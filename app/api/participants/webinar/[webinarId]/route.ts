@@ -166,16 +166,20 @@ export async function DELETE(
       select: { id: true },
     });
 
-    for (const slot of userSlots) {
-      await prisma.slotOfAppointment.update({
-        where: { id: slot.id },
-        data: {
-          user: {
-            disconnect: { id: userId },
+    // One atomic batch — sequential awaits paid a DB round trip per slot
+    // and could partially remove a participant on mid-loop failure.
+    await prisma.$transaction(
+      userSlots.map((slot) =>
+        prisma.slotOfAppointment.update({
+          where: { id: slot.id },
+          data: {
+            user: {
+              disconnect: { id: userId },
+            },
           },
-        },
-      });
-    }
+        }),
+      ),
+    );
     const participantRemoved = userSlots.length > 0;
 
     // Trigger waitlist notification if a participant was removed

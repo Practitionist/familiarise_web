@@ -51,7 +51,9 @@ export async function withDbConnectRetry<T>(
       if (!isDbConnectError(error) || attempt >= attempts) {
         throw error;
       }
-      // 2s/4s/8s + jitter — a cold Supabase pooler needs seconds, not ms.
+      // Exponential: baseMs * 2^(attempt-1) + jitter — with the default 3
+      // attempts that's two sleeps (2s, 4s); the final attempt just throws.
+      // A cold Supabase pooler needs seconds, not ms.
       const backoffMs = baseMs * 2 ** (attempt - 1) + Math.random() * 500;
       console.warn(
         `[connect-retry] transient DB connectivity failure (attempt ${attempt}/${attempts}), retrying in ${Math.round(backoffMs)}ms: ${

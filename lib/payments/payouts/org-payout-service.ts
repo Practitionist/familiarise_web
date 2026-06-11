@@ -503,7 +503,14 @@ export async function createOrgPayoutBatch(
  */
 export async function processOrgPayout(
   payoutId: string,
-): Promise<{ status: PayoutStatus; submittedToGateway: boolean }> {
+): Promise<{
+  status: PayoutStatus;
+  submittedToGateway: boolean;
+  /** True only when THIS invocation won the PENDING→PROCESSING claim —
+   * lets batch callers count real advancement instead of another worker's
+   * no-op echo of the current status. */
+  claimed: boolean;
+}> {
   const liveEnabled = process.env.ENABLE_LIVE_PAYOUTS === "true";
 
   return prisma
@@ -598,6 +605,7 @@ export async function processOrgPayout(
         return {
           status: result.status,
           submittedToGateway: result.submittedToGateway,
+          claimed: result.claimed,
         };
       }
 
@@ -608,7 +616,11 @@ export async function processOrgPayout(
       // 5xx / network error → throw so the cron retries with the same key.
       try {
         await submitOrgPayoutToGateway(payoutId);
-        return { status: "PROCESSING" as const, submittedToGateway: true };
+        return {
+          status: "PROCESSING" as const,
+          submittedToGateway: true,
+          claimed: true,
+        };
       } catch (err) {
         const cls = classifyGatewaySubmissionError(err);
         if (cls === "PERMANENT_4XX") {
@@ -619,7 +631,11 @@ export async function processOrgPayout(
           // Set true because we DID submit to the gateway — the rejection
           // is recorded on the row. False would imply we early-returned
           // before any gateway call, which isn't the case.
-          return { status: "FAILED" as PayoutStatus, submittedToGateway: true };
+          return {
+            status: "FAILED" as PayoutStatus,
+            submittedToGateway: true,
+            claimed: true,
+          };
         }
         // Transient — leave row in PROCESSING and re-throw so the cron
         // retries with the same idempotency key.
@@ -802,7 +818,9 @@ export async function processPendingOrgPayouts(): Promise<OrgProcessingResult> {
   for (const p of pending) {
     try {
       const out = await processOrgPayout(p.id);
-      if (out.status === "PROCESSING") {
+      // Count only claims THIS run won — a status echo of a row another
+      // worker already moved to PROCESSING is not our advancement.
+      if (out.claimed) {
         result.advanced++;
       }
     } catch (err) {

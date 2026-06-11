@@ -26,6 +26,10 @@ interface JobSummary {
   processed: number;
   succeeded: number;
   failed: number;
+  /** Org-payout advancement errors — kept separate from `failed` (which
+   * counts consultant disbursements) so success=false is always explained
+   * by failed>0 or org_errors>0, never a bare flag. */
+  orgErrors: number;
   success: boolean;
   errors: string[];
 }
@@ -43,6 +47,7 @@ function summarize(results: PayoutResult[]): JobSummary {
     processed: counted.length,
     succeeded,
     failed,
+    orgErrors: 0,
     success: failed === 0,
     errors: counted
       .filter((r) => !r.success && r.error)
@@ -62,6 +67,7 @@ function outputToGitHubActions(result: JobSummary): void {
       `processed=${result.processed}`,
       `succeeded=${result.succeeded}`,
       `failed=${result.failed}`,
+      `org_errors=${result.orgErrors}`,
       `success=${result.success}`,
     ].join("\n");
 
@@ -123,6 +129,7 @@ async function main(): Promise<void> {
     if (orgResult.errors.length > 0) {
       orgResult.errors.forEach((e) => console.warn(`   ⚠️ ${e}`));
       result.errors.push(...orgResult.errors);
+      result.orgErrors = orgResult.errors.length;
       result.success = false;
     }
 

@@ -33,18 +33,29 @@ export type CancelPendingResult =
   | { ok: true; slotsReleased: number }
   | { ok: false; code: "NOT_FOUND" | "NOT_PENDING" };
 
+interface GatewayCancel {
+  paymentIntent: string;
+  gateway: PaymentGateway;
+}
+
+interface TxOutcome {
+  outcome: CancelPendingResult;
+  // Returned FROM the transaction (never via outer-scope mutation): an
+  // aborted Serializable attempt that retries into an early-exit path must
+  // not leave a stale value behind — a stale gatewayCancel would cancel a
+  // gateway order this run did NOT expire.
+  gatewayCancel: GatewayCancel | null;
+}
+
 const CANCEL_NOTE = "Cancelled by user during checkout";
 
 export async function cancelPendingCheckout(args: {
   paymentId: string;
   userId: string;
 }): Promise<CancelPendingResult> {
-  let gatewayCancel: { paymentIntent: string; gateway: PaymentGateway } | null =
-    null;
-
-  const result = await withSerializableRetry(() =>
+  const { outcome, gatewayCancel } = await withSerializableRetry(() =>
     prisma.$transaction(
-      async (tx: Tx) => {
+      async (tx: Tx): Promise<TxOutcome> => {
         const payment = await tx.payment.findUnique({
           where: { id: args.paymentId },
           select: {
@@ -67,7 +78,10 @@ export async function cancelPendingCheckout(args: {
         });
         // Foreign payments 404 like missing ones — don't leak existence.
         if (!payment || payment.userId !== args.userId) {
-          return { ok: false as const, code: "NOT_FOUND" as const };
+          return {
+            outcome: { ok: false, code: "NOT_FOUND" },
+            gatewayCancel: null,
+          };
         }
 
         // CAS claim — the race closer. count 0 ⇒ the webhook confirmed it,
@@ -81,7 +95,10 @@ export async function cancelPendingCheckout(args: {
           data: { paymentStatus: "EXPIRED" },
         });
         if (claimed.count === 0) {
-          return { ok: false as const, code: "NOT_PENDING" as const };
+          return {
+            outcome: { ok: false, code: "NOT_PENDING" },
+            gatewayCancel: null,
+          };
         }
 
         // Referral credits consumed at checkout go back to the user —
@@ -147,13 +164,15 @@ export async function cancelPendingCheckout(args: {
           // event itself stays SCHEDULED for everyone else.
         }
 
-        if (!payment.isMockPayment) {
-          gatewayCancel = {
-            paymentIntent: payment.paymentIntent,
-            gateway: payment.paymentGateway,
-          };
-        }
-        return { ok: true as const, slotsReleased };
+        return {
+          outcome: { ok: true, slotsReleased },
+          gatewayCancel: payment.isMockPayment
+            ? null
+            : {
+                paymentIntent: payment.paymentIntent,
+                gateway: payment.paymentGateway,
+              },
+        };
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
     ),
@@ -163,19 +182,15 @@ export async function cancelPendingCheckout(args: {
   // booking. Razorpay can't cancel orders that already collected a payment —
   // a genuine late capture flips this payment SUCCEEDED via the webhook and
   // the orphaned-confirmation reconciler picks it up for refund.
-  if (result.ok && gatewayCancel !== null) {
-    const { paymentIntent, gateway } = gatewayCancel as {
-      paymentIntent: string;
-      gateway: PaymentGateway;
-    };
+  if (outcome.ok && gatewayCancel !== null) {
     try {
-      await cancelPaymentIntent(paymentIntent, gateway);
+      await cancelPaymentIntent(gatewayCancel.paymentIntent, gatewayCancel.gateway);
     } catch (error) {
       console.warn(
         JSON.stringify({
           event: "cancel_pending_gateway_cancel_failed",
           paymentId: args.paymentId,
-          gateway,
+          gateway: gatewayCancel.gateway,
           error: error instanceof Error ? error.message : String(error),
           timestamp: new Date().toISOString(),
         }),
@@ -183,5 +198,5 @@ export async function cancelPendingCheckout(args: {
     }
   }
 
-  return result;
+  return outcome;
 }

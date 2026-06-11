@@ -291,6 +291,68 @@ describe("cancelPendingCheckout — narrow parent from-set", () => {
   });
 });
 
+describe("cancelPendingCheckout — subscription parent", () => {
+  it("cancels the subscription parent through the guarded transition", async () => {
+    state.payments.set("pay-s", {
+      id: "pay-s",
+      userId: "user-1",
+      paymentStatus: "PENDING",
+      paymentIntent: "order_s",
+      paymentGateway: "RAZORPAY",
+      isMockPayment: true,
+      appointmentId: "appt-s",
+      consultationId: null,
+      subscriptionId: "sub-1",
+      webinarId: null,
+      classId: null,
+    });
+    state.subscriptions.set("sub-1", {
+      id: "sub-1",
+      requestStatus: "APPROVED_PENDING_PAYMENT",
+    });
+    state.slots.push({
+      id: "slot-s",
+      appointmentId: "appt-s",
+      classId: null,
+      isTentative: true,
+      userIds: ["user-1"],
+    });
+
+    const result = await cancelPendingCheckout({
+      paymentId: "pay-s",
+      userId: "user-1",
+    });
+
+    expect(result).toEqual({ ok: true, slotsReleased: 1 });
+    expect(state.payments.get("pay-s")?.paymentStatus).toBe("EXPIRED");
+    const sub = state.subscriptions.get("sub-1");
+    expect(sub?.requestStatus).toBe("CANCELLED");
+    expect(sub?.cancellationNotes).toBe("Cancelled by user during checkout");
+    expect(sub?.cancelledAt).toBeInstanceOf(Date);
+  });
+
+  it("rolls back when the subscription parent is already SCHEDULED", async () => {
+    state.payments.set("pay-s2", {
+      id: "pay-s2",
+      userId: "user-1",
+      paymentStatus: "PENDING",
+      paymentIntent: "order_s2",
+      paymentGateway: "RAZORPAY",
+      isMockPayment: true,
+      appointmentId: "appt-s2",
+      consultationId: null,
+      subscriptionId: "sub-2",
+      webinarId: null,
+      classId: null,
+    });
+    state.subscriptions.set("sub-2", { id: "sub-2", requestStatus: "SCHEDULED" });
+
+    await expect(
+      cancelPendingCheckout({ paymentId: "pay-s2", userId: "user-1" }),
+    ).rejects.toThrow(IllegalTransitionError);
+  });
+});
+
 describe("cancelPendingCheckout — webinar scoping", () => {
   it("deletes only the caller's tentative slot on a shared webinar appointment", async () => {
     state.payments.set("pay-w", {

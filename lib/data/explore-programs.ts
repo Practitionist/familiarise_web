@@ -66,11 +66,13 @@ const liveConsultantWhere = {
  * and sort by count IN MEMORY. That scan is O(all plans × recent slots) per
  * call — with React.cache alone it ran once per REQUEST, so 1000 concurrent
  * explore loads each paid it. unstable_cache shares one computation across
- * requests for 60s; the cached value is just the ranked id array. Staleness
- * is harmless — trending order changing 60s late is invisible.
+ * requests for 60s; the cached value is just the FULL ranked id array
+ * (callers slice to their limit — passing limit as an arg would key separate
+ * cache entries per limit, each paying the scan). Staleness is harmless —
+ * trending order changing 60s late is invisible.
  */
 const getTrendingClassPlanIds = unstable_cache(
-  async (limit: number): Promise<string[]> => {
+  async (): Promise<string[]> => {
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
@@ -107,7 +109,6 @@ const getTrendingClassPlanIds = unstable_cache(
         ),
       }))
       .sort((a, b) => b.count - a.count)
-      .slice(0, limit)
       .map((r) => r.id);
   },
   ["trending-class-plan-ids"],
@@ -115,7 +116,7 @@ const getTrendingClassPlanIds = unstable_cache(
 );
 
 const getTrendingWebinarPlanIds = unstable_cache(
-  async (limit: number): Promise<string[]> => {
+  async (): Promise<string[]> => {
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
@@ -147,7 +148,6 @@ const getTrendingWebinarPlanIds = unstable_cache(
         ),
       }))
       .sort((a, b) => b.count - a.count)
-      .slice(0, limit)
       .map((r) => r.id);
   },
   ["trending-webinar-plan-ids"],
@@ -177,7 +177,10 @@ export const getCuratedPrograms = cache(
       if (sort === "trending") {
         // Trending: rank by recent enrollment count (last 30 days) — the
         // ranking scan is shared across requests via unstable_cache above.
-        const sortedIds = await getTrendingClassPlanIds(limit);
+        // The cache holds the FULL ranked list (no limit arg): unstable_cache
+        // keys include fn args, so per-limit entries would each pay the scan;
+        // slicing here lets every caller share one entry.
+        const sortedIds = (await getTrendingClassPlanIds()).slice(0, limit);
 
         classPlans = await prisma.classPlan.findMany({
           where: {
@@ -234,8 +237,9 @@ export const getCuratedPrograms = cache(
       let webinarPlans;
 
       if (sort === "trending") {
-        // Shared 60s ranking cache — see getTrendingWebinarPlanIds above.
-        const sortedIds = await getTrendingWebinarPlanIds(limit);
+        // Shared 60s ranking cache — full list, sliced per caller (see the
+        // class-plan twin above for why no limit arg).
+        const sortedIds = (await getTrendingWebinarPlanIds()).slice(0, limit);
 
         webinarPlans = await prisma.webinarPlan.findMany({
           where: {

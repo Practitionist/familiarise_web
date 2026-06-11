@@ -134,7 +134,7 @@ scripts:process-payouts` locally with RazorpayX test creds).
 | 2 | Two concurrent runs (dispatch twice fast) | each payout disbursed ONCE — loser's CAS claim skips (`skipped`, not failed); gateway sees one `X-Payout-Idempotency: payout_<id>` |
 | 3 | Redis down / lock held with APPROVED payouts waiting | run exits **1** with `::error::` (silent-skip guard) — never a green no-op |
 | 4 | Org payouts PENDING | advanced→PROCESSING only when `ENABLE_LIVE_PAYOUTS=true`; errors reported but don't block consultant disbursement |
-| 5 | Env regression | job must run with `RAZORPAY_SECRET` resolved (service reads `RAZORPAYX_KEY_SECRET \|\| RAZORPAY_SECRET`, NOT `RAZORPAY_KEY_SECRET`) |
+| 5 | Env regression | Razorpay API calls must succeed with `RAZORPAYX_KEY_SECRET` or `RAZORPAY_SECRET` resolved — the payouts client never reads `RAZORPAY_KEY_SECRET`, and the job-level credential gate alone passing is NOT sufficient (handle-stuck/reconcile jobs gate on `RAZORPAY_SECRET ?? RAZORPAY_KEY_SECRET`, which can pass while the client secret is empty) |
 
 ### 2.4 Waitlist crons (#814/#821)
 
@@ -153,7 +153,7 @@ Expirations** (both have `dry_run` inputs).
 | Route | Cases |
 |---|---|
 | `POST /api/checkout` | same `clientIdempotencyKey` double-submit → one Payment row, second call replays the original response (#828); 6th call in 1 min → 429 |
-| `POST /api/webhooks/razorpay` | signed `payment.captured` replay ×10 → one WebhookEvent row, all ACKed 2xx; out-of-order events ACKed + deduped |
+| `POST /api/webhooks/razorpay` | signed `payment.captured` replay ×10 → one WebhookEvent row, all acknowledged 2xx; out-of-order events acknowledged + deduped |
 | `POST /api/appointments/[id]/cancel` vs reschedule | chaos scenario 09 invariants (one winner, no resurrections) |
 
 ---
@@ -221,7 +221,7 @@ body with `RAZORPAY_WEBHOOK_SECRET`, header `x-razorpay-signature`).
 Automated equivalent: `test-cancel-pending-vs-webhook` (runs in
 `npm run test:chaos:api`).
 
-**Invariants**: webhook ACKed 2xx always; payment never stays PENDING; end
+**Invariants**: webhook acknowledged 2xx always; payment never stays PENDING; end
 state is exactly one of — EXPIRED + slots deleted + parent CANCELLED (cancel
 won), SUCCEEDED + slots confirmed + cancel 409 (webhook won), or the
 documented late-capture orphan: SUCCEEDED after a 200 cancel with slots
