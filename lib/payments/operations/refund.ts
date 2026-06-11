@@ -390,12 +390,36 @@ export async function applyRefundCascade(
             `Payment ${payment.id} has WALLET leg ${leg.id} but no billingAccountId; cannot credit refund`,
           );
         }
-        await walletCredit(tx, {
+        const credit = await walletCredit(tx, {
           billingAccountId: payment.billingAccountId,
           amountPaise: reverse,
           reason: "REFUND",
           paymentId: payment.id,
           notes: `Refund cascade: ${input.reason}`,
+        });
+
+        // #835 — the org's wallet just lost money to a consumer refund;
+        // surface it on the org audit feed at the funding level. The
+        // billing account's owner org is the fallback because a B2C
+        // booking funded by an org wallet may carry no organizationId on
+        // the Payment row itself — that was the invisible path.
+        await tx.orgAuditLog.create({
+          data: {
+            organizationId: payment.organizationId ?? credit.ownerOrgId,
+            actorMembershipId: null,
+            category: "WALLET",
+            action: AUDIT_ACTIONS.WALLET.WALLET_REFUND,
+            description: `Refund ${input.refundId}: ${reverse} paise credited back to org wallet`,
+            details: {
+              paymentId: payment.id,
+              refundId: input.refundId,
+              legId: leg.id,
+              amountPaise: reverse,
+              balanceAfterPaise: credit.balanceAfter,
+              reason: input.reason,
+              initiatedByUserId: input.initiatedByUserId ?? null,
+            } as Prisma.InputJsonValue,
+          },
         });
         break;
       }
