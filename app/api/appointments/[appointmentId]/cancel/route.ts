@@ -15,6 +15,10 @@ import {
   computeRefundPct,
   parsePolicySnapshot,
 } from "@/lib/payments/operations/cancellation-policy";
+import {
+  CANCELLABLE_FROM,
+  EVENT_ALLOWED_FROM,
+} from "@/lib/booking/transitions";
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ appointmentId: string }> },
@@ -194,12 +198,7 @@ export async function POST(
     // REJECTED/EXPIRED (nothing to cancel). The guard rides the WHERE and is
     // re-evaluated under the row lock (B2/B16 — the #825 CAS doctrine), so a
     // cancel racing the capture webhook resolves to exactly one winner.
-    const CANCELLABLE_FROM = [
-      "PENDING",
-      "APPROVED",
-      "APPROVED_PENDING_PAYMENT",
-      "SCHEDULED",
-    ] as const;
+    // The set lives in lib/booking/transitions.ts so the map is canonical (#836).
 
     // Transaction for critical database operations only (with increased timeout)
     const result = await prisma.$transaction(
@@ -227,11 +226,13 @@ export async function POST(
             })
           ).count;
         } else if (appointment.webinar) {
+          // Explicit allowed-from (was notIn) — robust against future enum
+          // additions (#837).
           moved = (
             await tx.webinar.updateMany({
               where: {
                 id: appointment.webinar.id,
-                status: { notIn: ["CANCELLED", "COMPLETED"] },
+                status: { in: EVENT_ALLOWED_FROM.CANCELLED },
               },
               data: { status: "CANCELLED" },
             })
@@ -241,7 +242,7 @@ export async function POST(
             await tx.class.updateMany({
               where: {
                 id: appointment.class.id,
-                status: { notIn: ["CANCELLED", "COMPLETED"] },
+                status: { in: EVENT_ALLOWED_FROM.CANCELLED },
               },
               data: { status: "CANCELLED" },
             })

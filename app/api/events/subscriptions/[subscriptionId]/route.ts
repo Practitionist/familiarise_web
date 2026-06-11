@@ -13,6 +13,8 @@ import {
   lockSubscriptionApproval,
   unlockApproval,
 } from "@/utils/appointmentlock";
+import { transitionSubscriptionRequest } from "@/lib/booking/transitions";
+import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { sendPaymentLinkEmail } from "@/lib/email";
 import {
   notifySubscriptionStarted,
@@ -222,7 +224,6 @@ export async function PUT(
       data: {
         schedulingPeriodStartsAt: validatedData.schedulingPeriodStartsAt,
         schedulingPeriodEndsAt: validatedData.schedulingPeriodEndsAt,
-        requestStatus: validatedData.requestStatus,
         requestNotes: validatedData.requestNotes,
         feedbackFromConsultee: validatedData.feedbackFromConsultee,
         feedbackFromConsultant: validatedData.feedbackFromConsultant,
@@ -528,12 +529,15 @@ export async function PATCH(
             }
           }
 
-          // Update subscription status
-          const subscription = await tx.subscription.update({
+          // #836 — allowed-from guard rides the WHERE; the idempotency
+          // pre-checks above are only friendly error text. updateMany
+          // returns no row, so re-read for the heavy include.
+          await transitionSubscriptionRequest(tx, {
             where: { id: subscriptionId },
-            data: {
-              requestStatus: status,
-            },
+            to: status,
+          });
+          const subscription = await tx.subscription.findUniqueOrThrow({
+            where: { id: subscriptionId },
             include: {
               subscriptionPlan: {
                 include: {
@@ -602,11 +606,11 @@ export async function PATCH(
                 endDate,
               );
 
-              // Update status to APPROVED_PENDING_PAYMENT
-              const updatedSubscription = await tx.subscription.update({
+              // Update status to APPROVED_PENDING_PAYMENT — guarded (#836)
+              await transitionSubscriptionRequest(tx, {
                 where: { id: subscriptionId },
+                to: RequestStatus.APPROVED_PENDING_PAYMENT,
                 data: {
-                  requestStatus: RequestStatus.APPROVED_PENDING_PAYMENT,
                   schedulingPeriodStartsAt: startDate,
                   schedulingPeriodEndsAt: endDate,
                   pendingPaymentUrl: paymentResult.checkoutUrl,
@@ -614,6 +618,9 @@ export async function PATCH(
                     ? `${subscription.requestNotes}\n\n[System] Payment link generated and sent to user.`
                     : `[System] Payment link generated and sent to user.`,
                 },
+              });
+              const updatedSubscription = await tx.subscription.findUniqueOrThrow({
+                where: { id: subscriptionId },
                 include: {
                   subscriptionPlan: {
                     include: {
@@ -806,6 +813,12 @@ export async function PATCH(
       }
     }
   } catch (error) {
+    if (error instanceof IllegalTransitionError) {
+      return NextResponse.json(
+        { error: error.message, code: error.code },
+        { status: error.httpStatus },
+      );
+    }
     console.error(
       "Error updating subscription:",
       error instanceof Error ? error.message : "Unknown error",

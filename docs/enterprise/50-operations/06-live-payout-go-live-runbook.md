@@ -47,7 +47,10 @@ is real money on the first run — so the prerequisites below are hard gates.
 - [ ] **RazorpayX account live** + KYB complete; the platform's RazorpayX
       balance is funded to cover the first batch.
 - [ ] **Production secrets set** in the deploy env: `RAZORPAY_KEY_ID`,
-      `RAZORPAY_KEY_SECRET` (RazorpayX-enabled), `RAZORPAYX_WEBHOOK_SECRET`.
+      `RAZORPAY_SECRET` (RazorpayX-enabled), `RAZORPAYX_WEBHOOK_SECRET`.
+      The canonical secret name is `RAZORPAY_SECRET`; the reconciliation
+      scripts accept the legacy `RAZORPAY_KEY_SECRET` as a fallback only, so
+      new environments must not rely on it (#677 PM-1).
 - [ ] **Payout accounts VERIFIED** for every org/consultant in the first batch
       (`OrganizationPayoutAccount.status === "VERIFIED"`; the contact +
       fund-account side-channel finished provisioning).

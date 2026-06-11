@@ -62,8 +62,18 @@ import {
 
 function makeMockTx() {
   return {
-    consultation: { findUnique: jest.fn(), update: jest.fn() },
-    subscription: { findUnique: jest.fn(), update: jest.fn() },
+    // #836 — updateEventStatus routes through the CAS transition helpers,
+    // which call updateMany and read the returned count.
+    consultation: {
+      findUnique: jest.fn(),
+      update: jest.fn(),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
+    subscription: {
+      findUnique: jest.fn(),
+      update: jest.fn(),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
     webinar: { findUnique: jest.fn(), update: jest.fn() },
     class: { findUnique: jest.fn(), update: jest.fn() },
     // #440 — createAppointments denormalizes the consultant onto each slot.
@@ -431,9 +441,9 @@ describe("Manual allocation", () => {
       slots: ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"],
     });
 
-    expect(mockTx.consultation.update).toHaveBeenCalledWith(
+    expect(mockTx.consultation.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "consult-1" },
+        where: expect.objectContaining({ id: "consult-1" }),
         data: expect.objectContaining({
           requestStatus: RequestStatus.APPROVED,
         }),
@@ -691,9 +701,9 @@ describe("Requested slot allocation", () => {
       mode: "requested",
     });
 
-    expect(mockTx.consultation.update).toHaveBeenCalledWith(
+    expect(mockTx.consultation.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "consult-1" },
+        where: expect.objectContaining({ id: "consult-1" }),
         data: expect.objectContaining({
           requestStatus: RequestStatus.APPROVED,
         }),
@@ -1115,16 +1125,16 @@ describe("updateEventStatus", () => {
       slots: ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"],
     });
 
-    expect(mockTx.subscription.update).toHaveBeenCalledWith(
+    expect(mockTx.subscription.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "sub-1" },
+        where: expect.objectContaining({ id: "sub-1" }),
         data: expect.objectContaining({
           requestStatus: RequestStatus.APPROVED,
         }),
       }),
     );
     // Should NOT overwrite existing scheduling period
-    const updateData = mockTx.subscription.update.mock.calls[0][0].data;
+    const updateData = mockTx.subscription.updateMany.mock.calls[0][0].data;
     expect(updateData.schedulingPeriodStartsAt).toBeUndefined();
   });
 
@@ -1149,7 +1159,7 @@ describe("updateEventStatus", () => {
       slots: ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"],
     });
 
-    const updateData = mockTx.subscription.update.mock.calls[0][0].data;
+    const updateData = mockTx.subscription.updateMany.mock.calls[0][0].data;
     expect(updateData.schedulingPeriodStartsAt).toBeDefined();
     expect(updateData.schedulingPeriodEndsAt).toBeDefined();
   });
@@ -1491,8 +1501,14 @@ describe("Edge cases", () => {
 
       // Correct model was queried
       expect(freshTx[eventType].findUnique).toHaveBeenCalled();
-      // Correct model was updated
-      expect(freshTx[eventType].update).toHaveBeenCalled();
+      // Correct model was updated — consultation/subscription go through
+      // the #836 CAS transition helpers (updateMany); webinar/class still
+      // use a plain update in updateEventStatus.
+      const mutator =
+        eventType === "consultation" || eventType === "subscription"
+          ? freshTx[eventType].updateMany
+          : freshTx[eventType].update;
+      expect(mutator).toHaveBeenCalled();
     }
   });
 });

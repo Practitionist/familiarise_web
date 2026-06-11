@@ -1,6 +1,9 @@
 import prisma from "@/lib/prisma";
 import { RequestStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
+import { transitionConsultationRequest } from "@/lib/booking/transitions";
+import { IllegalTransitionError } from "@/lib/enterprise/transitions";
+import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 import {
   requireApiAuth,
   isPrivileged,
@@ -124,6 +127,10 @@ export async function PATCH(request: NextRequest) {
     if (authResult.error) return authResult.error;
     const { session } = authResult;
 
+    // #831 — event mutations previously had no limiter
+    const rl = await applyRateLimit(eventMutationLimiter, session.user.id);
+    if (rl) return rl;
+
     const body = await request.json();
     const { id, status } = body;
 
@@ -173,9 +180,13 @@ export async function PATCH(request: NextRequest) {
       );
     }
 
-    const consultation = await prisma.consultation.update({
+    // #836 — allowed-from guard rides the WHERE; updateMany returns no row,
+    // so re-read for the heavy include.
+    await prisma.$transaction((tx) =>
+      transitionConsultationRequest(tx, { where: { id }, to: status }),
+    );
+    const consultation = await prisma.consultation.findUniqueOrThrow({
       where: { id },
-      data: { requestStatus: status },
       include: {
         consultationPlan: {
           include: {
@@ -206,6 +217,12 @@ export async function PATCH(request: NextRequest) {
 
     return NextResponse.json({ data: consultation });
   } catch (error) {
+    if (error instanceof IllegalTransitionError) {
+      return NextResponse.json(
+        { error: error.message, code: error.code },
+        { status: error.httpStatus },
+      );
+    }
     console.error("Error updating consultation:", error);
     return NextResponse.json(
       { error: "An error occurred while updating consultation" },

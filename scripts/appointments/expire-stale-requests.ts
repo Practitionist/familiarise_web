@@ -19,6 +19,11 @@ import prisma from "../../lib/prisma";
 import { RequestStatus } from "@prisma/client";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 
+// The per-cohort WHERE guards below (PENDING by requestedAt,
+// APPROVED_PENDING_PAYMENT by updatedAt) are deliberate subsets of
+// REQUEST_ALLOWED_FROM.EXPIRED in lib/booking/transitions.ts (#836) —
+// each cohort has its own cutoff, so they are not merged into one sweep.
+
 // Expire requests in PENDING state for more than 30 days
 const PENDING_EXPIRATION_DAYS = 30;
 

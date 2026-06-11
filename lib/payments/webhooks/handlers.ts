@@ -13,6 +13,7 @@ import {
 } from "@prisma/client";
 import { calculateSubscriptionEndDate } from "@/utils/dateUtils";
 import { buildOccupiedAppointmentFilter } from "@/utils/slotAllocation/occupancyPolicy";
+import { REQUEST_ALLOWED_FROM } from "@/lib/booking/transitions";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { recordSystemError } from "@/lib/enterprise/system-events";
 import { validateWebhookMetadata } from "@/schemas/webhooks/metadata";
@@ -1317,16 +1318,24 @@ async function cleanupFailedPaymentAppointment(tx: Tx, appointmentId: string) {
       });
       if (remainingSlots === 0) {
         // Soft-delete: transition to EXPIRED status instead of hard-deleting
-        // to preserve audit trails for support/disputes/refunds
+        // to preserve audit trails for support/disputes/refunds.
+        // #836 — guard rides the WHERE: never expire an APPROVED or terminal
+        // booking from this cleanup path; zero rows means it already moved on.
         if (appointment.consultation) {
-          await tx.consultation.update({
-            where: { id: appointment.consultation.id },
+          await tx.consultation.updateMany({
+            where: {
+              id: appointment.consultation.id,
+              requestStatus: { in: REQUEST_ALLOWED_FROM.EXPIRED },
+            },
             data: { requestStatus: RequestStatus.EXPIRED },
           });
         }
         if (appointment.subscription) {
-          await tx.subscription.update({
-            where: { id: appointment.subscription.id },
+          await tx.subscription.updateMany({
+            where: {
+              id: appointment.subscription.id,
+              requestStatus: { in: REQUEST_ALLOWED_FROM.EXPIRED },
+            },
             data: { requestStatus: RequestStatus.EXPIRED },
           });
         }

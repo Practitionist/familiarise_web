@@ -28,6 +28,7 @@ import {
 import { notifyAppointmentCompleted } from "../../lib/novu/service";
 import { getAppUrl } from "../../lib/url";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
+import { REQUEST_ALLOWED_FROM } from "@/lib/booking/transitions";
 
 // Only complete appointments that ended at least 1 hour ago
 // This gives buffer time for any post-session activities
@@ -266,10 +267,19 @@ async function completeConsultations(): Promise<{
         `   Last slot ended: ${lastSlot?.endsAt?.toISOString() || "Unknown"}`,
       );
 
-      await prisma.consultation.update({
-        where: { id: consultation.id },
+      // #836 — guard rides the WHERE: a cancel landing between the sweep's
+      // read and this write must not be overwritten by COMPLETED.
+      const moved = await prisma.consultation.updateMany({
+        where: {
+          id: consultation.id,
+          requestStatus: { in: REQUEST_ALLOWED_FROM.COMPLETED },
+        },
         data: { requestStatus: RequestStatus.COMPLETED },
       });
+      if (moved.count === 0) {
+        console.log(`   ⏭️ Skipped — status changed since sweep read`);
+        continue;
+      }
 
       console.log(`   ✅ Marked as COMPLETED`);
       completed++;
@@ -387,10 +397,19 @@ async function completeSubscriptions(): Promise<{
         `   Last slot ended: ${latestEnd?.toISOString() || "Unknown"}`,
       );
 
-      await prisma.subscription.update({
-        where: { id: subscription.id },
+      // #836 — guard rides the WHERE: a cancel landing between the sweep's
+      // read and this write must not be overwritten by COMPLETED.
+      const moved = await prisma.subscription.updateMany({
+        where: {
+          id: subscription.id,
+          requestStatus: { in: REQUEST_ALLOWED_FROM.COMPLETED },
+        },
         data: { requestStatus: RequestStatus.COMPLETED },
       });
+      if (moved.count === 0) {
+        console.log(`   ⏭️ Skipped — status changed since sweep read`);
+        continue;
+      }
 
       console.log(`   ✅ Marked as COMPLETED`);
       completed++;
