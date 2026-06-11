@@ -1,5 +1,6 @@
 import { cache } from "react";
 import prisma from "@/lib/prisma";
+import { toPlain } from "@/lib/data/serialize";
 import { fetchImagesFromSupabaseStorage } from "@/lib/supabase";
 
 /**
@@ -44,15 +45,10 @@ export const getHomeExperts = cache(async () => {
       },
     },
   });
-  // BigInt `price` (paise) is non-serializable across Server→Client.
-  // Convert to Number — paise comfortably fits Number.MAX_SAFE_INTEGER.
-  return consultants.map((c) => ({
-    ...c,
-    subscriptionPlans: c.subscriptionPlans.map((p) => ({
-      ...p,
-      price: Number(p.price),
-    })),
-  }));
+  // price is already number at the JS boundary (#780 result extension);
+  // toPlain strips the extension's inspect symbol so the rows can cross
+  // the RSC boundary.
+  return toPlain(consultants);
 });
 
 export const getHomeReviews = cache(async () => {
@@ -74,7 +70,7 @@ export const getHomeReviews = cache(async () => {
     },
     orderBy: { rating: "desc" },
   });
-  return reviews;
+  return toPlain(reviews);
 });
 
 export const getHomeImages = cache(async () => {

@@ -17,6 +17,7 @@ import {
   BASE_URL,
   check,
   finish,
+  ensureServerOrSkip,
 } from "../../utilities/api-client";
 
 const SECRET = process.env.RAZORPAY_WEBHOOK_SECRET;
@@ -49,6 +50,8 @@ async function deliver(payload: string) {
 }
 
 async function run() {
+  await ensureServerOrSkip();
+
   if (!SECRET) {
     console.log("⏭️  SKIP — RAZORPAY_WEBHOOK_SECRET not set");
     process.exit(0);

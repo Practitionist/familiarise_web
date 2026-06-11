@@ -1,5 +1,6 @@
 import { cache } from "react";
 import prisma from "@/lib/prisma";
+import { toPlain } from "@/lib/data/serialize";
 
 /**
  * Server-side data access for webinar and class detail pages.
@@ -83,7 +84,8 @@ export async function fetchWebinarPlanDetail(webinarPlanId: string) {
       },
     },
   });
-  return plan;
+  // toPlain — extended plan rows carry an inspect symbol (see serialize.ts)
+  return toPlain(plan);
 }
 
 /** Cached wrapper for Server Components. */
@@ -164,7 +166,8 @@ export async function fetchClassPlanDetail(classPlanId: string) {
       },
     },
   });
-  return plan;
+  // toPlain — extended plan rows carry an inspect symbol (see serialize.ts)
+  return toPlain(plan);
 }
 
 /** Cached wrapper for Server Components. */

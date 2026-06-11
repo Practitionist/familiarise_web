@@ -13,9 +13,12 @@ import {
   finish,
   fireConcurrent,
   loginAs,
+  ensureServerOrSkip,
 } from "../../utilities/api-client";
 
 async function run() {
+  await ensureServerOrSkip();
+
   const email = process.env.CHAOS_USER_EMAIL ?? "daniel.anderson@outlook.com";
 
   const sessions = await fireConcurrent(5, async () => {

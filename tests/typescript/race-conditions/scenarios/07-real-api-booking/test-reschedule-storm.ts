@@ -17,9 +17,12 @@ import {
   fireConcurrent,
   histogram,
   loginAs,
+  ensureServerOrSkip,
 } from "../../utilities/api-client";
 
 async function run() {
+  await ensureServerOrSkip();
+
   const appointment = await prisma.appointment.findFirst({
     where: {
       consultation: { requestStatus: { in: ["PENDING", "APPROVED"] } },
