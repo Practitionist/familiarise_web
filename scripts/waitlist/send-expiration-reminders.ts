@@ -22,14 +22,24 @@ export interface SendRemindersResult {
 }
 
 /**
- * #814/#821 — the locked, connect-retrying entry. The lock was previously
+ * #814/#821 — the locked, connect-warming entry. The lock was previously
  * imported but never taken; the connect-retry absorbs the GH-runner →
  * Supabase-pooler ETIMEDOUTs that failed whole runs on the first query.
- * A retried body is safe — the reminderSentAt stamp keeps re-sends bounded.
+ *
+ * The retry wraps ONLY a no-op connection warm-up, never the body: the body
+ * sends emails (non-idempotent side effects), and replaying it after a
+ * mid-run transient would resend notifications. The observed failure mode
+ * (#814/#821 logs) is the FIRST query timing out on a cold pooler, which
+ * the warm-up covers.
  */
 export async function sendExpirationReminders(): Promise<SendRemindersResult> {
-  return withCronLock("send-expiration-reminders", { failMode: "open" }, () =>
-    withDbConnectRetry(sendRemindersCore),
+  return withCronLock(
+    "send-expiration-reminders",
+    { failMode: "open" },
+    async () => {
+      await withDbConnectRetry(() => prisma.$queryRaw`SELECT 1`);
+      return sendRemindersCore();
+    },
   );
 }
 
@@ -92,7 +102,7 @@ async function sendRemindersCore(): Promise<SendRemindersResult> {
       // Send reminder email — the rejoin link wants the PLAN id (the
       // deleted jobs/ duplicate drifted to the event id here; the plan id
       // is what the explore route resolves).
-      await sendWaitlistExpiringEmail({
+      const sendResult = await sendWaitlistExpiringEmail({
         email: entry.user.email,
         name: entry.user.name || "Valued User",
         eventTitle,
@@ -101,6 +111,20 @@ async function sendRemindersCore(): Promise<SendRemindersResult> {
         expiresAt: entry.expiresAt,
         waitlistId: entry.id,
       });
+
+      // The helper reports failures via { success: false } instead of
+      // throwing — stamping reminderSentAt on a failed delivery would
+      // silently drop the reminder forever.
+      if (!sendResult.success) {
+        errors.push({
+          id: entry.id,
+          error: String(sendResult.error ?? "email delivery failed"),
+        });
+        console.error(
+          `  ❌ Reminder delivery failed for entry ${entry.id}: ${sendResult.error}`,
+        );
+        continue;
+      }
 
       // Mark as reminded
       await prisma.waitlist.update({

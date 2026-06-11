@@ -24,17 +24,24 @@ export interface ProcessExpirationsResult {
 }
 
 /**
- * #814/#821 — the locked, connect-retrying entry. The lock was previously
+ * #814/#821 — the locked, connect-warming entry. The lock was previously
  * imported but never taken; the connect-retry absorbs the GH-runner →
  * Supabase-pooler ETIMEDOUTs that failed whole runs on the first query.
- * A retried body is safe — expiry processing is CAS-guarded and the
- * 5-minute respondedAt window bounds duplicate notify attempts.
+ *
+ * The retry wraps ONLY a no-op connection warm-up, never the body: the body
+ * sends emails and notifies queue successors (non-idempotent side effects),
+ * and replaying it after a mid-run transient would resend them. The
+ * observed failure mode (#814/#821 logs) is the FIRST query timing out on a
+ * cold pooler, which the warm-up covers.
  */
 export async function processWaitlistExpirations(): Promise<ProcessExpirationsResult> {
   return withCronLock(
     "process-expired-notifications",
     { failMode: "open" },
-    () => withDbConnectRetry(processExpirationsCore),
+    async () => {
+      await withDbConnectRetry(() => prisma.$queryRaw`SELECT 1`);
+      return processExpirationsCore();
+    },
   );
 }
 
@@ -92,9 +99,10 @@ async function processExpirationsCore(): Promise<ProcessExpirationsResult> {
     const eventId = entry.webinarId || entry.classId;
 
     try {
-      // Send expired notification email
+      // Send expired notification email — the helper reports failures via
+      // { success: false } instead of throwing, so count only real sends.
       if (entry.user.email) {
-        await sendWaitlistExpiredEmail({
+        const sendResult = await sendWaitlistExpiredEmail({
           email: entry.user.email,
           name: entry.user.name || "Valued User",
           eventTitle,
@@ -103,7 +111,17 @@ async function processExpirationsCore(): Promise<ProcessExpirationsResult> {
             ? `${getAppUrl()}/explore/programs/plans/${eventType}s/${eventId}`
             : undefined,
         });
-        emailed++;
+        if (sendResult.success) {
+          emailed++;
+        } else {
+          errors.push({
+            id: entry.id,
+            error: String(sendResult.error ?? "email delivery failed"),
+          });
+          console.error(
+            `  ❌ Expired-notice delivery failed for ${entry.id}: ${sendResult.error}`,
+          );
+        }
       }
 
       // Notify next person in queue

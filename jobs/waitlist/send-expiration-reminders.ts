@@ -72,4 +72,10 @@ async function main(): Promise<void> {
   }
 }
 
-main();
+// Run the job — the catch covers rejections that escape main's own
+// try/catch (e.g. abortIfMaintenance), matching the payouts wrapper.
+main().catch((error) => {
+  console.error("❌ expiration reminder job failed:");
+  console.error(error);
+  process.exit(1);
+});
