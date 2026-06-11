@@ -104,12 +104,18 @@ async function run() {
     );
 
     const winners = results.filter((r) => r.status >= 200 && r.status < 300);
+    const losers = results.filter((r) => !(r.status >= 200 && r.status < 300));
     const serverErrors = results.filter((r) => r.status >= 500);
 
     check("no server errors", serverErrors.length === 0, histogram(results));
     check(
       "exactly one winner for the last seat",
       winners.length === 1,
+      histogram(results),
+    );
+    check(
+      "losers get clean client errors (4xx)",
+      losers.every((r) => r.status >= 400 && r.status < 500),
       histogram(results),
     );
 
@@ -148,28 +154,28 @@ async function run() {
     });
     const paymentIds = createdPayments.map((p) => p.id);
     // Financial children Restrict the payment (#781 §B) — a mock checkout
-    // mints earnings/utilization rows that must go first.
-    await prisma.consultantEarnings.deleteMany({
-      where: { paymentId: { in: paymentIds } },
-    });
-    await prisma.organizationEarnings.deleteMany({
-      where: { paymentId: { in: paymentIds } },
-    });
-    await prisma.bookingUtilization.deleteMany({
-      where: { paymentId: { in: paymentIds } },
-    });
-    await prisma.paymentLeg.deleteMany({
-      where: { paymentId: { in: paymentIds } },
-    });
-    await prisma.payment
-      .deleteMany({ where: { id: { in: paymentIds } } })
-      .catch((e) => {
-        // Degraded cleanup: leave the payment but make it inert for reruns
-        // (slots are disconnected below; occupancy is slot-based).
-        console.warn(
-          `⚠️ payment cleanup blocked by a remaining FK — rows left in place: ${e.message.split("\n")[0]}`,
-        );
+    // mints earnings/utilization rows that must go first. The whole phase is
+    // fenced so a failure here can never abort the slot/enrollment cleanup
+    // below (occupancy is slot-based; a leftover payment is inert).
+    try {
+      await prisma.consultantEarnings.deleteMany({
+        where: { paymentId: { in: paymentIds } },
       });
+      await prisma.organizationEarnings.deleteMany({
+        where: { paymentId: { in: paymentIds } },
+      });
+      await prisma.bookingUtilization.deleteMany({
+        where: { paymentId: { in: paymentIds } },
+      });
+      await prisma.paymentLeg.deleteMany({
+        where: { paymentId: { in: paymentIds } },
+      });
+      await prisma.payment.deleteMany({ where: { id: { in: paymentIds } } });
+    } catch (e) {
+      console.warn(
+        `⚠️ payment cleanup incomplete — rows left in place: ${e instanceof Error ? e.message.split("\n")[0] : String(e)}`,
+      );
+    }
     // Disconnect any stormer from the webinar's slots (winner or tentative
     // residue) so reruns start from the same occupancy.
     const slots = await prisma.slotOfAppointment.findMany({

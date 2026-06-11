@@ -858,6 +858,8 @@ async function createAppointmentFromWebhook(
 // ============================================================================
 
 async function createConsultation(tx: Tx, data: ConsultationData) {
+  // #440 — the include rides the create so the overlap-guard column comes
+  // back without a second query inside the webhook transaction.
   const consultation = await tx.consultation.create({
     data: {
       consultationPlanId: data.planId,
@@ -866,13 +868,9 @@ async function createConsultation(tx: Tx, data: ConsultationData) {
       requestNotes: data.notes,
       bookingSource: "DIRECT_CHECKOUT",
     },
-  });
-
-  // #440 — denormalize the consultant onto the confirmed slot for the
-  // DB-level overlap guard (the consultation's FK guarantees the plan row).
-  const planForGuard = await tx.consultationPlan.findUniqueOrThrow({
-    where: { id: data.planId },
-    select: { consultantProfileId: true },
+    include: {
+      consultationPlan: { select: { consultantProfileId: true } },
+    },
   });
 
   return await tx.appointment.create({
@@ -884,7 +882,7 @@ async function createConsultation(tx: Tx, data: ConsultationData) {
           startsAt: new Date(data.slotStartTimeInUTC),
           endsAt: new Date(data.slotEndTimeInUTC),
           isTentative: false,
-          consultantProfileId: planForGuard.consultantProfileId,
+          consultantProfileId: consultation.consultationPlan.consultantProfileId,
           user: { connect: { id: data.userId } },
         },
       },
