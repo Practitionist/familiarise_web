@@ -248,11 +248,13 @@ export async function POST(request: NextRequest) {
       ) {
         return NextResponse.json({ error: "Forbidden" }, { status: 403 });
       }
-
-      // Rate limit: 3 trial requests per 24 hours per consultee (prevents inbox flooding)
-      const rl = await applyRateLimit(trialRequestLimiter, session.user.id);
-      if (rl) return rl;
     }
+
+    // Rate limit: 3 trial requests per 24 hours per creator. #831 — applied
+    // uniformly: a privileged session can still flood consultant inboxes,
+    // so role no longer bypasses the limiter.
+    const rl = await applyRateLimit(trialRequestLimiter, session.user.id);
+    if (rl) return rl;
 
     // Check if a trial already exists for this consultee-consultant pair
     const existingTrial = await prisma.trialSession.findUnique({

@@ -7,6 +7,7 @@ import {
   isPrivileged,
   forbiddenResponse,
 } from "@/lib/auth-helpers";
+import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 import { resolveOrgScope } from "@/lib/api/scope/parse";
 
 export async function GET(request: NextRequest) {
@@ -285,6 +286,10 @@ export async function POST(request: Request) {
   const authResult = await requireApiAuth();
   if (authResult.error) return authResult.error;
   const { session } = authResult;
+
+  // #831 — event mutations previously had no limiter
+  const rl = await applyRateLimit(eventMutationLimiter, session.user.id);
+  if (rl) return rl;
 
   try {
     const body = await request.json();

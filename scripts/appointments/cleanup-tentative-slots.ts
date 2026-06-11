@@ -2,7 +2,7 @@
  * Tentative Slot Cleanup - Core Logic
  *
  * Releases slots marked as isTentative=true that are associated with
- * abandoned booking flows (no successful payment after 7 days).
+ * abandoned booking flows (no successful payment after 24 hours, #833).
  *
  * This happens when:
  * - User started booking but never completed payment
@@ -21,8 +21,11 @@ import prisma from "../../lib/prisma";
 import { PaymentStatus } from "@prisma/client";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 
-// Release tentative slots older than 7 days with no successful payment
-const TENTATIVE_EXPIRATION_DAYS = 7;
+// #833 — hours, not days: gateway orders expire well inside a day, so a
+// 7-day hold locked users out of rebooking for most of a week. 24h keeps
+// margin over Payment.expiresAt and the 2-hourly cron cadence; the parent
+// status guard below still protects requests under consultant review.
+const TENTATIVE_EXPIRATION_HOURS = 24;
 
 export interface TentativeSlotCleanupResult {
   success: boolean;
@@ -49,11 +52,11 @@ async function cleanupTentativeSlotsUnlocked(): Promise<TentativeSlotCleanupResu
   const appointmentsAffected = new Set<string>();
 
   const expirationDate = new Date(
-    Date.now() - TENTATIVE_EXPIRATION_DAYS * 24 * 60 * 60 * 1000,
+    Date.now() - TENTATIVE_EXPIRATION_HOURS * 60 * 60 * 1000,
   );
 
   console.log("🧹 Starting tentative slot cleanup...");
-  console.log(`   Expiration threshold: ${TENTATIVE_EXPIRATION_DAYS} days`);
+  console.log(`   Expiration threshold: ${TENTATIVE_EXPIRATION_HOURS} hours`);
 
   try {
     // Find tentative slots with no successful payment AND whose parent event

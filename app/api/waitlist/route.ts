@@ -12,6 +12,7 @@ import { waitlistLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { resolveOrgScope } from "@/lib/api/scope/parse";
 
 import { getSession } from "@/lib/auth-server";
+import { assertBodySize } from "@/lib/validation/limits";
 /**
  * POST /api/waitlist - Join a waitlist
  */
@@ -29,6 +30,10 @@ export async function POST(request: NextRequest) {
     // Rate limit: 5 waitlist joins per hour per user
     const rl = await applyRateLimit(waitlistLimiter, session.user.id);
     if (rl) return rl;
+
+    // #831 — cap request body before parsing
+    const tooLarge = assertBodySize(request);
+    if (tooLarge) return tooLarge;
 
     const body = await request.json();
     const { webinarId, classId, preferences } = body;

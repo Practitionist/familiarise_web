@@ -195,8 +195,10 @@ export async function handleWaitlistResponse(params: {
 
   // Check if notification has expired
   if (entry.expiresAt && new Date() > entry.expiresAt) {
-    await prisma.waitlist.update({
-      where: { id: waitlistId },
+    // #834 — CAS: only NOTIFIED may expire; a racing respond/expire-cron
+    // already moved it on if count is 0.
+    await prisma.waitlist.updateMany({
+      where: { id: waitlistId, status: WaitlistStatus.NOTIFIED },
       data: {
         status: WaitlistStatus.EXPIRED,
         respondedAt: new Date(),
@@ -232,14 +234,21 @@ export async function handleWaitlistResponse(params: {
     }
 
     case "DECLINE": {
-      // User doesn't want the spot - remove from waitlist
-      await prisma.waitlist.update({
-        where: { id: waitlistId },
+      // #834 — CAS: two tabs declining concurrently must fire exactly one
+      // handleSlotOpening; the loser would double-notify the next in queue.
+      const declined = await prisma.waitlist.updateMany({
+        where: { id: waitlistId, status: WaitlistStatus.NOTIFIED },
         data: {
           status: WaitlistStatus.CANCELLED,
           respondedAt: now,
         },
       });
+      if (declined.count === 0) {
+        return {
+          success: false,
+          message: "This spot offer was already responded to.",
+        };
+      }
 
       // Notify next person in queue
       await handleSlotOpening({
@@ -256,14 +265,21 @@ export async function handleWaitlistResponse(params: {
     }
 
     case "SKIP": {
-      // User wants to skip this time - move to back of queue
-      await prisma.waitlist.update({
-        where: { id: waitlistId },
+      // #834 — CAS: a double-submitted SKIP must not insert two back-of-queue
+      // rows or double-fire handleSlotOpening.
+      const skipped = await prisma.waitlist.updateMany({
+        where: { id: waitlistId, status: WaitlistStatus.NOTIFIED },
         data: {
           status: WaitlistStatus.SKIPPED,
           respondedAt: now,
         },
       });
+      if (skipped.count === 0) {
+        return {
+          success: false,
+          message: "This spot offer was already responded to.",
+        };
+      }
 
       // Create a new waitlist entry at the back of the queue
       await prisma.waitlist.create({
@@ -308,8 +324,13 @@ export async function handleWaitlistResponse(params: {
  * Mark a waitlist entry as booked after successful payment
  */
 export async function markWaitlistAsBooked(waitlistId: string): Promise<void> {
-  await prisma.waitlist.update({
-    where: { id: waitlistId },
+  // #834 — CAS: webhook replays re-stamp, and a CANCELLED/EXPIRED entry must
+  // not be resurrected to BOOKED. Zero rows = already stamped or moved on.
+  const res = await prisma.waitlist.updateMany({
+    where: {
+      id: waitlistId,
+      status: { in: [WaitlistStatus.NOTIFIED, WaitlistStatus.WAITING] },
+    },
     data: {
       status: WaitlistStatus.BOOKED,
       bookedAt: new Date(),
@@ -319,7 +340,10 @@ export async function markWaitlistAsBooked(waitlistId: string): Promise<void> {
 
   console.log(
     JSON.stringify({
-      event: "waitlist_booking_completed",
+      event:
+        res.count === 0
+          ? "waitlist_booking_already_stamped"
+          : "waitlist_booking_completed",
       waitlistId,
       timestamp: new Date().toISOString(),
     }),
@@ -567,13 +591,24 @@ export async function leaveWaitlist(params: {
     };
   }
 
-  await prisma.waitlist.update({
-    where: { id: waitlistId },
+  // #834 — CAS: the pre-check above is friendly error text; the WHERE is
+  // what prevents a leave racing a respond/expire from double-firing.
+  const left = await prisma.waitlist.updateMany({
+    where: {
+      id: waitlistId,
+      status: { in: [WaitlistStatus.WAITING, WaitlistStatus.NOTIFIED] },
+    },
     data: {
       status: WaitlistStatus.CANCELLED,
       respondedAt: new Date(),
     },
   });
+  if (left.count === 0) {
+    return {
+      success: false,
+      message: "Cannot leave waitlist with current status",
+    };
+  }
 
   // If the entry was NOTIFIED, notify next person
   if (entry.status === WaitlistStatus.NOTIFIED) {

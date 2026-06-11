@@ -21,6 +21,7 @@ import {
 import { ZodError } from "zod";
 import type { SlotConflictResult } from "@/utils/slotAllocation/types";
 import { requireApiAuth, authorizeEventAccess } from "@/lib/auth-helpers";
+import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 
 interface ValidationResult extends SlotConflictResult {
   subscriptionValidation?: {
@@ -80,6 +81,13 @@ export async function POST(
       subscriptionId,
     );
     if (authzError) return authzError;
+
+    // #831 — event mutations previously had no limiter
+    const rl = await applyRateLimit(
+      eventMutationLimiter,
+      authResult.session.user.id,
+    );
+    if (rl) return rl;
 
     // LAYER 1: Zod Schema Validation (type-safe, automatic type inference)
     try {
