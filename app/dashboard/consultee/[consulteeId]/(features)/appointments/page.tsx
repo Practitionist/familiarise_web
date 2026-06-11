@@ -1,7 +1,7 @@
 "use client";
 
 import { use } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { PageSkeleton } from "@/components/dashboard/DashboardSkeletons";
 import { createConsulteeQueries } from "@/lib/dashboard-queries";
@@ -41,7 +41,12 @@ export default function AppointmentsPage({ params }: Readonly<PageProps>) {
         ? "all"
         : scope.orgId;
   const eventsQuery = createConsulteeQueries(consulteeId, orgScopeParam).events;
-  const { data: eventsData, isLoading, error } = useQuery(eventsQuery);
+  // keepPreviousData: scope-filter changes show the previous list while the
+  // new one loads instead of a skeleton flash (documents-page idiom, #346).
+  const { data: eventsData, isLoading, error } = useQuery({
+    ...eventsQuery,
+    placeholderData: keepPreviousData,
+  });
 
   const filterValue: OrgContextFilterValue =
     scope.kind === "personal"

@@ -1,6 +1,5 @@
 "use client";
 
-import "@stream-io/video-react-sdk/dist/css/styles.css";
 import { fetchConsulteeDetails, fetchUserDetails } from "@/lib/user";
 import NovuProvider from "@/providers/NovuProvider";
 import { NotificationInbox } from "@/components/notifications/NotificationInbox";
