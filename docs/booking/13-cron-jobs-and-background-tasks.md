@@ -78,9 +78,9 @@ Both paths call the same core function exported from `scripts/appointments/`. Th
 
 **Purpose**: Releases slots marked `isTentative = true` that are associated with abandoned booking flows. These tentative slots block consultant availability; if not cleaned up, abandoned checkouts permanently reduce the consultant's bookable calendar.
 
-**Threshold**: 7 days since slot creation (`TENTATIVE_EXPIRATION_DAYS = 7`).
+**Threshold**: 24 hours since slot creation (`TENTATIVE_EXPIRATION_HOURS = 24`, cut from 7 days by #833).
 
-**Criteria**: Slot has `isTentative = true`, `createdAt` older than 7 days, AND the associated appointment has no payment with `paymentStatus = SUCCEEDED`.
+**Criteria**: Slot has `isTentative = true`, `createdAt` older than 24 hours, AND the associated appointment has no payment with `paymentStatus = SUCCEEDED`. Users can also release their own holds immediately via `DELETE /api/checkout/pending/[paymentId]` (#849) instead of waiting for this cron.
 
 **Action**: Deletes the stale `SlotOfAppointment` records using `deleteMany`. This frees the time range for new bookings.
 
