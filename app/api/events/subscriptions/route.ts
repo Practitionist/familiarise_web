@@ -33,18 +33,22 @@ export async function GET(request: NextRequest) {
   try {
     const whereClause: Prisma.SubscriptionWhereInput = {};
 
-    // Authorization: filter by ownership for non-privileged users
+    // Authorization: filter by ownership for non-privileged users.
+    // `?? "__none__"` (the participants-route idiom) is load-bearing: a
+    // session with a missing profile id would otherwise put `undefined`
+    // into the where clause, which Prisma IGNORES — silently dropping the
+    // ownership filter and serving every consultant's subscriptions.
     if (!isPrivileged(session.user.role)) {
       if (session.user.role === "CONSULTANT") {
         // Consultants can only see their own subscriptions
         whereClause.subscriptionPlan = {
           consultantProfile: {
-            id: session.user.consultantProfileId,
+            id: session.user.consultantProfileId ?? "__none__",
           },
         };
       } else if (session.user.role === "CONSULTEE") {
         // Consultees can only see their own subscriptions
-        whereClause.requestedById = session.user.consulteeProfileId;
+        whereClause.requestedById = session.user.consulteeProfileId ?? "__none__";
       } else {
         // Unknown role - deny access
         return forbiddenResponse("Access denied");
@@ -101,7 +105,7 @@ export async function GET(request: NextRequest) {
                   user: { select: { id: true, name: true, email: true, image: true, role: true, phone: true } },
                 },
               },
-              payment: true,
+              payment: { select: { id: true, paymentStatus: true, amount: true, currency: true } },
             },
           },
         },
@@ -252,7 +256,7 @@ export async function PATCH(request: NextRequest) {
                   user: { select: { id: true, name: true, email: true, image: true, role: true, phone: true } },
                 },
               },
-              payment: true,
+              payment: { select: { id: true, paymentStatus: true, amount: true, currency: true } },
             },
           },
         },
