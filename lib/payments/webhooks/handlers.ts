@@ -868,6 +868,13 @@ async function createConsultation(tx: Tx, data: ConsultationData) {
     },
   });
 
+  // #440 — denormalize the consultant onto the confirmed slot for the
+  // DB-level overlap guard (the consultation's FK guarantees the plan row).
+  const planForGuard = await tx.consultationPlan.findUniqueOrThrow({
+    where: { id: data.planId },
+    select: { consultantProfileId: true },
+  });
+
   return await tx.appointment.create({
     data: {
       appointmentType: AppointmentsType.CONSULTATION,
@@ -877,6 +884,7 @@ async function createConsultation(tx: Tx, data: ConsultationData) {
           startsAt: new Date(data.slotStartTimeInUTC),
           endsAt: new Date(data.slotEndTimeInUTC),
           isTentative: false,
+          consultantProfileId: planForGuard.consultantProfileId,
           user: { connect: { id: data.userId } },
         },
       },

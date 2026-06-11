@@ -265,7 +265,16 @@ npm run dev & npm run test:chaos:api      # real-API chaos: categories 07 + 09
 npm run test:race                         # full race-condition harness
 ```
 
-Chaos category 07 now includes `test-cancel-pending-vs-webhook` (#849).
+Chaos category 07 now includes `test-cancel-pending-vs-webhook` (#849) and
+`test-last-seat-storm` (capacity race regression — exactly one winner for a
+single free webinar seat).
+
+DB-level backstop (#440): the `slot_no_confirmed_overlap` exclusion
+constraint (applied via `npm run db:constraints`) rejects two CONFIRMED
+overlapping slots for one consultant at the database. Verify after any
+reset: a direct duplicate-window insert with `isTentative=false` and a set
+`consultantProfileId` must fail with an exclusion violation; tentative and
+back-to-back inserts must succeed.
 
 ## 6. Reporting
 

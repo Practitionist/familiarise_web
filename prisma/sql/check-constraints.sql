@@ -40,3 +40,24 @@ ALTER TABLE "WebinarPlan" ADD CONSTRAINT "webinar_plan_max_participants_min" CHE
 ALTER TABLE "ClassPlan" DROP CONSTRAINT IF EXISTS "class_plan_max_participants_min";
 -- SPLIT
 ALTER TABLE "ClassPlan" ADD CONSTRAINT "class_plan_max_participants_min" CHECK ("maxParticipants" >= 1);
+
+-- SPLIT
+-- #440 — DB-level double-booking backstop for 1:1 bookings. The application
+-- guards (consultant allocation lock, #827 confirm-time recheck) are the
+-- first line; this exclusion constraint is the last line: two CONFIRMED
+-- slots for the same consultant may never overlap in time. Scoped to rows
+-- carrying the denormalized consultantProfileId — consultation/subscription
+-- slot creates set it; webinar/class attendee slots deliberately leave it
+-- NULL (many same-window rows per event are legitimate there) and legacy
+-- pre-#440 rows are NULL. tstzrange is '[)' so back-to-back slots don't
+-- conflict.
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+-- SPLIT
+ALTER TABLE "SlotOfAppointment" DROP CONSTRAINT IF EXISTS "slot_no_confirmed_overlap";
+-- SPLIT
+ALTER TABLE "SlotOfAppointment" ADD CONSTRAINT "slot_no_confirmed_overlap"
+  EXCLUDE USING gist (
+    "consultantProfileId" WITH =,
+    tstzrange("startsAt", "endsAt") WITH &&
+  )
+  WHERE ("consultantProfileId" IS NOT NULL AND NOT "isTentative");

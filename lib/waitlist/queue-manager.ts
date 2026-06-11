@@ -107,6 +107,22 @@ export async function getNextInQueue(params: {
   webinarId?: string;
   classId?: string;
 }): Promise<WaitlistEntryWithDetails | null> {
+  const batch = await getNextBatchInQueue(params, 1);
+  return batch[0] ?? null;
+}
+
+/**
+ * Ordered head-of-queue batch — the batched sibling of getNextInQueue so
+ * handleSlotOpening can claim N candidates in one round trip instead of a
+ * findFirst-per-slot loop (write-path scale hardening).
+ */
+export async function getNextBatchInQueue(
+  params: {
+    webinarId?: string;
+    classId?: string;
+  },
+  take: number,
+): Promise<WaitlistEntryWithDetails[]> {
   const { webinarId, classId } = params;
 
   if (!webinarId && !classId) {
@@ -115,7 +131,7 @@ export async function getNextInQueue(params: {
 
   const eventFilter = webinarId ? { webinarId } : { classId };
 
-  const entry = await prisma.waitlist.findFirst({
+  return prisma.waitlist.findMany({
     where: {
       ...eventFilter,
       status: WaitlistStatus.WAITING,
@@ -124,6 +140,7 @@ export async function getNextInQueue(params: {
       { priority: "desc" }, // Higher priority first
       { joinedAt: "asc" }, // Earlier joiners first
     ],
+    take,
     include: {
       user: {
         select: {
@@ -155,8 +172,6 @@ export async function getNextInQueue(params: {
       },
     },
   });
-
-  return entry;
 }
 
 /**
