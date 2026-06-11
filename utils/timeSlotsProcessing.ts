@@ -516,8 +516,16 @@ export function mergeConsecutiveSlots(
     const isConsecutive = Math.abs(currentMergedEnd - nextSlotStart) <= 60000;
     const bothAvailable =
       !currentMerged.isAllocated && !currentSlot.isAllocated;
+    // #788 — never merge across different availability rows. The merge keeps
+    // row A's slotOfAvailabilityId, so a cross-row merge mis-binds every
+    // sliced sub-window from row B's range to row A's ID and checkout's
+    // window validator correctly rejects the booking. The merge was designed
+    // (c9ad0de3) to fuse sub-windows WITHIN one row for trials; cross-row
+    // fusion was an accident no flow relies on.
+    const sameSource =
+      currentMerged.slotOfAvailabilityId === currentSlot.slotOfAvailabilityId;
 
-    if (isConsecutive && bothAvailable) {
+    if (isConsecutive && bothAvailable && sameSource) {
       // Extend the current merged slot
       currentMerged = {
         ...currentMerged,

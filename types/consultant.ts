@@ -65,6 +65,11 @@ export interface IConsultantCardData {
   subDomains: { id: string; name: string }[];
   tags: { id: string; name: string }[];
   reviews?: { rating: number }[];
+  organizationBadge?: {
+    name: string;
+    slug: string;
+    logo: string | null;
+  } | null;
   subscriptionPlans?: Array<{
     id: string;
     title: string;
@@ -76,38 +81,3 @@ export interface IConsultantCardData {
     totalSessions: number | null;
   }>;
 }
-
-/**
- * Data shape for the expert detail page.
- * Includes plans and slots for booking flow, but NOT reviews
- * (reviews are fetched separately and passed as a distinct prop).
- */
-export type TConsultantDetailData = Prisma.ConsultantProfileGetPayload<{
-  include: {
-    user: {
-      select: {
-        id: true;
-        name: true;
-        image: true;
-        profileDisplayImage: true;
-        bio: true;
-        city: true;
-        country: true;
-        linkedinUrl: true;
-        timezone: true;
-        workExperiences: true;
-        education: true;
-        certifications: true;
-      };
-    };
-    domain: true;
-    subDomains: true;
-    tags: true;
-    slotsOfAvailabilityWeekly: true;
-    slotsOfAvailabilityCustom: true;
-    consultationPlans: true;
-    subscriptionPlans: { include: { subscriptionContents: true } };
-    webinarPlans: true;
-    classPlans: true;
-  };
-}>;

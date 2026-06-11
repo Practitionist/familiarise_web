@@ -1,0 +1,122 @@
+---
+title: Public pages and discovery
+band: 30-programs-and-lifecycle
+audience: sde1
+status: live
+last-reviewed: 2026-06-05
+---
+
+# Public pages and discovery
+
+This document explains how an org and its plans surface on the public marketplace. It covers the `OrgPlanVisibility` gate on per-type plans, the public org list and detail pages, the attribution leg that `PERSONAL` funding leaves on a payment, and the explore-card badge. It is for anyone touching marketplace discovery or org public exposure, and it was last verified against code on 2026-06-05 (#726/#778).
+
+The enterprise layer's public-facing footprint is just two things. The first is per-type org-owned plans that opt into the marketplace via `OrgPlanVisibility`; the org's "catalog" is now simply its visible plans rather than a separate model. The second is public org pages for HOST and HYBRID orgs that opt into discovery by setting `Organization.isPublic = true`.
+
+The standalone `OrganizationPlan` model and the `/catalog` route set were both removed in the #778 elegance pass, because a separate "org catalog" table duplicated the bookable shape of the four per-type plans. The catalog an org exposes is now exactly its `ConsultationPlan`, `SubscriptionPlan`, `WebinarPlan`, and `ClassPlan` rows (those with `organizationId` set) whose `visibility` is public. Do not reintroduce `OrganizationPlan`.
+
+## Plan visibility (`OrgPlanVisibility`)
+
+Each of the four per-type plan models carries:
+
+```prisma
+enum OrgPlanVisibility {
+  PUBLIC          // visible everywhere (default for personal plans)
+  ORG_ONLY        // only org members see it; marketplace MUST filter it out
+  ORG_AND_PUBLIC  // discoverable AND surfaced to org members
+}
+```
+
+```prisma
+// on ConsultationPlan / SubscriptionPlan / WebinarPlan / ClassPlan
+visibility OrgPlanVisibility @default(PUBLIC)
+```
+
+The single source of truth for "what's safe to show publicly" is
+`lib/api/plans/visibility.ts`:
+
+```ts
+export const MARKETPLACE_VISIBILITY: OrgPlanVisibility[] = [
+  "PUBLIC",
+  "ORG_AND_PUBLIC",
+];
+```
+
+Every public plan-list surface composes `marketplaceVisibilityWhere()` (or the
+shared `buildPlanWhereClause`) into its `where` so an `ORG_ONLY` plan never
+leaks to `/explore/**`. The filter is applied in the `/api/plans/*` list routes
+(consultations, subscriptions, webinars, classes), `plan-filters.ts`'s
+`buildPlanWhereClause` (webinars + classes), and the consultant-detail GET
+(narrows included plans for non-privileged viewers). **Org-internal** catalog
+endpoints (operators viewing their own org's plans) MUST NOT use this filter —
+they accept `ORG_ONLY` for the viewer's own org by design. Routing every public
+surface through one constant keeps the tenant-private-catalog-leak class (#726)
+auditable.
+
+## The two discovery gates, drawn
+
+Discovery is two independent AND-gates: one decides whether the **org** appears
+at all, the other decides whether a given **plan** is safe to show. They don't
+interact — an `ORG_ONLY` plan stays hidden even on a fully public org, and a
+public plan on a non-public org is unreachable because there's no public org
+page to host it. Drawing both keeps the tenant-leak class (#726) legible:
+
+```mermaid
+flowchart TD
+  ORG["Organization"] --> G1{"isPublic = true<br/>AND canHost = true<br/>AND status = ACTIVE?"}
+  G1 -- no --> HIDE["not on /explore/enterprise/organisations<br/>(SPONSOR-only B2B clients never listed)"]
+  G1 -- yes --> LIST["listed + /[orgSlug] detail page<br/>(revalidate 60)"]
+
+  PLAN["per-type org plan<br/>(Consultation/Subscription/Webinar/Class)"] --> G2{"visibility ∈<br/>MARKETPLACE_VISIBILITY?<br/>{PUBLIC, ORG_AND_PUBLIC}"}
+  G2 -- "ORG_ONLY" --> PHIDE["filtered out of /explore/**<br/>+ public plan-list APIs"]
+  G2 -- yes --> PSHOW["surfaced on marketplace<br/>+ rendered on org detail (≤6/type)"]
+
+  LIST -.->|org page renders only| PSHOW
+  note1["org-internal catalog endpoints<br/>deliberately SKIP the plan filter<br/>(operators see their own ORG_ONLY)"] -.-> G2
+```
+
+The org-gate is hard-coded in `GET /api/organizations/public` (and the
+`[orgSlug]` detail loader); the plan-gate is the single `MARKETPLACE_VISIBILITY`
+constant composed into every public plan-list `where`. Routing all four
+per-type surfaces through one constant is the deliberate choice — a dropped
+filter on any one of them would be a private-catalog leak, so there's exactly
+one place to audit.
+
+## Public org pages
+
+A HOST or HYBRID org that sets `Organization.isPublic = true` becomes discoverable through two surfaces.
+
+The list surface is `app/explore/enterprise/organisations/page.tsx`, backed by the unauthenticated `GET /api/organizations/public`. Its query is hard-filtered to `isPublic = true AND canHost = true AND status = "ACTIVE"`, accepts optional `industry` (a case-insensitive contains match) and `search` filters, and uses 1-indexed pagination with a `limit` that defaults to 12 and is capped at 50.
+
+The detail surface is `app/explore/enterprise/organisations/[orgSlug]/page.tsx` (with `revalidate = 60`). It resolves the org by its `slug` under the same `isPublic + canHost + ACTIVE` guard, then renders the org's branding plus up to six of each per-type plan, each filtered to `visibility ∈ {PUBLIC, ORG_AND_PUBLIC}`.
+
+> **SPONSOR-only orgs are never public.** `canHost = false` orgs are B2B clients,
+> not marketplace participants — exposing them would breach the confidentiality
+> corporate clients expect, so both the list and detail queries require
+> `canHost = true`. (This is also why there's no generic `/org/[slug]` page: the
+> public surface is the explore-enterprise org page above, gated on hosting.)
+
+## Attribution-only semantics for PERSONAL funding
+
+A `FundingSource = PERSONAL` org tags the learner's `Payment` with
+`organizationId` so analytics can roll up "all sessions booked by Acme
+employees". No money flows through the org — the learner pays at checkout on
+their own card. This is the attribution leg `PaymentLeg` can't represent on its
+own (it carries `source = CARD`), so the org tag lives on the
+`Payment.organizationId` column directly.
+
+## Explore-side visibility (the org badge)
+
+When `canHost = true` and the org has ACTIVE experts, the org's name appears as
+a badge on each expert's marketplace card. The explore query resolves the badge
+by joining `Membership(status = ACTIVE, role = EXPERT)` ordered by
+`createdAt ASC` so a multi-org expert surfaces a deterministic primary org. The
+`ConsultantProfile.isIndependent` flag (true when a profile has no active EXPERT
+membership) decides whether the "hosted by &lt;org&gt;" badge renders at all.
+The explore query itself is part of the marketplace surface and lives outside
+the `/api/organizations` tree.
+
+## Related docs
+
+- [Dashboard pages](04-dashboard-pages.md) — the org-internal surfaces that feed this.
+- [Expert lifecycle](03-expert-lifecycle.md) — how an expert becomes discoverable in the org's public context.
+- [Feature flags & rollout](06-feature-flags-and-rollout.md) — `OrgPlanVisibility` in the flag/gating picture.

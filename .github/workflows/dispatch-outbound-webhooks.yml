@@ -1,0 +1,46 @@
+name: Dispatch Outbound Webhooks
+
+on:
+  schedule:
+    # Every minute. The worker is idempotent — a tick that overlaps an
+    # in-flight tick observes IN_FLIGHT rows and skips them.
+    - cron: "* * * * *"
+  workflow_dispatch: # Allow manual triggering for debugging
+
+jobs:
+  dispatch-outbound-webhooks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    env:
+      # Database connection (required for Prisma)
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      # #476 cron locks load lib/redis at import — every job entry needs these
+      UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
+      UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
+      DIRECT_URL: ${{ secrets.DIRECT_URL }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Run outbound webhook dispatch tick
+        run: npx tsx jobs/cleanup/dispatch-outbound-webhooks.ts
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "Outbound webhook dispatch tick failed"
+          # TODO: wire to #ops-alerts Slack channel.

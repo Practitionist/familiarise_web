@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { UserRole } from "@prisma/client";
 
-import { getSession } from "@/lib/auth-server";
+import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+
 interface RouteParams {
   params: Promise<{
     disputeId: string;
@@ -11,21 +11,9 @@ interface RouteParams {
 
 export async function GET(req: NextRequest, { params }: RouteParams) {
   try {
-    // Check authentication
-    const session = await getSession();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    // Check if user is admin
-    const user = await prisma.user.findUnique({
-      where: { id: session.user.id },
-      select: { role: true },
-    });
-
-    if (user?.role !== UserRole.ADMIN && user?.role !== UserRole.STAFF) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
+    // Check authentication (admin or staff)
+    const auth = await requirePrivilegedAuth();
+    if (auth.error) return auth.error;
 
     const resolvedParams = await params;
 

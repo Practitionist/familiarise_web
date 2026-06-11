@@ -24,25 +24,18 @@ export async function GET(
     if (!isPrivileged(session.user.role)) {
       const isOwner = session.user.consultantProfileId === consultantProfileId;
       if (!isOwner) {
-        const [webinarCollab, classCollab] = await Promise.all([
-          prisma.webinarCollaborator.findFirst({
-            where: {
-              consultantProfileId:
-                session.user.consultantProfileId ?? "__none__",
-              status: "ACCEPTED",
-              webinarPlan: { consultantProfileId },
-            },
-          }),
-          prisma.classCollaborator.findFirst({
-            where: {
-              consultantProfileId:
-                session.user.consultantProfileId ?? "__none__",
-              status: "ACCEPTED",
-              classPlan: { consultantProfileId },
-            },
-          }),
-        ]);
-        if (!webinarCollab && !classCollab) {
+        // #784 — merged Collaborator model covers both plan types in one lookup
+        const collab = await prisma.collaborator.findFirst({
+          where: {
+            consultantProfileId: session.user.consultantProfileId ?? "__none__",
+            status: "ACCEPTED",
+            OR: [
+              { webinarPlan: { consultantProfileId } },
+              { classPlan: { consultantProfileId } },
+            ],
+          },
+        });
+        if (!collab) {
           return NextResponse.json({ error: "Forbidden" }, { status: 403 });
         }
       }

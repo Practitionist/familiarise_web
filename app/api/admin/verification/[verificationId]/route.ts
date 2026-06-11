@@ -6,11 +6,11 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { UserRole, ConsultantVerificationStatus } from "@prisma/client";
+import { ConsultantVerificationStatus } from "@prisma/client";
 import { notifyVerificationStatusChanged } from "@/lib/novu";
 import { ReviewVerificationSchema } from "@/schemas/verifications";
+import { requirePrivilegedAuth } from "@/lib/auth-helpers";
 
-import { getSession } from "@/lib/auth-server";
 interface RouteParams {
   params: Promise<{ verificationId: string }>;
 }
@@ -21,19 +21,8 @@ interface RouteParams {
  */
 export async function GET(_req: NextRequest, { params }: RouteParams) {
   try {
-    const session = await getSession();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const user = await prisma.user.findUnique({
-      where: { id: session.user.id },
-      select: { role: true },
-    });
-
-    if (user?.role !== UserRole.ADMIN) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
+    const auth = await requirePrivilegedAuth();
+    if (auth.error) return auth.error;
 
     const { verificationId } = await params;
 
@@ -86,19 +75,9 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
  */
 export async function PATCH(req: NextRequest, { params }: RouteParams) {
   try {
-    const session = await getSession();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const user = await prisma.user.findUnique({
-      where: { id: session.user.id },
-      select: { role: true },
-    });
-
-    if (user?.role !== UserRole.ADMIN) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
+    const auth = await requirePrivilegedAuth();
+    if (auth.error) return auth.error;
+    const session = auth.session;
 
     const { verificationId } = await params;
     const body = await req.json();

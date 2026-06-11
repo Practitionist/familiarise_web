@@ -317,5 +317,3 @@ export function RecordingsList({ consultantId, type }: RecordingsListProps) {
     </div>
   );
 }
-
-export default RecordingsList;

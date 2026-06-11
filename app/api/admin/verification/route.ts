@@ -1,64 +1,32 @@
 /**
  * Admin Verification API
- * GET /api/admin/verification - List all pending verifications
+ * GET /api/admin/verification - List profile verifications.
+ *
+ * Thin shell — query/formatting lives in
+ * `lib/api/operators/verification.ts` and is shared with
+ * `/api/staff/moderation/profiles`.
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
-import { UserRole, ProfileVerificationStatus } from "@prisma/client";
+import { ProfileVerificationStatus } from "@prisma/client";
+import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { getVerificationQueue } from "@/lib/api/operators";
 
-import { getSession } from "@/lib/auth-server";
 export async function GET(req: NextRequest) {
   try {
-    const session = await getSession();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    // Check if user is admin
-    const user = await prisma.user.findUnique({
-      where: { id: session.user.id },
-      select: { role: true },
-    });
-
-    if (user?.role !== UserRole.ADMIN) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
+    const auth = await requirePrivilegedAuth();
+    if (auth.error) return auth.error;
 
     const { searchParams } = new URL(req.url);
-    const status = searchParams.get("status") || "PENDING";
+    const statusParam = searchParams.get("status") || "PENDING";
 
-    const verifications = await prisma.consultantProfileVerification.findMany({
-      where: {
-        status: status as ProfileVerificationStatus,
-      },
-      include: {
-        consultantProfile: {
-          include: {
-            user: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-                image: true,
-                linkedinUrl: true,
-                workExperiences: true,
-                certifications: true,
-                education: true,
-              },
-            },
-            domain: { select: { id: true, name: true } },
-            subDomains: { select: { id: true, name: true } },
-          },
-        },
-        documents: true,
-      },
-      orderBy: {
-        createdAt: "desc",
-      },
+    const result = await getVerificationQueue({
+      status: statusParam as ProfileVerificationStatus,
+      page: parseInt(searchParams.get("page") || "1"),
+      limit: parseInt(searchParams.get("limit") || "20"),
     });
 
-    return NextResponse.json({ verifications });
+    return NextResponse.json(result);
   } catch (error) {
     console.error("Error fetching verifications:", error);
     return NextResponse.json(

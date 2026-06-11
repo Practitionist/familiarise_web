@@ -1,5 +1,8 @@
 import { cache } from "react";
 import prisma from "@/lib/prisma";
+import { toPlain } from "@/lib/data/serialize";
+import type { Prisma } from "@prisma/client";
+import { marketplaceVisibilityWhere } from "@/lib/api/plans/visibility";
 import { generateProgramImageUrl } from "@/app/explore/programs/utils";
 import type {
   Program,
@@ -17,9 +20,18 @@ import type {
  *  - Client hooks in app/explore/programs/hooks.ts handle infinite scroll
  */
 
-/** Shared include for consultant profile in plan queries. */
+/** Shared select for consultant profile in plan queries.
+ *
+ * Public explore-programs surface — explicit `select` (not bare `include`) so
+ * we (a) never leak India statutory PII (panNumber, ibanOrAccount, swiftBic,
+ * residencyStatus, etc.) into a client component, and (b) avoid the
+ * "Decimal cannot be passed to Client Components" runtime error from
+ * `tdsRate: Decimal?`. Mirrors the `ProgramConsultantProfile` shape in
+ * app/explore/programs/utils.ts. */
 const planConsultantInclude = {
-  include: {
+  select: {
+    rating: true,
+    headline: true,
     user: {
       select: {
         name: true,
@@ -36,6 +48,13 @@ const planConsultantInclude = {
     },
   },
 };
+
+// #781 §B — soft-deleted profiles leave public surfaces. The owner relation is
+// nullable on Webinar/ClassPlan, so keep ownerless plans and drop only plans
+// whose owner is soft-deleted.
+const liveConsultantWhere = {
+  OR: [{ consultantProfile: null }, { consultantProfile: { deletedAt: null } }],
+} satisfies Prisma.ClassPlanWhereInput & Prisma.WebinarPlanWhereInput;
 
 // ---------------------------------------------------------------------------
 // Curated programs (Featured / Trending / Newest sections)
@@ -67,6 +86,7 @@ export const getCuratedPrograms = cache(
         thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
         const ranked = await prisma.classPlan.findMany({
+          where: { ...marketplaceVisibilityWhere(), ...liveConsultantWhere }, // #726 — no ORG_ONLY in curated feed
           select: {
             id: true,
             classes: {
@@ -102,7 +122,11 @@ export const getCuratedPrograms = cache(
           .map((r) => r.id);
 
         classPlans = await prisma.classPlan.findMany({
-          where: { id: { in: sortedIds } },
+          where: {
+            id: { in: sortedIds },
+            ...marketplaceVisibilityWhere(),
+            ...liveConsultantWhere,
+          }, // #726
           include: {
             consultantProfile: planConsultantInclude,
             topics: true,
@@ -118,6 +142,7 @@ export const getCuratedPrograms = cache(
         );
       } else {
         classPlans = await prisma.classPlan.findMany({
+          where: { ...marketplaceVisibilityWhere(), ...liveConsultantWhere }, // #726
           include: {
             consultantProfile: planConsultantInclude,
             topics: true,
@@ -155,6 +180,7 @@ export const getCuratedPrograms = cache(
         thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
         const ranked = await prisma.webinarPlan.findMany({
+          where: { ...marketplaceVisibilityWhere(), ...liveConsultantWhere }, // #726 — no ORG_ONLY in curated feed
           select: {
             id: true,
             webinars: {
@@ -186,7 +212,11 @@ export const getCuratedPrograms = cache(
           .map((r) => r.id);
 
         webinarPlans = await prisma.webinarPlan.findMany({
-          where: { id: { in: sortedIds } },
+          where: {
+            id: { in: sortedIds },
+            ...marketplaceVisibilityWhere(),
+            ...liveConsultantWhere,
+          }, // #726
           include: {
             consultantProfile: planConsultantInclude,
             topics: true,
@@ -199,6 +229,7 @@ export const getCuratedPrograms = cache(
         );
       } else {
         webinarPlans = await prisma.webinarPlan.findMany({
+          where: { ...marketplaceVisibilityWhere(), ...liveConsultantWhere }, // #726
           include: {
             consultantProfile: planConsultantInclude,
             topics: true,
@@ -233,7 +264,8 @@ export const getCuratedPrograms = cache(
       );
     }
 
-    return programs.slice(0, limit);
+    // toPlain — extended plan rows carry an inspect symbol (see serialize.ts)
+    return toPlain(programs.slice(0, limit));
   },
 );
 
@@ -247,11 +279,27 @@ export const getTopicsWithCount = cache(
       include: {
         _count: {
           select: {
+            // #726 — category counts must exclude ORG_ONLY plans too
+            // #781 §B — and plans whose owner is soft-deleted
             ...(planType === "all" || planType === "class"
-              ? { classPlans: true }
+              ? {
+                  classPlans: {
+                    where: {
+                      ...marketplaceVisibilityWhere(),
+                      ...liveConsultantWhere,
+                    },
+                  },
+                }
               : {}),
             ...(planType === "all" || planType === "webinar"
-              ? { webinarPlans: true }
+              ? {
+                  webinarPlans: {
+                    where: {
+                      ...marketplaceVisibilityWhere(),
+                      ...liveConsultantWhere,
+                    },
+                  },
+                }
               : {}),
           },
         },

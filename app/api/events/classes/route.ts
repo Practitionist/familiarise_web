@@ -1,11 +1,13 @@
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
+import type { Prisma } from "@prisma/client";
 import { transformNestedPlanTopics } from "@/lib/topics";
 import {
   requireApiAuth,
   isPrivileged,
   forbiddenResponse,
 } from "@/lib/auth-helpers";
+import { resolveOrgScope } from "@/lib/api/scope/parse";
 
 export async function GET(request: NextRequest) {
   // Require authentication (middleware already enforces cookie presence for /api/events/)
@@ -50,6 +52,37 @@ export async function GET(request: NextRequest) {
     const startDateStr = searchParams.get("startDate");
     const endDateStr = searchParams.get("endDate");
 
+    // Org-scope filter — Class rows don't carry organizationId directly;
+    // attribution lives on the parent ClassPlan (per
+    // `docs/enterprise/30-programs-and-lifecycle/05-public-pages-and-discovery.md`
+    // — plans with `organizationId` set are the org's catalog). So we
+    // filter via the `classPlan.organizationId` relation.
+    const callerMemberships = await prisma.membership.findMany({
+      where: { userId: session.user.id, status: "ACTIVE" },
+      select: { organizationId: true, status: true },
+    });
+    const scopeResolution = resolveOrgScope({
+      raw: searchParams.get("orgScope"),
+      memberships: callerMemberships,
+      userRole: session.user.role,
+      // Self-scoped: non-admin callers are already locked to their own
+      // consultant/consulteeProfileId above, so `?orgScope=all` means
+      // "all of MY classes" — safe for any role.
+      allowAllForOwner: true,
+    });
+    if (!scopeResolution.ok) {
+      return NextResponse.json(
+        { error: scopeResolution.message, code: scopeResolution.code },
+        { status: scopeResolution.status },
+      );
+    }
+    const classPlanOrgWhere: Prisma.ClassPlanWhereInput | null =
+      scopeResolution.scope.kind === "personal"
+        ? { organizationId: null }
+        : scopeResolution.scope.kind === "org"
+          ? { organizationId: scopeResolution.scope.orgId }
+          : null; // "all" → no filter
+
     let classes;
 
     const dateFilter =
@@ -66,6 +99,7 @@ export async function GET(request: NextRequest) {
     if (consulteeProfileId) {
       classes = await prisma.class.findMany({
         where: {
+          ...(classPlanOrgWhere && { classPlan: classPlanOrgWhere }),
           OR: [
             // Get classes where consultee is registered through appointments
             {
@@ -168,6 +202,7 @@ export async function GET(request: NextRequest) {
         where: {
           classPlan: {
             consultantProfileId,
+            ...(classPlanOrgWhere ?? {}),
           },
           ...dateFilter,
         },
@@ -188,7 +223,10 @@ export async function GET(request: NextRequest) {
       });
     } else {
       classes = await prisma.class.findMany({
-        where: { ...dateFilter },
+        where: {
+          ...(classPlanOrgWhere && { classPlan: classPlanOrgWhere }),
+          ...dateFilter,
+        },
         include: {
           classPlan: {
             include: {

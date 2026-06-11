@@ -5,25 +5,13 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { UserRole, AppointmentsType, Prisma } from "@prisma/client";
+import { AppointmentsType, Prisma } from "@prisma/client";
 
-import { getSession } from "@/lib/auth-server";
+import { requirePrivilegedAuth } from "@/lib/auth-helpers";
 export async function GET(req: NextRequest) {
   try {
-    const session = await getSession();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    // Check staff or admin role
-    const user = await prisma.user.findUnique({
-      where: { id: session.user.id },
-      select: { role: true },
-    });
-
-    if (user?.role !== UserRole.STAFF && user?.role !== UserRole.ADMIN) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
+    const auth = await requirePrivilegedAuth();
+    if (auth.error) return auth.error;
 
     // Parse query parameters
     const { searchParams } = new URL(req.url);
@@ -35,12 +23,20 @@ export async function GET(req: NextRequest) {
     const page = parseInt(searchParams.get("page") || "1");
     const limit = parseInt(searchParams.get("limit") || "20");
     const offset = (page - 1) * limit;
+    // #674 comment 7 — optional org-scope filter for support staff
+    // drilling into a single tenant's appointments. Uses
+    // Appointment.organizationId (added by the B1-hybrid migration).
+    const orgId = searchParams.get("orgId");
 
     // Build where clause
     const where: Prisma.AppointmentWhereInput = {};
 
     if (type && Object.values(AppointmentsType).includes(type)) {
       where.appointmentType = type;
+    }
+
+    if (orgId) {
+      where.organizationId = orgId;
     }
 
     // Filter by date at the database level using slotsOfAppointment

@@ -127,8 +127,6 @@ export const WaitlistExpiringEmail = ({
   );
 };
 
-export default WaitlistExpiringEmail;
-
 // Styles
 const main = {
   backgroundColor: "#f5f5f5",

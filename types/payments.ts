@@ -168,11 +168,11 @@ export interface AdminDashboardStats {
 
 // ─── Earnings (admin/payouts) ──────────────────────────────────────
 export interface EarningsStats {
-  pending: { count: number; consultantShare: number; platformFee: number };
-  ready: { count: number; consultantShare: number; platformFee: number };
-  paid: { count: number; consultantShare: number; platformFee: number };
-  held: { count: number; consultantShare: number; platformFee: number };
-  refunded: { count: number; consultantShare: number; platformFee: number };
+  pending: { count: number; consultantSharePaise: number; platformFeePaise: number };
+  ready: { count: number; consultantSharePaise: number; platformFeePaise: number };
+  paid: { count: number; consultantSharePaise: number; platformFeePaise: number };
+  held: { count: number; consultantSharePaise: number; platformFeePaise: number };
+  refunded: { count: number; consultantSharePaise: number; platformFeePaise: number };
   totalPlatformRevenue: number;
 }
 
@@ -182,8 +182,8 @@ export interface Earning {
     user: { name: string; email: string };
   };
   grossAmount: number;
-  platformFee: number;
-  consultantShare: number;
+  platformFeePaise: number;
+  consultantSharePaise: number;
   status: string;
   holdUntil: string;
   createdAt: string;

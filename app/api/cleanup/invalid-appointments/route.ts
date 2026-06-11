@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { timingSafeEqual } from "crypto";
 import { runAllCleanupTasks } from "@/scripts/appointments/cleanup-invalid-appointments";
+import { CronLockHeldError } from "@/lib/cron/with-cron-lock";
 
 export async function POST(req: NextRequest) {
   try {
@@ -43,6 +44,11 @@ export async function POST(req: NextRequest) {
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
+    // #476 — concurrent invocation (schedule overlap / manual re-run)
+    // skips with a 409 instead of double-running.
+    if (error instanceof CronLockHeldError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
     console.error("Invalid appointments cleanup API route failed:", error);
     return NextResponse.json(
       {

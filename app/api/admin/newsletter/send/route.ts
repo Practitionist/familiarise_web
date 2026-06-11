@@ -10,8 +10,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { UserRole } from "@prisma/client";
-import { getSession } from "@/lib/auth-server";
+import { requireAdminAuth } from "@/lib/auth-helpers";
 import { Resend } from "resend";
 import { z } from "zod";
 import { buildUnsubscribeUrl } from "@/lib/newsletter/unsubscribe";
@@ -36,19 +35,8 @@ function getResendClient(): Resend | null {
 export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
     // Auth check
-    const session = await getSession();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const user = await prisma.user.findUnique({
-      where: { id: session.user.id },
-      select: { role: true },
-    });
-
-    if (user?.role !== UserRole.ADMIN) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
+    const auth = await requireAdminAuth();
+    if (auth.error) return auth.error;
 
     // Validate input
     const body = await req.json();

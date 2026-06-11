@@ -84,11 +84,23 @@ export const checkoutSchema = z
     schedulingPeriodStartsAt: z.string().datetime().optional(),
     schedulingPeriodEndsAt: z.string().datetime().optional(),
     discountCode: z.string().optional(),
+    // #828 — one key per logical checkout attempt; the server replays the
+    // original response for a duplicate instead of minting a second order.
+    clientIdempotencyKey: z.string().min(8).max(128).optional(),
     paymentGateway: paymentGatewaySchema.default("RAZORPAY"), // Server auto-routes; client hint only
     displayCurrency: z.string().length(3).optional(), // Currency shown in the checkout UI
     notes: z.string().optional(),
     fromWaitlist: z.string().optional(), // Waitlist ID if coming from waitlist flow
     useReferralCredits: z.boolean().optional(), // Apply available referral credits
+    // Enterprise: optional org context. When set, the payment is tagged with
+    // organizationId and billing is routed per the BillingAccount's
+    // fundingSource (Arch-4 model):
+    //   PERSONAL  → normal gateway, payment tagged for reporting.
+    //   WALLET    → wallet debit (lib/api/organizations/wallet.ts).
+    //   LICENSE   → covered by an active LICENSED_SEAT ProgramAssignment.
+    //   INVOICE   → deferred billing; line item lands on next invoice.
+    //   PROJECT   → reserved for v2.
+    organizationId: z.string().optional(),
   })
   .superRefine((data, ctx) => {
     // === CONSULTATION validation ===
@@ -231,7 +243,7 @@ export const checkoutSuccessResponseSchema = z.object({
   paymentIntent: z
     .object({
       id: z.string(),
-      client_secret: z.string().optional(), // Can be Payment Intent secret or Checkout URL
+      client_secret: z.string().nullish(), // Can be Payment Intent secret, Checkout URL, or null for org billing modes
     })
     .optional(),
   amount: z.number().optional(),
@@ -260,13 +272,6 @@ export type SubscriptionSearchParams = z.infer<
   typeof subscriptionSearchParamsSchema
 >;
 export type WebinarSearchParams = z.infer<typeof webinarSearchParamsSchema>;
-export type ClassSearchParams = z.infer<typeof classSearchParamsSchema>;
-export type PaymentMetadata = z.infer<typeof paymentMetadataSchema>;
-export type CheckoutResponse = z.infer<typeof checkoutResponseSchema>;
-export type CheckoutSuccessResponse = z.infer<
-  typeof checkoutSuccessResponseSchema
->;
-export type CheckoutErrorResponse = z.infer<typeof checkoutErrorResponseSchema>;
 
 // Utility functions for validation
 export const validateSearchParamsForAppointmentType = (
@@ -306,6 +311,7 @@ export const createCheckoutData = (params: {
   notes?: string;
   fromWaitlist?: string;
   useReferralCredits?: boolean;
+  organizationId?: string;
 }): CheckoutInput => {
   return {
     appointmentType: params.appointmentType,
@@ -323,5 +329,6 @@ export const createCheckoutData = (params: {
     notes: params.notes,
     fromWaitlist: params.fromWaitlist,
     useReferralCredits: params.useReferralCredits,
+    organizationId: params.organizationId,
   };
 };

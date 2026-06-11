@@ -10,6 +10,7 @@
 import prisma from "@/lib/prisma";
 import { WaitlistStatus } from "@prisma/client";
 import { sendWaitlistExpiringEmail } from "@/lib/waitlist/notifications";
+import { CronLockHeldError } from "@/lib/cron/with-cron-lock";
 
 async function main() {
   console.log("🔔 Starting expiration reminder sender...");
@@ -107,6 +108,11 @@ async function main() {
 
     process.exit(0);
   } catch (error) {
+    // #476 — lock held = another run is live; skip cleanly (exit 0).
+    if (error instanceof CronLockHeldError) {
+      console.log(`⏭️  ${error.message}`);
+      process.exit(0);
+    }
     console.error("❌ Error sending expiration reminders:", error);
     process.exit(1);
   }

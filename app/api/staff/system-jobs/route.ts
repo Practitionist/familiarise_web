@@ -5,9 +5,8 @@
 
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { UserRole } from "@prisma/client";
 
-import { getSession } from "@/lib/auth-server";
+import { requirePrivilegedAuth } from "@/lib/auth-helpers";
 // Job configuration matching SystemJobsPanel
 const SYSTEM_JOBS = [
   {
@@ -81,19 +80,8 @@ const SYSTEM_JOBS = [
  */
 export async function GET() {
   try {
-    const session = await getSession();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const user = await prisma.user.findUnique({
-      where: { id: session.user.id },
-      select: { role: true },
-    });
-
-    if (user?.role !== UserRole.STAFF && user?.role !== UserRole.ADMIN) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
+    const auth = await requirePrivilegedAuth();
+    if (auth.error) return auth.error;
 
     // Get recent execution stats for each job
     const recentExecutions = await prisma.systemJobExecution.groupBy({

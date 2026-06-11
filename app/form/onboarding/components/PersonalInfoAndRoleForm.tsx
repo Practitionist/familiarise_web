@@ -17,7 +17,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, Loader2 } from "lucide-react";
 import { PersonalInfoAndRoleFormSchema } from "@/utils/onboarding";
 import { useSession } from "@/lib/auth-client";
 import { z } from "zod";
@@ -42,6 +42,10 @@ const ROLE_INFO: Record<
     title: "Consultee",
     description: "Learn from experienced professionals",
   },
+  ORG_WORKSPACE: {
+    title: "Organization Owner",
+    description: "Create and manage an organization for your school or company",
+  },
 };
 
 const GENDER_OPTIONS = [
@@ -54,6 +58,11 @@ const GENDER_OPTIONS = [
 const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
   const { data: session } = useSession();
   const [optionalOpen, setOptionalOpen] = useState(false);
+  // Reflects the parent's async role-flip (ORG_WORKSPACE path hits the
+  // `setOnboardingRoleAction` server action before advancing). When the
+  // action fails, the parent shows a toast and does NOT unmount us, so the
+  // `finally` re-enables the button for retry.
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const {
     register,
@@ -111,12 +120,17 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
   const selectedRole = watch("role");
   const bioLength = watch("bio")?.length || 0;
 
-  const onSubmit = (data: FormData) => {
+  const onSubmit = async (data: FormData) => {
     const submissionData = {
       ...data,
       email: session?.user?.email || "",
     };
-    onNext(submissionData);
+    setIsSubmitting(true);
+    try {
+      await onNext(submissionData);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -332,13 +346,33 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
                 experts in your field.
               </>
             )}
+            {selectedRole === "ORG_WORKSPACE" && (
+              <>
+                As an <strong>Organization Owner</strong>, you&apos;ll be able
+                to create and manage an organization, invite team members,
+                sponsor consultations, and access analytics for your school or
+                company.
+              </>
+            )}
             {/* STAFF and ADMIN roles are invite-only via admin dashboard */}
           </p>
         </div>
       )}
 
-      <Button type="submit" className="w-full" size="lg">
-        Continue
+      <Button
+        type="submit"
+        className="w-full"
+        size="lg"
+        disabled={isSubmitting}
+      >
+        {isSubmitting ? (
+          <>
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            Continuing...
+          </>
+        ) : (
+          "Continue"
+        )}
       </Button>
     </form>
   );

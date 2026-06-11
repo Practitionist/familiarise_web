@@ -5,7 +5,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { getSession } from "@/lib/auth-server";
+import { requireAdminAuth, requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { ENABLE_TDS_ADMIN_VIEW } from "@/lib/feature-flags";
 import {
   getTDSSummary,
   getConsultantTDSBreakdown,
@@ -13,24 +14,27 @@ import {
   getIndianFinancialYear,
 } from "@/lib/payments/tax/tds-service";
 
+// 404 when the flag is off, mirroring "endpoint doesn't exist" semantics
+// rather than 403 — the Form 26Q filing surface is intentionally hidden
+// pre-launch. Flip ENABLE_TDS_ADMIN_VIEW=true when finance is ready to
+// operate the quarterly filing flow. See lib/feature-flags.ts.
+function notFoundIfGated() {
+  if (!ENABLE_TDS_ADMIN_VIEW) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+  return null;
+}
+
 /**
  * GET /api/admin/tds?fy=2026-27&view=summary|consultants
  */
 export async function GET(req: NextRequest) {
+  const gated = notFoundIfGated();
+  if (gated) return gated;
   try {
-    const session = await getSession();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const user = await prisma.user.findUnique({
-      where: { id: session.user.id },
-      select: { role: true },
-    });
-
-    if (user?.role !== "ADMIN" && user?.role !== "STAFF") {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
+    const auth = await requirePrivilegedAuth();
+    if (auth.error) return auth.error;
+    const session = auth.session;
 
     const { searchParams } = new URL(req.url);
     const fy = searchParams.get("fy") || getIndianFinancialYear();
@@ -43,7 +47,7 @@ export async function GET(req: NextRequest) {
 
     // Form 26Q filing view — ADMIN only (exposes decrypted PAN)
     if (view === "form26q") {
-      if (user?.role !== "ADMIN") {
+      if (session.user.role !== "ADMIN") {
         return NextResponse.json(
           { error: "Forbidden — Admin only for PAN access" },
           { status: 403 },
@@ -66,7 +70,8 @@ export async function GET(req: NextRequest) {
         financialYear: r.financialYear,
         quarter: r.quarter,
         tdsDeducted: r.tdsDeducted,
-        tdsRate: r.tdsRate,
+        // 26Q wants a percent column; storage is bps (#781 §C).
+        tdsRatePercent: r.tdsRateBps / 100,
         cumulativeAmountCredited: r.cumulativeAmountCredited,
         isReversal: r.isReversal,
         consultantPAN: r.consultantProfile.taxInfo?.panEncrypted
@@ -93,22 +98,18 @@ export async function GET(req: NextRequest) {
  * POST /api/admin/tds
  * Mark TDS records as filed in Form 26Q
  * Body: { financialYear: string, quarter: number, filingDate: string }
+ *
+ * Strict ADMIN only — filing Form 26Q is a sensitive financial mutation
+ * (creates a permanent compliance record with the income tax department).
+ * Matches the access-control semantics of `/api/admin/payouts/process`
+ * and the `view=form26q` GET above which both expose decrypted PAN data.
  */
 export async function POST(req: NextRequest) {
+  const gated = notFoundIfGated();
+  if (gated) return gated;
   try {
-    const session = await getSession();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const user = await prisma.user.findUnique({
-      where: { id: session.user.id },
-      select: { role: true },
-    });
-
-    if (user?.role !== "ADMIN") {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
+    const auth = await requireAdminAuth();
+    if (auth.error) return auth.error;
 
     const body = await req.json();
     const { financialYear, quarter, filingDate } = body;

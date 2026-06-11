@@ -1,0 +1,264 @@
+/**
+ * ClearTax / NIC IRP e-invoice payload MAPPER — INDIA COMPLIANCE.
+ *
+ * #703 / #778 — the one missing piece of the IRP pipeline: a PURE function
+ * that maps an already-fetched OrganizationInvoice (+ line items + buyer
+ * tax info) to the NIC e-invoice schema v1.1 JSON that
+ * `lib/compliance/irp.generateIrn` POSTs to ClearTax. No DB access here —
+ * the cron fetches, this maps. HTTP + env-gating stay in irp.ts.
+ *
+ * Money note: the invoice stores paise (Int); the IRP wants rupees with 2
+ * decimals. We round per line and push the paise residual onto the last
+ * line so ItemList sums reconcile to ValDtls exactly — the IRP rejects any
+ * mismatch between per-line totals and invoice totals.
+ *
+ * State codes: the IRP wants the 2-digit NUMERIC GST state code (e.g. "29"
+ * Karnataka). The GSTIN's first 2 chars ARE that code, so we derive Pos /
+ * Stcd from the GSTIN where available and fall back to an alpha→numeric
+ * lookup for the env-sourced seller state.
+ */
+
+// 2-digit numeric GST state codes keyed by the alpha codes this codebase
+// stores in gstStateCode / SUPPLIER_STATE_CODE. The GSTIN prefix is
+// authoritative; this only covers the env-sourced seller fallback.
+const STATE_ALPHA_TO_NUMERIC: Record<string, string> = {
+  JK: "01", HP: "02", PB: "03", CH: "04", UT: "05", HR: "06", DL: "07",
+  RJ: "08", UP: "09", BR: "10", SK: "11", AR: "12", NL: "13", MN: "14",
+  MZ: "15", TR: "16", ML: "17", AS: "18", WB: "19", JH: "20", OD: "21",
+  CG: "22", MP: "23", GJ: "24", DD: "26", MH: "27", KA: "29", GA: "30",
+  LD: "31", KL: "32", TN: "33", PY: "34", AN: "35", TG: "36", AP: "37",
+  LA: "38",
+};
+
+interface IrpPayloadLineItem {
+  position: number;
+  description: string;
+  quantity: number;
+  unitPricePaise: number;
+  hsnCode: string | null;
+}
+
+interface IrpPayloadInvoice {
+  invoiceNumber: string | null;
+  issuedAt: Date | null;
+  reverseCharge: boolean;
+  lutNumber: string | null;
+  // GST split (paise) + place-of-supply, written by the v1 money audit.
+  subtotalPaise: number;
+  cgstPaise: number;
+  sgstPaise: number;
+  igstPaise: number;
+  totalPaise: number;
+  hsnCode: string; // invoice-level HSN fallback
+  placeOfSupply: string | null; // buyer state (alpha or numeric)
+}
+
+interface IrpPayloadBuyer {
+  name: string;
+  gstin: string | null;
+  stateCode: string | null; // OrganizationTaxInfo.gstStateCode
+  hsnDefault: string; // OrganizationTaxInfo.hsnDefault
+}
+
+interface IrpPayloadSeller {
+  gstin: string; // platform GSTIN (env-sourced in the cron)
+  legalName: string;
+  address1: string;
+  location: string;
+  pincode: string;
+  stateCode: string; // alpha or numeric; normalized here
+}
+
+export interface BuildIrpPayloadInput {
+  invoice: IrpPayloadInvoice;
+  lineItems: IrpPayloadLineItem[];
+  buyer: IrpPayloadBuyer;
+  seller: IrpPayloadSeller;
+}
+
+export type BuildIrpPayloadResult =
+  | { ok: true; payload: Record<string, unknown> }
+  | { ok: false; reason: string };
+
+// paise → rupees, 2dp, as a Number (the IRP accepts numeric monetary fields).
+function toRupees(paise: number): number {
+  return Math.round(paise) / 100;
+}
+
+// DD/MM/YYYY in UTC — the IRP doc-date format. UTC keeps it deterministic
+// regardless of the cron host TZ.
+function formatDocDate(d: Date): string {
+  const dd = String(d.getUTCDate()).padStart(2, "0");
+  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const yyyy = d.getUTCFullYear();
+  return `${dd}/${mm}/${yyyy}`;
+}
+
+// NIC wants the 2-digit numeric state code. GSTIN[0:2] is authoritative;
+// otherwise map the stored alpha code; pass through anything already numeric.
+function numericStateCode(
+  gstin: string | null,
+  alphaOrNumeric: string | null,
+): string | null {
+  if (gstin && /^[0-9]{2}/.test(gstin)) return gstin.slice(0, 2);
+  if (!alphaOrNumeric) return null;
+  const v = alphaOrNumeric.trim().toUpperCase();
+  if (/^[0-9]{2}$/.test(v)) return v;
+  return STATE_ALPHA_TO_NUMERIC[v] ?? null;
+}
+
+export function buildIrpPayload(
+  input: BuildIrpPayloadInput,
+): BuildIrpPayloadResult {
+  const { invoice, lineItems, buyer, seller } = input;
+
+  // B2B e-invoice requires the buyer GSTIN (the whole point of the IRP).
+  if (!buyer.gstin) {
+    return { ok: false, reason: "buyer GSTIN missing (B2B e-invoice requires it)" };
+  }
+  if (!invoice.invoiceNumber) {
+    return { ok: false, reason: "invoiceNumber missing" };
+  }
+  if (!invoice.issuedAt) {
+    return { ok: false, reason: "issuedAt missing (no document date)" };
+  }
+  if (lineItems.length === 0) {
+    return { ok: false, reason: "no line items" };
+  }
+  if (!seller.gstin) {
+    return { ok: false, reason: "seller GSTIN missing (PLATFORM_GSTIN env unset)" };
+  }
+
+  const sellerStcd = numericStateCode(seller.gstin, seller.stateCode);
+  if (!sellerStcd) {
+    return { ok: false, reason: "seller state code unresolved" };
+  }
+  const buyerStcd = numericStateCode(
+    buyer.gstin,
+    buyer.stateCode ?? invoice.placeOfSupply,
+  );
+  if (!buyerStcd) {
+    return { ok: false, reason: "buyer state code unresolved" };
+  }
+
+  // Whole-invoice split decides intra (CGST+SGST) vs inter (IGST). We split
+  // each line's GST in the SAME mode so per-line legs sum to the invoice legs.
+  const isInterState = invoice.igstPaise > 0;
+
+  // Assessable (taxable) base in paise — line totals must sum to this.
+  const lineAssessable = lineItems.map(
+    (li) => li.quantity * li.unitPricePaise,
+  );
+  const assessableTotalFromLines = lineAssessable.reduce((a, b) => a + b, 0);
+
+  // The invoice's stored subtotal is the source of truth for ValDtls.AssVal.
+  // If line math drifts from it (shouldn't, but guard), bail rather than ship
+  // a payload the IRP will reject.
+  if (assessableTotalFromLines !== invoice.subtotalPaise) {
+    return {
+      ok: false,
+      reason: `line assessable ${assessableTotalFromLines} != invoice subtotal ${invoice.subtotalPaise}`,
+    };
+  }
+
+  // Distribute each tax leg across lines proportional to assessable value,
+  // rounding per line and pushing the residual onto the LAST line so the
+  // per-line legs reconcile to the invoice legs exactly.
+  const distribute = (totalPaise: number): number[] => {
+    if (assessableTotalFromLines === 0) return lineItems.map(() => 0);
+    const out: number[] = [];
+    let running = 0;
+    for (let i = 0; i < lineItems.length; i++) {
+      if (i === lineItems.length - 1) {
+        out.push(totalPaise - running);
+      } else {
+        const share = Math.round(
+          (totalPaise * lineAssessable[i]) / assessableTotalFromLines,
+        );
+        out.push(share);
+        running += share;
+      }
+    }
+    return out;
+  };
+
+  const cgstByLine = distribute(invoice.cgstPaise);
+  const sgstByLine = distribute(invoice.sgstPaise);
+  const igstByLine = distribute(invoice.igstPaise);
+
+  const itemList = lineItems.map((li, i) => {
+    const assPaise = lineAssessable[i];
+    const cgstPaise = isInterState ? 0 : cgstByLine[i];
+    const sgstPaise = isInterState ? 0 : sgstByLine[i];
+    const igstPaise = isInterState ? igstByLine[i] : 0;
+    const taxPaise = cgstPaise + sgstPaise + igstPaise;
+    // GstRt = blended % on this line's assessable value, 2dp.
+    const gstRt =
+      assPaise > 0 ? Math.round((taxPaise / assPaise) * 10000) / 100 : 0;
+    const totItemValPaise = assPaise + taxPaise;
+
+    return {
+      SlNo: String(i + 1),
+      IsServc: "Y", // consulting / SaaS — services only
+      PrdDesc: li.description,
+      HsnCd: li.hsnCode ?? invoice.hsnCode ?? buyer.hsnDefault,
+      Qty: li.quantity,
+      Unit: "OTH",
+      UnitPrice: toRupees(li.unitPricePaise),
+      TotAmt: toRupees(assPaise),
+      AssAmt: toRupees(assPaise),
+      GstRt: gstRt,
+      CgstAmt: toRupees(cgstPaise),
+      SgstAmt: toRupees(sgstPaise),
+      IgstAmt: toRupees(igstPaise),
+      TotItemVal: toRupees(totItemValPaise),
+    };
+  });
+
+  // Zero-rated export with LUT (no IGST paid) → EXPWOP; else B2B. Reverse
+  // charge stays a B2B flag (Y/N), not a supply type.
+  const isZeroRatedExport =
+    Boolean(invoice.lutNumber) &&
+    invoice.igstPaise === 0 &&
+    invoice.cgstPaise === 0 &&
+    invoice.sgstPaise === 0;
+  const supTyp = isZeroRatedExport ? "EXPWOP" : "B2B";
+
+  const payload: Record<string, unknown> = {
+    Version: "1.1",
+    TranDtls: {
+      TaxSch: "GST",
+      SupTyp: supTyp,
+      RegRev: invoice.reverseCharge ? "Y" : "N",
+    },
+    DocDtls: {
+      Typ: "INV",
+      No: invoice.invoiceNumber,
+      Dt: formatDocDate(invoice.issuedAt),
+    },
+    SellerDtls: {
+      Gstin: seller.gstin,
+      LglNm: seller.legalName,
+      Addr1: seller.address1,
+      Loc: seller.location,
+      Pin: Number(seller.pincode),
+      Stcd: sellerStcd,
+    },
+    BuyerDtls: {
+      Gstin: buyer.gstin,
+      LglNm: buyer.name,
+      Pos: buyerStcd,
+      Stcd: buyerStcd,
+    },
+    ItemList: itemList,
+    ValDtls: {
+      AssVal: toRupees(invoice.subtotalPaise),
+      CgstVal: toRupees(invoice.cgstPaise),
+      SgstVal: toRupees(invoice.sgstPaise),
+      IgstVal: toRupees(invoice.igstPaise),
+      TotInvVal: toRupees(invoice.totalPaise),
+    },
+  };
+
+  return { ok: true, payload };
+}

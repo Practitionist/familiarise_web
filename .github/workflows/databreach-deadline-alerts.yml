@@ -1,0 +1,52 @@
+name: DPDP DataBreach 72h Deadline Alerts
+
+on:
+  schedule:
+    # Hourly at :15 — the 72-hour DPDP reporting deadline is sharp;
+    # daily would risk crossing the cutoff between runs. The :15 slot
+    # is free across the existing cron grid.
+    - cron: "15 * * * *"
+  workflow_dispatch:
+
+jobs:
+  databreach-deadline-alerts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      # #476 cron locks load lib/redis at import — every job entry needs these
+      UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
+      UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
+      DIRECT_URL: ${{ secrets.DIRECT_URL }}
+      # Email dispatch is opt-in. When DATABREACH_ALERT_EMAIL or
+      # RESEND_API_KEY are absent the cron falls back to structured-log
+      # only (event: "dpdp.databreach.deadline").
+      DATABREACH_ALERT_EMAIL: ${{ secrets.DATABREACH_ALERT_EMAIL }}
+      RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+      NEXT_PUBLIC_APP_URL: ${{ secrets.NEXT_PUBLIC_APP_URL }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Run DataBreach deadline alerts
+        run: npx tsx jobs/compliance/databreach-deadline-alerts.ts
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "DataBreach deadline alerts cron failed"
+          # TODO: wire to #ops-alerts Slack channel.

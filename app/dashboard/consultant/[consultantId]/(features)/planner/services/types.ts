@@ -63,37 +63,6 @@ export interface ClassContentInput {
   hoursAllotted: number;
 }
 
-export interface CreateConsultationPlanPayload {
-  title: string;
-  description?: string;
-  durationInHours: number;
-  price: number;
-  priceCurrency?: string;
-  language?: string;
-  level?: string;
-  prerequisites?: string;
-  materialProvided?: string;
-  learningOutcomes?: string[];
-  consultantProfileId: string;
-}
-
-export interface CreateSubscriptionPlanPayload {
-  title: string;
-  description?: string;
-  durationInMonths: number;
-  sessionDurationInHours?: number;
-  callsPerWeek: number;
-  price: number;
-  priceCurrency?: string;
-  emailSupport?: PlanEmailSupport;
-  language?: string;
-  level?: string;
-  prerequisites?: string;
-  materialProvided?: string;
-  learningOutcomes?: string[];
-  consultantProfileId: string;
-}
-
 // Update payload types extend create types with optional id fields
 export interface UpdateClassPayload extends CreateClassPayload {
   id: string;

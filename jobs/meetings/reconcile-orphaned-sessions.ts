@@ -8,12 +8,19 @@
  * Runs every 30 minutes via cleanup API route.
  */
 
+// Why: tsx does not auto-load .env when this script runs outside the
+// Next.js runtime. Without dotenv/config, DATABASE_URL + STREAM_API_KEY
+// are undefined, PrismaClient throws on first query, and the Stream
+// client fails to initialize. See
+// docs/enterprise/50-operations/03-runbooks.md "Running cron jobs locally".
+import "dotenv/config";
 import prisma from "../../lib/prisma";
 import {
   getStreamVideoClient,
   isStreamConfigured,
 } from "../../lib/stream-client";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
+import { withCronLock, CronLockHeldError } from "../../lib/cron/with-cron-lock";
 
 export interface ReconciliationResult {
   processed: number;
@@ -24,7 +31,14 @@ export interface ReconciliationResult {
   details: string[];
 }
 
+// #476 — entry-level cron lock; fail-open (repeat-safe side effects).
 export async function reconcileOrphanedSessions(): Promise<ReconciliationResult> {
+  return withCronLock("reconcile-orphaned-sessions", { failMode: "open" }, () =>
+    reconcileOrphanedSessionsUnlocked(),
+  );
+}
+
+async function reconcileOrphanedSessionsUnlocked(): Promise<ReconciliationResult> {
   const result: ReconciliationResult = {
     processed: 0,
     reconciled: 0,
@@ -159,6 +173,11 @@ if (require.main === module) {
 
       if (!result.success) process.exit(1);
     } catch (error) {
+      // #476 — lock held = another run is live; skip cleanly (exit 0).
+      if (error instanceof CronLockHeldError) {
+        console.log(`⏭️  ${error.message}`);
+        return;
+      }
       console.error("Fatal error:", error);
       process.exit(1);
     } finally {

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { CronLockHeldError } from "@/lib/cron/with-cron-lock";
 import {
   cleanupAbandonedPayments,
   cleanupExpiredApprovalPendingPayments,
@@ -31,6 +32,11 @@ export async function POST(req: NextRequest) {
       overallSuccess: paymentResult.success && consultationResult.success,
     });
   } catch (error) {
+    // #476 — concurrent invocation (schedule overlap / manual re-run)
+    // skips with a 409 instead of double-running.
+    if (error instanceof CronLockHeldError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
     console.error("Cleanup API route failed:", error);
     return NextResponse.json(
       {

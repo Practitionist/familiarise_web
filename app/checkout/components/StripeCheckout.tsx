@@ -5,6 +5,7 @@ import { useToast } from "@/hooks/use-toast";
 import { CheckoutInput, checkoutResponseSchema } from "@/schemas/checkout";
 import { loadStripe } from "@stripe/stripe-js";
 import { useState } from "react";
+import { mintClientIdempotencyKey } from "@/app/checkout/plans/utils";
 
 // Initialize Stripe with publishable key
 const stripeKey = process.env.NEXT_PUBLIC_STRIPE_KEY;
@@ -37,6 +38,10 @@ export default function StripeCheckout({
 }: StripeCheckoutProps) {
   const { toast } = useToast();
   const [isProcessing, setIsProcessing] = useState(false);
+  // #828 — stable per-mount; the server dedupes retries on this key.
+  // useState's lazy initializer runs once, unlike a useRef(arg) expression
+  // which would mint a key every render.
+  const [idempotencyKey] = useState(mintClientIdempotencyKey);
 
   const handleCheckout = async () => {
     setIsProcessing(true);
@@ -75,7 +80,10 @@ export default function StripeCheckout({
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(checkoutData),
+        body: JSON.stringify({
+          ...checkoutData,
+          clientIdempotencyKey: idempotencyKey,
+        }),
       });
 
       console.log("Response status:", response.status);

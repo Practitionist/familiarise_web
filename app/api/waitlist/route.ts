@@ -9,8 +9,10 @@ import { joinWaitlist, getUserWaitlistEntries } from "@/lib/waitlist";
 import { sendWaitlistJoinedEmail } from "@/lib/waitlist/notifications";
 import prisma from "@/lib/prisma";
 import { waitlistLimiter, applyRateLimit } from "@/lib/rate-limit";
+import { resolveOrgScope } from "@/lib/api/scope/parse";
 
 import { getSession } from "@/lib/auth-server";
+import { assertBodySize } from "@/lib/validation/limits";
 /**
  * POST /api/waitlist - Join a waitlist
  */
@@ -28,6 +30,10 @@ export async function POST(request: NextRequest) {
     // Rate limit: 5 waitlist joins per hour per user
     const rl = await applyRateLimit(waitlistLimiter, session.user.id);
     if (rl) return rl;
+
+    // #831 — cap request body before parsing
+    const tooLarge = assertBodySize(request);
+    if (tooLarge) return tooLarge;
 
     const body = await request.json();
     const { webinarId, classId, preferences } = body;
@@ -105,9 +111,9 @@ export async function POST(request: NextRequest) {
 }
 
 /**
- * GET /api/waitlist - Get user's waitlist entries
+ * GET /api/waitlist - Get user's waitlist entries (org-scope-aware)
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     const session = await getSession();
 
@@ -118,7 +124,37 @@ export async function GET() {
       );
     }
 
-    const entries = await getUserWaitlistEntries(session.user.id);
+    // #674 org-scope filter — Waitlist.organizationId is populated by
+    // the backfill so the consultant's "Waitlist" tab can split per
+    // tenant context without leaking cross-org entries.
+    const { searchParams } = new URL(request.url);
+    const callerMemberships = await prisma.membership.findMany({
+      where: { userId: session.user.id, status: "ACTIVE" },
+      select: { organizationId: true, status: true },
+    });
+    const scopeResolution = resolveOrgScope({
+      raw: searchParams.get("orgScope"),
+      memberships: callerMemberships,
+      userRole: session.user.role,
+    });
+    if (!scopeResolution.ok) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: scopeResolution.message,
+          code: scopeResolution.code,
+        },
+        { status: scopeResolution.status },
+      );
+    }
+    const orgFilter =
+      scopeResolution.scope.kind === "personal"
+        ? { organizationId: null }
+        : scopeResolution.scope.kind === "org"
+          ? { organizationId: scopeResolution.scope.orgId }
+          : {};
+
+    const entries = await getUserWaitlistEntries(session.user.id, orgFilter);
 
     return NextResponse.json({
       success: true,

@@ -6,28 +6,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
+import { requirePrivilegedAuth } from "@/lib/auth-helpers";
 
-import { getSession } from "@/lib/auth-server";
 /**
  * GET /api/admin/subscriptions
  * Get all subscriptions with optional filters
  */
 export async function GET(req: NextRequest) {
   try {
-    const session = await getSession();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    // Check admin role
-    const user = await prisma.user.findUnique({
-      where: { id: session.user.id },
-      select: { role: true },
-    });
-
-    if (user?.role !== "ADMIN" && user?.role !== "STAFF") {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
+    const auth = await requirePrivilegedAuth();
+    if (auth.error) return auth.error;
 
     // Parse query parameters
     const { searchParams } = new URL(req.url);
@@ -35,6 +23,8 @@ export async function GET(req: NextRequest) {
     const search = searchParams.get("search");
     const limit = parseInt(searchParams.get("limit") || "20");
     const offset = parseInt(searchParams.get("offset") || "0");
+    // #674 comment 7 — optional org-scope filter on Payment.organizationId.
+    const orgId = searchParams.get("orgId");
 
     const now = new Date();
     const soonThreshold = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000); // 7 days from now
@@ -80,6 +70,10 @@ export async function GET(req: NextRequest) {
           },
         },
       ];
+    }
+
+    if (orgId) {
+      where.organizationId = orgId;
     }
 
     // Base where clause for all subscription queries (without status filter)

@@ -21,7 +21,9 @@ import {
   Video,
   ChevronRight,
   FileText,
+  Building2,
 } from "lucide-react";
+import { useSession } from "@/lib/auth-client";
 import {
   Tooltip,
   TooltipContent,
@@ -91,6 +93,20 @@ export function HomeTab({
   const router = useRouter();
   const client = useStreamVideoClient();
   const { toast } = useToast();
+  const { data: session } = useSession();
+  // Sponsoring-org lookup for the indigo "Sponsored · <Org>" badge —
+  // shows on org-funded appointments only, mirroring the consultee
+  // dashboard convention.
+  const orgMemberships = session?.user?.organizationMemberships ?? [];
+  const resolveSponsoringOrgName = (
+    orgId: string | null | undefined,
+  ): string | null => {
+    if (!orgId) return null;
+    return (
+      orgMemberships.find((m) => m.organizationId === orgId)?.organizationName ??
+      "the organization"
+    );
+  };
 
   const handleJoinMeeting = async (
     appointment: TAppointment,
@@ -235,10 +251,27 @@ export function HomeTab({
                           </Avatar>
 
                           <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 flex-wrap">
                               <h3 className="font-medium text-zinc-900 truncate text-sm">
                                 {userName}
                               </h3>
+                              {(() => {
+                                const sponsoringOrgName =
+                                  resolveSponsoringOrgName(
+                                    appointment.organizationId,
+                                  );
+                                return sponsoringOrgName ? (
+                                  <Badge
+                                    className="text-[10px] font-semibold px-2 py-0.5 bg-indigo-50 text-indigo-700 border-0 rounded-md inline-flex items-center gap-1 max-w-[200px]"
+                                    title={`Sponsored by ${sponsoringOrgName}`}
+                                  >
+                                    <Building2 className="h-3 w-3 shrink-0" />
+                                    <span className="truncate">
+                                      Sponsored · {sponsoringOrgName}
+                                    </span>
+                                  </Badge>
+                                ) : null;
+                              })()}
                               {(() => {
                                 const role = getCollaboratorRole(
                                   appointment,
@@ -385,10 +418,27 @@ export function HomeTab({
                           </Avatar>
 
                           <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 flex-wrap">
                               <h4 className="font-medium text-zinc-900 truncate">
                                 {userName}
                               </h4>
+                              {(() => {
+                                const sponsoringOrgName =
+                                  resolveSponsoringOrgName(
+                                    firstAppointment.organizationId,
+                                  );
+                                return sponsoringOrgName ? (
+                                  <Badge
+                                    className="text-[10px] font-semibold px-2 py-0.5 bg-indigo-50 text-indigo-700 border-0 rounded-md inline-flex items-center gap-1 max-w-[200px]"
+                                    title={`Sponsored by ${sponsoringOrgName}`}
+                                  >
+                                    <Building2 className="h-3 w-3 shrink-0" />
+                                    <span className="truncate">
+                                      Sponsored · {sponsoringOrgName}
+                                    </span>
+                                  </Badge>
+                                ) : null;
+                              })()}
                               {(() => {
                                 const role = getCollaboratorRole(
                                   firstAppointment,

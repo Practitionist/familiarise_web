@@ -1,3 +1,4 @@
+import type React from "react";
 import { TConsultantProfile } from "@/types/consultant";
 import { TAppointment } from "@/types/appointment";
 
@@ -170,6 +171,10 @@ export interface AppointmentsTabProps {
   onUpdate?: () => void;
   unscheduledClasses?: UnscheduledClass[];
   unscheduledWebinars?: UnscheduledWebinar[];
+  /** Optional right-aligned element rendered next to the "All Appointments"
+   *  header — used by the page wrapper to mount the OrgContextFilter
+   *  dropdown inline instead of stacking it above the card. */
+  headerSlot?: React.ReactNode;
 }
 
 export interface RequestsTabProps {
@@ -177,8 +182,55 @@ export interface RequestsTabProps {
   onUpdate?: () => void;
 }
 
+/**
+ * Pagination envelope returned by the consultant documents API (issue #346).
+ * Defined here so both the fetch helper and the UI can import it.
+ */
+export interface DocumentsPagination {
+  limit: number;
+  offset: number;
+  totalCount: number;
+  totalPages: number;
+  currentPage: number;
+  hasNextPage: boolean;
+  hasPrevPage: boolean;
+}
+
+export interface DocumentsMetadata {
+  pendingCount: number;
+  reviewingCount: number;
+  needsRevisionCount: number;
+  completedCount: number;
+}
+
+export interface DocumentsPage {
+  data: IDocument[];
+  pagination: DocumentsPagination;
+  metadata: DocumentsMetadata;
+  count?: number;
+  message?: string;
+  consultant?: string;
+  filters?: {
+    status?: string | null;
+    appointmentType?: string | null;
+  };
+}
+
 export interface DocumentsTabProps {
-  documents: IDocument[];
+  documentsPage: DocumentsPage | undefined;
+  isPlaceholderData: boolean;
+
+  // Pagination
+  page: number;
+  pageSize: number;
+  onPageChange: (page: number) => void;
+  onPageSizeChange: (pageSize: number) => void;
+
+  // Filters (lifted up into the page component)
+  statusFilter: string;
+  typeFilter: string;
+  onStatusFilterChange: (status: string) => void;
+  onTypeFilterChange: (type: string) => void;
 }
 
 // Props for reusable components
@@ -222,15 +274,6 @@ export const getBadgeStyle = (status: string): string => {
   if (status.startsWith("In ") && status.includes("week"))
     return "bg-green-500 text-white";
   return BADGE_STYLES.default;
-};
-
-// Constants for time calculations
-export const TIME_CONSTANTS = {
-  MINUTES_IN_HOUR: 60,
-  HOURS_IN_DAY: 24,
-  DAYS_IN_WEEK: 7,
-  DAYS_IN_MONTH: 30.44, // Average days in a month
-  DAYS_IN_YEAR: 365.25, // Account for leap years
 };
 
 // Enum for section names

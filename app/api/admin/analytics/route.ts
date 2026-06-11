@@ -1,24 +1,13 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { UserRole } from "@prisma/client";
-import { getSession } from "@/lib/auth-server";
+import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { sumPaise } from "@/lib/payments/utils/money";
+
 export async function GET() {
   try {
-    const session = await getSession();
-
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    // Verify user is admin
-    const user = await prisma.user.findUnique({
-      where: { id: session.user.id },
-      select: { role: true },
-    });
-
-    if (user?.role !== UserRole.ADMIN) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
+    const auth = await requirePrivilegedAuth();
+    if (auth.error) return auth.error;
 
     // Get current date info for time-based queries
     const now = new Date();
@@ -129,12 +118,12 @@ export async function GET() {
       }),
       // Refund total
       prisma.refund.aggregate({
-        _sum: { amount: true },
+        _sum: { amountPaise: true },
         where: { status: "SUCCEEDED" },
       }),
     ]);
 
-    const totalRevenue = paymentStats._sum.amount ?? 0;
+    const totalRevenue = sumPaise(paymentStats._sum.amount);
     const avgSessionValue =
       paymentStats._count > 0 ? totalRevenue / paymentStats._count : 0;
 
@@ -156,9 +145,9 @@ export async function GET() {
 
       // Revenue stats
       totalRevenue,
-      revenueThisMonth: revenueThisMonth._sum.amount ?? 0,
+      revenueThisMonth: sumPaise(revenueThisMonth._sum.amount),
       avgSessionValue,
-      totalRefunds: refundTotal._sum.amount ?? 0,
+      totalRefunds: sumPaise(refundTotal._sum?.amountPaise),
 
       // Top domains
       topDomains: formattedTopDomains,

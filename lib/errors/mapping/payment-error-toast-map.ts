@@ -66,6 +66,10 @@ const ERROR_TOAST_MAP: Record<ErrorType, ToastMessage> = {
     title: "Operation In Progress",
     description: null, // Use the server's specific message
   },
+  [ErrorTypes.UNSUPPORTED_CONFIG]: {
+    title: "Configuration Not Supported",
+    description: null, // Use the server's specific message
+  },
   [ErrorTypes.UNKNOWN]: {
     title: "Something Went Wrong",
     description: null, // Use the server's specific message

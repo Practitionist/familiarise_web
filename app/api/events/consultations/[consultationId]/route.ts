@@ -1,4 +1,4 @@
-import prisma from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
 import {
   AppointmentsType,
   PaymentGateway,
@@ -15,6 +15,9 @@ import {
   lockConsultationApproval,
   unlockApproval,
 } from "@/utils/appointmentlock";
+import { transitionConsultationRequest } from "@/lib/booking/transitions";
+import { IllegalTransitionError } from "@/lib/enterprise/transitions";
+import { MAX_TEXT_LENGTH } from "@/lib/validation/limits";
 import { sendPaymentLinkEmail } from "@/lib/email";
 import {
   requireApiAuth,
@@ -26,35 +29,41 @@ import { createDirectMessageChannel } from "@/actions/stream/chat/channel.action
 import { streamLogger } from "@/lib/stream-logger";
 
 /**
- * Type for consultation with all related details needed for payment processing
+ * Type for consultation with all related details needed for payment processing.
+ * Derived via the extended client — raw GetPayload would re-introduce bigint
+ * money fields (#780).
  */
-type ConsultationWithDetails = Prisma.ConsultationGetPayload<{
-  include: {
-    consultationPlan: {
-      include: {
-        consultantProfile: {
-          include: {
-            user: true;
+type ConsultationWithDetails = Prisma.Result<
+  typeof prisma.consultation,
+  {
+    include: {
+      consultationPlan: {
+        include: {
+          consultantProfile: {
+            include: {
+              user: true;
+            };
+          };
+        };
+      };
+      requestedBy: {
+        include: {
+          user: true;
+        };
+      };
+      appointment: {
+        include: {
+          slotsOfAppointment: {
+            include: {
+              user: true;
+            };
           };
         };
       };
     };
-    requestedBy: {
-      include: {
-        user: true;
-      };
-    };
-    appointment: {
-      include: {
-        slotsOfAppointment: {
-          include: {
-            user: true;
-          };
-        };
-      };
-    };
-  };
-}>;
+  },
+  "findFirstOrThrow"
+>;
 
 export async function GET(
   request: Request,
@@ -204,15 +213,17 @@ export async function PUT(
     const body = await request.json();
 
     // Validate body to prevent arbitrary field injection
+    // #836 — requestStatus is NOT writable here: status changes flow only
+    // through PATCH, where the allowed-from guard rides the WHERE clause.
+    // #831 — user-typed strings carry a .max()
     const consultationPutSchema = z
       .object({
-        requestStatus: z.nativeEnum(RequestStatus).optional(),
-        requestNotes: z.string().nullish(),
+        requestNotes: z.string().max(MAX_TEXT_LENGTH).nullish(),
         bookingSource: z
           .enum(["DIRECT_CHECKOUT", "REQUEST_SUBMITTED"])
           .optional(),
-        feedbackFromConsultee: z.string().nullish(),
-        feedbackFromConsultant: z.string().nullish(),
+        feedbackFromConsultee: z.string().max(MAX_TEXT_LENGTH).nullish(),
+        feedbackFromConsultant: z.string().max(MAX_TEXT_LENGTH).nullish(),
         rating: z.number().min(1).max(5).nullish(),
         planId: z.string().optional(),
       })
@@ -233,7 +244,6 @@ export async function PUT(
     const consultationData = await prisma.consultation.update({
       where: { id: consultationId },
       data: {
-        requestStatus: validatedBody.requestStatus,
         requestNotes: validatedBody.requestNotes,
         bookingSource: validatedBody.bookingSource,
         feedbackFromConsultee: validatedBody.feedbackFromConsultee,
@@ -572,12 +582,15 @@ export async function PATCH(
             }
           }
 
-          // Update consultation status
-          const consultation = await tx.consultation.update({
+          // #836 — allowed-from guard rides the WHERE; the idempotency
+          // pre-checks above are only friendly error text. updateMany
+          // returns no row, so re-read for the heavy include.
+          await transitionConsultationRequest(tx, {
             where: { id: consultationId },
-            data: {
-              requestStatus: status,
-            },
+            to: status,
+          });
+          const consultation = await tx.consultation.findUniqueOrThrow({
+            where: { id: consultationId },
             include: {
               consultationPlan: {
                 include: {
@@ -629,16 +642,19 @@ export async function PATCH(
               // No payment - generate payment link
               const paymentResult = await generatePaymentLink(consultation);
 
-              // Update status to APPROVED_PENDING_PAYMENT
-              const updatedConsultation = await tx.consultation.update({
+              // Update status to APPROVED_PENDING_PAYMENT — guarded (#836)
+              await transitionConsultationRequest(tx, {
                 where: { id: consultationId },
+                to: RequestStatus.APPROVED_PENDING_PAYMENT,
                 data: {
-                  requestStatus: RequestStatus.APPROVED_PENDING_PAYMENT,
                   pendingPaymentUrl: paymentResult.checkoutUrl,
                   requestNotes: consultation.requestNotes
                     ? `${consultation.requestNotes}\n\n[System] Payment link generated and sent to user.`
                     : `[System] Payment link generated and sent to user.`,
                 },
+              });
+              const updatedConsultation = await tx.consultation.findUniqueOrThrow({
+                where: { id: consultationId },
                 include: {
                   consultationPlan: {
                     include: {
@@ -728,30 +744,34 @@ export async function PATCH(
       }
 
       // --- Stream channel creation (fire-and-forget, only on approval) ---
-      if (!result.duplicate && status === RequestStatus.APPROVED) try {
-        const consultationData = result.data;
-        const consultantUserId =
-          consultationData.consultationPlan?.consultantProfile?.userId;
-        const consulteeUserId = consultationData.requestedBy?.userId;
+      if (!result.duplicate && status === RequestStatus.APPROVED)
+        try {
+          const consultationData = result.data;
+          const consultantUserId =
+            consultationData.consultationPlan?.consultantProfile?.userId;
+          const consulteeUserId = consultationData.requestedBy?.userId;
 
-        if (consultantUserId && consulteeUserId) {
-          await addUserToEventChannel(
-            "consultation",
-            consultationId,
-            consulteeUserId,
+          if (consultantUserId && consulteeUserId) {
+            await addUserToEventChannel(
+              "consultation",
+              consultationId,
+              consulteeUserId,
+            );
+            await createDirectMessageChannel(consultantUserId, consulteeUserId);
+            streamLogger.info(
+              "Stream channel created on consultation approval",
+              {
+                consultationId,
+              },
+            );
+          }
+        } catch (channelError) {
+          streamLogger.error(
+            "Auto-channel creation failed on consultation approval",
+            channelError,
+            { consultationId },
           );
-          await createDirectMessageChannel(consultantUserId, consulteeUserId);
-          streamLogger.info("Stream channel created on consultation approval", {
-            consultationId,
-          });
         }
-      } catch (channelError) {
-        streamLogger.error(
-          "Auto-channel creation failed on consultation approval",
-          channelError,
-          { consultationId },
-        );
-      }
 
       // Return success response (exclude emailData from response)
       const { emailData: _emailData, ...responseData } =
@@ -770,6 +790,12 @@ export async function PATCH(
       }
     }
   } catch (error) {
+    if (error instanceof IllegalTransitionError) {
+      return NextResponse.json(
+        { error: error.message, code: error.code },
+        { status: error.httpStatus },
+      );
+    }
     console.error(
       "Error updating consultation:",
       error instanceof Error ? error.message : "Unknown error",
@@ -786,7 +812,7 @@ export async function PATCH(
  * Uses transaction client to maintain serializable isolation
  */
 async function checkConsultationPayment(
-  tx: Prisma.TransactionClient,
+  tx: Tx,
   consultationId: string,
 ): Promise<boolean> {
   const consultation = await tx.consultation.findUnique({

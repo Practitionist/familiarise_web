@@ -44,5 +44,3 @@ export function WaitlistBadge({
     </Badge>
   );
 }
-
-export default WaitlistBadge;

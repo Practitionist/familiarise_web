@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { signIn, useSession } from "@/lib/auth-client";
+import { ssoSigninWithGuard } from "@/lib/sso/signin-with-toast";
 import { GlobeIcon } from "@/components/auth/auth-icons";
 import { SocialLoginButtons } from "@/components/auth/social-login-buttons";
 import Link from "next/link";
@@ -34,6 +35,12 @@ function SignInContent() {
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [callbackUrl, setCallbackUrl] = useState<string | null>(null);
+  const [ssoCheck, setSsoCheck] = useState<{
+    enforceSSO: boolean;
+    organizationName: string;
+    ssoBody: { providerId: string; domain: string; callbackURL: string };
+  } | null>(null);
+  const [ssoChecking, setSsoChecking] = useState(false);
 
   useEffect(() => {
     const url = searchParams.get("callbackUrl");
@@ -75,6 +82,138 @@ function SignInContent() {
     );
   }
 
+  const handleEmailBlur = async () => {
+    if (!email || !email.includes("@")) return;
+    setSsoChecking(true);
+    try {
+      const res = await fetch(`/api/auth/sso/domain-check?email=${encodeURIComponent(email)}`);
+      if (res.ok) {
+        const data = await res.json();
+        // Why: the domain-check route returns `providerMisconfigured: true`
+        // when the stored SAML cert fails parse. Surface a friendly toast
+        // and leave `ssoCheck` null so the user falls back to credentials
+        // (which they may also have for legacy reasons). Without this
+        // branch, clicking "Sign in with SSO" would crash BetterAuth and
+        // present a blank 500.
+        if (data.enforceSSO && data.providerMisconfigured) {
+          toast({
+            title: "Single sign-on is misconfigured",
+            description:
+              "Your SSO provider's certificate is invalid. Contact your IT admin to re-paste the X.509 PEM.",
+            variant: "destructive",
+          });
+          setSsoCheck(null);
+        } else {
+          setSsoCheck(data.enforceSSO ? {
+            enforceSSO: true,
+            organizationName: data.organizationName,
+            ssoBody: data.ssoBody,
+          } : null);
+        }
+      }
+    } catch {
+      // ignore — fall through to normal login
+    } finally {
+      setSsoChecking(false);
+    }
+  };
+
+  const handleSSOSignIn = async () => {
+    if (!ssoCheck) return;
+    // Use the guarded wrapper around signIn.sso() so the call goes
+    // through the ssoClient plugin (OIDC PKCE verifier persists before
+    // the IdP redirect) AND so failure modes surface as toasts instead
+    // of silent dead-ends. See `lib/sso/signin-with-toast.ts` for the
+    // three failure modes this guards: BetterAuth's resolve-with-error
+    // shape, 500-with-empty-body crashes, and no-redirect-after-2s.
+    // Audit Phase B.1.
+    const result = await ssoSigninWithGuard({
+      providerId: ssoCheck.ssoBody.providerId,
+      domain: ssoCheck.ssoBody.domain,
+      callbackURL: ssoCheck.ssoBody.callbackURL,
+    });
+    if (!result.ok && result.errorMessage) {
+      toast({
+        title: "SSO sign-in failed",
+        description: result.errorMessage,
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Manual SSO trigger for IT admins testing their setup before enforcement
+  // is turned on. Same domain-check logic as the email blur handler, but
+  // immediately fires the redirect if a provider is found.
+  const handleManualSSOClick = async () => {
+    if (!email || !email.includes("@")) {
+      toast({
+        title: "Enter your work email first",
+        description: "Type your corporate email address above, then try again.",
+      });
+      return;
+    }
+    setSsoChecking(true);
+    try {
+      const res = await fetch(`/api/auth/sso/domain-check?email=${encodeURIComponent(email)}`);
+      if (!res.ok) throw new Error("check failed");
+      const data = await res.json();
+      // Same misconfigured-cert short-circuit as the blur handler — see
+      // its comment above for the failure mode this guards against.
+      if (data.enforceSSO && data.providerMisconfigured) {
+        toast({
+          title: "Single sign-on is misconfigured",
+          description:
+            "Your SSO provider's certificate is invalid. Contact your IT admin to re-paste the X.509 PEM.",
+          variant: "destructive",
+        });
+        return;
+      }
+      if (data.enforceSSO) {
+        setSsoCheck({ enforceSSO: true, organizationName: data.organizationName, ssoBody: data.ssoBody });
+        const result = await ssoSigninWithGuard({
+          providerId: data.ssoBody.providerId,
+          domain: data.ssoBody.domain,
+          callbackURL: data.ssoBody.callbackURL,
+        });
+        if (!result.ok && result.errorMessage) {
+          toast({
+            title: "SSO sign-in failed",
+            description: result.errorMessage,
+            variant: "destructive",
+          });
+        }
+      } else {
+        toast({
+          title: "No SSO provider found",
+          description: "No corporate SSO is configured for this email domain. Contact your IT admin.",
+          variant: "destructive",
+        });
+      }
+    } catch {
+      toast({
+        title: "SSO check failed",
+        description: "Could not verify SSO for this domain. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setSsoChecking(false);
+    }
+  };
+
+  const friendlyAuthError = (raw: string | undefined): string => {
+    if (!raw) return "Invalid email or password.";
+    const lower = raw.toLowerCase();
+    if (lower.includes("email") && (lower.includes("invalid") || lower.includes("required")))
+      return "Please enter a valid email address.";
+    if (lower.includes("password") && (lower.includes("too small") || lower.includes(">=") || lower.includes("required")))
+      return "Please enter your password.";
+    if (lower.includes("invalid") && lower.includes("credentials"))
+      return "Invalid email or password.";
+    if (lower.includes("not found") || lower.includes("no user"))
+      return "No account found with this email. Check the address or sign up.";
+    return raw.replace(/\[body\.\w+\]\s*/g, "").trim() || "Invalid email or password.";
+  };
+
   const handleEmailSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
@@ -89,7 +228,7 @@ function SignInContent() {
       if (error) {
         toast({
           title: "Sign In Failed",
-          description: error.message || "Invalid email or password.",
+          description: friendlyAuthError(error.message),
           variant: "destructive",
         });
       } else if (data) {
@@ -143,6 +282,13 @@ function SignInContent() {
           <h2 className="text-2xl md:text-3xl font-semibold mb-4 md:mb-6">
             Sign in to your account
           </h2>
+          {searchParams.get("sso_required") === "1" && (
+            <div className="mb-4 p-3 rounded-md bg-yellow-900/40 border border-yellow-600">
+              <p className="text-sm text-yellow-300">
+                Your organization requires SSO sign-in.
+              </p>
+            </div>
+          )}
           <p className="text-sm md:text-base mb-4 md:mb-6">
             Enter your email and password below to sign in.
           </p>
@@ -158,52 +304,72 @@ function SignInContent() {
                 autoCorrect="off"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
+                onBlur={handleEmailBlur}
                 required
-                disabled={isLoading}
+                disabled={isLoading || ssoChecking}
               />
             </div>
-            <div className="grid gap-2 mt-4">
-              <div className="flex items-center justify-between">
-                <Label htmlFor="password">Password</Label>
-                <Link
-                  href="/auth/forgot-password"
-                  className="text-sm font-medium text-blue-400 hover:underline"
-                >
-                  Forgot password?
-                </Link>
+            {!ssoCheck?.enforceSSO && (
+              <div className="grid gap-2 mt-4">
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="password">Password</Label>
+                  <Link
+                    href="/auth/forgot-password"
+                    className="text-sm font-medium text-blue-400 hover:underline"
+                  >
+                    Forgot password?
+                  </Link>
+                </div>
+                <Input
+                  id="password"
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  disabled={isLoading}
+                />
               </div>
-              <Input
-                id="password"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
+            )}
+            {ssoCheck?.enforceSSO ? (
+              <Button
+                type="button"
+                className="w-full mt-4 bg-blue-600 hover:bg-blue-500"
+                onClick={handleSSOSignIn}
+              >
+                Sign in with {ssoCheck.organizationName} SSO &rarr;
+              </Button>
+            ) : (
+              <Button
+                type="submit"
+                className="w-full mt-4 bg-gray-800 hover:bg-gray-700"
                 disabled={isLoading}
-              />
-            </div>
-            <Button
-              type="submit"
-              className="w-full mt-4 bg-gray-800 hover:bg-gray-700"
-              disabled={isLoading}
-            >
-              {isLoading ? "Signing In..." : "Sign In with Email"}
-            </Button>
+              >
+                {isLoading ? "Signing In..." : "Sign In with Email"}
+              </Button>
+            )}
           </form>
-          <div className="relative my-4 md:my-6">
-            <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-gray-600" />
-            </div>
-            <div className="relative flex justify-center text-sm">
-              <span className="px-2 bg-gray-900 text-gray-400">
-                OR CONTINUE WITH
-              </span>
-            </div>
-          </div>
-          <SocialLoginButtons
-            callbackURL={callbackUrl || "/dashboard"}
-            newUserCallbackURL="/form/onboarding"
-            isLoading={isLoading}
-          />
+          {!ssoCheck?.enforceSSO && (
+            <>
+              <div className="relative my-4 md:my-6">
+                <div className="absolute inset-0 flex items-center">
+                  <div className="w-full border-t border-gray-600" />
+                </div>
+                <div className="relative flex justify-center text-sm">
+                  <span className="px-2 bg-gray-900 text-gray-400">
+                    OR CONTINUE WITH
+                  </span>
+                </div>
+              </div>
+              <SocialLoginButtons
+                callbackURL={callbackUrl || "/dashboard"}
+                newUserCallbackURL="/form/onboarding"
+                isLoading={isLoading}
+                ssoEnforced={false}
+                onSSOClick={handleManualSSOClick}
+                ssoChecking={ssoChecking}
+              />
+            </>
+          )}
           <p className="text-xs text-gray-400 mt-4 md:mt-6">
             Don't have an account?{" "}
             <Link

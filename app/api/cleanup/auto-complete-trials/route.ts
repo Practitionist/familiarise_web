@@ -12,6 +12,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { TrialSessionStatus } from "@prisma/client";
 import prisma from "@/lib/prisma";
+import { withCronLock, CronLockHeldError } from "@/lib/cron/with-cron-lock";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
@@ -26,22 +27,29 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
     const now = new Date();
 
-    const result = await prisma.trialSession.updateMany({
-      where: {
-        status: TrialSessionStatus.SCHEDULED,
-        appointment: {
-          slotsOfAppointment: {
-            some: {
-              endsAt: { lt: now },
+    // #476 — entry-level cron lock; fail-open (idempotent updateMany).
+    const result = await withCronLock(
+      "auto-complete-trials",
+      { failMode: "open" },
+      async () => {
+        return prisma.trialSession.updateMany({
+          where: {
+            status: TrialSessionStatus.SCHEDULED,
+            appointment: {
+              slotsOfAppointment: {
+                some: {
+                  endsAt: { lt: now },
+                },
+              },
             },
           },
-        },
+          data: {
+            status: TrialSessionStatus.COMPLETED,
+            completedAt: now,
+          },
+        });
       },
-      data: {
-        status: TrialSessionStatus.COMPLETED,
-        completedAt: now,
-      },
-    });
+    );
 
     console.log(
       JSON.stringify({
@@ -56,6 +64,11 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       trialsCompleted: result.count,
     });
   } catch (error) {
+    // #476 — concurrent invocation (schedule overlap / manual re-run)
+    // skips with a 409 instead of double-running.
+    if (error instanceof CronLockHeldError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
     console.error("Error in auto-complete-trials cleanup:", error);
     return NextResponse.json(
       { success: false, error: "Failed to auto-complete trial sessions" },

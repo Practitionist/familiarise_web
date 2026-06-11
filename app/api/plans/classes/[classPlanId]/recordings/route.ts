@@ -54,7 +54,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       hasAccess =
         classPlan.consultantProfileId === session.user.consultantProfileId;
       if (!hasAccess && session.user.consultantProfileId) {
-        const collab = await prisma.classCollaborator.findFirst({
+        const collab = await prisma.collaborator.findFirst({
           where: {
             classPlanId,
             consultantProfileId: session.user.consultantProfileId,

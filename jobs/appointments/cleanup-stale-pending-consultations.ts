@@ -14,6 +14,7 @@ import {
 } from "../../scripts/appointments/cleanup-stale-pending-consultations";
 import fs from "fs";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
+import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
 
 /**
  * Output results to GitHub Actions
@@ -72,6 +73,11 @@ async function main(): Promise<void> {
       process.exit(1);
     }
   } catch (error) {
+    // #476 — lock held = another run is live; skip cleanly (exit 0).
+    if (error instanceof CronLockHeldError) {
+      console.log(`⏭️  ${error.message}`);
+      return;
+    }
     console.error("❌ Fatal error in stale consultation cleanup:", error);
     process.exit(1);
   } finally {

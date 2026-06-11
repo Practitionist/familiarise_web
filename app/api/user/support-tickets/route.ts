@@ -5,6 +5,7 @@ import { CreateSupportTicketSchema } from "@/schemas/support";
 import { spamLimiter, applyRateLimit } from "@/lib/rate-limit";
 
 import { getSession } from "@/lib/auth-server";
+import { assertBodySize } from "@/lib/validation/limits";
 export async function GET() {
   try {
     const session = await getSession();
@@ -74,6 +75,10 @@ export async function POST(req: NextRequest) {
     // Rate limit: 5 support tickets per hour per user
     const rl = await applyRateLimit(spamLimiter, `tickets:${session.user.id}`);
     if (rl) return rl;
+
+    // #831 — cap request body before parsing
+    const tooLarge = assertBodySize(req);
+    if (tooLarge) return tooLarge;
 
     const body = await req.json();
     const result = CreateSupportTicketSchema.safeParse(body);

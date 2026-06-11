@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { getSession } from "@/lib/auth-server";
+import { requirePrivilegedAuth } from "@/lib/auth-helpers";
 import {
   Prisma,
-  UserRole,
   PaymentStatus,
   PaymentGateway,
   AppointmentsType,
@@ -11,21 +10,8 @@ import {
 
 export async function GET(req: NextRequest) {
   try {
-    // Check authentication
-    const session = await getSession();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    // Check if user is admin
-    const user = await prisma.user.findUnique({
-      where: { id: session.user.id },
-      select: { role: true },
-    });
-
-    if (user?.role !== UserRole.ADMIN && user?.role !== UserRole.STAFF) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
+    const auth = await requirePrivilegedAuth();
+    if (auth.error) return auth.error;
 
     // Parse query parameters
     const searchParams = req.nextUrl.searchParams;
@@ -37,6 +23,10 @@ export async function GET(req: NextRequest) {
       "appointmentType",
     ) as AppointmentsType | null;
     const search = searchParams.get("search");
+    // #674 comment 7 — optional org-scope filter for support staff drilling
+    // into a single tenant's payments. No extra permission gate needed:
+    // the route is already privileged (requirePrivilegedAuth above).
+    const orgId = searchParams.get("orgId");
 
     // Build where clause
     const where: Prisma.PaymentWhereInput = {};
@@ -60,6 +50,10 @@ export async function GET(req: NextRequest) {
       where.appointment = {
         appointmentType,
       };
+    }
+
+    if (orgId) {
+      where.organizationId = orgId;
     }
 
     // Fetch payments with pagination

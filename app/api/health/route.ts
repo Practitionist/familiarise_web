@@ -73,7 +73,11 @@ export async function GET(request: Request) {
   try {
     let timeoutId: ReturnType<typeof setTimeout>;
     await Promise.race([
-      prisma.$queryRaw`SELECT 1`.finally(() => clearTimeout(timeoutId)),
+      // ORM connectivity probe (no raw SQL) — a cheap LIMIT 1 read proves the
+      // connection is alive; null (empty table) still means "connected".
+      prisma.user
+        .findFirst({ select: { id: true } })
+        .finally(() => clearTimeout(timeoutId)),
       new Promise((_, reject) => {
         timeoutId = setTimeout(() => reject(new Error("DB timeout")), 5000);
       }),

@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import { Building2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -24,6 +25,7 @@ import {
   getConsultantImage,
   getConsultantInitial,
 } from "../../utils/getMetadata";
+import { useSession } from "@/lib/auth-client";
 
 type EventWithType =
   | (TConsultationWithPlan & { type: "Consultation" })
@@ -39,12 +41,41 @@ interface BookingHistoryTabProps {
   classes: TClassWithPlan[];
 }
 
+// Extract the org-funding marker from any event variant. Single-appointment
+// events (Consultation, Webinar) carry it directly; multi-appointment
+// events (Subscription, Class) take it from the first appointment — all
+// child appointments share the same org context per the checkout flow.
+function getEventOrganizationId(event: EventWithType): string | null {
+  if (event.type === "Consultation" || event.type === "Webinar") {
+    return event.appointment?.organizationId ?? null;
+  }
+  if (event.type === "Subscription") {
+    return event.appointments?.[0]?.organizationId ?? null;
+  }
+  if (event.type === "Class") {
+    return event.appointment?.[0]?.organizationId ?? null;
+  }
+  return null;
+}
+
 export function BookingHistoryTab({
   consultations = [],
   subscriptions = [],
   webinars = [],
   classes = [],
 }: BookingHistoryTabProps) {
+  const { data: session } = useSession();
+  const orgMemberships = session?.user?.organizationMemberships ?? [];
+  const resolveSponsoringOrgName = (
+    orgId: string | null | undefined,
+  ): string | null => {
+    if (!orgId) return null;
+    return (
+      orgMemberships.find((m) => m.organizationId === orgId)?.organizationName ??
+      "the organization"
+    );
+  };
+
   const allEvents: EventWithType[] = [
     ...consultations.map((c) => ({ ...c, type: "Consultation" as const })),
     ...subscriptions.map((s) => ({ ...s, type: "Subscription" as const })),
@@ -95,13 +126,29 @@ export function BookingHistoryTab({
                       {formatDate(getBookingDate(event))}
                     </TableCell>
                     <TableCell>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <Badge className="text-xs font-medium bg-transparent border border-zinc-300 text-zinc-600 rounded-md">
                           {event.type}
                         </Badge>
                         <span className="font-medium">
                           {getEventTitle(event)}
                         </span>
+                        {(() => {
+                          const sponsoringOrgName = resolveSponsoringOrgName(
+                            getEventOrganizationId(event),
+                          );
+                          return sponsoringOrgName ? (
+                            <Badge
+                              className="text-[10px] font-semibold px-2 py-0.5 bg-indigo-50 text-indigo-700 border-0 rounded-md inline-flex items-center gap-1 max-w-[200px]"
+                              title={`Sponsored by ${sponsoringOrgName}`}
+                            >
+                              <Building2 className="h-3 w-3 shrink-0" />
+                              <span className="truncate">
+                                Sponsored · {sponsoringOrgName}
+                              </span>
+                            </Badge>
+                          ) : null;
+                        })()}
                       </div>
                     </TableCell>
                     <TableCell>

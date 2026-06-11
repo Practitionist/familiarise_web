@@ -1,32 +1,48 @@
 "use client";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useQuery } from "@tanstack/react-query";
-import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useCallback, useMemo } from "react";
 import {
-  ClipboardCheck,
-  Loader,
-  CheckCircle,
-  Wallet,
-  ArrowRight,
-} from "lucide-react";
+  BarChart,
+  Bar,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 
-interface PayoutStatCategory {
-  count: number;
+import PendingPayoutsSection from "./_sections/PendingPayoutsSection";
+import ProcessingPayoutsSection from "./_sections/ProcessingPayoutsSection";
+import CompletedPayoutsSection from "./_sections/CompletedPayoutsSection";
+import EarningsSection from "./_sections/EarningsSection";
+
+type TabKey = "pending" | "processing" | "completed" | "earnings";
+
+const VALID_TABS: readonly TabKey[] = [
+  "pending",
+  "processing",
+  "completed",
+  "earnings",
+] as const;
+
+interface PayoutTrendDatum {
+  createdAt: string;
   amount: number;
 }
 
-interface PayoutStatsResponse {
-  payouts: unknown[];
-  stats: {
-    pending: PayoutStatCategory;
-    approved: PayoutStatCategory;
-    processing: PayoutStatCategory;
-    completed: PayoutStatCategory;
-    failed: PayoutStatCategory;
-  };
-  pagination: {
+interface PayoutTrendResponse {
+  payouts: PayoutTrendDatum[];
+  pagination?: {
     total: number;
     limit: number;
     offset: number;
@@ -34,87 +50,90 @@ interface PayoutStatsResponse {
   };
 }
 
-async function fetchPayoutStats(): Promise<PayoutStatsResponse> {
-  const response = await fetch("/api/admin/payouts?limit=0");
+async function fetchPayoutTrend(): Promise<PayoutTrendResponse> {
+  // TODO: If /api/admin/payouts?limit=100 doesn't return enough history for a
+  // meaningful trend (e.g. paginated past the 7-day window), introduce a
+  // dedicated trend endpoint rather than fetching more client-side.
+  const response = await fetch("/api/admin/payouts?limit=100");
   if (!response.ok) {
-    throw new Error("Failed to fetch payout stats");
+    throw new Error("Failed to fetch payout trend");
   }
-  return response.json() as Promise<PayoutStatsResponse>;
+  return response.json() as Promise<PayoutTrendResponse>;
+}
+
+function formatDayKey(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function formatDayLabel(date: Date): string {
+  return date.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
+}
+
+function buildLast7DaysSeries(
+  payouts: PayoutTrendDatum[] | undefined,
+): Array<{ day: string; label: string; total: number }> {
+  const now = new Date();
+  const days: Array<{ day: string; label: string; total: number }> = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(now);
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() - i);
+    days.push({ day: formatDayKey(d), label: formatDayLabel(d), total: 0 });
+  }
+  if (!payouts?.length) return days;
+
+  const index = new Map(days.map((d, i) => [d.day, i]));
+  for (const p of payouts) {
+    if (!p?.createdAt) continue;
+    const d = new Date(p.createdAt);
+    if (Number.isNaN(d.getTime())) continue;
+    const key = formatDayKey(d);
+    const idx = index.get(key);
+    if (idx !== undefined) {
+      // amounts are stored in minor units (paise/cents) — normalize to major
+      days[idx].total += (p.amount || 0) / 100;
+    }
+  }
+  return days;
 }
 
 export default function AdminPayoutsPage() {
-  const { data, isLoading, error } = useQuery({
-    queryKey: ["admin-payout-stats"],
-    queryFn: fetchPayoutStats,
-    staleTime: 30 * 1000,
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const tabParam = searchParams.get("tab");
+  const activeTab: TabKey = (VALID_TABS as readonly string[]).includes(
+    tabParam ?? "",
+  )
+    ? (tabParam as TabKey)
+    : "pending";
+
+  const handleTabChange = useCallback(
+    (value: string) => {
+      const next = new URLSearchParams(Array.from(searchParams.entries()));
+      next.set("tab", value);
+      router.replace(`?${next.toString()}`, { scroll: false });
+    },
+    [router, searchParams],
+  );
+
+  const { data: trendData, isLoading: trendLoading } = useQuery({
+    queryKey: ["admin-payout-trend"],
+    queryFn: fetchPayoutTrend,
+    staleTime: 60 * 1000,
   });
 
-  if (error) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <Card className="w-full max-w-md">
-          <CardHeader>
-            <CardTitle className="text-red-600">Error</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-gray-700">
-              {error instanceof Error ? error.message : "Failed to load stats"}
-            </p>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
+  const chartData = useMemo(
+    () => buildLast7DaysSeries(trendData?.payouts),
+    [trendData?.payouts],
+  );
 
-  const stats = data?.stats || {
-    pending: { count: 0, amount: 0 },
-    approved: { count: 0, amount: 0 },
-    processing: { count: 0, amount: 0 },
-    completed: { count: 0, amount: 0 },
-  };
-
-  const sections = [
-    {
-      title: "Pending Approval",
-      description: "Payouts awaiting admin approval",
-      path: "/dashboard/admin/payouts/pending",
-      icon: ClipboardCheck,
-      color: "text-amber-600",
-      bgColor: "bg-amber-50",
-      count: stats.pending?.count || 0,
-      amount: stats.pending?.amount || 0,
-    },
-    {
-      title: "Processing",
-      description: "Payouts being processed by payment providers",
-      path: "/dashboard/admin/payouts/processing",
-      icon: Loader,
-      color: "text-blue-600",
-      bgColor: "bg-blue-50",
-      count: stats.processing?.count || 0,
-      amount: stats.processing?.amount || 0,
-    },
-    {
-      title: "Completed",
-      description: "Successfully completed payouts",
-      path: "/dashboard/admin/payouts/completed",
-      icon: CheckCircle,
-      color: "text-green-600",
-      bgColor: "bg-green-50",
-      count: stats.completed?.count || 0,
-      amount: stats.completed?.amount || 0,
-    },
-    {
-      title: "Consultant Earnings",
-      description: "View and manage consultant earnings",
-      path: "/dashboard/admin/payouts/earnings",
-      icon: Wallet,
-      color: "text-purple-600",
-      bgColor: "bg-purple-50",
-      count: null,
-      amount: null,
-    },
-  ];
+  const hasAnyTrendData = chartData.some((d) => d.total > 0);
 
   return (
     <div className="space-y-6">
@@ -125,76 +144,87 @@ export default function AdminPayoutsPage() {
         </p>
       </div>
 
-      {/* Summary Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        {isLoading ? (
-          <>
-            {[1, 2, 3, 4].map((i) => (
-              <Skeleton key={i} className="h-24 w-full" />
-            ))}
-          </>
-        ) : (
-          sections.map((section) => (
-            <Link key={section.path} href={section.path}>
-              <Card className="hover:shadow-md transition-shadow cursor-pointer h-full">
-                <CardContent className="pt-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm text-gray-500">{section.title}</p>
-                      {section.count !== null ? (
-                        <>
-                          <p className="text-2xl font-bold text-gray-900">
-                            {section.count}
-                          </p>
-                          <p className="text-sm text-gray-500">
-                            {(section.amount / 100).toLocaleString("en-IN", {
-                              style: "currency",
-                              currency: "INR",
-                            })}
-                          </p>
-                        </>
-                      ) : (
-                        <p className="text-sm text-gray-500 mt-2">
-                          View details
-                        </p>
-                      )}
-                    </div>
-                    <div className={`p-3 rounded-full ${section.bgColor}`}>
-                      <section.icon className={`w-6 h-6 ${section.color}`} />
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            </Link>
-          ))
-        )}
-      </div>
+      {/* Payout trend chart */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">Payouts - Last 7 Days</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {trendLoading ? (
+            <Skeleton className="h-[200px] w-full" />
+          ) : hasAnyTrendData ? (
+            <div style={{ width: "100%", height: 200 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart
+                  data={chartData}
+                  margin={{ top: 8, right: 16, left: 0, bottom: 0 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                  <XAxis
+                    dataKey="label"
+                    stroke="#64748b"
+                    fontSize={12}
+                    tickLine={false}
+                    axisLine={false}
+                  />
+                  <YAxis
+                    stroke="#64748b"
+                    fontSize={12}
+                    tickLine={false}
+                    axisLine={false}
+                    tickFormatter={(value: number) =>
+                      value >= 1000
+                        ? `${(value / 1000).toFixed(1)}k`
+                        : String(value)
+                    }
+                  />
+                  <Tooltip
+                    formatter={(value: number) =>
+                      value.toLocaleString(undefined, {
+                        style: "currency",
+                        currency: "INR",
+                        maximumFractionDigits: 0,
+                      })
+                    }
+                  />
+                  <Bar
+                    dataKey="total"
+                    fill="#6366f1"
+                    radius={[4, 4, 0, 0]}
+                  />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <div className="flex h-[200px] items-center justify-center text-sm text-gray-500">
+              Analytics coming soon
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
-      {/* Section Links */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {sections.map((section) => (
-          <Link key={section.path} href={section.path}>
-            <Card className="hover:shadow-md transition-shadow cursor-pointer">
-              <CardContent className="p-6">
-                <div className="flex items-center gap-4">
-                  <div className={`p-3 rounded-lg ${section.bgColor}`}>
-                    <section.icon className={`w-6 h-6 ${section.color}`} />
-                  </div>
-                  <div className="flex-1">
-                    <h3 className="font-semibold text-gray-900">
-                      {section.title}
-                    </h3>
-                    <p className="text-sm text-gray-500">
-                      {section.description}
-                    </p>
-                  </div>
-                  <ArrowRight className="w-5 h-5 text-gray-400" />
-                </div>
-              </CardContent>
-            </Card>
-          </Link>
-        ))}
-      </div>
+      {/* Tabs */}
+      <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
+        <TabsList className="grid w-full max-w-xl grid-cols-4">
+          <TabsTrigger value="pending">Pending</TabsTrigger>
+          <TabsTrigger value="processing">Processing</TabsTrigger>
+          <TabsTrigger value="completed">Completed</TabsTrigger>
+          <TabsTrigger value="earnings">Earnings</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="pending" className="mt-6">
+          <PendingPayoutsSection />
+        </TabsContent>
+        <TabsContent value="processing" className="mt-6">
+          <ProcessingPayoutsSection />
+        </TabsContent>
+        <TabsContent value="completed" className="mt-6">
+          <CompletedPayoutsSection />
+        </TabsContent>
+        <TabsContent value="earnings" className="mt-6">
+          <EarningsSection />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

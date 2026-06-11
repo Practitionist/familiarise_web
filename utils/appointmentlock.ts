@@ -19,7 +19,7 @@ export interface ApprovalLock {
   client: Redis; // Client reference for release
 }
 
-export interface LockRetryConfig {
+interface LockRetryConfig {
   retryCount: number; // Number of retry attempts (default: 10)
   retryDelay: number; // Base delay in ms (default: 200)
   retryJitter: number; // Random jitter in ms (default: 200)
@@ -27,7 +27,7 @@ export interface LockRetryConfig {
   driftFactor: number; // Clock drift factor (default: 0.01)
 }
 
-export interface EventSlotReservation {
+interface EventSlotReservation {
   reservationId: string;
   slotNumber: number;
   eventType: string;
@@ -50,6 +50,18 @@ const DEFAULT_RETRY_CONFIG: LockRetryConfig = {
 // This prevents lock expiration during slow database operations
 const DEFAULT_LOCK_TTL = 60000; // 60 seconds
 const DEFAULT_EVENT_SLOT_TTL = 300000; // 5 minutes for payment completion
+
+// #832 — one 60s budget cannot cover every checkout shape: a class checkout
+// writes N sessions × M slots plus a gateway round-trip and can outlive its
+// lock, silently admitting a second buyer. Sized per checkout type (mirrors
+// the LONG_JOB_TTL_MS precedent in lib/cron/with-cron-lock.ts); checkout
+// also renews once before the gateway call and aborts if ownership is lost.
+export const CHECKOUT_LOCK_TTL_MS: Record<string, number> = {
+  CONSULTATION: 60_000,
+  SUBSCRIPTION: 120_000,
+  WEBINAR: 120_000,
+  CLASS: 300_000,
+};
 
 // ============================================================================
 // Helper Functions

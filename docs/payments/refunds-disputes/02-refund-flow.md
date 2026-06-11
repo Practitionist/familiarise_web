@@ -1,5 +1,7 @@
 # Refund Processing Flow
 
+> **Moved (org/B2B side):** The organization-side documentation for refunds now lives in [`docs/enterprise/10-money-and-ledger/10-refunds.md`](../../enterprise/10-money-and-ledger/10-refunds.md). This file keeps the consumer-marketplace (B2C) and gateway-generic details only.
+
 ## Overview
 
 The refund system uses a **two-phase pattern** to prevent race conditions while avoiding long-running database transactions that can cause connection pool exhaustion.

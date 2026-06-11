@@ -1,0 +1,46 @@
+name: Auto-Renew Contracts
+
+on:
+  schedule:
+    # 02:30 UTC — 30 min BEFORE expire-contracts (03:00 UTC). Renewal must win
+    # the race with expiry: this job supersedes + EXPIREs the old contract, so
+    # by 03:00 expire-contracts has nothing left to flip (#779).
+    - cron: "30 2 * * *"
+  workflow_dispatch: # Allow manual triggering
+
+jobs:
+  auto-renew-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      # #476 cron locks load lib/redis at import — every job entry needs these
+      UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
+      UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
+      DIRECT_URL: ${{ secrets.DIRECT_URL }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Run contract-auto-renew job
+        run: npx tsx jobs/contracts/auto-renew-contracts.ts
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "Contract-auto-renew cron failed"
+          # TODO: wire to #ops-alerts Slack channel.

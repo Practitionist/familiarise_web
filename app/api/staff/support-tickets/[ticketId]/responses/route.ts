@@ -5,11 +5,10 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { UserRole } from "@prisma/client";
 import { notifySupportTicketResponse } from "@/lib/novu";
 import { CreateSupportResponseSchema } from "@/schemas/support";
+import { requirePrivilegedAuth } from "@/lib/auth-helpers";
 
-import { getSession } from "@/lib/auth-server";
 interface RouteParams {
   params: Promise<{ ticketId: string }>;
 }
@@ -20,20 +19,9 @@ interface RouteParams {
  */
 export async function POST(req: NextRequest, { params }: RouteParams) {
   try {
-    const session = await getSession();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    // Check staff or admin role
-    const user = await prisma.user.findUnique({
-      where: { id: session.user.id },
-      select: { role: true, name: true },
-    });
-
-    if (user?.role !== UserRole.STAFF && user?.role !== UserRole.ADMIN) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
+    const auth = await requirePrivilegedAuth();
+    if (auth.error) return auth.error;
+    const session = auth.session;
 
     const { ticketId } = await params;
     const body = await req.json();
@@ -114,20 +102,8 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
  */
 export async function GET(req: NextRequest, { params }: RouteParams) {
   try {
-    const session = await getSession();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    // Check staff or admin role
-    const user = await prisma.user.findUnique({
-      where: { id: session.user.id },
-      select: { role: true },
-    });
-
-    if (user?.role !== UserRole.STAFF && user?.role !== UserRole.ADMIN) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
+    const auth = await requirePrivilegedAuth();
+    if (auth.error) return auth.error;
 
     const { ticketId } = await params;
 
