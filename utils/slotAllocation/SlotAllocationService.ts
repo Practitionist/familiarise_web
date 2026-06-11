@@ -29,6 +29,12 @@ import { SlotValidationService } from "./SlotValidationService";
 import { buildOccupiedAppointmentFilter } from "./occupancyPolicy";
 import { lockAutoAllocate, unlockAutoAllocate } from "@/utils/appointmentlock";
 import {
+  ALLOCATION_APPROVABLE_FROM,
+  transitionConsultationRequest,
+  transitionSubscriptionRequest,
+} from "@/lib/booking/transitions";
+import { IllegalTransitionError } from "@/lib/enterprise/transitions";
+import {
   DAY_OF_WEEK_TO_INDEX,
   isMinuteWithinWeeklySlot,
   TWENTY_FOUR_HOURS_IN_MS,
@@ -119,6 +125,11 @@ export class SlotAllocationService {
     }
     if (error instanceof AllocationConflictError) {
       return { errorCode: error.errorCode, httpStatus: error.httpStatus };
+    }
+    // #836 — consultee cancelled (or request expired) while the consultant
+    // was allocating; the whole allocation tx rolled back.
+    if (error instanceof IllegalTransitionError) {
+      return { errorCode: "ILLEGAL_TRANSITION", httpStatus: error.httpStatus };
     }
 
     // Prisma unique constraint violation (P2002) — concurrent duplicate booking race
@@ -1766,18 +1777,24 @@ export class SlotAllocationService {
     config: EventConfig,
   ): Promise<void> {
     switch (eventType) {
+      // #836 — allocation racing a cancel/expiry must not resurrect the
+      // request to APPROVED; the allowed-from guard rides the WHERE and a
+      // miss rolls back the whole allocation tx. fromIn keeps the APPROVED
+      // self-edge legal for re-allocation of an already-approved event.
       case "consultation":
-        await tx.consultation.update({
+        await transitionConsultationRequest(tx, {
           where: { id: eventId },
-          data: { requestStatus: RequestStatus.APPROVED },
+          to: RequestStatus.APPROVED,
+          fromIn: ALLOCATION_APPROVABLE_FROM,
         });
         break;
 
       case "subscription":
-        await tx.subscription.update({
+        await transitionSubscriptionRequest(tx, {
           where: { id: eventId },
+          to: RequestStatus.APPROVED,
+          fromIn: ALLOCATION_APPROVABLE_FROM,
           data: {
-            requestStatus: RequestStatus.APPROVED,
             // FIX: Only set schedulingPeriod if not already configured
             // This prevents overwriting the user's scheduling period with the first allocated slot
             // which could cause slots to appear outside the intended scheduling window

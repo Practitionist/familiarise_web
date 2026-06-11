@@ -11,6 +11,12 @@ import {
 import { notifyAppointmentRescheduled } from "@/lib/novu/service";
 import { logActivity } from "@/lib/activity/log-activity";
 import { getAppUrl } from "@/lib/url";
+import {
+  CLASS_EVENT_ALLOWED_FROM,
+  EVENT_ALLOWED_FROM,
+  RESCHEDULABLE_FROM,
+  SLOT_RESCHEDULABLE_FROM,
+} from "@/lib/booking/transitions";
 
 const MINIMUM_HOURS_BEFORE_RESCHEDULE = 24;
 
@@ -246,9 +252,12 @@ export async function POST(
           const affectedAppointmentIds = Array.from(
             new Set(slotsToReschedule.map((s) => s.appointmentId)),
           );
+          // From-state guard on every slot flip: a reschedule must never
+          // resurrect COMPLETED/CANCELLED history to RESCHEDULED (#837).
           await tx.slotOfAppointment.updateMany({
             where: {
               appointmentId: { in: affectedAppointmentIds },
+              completionStatus: { in: SLOT_RESCHEDULABLE_FROM },
             },
             data: { isTentative: true, completionStatus: "RESCHEDULED" },
           });
@@ -262,7 +271,10 @@ export async function POST(
           ).map((a) => a.id);
 
           await tx.slotOfAppointment.updateMany({
-            where: { appointmentId: { in: allAppointmentIds } },
+            where: {
+              appointmentId: { in: allAppointmentIds },
+              completionStatus: { in: SLOT_RESCHEDULABLE_FROM },
+            },
             data: { isTentative: true, completionStatus: "RESCHEDULED" },
           });
         } else if (derivedType === "CLASS" && appointment.class) {
@@ -275,26 +287,27 @@ export async function POST(
           ).map((a) => a.id);
 
           await tx.slotOfAppointment.updateMany({
-            where: { appointmentId: { in: allAppointmentIds } },
+            where: {
+              appointmentId: { in: allAppointmentIds },
+              completionStatus: { in: SLOT_RESCHEDULABLE_FROM },
+            },
             data: { isTentative: true, completionStatus: "RESCHEDULED" },
           });
         } else {
           // Non-multi-appointment: mark all slots in the single appointment
           await tx.slotOfAppointment.updateMany({
-            where: { appointmentId },
+            where: {
+              appointmentId,
+              completionStatus: { in: SLOT_RESCHEDULABLE_FROM },
+            },
             data: { isTentative: true, completionStatus: "RESCHEDULED" },
           });
         }
 
         // Update status based on appointment type — CAS-guarded (B2): a
         // reschedule racing a cancel/completion must not resurrect the
-        // booking; count 0 means the from-state was terminal → 409.
-        const RESCHEDULABLE_FROM = [
-          "PENDING",
-          "APPROVED",
-          "APPROVED_PENDING_PAYMENT",
-          "SCHEDULED",
-        ] as const;
+        // booking; count 0 means the from-state was terminal → 409. The
+        // set lives in lib/booking/transitions.ts so the map is canonical.
         let movedStatus = 1; // group events validated below
         if (appointment.consultation) {
           movedStatus = (
@@ -317,11 +330,13 @@ export async function POST(
             })
           ).count;
         } else if (appointment.webinar) {
+          // Explicit allowed-from (was notIn) — robust against future enum
+          // additions (#837).
           movedStatus = (
             await tx.webinar.updateMany({
               where: {
                 id: appointment.webinar.id,
-                status: { notIn: ["CANCELLED", "COMPLETED"] },
+                status: { in: EVENT_ALLOWED_FROM.SCHEDULED },
               },
               data: { status: "SCHEDULED" },
             })
@@ -331,7 +346,7 @@ export async function POST(
             await tx.class.updateMany({
               where: {
                 id: appointment.class.id,
-                status: { notIn: ["CANCELLED", "COMPLETED"] },
+                status: { in: CLASS_EVENT_ALLOWED_FROM.SCHEDULED },
               },
               data: { status: "SCHEDULED" },
             })

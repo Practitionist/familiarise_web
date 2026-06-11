@@ -13,6 +13,9 @@ import {
   isPrivileged,
   forbiddenResponse,
 } from "@/lib/auth-helpers";
+import { transitionSubscriptionRequest } from "@/lib/booking/transitions";
+import { IllegalTransitionError } from "@/lib/enterprise/transitions";
+import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 
 export async function GET(request: NextRequest) {
   // Require authentication
@@ -136,6 +139,10 @@ export async function PATCH(request: NextRequest) {
     if (authResult.error) return authResult.error;
     const { session } = authResult;
 
+    // #831 — event mutations previously had no limiter
+    const rl = await applyRateLimit(eventMutationLimiter, session.user.id);
+    if (rl) return rl;
+
     const body = await request.json();
     const result = UpdateSubscriptionStatusSchema.safeParse(body);
     if (!result.success) {
@@ -209,14 +216,20 @@ export async function PATCH(request: NextRequest) {
     );
 
     try {
-      // Update subscription status and dates
-      const subscription = await prisma.subscription.update({
+      // #836 — allowed-from guard rides the WHERE; updateMany returns no
+      // row, so re-read for the heavy include.
+      await prisma.$transaction((tx) =>
+        transitionSubscriptionRequest(tx, {
+          where: { id },
+          to: status,
+          data: {
+            schedulingPeriodStartsAt: startDate,
+            schedulingPeriodEndsAt: endDate,
+          },
+        }),
+      );
+      const subscription = await prisma.subscription.findUniqueOrThrow({
         where: { id },
-        data: {
-          requestStatus: status,
-          schedulingPeriodStartsAt: startDate,
-          schedulingPeriodEndsAt: endDate,
-        },
         include: {
           subscriptionPlan: {
             include: {
@@ -310,6 +323,12 @@ export async function PATCH(request: NextRequest) {
       throw error;
     }
   } catch (error) {
+    if (error instanceof IllegalTransitionError) {
+      return NextResponse.json(
+        { error: error.message, code: error.code },
+        { status: error.httpStatus },
+      );
+    }
     console.error(
       "Error updating subscription:",
       error instanceof Error ? error.message : "Unknown error",

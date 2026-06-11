@@ -37,7 +37,11 @@ function outputToGitHubActions(result: PayoutReconciliationResult): void {
     fs.appendFileSync(outputFile, outputs + "\n");
   }
 
-  if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
+  // #677 PM-1 — match the canonical name the underlying script reads
+  if (
+    !process.env.RAZORPAY_KEY_ID ||
+    !(process.env.RAZORPAY_SECRET ?? process.env.RAZORPAY_KEY_SECRET)
+  ) {
     console.log(
       `::warning::Razorpay credentials not configured — Razorpay records were skipped`,
     );

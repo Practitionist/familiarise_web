@@ -79,6 +79,7 @@ export type AllocationErrorCode =
   | "NOT_FOUND" // event/consultant missing — 400
   | "INVALID_MODE" // unknown allocation mode — 400
   | "LOCK_CONTENTION" // Redis lock busy — 409
+  | "ILLEGAL_TRANSITION" // event left the approvable state mid-allocation (#836) — 409
   | "UNKNOWN_ERROR"; // infra / unexpected — 500
 
 /**
