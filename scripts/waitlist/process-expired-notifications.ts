@@ -2,7 +2,7 @@
  * Process Expired Waitlist Notifications
  *
  * This script processes expired waitlist notifications and notifies the next person in queue.
- * Run via: npx ts-node scripts/waitlist/process-expired-notifications.ts
+ * Run via: npx tsx scripts/waitlist/process-expired-notifications.ts
  *
  * Schedule: Every hour (via GitHub Actions workflow)
  */
@@ -12,88 +12,104 @@ import { WaitlistStatus } from "@prisma/client";
 import { processExpiredNotifications, handleSlotOpening } from "@/lib/waitlist";
 import { sendWaitlistExpiredEmail } from "@/lib/waitlist/notifications";
 import { getAppUrl } from "../../lib/url";
-import { CronLockHeldError } from "@/lib/cron/with-cron-lock";
+import { CronLockHeldError, withCronLock } from "@/lib/cron/with-cron-lock";
+import { withDbConnectRetry } from "@/lib/db/connect-retry";
+
+async function processExpirations(): Promise<void> {
+  const startTime = Date.now();
+
+  // Process expired notifications
+  const result = await processExpiredNotifications();
+
+  console.log(`✅ Processed ${result.processed} expired notifications`);
+
+  if (result.errors.length > 0) {
+    console.warn(`⚠️ ${result.errors.length} errors occurred:`);
+    result.errors.forEach(({ id, error }) => {
+      console.warn(`  - Entry ${id}: ${error}`);
+    });
+  }
+
+  // For each expired entry, notify next person and send expired email
+  const expiredEntries = await prisma.waitlist.findMany({
+    where: {
+      status: WaitlistStatus.EXPIRED,
+      respondedAt: {
+        gte: new Date(Date.now() - 5 * 60 * 1000), // Within last 5 minutes (just processed)
+      },
+    },
+    include: {
+      user: {
+        select: {
+          email: true,
+          name: true,
+        },
+      },
+      webinar: {
+        include: {
+          webinarPlan: true,
+        },
+      },
+      class: {
+        include: {
+          classPlan: true,
+        },
+      },
+    },
+  });
+
+  for (const entry of expiredEntries) {
+    const eventTitle =
+      entry.webinar?.webinarPlan.title ||
+      entry.class?.classPlan.title ||
+      "Event";
+    const eventType = entry.webinarId ? "webinar" : "class";
+    const eventId = entry.webinarId || entry.classId;
+
+    // Send expired notification email
+    if (entry.user.email) {
+      await sendWaitlistExpiredEmail({
+        email: entry.user.email,
+        name: entry.user.name || "Valued User",
+        eventTitle,
+        eventType,
+        rejoinUrl: eventId
+          ? `${getAppUrl()}/explore/programs/plans/${eventType}s/${eventId}`
+          : undefined,
+      });
+    }
+
+    // Notify next person in queue
+    await handleSlotOpening({
+      webinarId: entry.webinarId ?? undefined,
+      classId: entry.classId ?? undefined,
+      slotsAvailable: 1,
+      reason: "cancellation",
+    });
+  }
+
+  const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+  console.log(
+    `\n🎉 Completed in ${duration}s. Processed: ${result.processed}, Emails sent: ${expiredEntries.length}`,
+  );
+}
 
 async function main() {
   console.log("🕐 Starting expired notification processor...");
-  const startTime = Date.now();
 
   try {
-    // Process expired notifications
-    const result = await processExpiredNotifications();
-
-    console.log(`✅ Processed ${result.processed} expired notifications`);
-
-    if (result.errors.length > 0) {
-      console.warn(`⚠️ ${result.errors.length} errors occurred:`);
-      result.errors.forEach(({ id, error }) => {
-        console.warn(`  - Entry ${id}: ${error}`);
-      });
-    }
-
-    // For each expired entry, notify next person and send expired email
-    const expiredEntries = await prisma.waitlist.findMany({
-      where: {
-        status: WaitlistStatus.EXPIRED,
-        respondedAt: {
-          gte: new Date(Date.now() - 5 * 60 * 1000), // Within last 5 minutes (just processed)
-        },
-      },
-      include: {
-        user: {
-          select: {
-            email: true,
-            name: true,
-          },
-        },
-        webinar: {
-          include: {
-            webinarPlan: true,
-          },
-        },
-        class: {
-          include: {
-            classPlan: true,
-          },
-        },
-      },
-    });
-
-    for (const entry of expiredEntries) {
-      const eventTitle =
-        entry.webinar?.webinarPlan.title ||
-        entry.class?.classPlan.title ||
-        "Event";
-      const eventType = entry.webinarId ? "webinar" : "class";
-      const eventId = entry.webinarId || entry.classId;
-
-      // Send expired notification email
-      if (entry.user.email) {
-        await sendWaitlistExpiredEmail({
-          email: entry.user.email,
-          name: entry.user.name || "Valued User",
-          eventTitle,
-          eventType,
-          rejoinUrl: eventId
-            ? `${getAppUrl()}/explore/programs/plans/${eventType}s/${eventId}`
-            : undefined,
-        });
-      }
-
-      // Notify next person in queue
-      await handleSlotOpening({
-        webinarId: entry.webinarId ?? undefined,
-        classId: entry.classId ?? undefined,
-        slotsAvailable: 1,
-        reason: "cancellation",
-      });
-    }
-
-    const duration = ((Date.now() - startTime) / 1000).toFixed(2);
-    console.log(
-      `\n🎉 Completed in ${duration}s. Processed: ${result.processed}, Emails sent: ${expiredEntries.length}`,
+    // #814/#821 — the lock was previously imported but never taken (the
+    // CronLockHeldError catch below was dead code). Same lock name as the
+    // jobs/waitlist wrapper so both entry points mutually exclude. The
+    // connect-retry absorbs the GH-runner → Supabase-pooler ETIMEDOUTs that
+    // were failing whole runs on the first query; a retried body is safe —
+    // expiry processing is CAS-guarded and the 5-minute respondedAt window
+    // bounds duplicate notify attempts.
+    await withCronLock(
+      "process-expired-notifications",
+      { failMode: "open" },
+      () => withDbConnectRetry(processExpirations),
     );
-
     process.exit(0);
   } catch (error) {
     // #476 — lock held = another run is live; skip cleanly (exit 0).
