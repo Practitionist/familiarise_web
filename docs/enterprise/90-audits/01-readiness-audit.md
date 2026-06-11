@@ -649,18 +649,21 @@ canonical and DST-exact (#503 items 1–2); and the booking/payment CHECK
 constraints ride the `db:constraints` sidecar awaiting the pre-MVP reset
 (#676 A1–A4).
 
-**Demonstrated blocker:** the real-API chaos extension (scenarios 9–16 in
-the [chaos runbook](../50-operations/07-chaos-test-runbook.md)) fails 4 of 7
-implemented scenarios against the shared dev database solely because the
-schema declared by the merged hardening train has not been pushed
+**Demonstrated and resolved blocker:** the real-API chaos extension
+(scenarios 9–16 in the
+[chaos runbook](../50-operations/07-chaos-test-runbook.md)) initially failed
+4 of 7 implemented scenarios against the shared dev database solely because
+the schema declared by the merged hardening train had not been pushed
 (`Appointment.cancellationPolicySnapshot`, `organizations.version`). The
-`db push` owed by #837 is therefore not housekeeping — entire route families
-500 on environments whose schema lags, and the same failure would occur in
-production if deploy ever preceded push.
+owed `db push` was applied on 2026-06-11 — with a data-preserving manual
+migration for the `CreditPoolConfig` column rename and the ledger triggers
+re-applied — after which **all seven implemented scenarios pass**. The
+lesson stands for production: entire route families 500 on environments
+whose schema lags, so push must always precede deploy.
 
-**Still open for launch:** the #780/#781 schema-freeze stack, the owed
-schema push (above), and the staging go/no-go run (runbook scenarios 1–4
-plus the 2× peak ramp, now joined by scenarios 9–13/15/16).
+**Still open for launch:** the #780/#781 schema-freeze stack and the
+staging go/no-go run (runbook scenarios 1–4 plus the 2× peak ramp, now
+joined by scenarios 9–13/15/16).
 
 ---
 

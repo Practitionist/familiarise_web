@@ -135,12 +135,15 @@ under its composite event id, and a replay of either must not create a
 second row.
 
 A run of this extension on 2026-06-11 surfaced exactly the failure class it
-exists to catch: scenarios 9, 10, 11, and 13 fail against the shared dev
-database because schema declared by the merged hardening train
-(`Appointment.cancellationPolicySnapshot`, `organizations.version`) has not
-been pushed to it — the `db push` owed by #837. Scenarios 12, 15, and 16
-pass. The four blocked scenarios are correct as written and become the
-post-push verification.
+exists to catch: scenarios 9, 10, 11, and 13 initially failed against the
+shared dev database because schema declared by the merged hardening train
+(`Appointment.cancellationPolicySnapshot`, `organizations.version`) had not
+been pushed to it — the `db push` owed by #837. The push was applied the
+same day (with a data-preserving manual migration for the
+`CreditPoolConfig.creditsPerCycle` → `creditBudgetPerCycle` rename, and the
+ledger triggers re-applied per the sidecar contract), after which all seven
+implemented scenarios pass. The production deploy must follow the same
+order: push before deploy, or the same route families 500.
 
 ## Go/no-go
 
