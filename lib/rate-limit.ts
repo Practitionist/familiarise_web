@@ -40,6 +40,13 @@ export const authLimiter = makeLimiter(10, "15 m", "rl:auth");
 /** 5 per minute — POST /api/checkout */
 export const checkoutLimiter = makeLimiter(5, "1 m", "rl:checkout");
 
+/**
+ * 10 per minute — DELETE /api/checkout/pending/[paymentId] (#849).
+ * Own bucket so releasing a hold never consumes checkout quota — a user
+ * abandoning one attempt to start another needs both calls in the same minute.
+ */
+export const cancelPendingLimiter = makeLimiter(10, "1 m", "rl:cancel-pending");
+
 /** 10 per minute — POST /api/payments/discounts/validate */
 export const discountLimiter = makeLimiter(10, "1 m", "rl:discount");
 
