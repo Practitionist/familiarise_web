@@ -3,7 +3,7 @@
  * Used by admin/tickets, staff/tickets pages and their API routes.
  */
 
-export interface TicketUser {
+interface TicketUser {
   id: string;
   name: string | null;
   email: string | null;
@@ -24,7 +24,7 @@ export interface TicketResponse {
   } | null;
 }
 
-export interface TicketAttachment {
+interface TicketAttachment {
   id: string;
   fileName: string;
   originalName: string;
@@ -34,7 +34,7 @@ export interface TicketAttachment {
   uploadedAt: string;
 }
 
-export interface LinkedConsultation {
+interface LinkedConsultation {
   id: string;
   requestStatus: string;
   consultationPlan: {
@@ -52,7 +52,7 @@ export interface LinkedConsultation {
   } | null;
 }
 
-export interface LinkedPayment {
+interface LinkedPayment {
   id: string;
   amount: number;
   currency: string;
@@ -61,7 +61,7 @@ export interface LinkedPayment {
   createdAt: string;
 }
 
-export interface LinkedRefund {
+interface LinkedRefund {
   id: string;
   amount: number;
   currency: string;

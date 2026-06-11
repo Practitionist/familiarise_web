@@ -242,6 +242,7 @@ export function MultiSessionEventCard({
             isTentative={isTentative}
             bookingStatus={bookingStatus}
             waitlistPosition={waitlistPosition}
+            organizationId={appointment?.organizationId}
           />
         </div>
 

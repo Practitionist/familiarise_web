@@ -16,6 +16,8 @@
 
 import { PayoutStatus, PaymentGateway } from "@prisma/client";
 import prisma from "@/lib/prisma";
+import { processOrgPayout } from "@/lib/payments/payouts/org-payout-service";
+import { sumPaise } from "@/lib/payments/utils/money";
 
 /**
  * Result structure for individual payout processing
@@ -25,6 +27,8 @@ export interface PayoutProcessResult {
   success: boolean;
   providerPayoutId?: string;
   error?: string;
+  /** #776 — true when another concurrent run already claimed this payout. */
+  skipped?: boolean;
 }
 
 /**
@@ -49,7 +53,11 @@ async function createRazorpayPayout(
   payoutId: string,
 ): Promise<{ id: string }> {
   const keyId = process.env.RAZORPAY_KEY_ID;
-  const keySecret = process.env.RAZORPAY_KEY_SECRET;
+  // #677 PM-1 — prod env defines RAZORPAY_SECRET (the canonical name the
+  // core lib reads); reading only RAZORPAY_KEY_SECRET silently disabled
+  // this reconciliation in production while it looked green.
+  const keySecret =
+    process.env.RAZORPAY_SECRET ?? process.env.RAZORPAY_KEY_SECRET;
 
   if (!keyId || !keySecret) {
     throw new Error("RazorpayX credentials not configured");
@@ -65,7 +73,11 @@ async function createRazorpayPayout(
     headers: {
       "Content-Type": "application/json",
       Authorization: `Basic ${Buffer.from(`${keyId}:${keySecret}`).toString("base64")}`,
-      "X-Payout-Idempotency": `payout_${payoutId}_${Date.now()}`,
+      // Deterministic key — must match across retries so RazorpayX dedupes
+      // re-submissions of the same payout (#enterprise close-out 2026-05-15).
+      // Previously included `Date.now()`, which defeated dedupe and risked
+      // double payouts when the network round-trip retried.
+      "X-Payout-Idempotency": `payout_${payoutId}`,
     },
     body: JSON.stringify({
       account_number: accountNumber,
@@ -150,19 +162,34 @@ async function processSinglePayout(payout: {
     success: false,
   };
 
+  // #785 — declared OUTSIDE the try so the catch can read it: undefined until the
+  // gateway accepts, letting the catch tell a pre-gateway failure (safe to FAIL +
+  // release earnings) from a post-gateway DB-write failure (money already sent).
+  let providerPayoutId: string | undefined;
+
   try {
-    // Mark as processing
-    await prisma.payout.update({
-      where: { id: payout.id },
+    // #776 — atomically claim APPROVED→PROCESSING. Two overlapping cron runs both
+    // load the same APPROVED set; without this guard both submit to the gateway.
+    // The gateway dedupes on the @unique idempotencyKey, but the loser's
+    // duplicate-submit error would be caught below and mark the payout FAILED — a
+    // false failure plus retry churn. count===0 means another run already claimed
+    // it, so we skip submission entirely.
+    const claim = await prisma.consultantPayout.updateMany({
+      where: { id: payout.id, status: PayoutStatus.APPROVED },
       data: { status: PayoutStatus.PROCESSING },
     });
+    if (claim.count === 0) {
+      console.log(
+        `⏭️  Payout ${payout.id} already claimed by another run — skipping`,
+      );
+      result.skipped = true;
+      return result;
+    }
 
     const account = payout.consultantProfile.payoutAccounts[0];
     if (!account) {
       throw new Error("No payout account found");
     }
-
-    let providerPayoutId: string;
 
     if (payout.provider === PaymentGateway.RAZORPAY) {
       if (!account.razorpayFundAccId) {
@@ -193,7 +220,7 @@ async function processSinglePayout(payout: {
     }
 
     // Update payout with provider ID
-    await prisma.payout.update({
+    await prisma.consultantPayout.update({
       where: { id: payout.id },
       data: {
         providerPayoutId,
@@ -208,8 +235,45 @@ async function processSinglePayout(payout: {
     const errorMessage =
       error instanceof Error ? error.message : "Unknown error";
 
-    // Mark as failed
-    await prisma.payout.update({
+    // #785 — if the gateway ALREADY accepted (providerPayoutId set) but a later
+    // DB write threw, the money was SENT. Marking FAILED + unlinking earnings
+    // here would re-batch them under a fresh idempotencyKey the gateway won't
+    // dedupe → DOUBLE disbursement. Instead persist the gateway id and leave the
+    // row PROCESSING with earnings LINKED; handle-stuck-payouts then reconciles
+    // it against the gateway. Only a pre-gateway failure FAILs + releases.
+    if (providerPayoutId) {
+      try {
+        await prisma.consultantPayout.update({
+          where: { id: payout.id },
+          data: {
+            providerPayoutId,
+            status: PayoutStatus.PROCESSING,
+            failureReason:
+              `Gateway accepted (${providerPayoutId}); post-submit DB write failed, awaiting reconcile: ${errorMessage}`.slice(
+                0,
+                500,
+              ),
+          },
+        });
+      } catch (persistErr) {
+        // Double DB failure — the row stays PROCESSING (from the claim) with
+        // earnings still linked (no re-batch). Page for manual reconcile.
+        console.error(
+          `[process-payouts] CRITICAL: gateway accepted ${providerPayoutId} but DB persist failed twice for payout ${payout.id}; manual reconcile required`,
+          persistErr,
+        );
+      }
+      result.providerPayoutId = providerPayoutId;
+      result.error = `gateway-accepted-db-write-failed: ${errorMessage}`;
+      console.error(
+        `⚠️ Payout ${payout.id}: gateway accepted ${providerPayoutId} but DB write failed — quarantined PROCESSING (NOT failed) to avoid double-pay`,
+      );
+      return result;
+    }
+
+    // Genuine pre-gateway failure (rejected / never submitted) — safe to FAIL
+    // and release the earnings for a fresh batch.
+    await prisma.consultantPayout.update({
       where: { id: payout.id },
       data: {
         status: PayoutStatus.FAILED,
@@ -250,7 +314,7 @@ export async function processApprovedPayouts(): Promise<ProcessingResult> {
 
   try {
     // Get all approved payouts
-    const approvedPayouts = await prisma.payout.findMany({
+    const approvedPayouts = await prisma.consultantPayout.findMany({
       where: { status: PayoutStatus.APPROVED },
       include: {
         consultantProfile: {
@@ -276,13 +340,20 @@ export async function processApprovedPayouts(): Promise<ProcessingResult> {
 
     // Process each payout
     for (const payout of approvedPayouts) {
-      result.processed++;
-
       console.log(
         `\n📤 Processing payout for ${payout.consultantProfile.user.name || "Unknown"}: ₹${(payout.amount / 100).toFixed(2)}`,
       );
 
       const payoutResult = await processSinglePayout(payout);
+
+      // #776 — a payout claimed by a concurrent run is neither processed, succeeded
+      // nor failed by this run; don't count it (it would inflate metrics / fail the
+      // run). The run that claimed it owns the outcome.
+      if (payoutResult.skipped) {
+        continue;
+      }
+
+      result.processed++;
       result.results.push(payoutResult);
 
       if (payoutResult.success) {
@@ -321,6 +392,50 @@ export async function processApprovedPayouts(): Promise<ProcessingResult> {
 }
 
 /**
+ * Process org-side payouts (#713-2 / #700 LED-4).
+ *
+ * Today only progresses PENDING → PROCESSING and writes the audit
+ * trail; live gateway submission lands in PR-3 behind ENABLE_LIVE_PAYOUTS.
+ * Errors against a single payout do not abort the rest of the run.
+ */
+export interface OrgProcessingResult {
+  success: boolean;
+  scanned: number;
+  advanced: number;
+  errors: string[];
+}
+
+export async function processOrgPayouts(): Promise<OrgProcessingResult> {
+  const result: OrgProcessingResult = {
+    success: false,
+    scanned: 0,
+    advanced: 0,
+    errors: [],
+  };
+
+  const pending = await prisma.organizationPayout.findMany({
+    where: { status: PayoutStatus.PENDING },
+    select: { id: true, organizationId: true, amountPaise: true },
+  });
+  result.scanned = pending.length;
+
+  for (const p of pending) {
+    try {
+      const out = await processOrgPayout(p.id);
+      if (out.status === PayoutStatus.PROCESSING) {
+        result.advanced++;
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      result.errors.push(`OrgPayout ${p.id}: ${message}`);
+    }
+  }
+
+  result.success = true;
+  return result;
+}
+
+/**
  * Get processing statistics
  */
 export async function getProcessingStats(): Promise<{
@@ -330,12 +445,12 @@ export async function getProcessingStats(): Promise<{
   processingAmount: number;
 }> {
   const [approved, processing] = await Promise.all([
-    prisma.payout.aggregate({
+    prisma.consultantPayout.aggregate({
       where: { status: PayoutStatus.APPROVED },
       _sum: { amount: true },
       _count: true,
     }),
-    prisma.payout.aggregate({
+    prisma.consultantPayout.aggregate({
       where: { status: PayoutStatus.PROCESSING },
       _sum: { amount: true },
       _count: true,
@@ -344,9 +459,9 @@ export async function getProcessingStats(): Promise<{
 
   return {
     approvedCount: approved._count,
-    approvedAmount: approved._sum.amount || 0,
+    approvedAmount: sumPaise(approved._sum.amount),
     processingCount: processing._count,
-    processingAmount: processing._sum.amount || 0,
+    processingAmount: sumPaise(processing._sum.amount),
   };
 }
 
@@ -370,6 +485,23 @@ export async function runProcessingTask(): Promise<ProcessingResult> {
 
     // Process payouts
     const result = await processApprovedPayouts();
+
+    // Org-side processing pass — independent of consultant-side success.
+    try {
+      const orgResult = await processOrgPayouts();
+      console.log(`\n🏢 Org Payout Processing:`);
+      console.log(`   Scanned (PENDING): ${orgResult.scanned}`);
+      console.log(`   Advanced → PROCESSING: ${orgResult.advanced}`);
+      if (orgResult.errors.length > 0) {
+        console.warn(`   ⚠️ Org payout issues (non-fatal):`);
+        orgResult.errors.forEach((e) => console.warn(`      - ${e}`));
+      }
+    } catch (err) {
+      console.error(
+        "❌ Org payout processing threw — consultant processing was unaffected:",
+        err,
+      );
+    }
 
     // Get post-processing stats
     const postStats = await getProcessingStats();

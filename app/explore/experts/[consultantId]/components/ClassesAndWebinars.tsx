@@ -21,9 +21,13 @@ import React, { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useCurrency } from "@/hooks/useCurrency";
 
+// price is number at runtime via the extended client (#780)
+type ClassPlanRow = Omit<ClassPlan, "price"> & { price: number };
+type WebinarPlanRow = Omit<WebinarPlan, "price"> & { price: number };
+
 interface ClassesAndWebinarsProps {
-  classPlans: ClassPlan[];
-  webinarPlans: WebinarPlan[];
+  classPlans: ClassPlanRow[];
+  webinarPlans: WebinarPlanRow[];
   enrolledClassPlanIds?: Set<string>;
   registeredWebinarPlanIds?: Set<string>;
 }
@@ -75,7 +79,7 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
     return null;
   }
 
-  const renderClassCard = (classPlan: ClassPlan, index: number) => {
+  const renderClassCard = (classPlan: ClassPlanRow, index: number) => {
     const isEnrolled = isLoggedIn && enrolledClassPlanIds.has(classPlan.id);
     const gradient = getGradient(classPlan.id, "class");
 
@@ -186,7 +190,7 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
     );
   };
 
-  const renderWebinarCard = (webinarPlan: WebinarPlan, index: number) => {
+  const renderWebinarCard = (webinarPlan: WebinarPlanRow, index: number) => {
     const isRegistered =
       isLoggedIn && registeredWebinarPlanIds.has(webinarPlan.id);
     const gradient = getGradient(webinarPlan.id, "webinar");

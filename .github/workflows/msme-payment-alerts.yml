@@ -1,0 +1,49 @@
+name: MSME Section 43B(h) Payment Alerts
+
+on:
+  schedule:
+    # 04:30 UTC = 10:00 IST. Runs after the cleanup-empty-folders cron
+    # at 03:30 UTC and before the morning India business window.
+    # MSME deadlines are date-precision so daily is sufficient.
+    - cron: "30 4 * * *"
+  workflow_dispatch:
+
+jobs:
+  msme-payment-alerts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DIRECT_URL: ${{ secrets.DIRECT_URL }}
+      # Email dispatch is opt-in. When MSME_ALERT_EMAIL or RESEND_API_KEY
+      # are absent, the cron falls back to structured-log only — finance
+      # picks up alerts via the Cloud Logging → #finance-alerts sink.
+      MSME_ALERT_EMAIL: ${{ secrets.MSME_ALERT_EMAIL }}
+      RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+      NEXT_PUBLIC_APP_URL: ${{ secrets.NEXT_PUBLIC_APP_URL }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Run MSME deadline alerts
+        run: npx tsx jobs/compliance/msme-payment-alerts.ts
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "MSME deadline alerts cron failed"
+          # TODO: wire to #ops-alerts Slack channel.

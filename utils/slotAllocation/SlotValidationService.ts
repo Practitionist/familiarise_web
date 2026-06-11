@@ -5,12 +5,16 @@
  * Single source of truth for validation rules - eliminates duplication across routes.
  */
 
-import prisma from "@/lib/prisma";
-import { PrismaClient, Prisma, RequestStatus, ScheduleType } from "@prisma/client";
+import prisma, { type PrismaLike } from "@/lib/prisma";
+import {
+  PrismaClient,
+  Prisma,
+  RequestStatus,
+  ScheduleType,
+} from "@prisma/client";
 import {
   EventType,
   ValidationResult,
-  PrismaTransaction,
   ConsultantAllocationData,
   EventConfig,
 } from "./types";
@@ -23,9 +27,7 @@ import { isMinuteWithinWeeklySlot } from "./slotTimeUtils";
  * Service for validating slot allocations
  */
 export class SlotValidationService {
-  constructor(
-    private readonly prismaClient: typeof prisma | PrismaTransaction = prisma,
-  ) {}
+  constructor(private readonly prismaClient: PrismaLike = prisma) {}
 
   /**
    * Simple slot availability check (used for lock validation)
@@ -677,7 +679,7 @@ export class SlotValidationService {
     }
 
     const validationService = new SubscriptionValidationService(
-      this.prismaClient as PrismaClient | Prisma.TransactionClient,
+      this.prismaClient as PrismaLike,
     );
 
     // Exclude tentative appointments from weekly call count.

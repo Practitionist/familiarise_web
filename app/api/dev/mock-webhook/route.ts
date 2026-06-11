@@ -237,7 +237,7 @@ async function handleMockPayoutProcessed(
   }
 
   // Find payout by ID or providerPayoutId
-  const payout = await prisma.payout.findFirst({
+  const payout = await prisma.consultantPayout.findFirst({
     where: {
       OR: [{ id: payoutId }, { providerPayoutId: payoutId }],
     },
@@ -256,7 +256,7 @@ async function handleMockPayoutProcessed(
 
   // Update the payout with the mock provider ID if not set
   if (!payout.providerPayoutId) {
-    await prisma.payout.update({
+    await prisma.consultantPayout.update({
       where: { id: payout.id },
       data: { providerPayoutId },
     });
@@ -290,7 +290,7 @@ async function handleMockPayoutRejected(
     };
   }
 
-  const payout = await prisma.payout.findFirst({
+  const payout = await prisma.consultantPayout.findFirst({
     where: {
       OR: [{ id: payoutId }, { providerPayoutId: payoutId }],
     },
@@ -308,7 +308,7 @@ async function handleMockPayoutRejected(
 
   // Update the payout with the mock provider ID if not set
   if (!payout.providerPayoutId) {
-    await prisma.payout.update({
+    await prisma.consultantPayout.update({
       where: { id: payout.id },
       data: { providerPayoutId },
     });

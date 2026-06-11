@@ -1,6 +1,6 @@
 import { TAppointment } from "@/types/appointment";
 
-export interface AppointmentTimingDetails {
+interface AppointmentTimingDetails {
   eventType: "consultation" | "subscription" | "webinar" | "class";
   eventId: string;
   /** Generic sessions per week - maps to callsPerWeek for subscriptions, meetingsPerWeek for classes */
@@ -14,7 +14,7 @@ export interface AppointmentTimingDetails {
 /**
  * Extracts timing details from an appointment for use with EventTimingsCalendar
  */
-export function getAppointmentTimingDetails(
+function getAppointmentTimingDetails(
   appointment: TAppointment,
 ): AppointmentTimingDetails {
   switch (appointment.appointmentType) {
@@ -125,14 +125,4 @@ export function canManageGroupTimings(
   // Use the first appointment as representative of the group
   const firstAppointment = groupAppointments[0];
   return canManageAppointmentTimings(firstAppointment);
-}
-
-/**
- * Gets the display name for an appointment's timing management
- */
-export function getAppointmentTimingDisplayName(
-  appointment: TAppointment,
-): string {
-  const details = getAppointmentTimingDetails(appointment);
-  return `${details.title} Timings`;
 }

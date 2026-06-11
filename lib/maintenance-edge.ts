@@ -10,7 +10,15 @@
 
 import { NextRequest } from "next/server";
 
-// Redis key constants
+// Redis key constants. Platform-scoped: the middleware reads the single
+// platform maintenance phase/config on every request (30s-cached below).
+//
+// NOTE for future devs: per-org maintenance windows
+// ("maintenance:phase:org:<orgId>") are NOT implemented. There was previously
+// `orgMaintenanceKeys()` / `platformMaintenanceKeys()` scaffolding here with no
+// consumers — it was removed (#776) as dead code. If/when per-org windows ship,
+// add the org-scoped read here (org key first, fall back to platform) and a
+// matching writer in the admin maintenance route.
 const REDIS_KEYS = {
   PHASE: "maintenance:phase",
   CONFIG: "maintenance:config",
@@ -114,9 +122,11 @@ export async function getMaintenanceState(): Promise<MaintenanceState> {
   }
 }
 
-// Matches paths ending with a file extension (e.g. .js, .css, .png, .woff2)
-// More precise than pathname.includes(".") which false-positives on /api/v2.0/foo
-const HAS_FILE_EXTENSION = /\.\w{2,10}$/;
+// Matches paths ending with a file extension (e.g. .js, .css, .png, .woff2).
+// More precise than pathname.includes(".") which false-positives on /api/v2.0/foo.
+// Exported so middleware.ts reuses the exact same rule for its static-asset skip
+// (single source of truth — #776).
+export const HAS_FILE_EXTENSION = /\.\w{2,10}$/;
 
 /**
  * Check if a route is exempt from maintenance mode.

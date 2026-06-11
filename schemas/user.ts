@@ -236,7 +236,6 @@ export const ConsultantProfileSchema = z.object({
   education: z.array(EducationSchema).optional(),
 });
 
-export type ConsultantProfile = z.infer<typeof ConsultantProfileSchema>;
 
 // #endregion
 
@@ -284,8 +283,6 @@ export const AdminProfileSchema = z.object({
   notes: z.string().optional(),
 });
 
-export type AdminProfile = z.infer<typeof AdminProfileSchema>;
-
 // #endregion
 
 // #region Schedule Schemas
@@ -319,8 +316,6 @@ export const CookiePreferenceSchema = z.object({
   // Examples: Live chat (Intercom, Crisp), video embeds, social sharing, personalization
   functional: z.boolean().default(false),
 });
-
-export type CookiePreference = z.infer<typeof CookiePreferenceSchema>;
 
 export const NotificationPreferenceSchema = z.object({
   allNotifications: z.boolean().default(true),
@@ -375,7 +370,5 @@ export const FullUserSchema = z.object({
   cookiePreferences: CookiePreferenceSchema.optional().nullable(),
   notificationPreferences: NotificationPreferenceSchema.optional().nullable(),
 });
-
-export type FullUser = z.infer<typeof FullUserSchema>;
 
 // #endregion

@@ -4,6 +4,7 @@
  */
 "use client"; // Mark as a Client Component
 
+import { useToast } from "@/hooks/use-toast";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
@@ -57,6 +58,7 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false); // To disable buttons during save
+  const { toast } = useToast();
 
   // Fetch data on component mount
   useEffect(() => {
@@ -240,9 +242,10 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
 
       const updatedData: StaffData = await response.json();
       setStaffData(updatedData); // Update state with response data
-      alert(
-        `${section.charAt(0).toUpperCase() + section.slice(1)} settings saved successfully!`,
-      ); // Simple feedback
+      toast({
+        title: "Settings saved",
+        description: `${section.charAt(0).toUpperCase() + section.slice(1)} settings updated.`,
+      });
     } catch (err: unknown) {
       const errorMessage =
         err instanceof Error
@@ -250,7 +253,11 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
           : `An error occurred while saving ${section} settings`;
       setError(errorMessage);
       console.error("Save error:", err);
-      alert(`Error saving ${section} settings: ${errorMessage}`); // Simple feedback
+      toast({
+        title: `Couldn't save ${section} settings`,
+        description: errorMessage,
+        variant: "destructive",
+      });
     } finally {
       setIsSaving(false);
     }

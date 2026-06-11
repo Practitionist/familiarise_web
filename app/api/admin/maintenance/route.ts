@@ -159,7 +159,7 @@ export async function POST(request: NextRequest) {
         status: { in: ["NEEDS_RESPONSE", "WARNING_NEEDS_RESPONSE"] },
         dueBy: { gte: new Date(), lte: bufferEnd },
       },
-      select: { id: true, dueBy: true, amount: true, currency: true },
+      select: { id: true, dueBy: true, amountPaise: true, currency: true },
       orderBy: { dueBy: "asc" },
     });
     if (urgentDisputes.length > 0) {

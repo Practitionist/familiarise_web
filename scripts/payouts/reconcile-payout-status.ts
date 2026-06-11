@@ -19,6 +19,7 @@
 
 import prisma from "../../lib/prisma";
 import { PayoutStatus, PaymentGateway } from "@prisma/client";
+import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 
 // Only reconcile payouts older than 48 hours (give webhooks time)
 const MIN_AGE_HOURS = 48;
@@ -82,7 +83,11 @@ async function getRazorpayPayoutStatus(
   providerPayoutId: string,
 ): Promise<{ status: string; failureReason?: string } | null> {
   const keyId = process.env.RAZORPAY_KEY_ID;
-  const keySecret = process.env.RAZORPAY_KEY_SECRET;
+  // #677 PM-1 — prod env defines RAZORPAY_SECRET (the canonical name the
+  // core lib reads); reading only RAZORPAY_KEY_SECRET silently disabled
+  // this reconciliation in production while it looked green.
+  const keySecret =
+    process.env.RAZORPAY_SECRET ?? process.env.RAZORPAY_KEY_SECRET;
 
   if (!keyId || !keySecret) {
     console.warn("RazorpayX credentials not configured");
@@ -135,6 +140,12 @@ function mapGatewayStatus(
         return PayoutStatus.CANCELLED;
       case "failed":
         return PayoutStatus.FAILED;
+      // This poller only walks PENDING/PROCESSING payouts, where the PAYOUT
+      // ledger txn was never posted — a gateway "reversed" here is a net-zero
+      // round trip, so FAILED handling (unlink earnings, reverse TDS) is the
+      // correct accounting. Post-COMPLETED reversals arrive via the
+      // payout.reversed webhook → markConsultantPayoutReversed (#812), which
+      // does post the counter-txn. The failureReason records the distinction.
       case "reversed":
         return PayoutStatus.FAILED;
       default:
@@ -167,7 +178,15 @@ function mapGatewayStatus(
 /**
  * Reconcile stale PENDING/PROCESSING payouts with gateway status
  */
+// #476 — locked at the core so every entry (GH Actions / HTTP) shares one
+// mutual exclusion; fail-closed: money state must not double-run unlocked.
 export async function reconcilePayoutStatus(): Promise<PayoutReconciliationResult> {
+  return withCronLock("reconcile-payout-status", { failMode: "closed", ttlMs: LONG_JOB_TTL_MS }, () =>
+    reconcilePayoutStatusUnlocked(),
+  );
+}
+
+async function reconcilePayoutStatusUnlocked(): Promise<PayoutReconciliationResult> {
   const errors: string[] = [];
   const discrepancies: string[] = [];
   let reconciledCount = 0;
@@ -179,7 +198,7 @@ export async function reconcilePayoutStatus(): Promise<PayoutReconciliationResul
   const maxAge = new Date(Date.now() - MAX_AGE_DAYS * 24 * 60 * 60 * 1000);
 
   // Find stale PENDING or PROCESSING payouts
-  const stalePayouts = await prisma.payout.findMany({
+  const stalePayouts = await prisma.consultantPayout.findMany({
     where: {
       status: { in: [PayoutStatus.PENDING, PayoutStatus.PROCESSING] },
       updatedAt: {
@@ -199,9 +218,14 @@ export async function reconcilePayoutStatus(): Promise<PayoutReconciliationResul
     orderBy: { updatedAt: "asc" },
   });
 
-  const razorpayConfigured = !!(process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET);
+  const razorpayConfigured = !!(
+    process.env.RAZORPAY_KEY_ID &&
+    (process.env.RAZORPAY_SECRET ?? process.env.RAZORPAY_KEY_SECRET)
+  );
   if (!razorpayConfigured) {
-    console.warn("⚠️ Razorpay credentials not configured — Razorpay records will be skipped");
+    console.warn(
+      "⚠️ Razorpay credentials not configured — Razorpay records will be skipped",
+    );
   }
 
   console.log(
@@ -277,13 +301,18 @@ export async function reconcilePayoutStatus(): Promise<PayoutReconciliationResul
       discrepancies.push(discrepancy);
       console.log(`   ⚠️ DISCREPANCY: ${discrepancy}`);
 
-      await prisma.payout.update({
+      await prisma.consultantPayout.update({
         where: { id: payout.id },
         data: {
           status: mappedStatus,
           failureReason:
             mappedStatus === PayoutStatus.FAILED
-              ? gatewayStatus.failureMessage || gatewayStatus.failureReason
+              ? (gatewayStatus.status.toLowerCase() === "reversed"
+                  ? "gateway reversed pre-completion (net-zero round trip): "
+                  : "") +
+                (gatewayStatus.failureMessage ||
+                  gatewayStatus.failureReason ||
+                  gatewayStatus.status)
               : undefined,
           processedAt:
             mappedStatus === PayoutStatus.COMPLETED ? new Date() : undefined,

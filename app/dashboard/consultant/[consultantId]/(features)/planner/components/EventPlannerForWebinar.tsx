@@ -50,6 +50,7 @@ import { WebinarEvent, WebinarPlannerProps } from "../types/event";
 import { PlanMaterialsUpload } from "./PlanMaterialsUpload";
 import { CollaboratorsTab } from "@/components/collaborators/CollaboratorsTab";
 import { PlanImageUploader } from "@/components/plans/PlanImageUploader";
+import { toCurrencyEnum } from "@/lib/payments/validation/currency-guards";
 
 // Form-specific schema - all required fields explicitly defined
 const WebinarFormSchema = z.object({
@@ -277,7 +278,7 @@ export function EventPlannerForWebinar({
           title: formData.title,
           description: formData.description ?? "",
           price: Math.round(formData.price * 100),
-          priceCurrency: formData.priceCurrency ?? "INR",
+          priceCurrency: toCurrencyEnum(formData.priceCurrency),
           certificateProvided: formData.certificateProvided ?? false,
           recordingEnabled: formData.recordingEnabled ?? false,
           recordingStoragePolicy: initialData?.webinarPlan?.recordingStoragePolicy ?? "STREAM_ONLY",
@@ -291,6 +292,10 @@ export function EventPlannerForWebinar({
           topics: formData.topics,
           consultantProfileId: consultantId,
           consultantProfile: null,
+          organizationId: null,
+          // #726 — personal plans default to PUBLIC; org-owned plans
+          // surface a visibility toggle in their dedicated catalog UI.
+          visibility: initialData?.webinarPlan?.visibility ?? "PUBLIC",
           imageUrl: initialData?.webinarPlan?.imageUrl ?? null,
           createdAt: initialData?.webinarPlan?.createdAt ?? now,
           updatedAt: now,

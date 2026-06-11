@@ -1,11 +1,18 @@
 import prisma from "@/lib/prisma";
-import { DayOfWeek, Prisma, ScheduleType, SessionType } from "@prisma/client";
+import {
+  DayOfWeek,
+  type OrgPlanVisibility,
+  Prisma,
+  ScheduleType,
+  SessionType,
+} from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { experienceValidation } from "@/schemas/shared";
 import { checkActiveAppointments } from "../utils/consultant-appointments";
 import { getSession } from "@/lib/auth-server";
 import { apiError } from "@/lib/errors";
+import { toLocalMinutes, toLocalDay } from "@/utils/slotAllocation/localTime";
 import {
   dateToMinuteUtc,
   validateWeeklySlotTimeOrder,
@@ -142,6 +149,15 @@ export async function GET(
     // Determine which user fields to include based on access level
     const isPrivilegedAccess = isOwnProfile || isAdmin;
 
+    // #726 — public viewers must not see ORG_ONLY plans surfaced via the
+    // consultant detail page. Privileged viewers (the consultant
+    // themselves + ADMIN) see everything; the public include narrows
+    // to PUBLIC + ORG_AND_PUBLIC.
+    const planVisibilityFilter: { visibility: { in: OrgPlanVisibility[] } } | undefined =
+      isPrivilegedAccess
+        ? undefined
+        : { visibility: { in: ["PUBLIC", "ORG_AND_PUBLIC"] } };
+
     // Fetch consultant with appropriate user data
     const consultant = await prisma.consultantProfile.findUnique({
       where: { id },
@@ -189,16 +205,23 @@ export async function GET(
         tags: true,
         slotsOfAvailabilityWeekly: true,
         slotsOfAvailabilityCustom: true,
-        consultationPlans: true,
+        consultationPlans: planVisibilityFilter
+          ? { where: planVisibilityFilter }
+          : true,
         subscriptionPlans: {
+          ...(planVisibilityFilter && { where: planVisibilityFilter }),
           include: {
             subscriptionContents: {
               orderBy: { order: "asc" },
             },
           },
         },
-        webinarPlans: true,
-        classPlans: true,
+        webinarPlans: planVisibilityFilter
+          ? { where: planVisibilityFilter }
+          : true,
+        classPlans: planVisibilityFilter
+          ? { where: planVisibilityFilter }
+          : true,
         reviews: {
           select: { id: true, rating: true },
           take: 5,
@@ -362,14 +385,34 @@ export async function PUT(
           : 0;
 
         const weeklySlotData: Prisma.SlotOfAvailabilityWeeklyCreateManyInput[] =
-          slotsOfAvailabilityWeekly.map((slot) => ({
-            consultantProfileId: id,
-            startDay: slot.dayOfWeekforStartTimeInUTC,
-            endDay: slot.dayOfWeekforEndTimeInUTC,
-            startTimeUtc: dateToMinuteUtc(new Date(slot.slotStartTimeInUTC)),
-            endTimeUtc: dateToMinuteUtc(new Date(slot.slotEndTimeInUTC)),
-            utcOffsetMinutes,
-          }));
+          slotsOfAvailabilityWeekly.map((slot) => {
+            const startTimeUtc = dateToMinuteUtc(
+              new Date(slot.slotStartTimeInUTC),
+            );
+            const endTimeUtc = dateToMinuteUtc(new Date(slot.slotEndTimeInUTC));
+            return {
+              consultantProfileId: id,
+              startDay: slot.dayOfWeekforStartTimeInUTC,
+              endDay: slot.dayOfWeekforEndTimeInUTC,
+              startTimeUtc,
+              endTimeUtc,
+              utcOffsetMinutes,
+              // #503 — DST-proof columns written alongside the frozen offset.
+              timezone: userTimezone,
+              localStartMinutes: toLocalMinutes(startTimeUtc, utcOffsetMinutes),
+              localEndMinutes: toLocalMinutes(endTimeUtc, utcOffsetMinutes),
+              localStartDay: toLocalDay(
+                slot.dayOfWeekforStartTimeInUTC,
+                startTimeUtc,
+                utcOffsetMinutes,
+              ),
+              localEndDay: toLocalDay(
+                slot.dayOfWeekforEndTimeInUTC,
+                endTimeUtc,
+                utcOffsetMinutes,
+              ),
+            };
+          });
 
         // Validate each weekly slot before saving
         for (const slot of weeklySlotData) {
@@ -541,13 +584,53 @@ export async function DELETE(
     // Verify the caller owns this consultant profile
     const ownerCheck = await prisma.consultantProfile.findUnique({
       where: { id },
-      select: { userId: true },
+      select: {
+        userId: true,
+        deletedAt: true,
+        // #781 §B — earnings/payouts/TDS Restrict this profile; a profile
+        // that ever moved money can only soft-delete.
+        _count: {
+          select: { earnings: true, payouts: true, tdsRecords: true },
+        },
+      },
     });
     if (!ownerCheck || ownerCheck.userId !== session.user.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
     }
+    if (ownerCheck.deletedAt) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
 
-    // Delete all related records first
+    const hasMoneyHistory =
+      ownerCheck._count.earnings +
+        ownerCheck._count.payouts +
+        ownerCheck._count.tdsRecords >
+      0;
+
+    if (hasMoneyHistory) {
+      // Soft delete: financial rows (and the PAN they were withheld
+      // against) survive for statutory retention. Slots go so nothing is
+      // bookable; plans stay (historical bookings reference them) but the
+      // browse/checkout surfaces filter deletedAt profiles out.
+      await prisma.$transaction([
+        prisma.slotOfAvailabilityWeekly.deleteMany({
+          where: { consultantProfileId: id },
+        }),
+        prisma.slotOfAvailabilityCustom.deleteMany({
+          where: { consultantProfileId: id },
+        }),
+        prisma.consultantProfile.update({
+          where: { id },
+          data: { deletedAt: new Date() },
+        }),
+      ]);
+      return NextResponse.json({
+        message: "Consultant deactivated (financial history retained)",
+        softDeleted: true,
+      });
+    }
+
+    // No money ever moved — full hard delete is safe.
     await prisma.$transaction([
       // Delete slots
       prisma.slotOfAvailabilityWeekly.deleteMany({

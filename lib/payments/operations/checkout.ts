@@ -3,11 +3,12 @@
  * Handles the complete checkout flow for all appointment types
  */
 
-import prisma from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
 import { CheckoutInput, checkoutSchema } from "@/schemas/checkout";
 import { calculateSubscriptionEndDate } from "@/utils/dateUtils";
 import {
   AppointmentsType,
+  type Currency,
   PaymentGateway,
   PaymentStatus,
   Prisma,
@@ -23,6 +24,7 @@ import {
   ApprovalLock,
 } from "@/utils/appointmentlock";
 import { validateSlotTiming } from "@/lib/payments/utils/slot-validation";
+import { ensureConsulteeProfile } from "@/lib/profiles/ensure-consultee-profile";
 import { isMinuteWithinWeeklySlot } from "@/utils/slotAllocation/slotTimeUtils";
 import { buildOccupiedAppointmentFilter } from "@/utils/slotAllocation/occupancyPolicy";
 import {
@@ -42,6 +44,11 @@ import {
   createEarningsFromPayment,
   type AppointmentType,
 } from "@/lib/payments/payouts";
+import { walletDebit } from "@/lib/api/organizations/wallet";
+import {
+  recordBookingUtilization,
+  ProgramAssignmentLimitError,
+} from "@/lib/api/organizations/program-helpers";
 import {
   determineTax,
   appointmentTypeToServiceType,
@@ -50,6 +57,15 @@ import {
   validatePlanCurrency,
   validateDiscountCurrency,
 } from "@/lib/payments/validation/currency-guards";
+import { checkPaymentLegsSumToAmount } from "@/lib/payments/payment-legs";
+import { recordOverageAtCheckout } from "@/lib/payments/billing/overage-settlement";
+import { getInvoiceCreditLimitPaise } from "@/lib/enterprise/governance";
+import {
+  notifyOrgProgramExhausted,
+  notifyOrgProgramCapNear,
+} from "@/lib/novu/org-workflows";
+import { sumPaise } from "@/lib/payments/utils/money";
+import { resolveCancellationPolicySnapshot } from "@/lib/payments/operations/cancellation-policy";
 
 // Re-export for backward compatibility
 export const unifiedCheckoutSchema = checkoutSchema;
@@ -66,13 +82,17 @@ export type { CheckoutInput };
  * Consultant allocates specific slots later via Requests tab
  */
 type SubscriptionCheckoutResult = {
-  plan: Prisma.SubscriptionPlanGetPayload<{
-    include: {
-      consultantProfile: {
-        include: { user: true };
+  // #780 — extended-client reads return price as number; GetPayload says bigint.
+  plan: Omit<
+    Prisma.SubscriptionPlanGetPayload<{
+      include: {
+        consultantProfile: {
+          include: { user: true };
+        };
       };
-    };
-  }>;
+    }>,
+    "price"
+  > & { price: number };
   amount: number;
   subscription: Prisma.SubscriptionGetPayload<Record<string, never>>;
   appointment: Prisma.AppointmentGetPayload<Record<string, never>>;
@@ -85,11 +105,21 @@ type SubscriptionCheckoutResult = {
 
 /**
  * Build payment metadata for both payment intents and webhook handlers
- * Ensures consistency between payment creation and mock payment flows
+ * Ensures consistency between payment creation and mock payment flows.
+ *
+ * When the booking is org-sponsored, `organizationId` and `fundingSource`
+ * are stamped into the gateway's `notes` (C.1, #687). This lets the
+ * webhook attribute the payment to the org without an extra DB lookup
+ * and gives invoice-fraud reconcilers a server-side proof that the
+ * booker's claimed org matches the gateway's record.
  */
 function buildPaymentMetadata(
   data: CheckoutInput,
   userId: string,
+  orgContext?: {
+    organizationId: string | null;
+    fundingSource: "PERSONAL" | "WALLET" | "INVOICE" | "LICENSE" | null;
+  },
 ): { appointmentId: string; appointmentType: string; [key: string]: string } {
   return {
     appointmentId: "pending",
@@ -106,6 +136,12 @@ function buildPaymentMetadata(
     notes: data.notes || "",
     ...(data.eventId && { eventId: data.eventId }),
     ...(data.fromWaitlist && { fromWaitlist: data.fromWaitlist }),
+    ...(orgContext?.organizationId && {
+      organizationId: orgContext.organizationId,
+    }),
+    ...(orgContext?.fundingSource && {
+      fundingSource: orgContext.fundingSource,
+    }),
   };
 }
 
@@ -193,9 +229,14 @@ export async function calculateAmountAndValidate(
   return await prisma.$transaction(async (tx) => {
     let amount = 0;
     let plan;
-    let priceCurrency = "INR";
+    let priceCurrency: Currency = "INR";
 
-    // Get user profile
+    // Lazy-create ConsulteeProfile if this is the user's first
+    // consumer action. ORG_WORKSPACE / CONSULTANT users who also book
+    // personal sessions (valid, if rare) would hit "User profile not
+    // found" before this helper existed — now we seed the profile on
+    // demand inside the checkout tx.
+    await ensureConsulteeProfile(tx, userId);
     const user = await tx.user.findUnique({
       where: { id: userId },
       include: {
@@ -223,6 +264,11 @@ export async function calculateAmountAndValidate(
           throw new Error("Consultation plan not found");
         }
 
+        // #781 §B — soft-deleted expert is not bookable
+        if (plan.consultantProfile?.deletedAt) {
+          throw new Error("Consultation plan not found");
+        }
+
         await validateSlotAvailability(
           tx,
           validatedData,
@@ -244,6 +290,11 @@ export async function calculateAmountAndValidate(
         });
 
         if (!plan) {
+          throw new Error("Subscription plan not found");
+        }
+
+        // #781 §B — soft-deleted expert is not bookable
+        if (plan.consultantProfile?.deletedAt) {
           throw new Error("Subscription plan not found");
         }
 
@@ -286,6 +337,12 @@ export async function calculateAmountAndValidate(
         }
 
         plan = webinar.webinarPlan;
+
+        // #781 §B — soft-deleted expert is not bookable
+        if (plan.consultantProfile?.deletedAt) {
+          throw new Error("Webinar not found");
+        }
+
         const consultantUserId = plan.consultantProfile?.userId;
         const currentWebinarParticipants = countWebinarParticipants(
           webinar.appointment,
@@ -328,6 +385,12 @@ export async function calculateAmountAndValidate(
         }
 
         plan = classInstance.classPlan;
+
+        // #781 §B — soft-deleted expert is not bookable
+        if (plan.consultantProfile?.deletedAt) {
+          throw new Error("Class not found");
+        }
+
         const classConsultantUserId = plan.consultantProfile?.userId;
         // FIX: Count unique participants, not total slots
         // A user enrolled in a class with 8 sessions should count as 1 participant, not 8
@@ -489,7 +552,7 @@ export async function calculateAmountAndValidate(
  * 3. Excessive tentative bookings (rate limiting)
  */
 export async function validateSlotAvailability(
-  tx: Prisma.TransactionClient,
+  tx: Tx,
   data: CheckoutInput,
   userId?: string,
   consultantUserId?: string, // NEW: Filter by consultant to prevent blocking across different consultants
@@ -509,10 +572,17 @@ export async function validateSlotAvailability(
   if (data.slotOfAvailabilityWeeklyId) {
     const avail = await tx.slotOfAvailabilityWeekly.findUnique({
       where: { id: data.slotOfAvailabilityWeeklyId },
-      include: { consultantProfile: { select: { userId: true } } },
+      include: {
+        consultantProfile: { select: { userId: true, deletedAt: true } },
+      },
     });
     if (!avail) {
       throw new Error("Availability slot not found");
+    }
+    // B13 — the plan-level soft-delete check can race a deletion landing
+    // between plan fetch and slot validation; recheck at the slot level.
+    if (avail.consultantProfile.deletedAt) {
+      throw new Error("This expert is no longer accepting bookings");
     }
     // Verify the availability slot belongs to the correct consultant
     if (
@@ -900,11 +970,44 @@ async function releaseCheckoutLock(
 }
 
 /**
+ * Resolve the host org id for a webinar/class event so waitlist + recording
+ * rows can stamp `organizationId` consistently with the parent Appointment
+ * (which uses `plan.organizationId` per the SHARED-across-registrants tag).
+ *
+ * Used by the four waitlist creates in handleCheckout's catch blocks; the
+ * tx that loaded the plan is already rolled back at that point so we have
+ * to re-fetch. Returns null when the plan is personal (not org-owned).
+ */
+async function resolveEventHostOrgId(
+  appointmentType: "WEBINAR" | "CLASS",
+  eventId: string,
+): Promise<string | null> {
+  try {
+    if (appointmentType === "WEBINAR") {
+      const w = await prisma.webinar.findUnique({
+        where: { id: eventId },
+        select: { webinarPlan: { select: { organizationId: true } } },
+      });
+      return w?.webinarPlan?.organizationId ?? null;
+    }
+    const c = await prisma.class.findUnique({
+      where: { id: eventId },
+      select: { classPlan: { select: { organizationId: true } } },
+    });
+    return c?.classPlan?.organizationId ?? null;
+  } catch {
+    // Best-effort: an error here shouldn't sink the waitlist add. The org
+    // dashboard's "events I host" rollup tolerates null FKs.
+    return null;
+  }
+}
+
+/**
  * BUG-E: Verify plan still exists inside lock
  * Prevents race condition where plan is deleted between initial validation and checkout
  */
 async function verifyPlanExistsInsideLock(
-  tx: Prisma.TransactionClient,
+  tx: Tx,
   appointmentType: string,
   planId: string,
 ): Promise<void> {
@@ -955,6 +1058,7 @@ async function revalidateInsideLock(
   // Re-run the same validation as calculateAmountAndValidate
   // but this time we're inside the lock, so it's safe
   await prisma.$transaction(async (tx) => {
+    await ensureConsulteeProfile(tx, userId);
     const user = await tx.user.findUnique({
       where: { id: userId },
       include: { consulteeProfile: true },
@@ -1010,6 +1114,56 @@ async function revalidateInsideLock(
             user.consulteeProfile.id,
             consultationPlan.consultantProfile.user.id,
           );
+
+          // Consultee-side conflict check.
+          //
+          // validateNoConflicts (SlotValidationService) is scoped to the
+          // consultant's User ID — it ensures the consultant is not double-booked
+          // but says nothing about the learner's own calendar. A learner who is
+          // a member of two orgs (e.g., Org A with SEAT_PACK and Org B with
+          // PREPAID_UNLIMITED) faces zero cost friction on either side, making
+          // it easy to accidentally book overlapping sessions with two different
+          // consultants. Both would pass the consultant-side check because they
+          // involve different consultants, leaving the learner double-booked.
+          //
+          // The same scenario exists on the open marketplace — any consultee can
+          // book overlapping sessions with two different consultants. Enterprise
+          // multi-org membership increases the probability because the learner
+          // has multiple "free" billing paths with no payment step to slow them.
+          //
+          // We run this query inside the distributed lock and inside the
+          // Serializable transaction (TOCTOU-safe). We reuse
+          // buildOccupiedAppointmentFilter so the occupancy definition matches
+          // validateNoConflicts exactly — TENTATIVE and CONFIRMED both block.
+          const consulteeConflict = await tx.appointment.findFirst({
+            where: {
+              AND: [
+                { OR: buildOccupiedAppointmentFilter() },
+                {
+                  slotsOfAppointment: {
+                    some: {
+                      AND: [
+                        { startsAt: { lt: new Date(data.slotEndTimeInUTC!) } },
+                        { endsAt: { gt: new Date(data.slotStartTimeInUTC!) } },
+                        // userId (User.id) is the right scope — slots are
+                        // connected to User records, not ConsulteeProfile records.
+                        // This catches conflicts regardless of which org the
+                        // conflicting booking came from or whether it was a
+                        // marketplace booking with no org context at all.
+                        { user: { some: { id: userId } } },
+                      ],
+                    },
+                  },
+                },
+              ],
+            },
+            select: { id: true },
+          });
+          if (consulteeConflict) {
+            throw new Error(
+              "You already have a session booked during this time.",
+            );
+          }
         }
         break;
       }
@@ -1029,6 +1183,36 @@ async function revalidateInsideLock(
             user.consulteeProfile.id,
             subscriptionPlan.consultantProfile.user.id,
           );
+
+          // Consultee-side conflict check for direct-slot subscriptions.
+          // Same reasoning as the CONSULTATION case above — a subscription
+          // booked with an explicit slot window must not overlap an existing
+          // consultee appointment, regardless of which org or marketplace
+          // context that prior appointment came from.
+          const subscriptionConsulteeConflict = await tx.appointment.findFirst({
+            where: {
+              AND: [
+                { OR: buildOccupiedAppointmentFilter() },
+                {
+                  slotsOfAppointment: {
+                    some: {
+                      AND: [
+                        { startsAt: { lt: new Date(data.slotEndTimeInUTC!) } },
+                        { endsAt: { gt: new Date(data.slotStartTimeInUTC!) } },
+                        { user: { some: { id: userId } } },
+                      ],
+                    },
+                  },
+                },
+              ],
+            },
+            select: { id: true },
+          });
+          if (subscriptionConsulteeConflict) {
+            throw new Error(
+              "You already have a session booked during this time.",
+            );
+          }
         }
         break;
       }
@@ -1112,11 +1296,23 @@ async function revalidateInsideLock(
 // ============================================================================
 
 export async function handleConsultationCheckout(
-  tx: Prisma.TransactionClient,
+  tx: Tx,
   data: CheckoutInput,
   consulteeProfileId: string,
   userId: string,
   skipPayment: boolean,
+  /**
+   * Resolved org context for this checkout (already validated by caller).
+   * Passed through to `Appointment.organizationId` so the org dashboard's
+   * `/api/organizations/[orgId]/appointments` query (which filters by
+   * `Appointment.organizationId`) actually surfaces fresh org-funded
+   * bookings. Without this stamp, only the `Payment` row carried the org
+   * tag — leaving the appointment invisible to org admins until backfill.
+   *
+   * Issue: #674 (personal vs org scope split). The runtime-stamping gap
+   * was flagged in the May 2026 production-readiness audit.
+   */
+  organizationId: string | null,
 ) {
   const plan = await tx.consultationPlan.findUnique({
     where: { id: data.planId },
@@ -1179,11 +1375,18 @@ export async function handleConsultationCheckout(
     data: {
       appointmentType: AppointmentsType.CONSULTATION,
       consultationId: consultation.id,
+      organizationId,
+      // B1 — freeze the refund terms at booking; the cancel flow reads this.
+      cancellationPolicySnapshot: JSON.parse(
+        JSON.stringify(resolveCancellationPolicySnapshot()),
+      ),
       slotsOfAppointment: {
         create: slotChunks.map((chunk) => ({
           startsAt: chunk.startsAt,
           endsAt: chunk.endsAt,
           isTentative: !skipPayment,
+          // #440 — denormalized for the DB-level overlap guard.
+          consultantProfileId: plan.consultantProfileId,
           // Connect BOTH consultant and consultee so the user-scoped conflict
           // filter in validateNoConflicts (user.some.id === consultantUserId)
           // can see this slot. dev branch only connected the consultee, which
@@ -1200,10 +1403,12 @@ export async function handleConsultationCheckout(
 }
 
 export async function handleSubscriptionCheckout(
-  tx: Prisma.TransactionClient,
+  tx: Tx,
   data: CheckoutInput,
   consulteeProfileId: string,
   _skipPayment: boolean,
+  /** Resolved org context — see handleConsultationCheckout for rationale. */
+  organizationId: string | null,
 ): Promise<SubscriptionCheckoutResult> {
   const plan = await tx.subscriptionPlan.findUnique({
     where: { id: data.planId },
@@ -1313,6 +1518,7 @@ export async function handleSubscriptionCheckout(
     data: {
       appointmentType: AppointmentsType.SUBSCRIPTION,
       subscriptionId: subscription.id,
+      organizationId,
       // No slots created - consultant allocates later via Requests tab
     },
   });
@@ -1327,7 +1533,7 @@ export async function handleSubscriptionCheckout(
 }
 
 export async function handleWebinarCheckout(
-  tx: Prisma.TransactionClient,
+  tx: Tx,
   data: CheckoutInput,
   userId: string,
   _skipPayment: boolean,
@@ -1411,10 +1617,17 @@ export async function handleWebinarCheckout(
   // Create or reuse appointment
   let appointment = webinar.appointment;
   if (!appointment) {
+    // Webinar appointments are SHARED across registrants — multiple
+    // attendees from different orgs can join the same webinar. So we
+    // tag with the WebinarPlan owner's org (the event host's org), not
+    // the first registrant's booking org. This makes "events we host"
+    // discoverable in the org dashboard, and avoids first-registrant-
+    // wins org leakage.
     appointment = await tx.appointment.create({
       data: {
         appointmentType: AppointmentsType.WEBINAR,
         webinarId: webinar.id,
+        organizationId: plan.organizationId ?? null,
       },
       include: {
         slotsOfAppointment: {
@@ -1444,7 +1657,7 @@ export async function handleWebinarCheckout(
 }
 
 export async function handleClassCheckout(
-  tx: Prisma.TransactionClient,
+  tx: Tx,
   data: CheckoutInput,
   userId: string,
   _skipPayment: boolean,
@@ -1506,6 +1719,20 @@ export async function handleClassCheckout(
     throw new Error("You are already enrolled in this class");
   }
 
+  // B11 — a partially-scheduled class (consultant hasn't allocated every
+  // session yet) must not accept paid enrollments: the loop below links the
+  // buyer only to EXISTING sessions, silently shorting them the rest.
+  const expectedSessions = classInstance.classPlan?.totalSessions;
+  if (
+    typeof expectedSessions === "number" &&
+    expectedSessions > 0 &&
+    classInstance.appointments.length < expectedSessions
+  ) {
+    throw new Error(
+      `This class is not fully scheduled yet (${classInstance.appointments.length} of ${expectedSessions} sessions). Enrollment opens once all sessions are scheduled.`,
+    );
+  }
+
   // Link user to ALL existing slots of ALL class appointments (sessions).
   // Class participants attend every session, so they must be connected to
   // every existing SlotOfAppointment (not given duplicate slots).
@@ -1533,6 +1760,10 @@ export async function handleClassCheckout(
     plan,
     amount: plan.price,
     slotsLinked: linkedSlotCount,
+    // For enterprise cap counting (issue #710): one engagement per
+    // class day. The learner is enrolling in every existing class
+    // appointment at this moment, so the count is fully known here.
+    engagementsConsumed: classInstance.appointments.length,
   };
 }
 
@@ -1560,6 +1791,203 @@ export async function handleCheckout(
   // TYPE-1: Properly typed payment response instead of any
   let paymentResponse: { id: string; client_secret: string | null } | null =
     null;
+
+  // Enterprise (Arch 4-Modified): resolve org + Program context up-front.
+  //
+  //   fundingSource=PERSONAL → org is tagged for reporting only; learner pays.
+  //   fundingSource=WALLET   → debit BillingAccount.walletBalance atomically.
+  //   fundingSource=INVOICE  → accrue to the org's monthly invoice.
+  //   fundingSource=LICENSE  → absorbed by a LICENSED_SEAT program, amount=0.
+  //
+  // Every non-PERSONAL path also requires an ACTIVE `ProgramAssignment`
+  // whose Program covers the current `appointmentType` — that's the source
+  // of truth for "is this booking sponsored?". A missing assignment on a
+  // WALLET/INVOICE/LICENSE org fails closed: we refuse rather than
+  // silently bill the learner's card.
+  const appointmentType = validatedData.appointmentType as
+    | "CONSULTATION"
+    | "SUBSCRIPTION"
+    | "WEBINAR"
+    | "CLASS";
+
+  let organizationId: string | null = null;
+  let billingAccountId: string | null = null;
+  let fundingSource: "PERSONAL" | "WALLET" | "INVOICE" | "LICENSE" | null =
+    null;
+  let programAssignmentId: string | null = null;
+  let callerMembershipId: string | null = null;
+  // #785 B6 — effective INVOICE credit limit; threaded to the Serializable
+  // booking tx for a race-safe re-check (the pre-lock check below is fast-fail only).
+  let creditEffectiveLimit: number | null = null;
+
+  if (validatedData.organizationId) {
+    const org = await prisma.organization.findUnique({
+      where: { id: validatedData.organizationId },
+      select: {
+        id: true,
+        status: true,
+        canSponsor: true,
+        billingAccount: {
+          select: {
+            id: true,
+            fundingSource: true,
+            creditLimit: true,
+            walletBalance: true,
+          },
+        },
+      },
+    });
+    if (!org) {
+      throw new Error("Organization not found.");
+    }
+    // PR-1d: PENDING_VERIFICATION orgs may transact for INVOICE bookings
+    // under the credit-limit gate (#687 invoice-fraud guard). Anything
+    // else still requires fully ACTIVE status.
+    if (org.status !== "ACTIVE" && org.status !== "PENDING_VERIFICATION") {
+      throw new Error(
+        `Organization is ${org.status.toLowerCase()}; cannot process bookings.`,
+      );
+    }
+    if (!org.canSponsor) {
+      throw new Error(
+        "This organization is not configured to sponsor bookings (canSponsor=false).",
+      );
+    }
+
+    // #812 — dunning-suspend gate (config-gated, default off). The dunning cron's
+    // Stage 3 stamps OrganizationInvoice.dunningSuspendedAt once an invoice is
+    // unpaid past the grace window; while any such invoice is still OVERDUE, new
+    // sponsored bookings for the org are blocked until it is paid. Paying the
+    // invoice clears its OVERDUE status, which lifts this gate naturally.
+    if (process.env.ENABLE_DUNNING_SUSPEND === "true") {
+      const suspended = await prisma.organizationInvoice.findFirst({
+        where: {
+          organizationId: org.id,
+          status: "OVERDUE",
+          dunningSuspendedAt: { not: null },
+        },
+        select: { invoiceNumber: true },
+        // #750 — cite the OLDEST overdue invoice in the block message, not an
+        // arbitrary one.
+        orderBy: { dueDate: "asc" },
+      });
+      if (suspended) {
+        throw new Error(
+          `This organization has an overdue invoice (${suspended.invoiceNumber}) and is suspended from new sponsored bookings until it is paid.`,
+        );
+      }
+    }
+
+    // SECURITY: Verify the caller is an active Membership of this org.
+    const callerMembership = await prisma.membership.findUnique({
+      where: { userId_organizationId: { userId, organizationId: org.id } },
+      select: { role: true, status: true, id: true },
+    });
+    if (!callerMembership || callerMembership.status !== "ACTIVE") {
+      throw new Error("You are not an active member of this organization.");
+    }
+
+    organizationId = org.id;
+    callerMembershipId = callerMembership.id;
+    billingAccountId = org.billingAccount?.id ?? null;
+    fundingSource = org.billingAccount?.fundingSource ?? "PERSONAL";
+
+    // Block personal referral credits on org-funded bookings.
+    if (validatedData.useReferralCredits && fundingSource !== "PERSONAL") {
+      validatedData = { ...validatedData, useReferralCredits: false };
+    }
+
+    // INVOICE fundingSource: enforce creditLimit. PR-1d (#687):
+    // unverified orgs (PENDING_VERIFICATION) get an automatic
+    // governance credit-limit even when the BillingAccount.creditLimit
+    // column is null — the default ₹50k starter blocks the
+    // book-everything-then-ghost abuse pattern. The cap auto-lifts
+    // once the org is verified OR pays its first invoice.
+    if (fundingSource === "INVOICE") {
+      const explicitLimit = org.billingAccount?.creditLimit ?? null;
+      const isVerified = org.status === "ACTIVE";
+      const governanceLimit = isVerified ? null : getInvoiceCreditLimitPaise();
+      const effectiveLimit =
+        explicitLimit === null
+          ? governanceLimit
+          : governanceLimit === null
+            ? explicitLimit
+            : Math.min(explicitLimit, governanceLimit);
+      creditEffectiveLimit = effectiveLimit;
+
+      if (effectiveLimit !== null) {
+        const [accrualAgg, outstandingAgg] = await Promise.all([
+          prisma.paymentLeg.aggregate({
+            where: {
+              source: { in: ["INVOICE_ACCRUAL", "OVERAGE_INVOICE_ACCRUAL"] },
+              payment: {
+                organizationId: org.id,
+                paymentStatus: "SUCCEEDED",
+                billableToOrgInvoiceId: null,
+              },
+            },
+            _sum: { amountPaise: true },
+          }),
+          prisma.organizationInvoice.aggregate({
+            where: {
+              organizationId: org.id,
+              status: { in: ["ISSUED", "OVERDUE"] },
+            },
+            _sum: { totalPaise: true },
+          }),
+        ]);
+        const exposure =
+          sumPaise(accrualAgg._sum.amountPaise) +
+          sumPaise(outstandingAgg._sum.totalPaise);
+        if (exposure >= effectiveLimit) {
+          throw new Error(
+            `Organization has reached its invoice credit limit (${effectiveLimit} paise). Outstanding invoices must be paid before new bookings.`,
+          );
+        }
+      }
+    }
+
+    // Resolve a currently-active ProgramAssignment for this member that
+    // covers the appointment type. The assignment's Program must be
+    // ACTIVE and attached to an ACTIVE contract still within its
+    // effectiveFrom..effectiveTo window. The Program's
+    // `coveredPlanTypes` array filters which appointment types it
+    // sponsors (empty array = covers everything).
+    if (fundingSource !== "PERSONAL") {
+      const now = new Date();
+      const assignment = await prisma.programAssignment.findFirst({
+        where: {
+          membershipId: callerMembership.id,
+          periodStart: { lte: now },
+          periodEnd: { gte: now },
+          program: {
+            status: "ACTIVE",
+            OR: [
+              { coveredPlanTypes: { isEmpty: true } },
+              { coveredPlanTypes: { has: appointmentType } },
+            ],
+            contract: {
+              organizationId: org.id,
+              status: "ACTIVE",
+              effectiveFrom: { lte: now },
+              OR: [{ effectiveTo: null }, { effectiveTo: { gte: now } }],
+            },
+          },
+        },
+        orderBy: { periodEnd: "desc" },
+        select: { id: true },
+      });
+
+      if (!assignment) {
+        throw new Error(
+          "No active program assignment covers this booking. Ask your organization admin to assign you to a Program that covers " +
+            appointmentType +
+            ".",
+        );
+      }
+      programAssignmentId = assignment.id;
+    }
+  }
 
   try {
     // STEP 1: Calculate amount and fetch plan data (OUTSIDE LOCK - just pricing)
@@ -1616,13 +2044,36 @@ export async function handleCheckout(
       }),
     );
 
+    // Enterprise funding derived from BillingAccount.fundingSource +
+    // ProgramAssignment (both resolved above). These booleans gate the
+    // "skip the gateway entirely" path — org-funded bookings never go
+    // through Stripe/Razorpay at checkout time.
+    const isOrgWalletPayment =
+      fundingSource === "WALLET" && !!programAssignmentId;
+    const isOrgInvoicedPayment =
+      fundingSource === "INVOICE" && !!programAssignmentId;
+    const isOrgLicensedPayment =
+      fundingSource === "LICENSE" && !!programAssignmentId;
+    const isOrgSponsoredPayment =
+      isOrgWalletPayment || isOrgInvoicedPayment || isOrgLicensedPayment;
+
     // FIX #520: Detect zero-amount payments (credits fully cover cost)
     // Both Stripe and Razorpay reject amount <= 0, so we skip the gateway
     // entirely and treat this like a "free" payment that succeeds immediately.
     const isZeroAmountPayment = amount === 0 && creditsApplied > 0;
 
     // STEP 4: Create payment intent (INSIDE LOCK)
-    if (isZeroAmountPayment) {
+
+    // Enterprise org funding skips the gateway entirely.
+    if (isOrgSponsoredPayment) {
+      const prefix = isOrgWalletPayment
+        ? "org_wallet"
+        : isOrgLicensedPayment
+          ? "org_license"
+          : "org_invoice";
+      const syntheticId = `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+      paymentResponse = { id: syntheticId, client_secret: null };
+    } else if (isZeroAmountPayment) {
       const freePaymentId = `free_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
       paymentResponse = { id: freePaymentId, client_secret: null };
       console.log(
@@ -1639,7 +2090,10 @@ export async function handleCheckout(
         paymentResponse = await PaymentIntentManager.createWithCleanup({
           amount,
           currency,
-          metadata: buildPaymentMetadata(validatedData, userId),
+          metadata: buildPaymentMetadata(validatedData, userId, {
+            organizationId,
+            fundingSource,
+          }),
           paymentGateway: validatedData.paymentGateway,
           isMockPayment,
         });
@@ -1656,11 +2110,69 @@ export async function handleCheckout(
     try {
       const result = await prisma.$transaction(
         async (tx) => {
+          // #785 B6 — re-check the INVOICE credit limit INSIDE the Serializable
+          // tx. The pre-lock check ran on the global client before this tx, so
+          // two concurrent disjoint-slot bookings (which take different per-slot
+          // locks) could both pass it. Reading the accrual set here — the same
+          // rows this tx is about to add to — makes SSI abort one of a racing
+          // pair; the retry then sees the sibling's committed accrual.
+          if (
+            isOrgInvoicedPayment &&
+            creditEffectiveLimit !== null &&
+            organizationId
+          ) {
+            const [accrualAgg, outstandingAgg] = await Promise.all([
+              tx.paymentLeg.aggregate({
+                where: {
+                  source: {
+                    in: ["INVOICE_ACCRUAL", "OVERAGE_INVOICE_ACCRUAL"],
+                  },
+                  payment: {
+                    organizationId,
+                    paymentStatus: "SUCCEEDED",
+                    billableToOrgInvoiceId: null,
+                  },
+                },
+                _sum: { amountPaise: true },
+              }),
+              tx.organizationInvoice.aggregate({
+                where: {
+                  organizationId,
+                  status: { in: ["ISSUED", "OVERDUE"] },
+                },
+                _sum: { totalPaise: true },
+              }),
+            ]);
+            const exposure =
+              sumPaise(accrualAgg._sum.amountPaise) +
+              sumPaise(outstandingAgg._sum.totalPaise);
+            // Same gate as the pre-lock check (>= limit), re-run inside the tx so
+            // a concurrent sibling's just-committed accrual is visible — SSI then
+            // aborts the loser of a racing pair instead of both straddling the cap.
+            if (exposure >= creditEffectiveLimit) {
+              throw new Error(
+                `Organization has reached its invoice credit limit (${creditEffectiveLimit} paise). Outstanding invoices must be paid before new bookings.`,
+              );
+            }
+          }
+
           let createdAppointment;
+          // Engagement count for enterprise cap (issue #710). One
+          // engagement = one Appointment row = one calendar occurrence.
+          //   - CONSULTATION/WEBINAR: 1 (single Appointment created here)
+          //   - CLASS: N (count of appointments the learner enrolled in,
+          //     all known at checkout because consultant pre-allocated)
+          //   - SUBSCRIPTION: null → SKIP recordBookingUtilization at
+          //     checkout. Slots are allocated lazily by the consultant;
+          //     debits land in SlotAllocationService.createAppointments,
+          //     1 per allocation batch.
+          let engagementsForCap: number | null = null;
 
           // FIX #520: Zero-amount payments (credits cover full cost) skip the
           // gateway, so slots should be confirmed immediately just like mock payments.
-          const skipPayment = isMockPayment || isZeroAmountPayment;
+          // Enterprise: org-sponsored payments also skip the gateway.
+          const skipPayment =
+            isMockPayment || isZeroAmountPayment || isOrgSponsoredPayment;
 
           // Create appointment based on type (with isTentative flag)
           switch (validatedData.appointmentType) {
@@ -1671,8 +2183,10 @@ export async function handleCheckout(
                 consulteeProfileId,
                 userId,
                 skipPayment,
+                organizationId,
               );
               createdAppointment = consultationResult.appointment;
+              engagementsForCap = 1;
               break;
             }
 
@@ -1682,10 +2196,13 @@ export async function handleCheckout(
                 validatedData,
                 consulteeProfileId,
                 skipPayment,
+                organizationId,
               );
               // Use placeholder appointment for payment linkage
               // This ensures webhook uses NEW FLOW (confirm) not LEGACY FLOW (create duplicate)
               createdAppointment = subscriptionResult.appointment;
+              // engagementsForCap stays null — debit happens at
+              // SlotAllocationService.createAppointments time.
               break;
             }
 
@@ -1697,6 +2214,7 @@ export async function handleCheckout(
                 skipPayment,
               );
               createdAppointment = webinarResult.appointment;
+              engagementsForCap = 1;
               break;
             }
 
@@ -1710,6 +2228,7 @@ export async function handleCheckout(
               // Class creates slots across multiple appointments
               // Use first appointment for payment linkage
               createdAppointment = classResult.appointment || null;
+              engagementsForCap = classResult.engagementsConsumed;
               break;
             }
 
@@ -1727,14 +2246,26 @@ export async function handleCheckout(
               originalAmount,
               taxAmount,
               currency,
-              paymentMethod: isZeroAmountPayment ? "CREDITS" : "CARD",
+              paymentMethod: isOrgWalletPayment
+                ? "WALLET"
+                : isOrgInvoicedPayment
+                  ? "INVOICE"
+                  : isOrgLicensedPayment
+                    ? "LICENSE"
+                    : isZeroAmountPayment
+                      ? "CREDITS"
+                      : "CARD",
               paymentIntent: paymentResponse!.id,
+              // #828 — unique; a concurrent duplicate attempt dies on P2002
+              // and the route replays this payment's original response.
+              clientIdempotencyKey: validatedData.clientIdempotencyKey ?? null,
               paymentGateway: validatedData.paymentGateway,
               // FIX #520: Zero-amount and mock payments succeed immediately (no webhook)
               paymentStatus: skipPayment
                 ? PaymentStatus.SUCCEEDED
                 : PaymentStatus.PENDING,
-              isMockPayment: isMockPayment || isZeroAmountPayment,
+              isMockPayment:
+                isMockPayment || isZeroAmountPayment || isOrgSponsoredPayment,
               userId: userId,
               appointmentId: createdAppointment?.id || null,
               discountCodeId,
@@ -1745,8 +2276,280 @@ export async function handleCheckout(
               isInternational,
               displayCurrencyAtCheckout,
               exchangeRateAtCheckout,
+              // Enterprise (Arch 4): org tag for reporting / billing.
+              organizationId,
+              billingAccountId,
             },
           });
+
+          // Enterprise: WALLET fundingSource — debit from BillingAccount
+          // atomically via the wallet helper (raw-SQL conditional UPDATE).
+          // Triggered only when we also have a resolved program assignment,
+          // which guarantees the booking is actually sponsored.
+          if (isOrgWalletPayment && billingAccountId) {
+            await walletDebit(tx, {
+              billingAccountId,
+              amountPaise: amount,
+              reason: "BOOKING",
+              paymentId: payment.id,
+              membershipId: callerMembershipId ?? undefined,
+            });
+          }
+
+          // Enterprise: write the Program utilization row + a PaymentLeg
+          // that describes where the money (or commitment) actually came
+          // from. This is the runtime source of truth for sponsorship
+          // attribution — analytics / invoicing / cap enforcement all read
+          // these rows rather than back-deriving from `paymentMethod`.
+          if (
+            programAssignmentId &&
+            isOrgSponsoredPayment &&
+            engagementsForCap !== null
+          ) {
+            let utilizationResult: Awaited<
+              ReturnType<typeof recordBookingUtilization>
+            > = {
+              wasOverage: false,
+              engagementsConsumedDelta: 0,
+              engagementsUsedAfter: 0,
+              cap: null,
+              programType: "LICENSED_SEAT",
+              consumedPaiseAfter: 0,
+              creditBudgetPaise: null,
+            };
+            try {
+              utilizationResult = await recordBookingUtilization(tx, {
+                programAssignmentId,
+                paymentId: payment.id,
+                engagementsConsumed: engagementsForCap,
+                priceAtBookingPaise: amount,
+              });
+            } catch (err) {
+              if (err instanceof ProgramAssignmentLimitError) {
+                // Fire-and-forget bell notification to the assignee + org
+                // operators. Lookup uses the outer prisma client (not the
+                // about-to-roll-back `tx`) so the query runs against
+                // committed state. The TX still rolls back on throw —
+                // the notification is the correct signal whether or not
+                // the booking eventually succeeds.
+                //
+                // `Program.organizationId` lives on its parent Contract,
+                // not on Program itself, so the select chain hops
+                // Program → Contract → Organization.
+                prisma.programAssignment
+                  .findUnique({
+                    where: { id: programAssignmentId },
+                    select: {
+                      membership: {
+                        select: {
+                          userId: true,
+                          user: { select: { name: true, email: true } },
+                        },
+                      },
+                      program: {
+                        select: {
+                          name: true,
+                          contract: {
+                            select: {
+                              organizationId: true,
+                              organization: { select: { name: true } },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  })
+                  .then((ctx) => {
+                    if (!ctx) return;
+                    const orgId = ctx.program.contract.organizationId;
+                    return notifyOrgProgramExhausted(
+                      orgId,
+                      ctx.membership.userId,
+                      {
+                        orgName: ctx.program.contract.organization.name,
+                        programName: ctx.program.name,
+                        assigneeName:
+                          ctx.membership.user.name ?? ctx.membership.user.email,
+                        dashboardUrl: `/dashboard/organization/${orgId}/programs`,
+                      },
+                    );
+                  })
+                  .catch((notifyErr) =>
+                    console.error(
+                      "[notifyOrgProgramExhausted] failed:",
+                      notifyErr,
+                    ),
+                  );
+
+                throw new Error(
+                  "Your program has hit its session cap for this cycle. Ask your organization admin to upgrade the program or wait for the next cycle.",
+                );
+              }
+              throw err;
+            }
+
+            await tx.paymentLeg.create({
+              data: {
+                paymentId: payment.id,
+                source: isOrgWalletPayment
+                  ? "WALLET"
+                  : isOrgLicensedPayment
+                    ? "LICENSE"
+                    : "INVOICE_ACCRUAL",
+                // LICENSE absorbs the cost entirely at the contract level
+                // — the per-booking leg is zero so totals across all legs
+                // still reconcile to the Payment amount.
+                amountPaise: isOrgLicensedPayment ? 0 : amount,
+                sourceRef: programAssignmentId,
+              },
+            });
+
+            // #768 #22 — 80% cap-near early warning. Fire ONCE per cycle on
+            // the <80% → >=80% transition (not on every booking past 80%).
+            // Integer-only threshold cross: before/cap < 0.8 (before*5 <
+            // cap*4) AND after/cap >= 0.8 (after*5 >= cap*4). Skipped when
+            // cap is null (unlimited) or 0. Fire-and-forget on the outer
+            // prisma client + same roster as the 100% event — mirrors the
+            // notifyOrgProgramExhausted call below.
+            {
+              // #775 — LICENSED_SEAT meters in engagements, CREDIT_POOL in
+              // paise (consumedPaise vs creditBudgetPaise). The 80% transition
+              // math is unit-agnostic; the Novu payload reports credits for
+              // pools (÷100) and engagements for seats.
+              const isCredit = utilizationResult.programType === "CREDIT_POOL";
+              const capAfter = isCredit
+                ? utilizationResult.creditBudgetPaise
+                : utilizationResult.cap;
+              const after = isCredit
+                ? utilizationResult.consumedPaiseAfter
+                : utilizationResult.engagementsUsedAfter;
+              const before = isCredit
+                ? after - amount
+                : after - utilizationResult.engagementsConsumedDelta;
+              if (
+                capAfter != null &&
+                capAfter > 0 &&
+                before * 5 < capAfter * 4 &&
+                after * 5 >= capAfter * 4
+              ) {
+                const usedPct = Math.round((after / capAfter) * 100);
+                const reportUsed = isCredit ? Math.round(after / 100) : after;
+                const reportCap = isCredit
+                  ? Math.round(capAfter / 100)
+                  : capAfter;
+                prisma.programAssignment
+                  .findUnique({
+                    where: { id: programAssignmentId },
+                    select: {
+                      membership: {
+                        select: {
+                          userId: true,
+                          user: { select: { name: true, email: true } },
+                        },
+                      },
+                      program: {
+                        select: {
+                          name: true,
+                          contract: {
+                            select: {
+                              organizationId: true,
+                              organization: { select: { name: true } },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  })
+                  .then((ctx) => {
+                    if (!ctx) return;
+                    const orgId = ctx.program.contract.organizationId;
+                    return notifyOrgProgramCapNear(
+                      orgId,
+                      ctx.membership.userId,
+                      {
+                        orgName: ctx.program.contract.organization.name,
+                        programName: ctx.program.name,
+                        assigneeName:
+                          ctx.membership.user.name ?? ctx.membership.user.email,
+                        engagementsUsed: reportUsed,
+                        cap: reportCap,
+                        usedPct,
+                        dashboardUrl: `/dashboard/organization/${orgId}/programs`,
+                      },
+                    );
+                  })
+                  .catch((notifyErr) =>
+                    console.error(
+                      "[notifyOrgProgramCapNear] failed:",
+                      notifyErr,
+                    ),
+                  );
+              }
+            }
+
+            // C2: overage charging. recordBookingUtilization above flagged
+            // `wasOverage = true` if the increment crossed the cap (only
+            // possible when overageBehavior is CHARGE_MEMBER or CHARGE_ORG;
+            // BLOCK throws inside the helper). Branch on the program's
+            // configured behavior (#775):
+            //   - CHARGE_ORG: write an OVERAGE_INVOICE_ACCRUAL PaymentLeg +
+            //     OverageEvent(PENDING). The monthly invoice rollup picks it
+            //     up (→ ACCRUED) and the invoice-paid handler marks it CHARGED.
+            //   - CHARGE_MEMBER: the booking proceeds; the member owes the
+            //     marginal. Create a parent-linked PENDING side-Payment +
+            //     OverageEvent(PENDING). The member completes it via the
+            //     resume-checkout surface (order created there, not in this TX)
+            //     and the gateway webhook transitions it → CHARGED.
+            //   - BLOCK behavior: never reaches here (helper already threw).
+            //     The circuit-breaker veto is the only BLOCK decision here.
+            if (utilizationResult.wasOverage) {
+              // #778 elegance — extracted to recordOverageAtCheckout (resolves
+              // the behaviour via computeOverage, enforces the circuit breaker,
+              // persists the OverageEvent + CHARGE_MEMBER side-Payment /
+              // CHARGE_ORG accrual leg). Throws PROGRAM_CAP_EXHAUSTED (402) on
+              // the breaker veto.
+              await recordOverageAtCheckout({
+                tx,
+                programAssignmentId,
+                utilization: {
+                  programType: utilizationResult.programType,
+                  engagementsConsumedDelta:
+                    utilizationResult.engagementsConsumedDelta,
+                  engagementsUsedAfter: utilizationResult.engagementsUsedAfter,
+                  consumedPaiseAfter: utilizationResult.consumedPaiseAfter,
+                  creditBudgetPaise: utilizationResult.creditBudgetPaise,
+                },
+                bookingPricePaise: amount,
+                currency,
+                paymentId: payment.id,
+                userId,
+                organizationId,
+                paymentGateway: validatedData.paymentGateway,
+              });
+            }
+          }
+
+          // Enterprise: every successful Payment must have at least one
+          // PaymentLeg (`docs/enterprise/10-money-and-ledger/09-payment-legs.md`). For non-
+          // org-sponsored learner-pays-via-gateway flows that's the CARD
+          // leg, written here so the invariant holds whether or not the
+          // payment ever transitions to SUCCEEDED. We record the gateway
+          // payment-intent id in `sourceRef` so refund / reconciliation
+          // jobs can join back to the gateway txn without scanning the
+          // Payment table. `amount` is the post-credit gateway charge,
+          // mirroring the field-level comment on `Payment.amount`. The
+          // REFERRAL_CREDIT leg (if any) is written by
+          // `applyCreditsToPayment` further down in this same TX.
+          if (!isOrgSponsoredPayment && amount > 0) {
+            await tx.paymentLeg.create({
+              data: {
+                paymentId: payment.id,
+                source: "CARD",
+                amountPaise: amount,
+                sourceRef: paymentResponse!.id,
+              },
+            });
+          }
 
           // Increment discount code usage count atomically (only after payment is created)
           // This ensures count only increases when payment is successfully created.
@@ -1816,6 +2619,37 @@ export async function handleCheckout(
             actualCreditsApplied = creditsApplied; // In paise
           }
 
+          // Invariant sweep: every Payment should have legs that sum to
+          // `Payment.amount` (`docs/enterprise/10-money-and-ledger/09-payment-legs.md`). We
+          // log-only here rather than throw because the hot checkout
+          // path is the worst place to discover a leg-accounting drift
+          // — a surprise 500 blocks real bookings. A mismatch signals
+          // either (a) an org branch above wrote the wrong amount, or
+          // (b) a future PaymentLegSource was added without updating
+          // its write site. Reconciliation jobs + tests call the
+          // hard-throwing `assertPaymentLegsSumToAmount` instead.
+          if (!isMockPayment) {
+            const writtenLegs = await tx.paymentLeg.findMany({
+              where: { paymentId: payment.id },
+              select: { source: true, amountPaise: true },
+            });
+            const legMismatch = checkPaymentLegsSumToAmount({
+              paymentAmountPaise: payment.amount,
+              legs: writtenLegs,
+            });
+            if (legMismatch) {
+              console.warn(
+                JSON.stringify({
+                  event: "payment_leg_sum_mismatch",
+                  paymentId: payment.id,
+                  organizationId: validatedData.organizationId ?? null,
+                  appointmentType: validatedData.appointmentType,
+                  ...legMismatch,
+                }),
+              );
+            }
+          }
+
           return {
             appointmentId: createdAppointment?.id,
             creditsApplied: actualCreditsApplied,
@@ -1848,10 +2682,11 @@ export async function handleCheckout(
         }),
       );
 
-      // Mock/zero-amount payment post-processing: referral qualifying action + waitlist
-      // Real payments handle this via handlePaymentSuccess() in the webhook,
-      // but mock and zero-amount payments bypass webhooks entirely.
-      if (isMockPayment || isZeroAmountPayment) {
+      // Mock/zero-amount/org-sponsored payment post-processing: referral
+      // qualifying action + waitlist. Real payments handle this via
+      // handlePaymentSuccess() in the webhook, but these flows bypass
+      // webhooks entirely.
+      if (isMockPayment || isZeroAmountPayment || isOrgSponsoredPayment) {
         // Trigger referral reward if this is the user's first paid booking
         try {
           await processQualifyingAction(userId, "first_paid_booking");
@@ -2037,8 +2872,16 @@ export async function handleCheckout(
         validatedData.eventId
       ) {
         try {
+          const hostOrgId = await resolveEventHostOrgId(
+            "WEBINAR",
+            validatedData.eventId,
+          );
           await prisma.waitlist.create({
-            data: { userId, webinarId: validatedData.eventId },
+            data: {
+              userId,
+              webinarId: validatedData.eventId,
+              organizationId: hostOrgId,
+            },
           });
           throw new Error("Webinar is full. Added to waitlist.");
         } catch (waitlistError) {
@@ -2062,8 +2905,16 @@ export async function handleCheckout(
         validatedData.eventId
       ) {
         try {
+          const hostOrgId = await resolveEventHostOrgId(
+            "CLASS",
+            validatedData.eventId,
+          );
           await prisma.waitlist.create({
-            data: { userId, classId: validatedData.eventId },
+            data: {
+              userId,
+              classId: validatedData.eventId,
+              organizationId: hostOrgId,
+            },
           });
           throw new Error("Class is full. Added to waitlist.");
         } catch (waitlistError) {
@@ -2088,8 +2939,13 @@ export async function handleCheckout(
           "not been scheduled",
           "already have a pending or active subscription",
           "overlapping dates",
+          "insufficient credits",
         ];
-        if (preservedMessages.some((msg) => dbError.message.includes(msg))) {
+        if (
+          preservedMessages.some((msg) =>
+            dbError.message.toLowerCase().includes(msg),
+          )
+        ) {
           throw dbError;
         }
       }
@@ -2118,8 +2974,16 @@ export async function handleCheckout(
         validatedData.eventId
       ) {
         try {
+          const hostOrgId = await resolveEventHostOrgId(
+            "WEBINAR",
+            validatedData.eventId,
+          );
           await prisma.waitlist.create({
-            data: { userId, webinarId: validatedData.eventId },
+            data: {
+              userId,
+              webinarId: validatedData.eventId,
+              organizationId: hostOrgId,
+            },
           });
           throw new Error("Webinar is full. Added to waitlist.");
         } catch (waitlistError) {
@@ -2140,8 +3004,16 @@ export async function handleCheckout(
         validatedData.eventId
       ) {
         try {
+          const hostOrgId = await resolveEventHostOrgId(
+            "CLASS",
+            validatedData.eventId,
+          );
           await prisma.waitlist.create({
-            data: { userId, classId: validatedData.eventId },
+            data: {
+              userId,
+              classId: validatedData.eventId,
+              organizationId: hostOrgId,
+            },
           });
           throw new Error("Class is full. Added to waitlist.");
         } catch (waitlistError) {

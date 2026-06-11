@@ -1,5 +1,7 @@
 # Earnings Lifecycle
 
+> **Moved (org/B2B side):** The organization-side documentation for earnings now lives in [`docs/enterprise/10-money-and-ledger/06-earnings-lifecycle.md`](../../enterprise/10-money-and-ledger/06-earnings-lifecycle.md) (and the payout batching in [`07-payout-pipeline.md`](../../enterprise/10-money-and-ledger/07-payout-pipeline.md)). This file keeps the consumer-marketplace (B2C) and gateway-generic details only.
+
 > How consultant earnings flow from payment to payout
 
 ---
@@ -255,7 +257,7 @@ sequenceDiagram
 | PAID            | Yes*        | Via `forceRefund: true` (lost disputes), decrements totalRevenue |
 | REFUNDED        | No          | Already refunded                                   |
 
-> *PAID earnings can now be refunded using `forceRefund: true`, used by the lost-dispute handler. This creates TDS reversal records and decrements `totalRevenue`.
+> *PAID earnings can now be refunded using `forceRefund: true`, used by the lost-dispute handler. This routes through the shared `recordTdsReversal` helper to write a negative `isReversal` `TDSRecord` (capped at the original withholding so a refund-then-chargeback can't double-reverse, #813) and decrements `totalRevenue`.
 
 ---
 
@@ -298,7 +300,7 @@ await refundEarnings(paymentId);
 
 // Lost dispute on already-PAID earnings (Mar 2026)
 await refundEarnings(paymentId, { forceRefund: true });
-// Creates TDS reversal records, decrements totalRevenue
+// Writes a negative isReversal TDSRecord via recordTdsReversal (capped, #813), decrements totalRevenue
 ```
 
 ---

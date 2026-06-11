@@ -7,7 +7,7 @@
  * Represents a JSON value from Prisma's Json type.
  * Used for fields like `evidence` and `metadata` that store arbitrary JSON.
  */
-export type JsonValue =
+type JsonValue =
   | string
   | number
   | boolean

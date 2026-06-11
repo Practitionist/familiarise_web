@@ -11,6 +11,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { RecordingTransferService } from "@/lib/stream/recording-transfer-service";
 import { streamLogger } from "@/lib/stream-logger";
+import { withCronLock, CronLockHeldError } from "@/lib/cron/with-cron-lock";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
@@ -24,17 +25,25 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
     streamLogger.info("Starting transfer-expiring-recordings cron");
 
-    // Phase 1: Auto-transfer SUPABASE_PERMANENT recordings
-    const transferResult =
-      await RecordingTransferService.processExpiringRecordings(
-        5, // 5 days before expiry
-        10, // batch size
-        "SUPABASE_PERMANENT",
-      );
+    // #476 — both phases under one lock, same key as the GH Actions entry.
+    const { transferResult, expiringStreamOnly } = await withCronLock(
+      "transfer-expiring-recordings",
+      { failMode: "open" },
+      async () => {
+        // Phase 1: Auto-transfer SUPABASE_PERMANENT recordings
+        const transferResult =
+          await RecordingTransferService.processExpiringRecordings(
+            5, // 5 days before expiry
+            10, // batch size
+            "SUPABASE_PERMANENT",
+          );
 
-    // Phase 2: Find STREAM_ONLY recordings expiring soon (for notifications)
-    const expiringStreamOnly =
-      await RecordingTransferService.getExpiringStreamOnlyRecordings(3);
+        // Phase 2: Find STREAM_ONLY recordings expiring soon (for notifications)
+        const expiringStreamOnly =
+          await RecordingTransferService.getExpiringStreamOnlyRecordings(3);
+        return { transferResult, expiringStreamOnly };
+      },
+    );
 
     // TODO: Send Novu notifications to consultants with expiring STREAM_ONLY recordings
     // Group by consultant and send one notification per consultant
@@ -52,6 +61,11 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       errors: transferResult.errors,
     });
   } catch (error) {
+    // #476 — concurrent invocation (schedule overlap / manual re-run)
+    // skips with a 409 instead of double-running.
+    if (error instanceof CronLockHeldError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
     streamLogger.error("Transfer expiring recordings cron failed", error);
     return NextResponse.json(
       { error: "Cron job failed" },

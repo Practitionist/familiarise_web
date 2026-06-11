@@ -57,7 +57,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
           appointment.webinar.webinarPlan.consultantProfileId ===
           consultantProfileId;
         if (!hasAccess && consultantProfileId) {
-          const collab = await prisma.webinarCollaborator.findFirst({
+          const collab = await prisma.collaborator.findFirst({
             where: {
               webinarPlanId: appointment.webinar.webinarPlan.id,
               consultantProfileId,
@@ -71,7 +71,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
           appointment.class.classPlan.consultantProfileId ===
           consultantProfileId;
         if (!hasAccess && consultantProfileId) {
-          const collab = await prisma.classCollaborator.findFirst({
+          const collab = await prisma.collaborator.findFirst({
             where: {
               classPlanId: appointment.class.classPlan.id,
               consultantProfileId,

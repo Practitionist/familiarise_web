@@ -14,8 +14,10 @@
  * Schedule: Runs hourly via GitHub Actions
  */
 
-import { EarningStatus } from "@prisma/client";
+import { EarningStatus, Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
+import { sumPaise } from "@/lib/payments/utils/money";
+import { withCronLock } from "@/lib/cron/with-cron-lock";
 
 /**
  * Result structure for release operations
@@ -38,7 +40,15 @@ export interface ReleaseResult {
  *
  * @returns ReleaseResult with counts and error details
  */
+// #476 — locked at the core so every entry (GH Actions / HTTP) shares one
+// mutual exclusion; fail-closed: money state must not double-run unlocked.
 export async function releaseEarningsFromHold(): Promise<ReleaseResult> {
+  return withCronLock("release-earnings", { failMode: "closed" }, () =>
+    releaseEarningsFromHoldUnlocked(),
+  );
+}
+
+async function releaseEarningsFromHoldUnlocked(): Promise<ReleaseResult> {
   console.log("💰 Starting earnings release from hold...");
 
   const result: ReleaseResult = {
@@ -51,21 +61,43 @@ export async function releaseEarningsFromHold(): Promise<ReleaseResult> {
   try {
     const now = new Date();
 
-    // Find all earnings that are past their hold period
-    const earningsToRelease = await prisma.consultantEarnings.findMany({
-      where: {
-        status: EarningStatus.PENDING,
-        holdUntil: { lte: now },
-      },
-      include: {
-        consultantProfile: {
-          include: {
-            user: { select: { name: true, email: true } },
+    // #776 — read the snapshot and claim the rows inside one Serializable tx so an
+    // overlapping cron run can't observe the same PENDING set and double-count the
+    // release in logs/metrics. The updateMany predicate is the real money guard
+    // (already-READY rows are skipped); the transaction keeps the logged snapshot
+    // equal to what was actually transitioned. A serialization conflict aborts this
+    // run; the next hourly run reaps the rows.
+    const { earningsToRelease, releasedCount } = await prisma.$transaction(
+      async (tx) => {
+        const rows = await tx.consultantEarnings.findMany({
+          where: {
+            status: EarningStatus.PENDING,
+            holdUntil: { lte: now },
           },
-        },
-        payment: { select: { id: true, amount: true } },
+          include: {
+            consultantProfile: {
+              include: {
+                user: { select: { name: true, email: true } },
+              },
+            },
+            payment: { select: { id: true, amount: true } },
+          },
+        });
+
+        const updated = await tx.consultantEarnings.updateMany({
+          where: {
+            status: EarningStatus.PENDING,
+            holdUntil: { lte: now },
+          },
+          data: {
+            status: EarningStatus.READY,
+          },
+        });
+
+        return { earningsToRelease: rows, releasedCount: updated.count };
       },
-    });
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
 
     console.log(
       `📊 Found ${earningsToRelease.length} earnings ready for release`,
@@ -77,23 +109,12 @@ export async function releaseEarningsFromHold(): Promise<ReleaseResult> {
       return result;
     }
 
-    // Update all eligible earnings to READY status
-    const updateResult = await prisma.consultantEarnings.updateMany({
-      where: {
-        status: EarningStatus.PENDING,
-        holdUntil: { lte: now },
-      },
-      data: {
-        status: EarningStatus.READY,
-      },
-    });
-
-    result.releasedCount = updateResult.count;
+    result.releasedCount = releasedCount;
 
     // Log details for each released earning
     for (const earning of earningsToRelease) {
       console.log(
-        `✅ Released earning ${earning.id}: ₹${(earning.consultantShare / 100).toFixed(2)} for ${earning.consultantProfile.user.name || "Unknown"}`,
+        `✅ Released earning ${earning.id}: ₹${(earning.consultantSharePaise / 100).toFixed(2)} for ${earning.consultantProfile.user.name || "Unknown"}`,
       );
     }
 
@@ -103,7 +124,7 @@ export async function releaseEarningsFromHold(): Promise<ReleaseResult> {
     console.log(`\n📈 Release Summary:`);
     console.log(`   ✅ Released: ${result.releasedCount} earnings`);
     console.log(
-      `   💰 Total amount: ₹${(earningsToRelease.reduce((sum, e) => sum + e.consultantShare, 0) / 100).toFixed(2)}`,
+      `   💰 Total amount: ₹${(earningsToRelease.reduce((sum, e) => sum + e.consultantSharePaise, 0) / 100).toFixed(2)}`,
     );
   } catch (error) {
     const errorMessage =
@@ -129,21 +150,21 @@ export async function getPendingEarningsStats(): Promise<{
   const [pending, ready] = await Promise.all([
     prisma.consultantEarnings.aggregate({
       where: { status: EarningStatus.PENDING },
-      _sum: { consultantShare: true },
+      _sum: { consultantSharePaise: true },
       _count: true,
     }),
     prisma.consultantEarnings.aggregate({
       where: { status: EarningStatus.READY },
-      _sum: { consultantShare: true },
+      _sum: { consultantSharePaise: true },
       _count: true,
     }),
   ]);
 
   return {
     pendingCount: pending._count,
-    pendingAmount: pending._sum.consultantShare || 0,
+    pendingAmount: sumPaise(pending._sum.consultantSharePaise),
     readyCount: ready._count,
-    readyAmount: ready._sum.consultantShare || 0,
+    readyAmount: sumPaise(ready._sum.consultantSharePaise),
   };
 }
 

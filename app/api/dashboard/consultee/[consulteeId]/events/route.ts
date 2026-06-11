@@ -1,12 +1,33 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { WaitlistStatus } from "@prisma/client";
+import { WaitlistStatus, type Prisma } from "@prisma/client";
 import {
   requireApiAuth,
   isPrivileged,
   forbiddenResponse,
 } from "@/lib/auth-helpers";
+import { resolveOrgScope, type Scope } from "@/lib/api/scope/parse";
 
+/**
+ * Personal "all my bookings" widget endpoint. Returns the union of 5
+ * booking types (consultations, subscriptions, webinars, classes,
+ * trials) flattened for the consultee dashboard. Pre-existing surface
+ * — keep using this for the consultee's primary appointments view.
+ *
+ * NOT to be confused with `/api/appointments` (#674 / B1-hybrid),
+ * which is the paginated scope-aware list used by the new org
+ * dashboards. See `prompts/enterprise-test-prompt.md` §10 for the
+ * tradeoff matrix.
+ *
+ * `?orgScope=<orgId|personal|all>` — added in B1-personal-retrofit so
+ * the consultee dashboard can toggle between personal-only / a
+ * specific org's bookings / everything (admin-only). Default is
+ * `personal` for backwards compatibility (previous callers omit the
+ * param and get the same data they always have, since pre-B1 every
+ * row was implicitly personal). Cross-tenant scope guard fires here
+ * just like in `/api/appointments` — the caller must be a member of
+ * the requested org or hold ADMIN/STAFF.
+ */
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ consulteeId: string }> },
@@ -47,12 +68,62 @@ export async function GET(
 
     const userId = consulteeProfile.userId;
 
+    // B1-personal-retrofit: parse + authorize ?orgScope=. Default
+    // `personal` keeps every existing caller working without changes.
+    const url = new URL(request.url);
+    const callerMemberships = await prisma.membership.findMany({
+      where: { userId, status: "ACTIVE" },
+      select: { organizationId: true, status: true },
+    });
+    const scopeResolution = resolveOrgScope({
+      raw: url.searchParams.get("orgScope"),
+      memberships: callerMemberships,
+      userRole: session.user.role,
+      // Self-scoped: route already rejects requests for someone else's
+      // consulteeProfileId, so `?orgScope=all` here means "my personal
+      // + every org I belong to" — safe for any role.
+      allowAllForOwner: true,
+    });
+    if (!scopeResolution.ok) {
+      return NextResponse.json(
+        { error: scopeResolution.message, code: scopeResolution.code },
+        { status: scopeResolution.status },
+      );
+    }
+    const scope: Scope = scopeResolution.scope;
+
+    // Build per-resource org filters. The 5 booking models attach to
+    // org context differently:
+    //   - Consultation / Webinar (1:1 appointment): filter via
+    //     `appointment.is.organizationId`
+    //   - Subscription / Class (1:many appointments): filter via
+    //     `appointments.some.organizationId` so the parent surfaces if
+    //     ANY child appointment matches the scope
+    //   - TrialSession: filter directly via `organizationId`
+    const oneApptOrgWhere: Prisma.AppointmentWhereInput | undefined =
+      scope.kind === "personal"
+        ? { organizationId: null }
+        : scope.kind === "org"
+          ? { organizationId: scope.orgId }
+          : undefined;
+    const manyApptOrgWhere: Prisma.AppointmentWhereInput | undefined =
+      oneApptOrgWhere;
+    const trialOrgWhere: Prisma.TrialSessionWhereInput | undefined =
+      scope.kind === "personal"
+        ? { organizationId: null }
+        : scope.kind === "org"
+          ? { organizationId: scope.orgId }
+          : undefined;
+
     // PERFORMANCE FIX: Use direct Prisma queries instead of internal HTTP fetches
     // This avoids network overhead and reduces response time from 11+ seconds to <1 second
     const [consultations, subscriptions, webinars, classes, trials] =
       await Promise.all([
         prisma.consultation.findMany({
-          where: { requestedById: consulteeId },
+          where: {
+            requestedById: consulteeId,
+            ...(oneApptOrgWhere && { appointment: { is: oneApptOrgWhere } }),
+          },
           include: {
             consultationPlan: {
               include: {
@@ -87,7 +158,12 @@ export async function GET(
           orderBy: { requestedAt: "desc" },
         }),
         prisma.subscription.findMany({
-          where: { requestedById: consulteeId },
+          where: {
+            requestedById: consulteeId,
+            ...(manyApptOrgWhere && {
+              appointments: { some: manyApptOrgWhere },
+            }),
+          },
           include: {
             subscriptionPlan: {
               include: {
@@ -130,6 +206,7 @@ export async function GET(
                   slotsOfAppointment: {
                     some: { user: { some: { id: userId } } },
                   },
+                  ...(oneApptOrgWhere ?? {}),
                 },
               },
               {
@@ -204,6 +281,7 @@ export async function GET(
                     slotsOfAppointment: {
                       some: { user: { some: { id: userId } } },
                     },
+                    ...(manyApptOrgWhere ?? {}),
                   },
                 },
               },
@@ -271,7 +349,10 @@ export async function GET(
         }),
         // Trial sessions: Free trials requested by the consultee
         prisma.trialSession.findMany({
-          where: { consulteeProfileId: consulteeId },
+          where: {
+            consulteeProfileId: consulteeId,
+            ...(trialOrgWhere ?? {}),
+          },
           include: {
             subscriptionPlan: {
               include: {

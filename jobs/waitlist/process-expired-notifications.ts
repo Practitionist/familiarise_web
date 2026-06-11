@@ -9,6 +9,7 @@ import { processExpiredNotifications, handleSlotOpening } from "@/lib/waitlist";
 import { sendWaitlistExpiredEmail } from "@/lib/waitlist/notifications";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
 import { getAppUrl } from "../../lib/url";
+import { withCronLock } from "@/lib/cron/with-cron-lock";
 
 export interface ProcessExpiredResult {
   processed: number;
@@ -25,7 +26,14 @@ export interface ProcessExpiredResult {
  * 3. Send expiration notification email
  * 4. Notify next person in queue
  */
+// #476 — entry-level cron lock; fail-open (repeat-safe side effects).
 export async function processExpiredNotificationsJob(): Promise<ProcessExpiredResult> {
+  return withCronLock("process-expired-notifications", { failMode: "open" }, () =>
+    processExpiredNotificationsJobUnlocked(),
+  );
+}
+
+async function processExpiredNotificationsJobUnlocked(): Promise<ProcessExpiredResult> {
   await abortIfMaintenance("process-expired-notifications");
   const startTime = Date.now();
   const errors: Array<{ id: string; error: string }> = [];
@@ -80,5 +88,3 @@ export async function processExpiredNotificationsJob(): Promise<ProcessExpiredRe
     duration: Date.now() - startTime,
   };
 }
-
-export default processExpiredNotificationsJob;

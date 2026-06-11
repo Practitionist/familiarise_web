@@ -156,3 +156,40 @@ export async function setMaintenanceState(
     }
   });
 }
+
+// ---------------------------------------------------------------------------
+// Per-org maintenance (read side only — admin write API ships separately)
+// ---------------------------------------------------------------------------
+
+/**
+ * Read the currently-active MaintenanceWindow row scoped to a single org.
+ *
+ * Per the schema comment on `MaintenanceWindow.organizationId`, NULL rows
+ * are platform-wide and non-null rows scope to a single tenant. This helper
+ * only returns the *org-specific* active window — callers should still
+ * consult `getMaintenanceState()` for the platform-wide Redis check.
+ *
+ * Returns `null` if there is no active org-specific window. "Active" means
+ * `phase !== OFF` and the most recent row by `createdAt`.
+ *
+ * Used by per-org financial jobs (payout batch, subscription invoicing)
+ * to skip an individual tenant during a planned downtime window without
+ * affecting other tenants.
+ */
+export async function getActiveOrgMaintenanceWindow(
+  organizationId: string,
+): Promise<{
+  phase: MaintenancePhase;
+  reason: string | null;
+  estimatedEnd: Date | null;
+} | null> {
+  const row = await prisma.maintenanceWindow.findFirst({
+    where: {
+      organizationId,
+      phase: { not: MaintenancePhase.OFF },
+    },
+    orderBy: { createdAt: "desc" },
+    select: { phase: true, reason: true, estimatedEnd: true },
+  });
+  return row ?? null;
+}

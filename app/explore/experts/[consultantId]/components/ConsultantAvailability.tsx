@@ -1,15 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { DayOfWeek } from "@prisma/client";
-import type { TConsultantDetailData } from "@/types/consultant";
 import { TSlotTiming } from "@/types/slots";
 import { WeeklyAvailability } from "./WeeklyAvailability";
 import { CustomAvailability } from "./CustomAvailability";
 import { addDays, startOfDay, endOfDay } from "date-fns";
 import { toZonedTime, formatInTimeZone } from "date-fns-tz";
-import type { ProcessedSlot } from "../types";
+import type { ConsultantDetailData, ProcessedSlot } from "../types";
 
 interface ConsultantAvailabilityProps {
-  consultantDetails: TConsultantDetailData;
+  consultantDetails: ConsultantDetailData;
   timezone: string;
 }
 

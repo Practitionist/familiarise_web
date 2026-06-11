@@ -9,7 +9,8 @@ import { fetchImagesFromSupabaseStorage } from "@/lib/supabase";
 
 export const getHomeExperts = cache(async () => {
   const consultants = await prisma.consultantProfile.findMany({
-    where: { verificationStatus: "VERIFIED" },
+    // #781 §B — soft-deleted profiles leave public surfaces
+    where: { verificationStatus: "VERIFIED", deletedAt: null },
     orderBy: { rating: "desc" },
     take: 10,
     include: {
@@ -43,12 +44,21 @@ export const getHomeExperts = cache(async () => {
       },
     },
   });
-  return consultants;
+  // BigInt `price` (paise) is non-serializable across Server→Client.
+  // Convert to Number — paise comfortably fits Number.MAX_SAFE_INTEGER.
+  return consultants.map((c) => ({
+    ...c,
+    subscriptionPlans: c.subscriptionPlans.map((p) => ({
+      ...p,
+      price: Number(p.price),
+    })),
+  }));
 });
 
 export const getHomeReviews = cache(async () => {
   const reviews = await prisma.consultantReview.findMany({
-    where: { rating: { gte: 4 } },
+    // #781 §B — soft-deleted profiles leave public surfaces
+    where: { rating: { gte: 4 }, consultantProfile: { deletedAt: null } },
     take: 20,
     include: {
       consultantProfile: {

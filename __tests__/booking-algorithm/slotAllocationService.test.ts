@@ -66,6 +66,10 @@ function makeMockTx() {
     subscription: { findUnique: jest.fn(), update: jest.fn() },
     webinar: { findUnique: jest.fn(), update: jest.fn() },
     class: { findUnique: jest.fn(), update: jest.fn() },
+    // #440 — createAppointments denormalizes the consultant onto each slot.
+    consultantProfile: {
+      findFirst: jest.fn().mockResolvedValue({ id: "consultant-profile-1" }),
+    },
     appointment: {
       findMany: jest.fn().mockResolvedValue([]),
       create: jest.fn().mockResolvedValue({

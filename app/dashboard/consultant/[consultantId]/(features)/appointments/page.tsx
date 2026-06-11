@@ -5,6 +5,13 @@ import { useQuery } from "@tanstack/react-query";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { PageSkeleton } from "@/components/dashboard/DashboardSkeletons";
 import { createConsultantQueries } from "@/lib/dashboard-queries";
+import { useOrgScope } from "@/hooks/useOrgScope";
+import {
+  OrgContextFilter,
+  ORG_FILTER_ALL,
+  ORG_FILTER_PERSONAL,
+  type OrgContextFilterValue,
+} from "@/components/dashboard/OrgContextFilter";
 import { BADGE_STYLES } from "../../types";
 import { AppointmentsTab } from "./AppointmentsTab";
 
@@ -15,16 +22,47 @@ export default function AppointmentsPage({
 }) {
   const { consultantId } = use(params);
 
+  // Default to "All activity" so a panel expert lands on the union view
+  // (sponsored + personal) without a manual toggle every visit. Matches
+  // the consultee /appointments choice we shipped earlier this branch.
+  const { scope, setScope } = useOrgScope({ defaultForOrgMember: "all" });
+  const orgScopeParam =
+    scope.kind === "personal"
+      ? "personal"
+      : scope.kind === "all"
+        ? "all"
+        : scope.orgId;
+  const orgScopeQueryParam =
+    orgScopeParam && orgScopeParam !== "personal" ? orgScopeParam : null;
+
+  const filterValue: OrgContextFilterValue =
+    scope.kind === "personal"
+      ? ORG_FILTER_PERSONAL
+      : scope.kind === "all"
+        ? ORG_FILTER_ALL
+        : scope.orgId;
+  const handleFilterChange = (next: OrgContextFilterValue) => {
+    if (next === ORG_FILTER_PERSONAL) setScope({ kind: "personal" });
+    else if (next === ORG_FILTER_ALL) setScope({ kind: "all" });
+    else setScope({ kind: "org", orgId: next });
+  };
+
   // Use the centralized query configuration
-  const appointmentsQuery = createConsultantQueries(consultantId).appointments;
+  const appointmentsQuery = createConsultantQueries(
+    consultantId,
+    orgScopeParam,
+  ).appointments;
   const { data: appointments, isLoading, error } = useQuery(appointmentsQuery);
 
   // Fetch scheduled trials for this consultant
   const { data: trialsData, isLoading: trialsLoading } = useQuery({
-    queryKey: ["trials", consultantId, "SCHEDULED"],
+    queryKey: ["trials", consultantId, "SCHEDULED", orgScopeParam] as const,
     queryFn: async () => {
+      const orgScopeQs = orgScopeQueryParam
+        ? `&orgScope=${encodeURIComponent(orgScopeQueryParam)}`
+        : "";
       const res = await fetch(
-        `/api/trials?consultantProfileId=${consultantId}&status=SCHEDULED`,
+        `/api/trials?consultantProfileId=${consultantId}&status=SCHEDULED${orgScopeQs}`,
       );
       if (!res.ok) throw new Error("Failed to fetch trials");
       const { data } = await res.json();
@@ -34,10 +72,13 @@ export default function AppointmentsPage({
 
   // Fetch class events for this consultant (to show unscheduled classes in appointments page)
   const { data: classEventsData, isLoading: classesLoading } = useQuery({
-    queryKey: ["consultant-classes", consultantId],
+    queryKey: ["consultant-classes", consultantId, orgScopeParam] as const,
     queryFn: async () => {
+      const orgScopeQs = orgScopeQueryParam
+        ? `&orgScope=${encodeURIComponent(orgScopeQueryParam)}`
+        : "";
       const res = await fetch(
-        `/api/events/classes?consultantProfileId=${consultantId}`,
+        `/api/events/classes?consultantProfileId=${consultantId}${orgScopeQs}`,
       );
       if (!res.ok) throw new Error("Failed to fetch classes");
       const { data } = await res.json();
@@ -49,10 +90,17 @@ export default function AppointmentsPage({
 
   // Fetch webinar events for this consultant; filter to those with no appointment yet
   const { data: webinarEventsData, isLoading: webinarsLoading } = useQuery({
-    queryKey: ["consultant-webinars-unscheduled", consultantId],
+    queryKey: [
+      "consultant-webinars-unscheduled",
+      consultantId,
+      orgScopeParam,
+    ] as const,
     queryFn: async () => {
+      const orgScopeQs = orgScopeQueryParam
+        ? `&orgScope=${encodeURIComponent(orgScopeQueryParam)}`
+        : "";
       const res = await fetch(
-        `/api/events/webinars?consultantProfileId=${consultantId}`,
+        `/api/events/webinars?consultantProfileId=${consultantId}${orgScopeQs}`,
       );
       if (!res.ok) throw new Error("Failed to fetch webinars");
       const { data } = await res.json();
@@ -97,6 +145,12 @@ export default function AppointmentsPage({
         consultantId={consultantId}
         unscheduledClasses={classEventsData || []}
         unscheduledWebinars={webinarEventsData || []}
+        headerSlot={
+          <OrgContextFilter
+            value={filterValue}
+            onChange={handleFilterChange}
+          />
+        }
       />
     </DashboardErrorBoundary>
   );

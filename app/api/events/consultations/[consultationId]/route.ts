@@ -1,4 +1,4 @@
-import prisma from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
 import {
   AppointmentsType,
   PaymentGateway,
@@ -26,35 +26,41 @@ import { createDirectMessageChannel } from "@/actions/stream/chat/channel.action
 import { streamLogger } from "@/lib/stream-logger";
 
 /**
- * Type for consultation with all related details needed for payment processing
+ * Type for consultation with all related details needed for payment processing.
+ * Derived via the extended client — raw GetPayload would re-introduce bigint
+ * money fields (#780).
  */
-type ConsultationWithDetails = Prisma.ConsultationGetPayload<{
-  include: {
-    consultationPlan: {
-      include: {
-        consultantProfile: {
-          include: {
-            user: true;
+type ConsultationWithDetails = Prisma.Result<
+  typeof prisma.consultation,
+  {
+    include: {
+      consultationPlan: {
+        include: {
+          consultantProfile: {
+            include: {
+              user: true;
+            };
+          };
+        };
+      };
+      requestedBy: {
+        include: {
+          user: true;
+        };
+      };
+      appointment: {
+        include: {
+          slotsOfAppointment: {
+            include: {
+              user: true;
+            };
           };
         };
       };
     };
-    requestedBy: {
-      include: {
-        user: true;
-      };
-    };
-    appointment: {
-      include: {
-        slotsOfAppointment: {
-          include: {
-            user: true;
-          };
-        };
-      };
-    };
-  };
-}>;
+  },
+  "findFirstOrThrow"
+>;
 
 export async function GET(
   request: Request,
@@ -728,30 +734,34 @@ export async function PATCH(
       }
 
       // --- Stream channel creation (fire-and-forget, only on approval) ---
-      if (!result.duplicate && status === RequestStatus.APPROVED) try {
-        const consultationData = result.data;
-        const consultantUserId =
-          consultationData.consultationPlan?.consultantProfile?.userId;
-        const consulteeUserId = consultationData.requestedBy?.userId;
+      if (!result.duplicate && status === RequestStatus.APPROVED)
+        try {
+          const consultationData = result.data;
+          const consultantUserId =
+            consultationData.consultationPlan?.consultantProfile?.userId;
+          const consulteeUserId = consultationData.requestedBy?.userId;
 
-        if (consultantUserId && consulteeUserId) {
-          await addUserToEventChannel(
-            "consultation",
-            consultationId,
-            consulteeUserId,
+          if (consultantUserId && consulteeUserId) {
+            await addUserToEventChannel(
+              "consultation",
+              consultationId,
+              consulteeUserId,
+            );
+            await createDirectMessageChannel(consultantUserId, consulteeUserId);
+            streamLogger.info(
+              "Stream channel created on consultation approval",
+              {
+                consultationId,
+              },
+            );
+          }
+        } catch (channelError) {
+          streamLogger.error(
+            "Auto-channel creation failed on consultation approval",
+            channelError,
+            { consultationId },
           );
-          await createDirectMessageChannel(consultantUserId, consulteeUserId);
-          streamLogger.info("Stream channel created on consultation approval", {
-            consultationId,
-          });
         }
-      } catch (channelError) {
-        streamLogger.error(
-          "Auto-channel creation failed on consultation approval",
-          channelError,
-          { consultationId },
-        );
-      }
 
       // Return success response (exclude emailData from response)
       const { emailData: _emailData, ...responseData } =
@@ -786,7 +796,7 @@ export async function PATCH(
  * Uses transaction client to maintain serializable isolation
  */
 async function checkConsultationPayment(
-  tx: Prisma.TransactionClient,
+  tx: Tx,
   consultationId: string,
 ): Promise<boolean> {
   const consultation = await tx.consultation.findUnique({

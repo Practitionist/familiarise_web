@@ -5,6 +5,13 @@ import { useQuery } from "@tanstack/react-query";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { PageSkeleton } from "@/components/dashboard/DashboardSkeletons";
 import { createConsulteeQueries } from "@/lib/dashboard-queries";
+import { useOrgScope } from "@/hooks/useOrgScope";
+import {
+  OrgContextFilter,
+  ORG_FILTER_ALL,
+  ORG_FILTER_PERSONAL,
+  type OrgContextFilterValue,
+} from "@/components/dashboard/OrgContextFilter";
 import { Overview } from "./Overview";
 import { Calendar } from "./Calendar";
 import { BookingHistoryTab } from "../history/BookingHistoryTab";
@@ -19,9 +26,34 @@ type PageProps = {
 export default function AppointmentsPage({ params }: Readonly<PageProps>) {
   const { consulteeId } = use(params);
 
-  // Use the centralized query configuration
-  const eventsQuery = createConsulteeQueries(consulteeId).events;
+  // B1-personal-retrofit: drive the events query off the URL ?orgScope=
+  // so org-funded sessions surface here (e.g. deep-links from
+  // /dashboard/organization/<orgId>/my-program "Join now"). Default is
+  // personal — backwards-compatible with B2C users.
+  // Land on the union view by default — for an org learner who books
+  // both personally and through their org, the appointments page is
+  // the one place they want the full picture without toggling.
+  const { scope, setScope } = useOrgScope({ defaultForOrgMember: "all" });
+  const orgScopeParam =
+    scope.kind === "personal"
+      ? "personal"
+      : scope.kind === "all"
+        ? "all"
+        : scope.orgId;
+  const eventsQuery = createConsulteeQueries(consulteeId, orgScopeParam).events;
   const { data: eventsData, isLoading, error } = useQuery(eventsQuery);
+
+  const filterValue: OrgContextFilterValue =
+    scope.kind === "personal"
+      ? ORG_FILTER_PERSONAL
+      : scope.kind === "all"
+        ? ORG_FILTER_ALL
+        : scope.orgId;
+  const handleFilterChange = (next: OrgContextFilterValue) => {
+    if (next === ORG_FILTER_PERSONAL) setScope({ kind: "personal" });
+    else if (next === ORG_FILTER_ALL) setScope({ kind: "all" });
+    else setScope({ kind: "org", orgId: next });
+  };
 
   if (isLoading) {
     return <PageSkeleton />;
@@ -101,12 +133,18 @@ export default function AppointmentsPage({ params }: Readonly<PageProps>) {
   return (
     <DashboardErrorBoundary>
       <Tabs defaultValue="upcoming" className="space-y-6">
-        <TabsList>
-          <TabsTrigger value="upcoming">Upcoming</TabsTrigger>
-          <TabsTrigger value="past">Past</TabsTrigger>
-          <TabsTrigger value="calendar">Calendar</TabsTrigger>
-          <TabsTrigger value="history">History</TabsTrigger>
-        </TabsList>
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <TabsList>
+            <TabsTrigger value="upcoming">Upcoming</TabsTrigger>
+            <TabsTrigger value="past">Past</TabsTrigger>
+            <TabsTrigger value="calendar">Calendar</TabsTrigger>
+            <TabsTrigger value="history">History</TabsTrigger>
+          </TabsList>
+          <OrgContextFilter
+            value={filterValue}
+            onChange={handleFilterChange}
+          />
+        </div>
 
         <TabsContent value="upcoming">
           <Overview

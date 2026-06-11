@@ -1,5 +1,6 @@
 import { cache } from "react";
 import prisma from "@/lib/prisma";
+import { Prisma } from "@prisma/client";
 
 /**
  * Server-side data access for the explore experts page.
@@ -9,7 +10,15 @@ import prisma from "@/lib/prisma";
  *  - Cached (e.g. getExpertsMetadata)  — React.cache() wrapper. Used by Server Components.
  */
 
-/** Shared include shape for consultant list queries. */
+/**
+ * Shared include shape for consultant list queries.
+ *
+ * Typed via `satisfies Prisma.ConsultantProfileInclude` so Prisma's
+ * generated types validate the shape at compile time — the returned
+ * rows are then automatically narrow-typed with all the nested relations
+ * (user, domain, subDomains, tags, reviews, subscriptionPlans) without
+ * requiring `as const` or runtime narrowing at the caller.
+ */
 export const consultantListInclude = {
   user: {
     select: {
@@ -40,7 +49,39 @@ export const consultantListInclude = {
     },
     take: 5,
   },
-} as const;
+} satisfies Prisma.ConsultantProfileInclude;
+
+// Separate include for org membership.
+//
+// Arch 4-Modified shape: a consultant belongs to an org via `Membership`
+// (relation name "ConsultantMembership"). "Consultant" in the org context
+// is `MemberRole.EXPERT`, and a hosting org is `Organization.canHost=true`.
+//
+// Typed via `satisfies` so Prisma's generated include types validate the
+// filter at compile time (no `as const` string-literal narrowing needed).
+export const orgMembershipInclude = {
+  memberships: {
+    where: {
+      role: "EXPERT",
+      status: "ACTIVE",
+      organization: {
+        canHost: true,
+        status: "ACTIVE",
+      },
+    },
+    orderBy: { createdAt: "asc" },
+    select: {
+      organization: {
+        select: {
+          name: true,
+          slug: true,
+          brandingProfile: { select: { logo: true } },
+        },
+      },
+    },
+    take: 1,
+  },
+} satisfies Prisma.ConsultantProfileInclude;
 
 // ---------------------------------------------------------------------------
 // Experts metadata (filters, domain grid, language list)
@@ -68,11 +109,12 @@ export async function fetchExpertsMetadata() {
       select: { id: true, name: true, domainId: true },
     }),
     // Consultant metadata (counts, domain breakdown, avg rating)
+    // #781 §B — soft-deleted profiles leave public surfaces
     (async () => {
       const [totalConsultants, consultantsByDomain, averageRating] =
         await Promise.all([
           prisma.consultantProfile.count({
-            where: { verificationStatus: "VERIFIED" },
+            where: { verificationStatus: "VERIFIED", deletedAt: null },
           }),
           prisma.domain.findMany({
             select: {
@@ -81,14 +123,14 @@ export async function fetchExpertsMetadata() {
               _count: {
                 select: {
                   consultantProfiles: {
-                    where: { verificationStatus: "VERIFIED" },
+                    where: { verificationStatus: "VERIFIED", deletedAt: null },
                   },
                 },
               },
             },
           }),
           prisma.consultantProfile.aggregate({
-            where: { verificationStatus: "VERIFIED" },
+            where: { verificationStatus: "VERIFIED", deletedAt: null },
             _avg: { rating: true },
           }),
         ]);
@@ -103,19 +145,24 @@ export async function fetchExpertsMetadata() {
         averageRating: averageRating._avg.rating || 0,
       };
     })(),
-    // Available languages via raw SQL
-    prisma.$queryRaw<{ lang: string }[]>`
-        SELECT DISTINCT unnest(languages) as lang
-        FROM "ConsultantProfile"
-        WHERE "verificationStatus" = 'VERIFIED'
-        ORDER BY lang
-      `.then((result) => result.map((r) => r.lang)),
+    // Available languages — distinct across verified consultants. ORM read + JS
+    // dedupe (no raw SQL): pull the verified profiles' `languages` arrays and
+    // flatten/unique/sort in app code. The verified-consultant set is small enough
+    // that this is cheaper than it looks and avoids a Postgres `unnest`.
+    prisma.consultantProfile
+      .findMany({
+        where: { verificationStatus: "VERIFIED", deletedAt: null },
+        select: { languages: true },
+      })
+      .then((rows) =>
+        Array.from(new Set(rows.flatMap((r) => r.languages))).sort(),
+      ),
     // Available companies (from verified consultants' work experiences)
     prisma.workExperience.findMany({
       where: {
         company: { not: "" },
         user: {
-          consultantProfile: { verificationStatus: "VERIFIED" },
+          consultantProfile: { verificationStatus: "VERIFIED", deletedAt: null },
         },
       },
       select: { company: true },
@@ -154,7 +201,8 @@ export const getExpertsMetadata = cache(fetchExpertsMetadata);
 /** Fetch recent high-quality reviews for social proof sections. */
 export const getRecentReviews = cache(async (limit: number = 6) => {
   return prisma.consultantReview.findMany({
-    where: { rating: { gte: 4 } },
+    // #781 §B — soft-deleted profiles leave public surfaces
+    where: { rating: { gte: 4 }, consultantProfile: { deletedAt: null } },
     orderBy: { createdAt: "desc" },
     take: limit,
     include: {
@@ -192,11 +240,54 @@ export const getCuratedExperts = cache(
         break;
     }
 
-    return prisma.consultantProfile.findMany({
-      where: { verificationStatus: "VERIFIED" },
+    const rows = await prisma.consultantProfile.findMany({
+      // #781 §B — soft-deleted profiles leave public surfaces
+      where: { verificationStatus: "VERIFIED", deletedAt: null },
       orderBy,
       take: limit,
-      include: consultantListInclude,
+      include: { ...consultantListInclude, ...orgMembershipInclude },
+    });
+
+    // Explicitly map to IConsultantCardData so that Prisma Decimal fields
+    // (e.g. tdsRate) are never included in the payload passed to Client
+    // Components. Spreading the full row crosses the Server→Client boundary
+    // with non-serializable Decimal objects, which Next.js rejects.
+    return rows.map(({ memberships, ...c }) => {
+      const firstOrg = memberships[0]?.organization ?? null;
+      return {
+        id: c.id,
+        rating: c.rating,
+        headline: c.headline,
+        experience: c.experience,
+        description: c.description,
+        createdAt: c.createdAt,
+        isVerified: c.isVerified,
+        languages: c.languages,
+        user: c.user,
+        domain: c.domain,
+        subDomains: c.subDomains,
+        tags: c.tags,
+        reviews: c.reviews,
+        subscriptionPlans: c.subscriptionPlans.map((p) => ({
+          id: p.id,
+          title: p.title,
+          // BigInt (paise) is non-serializable across Server→Client.
+          // Paise comfortably fits Number.MAX_SAFE_INTEGER.
+          price: Number(p.price),
+          priceCurrency: p.priceCurrency,
+          durationInMonths: p.durationInMonths,
+          callsPerWeek: p.callsPerWeek,
+          emailSupport: p.emailSupport,
+          totalSessions: p.totalSessions,
+        })),
+        organizationBadge: firstOrg
+          ? {
+              name: firstOrg.name,
+              slug: firstOrg.slug,
+              logo: firstOrg.brandingProfile?.logo ?? null,
+            }
+          : null,
+      };
     });
   },
 );

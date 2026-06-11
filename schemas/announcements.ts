@@ -11,5 +11,3 @@ export const CreateAnnouncementSchema = z.object({
   linkUrl: z.string().url().optional(),
   linkText: z.string().optional(),
 });
-
-export type CreateAnnouncementInput = z.infer<typeof CreateAnnouncementSchema>;

@@ -4,7 +4,7 @@
  * Can be used by both webhook API routes and direct checkout flows
  */
 
-import prisma from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
 import {
   AppointmentsType,
   PaymentStatus,
@@ -12,12 +12,14 @@ import {
   RequestStatus,
 } from "@prisma/client";
 import { calculateSubscriptionEndDate } from "@/utils/dateUtils";
+import { buildOccupiedAppointmentFilter } from "@/utils/slotAllocation/occupancyPolicy";
+import { withSerializableRetry } from "@/lib/db/serializable-retry";
+import { recordSystemError } from "@/lib/enterprise/system-events";
 import { validateWebhookMetadata } from "@/schemas/webhooks/metadata";
 import { ZodError } from "zod";
 import { sendPaymentSuccessEmail, sendPaymentFailedEmail } from "@/lib/email";
 import {
   createEarningsFromPayment,
-  createInvoiceFromPayment,
   type AppointmentType,
 } from "@/lib/payments/payouts";
 import { markWaitlistAsBooked } from "@/lib/waitlist/slot-handler";
@@ -39,17 +41,35 @@ import { getAppUrl } from "@/lib/url";
 // Type Definitions
 // ============================================================================
 
+// #780/#781 — the extended client converts every BigInt column (and the FX
+// Decimal snapshots) to number on read, but GetPayload (incl. nested
+// includes) still says bigint/Decimal. Deep-map to match runtime;
+// Date/Bytes pass through untouched.
+type MoneyAsNumber<T> = T extends bigint
+  ? number
+  : T extends Prisma.Decimal
+    ? number
+    : T extends Date | Uint8Array
+      ? T
+      : T extends Array<infer U>
+        ? Array<MoneyAsNumber<U>>
+        : T extends object
+          ? { [K in keyof T]: MoneyAsNumber<T[K]> }
+          : T;
+
 /**
  * Payment type with user and consultee profile included
  * Matches the Prisma query includes used in handlePaymentSuccess
  */
-type PaymentWithUser = Prisma.PaymentGetPayload<{
-  include: {
-    user: {
-      include: { consulteeProfile: true };
+type PaymentWithUser = MoneyAsNumber<
+  Prisma.PaymentGetPayload<{
+    include: {
+      user: {
+        include: { consulteeProfile: true };
+      };
     };
-  };
-}>;
+  }>
+>;
 
 /**
  * Data required to create a consultation appointment
@@ -119,8 +139,15 @@ export async function handlePaymentSuccess(
   // error logging. The `sync-payment-earnings` background job serves as
   // a safety net for any failures in Phase 2.
 
-  // Phase 1: Critical transaction — payment confirmation + appointment
-  const txResult = await prisma.$transaction(async (tx) => {
+  // Phase 1: Critical transaction — payment confirmation + appointment.
+  // Serializable (#827 review): two concurrent capture webhooks for
+  // overlapping slots both pass the confirm-time conflict findFirst at READ
+  // COMMITTED (each sees the other's slots still tentative). Under SSI the
+  // rw-antidependency aborts one side with P2034; the retry then sees the
+  // winner confirmed and blocks. The SUCCEEDED early-return keeps the retry
+  // idempotent.
+  const txResult = await withSerializableRetry(() =>
+    prisma.$transaction(async (tx) => {
     const payment = await tx.payment.findUnique({
       where: { paymentIntent: paymentIntentId },
       include: { user: { include: { consulteeProfile: true } } },
@@ -261,7 +288,10 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
       amount: payment.amount,
       currency: payment.currency,
     };
-  });
+    },
+    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    ),
+  );
 
   // If transaction returned null, the payment was already processed or had a metadata error
   if (!txResult) return;
@@ -286,7 +316,10 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
       );
     }
   } catch (emailError) {
-    console.error("Failed to send payment success email (Phase 2):", emailError);
+    console.error(
+      "Failed to send payment success email (Phase 2):",
+      emailError,
+    );
   }
 
   const { paymentId, appointmentId, userId, userName, amount, currency } =
@@ -421,18 +454,11 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
     );
   }
 
-  // --- Invoice creation ---
-  try {
-    const invoiceId = await createInvoiceFromPayment(paymentId);
-    if (invoiceId) {
-      console.log(`📄 Invoice created for payment ${paymentId}`);
-    }
-  } catch (invoiceError) {
-    console.error(
-      `⚠️ Failed to create invoice for payment ${paymentId}:`,
-      invoiceError,
-    );
-  }
+  // Personal-consultee per-Payment invoice generation was removed in
+  // the v0 lockdown (#768). Org-funded checkouts continue to roll up
+  // into OrganizationInvoice via the INVOICE cycle cron; personal-card
+  // consultees request a receipt via support@familiarise.work until v1.1
+  // re-introduces a per-Payment surface.
 
   // --- Waitlist update ---
   if (metadata.fromWaitlist) {
@@ -593,18 +619,10 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
         const classEvent = appointmentForChannel.class;
 
         if (eventType === "CONSULTATION" && consultation) {
-          await addUserToEventChannel(
-            "consultation",
-            consultation.id,
-            userId,
-          );
+          await addUserToEventChannel("consultation", consultation.id, userId);
           await createDirectMessageChannel(consultantUserId, userId);
         } else if (eventType === "SUBSCRIPTION" && subscription) {
-          await addUserToEventChannel(
-            "subscription",
-            subscription.id,
-            userId,
-          );
+          await addUserToEventChannel("subscription", subscription.id, userId);
           await createDirectMessageChannel(consultantUserId, userId);
         } else if (eventType === "WEBINAR" && webinar) {
           await addUserToEventChannel("webinar", webinar.id, userId);
@@ -757,7 +775,7 @@ export async function handlePaymentFailure(paymentIntentId: string) {
  * Create appointment from webhook metadata based on appointment type
  */
 async function createAppointmentFromWebhook(
-  tx: Prisma.TransactionClient,
+  tx: Tx,
   metadata: Record<string, string>,
   payment: PaymentWithUser,
 ) {
@@ -838,10 +856,7 @@ async function createAppointmentFromWebhook(
 // Appointment Type-Specific Creation Functions
 // ============================================================================
 
-async function createConsultation(
-  tx: Prisma.TransactionClient,
-  data: ConsultationData,
-) {
+async function createConsultation(tx: Tx, data: ConsultationData) {
   const consultation = await tx.consultation.create({
     data: {
       consultationPlanId: data.planId,
@@ -871,10 +886,7 @@ async function createConsultation(
   });
 }
 
-async function createSubscription(
-  tx: Prisma.TransactionClient,
-  data: SubscriptionData,
-) {
+async function createSubscription(tx: Tx, data: SubscriptionData) {
   const plan = await tx.subscriptionPlan.findUnique({
     where: { id: data.planId },
   });
@@ -940,7 +952,7 @@ async function createSubscription(
   });
 }
 
-async function createWebinar(tx: Prisma.TransactionClient, data: EventData) {
+async function createWebinar(tx: Tx, data: EventData) {
   const webinar = await tx.webinar.findUnique({
     where: { id: data.eventId },
     include: { appointment: { include: { slotsOfAppointment: true } } },
@@ -974,7 +986,7 @@ async function createWebinar(tx: Prisma.TransactionClient, data: EventData) {
   return createdAppointment;
 }
 
-async function createClass(tx: Prisma.TransactionClient, data: EventData) {
+async function createClass(tx: Tx, data: EventData) {
   const classInstance = await tx.class.findUnique({
     where: { id: data.eventId },
     include: { classPlan: true },
@@ -1015,7 +1027,7 @@ async function createClass(tx: Prisma.TransactionClient, data: EventData) {
  * Transitions APPROVED_PENDING_PAYMENT → APPROVED
  */
 async function confirmApprovalStatus(
-  tx: Prisma.TransactionClient,
+  tx: Tx,
   entityType: "consultation" | "subscription",
   entityId: string,
 ): Promise<void> {
@@ -1028,21 +1040,43 @@ async function confirmApprovalStatus(
       throw new Error(`Consultation ${entityId} not found`);
     }
 
-    // If status is APPROVED_PENDING_PAYMENT, confirm the appointment
-    if (consultation.requestStatus === RequestStatus.APPROVED_PENDING_PAYMENT) {
-      await tx.consultation.update({
+    // B2 (#825 CAS doctrine) — APPROVED is only reachable from the two
+    // pre-payment states. The old else-branch moved ANY status → APPROVED,
+    // so a capture landing after a cancel resurrected the booking. Now the
+    // guard rides the WHERE; a late capture against a terminal booking is
+    // money collected for nothing — surface it for refund instead.
+    const movedConsult = await tx.consultation.updateMany({
+      where: {
+        id: entityId,
+        requestStatus: {
+          in: [RequestStatus.PENDING, RequestStatus.APPROVED_PENDING_PAYMENT],
+        },
+      },
+      data: { requestStatus: RequestStatus.APPROVED },
+    });
+    if (movedConsult.count === 0) {
+      // Re-read: the pre-read raced the very transition that made the CAS
+      // miss, so logging it would report the wrong state (review catch on
+      // #844). The fresh value decides whether this is benign (already
+      // APPROVED/SCHEDULED/COMPLETED) or money-for-nothing.
+      const fresh = await tx.consultation.findUnique({
         where: { id: entityId },
-        data: { requestStatus: RequestStatus.APPROVED },
+        select: { requestStatus: true },
       });
-      console.log(
-        `✅ Consultation ${entityId} payment completed - moving from APPROVED_PENDING_PAYMENT to APPROVED`,
-      );
-    } else if (consultation.requestStatus !== RequestStatus.APPROVED) {
-      // Only update if not already approved
-      await tx.consultation.update({
-        where: { id: entityId },
-        data: { requestStatus: RequestStatus.APPROVED },
-      });
+      const freshStatus = fresh?.requestStatus ?? consultation.requestStatus;
+      if (
+        freshStatus !== RequestStatus.APPROVED &&
+        freshStatus !== RequestStatus.SCHEDULED &&
+        freshStatus !== RequestStatus.COMPLETED
+      ) {
+        void recordSystemError({
+          organizationId: null,
+          category: "PAYMENT",
+          summary: `Payment captured for consultation ${entityId} in terminal state ${freshStatus} — refund needed`,
+          err: new Error("CAPTURE_AFTER_TERMINAL_STATE"),
+          context: { entityType: "consultation", entityId },
+        }).catch(() => {});
+      }
     }
   } else {
     const subscription = await tx.subscription.findUnique({
@@ -1058,8 +1092,12 @@ async function confirmApprovalStatus(
     // Subscription stays PENDING until consultant allocates slots via Requests tab
     // SlotAllocationService.allocate() will set status to APPROVED when slots are allocated
     if (subscription.requestStatus === RequestStatus.APPROVED_PENDING_PAYMENT) {
-      await tx.subscription.update({
-        where: { id: entityId },
+      // CAS — the pre-read can race a cancel; the guard decides (B2).
+      await tx.subscription.updateMany({
+        where: {
+          id: entityId,
+          requestStatus: RequestStatus.APPROVED_PENDING_PAYMENT,
+        },
         data: { requestStatus: RequestStatus.APPROVED },
       });
       console.log(
@@ -1083,8 +1121,9 @@ async function confirmApprovalStatus(
  * @param appointmentId - The appointment ID to confirm
  * @param userId - The paying user's ID (required for WEBINAR/CLASS to prevent confirming other users' slots)
  */
-async function confirmExistingAppointment(
-  tx: Prisma.TransactionClient,
+// Exported for the #827 regression tests; only handlePaymentSuccess calls it in prod.
+export async function confirmExistingAppointment(
+  tx: Tx,
   appointmentId: string,
   userId?: string,
 ) {
@@ -1102,6 +1141,68 @@ async function confirmExistingAppointment(
   if (!appointment) {
     console.warn(`Appointment ${appointmentId} not found for confirmation`);
     return;
+  }
+
+  // #827 — first-confirmed-wins recheck for the EXCLUSIVE booking types.
+  // Checkout's hard-overlap check only blocks against isTentative:false
+  // slots and its tentative dedup is same-user-only, so two different users
+  // can both pay for overlapping slots; whichever capture webhook lands
+  // second must NOT flip its slots confirmed over the winner's. The loser
+  // stays tentative (the orphan/refund path picks it up, see #830) and the
+  // conflict is surfaced loudly instead of double-booking the consultant.
+  // Webinars/classes are capacity-based, not exclusive — skipped.
+  if (appointment.consultation || appointment.subscription) {
+    const mySlots = await tx.slotOfAppointment.findMany({
+      where: { appointmentId, isTentative: true },
+      select: {
+        id: true,
+        startsAt: true,
+        endsAt: true,
+        user: { select: { id: true } },
+      },
+    });
+    for (const slot of mySlots) {
+      // The non-booker participants (the consultant) attend both bookings —
+      // a confirmed overlapping slot sharing one of them is a true conflict.
+      const participantIds = slot.user
+        .map((u) => u.id)
+        .filter((id) => id !== userId);
+      if (participantIds.length === 0) continue;
+      const conflict = await tx.slotOfAppointment.findFirst({
+        where: {
+          id: { not: slot.id },
+          startsAt: { lt: slot.endsAt },
+          endsAt: { gt: slot.startsAt },
+          isTentative: false,
+          user: { some: { id: { in: participantIds } } },
+          appointment: { OR: buildOccupiedAppointmentFilter() },
+        },
+        select: { id: true, appointmentId: true },
+      });
+      if (conflict) {
+        console.error(
+          JSON.stringify({
+            event: "confirmation_blocked_double_booking",
+            appointmentId,
+            conflictingAppointmentId: conflict.appointmentId,
+            slotId: slot.id,
+            timestamp: new Date().toISOString(),
+          }),
+        );
+        void recordSystemError({
+          organizationId: null,
+          category: "PAYMENT",
+          summary: `Double-booking blocked at confirmation: appointment ${appointmentId} overlaps an already-confirmed slot — the payment needs a refund`,
+          err: new Error("CONFIRMATION_BLOCKED_DOUBLE_BOOKING"),
+          context: {
+            appointmentId,
+            conflictingAppointmentId: conflict.appointmentId,
+            slotId: slot.id,
+          },
+        }).catch(() => {});
+        return; // slots stay tentative; do not confirm over the winner
+      }
+    }
   }
 
   // FIX Issue #3: For CLASS, confirm ALL user's slots across all sessions
@@ -1189,10 +1290,7 @@ async function confirmExistingAppointment(
 /**
  * Clean up tentative appointments for failed payments
  */
-async function cleanupFailedPaymentAppointment(
-  tx: Prisma.TransactionClient,
-  appointmentId: string,
-) {
+async function cleanupFailedPaymentAppointment(tx: Tx, appointmentId: string) {
   const appointment = await tx.appointment.findUnique({
     where: { id: appointmentId },
     include: {
@@ -1245,7 +1343,7 @@ async function cleanupFailedPaymentAppointment(
  * Send payment success email notification
  */
 async function sendPaymentSuccessNotification(
-  tx: Prisma.TransactionClient,
+  tx: Tx,
   payment: PaymentWithUser,
   appointmentId: string,
   appointmentType: string,
@@ -1327,18 +1425,13 @@ async function sendPaymentSuccessNotification(
       consultantName =
         appointment.subscription.subscriptionPlan.consultantProfile.user.name ||
         "Consultant";
-    } else if (
-      appointment.webinar?.webinarPlan?.consultantProfile?.user
-    ) {
+    } else if (appointment.webinar?.webinarPlan?.consultantProfile?.user) {
       consultantName =
         appointment.webinar.webinarPlan.consultantProfile.user.name ||
         "Consultant";
-    } else if (
-      appointment.class?.classPlan?.consultantProfile?.user
-    ) {
+    } else if (appointment.class?.classPlan?.consultantProfile?.user) {
       consultantName =
-        appointment.class.classPlan.consultantProfile.user.name ||
-        "Consultant";
+        appointment.class.classPlan.consultantProfile.user.name || "Consultant";
     }
 
     // Send email
@@ -1369,32 +1462,34 @@ async function sendPaymentSuccessNotification(
  * Send payment failure email notification
  */
 async function sendPaymentFailureNotification(
-  tx: Prisma.TransactionClient,
-  payment: Prisma.PaymentGetPayload<{
-    include: {
-      user: true;
-      appointment: {
-        include: {
-          consultation: {
-            include: {
-              consultationPlan: {
-                include: {
-                  consultantProfile: {
-                    include: {
-                      user: true;
+  tx: Tx,
+  payment: MoneyAsNumber<
+    Prisma.PaymentGetPayload<{
+      include: {
+        user: true;
+        appointment: {
+          include: {
+            consultation: {
+              include: {
+                consultationPlan: {
+                  include: {
+                    consultantProfile: {
+                      include: {
+                        user: true;
+                      };
                     };
                   };
                 };
               };
             };
-          };
-          subscription: {
-            include: {
-              subscriptionPlan: {
-                include: {
-                  consultantProfile: {
-                    include: {
-                      user: true;
+            subscription: {
+              include: {
+                subscriptionPlan: {
+                  include: {
+                    consultantProfile: {
+                      include: {
+                        user: true;
+                      };
                     };
                   };
                 };
@@ -1403,8 +1498,8 @@ async function sendPaymentFailureNotification(
           };
         };
       };
-    };
-  }>,
+    }>
+  >,
 ) {
   try {
     const appointment = await tx.appointment.findUnique({

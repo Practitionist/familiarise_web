@@ -179,6 +179,15 @@ export const OnboardingDataSchema = z.discriminatedUnion("role", [
     staffProfile: z.undefined().optional(),
     adminProfile: AdminProfileCreateObjectSchema.optional(),
   }),
+  OnboardingBaseSchema.extend({
+    role: z.literal(UserRole.ORG_WORKSPACE),
+    consultantProfile: z.undefined().optional(),
+    consulteeProfile: z.undefined().optional(),
+    staffProfile: z.undefined().optional(),
+    // ORG_WORKSPACE onboarding no longer collects org fields — the user is
+    // marked onboarded as ORG_WORKSPACE and redirected to
+    // /dashboard/organization/create where the full wizard runs.
+  }),
 ]);
 
 // ============================================================================
@@ -362,6 +371,13 @@ const adminFormFields = sharedFormFields.extend({
   adminNotes: z.string().optional(),
 });
 
+// ORG_WORKSPACE onboarding collects only personal info + agreement. The full
+// organization-creation wizard lives at /dashboard/organization/create and
+// runs after onboarding completes.
+const orgWorkspaceFormFields = sharedFormFields.extend({
+  role: z.literal("ORG_WORKSPACE" as const),
+});
+
 // Combined mega-schema: discriminated union on role to prevent
 // z.union from matching the wrong schema and stripping role-specific fields
 export const OnboardingFormDataSchema = z.discriminatedUnion("role", [
@@ -369,6 +385,7 @@ export const OnboardingFormDataSchema = z.discriminatedUnion("role", [
   consulteeFormFields,
   staffFormFields,
   adminFormFields,
+  orgWorkspaceFormFields,
 ]);
 
 // ============================================================================
@@ -388,18 +405,14 @@ export type StaffProfileCreateData = z.infer<
 export type AdminProfileCreateData = z.infer<
   typeof BaseAdminProfileCreateInputSchema
 >;
-export type FrontendConsultantProfile = z.infer<
+type FrontendConsultantProfile = z.infer<
   typeof FrontendConsultantProfileSchema
 >;
-export type FrontendConsulteeProfile = z.infer<
-  typeof FrontendConsulteeProfileSchema
->;
-export type FrontendStaffProfile = z.infer<typeof FrontendStaffProfileSchema>;
-export type FrontendAdminProfile = z.infer<typeof FrontendAdminProfileSchema>;
-export type FrontendOnboardingBase = z.infer<
-  typeof FrontendOnboardingBaseSchema
->;
-export type FrontendOnboardingData = FrontendOnboardingBase & {
+type FrontendConsulteeProfile = z.infer<typeof FrontendConsulteeProfileSchema>;
+type FrontendStaffProfile = z.infer<typeof FrontendStaffProfileSchema>;
+type FrontendAdminProfile = z.infer<typeof FrontendAdminProfileSchema>;
+type FrontendOnboardingBase = z.infer<typeof FrontendOnboardingBaseSchema>;
+type FrontendOnboardingData = FrontendOnboardingBase & {
   consultantProfile?: FrontendConsultantProfile;
   consulteeProfile?: FrontendConsulteeProfile;
   staffProfile?: FrontendStaffProfile;
@@ -416,7 +429,8 @@ export type OnboardingFormData = Omit<
 > &
   Partial<Omit<z.infer<typeof consulteeFormFields>, "role">> &
   Partial<Omit<z.infer<typeof staffFormFields>, "role">> &
-  Partial<Omit<z.infer<typeof adminFormFields>, "role">> & {
+  Partial<Omit<z.infer<typeof adminFormFields>, "role">> &
+  Partial<Omit<z.infer<typeof orgWorkspaceFormFields>, "role">> & {
     role: UserRole;
   };
 
@@ -599,6 +613,15 @@ export function transformOnboardingFormToServerData(
         },
       };
 
+    case UserRole.ORG_WORKSPACE:
+      return {
+        ...base,
+        role: formData.role,
+        consultantProfile: undefined,
+        consulteeProfile: undefined,
+        staffProfile: undefined,
+      } as OnboardingData;
+
     default:
       throw new Error(`Invalid role: ${formData.role}`);
   }
@@ -705,6 +728,15 @@ export function transformFrontendToServerData(
         consulteeProfile: undefined,
         staffProfile: undefined,
       };
+
+    case UserRole.ORG_WORKSPACE:
+      return {
+        ...base,
+        role: frontendData.role,
+        consultantProfile: undefined,
+        consulteeProfile: undefined,
+        staffProfile: undefined,
+      } as OnboardingData;
 
     default:
       throw new Error(`Invalid role: ${frontendData.role}`);

@@ -18,6 +18,7 @@ import {
   TooltipTrigger,
 } from "../ui/tooltip";
 import { getChannelDisplayInfo } from "./utils/channelUtils";
+import { useOrgScope } from "@/hooks/useOrgScope";
 
 // Custom channel item component for the sidebar - memoized for performance
 const ChannelItem = memo(
@@ -148,6 +149,7 @@ ChannelItem.displayName = "ChannelItem";
 export const ChatSidebar = () => {
   const { client, setActiveChannel } = useChatContext();
   const userRole = client?.user?.role as string | undefined;
+  const { scope } = useOrgScope();
   const [teamChannels, setTeamChannels] = useState<Channel[]>([]);
   const [directMessages, setDirectMessages] = useState<Channel[]>([]);
   const [activeChannelId, setActiveChannelId] = useState<string | null>(null);
@@ -178,7 +180,24 @@ export const ChatSidebar = () => {
     );
 
     try {
-      const filter = { members: { $in: [client.userID] } };
+      // #674 org-scope filter — Stream channels created by the
+      // enterprise wiring carry a `custom.organization_id` field.
+      // Without scoping, a consultant in Acme + Zeta sees every chat
+      // cross-tenanted in one inbox. Apply the same three-mode shape
+      // as the server-side resolveOrgScope:
+      //   - personal → channels with no organization_id (legacy/B2C)
+      //   - org:<id> → channels tagged with that org id
+      //   - all     → no scope filter (admin-only)
+      const orgFilter: Record<string, unknown> =
+        scope.kind === "personal"
+          ? { organization_id: { $exists: false } }
+          : scope.kind === "org"
+            ? { organization_id: { $eq: scope.orgId } }
+            : {};
+      const filter = {
+        members: { $in: [client.userID] },
+        ...orgFilter,
+      };
       const sort: { last_message_at: -1 } = { last_message_at: -1 };
       const options = {
         watch: true, // Crucial for real-time updates
@@ -268,7 +287,12 @@ export const ChatSidebar = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [client, setActiveChannel]);
+    // Why `scope` is in deps: when the operator toggles the org-context
+    // dropdown (or navigates into /dashboard/organization/<orgId>/...),
+    // useOrgScope's `scope` shifts and we must refetch the channel list
+    // through the new filter. Without this, the inbox keeps showing the
+    // previous tenant's threads until a hard reload.
+  }, [client, setActiveChannel, scope]);
 
   // Function to load more channels (pagination)
   const loadMoreChannels = useCallback(
@@ -283,7 +307,19 @@ export const ChatSidebar = () => {
       setIsLoadingMore(true);
 
       try {
-        const filter = { members: { $in: [client.userID] }, type };
+        // Mirror the org-scope filter from `fetchChannels` so the
+        // load-more page stays in the same tenant context.
+        const orgFilter: Record<string, unknown> =
+          scope.kind === "personal"
+            ? { organization_id: { $exists: false } }
+            : scope.kind === "org"
+              ? { organization_id: { $eq: scope.orgId } }
+              : {};
+        const filter = {
+          members: { $in: [client.userID] },
+          type,
+          ...orgFilter,
+        };
         const sort: { last_message_at: -1 } = { last_message_at: -1 };
 
         const offset = currentChannels.length;

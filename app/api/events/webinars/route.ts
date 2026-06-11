@@ -7,6 +7,7 @@ import {
   isPrivileged,
   forbiddenResponse,
 } from "@/lib/auth-helpers";
+import { resolveOrgScope } from "@/lib/api/scope/parse";
 
 export async function GET(request: NextRequest) {
   // Require authentication (middleware already enforces cookie presence for /api/events/)
@@ -53,6 +54,37 @@ export async function GET(request: NextRequest) {
     const startDateStr = searchParams.get("startDate");
     const endDateStr = searchParams.get("endDate");
 
+    // Org-scope filter — Webinar rows don't carry organizationId directly;
+    // attribution lives on the parent WebinarPlan (per
+    // `docs/enterprise/30-programs-and-lifecycle/05-public-pages-and-discovery.md`
+    // — plans with `organizationId` set are the org's catalog). So we
+    // filter via the `webinarPlan.organizationId` relation.
+    const callerMemberships = await prisma.membership.findMany({
+      where: { userId: session.user.id, status: "ACTIVE" },
+      select: { organizationId: true, status: true },
+    });
+    const scopeResolution = resolveOrgScope({
+      raw: searchParams.get("orgScope"),
+      memberships: callerMemberships,
+      userRole: session.user.role,
+      // Self-scoped: non-admin callers are already locked to their own
+      // consultant/consulteeProfileId above, so `?orgScope=all` means
+      // "all of MY webinars" — safe for any role.
+      allowAllForOwner: true,
+    });
+    if (!scopeResolution.ok) {
+      return NextResponse.json(
+        { error: scopeResolution.message, code: scopeResolution.code },
+        { status: scopeResolution.status },
+      );
+    }
+    const webinarPlanOrgWhere: Prisma.WebinarPlanWhereInput | null =
+      scopeResolution.scope.kind === "personal"
+        ? { organizationId: null }
+        : scopeResolution.scope.kind === "org"
+          ? { organizationId: scopeResolution.scope.orgId }
+          : null; // "all" → no filter
+
     let webinars;
 
     const dateFilter =
@@ -74,6 +106,7 @@ export async function GET(request: NextRequest) {
     if (consulteeProfileId) {
       webinars = await prisma.webinar.findMany({
         where: {
+          ...(webinarPlanOrgWhere && { webinarPlan: webinarPlanOrgWhere }),
           OR: [
             // Get webinars where consultee is registered through appointments
             {
@@ -142,7 +175,6 @@ export async function GET(request: NextRequest) {
               payment: true,
             },
           },
-          // meetingRoom: true,
           waitlist: {
             where: {
               user: {
@@ -169,6 +201,7 @@ export async function GET(request: NextRequest) {
       const whereClause: Prisma.WebinarWhereInput = {
         webinarPlan: {
           consultantProfileId,
+          ...(webinarPlanOrgWhere ?? {}),
         },
       };
 
@@ -203,13 +236,15 @@ export async function GET(request: NextRequest) {
               },
             },
           },
-          // meetingRoom: true,
           waitlist: true,
         },
       });
     } else {
       webinars = await prisma.webinar.findMany({
-        where: { ...dateFilter },
+        where: {
+          ...(webinarPlanOrgWhere && { webinarPlan: webinarPlanOrgWhere }),
+          ...dateFilter,
+        },
         include: {
           webinarPlan: {
             include: {
@@ -226,7 +261,6 @@ export async function GET(request: NextRequest) {
               },
             },
           },
-          // meetingRoom: true,
           waitlist: true,
         },
       });
@@ -305,7 +339,6 @@ export async function POST(request: Request) {
             },
           },
         },
-        // meetingRoom: true,
         waitlist: true,
       },
     });
