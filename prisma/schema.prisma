@@ -3271,6 +3271,10 @@ model PlanMaterial {
 model SlotOfAppointment {
   id String @id @default(uuid())
 
+  /// #834 — the implicit m:n join table's unique index on (A,B) is
+  /// load-bearing: it makes concurrent waitlist/checkout `connect` calls
+  /// double-assignment-safe. Restored automatically at every push/reset;
+  /// do not convert to an explicit join model without re-declaring it.
   user User[] @relation("SlotOfAppointmentToUser")
 
   startsAt    DateTime @db.Timestamptz
