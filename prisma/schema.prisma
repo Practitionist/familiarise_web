@@ -2815,6 +2815,8 @@ model ActivityLog {
 
 enum ActivityType {
   CONSULTATION_BOOKED
+  /// B14 — reschedule previously wrote no activity at all (cancel did).
+  APPOINTMENT_RESCHEDULED
   CONSULTATION_COMPLETED
   CONSULTATION_CANCELLED
   SUBSCRIPTION_REQUESTED

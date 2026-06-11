@@ -65,6 +65,7 @@ import {
   notifyOrgProgramCapNear,
 } from "@/lib/novu/org-workflows";
 import { sumPaise } from "@/lib/payments/utils/money";
+import { resolveCancellationPolicySnapshot } from "@/lib/payments/operations/cancellation-policy";
 
 // Re-export for backward compatibility
 export const unifiedCheckoutSchema = checkoutSchema;
@@ -571,10 +572,17 @@ export async function validateSlotAvailability(
   if (data.slotOfAvailabilityWeeklyId) {
     const avail = await tx.slotOfAvailabilityWeekly.findUnique({
       where: { id: data.slotOfAvailabilityWeeklyId },
-      include: { consultantProfile: { select: { userId: true } } },
+      include: {
+        consultantProfile: { select: { userId: true, deletedAt: true } },
+      },
     });
     if (!avail) {
       throw new Error("Availability slot not found");
+    }
+    // B13 — the plan-level soft-delete check can race a deletion landing
+    // between plan fetch and slot validation; recheck at the slot level.
+    if (avail.consultantProfile.deletedAt) {
+      throw new Error("This expert is no longer accepting bookings");
     }
     // Verify the availability slot belongs to the correct consultant
     if (
@@ -1368,6 +1376,10 @@ export async function handleConsultationCheckout(
       appointmentType: AppointmentsType.CONSULTATION,
       consultationId: consultation.id,
       organizationId,
+      // B1 — freeze the refund terms at booking; the cancel flow reads this.
+      cancellationPolicySnapshot: JSON.parse(
+        JSON.stringify(resolveCancellationPolicySnapshot()),
+      ),
       slotsOfAppointment: {
         create: slotChunks.map((chunk) => ({
           startsAt: chunk.startsAt,
@@ -1705,6 +1717,20 @@ export async function handleClassCheckout(
   // Check if user is already enrolled - OPT-2: Use extracted utility
   if (isUserEnrolled(classInstance.appointments, userId)) {
     throw new Error("You are already enrolled in this class");
+  }
+
+  // B11 — a partially-scheduled class (consultant hasn't allocated every
+  // session yet) must not accept paid enrollments: the loop below links the
+  // buyer only to EXISTING sessions, silently shorting them the rest.
+  const expectedSessions = classInstance.classPlan?.totalSessions;
+  if (
+    typeof expectedSessions === "number" &&
+    expectedSessions > 0 &&
+    classInstance.appointments.length < expectedSessions
+  ) {
+    throw new Error(
+      `This class is not fully scheduled yet (${classInstance.appointments.length} of ${expectedSessions} sessions). Enrollment opens once all sessions are scheduled.`,
+    );
   }
 
   // Link user to ALL existing slots of ALL class appointments (sessions).

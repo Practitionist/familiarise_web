@@ -207,10 +207,26 @@ function makeMockTx() {
       delete: jest.fn(),
       deleteMany: jest.fn(),
     },
-    consultation: { update: jest.fn() },
-    subscription: { update: jest.fn() },
-    webinar: { update: jest.fn() },
-    class: { update: jest.fn() },
+    consultation: {
+      update: jest.fn(),
+      // B2 — the cancel/reschedule CAS guards use updateMany.
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
+    subscription: {
+      update: jest.fn(),
+      // B2 — the cancel/reschedule CAS guards use updateMany.
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
+    webinar: {
+      update: jest.fn(),
+      // B2 — the cancel/reschedule CAS guards use updateMany.
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
+    class: {
+      update: jest.fn(),
+      // B2 — the cancel/reschedule CAS guards use updateMany.
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
     slotOfAppointment: { updateMany: jest.fn(), deleteMany: jest.fn() },
   };
 }
@@ -480,12 +496,17 @@ describe("Reschedule Route Handler - POST", () => {
       // Verify slots marked tentative by appointmentId (non-subscription path)
       expect(mockTx.slotOfAppointment.updateMany).toHaveBeenCalledWith({
         where: { appointmentId: "apt-1" },
-        data: { isTentative: true },
+        data: { isTentative: true, completionStatus: "RESCHEDULED" },
       });
 
       // Verify consultation status reverted
-      expect(mockTx.consultation.update).toHaveBeenCalledWith({
-        where: { id: "cons-1" },
+      expect(mockTx.consultation.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: "cons-1",
+          requestStatus: {
+            in: ["PENDING", "APPROVED", "APPROVED_PENDING_PAYMENT", "SCHEDULED"],
+          },
+        },
         data: { requestStatus: "PENDING" },
       });
     });
@@ -526,12 +547,17 @@ describe("Reschedule Route Handler - POST", () => {
       // Should mark all appointment slots tentative
       expect(mockTx.slotOfAppointment.updateMany).toHaveBeenCalledWith({
         where: { appointmentId: { in: ["apt-1", "apt-2"] } },
-        data: { isTentative: true },
+        data: { isTentative: true, completionStatus: "RESCHEDULED" },
       });
 
       // Should update subscription status
-      expect(mockTx.subscription.update).toHaveBeenCalledWith({
-        where: { id: "sub-1" },
+      expect(mockTx.subscription.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: "sub-1",
+          requestStatus: {
+            in: ["PENDING", "APPROVED", "APPROVED_PENDING_PAYMENT", "SCHEDULED"],
+          },
+        },
         data: { requestStatus: "PENDING" },
       });
     });
@@ -559,7 +585,7 @@ describe("Reschedule Route Handler - POST", () => {
       // are rescheduled atomically — a partial-tentative session would be inconsistent.
       expect(mockTx.slotOfAppointment.updateMany).toHaveBeenCalledWith({
         where: { appointmentId: { in: ["apt-1"] } },
-        data: { isTentative: true },
+        data: { isTentative: true, completionStatus: "RESCHEDULED" },
       });
     });
 
@@ -637,11 +663,11 @@ describe("Reschedule Route Handler - POST", () => {
 
       expect(mockTx.slotOfAppointment.updateMany).toHaveBeenCalledWith({
         where: { appointmentId: "apt-1" },
-        data: { isTentative: true },
+        data: { isTentative: true, completionStatus: "RESCHEDULED" },
       });
 
-      expect(mockTx.webinar.update).toHaveBeenCalledWith({
-        where: { id: "web-1" },
+      expect(mockTx.webinar.updateMany).toHaveBeenCalledWith({
+        where: { id: "web-1", status: { notIn: ["CANCELLED", "COMPLETED"] } },
         data: { status: "SCHEDULED" },
       });
     });
@@ -661,8 +687,8 @@ describe("Reschedule Route Handler - POST", () => {
       expect(res.status).toBe(200);
       expect(body.success).toBe(true);
 
-      expect(mockTx.class.update).toHaveBeenCalledWith({
-        where: { id: "cls-1" },
+      expect(mockTx.class.updateMany).toHaveBeenCalledWith({
+        where: { id: "cls-1", status: { notIn: ["CANCELLED", "COMPLETED"] } },
         data: { status: "SCHEDULED" },
       });
     });
@@ -828,8 +854,13 @@ describe("Cancel Route Handler - POST", () => {
       expect(body.cancellationReason).toBe("SCHEDULE_CONFLICT");
 
       // Verify consultation updated with cancellation data
-      expect(mockTx.consultation.update).toHaveBeenCalledWith({
-        where: { id: "cons-1" },
+      expect(mockTx.consultation.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: "cons-1",
+          requestStatus: {
+            in: ["PENDING", "APPROVED", "APPROVED_PENDING_PAYMENT", "SCHEDULED"],
+          },
+        },
         data: expect.objectContaining({
           requestStatus: "CANCELLED",
           cancellationReason: "SCHEDULE_CONFLICT",
@@ -838,9 +869,11 @@ describe("Cancel Route Handler - POST", () => {
         }),
       });
 
-      // Verify slots soft-cancelled (not hard-deleted — preserves payment audit trail)
+      // Verify slots soft-cancelled (not hard-deleted — preserves payment
+      // audit trail); only live SCHEDULED slots flip, history is never
+      // re-stamped.
       expect(mockTx.slotOfAppointment.updateMany).toHaveBeenCalledWith({
-        where: { appointmentId: "apt-1" },
+        where: { appointmentId: "apt-1", completionStatus: "SCHEDULED" },
         data: { completionStatus: "CANCELLED" },
       });
 
@@ -874,8 +907,13 @@ describe("Cancel Route Handler - POST", () => {
       const res = await cancelHandler(req, makeParams("apt-1"));
 
       expect(res.status).toBe(200);
-      expect(mockTx.subscription.update).toHaveBeenCalledWith({
-        where: { id: "sub-1" },
+      expect(mockTx.subscription.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: "sub-1",
+          requestStatus: {
+            in: ["PENDING", "APPROVED", "APPROVED_PENDING_PAYMENT", "SCHEDULED"],
+          },
+        },
         data: expect.objectContaining({
           requestStatus: "CANCELLED",
           cancellationReason: "FINANCIAL_REASONS",
@@ -899,8 +937,8 @@ describe("Cancel Route Handler - POST", () => {
 
       expect(res.status).toBe(200);
 
-      expect(mockTx.webinar.update).toHaveBeenCalledWith({
-        where: { id: "web-1" },
+      expect(mockTx.webinar.updateMany).toHaveBeenCalledWith({
+        where: { id: "web-1", status: { notIn: ["CANCELLED", "COMPLETED"] } },
         data: { status: "CANCELLED" },
       });
 
@@ -923,8 +961,8 @@ describe("Cancel Route Handler - POST", () => {
 
       expect(res.status).toBe(200);
 
-      expect(mockTx.class.update).toHaveBeenCalledWith({
-        where: { id: "cls-1" },
+      expect(mockTx.class.updateMany).toHaveBeenCalledWith({
+        where: { id: "cls-1", status: { notIn: ["CANCELLED", "COMPLETED"] } },
         data: { status: "CANCELLED" },
       });
 
@@ -948,8 +986,13 @@ describe("Cancel Route Handler - POST", () => {
     expect(res.status).toBe(200);
 
     // Cancellation data should have null reason and notes
-    expect(mockTx.consultation.update).toHaveBeenCalledWith({
-      where: { id: "cons-1" },
+    expect(mockTx.consultation.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: "cons-1",
+        requestStatus: {
+          in: ["PENDING", "APPROVED", "APPROVED_PENDING_PAYMENT", "SCHEDULED"],
+        },
+      },
       data: expect.objectContaining({
         requestStatus: "CANCELLED",
         cancellationReason: null,

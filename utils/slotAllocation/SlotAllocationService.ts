@@ -42,6 +42,7 @@ import {
   recordBookingUtilization,
   ProgramAssignmentLimitError,
 } from "@/lib/api/organizations/program-helpers";
+import { resolveCancellationPolicySnapshot } from "@/lib/payments/operations/cancellation-policy";
 
 type AppointmentWithSlots = Appointment & {
   slotsOfAppointment: SlotOfAppointment[];
@@ -1412,6 +1413,10 @@ export class SlotAllocationService {
               connect: { id: eventId },
             },
             ...(organizationId ? { organizationId } : {}),
+            // B1 — freeze the refund terms at booking (see cancellation-policy.ts).
+            cancellationPolicySnapshot: JSON.parse(
+              JSON.stringify(resolveCancellationPolicySnapshot()),
+            ),
             slotsOfAppointment: {
               create: slotsToCreate,
             },
@@ -1624,7 +1629,13 @@ export class SlotAllocationService {
       // Find appointments with tentative slots for this event
       const appointments = await tx.appointment.findMany({
         where: whereClause,
-        include: { slotsOfAppointment: true },
+        include: {
+          slotsOfAppointment: true,
+          // B8 — Payment has onDelete: Cascade on Appointment; deleting an
+          // appointment with payment rows destroys the payment/refund audit
+          // trail. Count them so the delete below can refuse.
+          _count: { select: { payment: true } },
+        },
       });
 
       for (const appointment of appointments) {
@@ -1644,8 +1655,10 @@ export class SlotAllocationService {
             },
           });
 
-          // If no confirmed slots exist, delete the now-empty appointment
-          if (!hasConfirmed) {
+          // If no confirmed slots exist, delete the now-empty appointment —
+          // unless payments reference it (B8): the empty shell is cheaper
+          // than a destroyed audit trail; the orphan sweep reports it.
+          if (!hasConfirmed && appointment._count.payment === 0) {
             await tx.appointment.delete({
               where: { id: appointment.id },
             });

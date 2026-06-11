@@ -1040,21 +1040,33 @@ async function confirmApprovalStatus(
       throw new Error(`Consultation ${entityId} not found`);
     }
 
-    // If status is APPROVED_PENDING_PAYMENT, confirm the appointment
-    if (consultation.requestStatus === RequestStatus.APPROVED_PENDING_PAYMENT) {
-      await tx.consultation.update({
-        where: { id: entityId },
-        data: { requestStatus: RequestStatus.APPROVED },
-      });
-      console.log(
-        `✅ Consultation ${entityId} payment completed - moving from APPROVED_PENDING_PAYMENT to APPROVED`,
-      );
-    } else if (consultation.requestStatus !== RequestStatus.APPROVED) {
-      // Only update if not already approved
-      await tx.consultation.update({
-        where: { id: entityId },
-        data: { requestStatus: RequestStatus.APPROVED },
-      });
+    // B2 (#825 CAS doctrine) — APPROVED is only reachable from the two
+    // pre-payment states. The old else-branch moved ANY status → APPROVED,
+    // so a capture landing after a cancel resurrected the booking. Now the
+    // guard rides the WHERE; a late capture against a terminal booking is
+    // money collected for nothing — surface it for refund instead.
+    const movedConsult = await tx.consultation.updateMany({
+      where: {
+        id: entityId,
+        requestStatus: {
+          in: [RequestStatus.PENDING, RequestStatus.APPROVED_PENDING_PAYMENT],
+        },
+      },
+      data: { requestStatus: RequestStatus.APPROVED },
+    });
+    if (
+      movedConsult.count === 0 &&
+      consultation.requestStatus !== RequestStatus.APPROVED &&
+      consultation.requestStatus !== RequestStatus.SCHEDULED &&
+      consultation.requestStatus !== RequestStatus.COMPLETED
+    ) {
+      void recordSystemError({
+        organizationId: null,
+        category: "PAYMENT",
+        summary: `Payment captured for consultation ${entityId} in terminal state ${consultation.requestStatus} — refund needed`,
+        err: new Error("CAPTURE_AFTER_TERMINAL_STATE"),
+        context: { entityType: "consultation", entityId },
+      }).catch(() => {});
     }
   } else {
     const subscription = await tx.subscription.findUnique({
@@ -1070,8 +1082,12 @@ async function confirmApprovalStatus(
     // Subscription stays PENDING until consultant allocates slots via Requests tab
     // SlotAllocationService.allocate() will set status to APPROVED when slots are allocated
     if (subscription.requestStatus === RequestStatus.APPROVED_PENDING_PAYMENT) {
-      await tx.subscription.update({
-        where: { id: entityId },
+      // CAS — the pre-read can race a cancel; the guard decides (B2).
+      await tx.subscription.updateMany({
+        where: {
+          id: entityId,
+          requestStatus: RequestStatus.APPROVED_PENDING_PAYMENT,
+        },
         data: { requestStatus: RequestStatus.APPROVED },
       });
       console.log(
