@@ -1,8 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
 import { applyRateLimit, cancelPendingLimiter } from "@/lib/rate-limit";
 import { cancelPendingCheckout } from "@/lib/payments/operations/cancel-pending";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
+
+// Serializable write-conflict shapes — P2034 plus the Prisma 7 client-engine
+// message variants. Surfaces when withSerializableRetry exhausts its retries
+// under heavy same-row contention (observed at 8 concurrent cancels in the
+// multi-agent race validation).
+function isWriteConflict(error: unknown): boolean {
+  if (
+    error instanceof Prisma.PrismaClientKnownRequestError &&
+    error.code === "P2034"
+  ) {
+    return true;
+  }
+  return (
+    error instanceof Error &&
+    /write conflict|TransactionWriteConflict|deadlock/i.test(error.message)
+  );
+}
 
 /**
  * #849 — release the caller's own tentative checkout hold.
@@ -57,6 +75,16 @@ export async function DELETE(
     if (error instanceof IllegalTransitionError) {
       return NextResponse.json(
         { error: "Booking is no longer cancellable from checkout" },
+        { status: 409 },
+      );
+    }
+    // Retry-exhausted Serializable conflict: another writer (a parallel
+    // cancel or the capture webhook) owns this payment right now — that is
+    // a conflict outcome, not a server error. The winner's verdict stands;
+    // the client refetches.
+    if (isWriteConflict(error)) {
+      return NextResponse.json(
+        { error: "Payment is being updated concurrently — refresh and retry" },
         { status: 409 },
       );
     }
