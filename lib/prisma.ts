@@ -40,6 +40,13 @@ const adapter = new PrismaPg({
   // Use pooled connection (DATABASE_URL) for runtime queries to avoid connection exhaustion
   // DIRECT_URL is only for migrations (handled by prisma.config.ts)
   connectionString: process.env.DATABASE_URL || process.env.DIRECT_URL,
+  // pg.Pool defaults to 10 clients PER function instance; at Netlify's 125
+  // concurrent invocations that can dwarf Supavisor's client cap. Set
+  // PG_POOL_MAX=1 (or 2) in serverless deploy env; unset = pg default for
+  // long-lived local dev/jobs.
+  ...(Number(process.env.PG_POOL_MAX) > 0
+    ? { max: Number(process.env.PG_POOL_MAX) }
+    : {}),
 });
 
 function makeClient() {
