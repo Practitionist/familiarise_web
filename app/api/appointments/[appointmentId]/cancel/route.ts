@@ -17,6 +17,7 @@ import {
 } from "@/lib/payments/operations/cancellation-policy";
 import {
   CANCELLABLE_FROM,
+  CLASS_EVENT_ALLOWED_FROM,
   EVENT_ALLOWED_FROM,
 } from "@/lib/booking/transitions";
 export async function POST(
@@ -242,7 +243,7 @@ export async function POST(
             await tx.class.updateMany({
               where: {
                 id: appointment.class.id,
-                status: { in: EVENT_ALLOWED_FROM.CANCELLED },
+                status: { in: CLASS_EVENT_ALLOWED_FROM.CANCELLED },
               },
               data: { status: "CANCELLED" },
             })

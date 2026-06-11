@@ -12,6 +12,7 @@ import { notifyAppointmentRescheduled } from "@/lib/novu/service";
 import { logActivity } from "@/lib/activity/log-activity";
 import { getAppUrl } from "@/lib/url";
 import {
+  CLASS_EVENT_ALLOWED_FROM,
   EVENT_ALLOWED_FROM,
   RESCHEDULABLE_FROM,
   SLOT_RESCHEDULABLE_FROM,
@@ -345,7 +346,7 @@ export async function POST(
             await tx.class.updateMany({
               where: {
                 id: appointment.class.id,
-                status: { in: EVENT_ALLOWED_FROM.SCHEDULED },
+                status: { in: CLASS_EVENT_ALLOWED_FROM.SCHEDULED },
               },
               data: { status: "SCHEDULED" },
             })
