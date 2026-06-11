@@ -334,7 +334,11 @@ export function RequestSlotAllocationTab({
     const REQUEST_POLL_INTERVAL = parseInt(
       process.env.NEXT_PUBLIC_REQUEST_POLL_INTERVAL ?? "300000",
     ); // 5 minutes
-    const interval = setInterval(fetchData, REQUEST_POLL_INTERVAL);
+    // Perf RCA: skip the tick while the tab is hidden — the old interval
+    // kept hitting the API from backgrounded tabs.
+    const interval = setInterval(() => {
+      if (!document.hidden) fetchData();
+    }, REQUEST_POLL_INTERVAL);
 
     return () => clearInterval(interval);
   }, [fetchData]);

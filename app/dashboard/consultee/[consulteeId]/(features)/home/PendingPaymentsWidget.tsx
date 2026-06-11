@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -46,47 +47,42 @@ export function PendingPaymentsWidget({
 }: PendingPaymentsWidgetProps) {
   const { formatPrice } = useCurrency();
   const router = useRouter();
-  const [pendingPayments, setPendingPayments] = useState<PendingPayment[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const queryClient = useQueryClient();
   const [cancellingId, setCancellingId] = useState<string | null>(null);
   const [cancelNotice, setCancelNotice] = useState<string | null>(null);
 
-  const fetchPendingPayments = useCallback(
-    async (showSpinner = true) => {
-      try {
-        if (showSpinner) setLoading(true);
-        const response = await fetch(
-          `/api/dashboard/consultee/${consulteeId}/pending-payments`,
-        );
-
-        if (!response.ok) {
-          throw new Error("Failed to fetch pending payments");
-        }
-
-        const data = await response.json();
-        setPendingPayments(data.pendingPayments || []);
-      } catch (err) {
-        console.error("Error fetching pending payments:", err);
-        setError(
-          err instanceof Error
-            ? err.message
-            : "Failed to load pending payments",
-        );
-      } finally {
-        if (showSpinner) setLoading(false);
+  // React Query owns the polling (perf RCA): the old manual setInterval
+  // restarted from zero on every tab switch (the widget remounts with the
+  // page) and kept firing with the window unfocused. refetchInterval is
+  // deduped across remounts via the shared cache and pauses while the
+  // window is unfocused (refetchIntervalInBackground defaults to false).
+  // Payment status is the one surface that wants focus freshness, so the
+  // global refetchOnWindowFocus=false is overridden here.
+  const {
+    data: pendingPayments = [],
+    isLoading: loading,
+    error: queryError,
+  } = useQuery({
+    queryKey: ["pending-payments", consulteeId],
+    queryFn: async (): Promise<PendingPayment[]> => {
+      const response = await fetch(
+        `/api/dashboard/consultee/${consulteeId}/pending-payments`,
+      );
+      if (!response.ok) {
+        throw new Error("Failed to fetch pending payments");
       }
+      const data = await response.json();
+      return data.pendingPayments || [];
     },
-    [consulteeId],
-  );
-
-  useEffect(() => {
-    fetchPendingPayments();
-
-    // Poll for updates every 2 minutes
-    const interval = setInterval(() => fetchPendingPayments(false), 120000);
-    return () => clearInterval(interval);
-  }, [fetchPendingPayments]);
+    refetchInterval: 120000,
+    refetchOnWindowFocus: true,
+    staleTime: 30 * 1000,
+  });
+  const error = queryError
+    ? queryError instanceof Error
+      ? queryError.message
+      : "Failed to load pending payments"
+    : null;
 
   // #849 — release the caller's own tentative hold instead of waiting out
   // the 24h cleanup window.
@@ -112,14 +108,16 @@ export function PendingPaymentsWidget({
         } else if (!response.ok) {
           setCancelNotice("Could not cancel the pending booking. Try again.");
         }
-        await fetchPendingPayments(false);
+        await queryClient.invalidateQueries({
+          queryKey: ["pending-payments", consulteeId],
+        });
       } catch {
         setCancelNotice("Could not cancel the pending booking. Try again.");
       } finally {
         setCancellingId(null);
       }
     },
-    [fetchPendingPayments],
+    [queryClient, consulteeId],
   );
 
   if (loading) {
