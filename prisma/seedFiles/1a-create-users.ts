@@ -636,6 +636,12 @@ export async function createUsers(): Promise<UserWithProfiles[]> {
           adminProfileId: user.adminProfile?.id ?? null,
         },
       });
+      // Keep the in-memory object consistent with the row — downstream seed
+      // files receive this `user` and would otherwise read stale nulls.
+      user.consultantProfileId = user.consultantProfile?.id ?? null;
+      user.consulteeProfileId = user.consulteeProfile?.id ?? null;
+      user.staffProfileId = user.staffProfile?.id ?? null;
+      user.adminProfileId = user.adminProfile?.id ?? null;
 
       await prisma.account.create({
         data: {
