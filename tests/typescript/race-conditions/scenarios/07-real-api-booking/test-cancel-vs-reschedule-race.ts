@@ -16,9 +16,12 @@ import {
   finish,
   histogram,
   loginAs,
+  ensureServerOrSkip,
 } from "../../utilities/api-client";
 
 async function run() {
+  await ensureServerOrSkip();
+
   // Fixture: a consultation appointment in a cancellable state with live slots.
   const appointment = await prisma.appointment.findFirst({
     where: {

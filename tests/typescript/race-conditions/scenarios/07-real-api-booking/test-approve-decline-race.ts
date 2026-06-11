@@ -14,9 +14,12 @@ import {
   check,
   finish,
   loginAs,
+  ensureServerOrSkip,
 } from "../../utilities/api-client";
 
 async function run() {
+  await ensureServerOrSkip();
+
   const pending = await prisma.consultation.findFirst({
     where: { requestStatus: "PENDING" },
     select: { id: true },

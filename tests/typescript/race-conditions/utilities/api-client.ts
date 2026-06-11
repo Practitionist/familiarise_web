@@ -13,6 +13,26 @@
 export const BASE_URL = process.env.CHAOS_BASE_URL ?? "http://localhost:3000";
 const SEED_PASSWORD = process.env.SEED_PASSWORD ?? "SeedPass123!";
 
+/**
+ * The simulated 01-06 categories run anywhere, but these real-API scenarios
+ * need a live server. The CI race-tests workflow runs `npm run test:race`
+ * with no server, so every scenario calls this first and SKIPs (exit 0)
+ * when the target is unreachable — same semantics as the missing-fixture
+ * SKIPs. The pre-launch staging run sets CHAOS_BASE_URL and runs for real.
+ */
+export async function ensureServerOrSkip(): Promise<void> {
+  try {
+    await fetch(`${BASE_URL}/api/auth/get-session`, {
+      signal: AbortSignal.timeout(5_000),
+    });
+  } catch {
+    console.log(
+      `⏭️  SKIP — no server reachable at ${BASE_URL} (set CHAOS_BASE_URL or start \`npm run dev\`)`,
+    );
+    process.exit(0);
+  }
+}
+
 export interface Session {
   cookie: string;
   email: string;

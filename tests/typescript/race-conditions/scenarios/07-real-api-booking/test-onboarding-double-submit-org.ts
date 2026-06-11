@@ -15,9 +15,12 @@ import {
   finish,
   fireConcurrent,
   loginAs,
+  ensureServerOrSkip,
 } from "../../utilities/api-client";
 
 async function run() {
+  await ensureServerOrSkip();
+
   const admin = await loginAs(
     process.env.CHAOS_ADMIN_EMAIL ?? "olivia.brown@protonmail.com",
   );
