@@ -9,6 +9,7 @@
  * what they owe.
  */
 import prisma from "@/lib/prisma";
+import { toPlain } from "@/lib/data/serialize";
 
 // #748-parity — 10-min join window matches JoinButton.getJoinState. Real join
 // (Stream client) lives on the consultee dashboard; the page links there.
@@ -184,12 +185,13 @@ export async function getMyProgramData(params: {
     })
   ).filter((p) => !assignedProgramIds.has(p.id));
 
-  return {
+  // toPlain — assignment/utilization rows carry an inspect symbol (see serialize.ts)
+  return toPlain({
     assignments,
     utilizations,
     upcomingSessions,
     outstandingOveragePaise,
     overagePaiseByAssignment,
     eligiblePrograms,
-  };
+  });
 }

@@ -1,5 +1,6 @@
 import { cache } from "react";
 import prisma from "@/lib/prisma";
+import { toPlain } from "@/lib/data/serialize";
 import type { Prisma } from "@prisma/client";
 import { marketplaceVisibilityWhere } from "@/lib/api/plans/visibility";
 import { generateProgramImageUrl } from "@/app/explore/programs/utils";
@@ -263,7 +264,8 @@ export const getCuratedPrograms = cache(
       );
     }
 
-    return programs.slice(0, limit);
+    // toPlain — extended plan rows carry an inspect symbol (see serialize.ts)
+    return toPlain(programs.slice(0, limit));
   },
 );
 

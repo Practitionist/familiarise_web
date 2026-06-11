@@ -8,6 +8,7 @@
  * money-safety rule).
  */
 import prisma from "@/lib/prisma";
+import { toPlain } from "@/lib/data/serialize";
 import type { PayoutRecipient } from "@prisma/client";
 
 // #748-parity — 10-min join window matches JoinButton.getJoinState. The real
@@ -184,5 +185,6 @@ export async function getMyArrangementData(params: {
       (x, y) => new Date(x.startsAt).getTime() - new Date(y.startsAt).getTime(),
     );
 
-  return { orgDefaultCard, payoutAccount, earnings, upcomingSessions };
+  // toPlain — rateCard/earnings rows carry an inspect symbol (see serialize.ts)
+  return toPlain({ orgDefaultCard, payoutAccount, earnings, upcomingSessions });
 }
