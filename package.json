@@ -12,6 +12,7 @@
     "db:push": "prisma db push",
     "db:triggers": "npx tsx -r dotenv/config scripts/db/apply-ledger-triggers.ts",
     "db:constraints": "npx tsx -r dotenv/config scripts/db/apply-check-constraints.ts",
+    "test:chaos:api": "npx tsx tests/typescript/race-conditions/master-runner.ts sequential --category=07-real-api-booking && npx tsx tests/typescript/race-conditions/master-runner.ts sequential --category=09-webhook-storm",
     "db:seed": "npx tsx prisma/seed.ts",
     "db:seed:small": "SEED_MODE=small npx tsx prisma/seed.ts",
     "db:seed:medium": "SEED_MODE=medium npx tsx prisma/seed.ts",
