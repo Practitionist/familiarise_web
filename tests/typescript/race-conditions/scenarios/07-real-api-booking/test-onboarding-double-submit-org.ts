@@ -41,19 +41,27 @@ async function run() {
 
   const rows = await prisma.organization.findMany({
     where: { slug },
-    select: { id: true },
+    select: { id: true, billingAccountId: true },
   });
   check("exactly one Organization row exists", rows.length === 1, rows);
 
-  // Cleanup the chaos org (and its dependents) for repeat runs.
+  // Cleanup the chaos org for repeat runs. Org children (audit, members,
+  // memberships) cascade on delete; the BillingAccount does NOT — the org
+  // holds the FK, so deleting the org orphans it. Delete it explicitly.
   for (const row of rows) {
-    await prisma.organization
-      .delete({ where: { id: row.id } })
-      .catch(async () => {
-        // FK-restricted children (audit rows etc.) — leave for manual sweep,
-        // but flag it so the run output shows the residue.
-        console.warn(`⚠️  could not delete chaos org ${row.id}; manual cleanup needed`);
-      });
+    try {
+      await prisma.organization.delete({ where: { id: row.id } });
+      if (row.billingAccountId) {
+        await prisma.billingAccount.delete({
+          where: { id: row.billingAccountId },
+        });
+      }
+    } catch (e) {
+      console.warn(
+        `⚠️  could not fully delete chaos org ${row.id}; manual cleanup needed`,
+        e,
+      );
+    }
   }
 
   finish("onboarding-double-submit-org");

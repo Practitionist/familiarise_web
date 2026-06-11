@@ -92,9 +92,12 @@ pass/fail record.
 
 **9. Cancel versus reschedule on the same appointment (implemented:
 `test-cancel-vs-reschedule-race`).** Two tabs act on one appointment
-simultaneously, one cancelling and one rescheduling. Exactly one must win,
-and the slots must end consistently — all CANCELLED or all
-RESCHEDULED-tentative, never a mix.
+simultaneously, one cancelling and one rescheduling. Ordering decides the
+winner count — the reschedule-first interleaving legally admits both
+actions, because reschedule resets the request to PENDING and a PENDING
+request is cancellable. The invariants are therefore: no server errors,
+never zero winners, a successful cancel is never resurrected by the racing
+reschedule, and the slots never end in a CANCELLED+RESCHEDULED mix.
 
 **10. Reschedule storm (implemented: `test-reschedule-storm`).** Ten
 concurrent reschedules of one appointment. Reschedule is re-entrant, so

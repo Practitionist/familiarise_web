@@ -33,6 +33,16 @@ async function run() {
     process.exit(0);
   }
 
+  // Capture the fixture so repeat runs do not consume the seed pool.
+  const originalConsultation = await prisma.consultation.findUniqueOrThrow({
+    where: { id: appointment.consultation!.id },
+    select: { requestStatus: true },
+  });
+  const originalSlots = await prisma.slotOfAppointment.findMany({
+    where: { appointmentId: appointment.id },
+    select: { id: true, completionStatus: true, isTentative: true },
+  });
+
   const terminalBefore = await prisma.slotOfAppointment.count({
     where: {
       appointmentId: appointment.id,
@@ -77,6 +87,21 @@ async function run() {
     terminalAfter === terminalBefore,
     { terminalBefore, terminalAfter },
   );
+
+  // Restore the fixture for repeat runs.
+  await prisma.consultation.update({
+    where: { id: appointment.consultation!.id },
+    data: { requestStatus: originalConsultation.requestStatus },
+  });
+  for (const slot of originalSlots) {
+    await prisma.slotOfAppointment.update({
+      where: { id: slot.id },
+      data: {
+        completionStatus: slot.completionStatus,
+        isTentative: slot.isTentative,
+      },
+    });
+  }
 
   finish("reschedule-storm");
 }

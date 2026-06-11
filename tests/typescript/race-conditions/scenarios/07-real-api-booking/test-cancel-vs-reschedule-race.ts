@@ -3,16 +3,18 @@
  * Category: 07 - Real API booking races (#837 scenario 9)
  *
  * Two tabs act on the same appointment simultaneously: one cancels, one
- * reschedules. Exactly one must win; slots must end consistently
- * (all CANCELLED or all RESCHEDULED-tentative, never mixed).
+ * reschedules. Ordering decides the winner count — reschedule-then-cancel
+ * is legal (reschedule resets to PENDING, and PENDING is cancellable), so
+ * the invariants are: no 5xx, never zero winners, a successful cancel is
+ * NEVER resurrected, and slots never end in a CANCELLED+RESCHEDULED mix.
  */
 import "dotenv/config";
 import prisma from "../../../../../lib/prisma";
 import {
   apiFetch,
-  assertExactlyOneWinner,
   check,
   finish,
+  histogram,
   loginAs,
 } from "../../utilities/api-client";
 
@@ -30,11 +32,21 @@ async function run() {
     process.exit(0);
   }
 
+  // Capture the fixture so repeat runs do not consume the seed pool.
+  const originalConsultation = await prisma.consultation.findUniqueOrThrow({
+    where: { id: appointment.consultation!.id },
+    select: { requestStatus: true },
+  });
+  const originalSlots = await prisma.slotOfAppointment.findMany({
+    where: { appointmentId: appointment.id },
+    select: { id: true, completionStatus: true, isTentative: true },
+  });
+
   const admin = await loginAs(
     process.env.CHAOS_ADMIN_EMAIL ?? "olivia.brown@protonmail.com",
   );
 
-  const results = await Promise.all([
+  const [cancelRes, rescheduleRes] = await Promise.all([
     apiFetch(`/api/appointments/${appointment.id}/cancel`, {
       method: "POST",
       session: admin,
@@ -46,8 +58,33 @@ async function run() {
       body: JSON.stringify({}),
     }),
   ]);
+  const results = [cancelRes, rescheduleRes];
+  const winners = results.filter(
+    (r) => r.status >= 200 && r.status < 300,
+  ).length;
+  const serverErrors = results.filter((r) => r.status >= 500).length;
 
-  assertExactlyOneWinner("cancel-vs-reschedule: exactly one winner", results);
+  check("no server errors", serverErrors === 0, histogram(results));
+  check("never zero winners", winners >= 1, histogram(results));
+
+  // THE scenario-9 invariant: once a cancel has succeeded, the racing
+  // reschedule must not resurrect the booking. (Two winners is legal only
+  // in the reschedule-first ordering, and then the cancel's verdict stands.)
+  const finalState = await prisma.consultation.findUniqueOrThrow({
+    where: { id: appointment.consultation!.id },
+    select: { requestStatus: true },
+  });
+  const cancelWon = cancelRes.status >= 200 && cancelRes.status < 300;
+  check(
+    "a successful cancel is never resurrected",
+    !cancelWon || finalState.requestStatus === "CANCELLED",
+    { cancelWon, finalState, h: histogram(results) },
+  );
+  check(
+    "reschedule-only outcome lands on PENDING",
+    cancelWon || finalState.requestStatus === "PENDING",
+    { cancelWon, finalState },
+  );
 
   // Consistency: slots must not be a mix of CANCELLED and RESCHEDULED.
   const slots = await prisma.slotOfAppointment.findMany({
@@ -60,6 +97,27 @@ async function run() {
     !(statuses.has("CANCELLED") && statuses.has("RESCHEDULED")),
     slots,
   );
+
+  // Restore the fixture for repeat runs (status, slots, cancel stamps).
+  await prisma.consultation.update({
+    where: { id: appointment.consultation!.id },
+    data: {
+      requestStatus: originalConsultation.requestStatus,
+      cancellationReason: null,
+      cancellationNotes: null,
+      cancelledAt: null,
+      cancelledBy: null,
+    },
+  });
+  for (const slot of originalSlots) {
+    await prisma.slotOfAppointment.update({
+      where: { id: slot.id },
+      data: {
+        completionStatus: slot.completionStatus,
+        isTentative: slot.isTentative,
+      },
+    });
+  }
 
   finish("cancel-vs-reschedule-race");
 }
