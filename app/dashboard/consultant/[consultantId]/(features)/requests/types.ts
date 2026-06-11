@@ -1,7 +1,7 @@
-import { RequestStatus, ScheduleType } from "@prisma/client";
+import { RequestStatus } from "@prisma/client";
 
 // --- API Response Type Definitions ---
-export interface UserInfo {
+interface UserInfo {
   id: string;
   name: string;
   image?: string;
@@ -12,12 +12,12 @@ export interface RequestedBy {
   user: UserInfo;
 }
 
-export interface ConsultationPlanInfo {
+interface ConsultationPlanInfo {
   title?: string;
   durationInHours?: number;
 }
 
-export interface SubscriptionPlanInfo {
+interface SubscriptionPlanInfo {
   title?: string;
   callsPerWeek: number;
   durationInMonths: number;
@@ -25,14 +25,14 @@ export interface SubscriptionPlanInfo {
   totalSessions?: number;
 }
 
-export interface AppointmentSlot {
+interface AppointmentSlot {
   id: string;
   startsAt: string;
   endsAt: string;
   isTentative?: boolean; // Indicates if slot needs rescheduling
 }
 
-export interface AppointmentInfo {
+interface AppointmentInfo {
   id: string;
   slotsOfAppointment?: AppointmentSlot[];
 }
@@ -58,20 +58,4 @@ export interface SubscriptionApiResponse {
   // Correct field names from Prisma Subscription model
   schedulingPeriodStartsAt?: string;
   schedulingPeriodEndsAt?: string;
-}
-
-export type AvailabilityApiResponse = AppointmentSlot;
-
-export interface ConsultantApiResponse {
-  scheduleType?: ScheduleType;
-  user?: {
-    currentTimezone?: string;
-  };
-}
-
-// Interface used within the component
-export interface SlotInterval {
-  id: string;
-  startsAt: string;
-  endsAt: string;
 }

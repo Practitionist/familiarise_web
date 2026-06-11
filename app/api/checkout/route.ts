@@ -8,16 +8,23 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth-server";
 import { checkoutLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { ZodError } from "zod";
+import { Prisma } from "@prisma/client";
+import { replayByIdempotencyKey } from "@/lib/payments/operations/checkout-replay";
 import { routeGateway } from "@/lib/payments/gateway-router";
 import { resolveCheckoutTaxContext } from "@/lib/payments/tax/checkout-context";
 
 export async function POST(req: NextRequest) {
+  // #828 — hoisted so the P2002 catch can replay without re-reading the
+  // (already consumed) request body.
+  let replayUserId: string | undefined;
+  let replayKey: string | undefined;
   try {
     // Check authentication
     const session = await getSession();
     if (!session?.user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+    replayUserId = session.user.id;
 
     // Rate limit: 5 checkouts per minute per user
     const rl = await applyRateLimit(checkoutLimiter, session.user.id);
@@ -29,6 +36,15 @@ export async function POST(req: NextRequest) {
     // Only allow mock payments in development — prevent client-side bypass in production
     const isMockPayment =
       body.isMockPayment === true && process.env.NODE_ENV === "development";
+
+    // #828 — fast-path replay: a double-click / network retry / second tab
+    // with the same key gets the original attempt's response, never a second
+    // Payment + tentative slots + gateway order.
+    replayKey = validatedData.clientIdempotencyKey;
+    if (replayKey) {
+      const replay = await replayByIdempotencyKey(session.user.id, replayKey);
+      if (replay) return replay;
+    }
 
     const { buyerCountry } = await resolveCheckoutTaxContext({
       userId: session.user.id,
@@ -63,8 +79,24 @@ export async function POST(req: NextRequest) {
       isMockPayment,
       buyerCountry,
     );
+    if (!result.success) {
+      return NextResponse.json(result, { status: 400 });
+    }
     return NextResponse.json(result);
   } catch (error) {
+    // #828 — two concurrent identical requests can both miss the replay
+    // lookup; the loser's Payment.create dies on the unique key. Replay the
+    // winner's response instead of surfacing a 500.
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002" &&
+      String(error.meta?.target ?? "").includes("clientIdempotencyKey") &&
+      replayUserId &&
+      replayKey
+    ) {
+      const replay = await replayByIdempotencyKey(replayUserId, replayKey);
+      if (replay) return replay;
+    }
     // ZodError from checkoutSchema.parse() — extract first human-readable message
     if (error instanceof ZodError) {
       const firstMessage = error.issues[0]?.message ?? "Invalid request";

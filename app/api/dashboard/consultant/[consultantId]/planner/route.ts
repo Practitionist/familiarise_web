@@ -7,6 +7,7 @@ import {
   isPrivileged,
   forbiddenResponse,
 } from "@/lib/auth-helpers";
+import { resolveOrgScope } from "@/lib/api/scope/parse";
 
 // =============================================================================
 // Prisma Query Types - Derived from actual query shape for type safety
@@ -46,11 +47,18 @@ const classInclude = {
   appointments: true,
 } satisfies Prisma.ClassInclude;
 
-// Derive types from the include objects
-type PlannerWebinar = Prisma.WebinarGetPayload<{
-  include: typeof webinarInclude;
-}>;
-type PlannerClass = Prisma.ClassGetPayload<{ include: typeof classInclude }>;
+// Derive types from the include objects via the extended client — raw
+// GetPayload would re-introduce bigint money fields (#780).
+type PlannerWebinar = Prisma.Result<
+  typeof prisma.webinar,
+  { include: typeof webinarInclude },
+  "findFirstOrThrow"
+>;
+type PlannerClass = Prisma.Result<
+  typeof prisma.class,
+  { include: typeof classInclude },
+  "findFirstOrThrow"
+>;
 
 // Response types with discriminators and role annotations
 type WebinarEvent = PlannerWebinar & {
@@ -170,9 +178,6 @@ export async function GET(
   request: Request,
   { params }: { params: Promise<{ consultantId: string }> },
 ) {
-  // Note: request parameter kept for Next.js API route signature compatibility
-  void request;
-
   const authResult = await requireApiAuth();
   if (authResult.error) return authResult.error;
   const { session } = authResult;
@@ -194,22 +199,96 @@ export async function GET(
       );
     }
 
+    // B1-personal-retrofit: parse + authorize ?orgScope=. Filter applies
+    // to the appointment.organizationId attached to each Webinar/Class.
+    // Plans without bookings yet are NOT filtered (the planner shows
+    // owned + collaborated plans regardless of whether anyone has
+    // booked them).
+    const url = new URL(request.url);
+    const consultantUser = await prisma.consultantProfile.findUnique({
+      where: { id: consultantId },
+      select: { userId: true },
+    });
+    const callerMemberships = consultantUser
+      ? await prisma.membership.findMany({
+          where: { userId: consultantUser.userId, status: "ACTIVE" },
+          select: { organizationId: true, status: true },
+        })
+      : [];
+    const scopeResolution = resolveOrgScope({
+      raw: url.searchParams.get("orgScope"),
+      memberships: callerMemberships,
+      userRole: session.user.role,
+      // Self-scoped consultant endpoint.
+      allowAllForOwner: true,
+    });
+    if (!scopeResolution.ok) {
+      return NextResponse.json(
+        { error: scopeResolution.message, code: scopeResolution.code },
+        { status: scopeResolution.status },
+      );
+    }
+    // For Webinar (1:1 appointment) — `appointment.is.organizationId`.
+    // For Class (1:many appointments) — `appointments.some.organizationId`.
+    //
+    // Personal scope: include events that have NO appointment yet (unbooked)
+    // OR have an appointment with organizationId=null. Using only
+    // `{ appointment: { is: { organizationId: null } } }` would exclude
+    // freshly created unbooked events, hiding them from the consultant's
+    // own inventory view. Issue: #732 (planner inventory vs booking-history
+    // semantics — flagged in the May 2026 readiness audit).
+    const webinarApptOrg: Prisma.WebinarWhereInput | undefined =
+      scopeResolution.scope.kind === "personal"
+        ? {
+            OR: [
+              { appointment: { is: null } },
+              { appointment: { is: { organizationId: null } } },
+            ],
+          }
+        : scopeResolution.scope.kind === "org"
+          ? {
+              appointment: {
+                is: { organizationId: scopeResolution.scope.orgId },
+              },
+            }
+          : undefined;
+    const classApptOrg: Prisma.ClassWhereInput | undefined =
+      scopeResolution.scope.kind === "personal"
+        ? {
+            OR: [
+              { appointments: { none: {} } },
+              { appointments: { some: { organizationId: null } } },
+            ],
+          }
+        : scopeResolution.scope.kind === "org"
+          ? {
+              appointments: {
+                some: { organizationId: scopeResolution.scope.orgId },
+              },
+            }
+          : undefined;
+
     // Fetch owned plans, collaborated plans, and collaborator roles in parallel
     const [
       ownedWebinarsRaw,
       ownedClassesRaw,
       collabWebinarsRaw,
       collabClassesRaw,
-      webinarCollabRoles,
-      classCollabRoles,
+      collabRoles,
     ] = await Promise.all([
       // Owned plans
       prisma.webinar.findMany({
-        where: { webinarPlan: { consultantProfileId: consultantId } },
+        where: {
+          webinarPlan: { consultantProfileId: consultantId },
+          ...(webinarApptOrg ?? {}),
+        },
         include: webinarInclude,
       }),
       prisma.class.findMany({
-        where: { classPlan: { consultantProfileId: consultantId } },
+        where: {
+          classPlan: { consultantProfileId: consultantId },
+          ...(classApptOrg ?? {}),
+        },
         include: classInclude,
       }),
       // Collaborated plans (only ACCEPTED)
@@ -220,6 +299,7 @@ export async function GET(
               some: { consultantProfileId: consultantId, status: "ACCEPTED" },
             },
           },
+          ...(webinarApptOrg ?? {}),
         },
         include: webinarInclude,
       }),
@@ -230,27 +310,24 @@ export async function GET(
               some: { consultantProfileId: consultantId, status: "ACCEPTED" },
             },
           },
+          ...(classApptOrg ?? {}),
         },
         include: classInclude,
       }),
-      // Collaborator role lookups
-      prisma.webinarCollaborator.findMany({
+      // Collaborator role lookups (#784 — one merged model for both plan types)
+      prisma.collaborator.findMany({
         where: { consultantProfileId: consultantId, status: "ACCEPTED" },
-        select: { webinarPlanId: true, role: true },
-      }),
-      prisma.classCollaborator.findMany({
-        where: { consultantProfileId: consultantId, status: "ACCEPTED" },
-        select: { classPlanId: true, role: true },
+        select: { webinarPlanId: true, classPlanId: true, role: true },
       }),
     ]);
 
-    // Build role lookup maps
-    const webinarRoleMap = Object.fromEntries(
-      webinarCollabRoles.map((c) => [c.webinarPlanId, c.role]),
-    );
-    const classRoleMap = Object.fromEntries(
-      classCollabRoles.map((c) => [c.classPlanId, c.role]),
-    );
+    // Build role lookup maps — exactly one plan FK is set per record (#784)
+    const webinarRoleMap: Record<string, string> = {};
+    const classRoleMap: Record<string, string> = {};
+    for (const c of collabRoles) {
+      if (c.webinarPlanId) webinarRoleMap[c.webinarPlanId] = c.role;
+      else if (c.classPlanId) classRoleMap[c.classPlanId] = c.role;
+    }
 
     // Collect owned IDs for deduplication
     const ownedWebinarIds = new Set(ownedWebinarsRaw.map((w) => w.id));

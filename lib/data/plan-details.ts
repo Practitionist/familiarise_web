@@ -16,7 +16,15 @@ import prisma from "@/lib/prisma";
 /** Raw function — importable by API routes (no React.cache). */
 export async function fetchWebinarPlanDetail(webinarPlanId: string) {
   const plan = await prisma.webinarPlan.findUnique({
-    where: { id: webinarPlanId },
+    where: {
+      id: webinarPlanId,
+      // #781 §B — soft-deleted profiles leave public surfaces; owner relation
+      // is nullable, so only plans with a soft-deleted owner become not-found.
+      OR: [
+        { consultantProfile: null },
+        { consultantProfile: { deletedAt: null } },
+      ],
+    },
     include: {
       consultantProfile: {
         include: {
@@ -88,7 +96,15 @@ export const getWebinarPlanDetail = cache(fetchWebinarPlanDetail);
 /** Raw function — importable by API routes (no React.cache). */
 export async function fetchClassPlanDetail(classPlanId: string) {
   const plan = await prisma.classPlan.findUnique({
-    where: { id: classPlanId },
+    where: {
+      id: classPlanId,
+      // #781 §B — soft-deleted profiles leave public surfaces; owner relation
+      // is nullable, so only plans with a soft-deleted owner become not-found.
+      OR: [
+        { consultantProfile: null },
+        { consultantProfile: { deletedAt: null } },
+      ],
+    },
     include: {
       consultantProfile: {
         include: {

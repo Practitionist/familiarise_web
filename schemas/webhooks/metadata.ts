@@ -100,16 +100,3 @@ export function validateWebhookMetadata(metadata: Record<string, string>) {
       throw new Error(`Unsupported appointment type: ${appointmentType}`);
   }
 }
-
-/**
- * Type exports for validated metadata
- */
-export type ConsultationMetadata = z.infer<typeof consultationMetadataSchema>;
-export type SubscriptionMetadata = z.infer<typeof subscriptionMetadataSchema>;
-export type WebinarMetadata = z.infer<typeof webinarMetadataSchema>;
-export type ClassMetadata = z.infer<typeof classMetadataSchema>;
-export type ValidatedMetadata =
-  | ConsultationMetadata
-  | SubscriptionMetadata
-  | WebinarMetadata
-  | ClassMetadata;

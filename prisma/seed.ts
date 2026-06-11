@@ -54,11 +54,17 @@ import { createDisputes } from "./seedFiles/12b-create-disputes";
 import { createPayoutAccounts } from "./seedFiles/13a-create-payout-accounts";
 import { createConsultantEarnings } from "./seedFiles/13b-create-consultant-earnings";
 import { createPayouts } from "./seedFiles/13c-create-payouts";
-import { createInvoices } from "./seedFiles/13d-create-invoices";
+// 13d-create-invoices removed in #768 lockdown (legacy Invoice model dropped).
 
 // Phase 14: Referrals & Collaborators
 import { createReferralCodes } from "./seedFiles/14a-create-referral-codes";
 import { createCollaborators } from "./seedFiles/14b-create-collaborators";
+
+// Phase 15: Enterprise Organizations
+import { createOrganizations } from "./seedFiles/15a-create-organizations";
+
+// Phase 16: Statutory lookups (#778 §D)
+import { createTdsRates } from "./seedFiles/16a-create-tds-rates";
 
 async function seed() {
   console.log("Starting seed process...");
@@ -180,9 +186,6 @@ async function seed() {
     console.log("Creating payouts...");
     await createPayouts();
 
-    console.log("Creating invoices...");
-    await createInvoices();
-
     // Phase 14: Referrals & Collaborators
     console.log("\n[Phase 14] Creating referrals & collaborators...");
     console.log("Creating referral codes...");
@@ -190,6 +193,14 @@ async function seed() {
 
     console.log("Creating collaborators...");
     await createCollaborators();
+
+    // Phase 15: Enterprise Organizations
+    console.log("\n[Phase 15] Creating enterprise organizations...");
+    await createOrganizations(users);
+
+    // Phase 16: Statutory lookups
+    console.log("\n[Phase 16] Seeding statutory TDS rates...");
+    await createTdsRates();
 
     // Summary
     const endTime = Date.now();

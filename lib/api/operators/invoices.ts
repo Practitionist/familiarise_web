@@ -19,6 +19,13 @@ export type OperatorInvoiceFilters = {
   search?: string | null;
   limit?: number;
   offset?: number;
+  /**
+   * #674 comment 7 — optional org-scope filter. When set, restricts the
+   * invoice list to Payments tagged with `Payment.organizationId = orgId`.
+   * Does not require additional auth (the route is already privileged
+   * via `requirePrivilegedAuth`).
+   */
+  orgId?: string | null;
 };
 
 export type OperatorInvoice = {
@@ -75,6 +82,7 @@ export async function getOperatorInvoices(
 ): Promise<OperatorInvoiceResult> {
   const status = filters.status ?? null;
   const search = filters.search ?? null;
+  const orgId = filters.orgId ?? null;
   const limit = sanitizePagination(filters.limit, 20, 1, 200);
   const offset = sanitizePagination(filters.offset, 0, 0, Number.MAX_SAFE_INTEGER);
 
@@ -95,6 +103,9 @@ export async function getOperatorInvoices(
         },
       },
     ];
+  }
+  if (orgId) {
+    where.organizationId = orgId;
   }
 
   // Get invoices (payments with succeeded status are considered invoices)

@@ -7,12 +7,44 @@ import prisma from "@/lib/prisma";
  */
 
 export const getConsultantDetail = cache(async (consultantId: string) => {
+  // Public expert detail page — explicit allowlist `select` instead of bare
+  // `include` so we (a) never leak India statutory PII (panNumber, tdsRate,
+  // ibanOrAccount, swiftBic, residencyStatus, etc.) onto a public route, and
+  // (b) avoid the "Decimal cannot be passed to Client Components" runtime
+  // error from `tdsRate: Decimal?` (added by the enterprise compliance
+  // scaffolds). Add new fields here only if the public profile actually
+  // renders them. Surfaced during May 2026 enterprise readiness audit.
   const consultant = await prisma.consultantProfile.findUnique({
     where: {
       id: consultantId,
       verificationStatus: "VERIFIED",
+      // #781 §B — soft-deleted profiles leave public surfaces (treated as not-found)
+      deletedAt: null,
     },
-    include: {
+    select: {
+      id: true,
+      description: true,
+      experience: true,
+      rating: true,
+      headline: true,
+      websiteUrl: true,
+      twitterUrl: true,
+      githubUrl: true,
+      videoIntroUrl: true,
+      languages: true,
+      toolsAndTechnologies: true,
+      mentoringStyle: true,
+      sessionTypes: true,
+      profileCompletionPercentage: true,
+      isVerified: true,
+      verificationStatus: true,
+      totalMenteesHelped: true,
+      domainId: true,
+      scheduleType: true,
+      userId: true,
+      isIndependent: true,
+      createdAt: true,
+      updatedAt: true,
       user: {
         select: {
           id: true,
@@ -55,7 +87,17 @@ export const getConsultantDetail = cache(async (consultantId: string) => {
       classPlans: true,
     },
   });
-  return consultant;
+  if (!consultant) return null;
+
+  // The Prisma client extension at lib/prisma.ts:121-124 converts BigInt
+  // `price` → Number for all four plan models. But the rows returned by
+  // the extended client are Proxy-wrapped; Next.js's RSC serializer
+  // flags them as "objects with symbol properties (nodejs.util.inspect.custom)".
+  // JSON round-trip strips every non-serializable artifact (Proxies,
+  // symbols, methods) and yields true plain objects. Dates become ISO
+  // strings — downstream client components already format them via
+  // formatInTimeZone / date-fns, so this is safe here.
+  return JSON.parse(JSON.stringify(consultant)) as typeof consultant;
 });
 
 export const getConsultantReviews = cache(

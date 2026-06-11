@@ -13,6 +13,3 @@ export const CreateReviewSchema = z.object({
   consultantProfileId: z.string().min(1, "Consultant profile ID is required"),
   consulteeProfileId: z.string().min(1, "Consultee profile ID is required"),
 });
-
-export type CreateFeedbackInput = z.infer<typeof CreateFeedbackSchema>;
-export type CreateReviewInput = z.infer<typeof CreateReviewSchema>;

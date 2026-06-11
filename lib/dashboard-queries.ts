@@ -33,24 +33,6 @@ interface PlannerData {
   participantCounts: Record<string, number>;
 }
 
-export interface QueryConfig {
-  queryKey: readonly unknown[];
-  queryFn: () => Promise<unknown>;
-  staleTime: number;
-  gcTime: number;
-  retry?: number | boolean;
-  refetchOnWindowFocus?: boolean;
-  enabled?: boolean;
-}
-
-export interface DashboardQueryResult<T> {
-  data: T | undefined;
-  isLoading: boolean;
-  error: Error | null;
-  isStale: boolean;
-  refetch: () => void;
-}
-
 // =============================================================================
 // Fetch Functions
 // =============================================================================
@@ -75,9 +57,11 @@ export const consultantFetchers = {
       "Dashboard fetch failed",
     ),
 
-  appointments: (consultantId: string) =>
+  appointments: (consultantId: string, orgScope?: string | null) =>
     fetchWithErrorHandling<TAppointment[]>(
-      `/api/slots/appointments?consultantProfileId=${consultantId}`,
+      orgScope && orgScope !== "personal"
+        ? `/api/slots/appointments?consultantProfileId=${consultantId}&orgScope=${encodeURIComponent(orgScope)}`
+        : `/api/slots/appointments?consultantProfileId=${consultantId}`,
       "Appointments fetch failed",
     ),
 
@@ -87,30 +71,38 @@ export const consultantFetchers = {
       "Consultant details fetch failed",
     ),
 
-  requests: (consultantId: string) =>
+  requests: (consultantId: string, orgScope?: string | null) =>
     fetchWithErrorHandling<TAppointment[]>(
-      `/api/dashboard/consultant/${consultantId}/requests`,
+      orgScope && orgScope !== "personal"
+        ? `/api/dashboard/consultant/${consultantId}/requests?orgScope=${encodeURIComponent(orgScope)}`
+        : `/api/dashboard/consultant/${consultantId}/requests`,
       "Requests fetch failed",
     ),
 
-  planner: (consultantId: string) =>
+  planner: (consultantId: string, orgScope?: string | null) =>
     fetchWithErrorHandling<PlannerData>(
-      `/api/dashboard/consultant/${consultantId}/planner`,
+      orgScope && orgScope !== "personal"
+        ? `/api/dashboard/consultant/${consultantId}/planner?orgScope=${encodeURIComponent(orgScope)}`
+        : `/api/dashboard/consultant/${consultantId}/planner`,
       "Planner fetch failed",
     ),
 
-  documents: (consultantId: string) =>
+  documents: (consultantId: string, orgScope?: string | null) =>
     fetchWithErrorHandling<TAppointment[]>(
-      `/api/dashboard/consultant/${consultantId}/documents`,
+      orgScope && orgScope !== "personal"
+        ? `/api/dashboard/consultant/${consultantId}/documents?orgScope=${encodeURIComponent(orgScope)}`
+        : `/api/dashboard/consultant/${consultantId}/documents`,
       "Documents fetch failed",
     ),
 };
 
 // Consultee fetchers
 export const consulteeFetchers = {
-  events: (consulteeId: string) =>
+  events: (consulteeId: string, orgScope?: string | null) =>
     fetchWithErrorHandling<TConsulteeEventsResponse>(
-      `/api/dashboard/consultee/${consulteeId}/events`,
+      orgScope && orgScope !== "personal"
+        ? `/api/dashboard/consultee/${consulteeId}/events?orgScope=${encodeURIComponent(orgScope)}`
+        : `/api/dashboard/consultee/${consulteeId}/events`,
       "Events fetch failed",
     ),
 
@@ -146,31 +138,8 @@ export const consulteeFetchers = {
     ).catch((): Record<string, unknown>[] => []),
 };
 
-// Admin fetchers
-export const adminFetchers = {
-  stats: () =>
-    fetchWithErrorHandling(`/api/admin/stats`, "Admin stats fetch failed"),
-
-  users: () => fetchWithErrorHandling(`/api/admin/users`, "Users fetch failed"),
-
-  payments: (page = 1, limit = 20) =>
-    fetchWithErrorHandling(
-      `/api/admin/payments?page=${page}&limit=${limit}`,
-      "Payments fetch failed",
-    ),
-
-  analytics: () =>
-    fetchWithErrorHandling(`/api/admin/analytics`, "Analytics fetch failed"),
-
-  disputes: () =>
-    fetchWithErrorHandling(`/api/admin/disputes`, "Disputes fetch failed"),
-
-  refunds: () =>
-    fetchWithErrorHandling(`/api/admin/refunds`, "Refunds fetch failed"),
-};
-
 // User fetchers (shared)
-export const userFetchers = {
+const userFetchers = {
   details: (userId: string) =>
     fetchWithErrorHandling(`/api/user/${userId}`, "User details fetch failed"),
 };
@@ -194,7 +163,16 @@ const GC_TIME = 10 * 60 * 1000; // 10 minutes
 /**
  * Consultant Dashboard Queries
  */
-export function createConsultantQueries(consultantId: string) {
+export function createConsultantQueries(
+  consultantId: string,
+  /**
+   * B1-personal-retrofit: org-scope filter for the consultant's
+   * requests / planner / documents queries. Threaded into queryKey
+   * so swap-flips invalidate the cache.
+   */
+  orgScope?: string | null,
+) {
+  const scopeKey = orgScope ?? "personal";
   return {
     // Primary data for home dashboard
     dashboard: {
@@ -207,8 +185,12 @@ export function createConsultantQueries(consultantId: string) {
 
     // Appointments with all statuses
     appointments: {
-      queryKey: ["consultant-appointments", consultantId] as const,
-      queryFn: () => consultantFetchers.appointments(consultantId),
+      queryKey: [
+        "consultant-appointments",
+        consultantId,
+        scopeKey,
+      ] as const,
+      queryFn: () => consultantFetchers.appointments(consultantId, orgScope),
       staleTime: STALE_TIMES.SHORT,
       gcTime: GC_TIME,
       retry: 2,
@@ -225,8 +207,8 @@ export function createConsultantQueries(consultantId: string) {
 
     // Pending requests
     requests: {
-      queryKey: ["consultant-requests", consultantId] as const,
-      queryFn: () => consultantFetchers.requests(consultantId),
+      queryKey: ["consultant-requests", consultantId, scopeKey] as const,
+      queryFn: () => consultantFetchers.requests(consultantId, orgScope),
       staleTime: STALE_TIMES.SHORT,
       gcTime: GC_TIME,
       retry: 2,
@@ -234,8 +216,8 @@ export function createConsultantQueries(consultantId: string) {
 
     // Planner/calendar data
     planner: {
-      queryKey: ["consultant-planner", consultantId] as const,
-      queryFn: () => consultantFetchers.planner(consultantId),
+      queryKey: ["consultant-planner", consultantId, scopeKey] as const,
+      queryFn: () => consultantFetchers.planner(consultantId, orgScope),
       staleTime: STALE_TIMES.MEDIUM,
       gcTime: GC_TIME,
       retry: 2,
@@ -243,8 +225,8 @@ export function createConsultantQueries(consultantId: string) {
 
     // Documents for review
     documents: {
-      queryKey: ["consultant-documents", consultantId] as const,
-      queryFn: () => consultantFetchers.documents(consultantId),
+      queryKey: ["consultant-documents", consultantId, scopeKey] as const,
+      queryFn: () => consultantFetchers.documents(consultantId, orgScope),
       staleTime: STALE_TIMES.MEDIUM,
       gcTime: GC_TIME,
       retry: 2,
@@ -255,12 +237,21 @@ export function createConsultantQueries(consultantId: string) {
 /**
  * Consultee Dashboard Queries
  */
-export function createConsulteeQueries(consulteeId: string) {
+export function createConsulteeQueries(
+  consulteeId: string,
+  /**
+   * B1-personal-retrofit: org-scope filter for the events query.
+   * Pass `personal` (default) | `<orgId>` | `all`. Threaded into the
+   * queryKey so swap-flips invalidate the cache.
+   */
+  orgScope?: string | null,
+) {
+  const scopeKey = orgScope ?? "personal";
   return {
     // All events (appointments, subscriptions, classes, webinars)
     events: {
-      queryKey: ["consultee-events", consulteeId] as const,
-      queryFn: () => consulteeFetchers.events(consulteeId),
+      queryKey: ["consultee-events", consulteeId, scopeKey] as const,
+      queryFn: () => consulteeFetchers.events(consulteeId, orgScope),
       staleTime: STALE_TIMES.MEDIUM,
       gcTime: GC_TIME,
       retry: 2,
@@ -314,59 +305,6 @@ export function createConsulteeQueries(consulteeId: string) {
 }
 
 /**
- * Admin Dashboard Queries
- */
-export function createAdminQueries() {
-  return {
-    // Overview stats
-    stats: {
-      queryKey: ["admin-stats"] as const,
-      queryFn: () => adminFetchers.stats(),
-      staleTime: STALE_TIMES.SHORT,
-      gcTime: GC_TIME,
-      retry: 2,
-      refetchInterval: 2 * 60 * 1000, // Auto-refresh every 2 minutes
-    },
-
-    // User management
-    users: {
-      queryKey: ["admin-users"] as const,
-      queryFn: () => adminFetchers.users(),
-      staleTime: STALE_TIMES.MEDIUM,
-      gcTime: GC_TIME,
-      retry: 2,
-    },
-
-    // Analytics data
-    analytics: {
-      queryKey: ["admin-analytics"] as const,
-      queryFn: () => adminFetchers.analytics(),
-      staleTime: STALE_TIMES.MEDIUM,
-      gcTime: GC_TIME,
-      retry: 2,
-    },
-
-    // Disputes
-    disputes: {
-      queryKey: ["admin-disputes"] as const,
-      queryFn: () => adminFetchers.disputes(),
-      staleTime: STALE_TIMES.SHORT,
-      gcTime: GC_TIME,
-      retry: 2,
-    },
-
-    // Refunds
-    refunds: {
-      queryKey: ["admin-refunds"] as const,
-      queryFn: () => adminFetchers.refunds(),
-      staleTime: STALE_TIMES.SHORT,
-      gcTime: GC_TIME,
-      retry: 2,
-    },
-  };
-}
-
-/**
  * User Queries (shared across all dashboards)
  */
 export function createUserQueries(userId: string) {
@@ -386,48 +324,6 @@ export function createUserQueries(userId: string) {
 // =============================================================================
 
 /**
- * Priority levels for prefetching
- */
-export type PrefetchPriority = "high" | "medium" | "low";
-
-/**
- * Get delay based on priority
- */
-export function getPrefetchDelay(priority: PrefetchPriority): number {
-  switch (priority) {
-    case "high":
-      return 0;
-    case "medium":
-      return 500;
-    case "low":
-      return 1000;
-  }
-}
-
-/**
- * Batch prefetch with priority scheduling
- */
-export async function batchPrefetch(
-  queryClient: { prefetchQuery: (query: QueryConfig) => Promise<unknown> },
-  queries: QueryConfig[],
-  priority: PrefetchPriority = "medium",
-): Promise<void> {
-  const delay = getPrefetchDelay(priority);
-
-  const execute = async () => {
-    await Promise.allSettled(
-      queries.map((query) => queryClient.prefetchQuery(query)),
-    );
-  };
-
-  if (delay > 0) {
-    setTimeout(execute, delay);
-  } else {
-    await execute();
-  }
-}
-
-/**
  * Schedule prefetch using requestIdleCallback when available
  */
 export function schedulePrefetch(callback: () => void, timeout = 2000): void {
@@ -437,46 +333,3 @@ export function schedulePrefetch(callback: () => void, timeout = 2000): void {
     setTimeout(callback, 100);
   }
 }
-
-// =============================================================================
-// Query Keys for Invalidation
-// =============================================================================
-
-export const queryKeys = {
-  consultant: {
-    all: (consultantId: string) => ["consultant", consultantId] as const,
-    dashboard: (consultantId: string) =>
-      ["consultant-dashboard", consultantId] as const,
-    appointments: (consultantId: string) =>
-      ["consultant-appointments", consultantId] as const,
-    details: (consultantId: string) =>
-      ["consultant-details", consultantId] as const,
-    requests: (consultantId: string) =>
-      ["consultant-requests", consultantId] as const,
-    planner: (consultantId: string) =>
-      ["consultant-planner", consultantId] as const,
-    documents: (consultantId: string) =>
-      ["consultant-documents", consultantId] as const,
-  },
-  consultee: {
-    all: (consulteeId: string) => ["consultee", consulteeId] as const,
-    events: (consulteeId: string) => ["consultee-events", consulteeId] as const,
-    profile: (consulteeId: string) =>
-      ["consultee-profile", consulteeId] as const,
-    feedback: () => ["consultee-feedback"] as const,
-    supportTickets: () => ["consultee-support-tickets"] as const,
-    messages: (consulteeId: string) =>
-      ["consultee-messages", consulteeId] as const,
-  },
-  admin: {
-    all: () => ["admin"] as const,
-    stats: () => ["admin-stats"] as const,
-    users: () => ["admin-users"] as const,
-    analytics: () => ["admin-analytics"] as const,
-    disputes: () => ["admin-disputes"] as const,
-    refunds: () => ["admin-refunds"] as const,
-  },
-  user: {
-    details: (userId: string) => ["user-details", userId] as const,
-  },
-};

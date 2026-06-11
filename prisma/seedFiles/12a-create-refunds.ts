@@ -129,7 +129,7 @@ export async function createRefunds(): Promise<void> {
 
       await prisma.refund.create({
         data: {
-          amount: refundAmount,
+          amountPaise: refundAmount,
           currency: payment.currency,
           reason,
           status,

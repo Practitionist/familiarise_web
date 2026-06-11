@@ -19,6 +19,7 @@
 
 import prisma from "../../lib/prisma";
 import { PaymentStatus } from "@prisma/client";
+import { withCronLock } from "@/lib/cron/with-cron-lock";
 
 // Release tentative slots older than 7 days with no successful payment
 const TENTATIVE_EXPIRATION_DAYS = 7;
@@ -34,7 +35,15 @@ export interface TentativeSlotCleanupResult {
 /**
  * Find and release stale tentative slots
  */
+// #476 — locked at the core so every entry (GH Actions / HTTP) shares one
+// mutual exclusion; fail-open: repeat-safe side effects, lock is belt-and-braces.
 export async function cleanupTentativeSlots(): Promise<TentativeSlotCleanupResult> {
+  return withCronLock("cleanup-tentative-slots", { failMode: "open" }, () =>
+    cleanupTentativeSlotsUnlocked(),
+  );
+}
+
+async function cleanupTentativeSlotsUnlocked(): Promise<TentativeSlotCleanupResult> {
   const errors: string[] = [];
   let slotsReleased = 0;
   const appointmentsAffected = new Set<string>();
@@ -154,6 +163,14 @@ export async function cleanupTentativeSlots(): Promise<TentativeSlotCleanupResul
       const result = await prisma.slotOfAppointment.deleteMany({
         where: {
           id: { in: staleTentativeSlots.map((s) => s.id) },
+          // #829 — re-state the tentative + unpaid conditions so a slot whose
+          // capture webhook confirmed it between the findMany above and this
+          // delete no longer matches (re-evaluated under the row lock). An
+          // id-only delete here destroyed paid bookings.
+          isTentative: true,
+          appointment: {
+            payment: { none: { paymentStatus: PaymentStatus.SUCCEEDED } },
+          },
         },
       });
 

@@ -2,6 +2,11 @@ import { PaymentGateway, RefundStatus, DisputeStatus } from "@prisma/client";
 
 /**
  * Common payment types and interfaces for all payment gateways
+ *
+ * #781 §A — `currency` here is deliberately `string`: these types face the
+ * gateways, which speak free-form ISO codes (incl. display currencies the
+ * Currency enum doesn't model). Database money rows store the Currency enum;
+ * every row-write must coerce through toCurrencyEnum() (currency-guards.ts).
  */
 
 // ============================================================================
@@ -97,7 +102,7 @@ export interface DisputeResult {
 // ============================================================================
 
 /** Supported currency codes for payment gateway amount conversion. */
-export type SupportedCurrency =
+type SupportedCurrency =
   | "USD"
   | "EUR"
   | "GBP"
@@ -121,20 +126,6 @@ export const CURRENCY_MULTIPLIERS: Record<SupportedCurrency, number> = {
   AED: 100, // fils
   NGN: 100, // kobo (for XFlow)
 };
-
-export interface PaymentGatewayConfig {
-  name: string;
-  isAvailable: boolean;
-  requiresKYC: boolean;
-  kycStatus?: "pending" | "approved" | "rejected";
-  supportedCurrencies: string[];
-  features: {
-    checkout: boolean;
-    refunds: boolean;
-    disputes: boolean;
-    subscriptions: boolean;
-  };
-}
 
 // ============================================================================
 // Error Types

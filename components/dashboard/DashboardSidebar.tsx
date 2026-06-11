@@ -37,6 +37,8 @@ import {
   Server,
   Gift,
   Wrench,
+  Building2,
+  PlusCircle,
 } from "lucide-react";
 
 // Icon mapping for dynamic icon rendering
@@ -78,7 +80,7 @@ const iconMap: Record<string, typeof Home> = {
   gift: Gift,
 };
 
-export interface NavItem {
+interface NavItem {
   name: string;
   path: string;
   icon?: string;
@@ -88,6 +90,13 @@ export interface NavItem {
 export interface NavSection {
   title: string | null;
   items: NavItem[];
+}
+
+export interface OrgMembershipEntry {
+  organizationId: string;
+  organizationName: string;
+  organizationLogo: string | null;
+  role: string;
 }
 
 interface DashboardSidebarProps {
@@ -100,6 +109,8 @@ interface DashboardSidebarProps {
   isLoading?: boolean;
   bottomNavItems?: NavItem[];
   hideBottomActions?: boolean;
+  /** Org memberships for the "Teams & Orgs" section at the bottom of the sidebar. */
+  orgMemberships?: OrgMembershipEntry[];
 }
 
 export function DashboardSidebar({
@@ -112,6 +123,7 @@ export function DashboardSidebar({
   isLoading = false,
   bottomNavItems: _bottomNavItems = [],
   hideBottomActions: _hideBottomActions = false,
+  orgMemberships = [],
 }: DashboardSidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
@@ -313,7 +325,49 @@ export function DashboardSidebar({
         )}
       </nav>
 
-      {/* Bottom Section removed: Back to Home, Settings, Help, Sign Out */}
+      {/* Teams & Orgs — shows the user's org memberships so they can switch
+          directly from within their personal dashboard sidebar. Capped at 3
+          visible orgs to keep the sidebar from growing unwieldy. */}
+      {orgMemberships.length > 0 && (
+        <div className="border-t border-zinc-800/50 pt-2 pb-1 px-3 mt-2">
+          <h3 className="py-2 text-xs font-semibold text-zinc-500 uppercase tracking-wider">
+            Teams &amp; Orgs
+          </h3>
+          <ul className="space-y-1">
+            {orgMemberships.slice(0, 3).map((m) => (
+              <li key={m.organizationId}>
+                <a
+                  href={`/dashboard/organization/${m.organizationId}/home`}
+                  className="group flex items-center gap-2.5 rounded-lg px-2 py-2 text-sm font-medium text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-100 transition-all duration-150"
+                >
+                  <div className="w-6 h-6 rounded-md bg-zinc-800 flex items-center justify-center overflow-hidden shrink-0">
+                    {m.organizationLogo ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={m.organizationLogo}
+                        alt={m.organizationName}
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <Building2 className="w-3.5 h-3.5 text-zinc-500" />
+                    )}
+                  </div>
+                  <span className="flex-1 truncate text-xs">
+                    {m.organizationName}
+                  </span>
+                </a>
+              </li>
+            ))}
+          </ul>
+          <Link
+            href="/dashboard/organization/create"
+            className="flex items-center gap-2 rounded-lg px-2 py-2 text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+          >
+            <PlusCircle className="w-4 h-4" />
+            Create organization
+          </Link>
+        </div>
+      )}
     </div>
   );
 }

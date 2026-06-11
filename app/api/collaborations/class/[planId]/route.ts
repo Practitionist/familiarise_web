@@ -90,7 +90,7 @@ export async function POST(
       );
     }
 
-    const existingCollab = await prisma.classCollaborator.findFirst({
+    const existingCollab = await prisma.collaborator.findFirst({
       where: {
         classPlanId: planId,
         consultantProfileId,

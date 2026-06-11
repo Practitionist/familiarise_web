@@ -6,6 +6,7 @@ import {
   isPrivileged,
   forbiddenResponse,
 } from "@/lib/auth-helpers";
+import { resolveOrgScope } from "@/lib/api/scope/parse";
 
 // =============================================================================
 // Prisma Query Types - Derived from actual query shape for type safety
@@ -227,25 +228,38 @@ const consultantInclude = {
   classPlans: true,
 } satisfies Prisma.ConsultantProfileInclude;
 
-// Derive types from the include objects
-type RequestsConsultation = Prisma.ConsultationGetPayload<{
-  include: typeof consultationInclude;
-}>;
-type RequestsSubscription = Prisma.SubscriptionGetPayload<{
-  include: typeof subscriptionInclude;
-}>;
-type RequestsWeeklyAvailability = Prisma.SlotOfAvailabilityWeeklyGetPayload<{
-  include: typeof weeklyAvailabilityInclude;
-}>;
-type RequestsCustomAvailability = Prisma.SlotOfAvailabilityCustomGetPayload<{
-  include: typeof customAvailabilityInclude;
-}>;
-type RequestsAppointment = Prisma.AppointmentGetPayload<{
-  include: typeof appointmentInclude;
-}>;
-type RequestsConsultant = Prisma.ConsultantProfileGetPayload<{
-  include: typeof consultantInclude;
-}>;
+// Derive types from the include objects via the extended client — raw
+// GetPayload would re-introduce bigint money fields (#780).
+type RequestsConsultation = Prisma.Result<
+  typeof prisma.consultation,
+  { include: typeof consultationInclude },
+  "findFirstOrThrow"
+>;
+type RequestsSubscription = Prisma.Result<
+  typeof prisma.subscription,
+  { include: typeof subscriptionInclude },
+  "findFirstOrThrow"
+>;
+type RequestsWeeklyAvailability = Prisma.Result<
+  typeof prisma.slotOfAvailabilityWeekly,
+  { include: typeof weeklyAvailabilityInclude },
+  "findFirstOrThrow"
+>;
+type RequestsCustomAvailability = Prisma.Result<
+  typeof prisma.slotOfAvailabilityCustom,
+  { include: typeof customAvailabilityInclude },
+  "findFirstOrThrow"
+>;
+type RequestsAppointment = Prisma.Result<
+  typeof prisma.appointment,
+  { include: typeof appointmentInclude },
+  "findFirstOrThrow"
+>;
+type RequestsConsultant = Prisma.Result<
+  typeof prisma.consultantProfile,
+  { include: typeof consultantInclude },
+  "findFirstOrThrow"
+>;
 
 // Response data interface
 interface RequestsData {
@@ -289,6 +303,42 @@ export async function GET(
         { status: 400 },
       );
     }
+
+    // B1-personal-retrofit: parse + authorize ?orgScope=. Default
+    // `personal` keeps existing callers stable. The scope filters the
+    // approved-appointments query below; pending consultations /
+    // subscriptions are NOT filtered because they don't have an
+    // appointment yet (org context is set at checkout, not at request).
+    const url = new URL(request.url);
+    const consultantUser = await prisma.consultantProfile.findUnique({
+      where: { id: consultantProfileId },
+      select: { userId: true },
+    });
+    const callerMemberships = consultantUser
+      ? await prisma.membership.findMany({
+          where: { userId: consultantUser.userId, status: "ACTIVE" },
+          select: { organizationId: true, status: true },
+        })
+      : [];
+    const scopeResolution = resolveOrgScope({
+      raw: url.searchParams.get("orgScope"),
+      memberships: callerMemberships,
+      userRole: session.user.role,
+      // Self-scoped consultant endpoint.
+      allowAllForOwner: true,
+    });
+    if (!scopeResolution.ok) {
+      return NextResponse.json(
+        { error: scopeResolution.message, code: scopeResolution.code },
+        { status: scopeResolution.status },
+      );
+    }
+    const apptOrgWhere: Prisma.AppointmentWhereInput | undefined =
+      scopeResolution.scope.kind === "personal"
+        ? { organizationId: null }
+        : scopeResolution.scope.kind === "org"
+          ? { organizationId: scopeResolution.scope.orgId }
+          : undefined;
 
     // PERFORMANCE FIX #364: Use direct Prisma queries instead of internal HTTP fetches
     // This eliminates network overhead and reduces response time significantly
@@ -375,6 +425,8 @@ export async function GET(
               },
             },
           ],
+          // B1-personal-retrofit: scope filter applied here.
+          ...(apptOrgWhere ?? {}),
         },
         include: appointmentInclude,
       }),

@@ -1,0 +1,275 @@
+/**
+ * Wallet balance helpers. The wallet is a prepaid liability we owe an org,
+ * cached on `BillingAccount.walletBalance` and authoritatively recorded in
+ * the double-entry journal (the org's WALLET LedgerAccount). #772 B3 removed
+ * the old per-row WalletEntry log; balance movements ARE journal postings.
+ *
+ * Atomicity: the `walletDebit` helper uses a raw SQL
+ *   `UPDATE ... WHERE walletBalance >= :amount`
+ * conditional update to prevent overdraft under concurrent transactions —
+ * the same pattern the old seat-helpers.ts used for acquireSeat.
+ *
+ * Top-up flow (Razorpay-only for v1):
+ *   1. API calls `initiateTopUp` → a PENDING WalletTopUp keyed by
+ *      providerOrderId (@unique). Returns the Razorpay order id to client.
+ *   2. Client completes Razorpay checkout.
+ *   3. Webhook calls `confirmTopUp(providerOrderId, providerPaymentId)`.
+ *   4. `confirmTopUp` atomically: flips the WalletTopUp PENDING → CONFIRMED
+ *      (idempotent claim), bumps walletBalance, and posts the top-up's
+ *      double-entry txn (Dr CASH / Cr WALLET) — all in one transaction.
+ *
+ * Booking debit flow (at checkout):
+ *   1. `walletDebit` atomically decrements the cached balance.
+ *   2. Throws `WalletInsufficientFundsError` if balance would go negative.
+ *   3. The accounting leg (Dr WALLET) posts from the settlement layer where
+ *      the full fee/payable split is known (createEarningsFromPayment).
+ */
+
+import type { WalletReason } from "@prisma/client";
+
+import prisma, { type Db, type Tx } from "@/lib/prisma";
+import { postLedgerTxn } from "@/lib/payments/ledger/post";
+
+export class WalletInsufficientFundsError extends Error {
+  constructor(
+    public billingAccountId: string,
+    public requestedPaise: number,
+  ) {
+    super(
+      `Insufficient wallet balance on billing account ${billingAccountId}: requested ${requestedPaise} paise`,
+    );
+    this.name = "WalletInsufficientFundsError";
+  }
+}
+
+/**
+ * Atomically debit a wallet. Throws WalletInsufficientFundsError if the
+ * account would go negative. Must be called inside a Prisma transaction.
+ */
+export async function walletDebit(
+  tx: Tx,
+  params: {
+    billingAccountId: string;
+    amountPaise: number;
+    reason: WalletReason;
+    paymentId?: string;
+    membershipId?: string;
+    notes?: string;
+  },
+): Promise<{ balanceAfter: number }> {
+  if (params.amountPaise <= 0) {
+    throw new Error(
+      `walletDebit requires positive amountPaise, got ${params.amountPaise}`,
+    );
+  }
+  // Atomic conditional decrement via the ORM (no raw SQL): updateMany only matches
+  // a row whose balance is already sufficient (gte excludes NULL too), so two
+  // concurrent debits can't overdraw — Postgres row-locks the matched row.
+  const updated = await tx.billingAccount.updateMany({
+    where: {
+      id: params.billingAccountId,
+      walletBalance: { gte: params.amountPaise },
+    },
+    data: { walletBalance: { decrement: params.amountPaise } },
+  });
+  if (updated.count === 0) {
+    throw new WalletInsufficientFundsError(
+      params.billingAccountId,
+      params.amountPaise,
+    );
+  }
+  const acct = await tx.billingAccount.findUniqueOrThrow({
+    where: { id: params.billingAccountId },
+    select: { walletBalance: true, currency: true },
+  });
+  const balanceAfter = acct.walletBalance ?? 0;
+
+  // #772 B3 — WalletEntry removed. The wallet-balance cache is decremented
+  // above; the booking-debit's accounting leg (Dr WALLET) posts to the
+  // double-entry journal from the settlement layer (createEarningsFromPayment),
+  // which is also the wallet-history record.
+  return { balanceAfter };
+}
+
+/**
+ * Credit a wallet (top-up or refund). Same transaction semantics as debit.
+ */
+export async function walletCredit(
+  tx: Tx,
+  params: {
+    billingAccountId: string;
+    amountPaise: number;
+    reason: WalletReason;
+    paymentId?: string;
+    membershipId?: string;
+    notes?: string;
+    providerOrderId?: string;
+    providerPaymentId?: string;
+  },
+): Promise<{ balanceAfter: number }> {
+  if (params.amountPaise <= 0) {
+    throw new Error(
+      `walletCredit requires positive amountPaise, got ${params.amountPaise}`,
+    );
+  }
+  // Atomic increment via the ORM (no raw SQL). WALLET-funded accounts are created
+  // with walletBalance=0 (never null), and every mutation is increment/decrement,
+  // so the value stays non-null — increment is exact without a COALESCE. `update`
+  // throws P2025 if the account is missing (a real error, like the old guard).
+  const acct = await tx.billingAccount.update({
+    where: { id: params.billingAccountId },
+    data: { walletBalance: { increment: params.amountPaise } },
+    select: { walletBalance: true, currency: true, ownerOrgId: true },
+  });
+  const balanceAfter = acct.walletBalance ?? 0;
+
+  // #771 D1/D5 / #772 B3 — double-entry is now the sole record (WalletEntry
+  // removed). A top-up is a complete 2-leg txn:
+  // platform CASH rises and we now owe the org a WALLET balance.
+  //   Dr CASH(platform)   Cr WALLET(org)
+  // Booking-debit and refund WALLET legs post from the settlement / refund
+  // layer (where the full split is known), not here.
+  if (params.reason === "TOPUP") {
+    await postLedgerTxn(tx, {
+      idempotencyKey: `topup:${params.providerOrderId ?? params.paymentId ?? `${params.billingAccountId}:${balanceAfter}`}`,
+      kind: "TOPUP",
+      paymentId: params.paymentId ?? null,
+      postings: [
+        {
+          account: { kind: "CASH", currency: acct.currency },
+          direction: "DEBIT",
+          amountPaise: params.amountPaise,
+        },
+        {
+          account: {
+            kind: "WALLET",
+            organizationId: acct.ownerOrgId,
+            currency: acct.currency,
+          },
+          direction: "CREDIT",
+          amountPaise: params.amountPaise,
+        },
+      ],
+    });
+  }
+
+  return { balanceAfter };
+}
+
+/**
+ * Initiate a top-up: creates a PENDING WalletTopUp keyed by providerOrderId
+ * so the webhook can idempotently confirm.
+ *
+ * The `@unique` constraint on WalletTopUp.providerOrderId provides the
+ * idempotency guarantee — a second POST with the same order id fails fast.
+ * Unlike the old WalletEntry placeholder, the amount is stored up front so
+ * confirmTopUp can assert the webhook amount matches what was authorized.
+ */
+export async function initiateTopUp(
+  db: Tx | typeof prisma,
+  params: {
+    billingAccountId: string;
+    amountPaise: number;
+    providerOrderId: string;
+    notes?: string;
+  },
+): Promise<void> {
+  await db.walletTopUp.create({
+    data: {
+      billingAccountId: params.billingAccountId,
+      amountPaise: params.amountPaise,
+      providerOrderId: params.providerOrderId,
+      status: "PENDING",
+      notes: params.notes ?? "Top-up initiated; awaiting webhook",
+    },
+  });
+}
+
+/**
+ * Confirm a top-up from a webhook. Idempotent: if the same providerOrderId
+ * is confirmed twice, the second call is a no-op.
+ */
+export async function confirmTopUp(
+  // #780 — must be the extended client; bare PrismaClient re-introduces bigint
+  // money types and its tx callback type blows the structural-compare limit.
+  prisma: Db,
+  params: {
+    providerOrderId: string;
+    providerPaymentId: string;
+    amountPaise: number;
+  },
+): Promise<{ confirmed: boolean; balanceAfter?: number }> {
+  // #785 — record the gateway capture OUTSIDE the tx below so it survives a
+  // ledger-post rollback. The whole confirm body is one $transaction, so a
+  // walletCredit/postLedgerTxn failure reverts the CONFIRMED claim back to
+  // PENDING; without this the abandoned-cleanup cron reaps the row and the
+  // captured money's only trace is lost. capturedAt + providerPaymentId persist
+  // so the cleanup skips it and sweep-orphaned-topup-captures can re-credit it.
+  await prisma.walletTopUp.updateMany({
+    where: { providerOrderId: params.providerOrderId, capturedAt: null },
+    data: {
+      capturedAt: new Date(),
+      providerPaymentId: params.providerPaymentId,
+    },
+  });
+
+  return prisma.$transaction(async (tx) => {
+    // Atomic idempotent claim: flip PENDING → CONFIRMED in a single
+    // conditional updateMany. Exactly one racing webhook delivery sees
+    // count===1 and proceeds to credit the wallet; a redelivery (or the
+    // losing race) sees count===0 and falls through to the no-op branch.
+    const claim = await tx.walletTopUp.updateMany({
+      where: { providerOrderId: params.providerOrderId, status: "PENDING" },
+      data: {
+        status: "CONFIRMED",
+        providerPaymentId: params.providerPaymentId,
+        confirmedAt: new Date(),
+      },
+    });
+
+    if (claim.count === 0) {
+      // Already confirmed by a prior delivery, or no such top-up. Return
+      // the current wallet balance so the caller can surface latest state;
+      // throw only if the top-up genuinely never existed.
+      const existing = await tx.walletTopUp.findUnique({
+        where: { providerOrderId: params.providerOrderId },
+        select: { billingAccountId: true },
+      });
+      if (!existing) {
+        throw new Error(
+          `No WalletTopUp for providerOrderId=${params.providerOrderId}`,
+        );
+      }
+      const ba = await tx.billingAccount.findUniqueOrThrow({
+        where: { id: existing.billingAccountId },
+        select: { walletBalance: true },
+      });
+      return { confirmed: false, balanceAfter: ba.walletBalance ?? 0 };
+    }
+
+    const topUp = await tx.walletTopUp.findUniqueOrThrow({
+      where: { providerOrderId: params.providerOrderId },
+      select: { billingAccountId: true, amountPaise: true },
+    });
+    // #785 — credit the AUTHORIZED amount stored at initiation, and reject a
+    // webhook/sweeper whose amount disagrees. The ledger idempotency key is the
+    // order id, so it dedupes the posting but NOT the amount; without this a
+    // mismatched-amount delivery (or a future caller that skips the gateway
+    // amount check) would credit the wallet for the wrong figure undetected.
+    if (params.amountPaise !== topUp.amountPaise) {
+      throw new Error(
+        `Top-up amount mismatch for order ${params.providerOrderId}: ` +
+          `confirm=${params.amountPaise} paise vs authorized=${topUp.amountPaise} paise`,
+      );
+    }
+    const result = await walletCredit(tx, {
+      billingAccountId: topUp.billingAccountId,
+      amountPaise: topUp.amountPaise,
+      reason: "TOPUP",
+      providerOrderId: params.providerOrderId,
+      providerPaymentId: params.providerPaymentId,
+      notes: `Top-up confirmed via webhook; order=${params.providerOrderId}`,
+    });
+    return { confirmed: true, balanceAfter: result.balanceAfter };
+  });
+}

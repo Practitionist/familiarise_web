@@ -28,7 +28,8 @@ import { ConsultantSearchInput } from "./ConsultantSearchInput";
 interface Collaborator {
   id: string;
   role: string;
-  revenueSharePercentage: number;
+  // #772 B5 — basis points (3000 = 30%); divide by 100 for display.
+  revenueShareBps: number;
   status: "PENDING" | "ACCEPTED" | "DECLINED" | "REMOVED";
   consultantProfile: {
     id: string;
@@ -159,9 +160,10 @@ export function CollaboratorsTab({
     },
   });
 
-  const totalShare = collaborators
-    .filter((c) => c.status === "PENDING" || c.status === "ACCEPTED")
-    .reduce((sum, c) => sum + c.revenueSharePercentage, 0);
+  const totalShare =
+    collaborators
+      .filter((c) => c.status === "PENDING" || c.status === "ACCEPTED")
+      .reduce((sum, c) => sum + c.revenueShareBps, 0) / 100;
 
   const ownerShare = 100 - totalShare;
 
@@ -238,7 +240,7 @@ export function CollaboratorsTab({
                       {collab.consultantProfile.user.name ?? "Unknown"}
                     </p>
                     <p className="text-xs text-zinc-500">
-                      {roleLabel} &middot; {collab.revenueSharePercentage}%
+                      {roleLabel} &middot; {collab.revenueShareBps / 100}%
                       share
                     </p>
                   </div>

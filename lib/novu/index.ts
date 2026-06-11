@@ -1,6 +1,5 @@
 export { getNovuClient, isNovuConfigured, validateNovuConfig } from "./client";
 export { NOVU_WORKFLOWS } from "./workflows";
-export type { NovuWorkflowId } from "./workflows";
 export {
   syncSubscriber,
   deleteSubscriber,
@@ -17,6 +16,7 @@ export {
   notifyPaymentSuccess,
   notifyPaymentFailed,
   notifyRefundProcessed,
+  notifyRefundFailed,
   notifyRefundRequested,
   // Support
   notifySupportTicketCreated,

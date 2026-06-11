@@ -13,17 +13,7 @@ export {
   getRazorpayPayoutsService,
   isRazorpayPayoutsConfigured,
 } from "./razorpay-payouts";
-export type {
-  RazorpayXConfig,
-  CreateContactRequest,
-  Contact,
-  CreateFundAccountRequest,
-  FundAccount,
-  CreatePayoutRequest,
-  RazorpayPayout,
-  RazorpayPayoutStatus,
-  PayoutWebhookEvent,
-} from "./razorpay-payouts";
+export type { Contact, RazorpayPayout } from "./razorpay-payouts";
 
 // Stripe Connect
 export {
@@ -31,16 +21,7 @@ export {
   getStripeConnectService,
   isStripeConnectConfigured,
 } from "./stripe-connect";
-export type {
-  StripeConnectConfig,
-  CreateConnectedAccountRequest,
-  ConnectedAccount,
-  CreateAccountLinkRequest,
-  AccountLink,
-  CreateTransferRequest,
-  StripeTransfer,
-  StripePayout,
-} from "./stripe-connect";
+export type { AccountLink } from "./stripe-connect";
 
 // Payout Service
 export {
@@ -52,14 +33,19 @@ export {
   rejectPayout,
   processApprovedPayouts,
   handlePayoutWebhook,
+  markConsultantPayoutReversed,
   getPayoutStats,
 } from "./payout-service";
-export type {
-  PayoutSummary,
-  PayoutResult,
-  BatchResult,
-  ConsultantPayoutEligibility,
-} from "./payout-service";
+
+// Org Payout Service
+export {
+  getOrgPayoutEligibility,
+  createOrgPayoutBatch,
+  processOrgPayout,
+  markOrgPayoutCompleted,
+  markOrgPayoutFailed,
+  markOrgPayoutReversed,
+} from "./org-payout-service";
 
 // Earnings Service
 export {
@@ -71,20 +57,8 @@ export {
   holdEarnings,
   releaseHeldEarnings,
   getEarningsStats,
+  // Organization earnings (PROVIDER/HYBRID 3-way split)
+  getOrgEarningsSummary,
+  getOrgEarnings,
 } from "./earnings-service";
-export type { EarningsSummary, CreateEarningsParams } from "./earnings-service";
 
-// Invoice Service
-export {
-  createInvoice,
-  createInvoiceFromPayment,
-  getInvoiceById,
-  getInvoiceByNumber,
-  getUserInvoices,
-  getAllInvoices,
-} from "./invoice-service";
-export type {
-  InvoiceItem,
-  InvoiceData,
-  CreateInvoiceParams,
-} from "./invoice-service";

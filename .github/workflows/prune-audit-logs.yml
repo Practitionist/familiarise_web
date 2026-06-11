@@ -1,0 +1,28 @@
+name: Prune Audit Logs
+
+on:
+  schedule:
+    # 03:15 UTC daily. Staggered after Stream retention sweep (03:00).
+    - cron: "15 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  prune-audit-logs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DIRECT_URL: ${{ secrets.DIRECT_URL }}
+
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: "npm"
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npx tsx jobs/cleanup/prune-audit-logs.ts
+      - if: failure()
+        run: echo "Audit log retention sweep failed"

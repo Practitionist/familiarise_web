@@ -23,6 +23,10 @@ export async function GET(req: NextRequest) {
       "appointmentType",
     ) as AppointmentsType | null;
     const search = searchParams.get("search");
+    // #674 comment 7 — optional org-scope filter for support staff drilling
+    // into a single tenant's payments. No extra permission gate needed:
+    // the route is already privileged (requirePrivilegedAuth above).
+    const orgId = searchParams.get("orgId");
 
     // Build where clause
     const where: Prisma.PaymentWhereInput = {};
@@ -46,6 +50,10 @@ export async function GET(req: NextRequest) {
       where.appointment = {
         appointmentType,
       };
+    }
+
+    if (orgId) {
+      where.organizationId = orgId;
     }
 
     // Fetch payments with pagination

@@ -212,7 +212,7 @@ export async function DELETE(
     }
 
     // Check for active collaborators (PENDING or ACCEPTED)
-    const activeCollaborators = await prisma.classCollaborator.count({
+    const activeCollaborators = await prisma.collaborator.count({
       where: {
         classPlanId,
         status: { in: ["PENDING", "ACCEPTED"] },

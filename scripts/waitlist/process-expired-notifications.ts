@@ -12,6 +12,7 @@ import { WaitlistStatus } from "@prisma/client";
 import { processExpiredNotifications, handleSlotOpening } from "@/lib/waitlist";
 import { sendWaitlistExpiredEmail } from "@/lib/waitlist/notifications";
 import { getAppUrl } from "../../lib/url";
+import { CronLockHeldError } from "@/lib/cron/with-cron-lock";
 
 async function main() {
   console.log("🕐 Starting expired notification processor...");
@@ -95,6 +96,11 @@ async function main() {
 
     process.exit(0);
   } catch (error) {
+    // #476 — lock held = another run is live; skip cleanly (exit 0).
+    if (error instanceof CronLockHeldError) {
+      console.log(`⏭️  ${error.message}`);
+      process.exit(0);
+    }
     console.error("❌ Error processing expired notifications:", error);
     process.exit(1);
   }

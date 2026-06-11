@@ -6,6 +6,13 @@ on:
     - cron: "0 21 * * 1"
   workflow_dispatch: # Allow manual triggering
 
+# #776 — never let two payout runs overlap. Queue a new run behind an in-flight
+# one (do NOT cancel — a mid-flight disbursement must finish) so the find-then-claim
+# can't double-submit to the gateway. Belt to the in-code atomic claim's suspenders.
+concurrency:
+  group: process-payouts
+  cancel-in-progress: false
+
 jobs:
   process-payouts:
     runs-on: ubuntu-latest
@@ -45,6 +52,6 @@ jobs:
 
       - name: Notify on failure
         if: failure()
-        run: |
-          echo "Process payouts job failed"
-          # Add notification logic here (Slack, email, etc.)
+        env:
+          SLACK_OPS_WEBHOOK_URL: ${{ secrets.SLACK_OPS_WEBHOOK_URL }}
+        run: bash scripts/ci/notify-ops-failure.sh "process-payouts"

@@ -49,6 +49,7 @@ const FOOTER_LINKS: Record<string, FooterLink[]> = {
   resources: [
     { label: "How It Works", href: "/#how-it-works" },
     { label: "Become an Expert", href: "/form/onboarding" },
+    { label: "Explore Organisations", href: "/explore/enterprise/organisations" },
   ],
   legal: [
     { label: "Terms of Service", href: "/terms" },

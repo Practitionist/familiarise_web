@@ -14,6 +14,7 @@ import {
 } from "../../scripts/payments/reconcile-payment-status";
 import fs from "fs";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
+import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
 
 /**
  * Output results to GitHub Actions
@@ -86,6 +87,13 @@ async function main(): Promise<void> {
       process.exit(1);
     }
   } catch (error) {
+    // #476 — lock held = another run is live; skipping is the correct
+    // outcome (exit 0, no page). CronLockUnavailableError falls through
+    // to exit 1 so the workflow's notify step pages.
+    if (error instanceof CronLockHeldError) {
+      console.log(`⏭️  ${error.message}`);
+      return;
+    }
     console.error("❌ Fatal error in payment reconciliation:", error);
     process.exit(1);
   } finally {

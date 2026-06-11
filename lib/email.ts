@@ -5,6 +5,7 @@ import { AccountLinkedEmail } from "@/emails/auth/AccountLinkedEmail";
 import { PaymentLinkEmail } from "@/emails/payments/PaymentLinkEmail";
 import { PaymentSuccessEmail } from "@/emails/payments/PaymentSuccessEmail";
 import { PaymentFailedEmail } from "@/emails/payments/PaymentFailedEmail";
+import { OrgInvitationEmail } from "@/emails/organizations/OrgInvitationEmail";
 import { render } from "@react-email/render";
 import { getAppUrl } from "@/lib/url";
 
@@ -393,6 +394,50 @@ export async function sendPaymentFailedEmail({
     return { success: true, data };
   } catch (error) {
     console.error("Failed to send payment failed email:", error);
+    return { success: false, error };
+  }
+}
+
+/**
+ * Send organization invitation email
+ */
+export async function sendOrgInvitationEmail({
+  email,
+  inviterName,
+  orgName,
+  role,
+  inviteUrl,
+  expiresAt,
+}: {
+  email: string;
+  inviterName: string;
+  orgName: string;
+  role: string;
+  inviteUrl: string;
+  expiresAt?: string;
+}) {
+  try {
+    const resend = getResendClient();
+    if (!resend) {
+      console.error("RESEND_API_KEY not configured. Cannot send org invitation email.");
+      return { success: false, error: "Email service not configured" };
+    }
+
+    const html = await render(
+      OrgInvitationEmail({ inviterName, orgName, role, inviteUrl, expiresAt }),
+    );
+
+    const data = await resend.emails.send({
+      from: "Familiarise <notifications@familiarise.com>",
+      to: email,
+      subject: `You're invited to join ${orgName} on Familiarise`,
+      html,
+    });
+
+    console.log(`Org invitation email sent to ${email}:`, data);
+    return { success: true, data };
+  } catch (error) {
+    console.error("Failed to send org invitation email:", error);
     return { success: false, error };
   }
 }

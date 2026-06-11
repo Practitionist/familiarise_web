@@ -17,6 +17,7 @@ import prisma from "../../lib/prisma";
 import redis from "../../lib/redis";
 import { notifyAppointmentReminder } from "../../lib/novu/service";
 import { getAppUrl } from "../../lib/url";
+import { withCronLock } from "@/lib/cron/with-cron-lock";
 
 // Reminder windows (in milliseconds)
 const REMINDER_24H = {
@@ -232,7 +233,15 @@ async function sendRemindersForWindow(window: {
 /**
  * Main function to send all appointment reminders
  */
+// #476 — locked at the core so every entry (GH Actions / HTTP) shares one
+// mutual exclusion; fail-open: repeat-safe side effects, lock is belt-and-braces.
 export async function sendAppointmentReminders(): Promise<ReminderResult> {
+  return withCronLock("send-appointment-reminders", { failMode: "open" }, () =>
+    sendAppointmentRemindersUnlocked(),
+  );
+}
+
+async function sendAppointmentRemindersUnlocked(): Promise<ReminderResult> {
   console.log("🔔 Starting appointment reminders scan...");
 
   const [result24h, result1h] = await Promise.all([

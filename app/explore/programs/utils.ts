@@ -22,11 +22,11 @@ interface WebinarWithAppointment {
   } | null;
 }
 
-export interface ClassSlot extends Record<string, unknown> {
+interface ClassSlot extends Record<string, unknown> {
   user?: SlotUser[];
 }
 
-export interface ClassAppointment {
+interface ClassAppointment {
   slotsOfAppointment: ClassSlot[];
 }
 
@@ -36,21 +36,27 @@ export interface ClassInstance {
   appointments?: ClassAppointment[];
 }
 
-export type ProgramConsultantProfile = {
+type ProgramConsultantProfile = {
   rating?: number;
   headline?: string | null;
   user?: {
     name?: string | null;
     image?: string | null;
-    workExperiences?: Array<{ company: string; companyDomain: string | null; isCurrent: boolean }>;
+    workExperiences?: Array<{
+      company: string;
+      companyDomain: string | null;
+      isCurrent: boolean;
+    }>;
   };
 };
 
-export type ProgramCollaborator = {
+type ProgramCollaborator = {
   consultantProfile?: ProgramConsultantProfile | null;
 };
 
-export type ClassPlanProgram = PrismaClassPlan & {
+// #780 — price reaches here as number (extended-client read → JSON), never bigint
+export type ClassPlanProgram = Omit<PrismaClassPlan, "price"> & {
+  price: number;
   classes: ClassInstance[];
   type: "class";
   imageUrl: string;
@@ -59,7 +65,8 @@ export type ClassPlanProgram = PrismaClassPlan & {
   collaborators?: ProgramCollaborator[];
 };
 
-export type WebinarPlanProgram = PrismaWebinarPlan & {
+export type WebinarPlanProgram = Omit<PrismaWebinarPlan, "price"> & {
+  price: number;
   webinars?: WebinarWithAppointment[];
   type: "webinar";
   imageUrl: string;
@@ -106,12 +113,6 @@ export function generateProgramImageUrl(
 
 export function isClassProgram(program: Program): program is ClassPlanProgram {
   return program.type === "class";
-}
-
-export function isWebinarProgram(
-  program: Program,
-): program is WebinarPlanProgram {
-  return program.type === "webinar";
 }
 
 // Client-side filtering for search term and level only.

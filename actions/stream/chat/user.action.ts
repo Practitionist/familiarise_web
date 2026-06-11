@@ -6,6 +6,7 @@ import { mapRoleToStream } from "@/lib/user";
 import { getStreamChatClient } from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
 import { markUserSynced, isUserSynced } from "@/lib/stream-cache";
+import { checkConsent } from "@/lib/compliance/dpdp";
 
 // Input validation schemas
 const userIdSchema = z.string().min(1, "User ID is required");
@@ -47,6 +48,24 @@ export const upsertUserToStream = async (userId: string) => {
 
     if (!user) {
       throw new Error(`User not found: ${validatedUserId}`);
+    }
+
+    // DPDP Act 2023: refuse to hand user PII over to Stream.io when the
+    // user has withdrawn (or never granted) consent for STREAM_DATA_PROCESSING.
+    // The signup hook auto-stamps this; an in-app withdrawal via
+    // /api/organizations/[orgId]/consent revokes it and `checkConsent`
+    // returns false, killing future video/chat sessions until re-granted.
+    const hasStreamConsent = await checkConsent({
+      userId: user.id,
+      purposeCode: "STREAM_DATA_PROCESSING",
+    });
+    if (!hasStreamConsent) {
+      streamLogger.warn("Refusing Stream upsert — STREAM_DATA_PROCESSING consent absent", {
+        userId: user.id,
+      });
+      throw new Error(
+        "Stream video/chat consent is required. Please re-grant data processing consent under Account → Privacy.",
+      );
     }
 
     const client = getStreamChatClient();
@@ -118,11 +137,42 @@ export const upsertUsersToStream = async (userIds: string[]) => {
       return { users: {} };
     }
 
+    // DPDP gate (batch). Filter out users who have withdrawn — or never
+    // granted — STREAM_DATA_PROCESSING consent. The non-consenters are
+    // logged for ops visibility; the channel proceeds with the
+    // consenters only. The signup auth hook stamps consent at account
+    // creation so this should only filter when a user explicitly
+    // withdraws via the in-app /consent route.
+    const consentResults = await Promise.all(
+      users.map(async (u) => ({
+        user: u,
+        hasConsent: await checkConsent({
+          userId: u.id,
+          purposeCode: "STREAM_DATA_PROCESSING",
+        }),
+      })),
+    );
+    const consenters = consentResults
+      .filter((r) => r.hasConsent)
+      .map((r) => r.user);
+    const droppedIds = consentResults
+      .filter((r) => !r.hasConsent)
+      .map((r) => r.user.id);
+    if (droppedIds.length > 0) {
+      streamLogger.warn(
+        "Batch upsert dropping users missing STREAM_DATA_PROCESSING consent",
+        { droppedIds, droppedCount: droppedIds.length },
+      );
+    }
+    if (consenters.length === 0) {
+      return { users: {} };
+    }
+
     const client = getStreamChatClient();
 
     // Prepare users for batch upsert
     // Note: Using type assertion for custom user data (stream-chat v9)
-    const streamUsers = users.map((user) => {
+    const streamUsers = consenters.map((user) => {
       const streamRole = mapRoleToStream(user.role);
       return {
         id: user.id,
@@ -136,6 +186,7 @@ export const upsertUsersToStream = async (userIds: string[]) => {
     streamLogger.debug("Batch upserting users to Stream", {
       count: streamUsers.length,
       skipped: validatedIds.length - unsyncedIds.length,
+      droppedNoConsent: droppedIds.length,
     });
 
     // Single batch API call
@@ -145,7 +196,7 @@ export const upsertUsersToStream = async (userIds: string[]) => {
     );
 
     // Mark all as synced
-    users.forEach((user) => markUserSynced(user.id));
+    consenters.forEach((user) => markUserSynced(user.id));
 
     return result;
   } catch (error) {

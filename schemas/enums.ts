@@ -72,13 +72,3 @@ export const RequestStatusEnum = z.enum([
   "CANCELLED",
   "EXPIRED",
 ]);
-
-export type CancellationReasonType = z.infer<typeof CancellationReasonEnum>;
-export type ProfileVerificationStatusType = z.infer<
-  typeof ProfileVerificationStatusEnum
->;
-export type SupportTicketStatusType = z.infer<typeof SupportTicketStatusEnum>;
-export type SupportPriorityType = z.infer<typeof SupportPriorityEnum>;
-export type SupportIssueTypeType = z.infer<typeof SupportIssueTypeEnum>;
-export type TrialSessionStatusType = z.infer<typeof TrialSessionStatusEnum>;
-export type RequestStatusType = z.infer<typeof RequestStatusEnum>;

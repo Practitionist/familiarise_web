@@ -23,12 +23,20 @@ export async function GET(req: NextRequest) {
     const page = parseInt(searchParams.get("page") || "1");
     const limit = parseInt(searchParams.get("limit") || "20");
     const offset = (page - 1) * limit;
+    // #674 comment 7 — optional org-scope filter for support staff
+    // drilling into a single tenant's appointments. Uses
+    // Appointment.organizationId (added by the B1-hybrid migration).
+    const orgId = searchParams.get("orgId");
 
     // Build where clause
     const where: Prisma.AppointmentWhereInput = {};
 
     if (type && Object.values(AppointmentsType).includes(type)) {
       where.appointmentType = type;
+    }
+
+    if (orgId) {
+      where.organizationId = orgId;
     }
 
     // Filter by date at the database level using slotsOfAppointment

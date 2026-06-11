@@ -81,6 +81,12 @@ const EXPLORE_ITEMS: NavDropdownItem[] = [
     description: "Webinars, classes, and group sessions",
     icon: Presentation,
   },
+  {
+    label: "Explore Organisations",
+    href: "/explore/enterprise/organisations",
+    description: "Discover agencies and expert networks",
+    icon: Building2,
+  },
 ];
 
 const EXPLORE_CATEGORIES: NavCategoryChip[] = [
@@ -322,6 +328,7 @@ const Navbar = () => {
     "/explore/experts",
     "/explore/programs",
     "/explore/community",
+    "/explore/enterprise/organisations",
   ];
   const hasDarkHero = darkHeroPages.includes(pathname);
 

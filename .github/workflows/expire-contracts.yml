@@ -1,0 +1,42 @@
+name: Expire Contracts
+
+on:
+  schedule:
+    # 03:00 UTC = 08:30 IST. Quiet slot — no other crons fire here
+    # (avoids the 00:00 / 01:00 / 02:00 contention zones).
+    - cron: "0 3 * * *"
+  workflow_dispatch: # Allow manual triggering
+
+jobs:
+  expire-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DIRECT_URL: ${{ secrets.DIRECT_URL }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Run contract-expiry job
+        run: npx tsx jobs/contracts/expire-contracts.ts
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "Contract-expiry cron failed"
+          # TODO: wire to #ops-alerts Slack channel.
