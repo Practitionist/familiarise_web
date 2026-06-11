@@ -71,7 +71,7 @@ Items 13–20 verify that a HYBRID org correctly runs sponsor and host flows on 
 | # | Item | Verdict | Notes |
 |---|------|---------|-------|
 | 13 | HYBRID self-deal — sponsor (wallet out) + host (org earns) on ONE payment | ✅ | One `BOOKING` posts `Dr WALLET(org)` plus `Cr ORG_PAYABLE(org)` (host earnings) — both flows, one payment (see [scenarios-and-examples §5.6](01-scenarios-and-examples.md)). |
-| 14 | `CREDIT_POOL` money-meter — credits burn by **price**, not count | ✅ | `consumedPaise` metered against `engagementsPerCycle × 100` (1 credit = ₹1); a ₹5,000 session burns more than a ₹500 one (#753). |
+| 14 | `CREDIT_POOL` money-meter — credits burn by **price**, not count | ✅ | `consumedPaise` metered against `creditBudgetPerCycle × 100` (1 credit = ₹1); a ₹5,000 session burns more than a ₹500 one (#753). |
 | 15 | `LICENSE` funding + LICENSED_SEAT (`coveredEngagementsPerCycle=null`) absorbs bookings | ✅ | Checkout writes `PaymentLeg(source=LICENSE, amountPaise=0)` + increments `BookingUtilization`; no `BOOKING` journal txn (nothing moved). |
 | 16 | SSO enforcement + allowedEmailDomains via `OrganizationSSOSettings` | ✅ | `customSession` hook + `shouldRejectSession` / `lib/sso/enforce-session.ts`. |
 | 17 | SSO break-glass — OWNER opens a 1–72h (default 4h) IdP-outage window | ✅ | `POST/DELETE /sso/break-glass`; sets `breakGlassUntil`, auth layer skips the `enforceSSO` gate while `> now`; who/why in the audit row (#779 §E). Route-level only — no dashboard button. |

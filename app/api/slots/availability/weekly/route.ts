@@ -8,6 +8,7 @@ import {
   getTimezoneOffsetMinutes,
 } from "@/utils/slotAllocation/slotTimeUtils";
 import { getSession } from "@/lib/auth-server";
+import { toLocalMinutes, toLocalDay } from "@/utils/slotAllocation/localTime";
 
 export async function GET(req: NextRequest) {
   try {
@@ -180,10 +181,10 @@ export async function POST(req: NextRequest) {
     // #503 — persist the DST-proof source of truth alongside the frozen
     // offset; the slot math migrates read-side in the follow-up.
     const timezone = consultantProfile.user?.timezone ?? null;
-    const localStartMinutes =
-      (((startTimeUtc + utcOffsetMinutes) % 1440) + 1440) % 1440;
-    const localEndMinutes =
-      (((endTimeUtc + utcOffsetMinutes) % 1440) + 1440) % 1440;
+    const localStartMinutes = toLocalMinutes(startTimeUtc, utcOffsetMinutes);
+    const localEndMinutes = toLocalMinutes(endTimeUtc, utcOffsetMinutes);
+    const localStartDay = toLocalDay(startDay, startTimeUtc, utcOffsetMinutes);
+    const localEndDay = toLocalDay(endDay, endTimeUtc, utcOffsetMinutes);
 
     const newWeeklySlot = await prisma.slotOfAvailabilityWeekly.create({
       data: {
@@ -196,6 +197,8 @@ export async function POST(req: NextRequest) {
         timezone,
         localStartMinutes,
         localEndMinutes,
+        localStartDay,
+        localEndDay,
       },
       include: {
         consultantProfile: {

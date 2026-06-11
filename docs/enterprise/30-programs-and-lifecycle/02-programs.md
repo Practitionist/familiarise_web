@@ -85,7 +85,7 @@ flowchart TD
   CMT -- "no (14d)" --> CMTO["timeout cron → OverageEvent FAILED<br/>frees the breaker ceiling, notifies member"]
 ```
 
-The counter increment + ledger twin are written atomically in one transaction; see [concurrency & idempotency](01-concurrency-and-idempotency.md). `CREDIT_POOL` programs apply the same shape with the cap denominated in credits (1 credit = ₹1) — the meter is `consumedPaise` against `engagementsPerCycle × 100`. The pre-checkout preview (`lib/payments/billing/overage-preview.ts`, route `GET /api/organizations/[orgId]/checkout/overage-preview`) is **advisory only** — it reuses the same `computeOverageForBooking` mapper over the assignment's *current* usage so preview and the checkout recorder can't drift, then the authoritative `OverageEvent` is persisted at checkout. The `base`/`surcharge` split lives on the `OverageEvent` (`marginalPaise == basePaise + surchargePaise`); the CHARGE_MEMBER timeout wall (14 days → `FAILED`) is the [timeout cron](01-concurrency-and-idempotency.md).
+The counter increment + ledger twin are written atomically in one transaction; see [concurrency & idempotency](01-concurrency-and-idempotency.md). `CREDIT_POOL` programs apply the same shape with the cap denominated in credits (1 credit = ₹1) — the meter is `consumedPaise` against `creditBudgetPerCycle × 100`. The pre-checkout preview (`lib/payments/billing/overage-preview.ts`, route `GET /api/organizations/[orgId]/checkout/overage-preview`) is **advisory only** — it reuses the same `computeOverageForBooking` mapper over the assignment's *current* usage so preview and the checkout recorder can't drift, then the authoritative `OverageEvent` is persisted at checkout. The `base`/`surcharge` split lives on the `OverageEvent` (`marginalPaise == basePaise + surchargePaise`); the CHARGE_MEMBER timeout wall (14 days → `FAILED`) is the [timeout cron](01-concurrency-and-idempotency.md).
 
 > 🟡 **Gap (SUBSCRIPTION lazy-debit crosses the cap silently).** SUBSCRIPTION engagements debit at slot-allocation time, and `SlotAllocationService` discards `recordBookingUtilization`'s result — a `wasOverage=true` crossing on a `CHARGE_*` program at allocation never reaches `recordOverageAtCheckout`, so no `OverageEvent`, side-payment, or accrual leg is created while `overageCount` still increments (a silent under-charge; the reconciler's `OVERAGE_COUNT_DRIFT` fires on exactly these rows). Wiring it needs a #715-style design decision first, because follow-on allocations pass `priceAtBookingPaise: 0` and the marginal price basis is undefined on that path. Found in the 2026-06-10 overage architecture audit.
 
@@ -141,7 +141,7 @@ crossed that ceiling — the circuit breaker overrides `CHARGE_ORG`.
 ### Walkthrough B — IIT Madras drains a credit pool (BLOCK)
 
 IIT's seeded program (`IIT Student Coaching Pool`, `CREDIT_POOL`,
-`engagementsPerCycle = 10,000` ⇒ `creditBudgetPaise = 10,000 × 100 = ₹10,000/month`,
+`creditBudgetPerCycle = 10,000` ⇒ `creditBudgetPaise = 10,000 × 100 = ₹10,000/month`,
 MONTHLY, `overageBehavior` left at its `@default(BLOCK)`) meters in **paise on
 `consumedPaise`**, not engagement count. Same booking helper, different unit:
 
@@ -152,14 +152,14 @@ MONTHLY, `overageBehavior` left at its `@default(BLOCK)`) meters in **paise on
 | over-budget session | ₹9,000 | ₹3,000 | ₹1,000 | **402** — `ProgramAssignmentLimitError` |
 
 On the third booking `remaining = ₹10,000 − ₹9,000 = ₹1,000`, the ₹3,000 price
-exceeds it, and because the pool is `BLOCK`, `engagementsPerCycle` is a **hard** cap:
+exceeds it, and because the pool is `BLOCK`, `creditBudgetPerCycle` is a **hard** cap:
 the guarded `updateMany WHERE consumedPaise <= budget − price` matches zero rows
 and checkout throws a 402 ([the race, drawn](01-concurrency-and-idempotency.md)).
 Nothing is half-written — the student picks a cheaper session or waits for the
 MONTHLY rollover, which mints a fresh assignment with `consumedPaise = 0` (see
 [cycle engine](08-cycle-engine-and-rollover.md)). Flip the same pool to
 `CHARGE_ORG` and the ₹2,000 over-budget portion would accrue to the invoice
-instead; the `engagementsPerCycle` cap becomes *soft*. That single enum value is the
+instead; the `creditBudgetPerCycle` cap becomes *soft*. That single enum value is the
 whole difference between "students get cut off at ₹10,000" and "the dean's
 office eats the overflow."
 
@@ -248,7 +248,7 @@ model LicensedSeatConfig {
 
 `CreditPoolConfig` carries the same `overageBehavior` / `overageSurchargeBps`
 / `maxOveragePerCyclePaise` trio for parity — the credit-pool cap is
-`engagementsPerCycle × 100` paise and bookings past it route the same three ways.
+`creditBudgetPerCycle × 100` paise and bookings past it route the same three ways.
 
 ## `CreditPoolConfig`
 
@@ -256,12 +256,12 @@ model LicensedSeatConfig {
 model CreditPoolConfig {
   programId               String @id
   cycle                   BillingCycle
-  engagementsPerCycle         Int                // hard cap (1 credit = ₹1)
+  creditBudgetPerCycle         Int                // hard cap (1 credit = ₹1)
   minimumCreditsPerPeriod Int?
 }
 ```
 
-Pool with a per-cycle credit cap. `engagementsPerCycle` is the hard cap
+Pool with a per-cycle credit cap. `creditBudgetPerCycle` is the hard cap
 when `overageBehavior=BLOCK` (and the soft cap when overage routes
 elsewhere). `minimumCreditsPerPeriod` is an optional commitment
 minimum that rolls into the next invoice if unconsumed.
@@ -332,7 +332,7 @@ It reports `created` so the caller bumps `activeSeatCount` exactly once.
 `engagementsUsed` is incremented atomically by a guarded conditional UPDATE
 inside `recordBookingUtilization()` (`updateMany WHERE engagementsUsed <= cap -
 delta`, so the cap check and the increment can't race); `consumedPaise` is the
-CREDIT_POOL twin (metered against `engagementsPerCycle × 100`). A nightly cron
+CREDIT_POOL twin (metered against `creditBudgetPerCycle × 100`). A nightly cron
 reconciles both against the append-only `UsageLedgerEntry` sums, where the
 ledger is the source of truth.
 
@@ -417,7 +417,7 @@ A program's **money config locks the moment anything rides on it** (#779 §B).
 `ProgramAssignment` (not at program-create — a typo on a brand-new program is
 still fixable). Non-null ⇒ the `LOCKED_PROGRAM_FIELDS` (`type`,
 `coveredPlanTypes`, `ratePerSeatPaise`, `coveredEngagementsPerCycle`,
-`engagementsPerCycle`, `overageBehavior`, `overageSurchargeBps`,
+`creditBudgetPerCycle`, `overageBehavior`, `overageSurchargeBps`,
 `priceCapPerEngagementPaise`, `maxOveragePerCyclePaise`) are read-only. A
 money-field PATCH on a locked program returns `409 PROGRAM_CONFIG_LOCKED` —
 only `name` / `status` / `allowedCategories` stay editable. The predicate lives

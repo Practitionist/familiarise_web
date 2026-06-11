@@ -118,7 +118,7 @@ export async function previewOverageForBooking(
               overageBehavior: true,
               overageSurchargeBps: true,
               maxOveragePerCyclePaise: true,
-              engagementsPerCycle: true,
+              creditBudgetPerCycle: true,
             },
           },
         },
@@ -151,7 +151,7 @@ export async function previewOverageForBooking(
         maxOveragePerCyclePaise: cpc?.maxOveragePerCyclePaise ?? null,
         cycleOverageSoFarPaise,
         // 1 credit = ₹1 = 100 paise (same as recordBookingUtilization).
-        creditBudgetPaise: (cpc?.engagementsPerCycle ?? 0) * 100,
+        creditBudgetPaise: (cpc?.creditBudgetPerCycle ?? 0) * 100,
         consumedPaise: assignment.consumedPaise,
       }
     : {

@@ -159,22 +159,22 @@ export function computeOverage(input: OverageInput): OverageResult {
       // recorder passes max(1, meter delta) and the meter never flags overage
       // on a 0 delta, so 1 is unreachable-wrong in practice; NaN is normalized
       // so the split can't poison every downstream paise field.
-      const sessions = Number.isFinite(input.engagementsConsumed)
+      const engagements = Number.isFinite(input.engagementsConsumed)
         ? Math.max(1, Math.floor(input.engagementsConsumed))
         : 1;
       const remainingSeats = Math.max(0, cap - used);
-      if (remainingSeats >= sessions) {
+      if (remainingSeats >= engagements) {
         coveredPaise = price;
         marginalPaise = 0;
       } else {
-        const overageSessions = sessions - remainingSeats;
-        const perSession = Math.floor(price / sessions);
-        const rawMarginal = overageSessions * perSession;
+        const overageEngagements = engagements - remainingSeats;
+        const perEngagement = Math.floor(price / engagements);
+        const rawMarginal = overageEngagements * perEngagement;
         const perCap = input.priceCapPerEngagementPaise;
         // priceCap caps the marginal per overage engagement (an absorbed discount).
         const capped =
           perCap != null
-            ? Math.min(rawMarginal, overageSessions * perCap)
+            ? Math.min(rawMarginal, overageEngagements * perCap)
             : rawMarginal;
         marginalPaise = Math.min(price, capped);
         coveredPaise = price - marginalPaise;

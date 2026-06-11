@@ -12,6 +12,7 @@ import { experienceValidation } from "@/schemas/shared";
 import { checkActiveAppointments } from "../utils/consultant-appointments";
 import { getSession } from "@/lib/auth-server";
 import { apiError } from "@/lib/errors";
+import { toLocalMinutes, toLocalDay } from "@/utils/slotAllocation/localTime";
 import {
   dateToMinuteUtc,
   validateWeeklySlotTimeOrder,
@@ -398,10 +399,18 @@ export async function PUT(
               utcOffsetMinutes,
               // #503 — DST-proof columns written alongside the frozen offset.
               timezone: userTimezone,
-              localStartMinutes:
-                (((startTimeUtc + utcOffsetMinutes) % 1440) + 1440) % 1440,
-              localEndMinutes:
-                (((endTimeUtc + utcOffsetMinutes) % 1440) + 1440) % 1440,
+              localStartMinutes: toLocalMinutes(startTimeUtc, utcOffsetMinutes),
+              localEndMinutes: toLocalMinutes(endTimeUtc, utcOffsetMinutes),
+              localStartDay: toLocalDay(
+                slot.dayOfWeekforStartTimeInUTC,
+                startTimeUtc,
+                utcOffsetMinutes,
+              ),
+              localEndDay: toLocalDay(
+                slot.dayOfWeekforEndTimeInUTC,
+                endTimeUtc,
+                utcOffsetMinutes,
+              ),
             };
           });
 

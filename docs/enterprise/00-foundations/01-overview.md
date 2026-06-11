@@ -553,7 +553,7 @@ flowchart TD
     subgraph PROGRAMS["Programs & Entitlements"]
         Program["Program\nLICENSED_SEAT / CREDIT_POOL\nconfigLockedAt · archivedAt"]
         LicSeat["LicensedSeatConfig\noverageSurchargeBps · maxOveragePerCyclePaise"]
-        CreditPool["CreditPoolConfig\nengagementsPerCycle (1 credit = ₹1)\noverageSurchargeBps · maxOveragePerCyclePaise"]
+        CreditPool["CreditPoolConfig\ncreditBudgetPerCycle (1 credit = ₹1)\noverageSurchargeBps · maxOveragePerCyclePaise"]
         Assignment["ProgramAssignment\nstatus · engagementsUsed · consumedPaise\nrolledTo (chain)"]
         BookUtil["BookingUtilization\nbps snapshot"]
         Overage["OverageEvent\nbase+surcharge=marginal · chargeStatus"]

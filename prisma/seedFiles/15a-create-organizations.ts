@@ -563,7 +563,7 @@ async function seedIit(params: {
       creditPoolConfig: {
         create: {
           cycle: "MONTHLY",
-          engagementsPerCycle: 10_000, // 10k credits = ₹10k / month
+          creditBudgetPerCycle: 10_000, // 10k credits = ₹10k / month
         },
       },
     },

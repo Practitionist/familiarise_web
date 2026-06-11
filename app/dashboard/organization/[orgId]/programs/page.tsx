@@ -85,7 +85,7 @@ interface ProgramListItem {
   } | null;
   creditPoolConfig: {
     cycle: BillingCycle;
-    engagementsPerCycle: number;
+    creditBudgetPerCycle: number;
     overageBehavior: OverageBehavior;
     overageSurchargeBps: number | null;
     maxOveragePerCyclePaise: number | null;
@@ -120,7 +120,7 @@ function programUtilization(
   }
   if (p.type === "CREDIT_POOL") {
     const budgetPaise =
-      (p.creditPoolConfig?.engagementsPerCycle ?? 0) * 100 * activeAssignments;
+      (p.creditPoolConfig?.creditBudgetPerCycle ?? 0) * 100 * activeAssignments;
     return {
       used: formatCurrencyAmount(consumedPaise, "INR"),
       total: budgetPaise > 0 ? formatCurrencyAmount(budgetPaise, "INR") : "∞",
@@ -229,7 +229,7 @@ type CreateProgramBody =
       coveredPlanTypes: CoveredPlanType[];
       creditPoolConfig: {
         cycle: BillingCycle;
-        engagementsPerCycle: number;
+        creditBudgetPerCycle: number;
         overageBehavior: OverageBehavior;
         overageSurchargeBps: number | null;
       };
@@ -258,7 +258,7 @@ type PatchProgramBody = {
   coveredPlanTypes?: CoveredPlanType[];
   ratePerSeatPaise?: number;
   coveredEngagementsPerCycle?: number | null;
-  engagementsPerCycle?: number;
+  creditBudgetPerCycle?: number;
   overageBehavior?: OverageBehavior;
   overageSurchargeBps?: number | null;
 };
@@ -425,7 +425,7 @@ function CreateProgramDialog({
   const [overageSurchargePct, setOverageSurchargePct] = useState("");
   // 1 credit = ₹1; per-cycle cap is the user-facing input, paise conversion
   // is implicit (credits map to rupees end-to-end).
-  const [engagementsPerCycle, setCreditsPerCycle] = useState("1000");
+  const [creditBudgetPerCycle, setCreditsPerCycle] = useState("1000");
   const [coveredPlanTypes, setCoveredPlanTypes] = useState<CoveredPlanType[]>(["CONSULTATION"]);
   const [error, setError] = useState<string | null>(null);
 
@@ -547,7 +547,7 @@ function CreateProgramDialog({
         },
       });
     } else {
-      const credits = Number(engagementsPerCycle.trim());
+      const credits = Number(creditBudgetPerCycle.trim());
       if (!Number.isFinite(credits) || credits < 1 || !Number.isInteger(credits)) {
         setError("Credits per cycle must be a positive integer.");
         return;
@@ -559,7 +559,7 @@ function CreateProgramDialog({
         coveredPlanTypes,
         creditPoolConfig: {
           cycle,
-          engagementsPerCycle: credits,
+          creditBudgetPerCycle: credits,
           overageBehavior,
           overageSurchargeBps: surchargeBps,
         },
@@ -771,7 +771,7 @@ function CreateProgramDialog({
                 type="number"
                 min={1}
                 step={1}
-                value={engagementsPerCycle}
+                value={creditBudgetPerCycle}
                 onChange={(e) => setCreditsPerCycle(e.target.value)}
               />
               <p className="text-xs text-zinc-500">
@@ -919,7 +919,7 @@ function EditProgramDialog({
   const [ratePerSeatRupees, setRatePerSeatRupees] = useState("");
   const [coveredEngagementsPerCycle, setCoveredEngagementsPerCycle] =
     useState("");
-  const [engagementsPerCycle, setCreditsPerCycle] = useState("");
+  const [creditBudgetPerCycle, setCreditsPerCycle] = useState("");
   const [overageBehavior, setOverageBehavior] =
     useState<OverageBehavior>("BLOCK");
   const [overageSurchargePct, setOverageSurchargePct] = useState("");
@@ -951,7 +951,7 @@ function EditProgramDialog({
       );
     }
     if (program.creditPoolConfig) {
-      setCreditsPerCycle(String(program.creditPoolConfig.engagementsPerCycle));
+      setCreditsPerCycle(String(program.creditPoolConfig.creditBudgetPerCycle));
     }
     setError(null);
   }, [program]);
@@ -1016,7 +1016,7 @@ function EditProgramDialog({
         body.ratePerSeatPaise = ratePaise;
         body.coveredEngagementsPerCycle = cap;
       } else {
-        const credits = Number(engagementsPerCycle.trim());
+        const credits = Number(creditBudgetPerCycle.trim());
         if (
           !Number.isFinite(credits) ||
           credits < 1 ||
@@ -1025,7 +1025,7 @@ function EditProgramDialog({
           setError("Credits per cycle must be a positive integer.");
           return;
         }
-        body.engagementsPerCycle = credits;
+        body.creditBudgetPerCycle = credits;
       }
     }
     patchMutation.mutate(body);
@@ -1160,7 +1160,7 @@ function EditProgramDialog({
                   min={1}
                   step={1}
                   disabled={locked}
-                  value={engagementsPerCycle}
+                  value={creditBudgetPerCycle}
                   onChange={(e) => setCreditsPerCycle(e.target.value)}
                 />
               </div>
@@ -1659,12 +1659,12 @@ export default function OrgProgramsPage({
                           </>
                         ) : p.type === "CREDIT_POOL" && p.creditPoolConfig ? (
                           <>
-                            {p.creditPoolConfig.engagementsPerCycle.toLocaleString(
+                            {p.creditPoolConfig.creditBudgetPerCycle.toLocaleString(
                               "en-IN",
                             )}{" "}
                             credits (
                             {formatCurrencyAmount(
-                              p.creditPoolConfig.engagementsPerCycle * 100,
+                              p.creditPoolConfig.creditBudgetPerCycle * 100,
                               "INR",
                             )}{" "}
                             cap) /{" "}

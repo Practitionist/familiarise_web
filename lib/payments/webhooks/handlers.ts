@@ -1054,19 +1054,29 @@ async function confirmApprovalStatus(
       },
       data: { requestStatus: RequestStatus.APPROVED },
     });
-    if (
-      movedConsult.count === 0 &&
-      consultation.requestStatus !== RequestStatus.APPROVED &&
-      consultation.requestStatus !== RequestStatus.SCHEDULED &&
-      consultation.requestStatus !== RequestStatus.COMPLETED
-    ) {
-      void recordSystemError({
-        organizationId: null,
-        category: "PAYMENT",
-        summary: `Payment captured for consultation ${entityId} in terminal state ${consultation.requestStatus} — refund needed`,
-        err: new Error("CAPTURE_AFTER_TERMINAL_STATE"),
-        context: { entityType: "consultation", entityId },
-      }).catch(() => {});
+    if (movedConsult.count === 0) {
+      // Re-read: the pre-read raced the very transition that made the CAS
+      // miss, so logging it would report the wrong state (review catch on
+      // #844). The fresh value decides whether this is benign (already
+      // APPROVED/SCHEDULED/COMPLETED) or money-for-nothing.
+      const fresh = await tx.consultation.findUnique({
+        where: { id: entityId },
+        select: { requestStatus: true },
+      });
+      const freshStatus = fresh?.requestStatus ?? consultation.requestStatus;
+      if (
+        freshStatus !== RequestStatus.APPROVED &&
+        freshStatus !== RequestStatus.SCHEDULED &&
+        freshStatus !== RequestStatus.COMPLETED
+      ) {
+        void recordSystemError({
+          organizationId: null,
+          category: "PAYMENT",
+          summary: `Payment captured for consultation ${entityId} in terminal state ${freshStatus} — refund needed`,
+          err: new Error("CAPTURE_AFTER_TERMINAL_STATE"),
+          context: { entityType: "consultation", entityId },
+        }).catch(() => {});
+      }
     }
   } else {
     const subscription = await tx.subscription.findUnique({

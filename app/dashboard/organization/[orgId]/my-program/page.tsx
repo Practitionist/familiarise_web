@@ -170,7 +170,7 @@ export default async function MyProgramPage({
               a.program.type === "LICENSED_SEAT"
                 ? (seat?.coveredEngagementsPerCycle ?? null)
                 : a.program.type === "CREDIT_POOL"
-                  ? (pool?.engagementsPerCycle ?? null)
+                  ? (pool?.creditBudgetPerCycle ?? null)
                   : null;
             const used = a.engagementsUsed;
             const pct =

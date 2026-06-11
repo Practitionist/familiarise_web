@@ -88,7 +88,13 @@ export async function POST(
             classPlan: true,
           },
         },
-        slotsOfAppointment: { take: 1, select: { startsAt: true } },
+        // Earliest slot decides the refund tier — without orderBy the DB
+        // returns an arbitrary slot (review catch on #844).
+        slotsOfAppointment: {
+          take: 1,
+          orderBy: { startsAt: "asc" },
+          select: { startsAt: true },
+        },
         // B1 — refund terms frozen at booking + the payment to refund.
         payment: {
           select: { id: true, amount: true, paymentStatus: true },

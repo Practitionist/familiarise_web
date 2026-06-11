@@ -133,7 +133,7 @@ const LicensedSeatConfigSchema = z
 const CreditPoolConfigSchema = z
   .object({
     cycle: BillingCycleSchema,
-    engagementsPerCycle: z.coerce.number().int().min(1),
+    creditBudgetPerCycle: z.coerce.number().int().min(1),
     // #775 — over-budget routing + markup + ceiling (parity with LICENSED_SEAT).
     overageBehavior: OverageBehaviorSchema.default("BLOCK"),
     overageSurchargeBps: z.coerce.number().int().min(0).nullable().optional(),
@@ -144,7 +144,7 @@ const CreditPoolConfigSchema = z
       .nullable()
       .optional(),
   })
-  // Pool budgets are always finite (engagementsPerCycle ≥ 1), so only the shared
+  // Pool budgets are always finite (creditBudgetPerCycle ≥ 1), so only the shared
   // combo guards apply here.
   .superRefine(refineOverageCombo);
 
@@ -381,7 +381,7 @@ export async function POST(
           creditPoolConfig: {
             create: {
               cycle: body.creditPoolConfig.cycle,
-              engagementsPerCycle: body.creditPoolConfig.engagementsPerCycle,
+              creditBudgetPerCycle: body.creditPoolConfig.creditBudgetPerCycle,
               overageBehavior: body.creditPoolConfig.overageBehavior,
               overageSurchargeBps:
                 body.creditPoolConfig.overageSurchargeBps ?? null,

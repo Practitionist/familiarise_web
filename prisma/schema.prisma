@@ -1183,12 +1183,13 @@ model CreditPoolConfig {
   programId               String          @id
   program                 Program         @relation(fields: [programId], references: [id], onDelete: Cascade)
   cycle                   BillingCycle
-  /// #753 option B — the meter counts ENGAGEMENTS (bookings), not money.
-  /// Renamed from creditsPerCycle: "credits" implied a paise-denominated
-  /// meter the code never implemented (the dead creditValuePaise fields fell
-  /// in #768 lockdown #14/#15). Commercial framing is "N engagements per
-  /// cycle"; wallet exhaustion remains the money backstop.
-  engagementsPerCycle     Int
+  /// #753 — a MONEY budget in whole-rupee credits (1 credit = ₹1 = 100
+  /// paise): recordBookingUtilization meters consumedPaise against
+  /// creditBudgetPerCycle × 100. Renamed twice for honesty: creditsPerCycle
+  /// hid the money semantics; the interim engagementsPerCycle wrongly
+  /// implied a count meter (review catch on #843). LICENSED_SEAT counts
+  /// engagements; CREDIT_POOL spends this budget.
+  creditBudgetPerCycle    Int
   /// #775 — over-budget routing (parity with LicensedSeatConfig); bookings
   /// past the cap BLOCK, CHARGE_MEMBER, or CHARGE_ORG per this value.
   overageBehavior         OverageBehavior @default(BLOCK)
@@ -2518,20 +2519,25 @@ model Achievement {
 //////////////////////////////////////////////////// AVAILABILITY SLOTS ////////////////////////////////////////////////////
 
 model SlotOfAvailabilityWeekly {
-  id                String    @id @default(uuid())
+  id                String     @id @default(uuid())
   startDay          DayOfWeek
-  startTimeUtc      Int       @db.SmallInt // Minutes since midnight UTC (0-1439)
+  startTimeUtc      Int        @db.SmallInt // Minutes since midnight UTC (0-1439)
   endDay            DayOfWeek
-  endTimeUtc        Int       @db.SmallInt // Minutes since midnight UTC (0-1439)
-  utcOffsetMinutes  Int       @default(0) @db.SmallInt // UTC offset in minutes at slot creation (e.g. 330 for IST, -300 for EST)
+  endTimeUtc        Int        @db.SmallInt // Minutes since midnight UTC (0-1439)
+  utcOffsetMinutes  Int        @default(0) @db.SmallInt // UTC offset in minutes at slot creation (e.g. 330 for IST, -300 for EST)
   /// #503 — DST-proof source of truth: the consultant's LOCAL wall-clock
   /// window plus the IANA zone. The frozen utcOffsetMinutes above breaks for
   /// any DST zone (the offset at creation is wrong half the year). Write-side
   /// populated now; the slot math migrates read-side in #503's follow-up,
   /// then the offset column retires. Nullable until backfilled.
-  timezone          String?   @db.VarChar(64)
-  localStartMinutes Int?      @db.SmallInt
-  localEndMinutes   Int?      @db.SmallInt
+  timezone          String?    @db.VarChar(64)
+  localStartMinutes Int?       @db.SmallInt
+  localEndMinutes   Int?       @db.SmallInt
+  /// Review catch on #843 — the offset can roll the LOCAL day across
+  /// midnight relative to the UTC startDay/endDay (IST 00:30 Mon local =
+  /// 19:00 Sun UTC), so local-day queries need their own columns.
+  localStartDay     DayOfWeek?
+  localEndDay       DayOfWeek?
 
   consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultantProfileId String

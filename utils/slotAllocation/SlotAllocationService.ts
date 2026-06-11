@@ -1382,11 +1382,18 @@ export class SlotAllocationService {
     }
 
     // #440 — denormalize the consultant onto each slot for the DB-level
-    // overlap guard. One lookup per allocation; nullable for legacy rows.
+    // overlap guard. The column is nullable for LEGACY rows only — an active
+    // allocation without a resolvable profile would silently disable the
+    // guard, so it throws instead (review catch on #843).
     const consultantProfileRow = await tx.consultantProfile.findFirst({
       where: { user: { id: consultantUserId } },
       select: { id: true },
     });
+    if (!consultantProfileRow) {
+      throw new Error(
+        `Consultant profile not found for user ${consultantUserId} — refusing to create slots without the #440 overlap-guard column`,
+      );
+    }
 
     // Create appointment for each call
     const appointments = await Promise.all(
@@ -1397,7 +1404,7 @@ export class SlotAllocationService {
             startsAt: slotStart,
             endsAt: endTime,
             isTentative: false,
-            consultantProfileId: consultantProfileRow?.id ?? null,
+            consultantProfileId: consultantProfileRow.id,
             user: {
               connect: consulteeUserId
                 ? [{ id: consultantUserId }, { id: consulteeUserId }]

@@ -128,7 +128,7 @@ describe("computeOverage — LICENSED_SEAT pass-through", () => {
       engagementsUsed: 5,
       engagementsConsumed: 0,
     });
-    expect(zero.marginalPaise).toBe(100_000); // treated as 1 session, fully over cap
+    expect(zero.marginalPaise).toBe(100_000); // treated as 1 engagement, fully over cap
     const nan = computeOverage({
       ...base,
       coveredEngagementsPerCycle: 5,
