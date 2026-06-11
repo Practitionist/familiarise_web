@@ -2631,6 +2631,10 @@ model Consultation {
 
   @@index([requestedById])
   @@index([consultationPlanId])
+  // Requests-tab hot path: all consultations for a plan filtered by status,
+  // newest first — without this the planner-side list falls back to the
+  // single-column indexes + sort.
+  @@index([consultationPlanId, requestStatus, requestedAt])
   @@index([requestStatus])
   @@index([requestedById, requestStatus])
   @@index([requestedAt])
@@ -2716,6 +2720,8 @@ model Subscription {
 
   @@index([requestedById])
   @@index([subscriptionPlanId])
+  // Requests-tab hot path — mirror of the Consultation composite.
+  @@index([subscriptionPlanId, requestStatus, requestedAt])
   @@index([requestStatus])
   @@index([requestedById, requestStatus])
   @@index([requestedAt])
@@ -3120,6 +3126,10 @@ model Waitlist {
   @@index([status, webinarId])
   @@index([status, classId])
   @@index([expiresAt])
+  // Cron hot path: reminder + expiration jobs range-scan NOTIFIED entries
+  // by expiresAt window; the single-column indexes force a bitmap AND or a
+  // seq scan as the table grows.
+  @@index([status, expiresAt])
   @@index([priority, joinedAt])
   @@index([organizationId, createdAt])
 }

@@ -1,10 +1,6 @@
 "use client";
 
-import { use } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
-import { RequestsSkeleton } from "@/components/dashboard/DashboardSkeletons";
-import { createConsultantQueries } from "@/lib/dashboard-queries";
 import { useOrgScope } from "@/hooks/useOrgScope";
 import {
   OrgContextFilter,
@@ -14,31 +10,29 @@ import {
 } from "@/components/dashboard/OrgContextFilter";
 import { RequestSlotAllocationTab } from "./RequestSlotAllocationTab";
 
-export default function RequestsPage({
-  params,
-}: {
-  params: Promise<{ consultantId: string }>;
-}) {
-  const { consultantId } = use(params);
-
-  // S1 (B1-personal-retrofit): drive the requests query off the URL
-  // ?orgScope= via useOrgScope. The OrgContextFilter dropdown above
-  // the existing tab lets a consultant who works for multiple orgs
-  // toggle between "Personal" / "<org>" / "All". Self-hides for
-  // consultants with zero org memberships (no behavioral change there).
+/**
+ * Requests tab page. RequestSlotAllocationTab owns its data: it resolves the
+ * consultantId from the route via useParams and fetches the paginated
+ * /api/events/consultations + /api/events/subscriptions endpoints with its
+ * own loading/error states.
+ *
+ * Read-path scale fix: this page previously also ran the
+ * /api/dashboard/consultant/[id]/requests query — the single heaviest
+ * dashboard bundle (six unbounded datasets, 4-level includes) — purely to
+ * gate rendering on isLoading/error; the response data was never read
+ * anywhere. The endpoint is deleted and the tab renders immediately,
+ * removing the double loading phase.
+ */
+export default function RequestsPage() {
+  // S1 (B1-personal-retrofit): the OrgContextFilter dropdown lets a
+  // consultant who works for multiple orgs toggle between "Personal" /
+  // "<org>" / "All" (drives the ?orgScope= URL param via useOrgScope).
+  // Self-hides for consultants with zero org memberships. Note: the tab's
+  // /api/events/* fetches don't consume orgScope yet — wiring the scope
+  // into those endpoints is tracked follow-up work, not a regression of
+  // this page (the deleted query was the only thing that ever read it,
+  // and its data went nowhere).
   const { scope, setScope } = useOrgScope();
-  // "all" sends `?orgScope=all` to the API. This is now allowed for
-  // owners of self-scoped endpoints (lib/api/scope/parse.ts —
-  // allowAllForOwner). Returns personal + every org the user belongs to.
-  const orgScopeParam =
-    scope.kind === "personal"
-      ? "personal"
-      : scope.kind === "all"
-        ? "all"
-        : scope.orgId;
-  const requestsQuery = createConsultantQueries(consultantId, orgScopeParam)
-    .requests;
-  const { data: _requestsData, isLoading, error } = useQuery(requestsQuery);
 
   const filterValue: OrgContextFilterValue =
     scope.kind === "personal"
@@ -51,32 +45,6 @@ export default function RequestsPage({
     else if (next === ORG_FILTER_ALL) setScope({ kind: "all" });
     else setScope({ kind: "org", orgId: next });
   };
-
-  if (isLoading) {
-    return <RequestsSkeleton />;
-  }
-
-  if (error) {
-    return (
-      <DashboardErrorBoundary>
-        <div className="flex items-center justify-center min-h-[400px]">
-          <div className="p-4 bg-red-50 text-red-600 rounded-lg max-w-md text-center">
-            <h3 className="font-semibold mb-2">Error Loading Requests</h3>
-            <p className="text-sm">
-              {error.message ||
-                "Failed to load requests data. Please try again."}
-            </p>
-            <button
-              onClick={() => window.location.reload()}
-              className="mt-4 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
-            >
-              Retry
-            </button>
-          </div>
-        </div>
-      </DashboardErrorBoundary>
-    );
-  }
 
   const handleUpdate = () => {
     // Handled internally by RequestSlotAllocationTab

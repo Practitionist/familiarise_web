@@ -24,7 +24,11 @@ const webinarInclude = {
     include: {
       slotsOfAppointment: {
         include: {
-          user: true,
+          // Display fields only — the full User row per attendee was the
+          // planner payload's biggest over-fetch. Slot scalars
+          // (isTentative etc.) still come through; the in-memory
+          // participant count below relies on them.
+          user: { select: { id: true, name: true, email: true, image: true } },
         },
       },
     },
@@ -83,51 +87,52 @@ interface PlannerData {
 // =============================================================================
 
 /**
- * Helper function to fetch participant counts directly via Prisma
- * FIX #142: Uses batched queries instead of N+1 individual API calls
+ * Webinar participant counts computed from the ALREADY-FETCHED webinar rows
+ * (webinarInclude carries appointment.slotsOfAppointment.user) — the old
+ * helper re-queried the same rows from Postgres a second time per request.
+ * FIX #556 semantics preserved: confirmed (non-tentative) slots only,
+ * deduplicated across multi-slot webinars, consultant host excluded.
  */
-async function getParticipantCounts(
-  webinarIds: string[],
+function countWebinarParticipants(
+  webinars: Array<{
+    id: string;
+    appointment: {
+      slotsOfAppointment: Array<{
+        isTentative: boolean;
+        user: Array<{ id: string }>;
+      }>;
+    } | null;
+  }>,
+  excludeConsultantUserId?: string,
+): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const webinar of webinars) {
+    const uniqueUserIds = new Set<string>();
+    for (const slot of webinar.appointment?.slotsOfAppointment || []) {
+      if (slot.isTentative) continue;
+      for (const user of slot.user) {
+        if (user.id !== excludeConsultantUserId) {
+          uniqueUserIds.add(user.id);
+        }
+      }
+    }
+    counts[webinar.id] = uniqueUserIds.size;
+  }
+  return counts;
+}
+
+/**
+ * Class participant counts still need their one batched query —
+ * classInclude fetches bare appointments without slots (the class payload
+ * doesn't show attendees), so the user ids aren't already in memory.
+ * FIX #142: batched, never N+1.
+ */
+async function getClassParticipantCounts(
   classIds: string[],
   excludeConsultantUserId?: string,
 ): Promise<Record<string, number>> {
   const counts: Record<string, number> = {};
 
-  // FIX #556: Fetch webinar participant counts with host exclusion.
-  // Use actual user IDs (not _count) to deduplicate across multi-slot
-  // webinars and exclude the consultant host.
-  if (webinarIds.length > 0) {
-    const webinarCounts = await prisma.webinar.findMany({
-      where: { id: { in: webinarIds } },
-      select: {
-        id: true,
-        appointment: {
-          select: {
-            slotsOfAppointment: {
-              select: {
-                user: { select: { id: true } },
-              },
-              where: { isTentative: false },
-            },
-          },
-        },
-      },
-    });
-
-    for (const webinar of webinarCounts) {
-      const uniqueUserIds = new Set<string>();
-      for (const slot of webinar.appointment?.slotsOfAppointment || []) {
-        for (const user of slot.user) {
-          if (user.id !== excludeConsultantUserId) {
-            uniqueUserIds.add(user.id);
-          }
-        }
-      }
-      counts[webinar.id] = uniqueUserIds.size;
-    }
-  }
-
-  // Fetch class participant counts - count UNIQUE users across all sessions
   if (classIds.length > 0) {
     const classCounts = await prisma.class.findMany({
       where: { id: { in: classIds } },
@@ -372,20 +377,15 @@ export async function GET(
       })),
     ];
 
-    // Fetch participant counts for all events (owned + collaborated)
-    const webinarIds = webinars.map((w) => w.id);
+    // Participant counts for all events (owned + collaborated).
+    // FIX #556: the consultant's own userId is excluded — reuse the
+    // consultantUser already fetched for org-scope resolution above (the
+    // old code re-fetched the identical row here).
     const classIds = classes.map((c) => c.id);
-
-    // FIX #556: Pass consultant's userId to exclude from participant counts
-    const consultantProfile = await prisma.consultantProfile.findUnique({
-      where: { id: consultantId },
-      select: { userId: true },
-    });
-    const participantCounts = await getParticipantCounts(
-      webinarIds,
-      classIds,
-      consultantProfile?.userId,
-    );
+    const participantCounts = {
+      ...countWebinarParticipants(webinars, consultantUser?.userId),
+      ...(await getClassParticipantCounts(classIds, consultantUser?.userId)),
+    };
 
     const plannerData: PlannerData = {
       webinars,

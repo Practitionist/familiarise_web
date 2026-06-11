@@ -1,4 +1,5 @@
 import { cache } from "react";
+import { unstable_cache } from "next/cache";
 import prisma from "@/lib/prisma";
 import { toPlain } from "@/lib/data/serialize";
 import type { Prisma } from "@prisma/client";
@@ -61,6 +62,99 @@ const liveConsultantWhere = {
 // ---------------------------------------------------------------------------
 
 /**
+ * Trending rank step 1: load every marketplace plan's last-30-day slot ids
+ * and sort by count IN MEMORY. That scan is O(all plans × recent slots) per
+ * call — with React.cache alone it ran once per REQUEST, so 1000 concurrent
+ * explore loads each paid it. unstable_cache shares one computation across
+ * requests for 60s; the cached value is just the FULL ranked id array
+ * (callers slice to their limit — passing limit as an arg would key separate
+ * cache entries per limit, each paying the scan). Staleness is harmless —
+ * trending order changing 60s late is invisible.
+ */
+const getTrendingClassPlanIds = unstable_cache(
+  async (): Promise<string[]> => {
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    const ranked = await prisma.classPlan.findMany({
+      where: { ...marketplaceVisibilityWhere(), ...liveConsultantWhere }, // #726 — no ORG_ONLY in curated feed
+      select: {
+        id: true,
+        classes: {
+          select: {
+            appointments: {
+              select: {
+                slotsOfAppointment: {
+                  where: { createdAt: { gte: thirtyDaysAgo } },
+                  select: { id: true },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    return ranked
+      .map((p) => ({
+        id: p.id,
+        count: p.classes.reduce(
+          (sum, cls) =>
+            sum +
+            cls.appointments.reduce(
+              (s, apt) => s + apt.slotsOfAppointment.length,
+              0,
+            ),
+          0,
+        ),
+      }))
+      .sort((a, b) => b.count - a.count)
+      .map((r) => r.id);
+  },
+  ["trending-class-plan-ids"],
+  { revalidate: 60 },
+);
+
+const getTrendingWebinarPlanIds = unstable_cache(
+  async (): Promise<string[]> => {
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    const ranked = await prisma.webinarPlan.findMany({
+      where: { ...marketplaceVisibilityWhere(), ...liveConsultantWhere }, // #726 — no ORG_ONLY in curated feed
+      select: {
+        id: true,
+        webinars: {
+          select: {
+            appointment: {
+              select: {
+                slotsOfAppointment: {
+                  where: { createdAt: { gte: thirtyDaysAgo } },
+                  select: { id: true },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    return ranked
+      .map((p) => ({
+        id: p.id,
+        count: p.webinars.reduce(
+          (sum, w) => sum + (w.appointment?.slotsOfAppointment?.length ?? 0),
+          0,
+        ),
+      }))
+      .sort((a, b) => b.count - a.count)
+      .map((r) => r.id);
+  },
+  ["trending-webinar-plan-ids"],
+  { revalidate: 60 },
+);
+
+/**
  * Fetch curated programs for server-rendered sections.
  * Combines class plans + webinar plans, normalizes into Program[].
  */
@@ -81,45 +175,12 @@ export const getCuratedPrograms = cache(
       let classPlans;
 
       if (sort === "trending") {
-        // Trending: rank by recent enrollment count (last 30 days)
-        const thirtyDaysAgo = new Date();
-        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-
-        const ranked = await prisma.classPlan.findMany({
-          where: { ...marketplaceVisibilityWhere(), ...liveConsultantWhere }, // #726 — no ORG_ONLY in curated feed
-          select: {
-            id: true,
-            classes: {
-              select: {
-                appointments: {
-                  select: {
-                    slotsOfAppointment: {
-                      where: { createdAt: { gte: thirtyDaysAgo } },
-                      select: { id: true },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        });
-
-        const sortedIds = ranked
-          .map((p) => ({
-            id: p.id,
-            count: p.classes.reduce(
-              (sum, cls) =>
-                sum +
-                cls.appointments.reduce(
-                  (s, apt) => s + apt.slotsOfAppointment.length,
-                  0,
-                ),
-              0,
-            ),
-          }))
-          .sort((a, b) => b.count - a.count)
-          .slice(0, limit)
-          .map((r) => r.id);
+        // Trending: rank by recent enrollment count (last 30 days) — the
+        // ranking scan is shared across requests via unstable_cache above.
+        // The cache holds the FULL ranked list (no limit arg): unstable_cache
+        // keys include fn args, so per-limit entries would each pay the scan;
+        // slicing here lets every caller share one entry.
+        const sortedIds = (await getTrendingClassPlanIds()).slice(0, limit);
 
         classPlans = await prisma.classPlan.findMany({
           where: {
@@ -176,40 +237,9 @@ export const getCuratedPrograms = cache(
       let webinarPlans;
 
       if (sort === "trending") {
-        const thirtyDaysAgo = new Date();
-        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-
-        const ranked = await prisma.webinarPlan.findMany({
-          where: { ...marketplaceVisibilityWhere(), ...liveConsultantWhere }, // #726 — no ORG_ONLY in curated feed
-          select: {
-            id: true,
-            webinars: {
-              select: {
-                appointment: {
-                  select: {
-                    slotsOfAppointment: {
-                      where: { createdAt: { gte: thirtyDaysAgo } },
-                      select: { id: true },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        });
-
-        const sortedIds = ranked
-          .map((p) => ({
-            id: p.id,
-            count: p.webinars.reduce(
-              (sum, w) =>
-                sum + (w.appointment?.slotsOfAppointment?.length ?? 0),
-              0,
-            ),
-          }))
-          .sort((a, b) => b.count - a.count)
-          .slice(0, limit)
-          .map((r) => r.id);
+        // Shared 60s ranking cache — full list, sliced per caller (see the
+        // class-plan twin above for why no limit arg).
+        const sortedIds = (await getTrendingWebinarPlanIds()).slice(0, limit);
 
         webinarPlans = await prisma.webinarPlan.findMany({
           where: {
