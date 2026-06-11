@@ -19,7 +19,7 @@ export interface ApprovalLock {
   client: Redis; // Client reference for release
 }
 
-export interface LockRetryConfig {
+interface LockRetryConfig {
   retryCount: number; // Number of retry attempts (default: 10)
   retryDelay: number; // Base delay in ms (default: 200)
   retryJitter: number; // Random jitter in ms (default: 200)
@@ -27,7 +27,7 @@ export interface LockRetryConfig {
   driftFactor: number; // Clock drift factor (default: 0.01)
 }
 
-export interface EventSlotReservation {
+interface EventSlotReservation {
   reservationId: string;
   slotNumber: number;
   eventType: string;

@@ -167,8 +167,6 @@ export const PaymentFailedEmail = ({
   );
 };
 
-export default PaymentFailedEmail;
-
 // Styles
 const main = {
   backgroundColor: "#f5f5f5",

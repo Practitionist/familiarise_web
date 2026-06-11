@@ -19,7 +19,7 @@
 
 import { ENABLE_BETTERSTACK_TELEMETRY } from "@/lib/feature-flags";
 
-export type TelemetryLevel = "info" | "warn" | "error";
+type TelemetryLevel = "info" | "warn" | "error";
 
 export interface TelemetryLog {
   level: TelemetryLevel;

@@ -24,7 +24,7 @@ export interface OverageInput {
   programType: ProgramType; // LICENSED_SEAT | CREDIT_POOL
   bookingPricePaise: number;
   /** Engagements this booking consumes (1 for CONSULTATION; N for multi-session). */
-  sessionsConsumed: number;
+  engagementsConsumed: number;
   overageBehavior: OverageBehavior;
   /** Per-cycle overage ceiling (circuit breaker); null = no ceiling. */
   maxOveragePerCyclePaise: number | null;
@@ -50,8 +50,8 @@ export interface OverageInput {
   consumedPaise?: number;
 }
 
-export type OverageDecision = "PROCEED" | "BLOCK";
-export type OverageChargeTarget = "MEMBER" | "ORG" | null;
+type OverageDecision = "PROCEED" | "BLOCK";
+type OverageChargeTarget = "MEMBER" | "ORG" | null;
 
 export interface OverageResult {
   coveredPaise: number;
@@ -102,11 +102,11 @@ export interface OverageContext {
  */
 export function computeOverageForBooking(
   ctx: OverageContext,
-  booking: { bookingPricePaise: number; sessionsConsumed: number },
+  booking: { bookingPricePaise: number; engagementsConsumed: number },
 ): OverageResult {
   const base = {
     bookingPricePaise: booking.bookingPricePaise,
-    sessionsConsumed: booking.sessionsConsumed,
+    engagementsConsumed: booking.engagementsConsumed,
     overageBehavior: ctx.overageBehavior,
     maxOveragePerCyclePaise: ctx.maxOveragePerCyclePaise,
     cycleOverageSoFarPaise: ctx.cycleOverageSoFarPaise,
@@ -159,8 +159,8 @@ export function computeOverage(input: OverageInput): OverageResult {
       // recorder passes max(1, meter delta) and the meter never flags overage
       // on a 0 delta, so 1 is unreachable-wrong in practice; NaN is normalized
       // so the split can't poison every downstream paise field.
-      const sessions = Number.isFinite(input.sessionsConsumed)
-        ? Math.max(1, Math.floor(input.sessionsConsumed))
+      const sessions = Number.isFinite(input.engagementsConsumed)
+        ? Math.max(1, Math.floor(input.engagementsConsumed))
         : 1;
       const remainingSeats = Math.max(0, cap - used);
       if (remainingSeats >= sessions) {

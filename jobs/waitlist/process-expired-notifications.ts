@@ -88,5 +88,3 @@ async function processExpiredNotificationsJobUnlocked(): Promise<ProcessExpiredR
     duration: Date.now() - startTime,
   };
 }
-
-export default processExpiredNotificationsJob;

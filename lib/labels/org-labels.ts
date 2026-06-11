@@ -227,7 +227,6 @@ export const SELF_SERVICE_MEMBER_ROLES = SelfServiceMemberRoleSchema.options;
  * See `docs/enterprise/20-iam-and-security/01-sso-and-authentication.md#jit-default-role`.
  */
 export const JitDefaultRoleSchema = z.literal("LEARNER");
-export type JitDefaultRole = z.infer<typeof JitDefaultRoleSchema>;
 
 // Host-invitable subset — adds EXPERT to the self-service set. Used by
 // the Members + Invitations dashboard surfaces and the matching server
@@ -243,9 +242,6 @@ export const HostInvitableMemberRoleSchema = z.enum([
   "LEARNER",
   "EXPERT",
 ]);
-export type HostInvitableMemberRole = z.infer<
-  typeof HostInvitableMemberRoleSchema
->;
 export const HOST_INVITABLE_MEMBER_ROLES =
   HostInvitableMemberRoleSchema.options;
 

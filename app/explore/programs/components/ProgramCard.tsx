@@ -10,7 +10,7 @@ import { useCurrency } from "@/hooks/useCurrency";
 import { CompanyLogo } from "@/components/ui/company-logo";
 import { isClassProgram, Program } from "../utils";
 
-export type ProgramCardVariant = "grid" | "list" | "carousel";
+type ProgramCardVariant = "grid" | "list" | "carousel";
 export type ProgramBadge = "featured" | "trending" | "new";
 
 interface ProgramCardProps {

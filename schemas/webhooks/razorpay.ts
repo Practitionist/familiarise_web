@@ -184,13 +184,3 @@ export const razorpayWebhookEnvelopeSchema = z
 export type RazorpayWebhookEnvelope = z.infer<
   typeof razorpayWebhookEnvelopeSchema
 >;
-
-export type RazorpayPaymentCapturedEvent = z.infer<
-  typeof razorpayPaymentCapturedEventSchema
->;
-export type RazorpayOrderPaidEvent = z.infer<
-  typeof razorpayOrderPaidEventSchema
->;
-export type RazorpayPaymentFailedEvent = z.infer<
-  typeof razorpayPaymentFailedEventSchema
->;

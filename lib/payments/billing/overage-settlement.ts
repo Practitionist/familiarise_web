@@ -107,7 +107,7 @@ export async function recordOverageAtCheckout(
   // already applied this booking's delta); for CREDIT_POOL the PRE-booking
   // consumed paise. The preview surface (#777 §C) builds the same context from
   // the assignment's current state, so the two can't drift.
-  const sessionsConsumed = Math.max(1, utilization.engagementsConsumedDelta);
+  const engagementsConsumed = Math.max(1, utilization.engagementsConsumedDelta);
   const overage = computeOverageForBooking(
     isCredit
       ? {
@@ -131,7 +131,7 @@ export async function recordOverageAtCheckout(
             utilization.engagementsConsumedDelta,
           priceCapPerEngagementPaise: lsc?.priceCapPerEngagementPaise ?? null,
         },
-    { bookingPricePaise: amount, sessionsConsumed },
+    { bookingPricePaise: amount, engagementsConsumed },
   );
   const { marginalPaise, basePaise, surchargePaise } = overage;
 

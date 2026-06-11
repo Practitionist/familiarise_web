@@ -47,7 +47,7 @@ export interface ActivationStep {
   href: string;
 }
 
-export type ActionSeverity = "critical" | "warning" | "info";
+type ActionSeverity = "critical" | "warning" | "info";
 
 export interface ActionItem {
   key: string;
@@ -59,7 +59,7 @@ export interface ActionItem {
 }
 
 /** Below this the wallet is "low" — surfaced before bookings start failing. */
-export const WALLET_LOW_BALANCE_PAISE = 1_000_00; // ₹1,000
+const WALLET_LOW_BALANCE_PAISE = 1_000_00; // ₹1,000
 
 /**
  * The activation checklist — capability-aware. A SPONSOR org's path runs

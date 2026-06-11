@@ -20,11 +20,3 @@ export const UpdateSubscriptionSchema = z.object({
 export const PatchSubscriptionStatusSchema = z.object({
   status: RequestStatusEnum,
 });
-
-export type UpdateSubscriptionStatusInput = z.infer<
-  typeof UpdateSubscriptionStatusSchema
->;
-export type UpdateSubscriptionInput = z.infer<typeof UpdateSubscriptionSchema>;
-export type PatchSubscriptionStatusInput = z.infer<
-  typeof PatchSubscriptionStatusSchema
->;

@@ -99,7 +99,7 @@ export async function GET(
     membershipId: access.member.id,
     coveredPlanType: parsed.data.planType,
     bookingPricePaise: pricePaise,
-    sessionsConsumed: parsed.data.sessions,
+    engagementsConsumed: parsed.data.sessions,
   });
 
   return NextResponse.json(result);

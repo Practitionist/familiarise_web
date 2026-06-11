@@ -11,7 +11,6 @@ export {
   processExpiredNotifications,
   getWaitlistStats,
   getUserWaitlistEntries,
-  type WaitlistEntryWithDetails,
 } from "./queue-manager";
 
 // Slot Handler exports
@@ -22,7 +21,6 @@ export {
   checkEventAvailability,
   joinWaitlist,
   leaveWaitlist,
-  type SlotOpeningParams,
 } from "./slot-handler";
 
 // Notification exports

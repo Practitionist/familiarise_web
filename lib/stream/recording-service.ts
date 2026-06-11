@@ -1070,5 +1070,3 @@ export class RecordingService {
     }
   }
 }
-
-export default RecordingService;

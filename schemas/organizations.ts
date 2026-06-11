@@ -16,7 +16,6 @@ import {
   HostInvitableMemberRoleSchema,
   MemberRoleSchema,
   SelfServiceFundingSourceSchema,
-  SelfServiceMemberRoleSchema,
 } from "@/lib/labels/org-labels";
 
 // ───────────────────────────── Organization ─────────────────────────────
@@ -28,7 +27,6 @@ export const OrganizationSummarySchema = z.object({
   canSponsor: z.boolean().optional(),
   canHost: z.boolean().optional(),
 });
-export type OrganizationSummary = z.infer<typeof OrganizationSummarySchema>;
 
 export const CreateOrganizationResponseSchema = z.object({
   organization: OrganizationSummarySchema,
@@ -55,9 +53,6 @@ export const CreateOrganizationPayloadSchema = z.object({
   fundingSource: SelfServiceFundingSourceSchema.optional(),
   paymentTermsDays: z.number().int().min(0).max(180).optional(),
 });
-export type CreateOrganizationPayload = z.infer<
-  typeof CreateOrganizationPayloadSchema
->;
 
 // PATCH /api/organizations/[orgId] — fields the dashboard surfaces.
 // The wizard's Review step sends branding fields; the Settings page
@@ -93,9 +88,6 @@ export const PatchOrganizationPayloadSchema = z.object({
     .nullable()
     .optional(),
 });
-export type PatchOrganizationPayload = z.infer<
-  typeof PatchOrganizationPayloadSchema
->;
 
 // POST /api/organizations/[orgId]/rate-cards — 3-way split for host orgs.
 // bps values must sum to 10 000 (enforced server-side; duplicated here so
@@ -109,7 +101,6 @@ export const CreateRateCardPayloadSchema = z
   .refine((v) => v.platformBps + v.orgBps + v.consultantBps === 10000, {
     message: "Revenue split must add up to 100%",
   });
-export type CreateRateCardPayload = z.infer<typeof CreateRateCardPayloadSchema>;
 
 // ───────────────────────────── Members ─────────────────────────────
 
@@ -164,7 +155,6 @@ export const AddMemberPayloadSchema = z.object({
   email: z.string().email(),
   role: HostInvitableMemberRoleSchema,
 });
-export type AddMemberPayload = z.infer<typeof AddMemberPayloadSchema>;
 
 // PATCH body shared with the edit-member dialog. At least one of role or
 // status must be set; the server enforces a `.refine()` on the same
@@ -186,7 +176,6 @@ export const UpdateMemberPayloadSchema = z
       v.payoutRecipient !== undefined,
     { message: "Provide at least one of role, status, or payout recipient" },
   );
-export type UpdateMemberPayload = z.infer<typeof UpdateMemberPayloadSchema>;
 
 // ───────────────────────────── Invitations ─────────────────────────────
 
@@ -228,9 +217,6 @@ export const CreateInvitationPayloadSchema = z.object({
   role: HostInvitableMemberRoleSchema,
   expiresInDays: z.number().int().min(1).max(30).optional(),
 });
-export type CreateInvitationPayload = z.infer<
-  typeof CreateInvitationPayloadSchema
->;
 
 export const CreateInvitationResponseSchema = z.object({
   invitation: InvitationRowSchema,
@@ -247,7 +233,6 @@ export const SsoProviderRowSchema = z.object({
   // before the type column existed; tolerate it so the table renders.
   providerType: z.enum(["saml", "oidc"]).nullable(),
 });
-export type SsoProviderRow = z.infer<typeof SsoProviderRowSchema>;
 
 export const SsoSettingsResponseSchema = z.object({
   settings: z.object({
@@ -274,9 +259,6 @@ export const PatchSsoSettingsPayloadSchema = z.object({
   // rejects anything other than LEARNER with 400.
   defaultRoleForAutoJoin: z.literal("LEARNER").optional(),
 });
-export type PatchSsoSettingsPayload = z.infer<
-  typeof PatchSsoSettingsPayloadSchema
->;
 
 // POST /api/organizations/[orgId]/sso/providers — outbound.
 // Discriminated union on `providerType` so the SAML branch must include

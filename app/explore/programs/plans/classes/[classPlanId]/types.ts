@@ -6,7 +6,7 @@ import type {
 } from "@prisma/client";
 import type { ICollaboratorInfo } from "../../types";
 
-export type TClassSessionWithSchedule = PrismaClass & {
+type TClassSessionWithSchedule = PrismaClass & {
   appointments: (PrismaAppointment & {
     slotsOfAppointment: (PrismaSlotOfAppointment & {
       user: { id: string }[];

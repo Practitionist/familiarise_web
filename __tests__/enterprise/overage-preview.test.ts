@@ -32,12 +32,12 @@ describe("computeOverageForBooking — parity with computeOverage", () => {
     };
     const viaMapper = computeOverageForBooking(ctx, {
       bookingPricePaise: 100_000,
-      sessionsConsumed: 1,
+      engagementsConsumed: 1,
     });
     const viaRaw = computeOverage({
       programType: "LICENSED_SEAT",
       bookingPricePaise: 100_000,
-      sessionsConsumed: 1,
+      engagementsConsumed: 1,
       overageBehavior: "CHARGE_ORG",
       overageSurchargeBps: 1000,
       maxOveragePerCyclePaise: null,
@@ -61,12 +61,12 @@ describe("computeOverageForBooking — parity with computeOverage", () => {
     };
     const viaMapper = computeOverageForBooking(ctx, {
       bookingPricePaise: 30_000,
-      sessionsConsumed: 1,
+      engagementsConsumed: 1,
     });
     const viaRaw = computeOverage({
       programType: "CREDIT_POOL",
       bookingPricePaise: 30_000,
-      sessionsConsumed: 1,
+      engagementsConsumed: 1,
       overageBehavior: "CHARGE_MEMBER",
       overageSurchargeBps: null,
       maxOveragePerCyclePaise: null,
@@ -93,7 +93,7 @@ describe("computeOverageForBooking — preview behavior table", () => {
   it("within cap → not an overage (nothing to warn)", () => {
     const r = computeOverageForBooking(seat(), {
       bookingPricePaise: 100_000,
-      sessionsConsumed: 1,
+      engagementsConsumed: 1,
     });
     expect(r.marginalPaise).toBe(0);
     expect(r.decision).toBe("PROCEED");
@@ -102,7 +102,7 @@ describe("computeOverageForBooking — preview behavior table", () => {
   it("cap exhausted + CHARGE_MEMBER → member owes the marginal", () => {
     const r = computeOverageForBooking(
       seat({ engagementsUsed: 5, overageBehavior: "CHARGE_MEMBER" }),
-      { bookingPricePaise: 100_000, sessionsConsumed: 1 },
+      { bookingPricePaise: 100_000, engagementsConsumed: 1 },
     );
     expect(r.marginalPaise).toBe(100_000);
     expect(r.chargeTo).toBe("MEMBER");
@@ -112,7 +112,7 @@ describe("computeOverageForBooking — preview behavior table", () => {
   it("cap exhausted + CHARGE_ORG → org owes the marginal", () => {
     const r = computeOverageForBooking(
       seat({ engagementsUsed: 5, overageBehavior: "CHARGE_ORG" }),
-      { bookingPricePaise: 100_000, sessionsConsumed: 1 },
+      { bookingPricePaise: 100_000, engagementsConsumed: 1 },
     );
     expect(r.chargeTo).toBe("ORG");
     expect(r.decision).toBe("PROCEED");
@@ -121,7 +121,7 @@ describe("computeOverageForBooking — preview behavior table", () => {
   it("cap exhausted + BLOCK → booking refused", () => {
     const r = computeOverageForBooking(
       seat({ engagementsUsed: 5, overageBehavior: "BLOCK" }),
-      { bookingPricePaise: 100_000, sessionsConsumed: 1 },
+      { bookingPricePaise: 100_000, engagementsConsumed: 1 },
     );
     expect(r.decision).toBe("BLOCK");
     expect(r.chargeTo).toBeNull();
@@ -135,7 +135,7 @@ describe("computeOverageForBooking — preview behavior table", () => {
         maxOveragePerCyclePaise: 50_000,
         cycleOverageSoFarPaise: 0,
       }),
-      { bookingPricePaise: 100_000, sessionsConsumed: 1 },
+      { bookingPricePaise: 100_000, engagementsConsumed: 1 },
     );
     expect(r.decision).toBe("BLOCK");
     expect(r.reason).toContain("circuit breaker");
@@ -151,7 +151,7 @@ describe("computeOverageForBooking — preview behavior table", () => {
         creditBudgetPaise: 50_000,
         consumedPaise: 40_000,
       },
-      { bookingPricePaise: 30_000, sessionsConsumed: 1 },
+      { bookingPricePaise: 30_000, engagementsConsumed: 1 },
     );
     // 10_000 of the 30_000 booking is covered; 20_000 is overage.
     expect(r.coveredPaise).toBe(10_000);

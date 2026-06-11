@@ -21,7 +21,7 @@ import type { BookingStatus } from "@/components/ui/waitlist-status-badge";
  * Unified event type for display in the dashboard
  */
 // Collaborator info for co-hosts display
-export interface ProcessedCollaborator {
+interface ProcessedCollaborator {
   name: string;
   image?: string | null;
   role: string;
@@ -83,7 +83,7 @@ function findNextSlot(slots: SlotWithContext[]): SlotWithContext | null {
 /**
  * Process a consultation into a ProcessedEvent
  */
-export function processConsultation(
+function processConsultation(
   consultation: TConsultationWithPlan,
 ): ProcessedEvent | null {
   const slots = consultation.appointment?.slotsOfAppointment;
@@ -150,7 +150,7 @@ export function processConsultation(
 /**
  * Process a subscription into a ProcessedEvent
  */
-export function processSubscription(
+function processSubscription(
   subscription: TSubscriptionWithPlan,
 ): ProcessedEvent | null {
   const allSlots: SlotWithContext[] = [];
@@ -228,7 +228,7 @@ export function processSubscription(
 /**
  * Process a webinar into a ProcessedEvent
  */
-export function processWebinar(
+function processWebinar(
   webinar: TConsulteeWebinar,
 ): ProcessedEvent | null {
   const allSlots: SlotWithContext[] = [];
@@ -328,7 +328,7 @@ export function processWebinar(
 /**
  * Process a class into a ProcessedEvent
  */
-export function processClass(
+function processClass(
   classEvent: TConsulteeClass,
 ): ProcessedEvent | null {
   const allSlots: SlotWithContext[] = [];

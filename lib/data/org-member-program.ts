@@ -14,7 +14,7 @@ import prisma from "@/lib/prisma";
 // (Stream client) lives on the consultee dashboard; the page links there.
 const JOIN_WINDOW_MS = 10 * 60 * 1000;
 
-export interface UpcomingSession {
+interface UpcomingSession {
   id: string;
   type: string;
   title: string;

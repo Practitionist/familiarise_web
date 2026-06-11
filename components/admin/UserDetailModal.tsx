@@ -435,5 +435,3 @@ export function UserDetailModal({
     </Dialog>
   );
 }
-
-export default UserDetailModal;

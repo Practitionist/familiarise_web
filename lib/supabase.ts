@@ -2,7 +2,7 @@ import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import type { FileObject } from "@supabase/storage-js"; // Import FileObject type
 
 // Define types for image transformation and the enhanced file object
-export interface TransformOptions {
+interface TransformOptions {
   width?: number;
   height?: number;
   resize?: "cover" | "contain" | "fill";
@@ -16,7 +16,7 @@ export interface SupabaseImageFile extends FileObject {
 }
 
 // Document upload types
-export interface DocumentUploadResult {
+interface DocumentUploadResult {
   success: boolean;
   fileUrl?: string;
   storagePath?: string;
@@ -26,7 +26,7 @@ export interface DocumentUploadResult {
   error?: string;
 }
 
-export interface DocumentUploadOptions {
+interface DocumentUploadOptions {
   appointmentId: string;
   consulteeId: string;
   description?: string;
@@ -439,7 +439,7 @@ const listAppointmentDocuments = async (
 // Plan material upload types
 export type PlanType = "consultation" | "subscription" | "webinar" | "class";
 
-export interface PlanMaterialUploadOptions {
+interface PlanMaterialUploadOptions {
   planType: PlanType;
   planId: string;
   file: File;
@@ -447,7 +447,7 @@ export interface PlanMaterialUploadOptions {
 }
 
 // Consultant document upload types (for response documents)
-export interface ConsultantDocumentUploadOptions {
+interface ConsultantDocumentUploadOptions {
   appointmentId: string;
   consultantId: string;
   file: File;
@@ -701,7 +701,7 @@ const uploadConsultantDocument = async (
 };
 
 // Support ticket attachment types
-export interface SupportAttachmentUploadOptions {
+interface SupportAttachmentUploadOptions {
   ticketId: string;
   file: File;
 }
@@ -842,7 +842,7 @@ You can find this key in: Dashboard > Settings > API > service_role key
 // Plan image upload types
 export type TPlanImageType = "webinar-plans" | "class-plans";
 
-export interface IPlanImageUploadOptions {
+interface IPlanImageUploadOptions {
   planType: TPlanImageType;
   planId: string;
   file: File;
@@ -981,12 +981,12 @@ const deletePlanImage = async (
 };
 
 // Cover image upload types
-export interface CoverImageUploadOptions {
+interface CoverImageUploadOptions {
   userId: string;
   file: File;
 }
 
-export interface CoverImageUploadResult {
+interface CoverImageUploadResult {
   success: boolean;
   fileUrl?: string;
   storagePath?: string;
@@ -1004,12 +1004,12 @@ const ALLOWED_COVER_IMAGE_TYPES = [
 const COVER_IMAGE_MAX_SIZE = 5 * 1024 * 1024; // 5MB
 
 // Profile display image upload types (square image for Explore Experts page)
-export interface ProfileDisplayImageUploadOptions {
+interface ProfileDisplayImageUploadOptions {
   userId: string;
   file: File;
 }
 
-export interface ProfileDisplayImageUploadResult {
+interface ProfileDisplayImageUploadResult {
   success: boolean;
   fileUrl?: string;
   storagePath?: string;
@@ -1447,12 +1447,12 @@ const deleteProfileImage = async (userId: string): Promise<boolean> => {
 };
 
 // Organization branding image upload types (logo + banner)
-export interface OrganizationBrandingUploadOptions {
+interface OrganizationBrandingUploadOptions {
   organizationId: string;
   file: File;
 }
 
-export interface OrganizationBrandingUploadResult {
+interface OrganizationBrandingUploadResult {
   success: boolean;
   fileUrl?: string;
   storagePath?: string;

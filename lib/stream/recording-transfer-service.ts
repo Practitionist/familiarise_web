@@ -600,5 +600,3 @@ export class RecordingTransferService {
     return null;
   }
 }
-
-export default RecordingTransferService;

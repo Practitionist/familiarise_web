@@ -3,9 +3,9 @@ import type { TSlotOfAppointment } from "@/types/appointment";
 const JOIN_WINDOW_MS = 15 * 60 * 1000; // 15 minutes before start
 const DEFAULT_MEETING_DURATION_MS = 60 * 60 * 1000; // 1 hour fallback
 
-export type JoinState = "disabled" | "countdown" | "joinable" | "ended";
+type JoinState = "disabled" | "countdown" | "joinable" | "ended";
 
-export function getSlotJoinState(slot: TSlotOfAppointment): JoinState {
+function getSlotJoinState(slot: TSlotOfAppointment): JoinState {
   if (slot.isTentative) return "disabled";
   if (
     slot.completionStatus === "CANCELLED" ||

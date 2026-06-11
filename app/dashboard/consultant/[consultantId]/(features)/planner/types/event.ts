@@ -149,7 +149,7 @@ export type FormData = {
     }
 );
 
-export interface BasePlannerProps {
+interface BasePlannerProps {
   isOpen: boolean;
   onClose: () => void;
   consultantId: string;
@@ -191,7 +191,7 @@ export type ClassContentInput = {
 };
 
 // Define input type for SubscriptionContent (session roadmap)
-export type SubscriptionContentInput = {
+type SubscriptionContentInput = {
   id?: string; // Optional for new content
   title: string;
   description: string;

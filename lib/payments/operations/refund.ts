@@ -457,9 +457,11 @@ export async function applyRefundCascade(
       case "CARD":
       case "REFERRAL_CREDIT": {
         // CARD: gateway handles the actual money via the Refund row.
-        // REFERRAL_CREDIT: TODO (v2) — referral credits do not
-        // auto-restore on refund. Manual support intervention only;
-        // tracking issue for the v2 referral ledger.
+        // REFERRAL_CREDIT: restoration is deliberately NOT part of this
+        // cascade — the gateway-refund webhook calls
+        // reverseCreditsForPayment (app/api/webhooks/utils.ts) so credits
+        // restore exactly once per gateway refund. Reversal-engine paths
+        // that bypass the webhook do not restore credits (#B20 audit note).
         break;
       }
 

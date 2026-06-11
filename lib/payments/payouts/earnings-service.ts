@@ -43,7 +43,7 @@ export interface EarningsSummary {
 }
 
 /** Resolved 3-way split for a canHost=true org consultant */
-export interface OrgEarningsSplit {
+interface OrgEarningsSplit {
   organizationId: string;
   rateCardIdApplied: string | null;
   platformBps: number;
@@ -56,7 +56,7 @@ export interface OrgEarningsSplit {
 }
 
 /** Summary of an org's earnings across all statuses */
-export interface OrgEarningsSummary {
+interface OrgEarningsSummary {
   organizationId: string;
   totalEarnings: number;
   pendingEarnings: number;

@@ -22,11 +22,11 @@ interface WebinarWithAppointment {
   } | null;
 }
 
-export interface ClassSlot extends Record<string, unknown> {
+interface ClassSlot extends Record<string, unknown> {
   user?: SlotUser[];
 }
 
-export interface ClassAppointment {
+interface ClassAppointment {
   slotsOfAppointment: ClassSlot[];
 }
 
@@ -36,7 +36,7 @@ export interface ClassInstance {
   appointments?: ClassAppointment[];
 }
 
-export type ProgramConsultantProfile = {
+type ProgramConsultantProfile = {
   rating?: number;
   headline?: string | null;
   user?: {
@@ -50,7 +50,7 @@ export type ProgramConsultantProfile = {
   };
 };
 
-export type ProgramCollaborator = {
+type ProgramCollaborator = {
   consultantProfile?: ProgramConsultantProfile | null;
 };
 
@@ -113,12 +113,6 @@ export function generateProgramImageUrl(
 
 export function isClassProgram(program: Program): program is ClassPlanProgram {
   return program.type === "class";
-}
-
-export function isWebinarProgram(
-  program: Program,
-): program is WebinarPlanProgram {
-  return program.type === "webinar";
 }
 
 // Client-side filtering for search term and level only.

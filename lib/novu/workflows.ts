@@ -118,9 +118,6 @@ export const NOVU_WORKFLOWS = {
   ORG_EXPERT_REMOVED: "org-expert-removed",
 } as const;
 
-export type NovuWorkflowId =
-  (typeof NOVU_WORKFLOWS)[keyof typeof NOVU_WORKFLOWS];
-
 // ============================================================================
 // Payload Type Definitions
 // ============================================================================

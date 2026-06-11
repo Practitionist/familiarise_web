@@ -30,7 +30,7 @@ const STATE_ALPHA_TO_NUMERIC: Record<string, string> = {
   LA: "38",
 };
 
-export interface IrpPayloadLineItem {
+interface IrpPayloadLineItem {
   position: number;
   description: string;
   quantity: number;
@@ -38,7 +38,7 @@ export interface IrpPayloadLineItem {
   hsnCode: string | null;
 }
 
-export interface IrpPayloadInvoice {
+interface IrpPayloadInvoice {
   invoiceNumber: string | null;
   issuedAt: Date | null;
   reverseCharge: boolean;
@@ -53,14 +53,14 @@ export interface IrpPayloadInvoice {
   placeOfSupply: string | null; // buyer state (alpha or numeric)
 }
 
-export interface IrpPayloadBuyer {
+interface IrpPayloadBuyer {
   name: string;
   gstin: string | null;
   stateCode: string | null; // OrganizationTaxInfo.gstStateCode
   hsnDefault: string; // OrganizationTaxInfo.hsnDefault
 }
 
-export interface IrpPayloadSeller {
+interface IrpPayloadSeller {
   gstin: string; // platform GSTIN (env-sourced in the cron)
   legalName: string;
   address1: string;

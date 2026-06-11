@@ -16,7 +16,7 @@ describe("computeOverage — LICENSED_SEAT pass-through", () => {
   const base = {
     programType: "LICENSED_SEAT" as const,
     bookingPricePaise: 100_000,
-    sessionsConsumed: 1,
+    engagementsConsumed: 1,
     overageBehavior: "CHARGE_ORG" as const,
     maxOveragePerCyclePaise: null,
     cycleOverageSoFarPaise: 0,
@@ -114,26 +114,26 @@ describe("computeOverage — LICENSED_SEAT pass-through", () => {
       ...base,
       coveredEngagementsPerCycle: 5,
       engagementsUsed: 4,
-      sessionsConsumed: 3,
+      engagementsConsumed: 3,
     });
     expect(r.basePaise).toBe(66_666);
     expect(r.coveredPaise).toBe(33_334);
     expect(r.coveredPaise + r.basePaise).toBe(100_000);
   });
 
-  it("sessionsConsumed floors to 1 and never NaN-poisons the split (#710/#713)", () => {
+  it("engagementsConsumed floors to 1 and never NaN-poisons the split (#710/#713)", () => {
     const zero = computeOverage({
       ...base,
       coveredEngagementsPerCycle: 5,
       engagementsUsed: 5,
-      sessionsConsumed: 0,
+      engagementsConsumed: 0,
     });
     expect(zero.marginalPaise).toBe(100_000); // treated as 1 session, fully over cap
     const nan = computeOverage({
       ...base,
       coveredEngagementsPerCycle: 5,
       engagementsUsed: 5,
-      sessionsConsumed: Number.NaN,
+      engagementsConsumed: Number.NaN,
     });
     expect(Number.isInteger(nan.marginalPaise)).toBe(true);
     expect(nan.marginalPaise).toBe(100_000);
@@ -143,7 +143,7 @@ describe("computeOverage — LICENSED_SEAT pass-through", () => {
 describe("computeOverage — CREDIT_POOL money-meter", () => {
   const base = {
     programType: "CREDIT_POOL" as const,
-    sessionsConsumed: 1,
+    engagementsConsumed: 1,
     overageBehavior: "CHARGE_ORG" as const,
     maxOveragePerCyclePaise: null,
     cycleOverageSoFarPaise: 0,
@@ -208,7 +208,7 @@ describe("computeOverage — circuit breaker + behavior routing", () => {
   const over = {
     programType: "LICENSED_SEAT" as const,
     bookingPricePaise: 100_000,
-    sessionsConsumed: 1,
+    engagementsConsumed: 1,
     coveredEngagementsPerCycle: 1,
     engagementsUsed: 1, // over cap
   };

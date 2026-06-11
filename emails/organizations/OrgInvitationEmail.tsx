@@ -86,8 +86,6 @@ export const OrgInvitationEmail = ({
   );
 };
 
-export default OrgInvitationEmail;
-
 const main = {
   backgroundColor: "#f5f5f5",
   fontFamily:

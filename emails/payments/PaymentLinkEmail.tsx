@@ -135,8 +135,6 @@ export const PaymentLinkEmail = ({
   );
 };
 
-export default PaymentLinkEmail;
-
 // Styles
 const main = {
   backgroundColor: "#f5f5f5",
