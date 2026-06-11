@@ -36,16 +36,19 @@ export {
   markConsultantPayoutReversed,
   getPayoutStats,
 } from "./payout-service";
+export type { PayoutResult } from "./payout-service";
 
 // Org Payout Service
 export {
   getOrgPayoutEligibility,
   createOrgPayoutBatch,
   processOrgPayout,
+  processPendingOrgPayouts,
   markOrgPayoutCompleted,
   markOrgPayoutFailed,
   markOrgPayoutReversed,
 } from "./org-payout-service";
+export type { OrgProcessingResult } from "./org-payout-service";
 
 // Earnings Service
 export {

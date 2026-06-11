@@ -26,9 +26,13 @@ jobs:
       UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
       DIRECT_URL: ${{ secrets.DIRECT_URL }}
 
-      # RazorpayX credentials for payouts
+      # RazorpayX credentials for payouts.
+      # #850 — the payout service reads RAZORPAYX_KEY_SECRET || RAZORPAY_SECRET
+      # (razorpay-payouts.ts), NOT RAZORPAY_KEY_SECRET; both names are set so
+      # the service and any legacy readers resolve the same secret.
       RAZORPAY_KEY_ID: ${{ secrets.RAZORPAY_KEY_ID }}
       RAZORPAY_KEY_SECRET: ${{ secrets.RAZORPAY_KEY_SECRET }}
+      RAZORPAY_SECRET: ${{ secrets.RAZORPAY_KEY_SECRET }}
       RAZORPAYX_ACCOUNT_NUMBER: ${{ secrets.RAZORPAYX_ACCOUNT_NUMBER }}
 
       # Stripe credentials for Connect transfers

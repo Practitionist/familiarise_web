@@ -778,6 +778,43 @@ async function markPayoutFailedFromSubmission(
 }
 
 /**
+ * #850 — batch driver over `processOrgPayout` for every PENDING org payout
+ * (ported from the deleted scripts/payouts/process-payouts.ts CLI loop so
+ * the weekly GH job keeps advancing org payouts). Errors against a single
+ * payout never abort the rest of the run.
+ */
+export interface OrgProcessingResult {
+  scanned: number;
+  advanced: number;
+  errors: string[];
+}
+
+export async function processPendingOrgPayouts(): Promise<OrgProcessingResult> {
+  const result: OrgProcessingResult = { scanned: 0, advanced: 0, errors: [] };
+
+  // String literals — PayoutStatus is an `import type` in this module.
+  const pending = await prisma.organizationPayout.findMany({
+    where: { status: "PENDING" },
+    select: { id: true },
+  });
+  result.scanned = pending.length;
+
+  for (const p of pending) {
+    try {
+      const out = await processOrgPayout(p.id);
+      if (out.status === "PROCESSING") {
+        result.advanced++;
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      result.errors.push(`OrgPayout ${p.id}: ${message}`);
+    }
+  }
+
+  return result;
+}
+
+/**
  * Idempotent PROCESSING → COMPLETED transition for an OrganizationPayout.
  *
  * Called by the gateway-webhook reconciler that PR-3 wires up; the
