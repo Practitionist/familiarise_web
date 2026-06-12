@@ -34,12 +34,12 @@ async function run() {
   );
 
   const results = await Promise.all([
-    apiFetch(`/api/events/consultations/${pending.id}`, {
+    apiFetch(`/api/bookings/consultations/${pending.id}`, {
       method: "PATCH",
       session: admin,
       body: JSON.stringify({ status: "APPROVED" }),
     }),
-    apiFetch(`/api/events/consultations/${pending.id}`, {
+    apiFetch(`/api/bookings/consultations/${pending.id}`, {
       method: "PATCH",
       session: admin,
       body: JSON.stringify({ status: "REJECTED" }),

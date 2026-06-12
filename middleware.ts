@@ -64,7 +64,7 @@ const ROUTE_PATTERNS = {
     "/api/form/onboarding/",
     "/api/verification/",
     "/api/user/",
-    "/api/events/",
+    "/api/bookings/",
     "/api/plans/",
     "/api/participants/", // Private: participant management for classes/webinars/etc.
     "/api/dashboard/", // Private: dashboard data routes

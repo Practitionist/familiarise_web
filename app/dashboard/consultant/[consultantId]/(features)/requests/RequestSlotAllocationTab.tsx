@@ -160,10 +160,10 @@ export function RequestSlotAllocationTab({
       // Fetch data in parallel (only PENDING requests)
       const [consultationsResult, subscriptionsResult] = await Promise.all([
         fetchDataFromApi<ConsultationApiResponse[]>(
-          `/api/events/consultations?consultantProfileId=${consultantId}&status=PENDING`,
+          `/api/bookings/consultations?consultantProfileId=${consultantId}&status=PENDING`,
         ),
         fetchDataFromApi<SubscriptionApiResponse[]>(
-          `/api/events/subscriptions?consultantProfileId=${consultantId}&status=PENDING`,
+          `/api/bookings/subscriptions?consultantProfileId=${consultantId}&status=PENDING`,
         ),
       ]);
 
@@ -349,8 +349,8 @@ export function RequestSlotAllocationTab({
     try {
       const endpoint =
         selectedRequestForDialog.type === AppointmentsType.SUBSCRIPTION
-          ? `/api/events/subscriptions/${selectedRequestForDialog.id}/allocate`
-          : `/api/events/consultations/${selectedRequestForDialog.id}/allocate`;
+          ? `/api/bookings/subscriptions/${selectedRequestForDialog.id}/allocate`
+          : `/api/bookings/consultations/${selectedRequestForDialog.id}/allocate`;
 
       const response = await fetch(endpoint, {
         method: "PATCH",
@@ -401,7 +401,7 @@ export function RequestSlotAllocationTab({
   const handleDecline = async (request: Request) => {
     if (request.type !== AppointmentsType.CONSULTATION) return;
     try {
-      const response = await fetch(`/api/events/consultations/${request.id}`, {
+      const response = await fetch(`/api/bookings/consultations/${request.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: "REJECTED" }),

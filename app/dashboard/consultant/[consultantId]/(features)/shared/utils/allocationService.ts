@@ -72,7 +72,7 @@ export class AllocationService {
   ): Promise<AllocationResponse> {
     try {
       const response = await fetch(
-        `/api/events/consultations/${consultationId}/allocate`,
+        `/api/bookings/consultations/${consultationId}/allocate`,
         {
           method: "PATCH",
           headers: {
@@ -114,7 +114,7 @@ export class AllocationService {
   ): Promise<ValidationResponse> {
     try {
       const response = await fetch(
-        `/api/events/consultations/${consultationId}/validate`,
+        `/api/bookings/consultations/${consultationId}/validate`,
         {
           method: "POST",
           headers: {
@@ -156,7 +156,7 @@ export class AllocationService {
   ): Promise<AllocationResponse> {
     try {
       const response = await fetch(
-        `/api/events/subscriptions/${subscriptionId}/allocate`,
+        `/api/bookings/subscriptions/${subscriptionId}/allocate`,
         {
           method: "PATCH",
           headers: {
@@ -198,7 +198,7 @@ export class AllocationService {
   ): Promise<ValidationResponse> {
     try {
       const response = await fetch(
-        `/api/events/subscriptions/${subscriptionId}/validate`,
+        `/api/bookings/subscriptions/${subscriptionId}/validate`,
         {
           method: "POST",
           headers: {
@@ -240,7 +240,7 @@ export class AllocationService {
   ): Promise<AllocationResponse> {
     try {
       const response = await fetch(
-        `/api/events/webinars/${webinarId}/allocate`,
+        `/api/bookings/webinars/${webinarId}/allocate`,
         {
           method: "PATCH",
           headers: {
@@ -281,7 +281,7 @@ export class AllocationService {
     request: AllocationRequest,
   ): Promise<AllocationResponse> {
     try {
-      const response = await fetch(`/api/events/classes/${classId}/allocate`, {
+      const response = await fetch(`/api/bookings/classes/${classId}/allocate`, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
@@ -362,7 +362,7 @@ export class AllocationService {
     slots: string[],
   ): Promise<ValidationResponse> {
     try {
-      const response = await fetch(`/api/events/classes/${classId}/validate`, {
+      const response = await fetch(`/api/bookings/classes/${classId}/validate`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -402,7 +402,7 @@ export class AllocationService {
   ): Promise<ValidationResponse> {
     try {
       const response = await fetch(
-        `/api/events/webinars/${webinarId}/validate`,
+        `/api/bookings/webinars/${webinarId}/validate`,
         {
           method: "POST",
           headers: {

@@ -13,7 +13,7 @@ import { RequestSlotAllocationTab } from "./RequestSlotAllocationTab";
 /**
  * Requests tab page. RequestSlotAllocationTab owns its data: it resolves the
  * consultantId from the route via useParams and fetches the paginated
- * /api/events/consultations + /api/events/subscriptions endpoints with its
+ * /api/bookings/consultations + /api/bookings/subscriptions endpoints with its
  * own loading/error states.
  *
  * Read-path scale fix: this page previously also ran the
@@ -28,7 +28,7 @@ export default function RequestsPage() {
   // consultant who works for multiple orgs toggle between "Personal" /
   // "<org>" / "All" (drives the ?orgScope= URL param via useOrgScope).
   // Self-hides for consultants with zero org memberships. Note: the tab's
-  // /api/events/* fetches don't consume orgScope yet — wiring the scope
+  // /api/bookings/* fetches don't consume orgScope yet — wiring the scope
   // into those endpoints is tracked follow-up work, not a regression of
   // this page (the deleted query was the only thing that ever read it,
   // and its data went nowhere).
