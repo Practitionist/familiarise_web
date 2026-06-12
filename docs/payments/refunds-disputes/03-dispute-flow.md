@@ -174,11 +174,11 @@ await prisma.dispute.update({
 
 ### Razorpay
 
-**Limited API Support:**
+**API support (updated 2026-06):**
 
-- NO direct dispute API
-- Disputes handled via Razorpay Dashboard
-- Only webhook notifications available
+- Razorpay now exposes dispute APIs: `POST /v1/disputes/:id/accept` and `PATCH /v1/disputes/:id/contest` (this doc previously claimed no API existed)
+- Webhook notifications cover created / action_required / under_review / won / lost / closed
+- Our reconcile cron still routes Razorpay disputes to manual review — wiring it to the contest/accept APIs is tracked in the launch-residuals register; see `docs/enterprise/10-money-and-ledger/11-disputes.md` §3
 
 **Webhook Events:**
 
