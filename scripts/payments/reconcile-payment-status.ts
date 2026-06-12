@@ -55,6 +55,30 @@ async function getStripePaymentStatus(
     const Stripe = (await import("stripe")).default;
     const stripe = new Stripe(stripeSecretKey);
 
+    // Checkout-flow payments store the cs_ session id as the payment ref
+    // (the cancel path in lib/payments/core/stripe.ts handles the same
+    // split). Passing a cs_ id to paymentIntents.retrieve throws "No such
+    // payment_intent", which used to poison every run with the same two
+    // stale rows. Resolve the session to its intent; a session that never
+    // produced one maps on its own state — expired → canceled (the row
+    // finally EXPIREs), open → processing (Stripe auto-expires within 24h,
+    // the next sweep settles it).
+    if (paymentIntent.startsWith("cs_")) {
+      const session = await stripe.checkout.sessions.retrieve(paymentIntent);
+      const intentRef = session.payment_intent;
+      if (!intentRef) {
+        return { status: session.status === "expired" ? "canceled" : "processing" };
+      }
+      const pi =
+        typeof intentRef === "string"
+          ? await stripe.paymentIntents.retrieve(intentRef)
+          : intentRef;
+      return {
+        status: pi.status,
+        failureMessage: pi.last_payment_error?.message ?? undefined,
+      };
+    }
+
     const pi = await stripe.paymentIntents.retrieve(paymentIntent);
     return {
       status: pi.status,
