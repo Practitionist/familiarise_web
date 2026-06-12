@@ -52,7 +52,7 @@ This document tracks the complete dashboard performance optimization project to 
   - Component: `HelpPageWithQuery.tsx`
 - [x] **Consultant Dashboard - Requests** (`/requests`)
   - Hook: `useRequests`
-  - API: `/api/dashboard/consultant/[consultantId]/requests`
+  - API: `/api/bookings/*` (self-fetched by the tab; the old `/api/dashboard/consultant/[consultantId]/requests` endpoint was deleted)
   - **Performance**: Consolidated 6 API calls → 1 optimized call
 - [x] **Consultant Dashboard - Settings** (`/settings`)
   - Hook: Direct React Query in page

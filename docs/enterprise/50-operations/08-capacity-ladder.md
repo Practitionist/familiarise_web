@@ -61,8 +61,8 @@ swap stays mechanical.
 ## Queue and broker posture
 
 Standardize on Inngest or QStash for new async work if a queue is needed
-before the persistent-compute move — we already run Inngest for waitlist
-crons, and a second paradigm would be pure carrying cost. BullMQ becomes the
+before the persistent-compute move — introducing a second paradigm alongside
+the existing GitHub-Actions cron fleet would be pure carrying cost. BullMQ becomes the
 default at the persistent-compute rung. Kafka is not a conversation worth
 having for this product before sustained six-figure events per second with
 multiple independent consumer groups; revisit thresholds live in ADR 13.

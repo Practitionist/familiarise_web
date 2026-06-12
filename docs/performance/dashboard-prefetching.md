@@ -60,7 +60,7 @@ The consultant dashboard prefetches:
 - **Dashboard Overview**: `/api/dashboard/consultant/{id}`
 - **Appointments**: `/api/slots/appointments?consultantProfileId={id}`
 - **Consultant Details**: `/api/user/consultants/{id}`
-- **Requests**: `/api/dashboard/consultant/{id}/requests`
+- **Requests**: `/api/bookings/*` (self-fetched by the tab; the `/api/dashboard/consultant/{id}/requests` endpoint was deleted)
 - **Planner**: `/api/dashboard/consultant/{id}/planner`
 - **Help/FAQ**: Static import from questions file
 

@@ -480,7 +480,8 @@ async function withLockExtension(operation: () => Promise<void>) {
 | Lock Type      | Key Pattern                              | Use Case              | TTL |
 | -------------- | ---------------------------------------- | --------------------- | --- |
 | Slot Booking   | `slot-booking:{consultantId}:{slotTime}` | 1:1 consultations     | 60s |
-| Event Checkout | `event-checkout:{type}:{eventId}`        | Webinars, Classes     | 60s |
+| Event Checkout | `event-checkout:{type}:{eventId}`        | Webinars, Classes     | Per-type via `CHECKOUT_LOCK_TTL_MS` (#832): CONSULTATION 60s / SUBSCRIPTION 120s / WEBINAR 120s / CLASS 300s |
+| Auto-Allocate  | `auto-allocate:{consultantProfileId}`    | Auto-allocation (consultant-level; NOT narrowed per slot — #860) | 150s |
 | Approval       | `consultation-approval:{consultationId}` | Request approval      | 60s |
 | Subscription   | `subscription-approval:{subscriptionId}` | Subscription approval | 60s |
 

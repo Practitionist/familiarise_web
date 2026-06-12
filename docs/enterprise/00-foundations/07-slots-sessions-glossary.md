@@ -34,7 +34,7 @@ shapes in `utils/timeSlotsProcessing.ts` and `TSlotTiming` in
 **Booked slot.** One concrete reserved time instance inside an appointment —
 the atomic scheduling unit. Implemented by `SlotOfAppointment`:
 `isTentative` flips false at webhook confirmation, `completionStatus` walks
-SCHEDULED → COMPLETED/UNVERIFIED/CANCELLED, and the m:n `user` relation
+SCHEDULED → COMPLETED/UNVERIFIED/CANCELLED/RESCHEDULED, and the m:n `user` relation
 links booker and consultant (load-bearing for the #827 double-booking
 guard — never treat it as dead code).
 
