@@ -180,6 +180,7 @@ export async function processLongOperation(
 | **Auto-Allocate**          | 150 seconds (consultant-level, not narrowed — #860 tracks per-slot narrowing) | Auto-allocation serialization per consultant |
 | **Payout Batch Creation**  | 2 minutes (`lock:payout_batch_creation`)                           | Cron — create payout batches         |
 | **Payout Processing**      | 5 minutes (`lock:payout_processing`)                               | Cron — process approved payouts      |
+| **Org Payout Batch**       | 60 seconds (`org:{orgId}:payout-batch`)                            | Per-org payout batch creation        |
 
 ### Core Features
 
@@ -316,7 +317,9 @@ lib/
 │   └── withCronLock()                 # Wraps cron job with Redis lock; fail-open or fail-closed
 └── payments/payouts/payout-service.ts
     ├── lock:payout_batch_creation     # 2-minute lock for batch creation cron
-    └── lock:payout_processing         # 5-minute lock for payout processing cron
+    ├── lock:payout_processing         # 5-minute lock for payout processing cron
+    └── org-payout-service.ts
+        └── org:{orgId}:payout-batch       # 60s per-org payout batch creation lock
 ```
 
 ---

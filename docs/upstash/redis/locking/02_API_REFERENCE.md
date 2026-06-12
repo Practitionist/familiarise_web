@@ -1053,6 +1053,7 @@ Redis Namespace
 │   └── auto-allocate:{consultantProfileId}
 ├── lock:payout_batch_creation          # payout-service.ts — createPayoutBatch cron
 ├── lock:payout_processing              # payout-service.ts — processPayouts cron
+├── org:*:payout-batch                  # org-payout-service.ts — createOrgPayoutBatch (60s)
 └── appointment-lock:*                  # lockAppointment (legacy)
     ├── appointment-lock:apt123
     └── appointment-lock:apt456
@@ -1071,6 +1072,9 @@ Redis Namespace
 | Auto-Allocate             | 150 seconds (consultant-level; NOT narrowed per slot — #860 tracks that)           | ~148.5 seconds                 | Auto-allocation serialization    |
 | Event Slot (Semaphore)    | 5 minutes                                                                          | 4.95 minutes                   | Multi-participant payment window |
 | Appointment Lock (Legacy) | 5 minutes                                                                          | 4.95 minutes                   | Complex time slot allocation     |
+| Payout Batch Creation     | 2 minutes (`lock:payout_batch_creation`)                                           | ~1.98 minutes                  | Consultant payout batch cron     |
+| Payout Processing         | 5 minutes (`lock:payout_processing`)                                               | 4.95 minutes                   | Consultant payout disbursement   |
+| Org Payout Batch          | 60 seconds (`org:{orgId}:payout-batch`)                                            | 59.4 seconds                   | Per-org payout batch creation    |
 
 #### TTL Selection Guidelines
 

@@ -484,6 +484,9 @@ async function withLockExtension(operation: () => Promise<void>) {
 | Auto-Allocate  | `auto-allocate:{consultantProfileId}`    | Auto-allocation (consultant-level; NOT narrowed per slot — #860) | 150s |
 | Approval       | `consultation-approval:{consultationId}` | Request approval      | 60s |
 | Subscription   | `subscription-approval:{subscriptionId}` | Subscription approval | 60s |
+| Payout Batch   | `lock:payout_batch_creation`             | Consultant payout batch cron | 2min |
+| Payout Process | `lock:payout_processing`                 | Consultant payout disbursement | 5min |
+| Org Payout Batch | `org:{orgId}:payout-batch`             | Per-org payout batch creation | 60s |
 
 ### Code Flow
 
