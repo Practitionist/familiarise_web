@@ -88,7 +88,20 @@ they create, so a local run against seeded development data is sanctioned.
 The staging clone remains the venue for the go/no-go record. Each scenario
 is a standalone script under `tests/typescript/race-conditions/scenarios/`
 that exits non-zero on failure, so the master runner's report is the
-pass/fail record.
+pass/fail record. The master runner creates its results directory with
+`fs.mkdir(reportsDir, { recursive: true })` so a fresh checkout never fails
+on a missing path.
+
+**Auth-limiter note.** The master runner spawns each scenario as its own
+process. The BetterAuth sign-in rate limiter is 10 logins per 15 minutes per
+IP, which a full suite run exhausts. `loginAs` in
+`tests/typescript/race-conditions/utilities/api-client.ts` therefore caches
+session cookies in `os.tmpdir()/chaos-session-cache.json` (cross-process
+persistence via the temp directory), validating each cached cookie with a
+`GET /api/auth/get-session` probe before reuse. A stale cookie falls through
+to a real login. `test-multi-device-login` is immune: its five parallel
+`loginAs` calls race past the empty cache by design and exercise real
+concurrent logins.
 
 **9. Cancel versus reschedule on the same appointment (implemented:
 `test-cancel-vs-reschedule-race`).** Two tabs act on one appointment
@@ -119,7 +132,30 @@ twice concurrently. The slug-unique guard inside the creation transaction
 must admit exactly one; exactly one row may exist afterwards. The consumer
 profile-completion variant is staged for a follow-up.
 
-**14. Enterprise allocation races (staged).** Seat/program-assignment
+**14a. Cancel-pending versus capture webhook (implemented:
+`test-cancel-pending-vs-webhook`).** A user abandons checkout and
+hits `DELETE /api/checkout/pending/[paymentId]` at the same moment
+the gateway's `payment.captured` webhook lands. Both sides CAS the
+payment inside Serializable transactions. The invariants are: no 5xx,
+the webhook is always ACKed 2xx, the payment never stays PENDING, and
+the end state is exactly one of three consistent outcomes — cancel wins
+(EXPIRED, slots deleted, parent CANCELLED), webhook wins (SUCCEEDED,
+slots confirmed, cancel gets 409), or documented late-capture orphan
+(SUCCEEDED after a 200 cancel; reconciler flags for refund, never a
+half-confirmed booking). Second leg: two concurrent `DELETE` calls on
+the same PENDING payment — exactly one 200, the loser 409 (CAS
+cancel-vs-cancel guard). Tracked by #849.
+
+**14b. Last-seat enrollment storm (implemented:
+`test-last-seat-storm`).** N concurrent checkouts race for a webinar
+with exactly one free seat. Guards under test: per-event checkout lock
+plus the tentative-inclusive `validateEventCapacity` participant count.
+Invariants: exactly one winner, losers receive a clean 4xx ("Webinar is
+full"), zero 5xx, and the confirmed participant count never exceeds
+`maxParticipants`. This is a capacity regression test for the #440
+`slot_no_confirmed_overlap` exclusion constraint and the last-seat path.
+
+**14c. Enterprise allocation races (staged).** Seat/program-assignment
 over-allocation (N+1 concurrent assignments against N seats), invoice
 generate-versus-void, and wallet top-up webhook replay. The underlying CAS
 guards shipped with #825/#826 and are exercised at the service level; the
@@ -152,7 +188,8 @@ order: push before deploy, or the same route families 500.
 
 Scenarios 1 through 4 must pass with zero duplicate charges and zero double
 bookings, and scenario 6 must pass at twice the expected launch peak.
-Scenarios 9 through 13, 15, and 16 must pass on the staging clone after the
-schema push; they are cheap enough to run on every hardening PR. The others
-inform the first-month backlog (#829–#834) rather than blocking launch,
-unless a failure reveals money loss.
+Scenarios 9 through 13, 14a, 14b, 15, and 16 must pass on the staging clone
+after the schema push; they are cheap enough to run on every hardening PR.
+Scenario 14c (enterprise allocation races) and the others inform the
+first-month backlog (#829–#834) rather than blocking launch, unless a failure
+reveals money loss.

@@ -94,7 +94,9 @@ import { withCircuitBreaker, checkRedisHealth } from "@/lib/redis";
 | `unlockApproval`           | Release any approval lock     | N/A         | `void`                         |
 | `lockSlotBooking`          | Lock time slot for booking    | 60s         | `ApprovalLock`                 |
 | `unlockSlotBooking`        | Release slot booking lock     | N/A         | `void`                         |
-| `lockEventCheckout`        | Lock event for checkout       | 60s         | `ApprovalLock`                 |
+| `lockEventCheckout`        | Lock event for checkout       | Per-type via `CHECKOUT_LOCK_TTL_MS` (#832): CONSULTATION 60s / SUBSCRIPTION 120s / WEBINAR 120s / CLASS 300s | `ApprovalLock`                 |
+| `lockAutoAllocate`         | Lock auto-allocation (consultant-level) | 150s | `ApprovalLock`          |
+| `unlockAutoAllocate`       | Release auto-allocate lock    | N/A         | `void`                         |
 | `unlockEventCheckout`      | Release event checkout lock   | N/A         | `void`                         |
 | `acquireEventSlot`         | Reserve slot (semaphore)      | 5min        | `EventSlotReservation \| null` |
 | `releaseEventSlot`         | Release semaphore slot        | N/A         | `void`                         |
@@ -1037,13 +1039,22 @@ appointment-lock:clx789ghi          # Appointment booking lock
 
 ```
 Redis Namespace
-├── consultation-approval:*
+├── consultation-approval:*             # lockConsultationApproval
 │   ├── consultation-approval:clx123
 │   └── consultation-approval:clx456
-├── subscription-approval:*
+├── subscription-approval:*             # lockSubscriptionApproval
 │   ├── subscription-approval:sub123
 │   └── subscription-approval:sub456
-└── appointment-lock:*
+├── slot-booking:*                      # lockSlotBooking
+│   └── slot-booking:{consultantProfileId}:{slotStartISO}
+├── event-checkout:*                    # lockEventCheckout
+│   └── event-checkout:{TYPE}:{eventOrPlanId}
+├── auto-allocate:*                     # lockAutoAllocate (consultant-level)
+│   └── auto-allocate:{consultantProfileId}
+├── lock:payout_batch_creation          # payout-service.ts — createPayoutBatch cron
+├── lock:payout_processing              # payout-service.ts — processPayouts cron
+├── org:*:payout-batch                  # org-payout-service.ts — createOrgPayoutBatch (60s)
+└── appointment-lock:*                  # lockAppointment (legacy)
     ├── appointment-lock:apt123
     └── appointment-lock:apt456
 ```
@@ -1052,14 +1063,18 @@ Redis Namespace
 
 ### TTL Defaults
 
-| Lock Type                 | Default TTL | Effective TTL (after drift) | Use Case                         |
-| ------------------------- | ----------- | --------------------------- | -------------------------------- |
-| Consultation Approval     | 60 seconds  | 59.4 seconds                | Payment link generation          |
-| Subscription Approval     | 60 seconds  | 59.4 seconds                | Subscription processing          |
-| Slot Booking              | 60 seconds  | 59.4 seconds                | Time slot allocation             |
-| Event Checkout            | 60 seconds  | 59.4 seconds                | Webinar/class checkout           |
-| Event Slot (Semaphore)    | 5 minutes   | 4.95 minutes                | Multi-participant payment window |
-| Appointment Lock (Legacy) | 5 minutes   | 4.95 minutes                | Complex time slot allocation     |
+| Lock Type                 | Default TTL                                                                        | Effective TTL (after 1% drift) | Use Case                         |
+| ------------------------- | ---------------------------------------------------------------------------------- | ------------------------------ | -------------------------------- |
+| Consultation Approval     | 60 seconds                                                                         | 59.4 seconds                   | Payment link generation          |
+| Subscription Approval     | 60 seconds                                                                         | 59.4 seconds                   | Subscription processing          |
+| Slot Booking              | 60 seconds                                                                         | 59.4 seconds                   | Time slot allocation             |
+| Event Checkout            | Per-type via `CHECKOUT_LOCK_TTL_MS` (#832): CONSULTATION 60s / SUBSCRIPTION 120s / WEBINAR 120s / CLASS 300s | varies                         | Webinar/class/subscription checkout |
+| Auto-Allocate             | 150 seconds (consultant-level; NOT narrowed per slot — #860 tracks that)           | ~148.5 seconds                 | Auto-allocation serialization    |
+| Event Slot (Semaphore)    | 5 minutes                                                                          | 4.95 minutes                   | Multi-participant payment window |
+| Appointment Lock (Legacy) | 5 minutes                                                                          | 4.95 minutes                   | Complex time slot allocation     |
+| Payout Batch Creation     | 2 minutes (`lock:payout_batch_creation`)                                           | ~1.98 minutes                  | Consultant payout batch cron     |
+| Payout Processing         | 5 minutes (`lock:payout_processing`)                                               | 4.95 minutes                   | Consultant payout disbursement   |
+| Org Payout Batch          | 60 seconds (`org:{orgId}:payout-batch`)                                            | 59.4 seconds                   | Per-org payout batch creation    |
 
 #### TTL Selection Guidelines
 
