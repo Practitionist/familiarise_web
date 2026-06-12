@@ -95,13 +95,16 @@ All checkout data is stored in payment intent metadata:
   appointmentType: "CONSULTATION",
   planId: "plan_abc123",
   eventId: "event_xyz789",
-  slotStartTimeInUTC: "2025-01-15T10:00:00.000Z",
-  slotEndTimeInUTC: "2025-01-15T11:00:00.000Z",
+  startsAt: "2025-01-15T10:00:00.000Z",    // renamed from startsAt
+  endsAt: "2025-01-15T11:00:00.000Z",      // renamed from endsAt
   slotOfAvailabilityWeeklyId: "slot_weekly_123",
   notes: "User notes...",
   userId: "user_abc",
   consulteeProfileId: "profile_xyz"
 }
+```
+
+> **Webhook backward-compat note:** Razorpay order `notes` objects embedded with the old keys (`startsAt` / `endsAt`) are still accepted by the webhook handler for in-flight orders created before the rename. `normalizeLegacySlotKeys()` in `schemas/webhooks/metadata.ts` maps old → new on ingest; new orders always use `startsAt` / `endsAt`.
 ```
 
 **Benefits:**
@@ -181,8 +184,8 @@ Consultations are **one-on-one sessions** between a consultee (user) and a consu
 
 ```typescript
 {
-  slotStartTimeInUTC: string,     // ISO 8601 datetime
-  slotEndTimeInUTC: string,       // ISO 8601 datetime
+  startsAt: string,     // ISO 8601 datetime (URL query-param name; maps to startsAt internally)
+  endsAt: string,       // ISO 8601 datetime (URL query-param name; maps to endsAt internally)
   slotOfAvailabilityWeeklyId: string (OR slotOfAvailabilityCustomId),
   slotOfAvailabilityCustomId: string (OR slotOfAvailabilityWeeklyId),
   discountCode?: string,           // Optional promo code
@@ -190,13 +193,15 @@ Consultations are **one-on-one sessions** between a consultee (user) and a consu
 }
 ```
 
-**Validation Schema:** `/schemas/checkout.ts` - `consultationSearchParamsSchema` (Lines 32-54)
+> **Field naming:** The public-facing query params keep the `startsAt`/`endsAt` names. Internally the checkout logic and Razorpay order notes use `startsAt`/`endsAt` (post-rename). Webhook handlers accept both via `normalizeLegacySlotKeys()` for in-flight orders.
+
+**Validation Schema:** `/schemas/checkout.ts`
 
 ```typescript
 export const consultationSearchParamsSchema = z
   .object({
-    slotStartTimeInUTC: z.string().datetime(),
-    slotEndTimeInUTC: z.string().datetime(),
+    startsAt: z.string().datetime(),
+    endsAt: z.string().datetime(),
     slotOfAvailabilityWeeklyId: z.string().optional(),
     slotOfAvailabilityCustomId: z.string().optional(),
     discountCode: z.string().optional(),
@@ -209,8 +214,8 @@ export const consultationSearchParamsSchema = z
   )
   .refine(
     (data) => {
-      const start = new Date(data.slotStartTimeInUTC);
-      const end = new Date(data.slotEndTimeInUTC);
+      const start = new Date(data.startsAt);
+      const end = new Date(data.endsAt);
       return start < end;
     },
     { message: "Start time must be before end time" },
@@ -227,8 +232,8 @@ export const consultationSearchParamsSchema = z
 {
   appointmentType: "CONSULTATION",
   planId: "consultation_plan_id",
-  slotStartTimeInUTC: "2025-01-15T10:00:00.000Z",
-  slotEndTimeInUTC: "2025-01-15T11:00:00.000Z",
+  startsAt: "2025-01-15T10:00:00.000Z",       // renamed from startsAt
+  endsAt: "2025-01-15T11:00:00.000Z",         // renamed from endsAt
   slotOfAvailabilityWeeklyId: "slot_id",
   notes: "User notes",
   discountCode: "PROMO20",
@@ -300,12 +305,12 @@ const overlappingConfirmed = await tx.slotOfAppointment.findFirst({
       { isTentative: false }, // Only confirmed bookings
       {
         startsAt: {
-          lt: new Date(data.slotEndTimeInUTC!),
+          lt: new Date(data.endsAt!),
         },
       },
       {
         endsAt: {
-          gt: new Date(data.slotStartTimeInUTC!),
+          gt: new Date(data.startsAt!),
         },
       },
     ],
@@ -357,12 +362,12 @@ const userTentativeBookings = await tx.slotOfAppointment.findMany({
     AND: [
       {
         startsAt: {
-          lt: new Date(data.slotEndTimeInUTC!),
+          lt: new Date(data.endsAt!),
         },
       },
       {
         endsAt: {
-          gt: new Date(data.slotStartTimeInUTC!),
+          gt: new Date(data.startsAt!),
         },
       },
     ],
@@ -424,12 +429,12 @@ const pendingAttempts = await tx.slotOfAppointment.count({
     AND: [
       {
         startsAt: {
-          lt: new Date(data.slotEndTimeInUTC!),
+          lt: new Date(data.endsAt!),
         },
       },
       {
         endsAt: {
-          gt: new Date(data.slotStartTimeInUTC!),
+          gt: new Date(data.startsAt!),
         },
       },
     ],
@@ -475,20 +480,20 @@ if (pendingAttempts >= 3) {
 ```typescript
 const consultation = await tx.consultation.create({
   data: {
-    requestStatus: RequestStatus.PENDING,
+    status: AppointmentStatus.PENDING,   // field renamed from status
     requestNotes: data.notes,
     requestedById: consulteeProfileId,
     consultationPlanId: plan.id,
     bookingSource: "DIRECT_CHECKOUT",
-    schedulingPeriodStartsAt: new Date(data.slotStartTimeInUTC!),
-    schedulingPeriodEndsAt: new Date(data.slotEndTimeInUTC!),
+    schedulingPeriodStartsAt: new Date(data.startsAt!),
+    schedulingPeriodEndsAt: new Date(data.endsAt!),
   },
 });
 ```
 
 **Key Fields:**
 
-- `requestStatus: PENDING` → Will become `APPROVED` after payment
+- `status: PENDING` (enum `AppointmentStatus`) → Will become `APPROVED` after payment
 - `requestedById` → Consultee profile ID
 - `bookingSource: "DIRECT_CHECKOUT"` → Distinguish from admin-created bookings
 - Scheduling period tracks the selected time slot
@@ -502,8 +507,8 @@ const appointment = await tx.appointment.create({
     consultationId: consultation.id,
     slotsOfAppointment: {
       create: {
-        startsAt: new Date(data.slotStartTimeInUTC!),
-        endsAt: new Date(data.slotEndTimeInUTC!),
+        startsAt: new Date(data.startsAt!),
+        endsAt: new Date(data.endsAt!),
         isTentative: !skipPayment, // true for real payments, false for mock
         user: {
           connect: { id: userId },
@@ -592,7 +597,7 @@ sequenceDiagram
         Note over WH: Appointment already exists<br/>(created during checkout)
         WH->>DB: Link Payment.appointmentId = appointment.id
         WH->>DB: UPDATE SlotOfAppointment<br/>SET isTentative = false
-        WH->>DB: UPDATE Consultation<br/>SET requestStatus = APPROVED
+        WH->>DB: UPDATE Consultation<br/>SET status = APPROVED
         WH-->>PG: 200 OK
         PG->>U: Redirect to success page
     else Payment Failed
@@ -661,8 +666,8 @@ Subscriptions are **recurring one-on-one sessions** between a consultee and cons
 
 ```typescript
 {
-  slotStartTimeInUTC: string,     // First session start time
-  slotEndTimeInUTC: string,       // First session end time
+  startsAt: string,     // First session start time (URL param; maps to startsAt internally)
+  endsAt: string,       // First session end time (URL param; maps to endsAt internally)
   slotOfAvailabilityWeeklyId: string (OR slotOfAvailabilityCustomId),
   schedulingPeriodStartsAt?: string,  // Optional subscription start date
   schedulingPeriodEndsAt?: string,    // Optional subscription end date
@@ -728,8 +733,8 @@ const totalWeeks = Math.ceil(plan.durationInMonths * 4.33);
 const totalSessions = totalWeeks * plan.callsPerWeek;
 
 // Get first session timing
-const firstSessionStart = new Date(data.slotStartTimeInUTC!);
-const firstSessionEnd = new Date(data.slotEndTimeInUTC!);
+const firstSessionStart = new Date(data.startsAt!);
+const firstSessionEnd = new Date(data.endsAt!);
 const sessionDurationMs =
   firstSessionEnd.getTime() - firstSessionStart.getTime();
 ```
@@ -760,7 +765,7 @@ totalSessions = 13 * 2 = 26 sessions
 const subscription = await tx.subscription.create({
   data: {
     subscriptionPlanId: plan.id,
-    requestStatus: skipPayment ? RequestStatus.APPROVED : RequestStatus.PENDING,
+    status: skipPayment ? AppointmentStatus.APPROVED : AppointmentStatus.PENDING,  // field renamed from status
     requestedById: consulteeProfileId,
     requestNotes: data.notes,
     bookingSource: "DIRECT_CHECKOUT",
@@ -847,7 +852,7 @@ return {
 ```
 Subscription
 ├─ id: "sub_123"
-├─ requestStatus: PENDING
+├─ status: PENDING           (field renamed from status; enum AppointmentStatus)
 ├─ schedulingPeriodStartsAt: 2025-01-15
 ├─ schedulingPeriodEndsAt: 2025-04-15
 │
@@ -885,14 +890,14 @@ WHERE appointmentId IN (
 )
 
 UPDATE Subscription
-SET requestStatus = 'APPROVED'
+SET status = 'APPROVED'   -- field renamed from status; enum AppointmentStatus
 WHERE id = 'sub_123'
 ```
 
 **Result:**
 
 - 26 SlotOfAppointment records: isTentative `true` → `false`
-- Subscription: requestStatus `PENDING` → `APPROVED`
+- Subscription: `status` `PENDING` → `APPROVED` (enum `AppointmentStatus`)
 - User immediately sees all 26 sessions in their dashboard
 
 ### Complete Flow Diagram
@@ -919,7 +924,7 @@ sequenceDiagram
 
     CO->>CO: validateSlotAvailability()<br/>(first session only)
 
-    CO->>DB: Create Subscription record<br/>(requestStatus: PENDING)
+    CO->>DB: Create Subscription record<br/>(status: PENDING)
 
     rect rgb(200, 220, 250)
         Note over CO,DB: Loop 26 times (once per session)
@@ -949,7 +954,7 @@ sequenceDiagram
         WH->>DB: UPDATE SlotOfAppointment<br/>SET isTentative = false<br/>WHERE appointmentId IN<br/>  (SELECT id FROM Appointment<br/>   WHERE subscriptionId = 'sub_123')
     end
 
-    WH->>DB: UPDATE Subscription<br/>SET requestStatus = APPROVED
+    WH->>DB: UPDATE Subscription<br/>SET status = APPROVED
 
     WH-->>PG: 200 OK
     PG->>U: Redirect to success

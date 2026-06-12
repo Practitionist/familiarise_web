@@ -152,7 +152,7 @@ At 100K rows, each count takes 100-500ms. The analytics page becomes unusable (2
 @@index([paymentStatus])   // on Payment model
 @@index([refundStatus])     // on PaymentRefund model
 @@index([disputeStatus])    // on PaymentDispute model
-@@index([requestStatus])    // on Consultation model
+@@index([status])    // on Consultation model
 @@index([status])           // on Appointment model
 @@index([createdAt])        // on User model (for date-range counts)
 ```
@@ -650,8 +650,8 @@ Based on the codebase audit, these columns are frequently queried/filtered but l
 @@index([disputeStatus])
 
 // Consultation model
-@@index([requestStatus])
-@@index([consultantProfileId, requestStatus])
+@@index([status])
+@@index([consultantProfileId, status])
 
 // Appointment model
 @@index([status])

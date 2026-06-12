@@ -117,6 +117,17 @@ if (allPendingCount >= 3) {
 }
 ```
 
+**DB backstop — `slot_no_confirmed_overlap` exclusion constraint (#440):**
+
+Even if two Serializable transactions race past all three application-layer checks, a PostgreSQL **exclusion constraint** on `SlotOfAppointment` prevents two *confirmed* (non-tentative) rows from overlapping the same `(consultantId, startsAt, endsAt)` range. This is the last-resort guarantee that concurrent webhooks cannot double-confirm a slot. The constraint fires at `COMMIT` time; the losing transaction receives a `P2002` / `UniqueConstraintError` which surfaces to the webhook handler as a 409 and triggers a gateway refund cascade.
+
+```sql
+-- prisma/sql/check-constraints.sql lines 56-58
+ALTER TABLE "SlotOfAppointment"
+  ADD CONSTRAINT "slot_no_confirmed_overlap"
+  EXCLUDE USING gist (...) WHERE ("isTentative" = false);
+```
+
 **Resolution:**
 
 - First confirmed payment wins
@@ -185,6 +196,28 @@ if (uniqueUserIds.has(userId)) {
 
 **Additional Protection:** Unique constraint on payment intent IDs prevents duplicate payments.
 
+### 1.4 User Self-Cancel of Pending Checkout (#849)
+
+**Scenario:** User abandons checkout and wants to release their tentative hold immediately instead of waiting up to 24 hours for the cleanup cron.
+
+**Endpoint:** `DELETE /api/checkout/pending/[paymentId]`
+
+**File:** `/app/api/checkout/pending/[paymentId]/route.ts` + `/lib/payments/operations/cancel-pending.ts`
+
+**Mechanics:**
+1. Rate-limited to **10 requests/minute** per user (`cancelPendingLimiter`).
+2. The entire body runs in a single **Serializable transaction** with a CAS write as the first step: `UPDATE payment SET status = EXPIRED WHERE id = ? AND status = PENDING`. If `count = 0`, another winner already settled the payment (webhook confirm or parallel cancel).
+3. On CAS success: referral credits are reversed, tentative slots are deleted per-type (class = caller's slots across all sessions, webinar = caller-scoped slot, consultation/subscription = all slots on the appointment), parent consultation/subscription is transitioned to `CANCELLED` from the **narrow** from-set `[PENDING, APPROVED_PENDING_PAYMENT]` — an APPROVED parent blocks the cancellation via `IllegalTransitionError`, rolling back the entire tx.
+4. Post-commit, best-effort: gateway order is cancelled. Failure does not un-cancel the booking.
+5. Retry-exhausted Serializable write conflicts (P2034) map to **409 Conflict**, not 500.
+
+**Capacity counts:** This endpoint correctly counts tentative holds in capacity (the checkout layer already includes tentative slots in availability checks — the last-seat race is closed at checkout; `test-last-seat-storm` pins this).
+
+**Returns:**
+```json
+{ "success": true, "slotsReleased": 1 }
+```
+
 ---
 
 ## 2. Timeout Scenarios
@@ -216,7 +249,10 @@ expiresAt: new Date(Date.now() + 30 * 60 * 1000),
 
 - Gateway shows "Session expired" error
 - User must restart checkout process
-- Tentative slot is released by cleanup job
+- User can self-cancel immediately via `DELETE /api/checkout/pending/[paymentId]` (see §1.4)
+- Otherwise, tentative slot is released by the cron cleanup
+
+**TTL distinction:** The `Payment.expiresAt` field is set to **30 minutes** (matches the gateway checkout session). The `isTentative` slot itself has a **24-hour** cleanup window (#833 — changed from the old 7-day window). The abandoned-payments cron releases the slot once `expiresAt` has passed; the tentative-slots cron is a belt-and-braces fallback that runs every 2 hours and catches any orphans past the 24-hour mark.
 
 **Edge Case:** User completes payment at exactly 30:00 → May succeed or fail depending on gateway clock.
 
@@ -560,15 +596,15 @@ if (currentParticipants >= plan.capacity) {
 
 ```typescript
 // Allows booking slots in the past
-slotStartTimeInUTC: z.string().datetime(),
-slotEndTimeInUTC: z.string().datetime(),
+startsAt: z.string().datetime(),   // renamed from startsAt
+endsAt: z.string().datetime(),     // renamed from endsAt
 ```
 
 **Recommendation:**
 
 ```typescript
 // Add custom validation
-slotStartTimeInUTC: z.string().datetime().refine(
+startsAt: z.string().datetime().refine(
   (val) => new Date(val) > new Date(),
   { message: "Slot start time must be in the future" }
 ),
@@ -576,8 +612,8 @@ slotStartTimeInUTC: z.string().datetime().refine(
 // Also validate slot duration
 .refine(
   (data) => {
-    const start = new Date(data.slotStartTimeInUTC);
-    const end = new Date(data.slotEndTimeInUTC);
+    const start = new Date(data.startsAt);
+    const end = new Date(data.endsAt);
     return end > start;
   },
   { message: "Slot end time must be after start time" }
@@ -925,7 +961,7 @@ const totalSessions = 13 * 2 = 26 sessions
 
 **Current Implementation:**
 
-**File:** `/app/api/events/classes/crud-with-plan/route.ts` (lines 162-164)
+**File:** `/app/api/bookings/classes/crud-with-plan/route.ts` (lines 162-164)
 
 ```typescript
 // Calculate total sessions
@@ -1060,7 +1096,7 @@ const zonedDate = utcToZonedTime(sessionStart, subscription.timezone);
 **Session Calculations:**
 
 - Subscription: `/lib/payments/operations/checkout.ts:512-514`
-- Class: `/app/api/events/classes/crud-with-plan/route.ts:162-164`
+- Class: `/app/api/bookings/classes/crud-with-plan/route.ts:162-164`
 
 **Error Handling:**
 
@@ -1106,8 +1142,8 @@ const response = await fetch("/api/checkout", {
   body: JSON.stringify({
     appointmentType: "CONSULTATION",
     planId: "plan-uuid",
-    slotStartTimeInUTC: "2025-11-07T10:00:00Z",
-    slotEndTimeInUTC: "2025-11-07T11:00:00Z",
+    startsAt: "2025-11-07T10:00:00Z",   // renamed from startsAt
+    endsAt: "2025-11-07T11:00:00Z",     // renamed from endsAt
     notes: "Follow-up consultation",
     isMockPayment: false, // Set to true for testing
   }),

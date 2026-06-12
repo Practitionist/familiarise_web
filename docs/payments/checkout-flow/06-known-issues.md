@@ -106,7 +106,7 @@ The default lock TTL of 30 seconds may expire during slow database operations, e
 
 ```typescript
 // Current implementation
-return await lockSlotBooking(consultantUserId, data.slotStartTimeInUTC, 30000); // 30 seconds
+return await lockSlotBooking(consultantUserId, data.startsAt, 30000); // 30 seconds (renamed from startsAt)
 ```
 
 #### Impact Analysis
@@ -144,14 +144,14 @@ T=35s    User A's transaction commits → DOUBLE BOOKING
 
 export async function lockSlotBooking(
   consultantProfileId: string,
-  slotStartTimeInUTC: string,
-  ttl: number = 60000, // ← Increased from 15000 to 60000
+  startsAt: string,           // renamed from startsAt
+  ttl: number = 60000,        // ← Increased from 15000 to 60000
 ): Promise<ApprovalLock> {
-  const key = `slot-booking:${consultantProfileId}:${slotStartTimeInUTC}`;
+  const key = `slot-booking:${consultantProfileId}:${startsAt}`;
   try {
     return await acquireLockWithRetry(key, ttl);
   } catch (error) {
-    throw new SlotLockError(consultantProfileId, slotStartTimeInUTC, 60); // ← Updated message
+    throw new SlotLockError(consultantProfileId, startsAt, 60); // ← Updated message
   }
 }
 
@@ -408,7 +408,7 @@ export async function handleSubscriptionCheckout(
     where: {
       subscriptionPlanId: plan.id,
       requestedById: consulteeProfileId,
-      requestStatus: { in: [RequestStatus.PENDING, RequestStatus.APPROVED] },
+      status: { in: [AppointmentStatus.PENDING, AppointmentStatus.APPROVED] },  // field+enum renamed from status/AppointmentStatus
       OR: [
         {
           AND: [
@@ -430,9 +430,9 @@ export async function handleSubscriptionCheckout(
   const subscription = await tx.subscription.create({
     data: {
       subscriptionPlanId: plan.id,
-      requestStatus: skipPayment
-        ? RequestStatus.APPROVED
-        : RequestStatus.PENDING,
+      status: skipPayment                              // renamed from status; AppointmentStatus was AppointmentStatus
+        ? AppointmentStatus.APPROVED
+        : AppointmentStatus.PENDING,
       requestedById: consulteeProfileId,
       requestNotes: data.notes,
       bookingSource: "DIRECT_CHECKOUT",

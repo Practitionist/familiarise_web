@@ -376,7 +376,7 @@ Acquires a distributed lock for preventing double-booking of time slots during c
 ```typescript
 async function lockSlotBooking(
   consultantProfileId: string,
-  slotStartTimeInUTC: string,
+  startsAt: string,
   ttl: number = 60000,
 ): Promise<ApprovalLock>;
 ```
@@ -386,7 +386,7 @@ async function lockSlotBooking(
 | Parameter             | Type     | Required | Default | Description                                                        |
 | --------------------- | -------- | -------- | ------- | ------------------------------------------------------------------ |
 | `consultantProfileId` | `string` | Yes      | -       | The consultant's profile ID                                        |
-| `slotStartTimeInUTC`  | `string` | Yes      | -       | Slot start time in ISO format (e.g., `"2025-01-15T10:00:00.000Z"`) |
+| `startsAt`  | `string` | Yes      | -       | Slot start time in ISO format (e.g., `"2025-01-15T10:00:00.000Z"`) |
 | `ttl`                 | `number` | No       | `60000` | Time-to-live in milliseconds (60 seconds default)                  |
 
 #### Throws

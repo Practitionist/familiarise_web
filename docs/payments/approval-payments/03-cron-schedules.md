@@ -58,7 +58,7 @@ The payment approval workflow includes automated cleanup jobs to handle expired 
 // app/api/cleanup/approval-payments/route.ts
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { RequestStatus } from "@prisma/client";
+import { AppointmentStatus } from "@prisma/client"; // renamed from AppointmentStatus
 
 /**
  * Cleanup expired payment links (48 hours)
@@ -79,7 +79,7 @@ export async function GET() {
     // Find expired consultations
     const expiredConsultations = await prisma.consultation.findMany({
       where: {
-        requestStatus: RequestStatus.APPROVED_PENDING_PAYMENT,
+        status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
         updatedAt: {
           lt: expiryThreshold,
         },
@@ -101,7 +101,7 @@ export async function GET() {
     // Find expired subscriptions
     const expiredSubscriptions = await prisma.subscription.findMany({
       where: {
-        requestStatus: RequestStatus.APPROVED_PENDING_PAYMENT,
+        status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
         updatedAt: {
           lt: expiryThreshold,
         },
@@ -127,7 +127,7 @@ export async function GET() {
           const updated = await prisma.consultation.update({
             where: { id: consultation.id },
             data: {
-              requestStatus: RequestStatus.PENDING,
+              status: AppointmentStatus.PENDING,
               requestNotes: consultation.requestNotes
                 ? `${consultation.requestNotes}\n\n[System] Payment link expired after 48 hours. Reverted to pending status at ${now.toISOString()}`
                 : `[System] Payment link expired after 48 hours. Reverted to pending status at ${now.toISOString()}`,
@@ -160,7 +160,7 @@ export async function GET() {
           const updated = await prisma.subscription.update({
             where: { id: subscription.id },
             data: {
-              requestStatus: RequestStatus.PENDING,
+              status: AppointmentStatus.PENDING,
               requestNotes: subscription.requestNotes
                 ? `${subscription.requestNotes}\n\n[System] Payment link expired after 48 hours. Reverted to pending status at ${now.toISOString()}`
                 : `[System] Payment link expired after 48 hours. Reverted to pending status at ${now.toISOString()}`,
@@ -410,7 +410,7 @@ describe("Approval Payment Cleanup", () => {
     // Seed database with expired payments
     await prisma.consultation.create({
       data: {
-        requestStatus: RequestStatus.APPROVED_PENDING_PAYMENT,
+        status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
         updatedAt: new Date(Date.now() - 49 * 60 * 60 * 1000), // 49 hours ago
         // ... other required fields
       },
@@ -425,7 +425,7 @@ describe("Approval Payment Cleanup", () => {
     expect(data.summary.consultations.reverted).toBe(1);
 
     const consultation = await prisma.consultation.findFirst({
-      where: { requestStatus: RequestStatus.PENDING },
+      where: { status: AppointmentStatus.PENDING },
     });
 
     expect(consultation).toBeDefined();
@@ -435,7 +435,7 @@ describe("Approval Payment Cleanup", () => {
   it("should not revert recent approvals", async () => {
     await prisma.consultation.create({
       data: {
-        requestStatus: RequestStatus.APPROVED_PENDING_PAYMENT,
+        status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
         updatedAt: new Date(Date.now() - 24 * 60 * 60 * 1000), // 24 hours ago
         // ... other required fields
       },
@@ -465,7 +465,7 @@ describe("End-to-End Cleanup Flow", () => {
     const updated = await prisma.consultation.findUnique({
       where: { id: consultation.id },
     });
-    expect(updated.requestStatus).toBe(RequestStatus.PENDING);
+    expect(updated.status).toBe(AppointmentStatus.PENDING);
 
     // 4. Verify notification sent
     // TODO: Check email service mock
@@ -496,12 +496,12 @@ for (let i = 0; i < totalExpired; i += batchSize) {
 ```typescript
 // Use indexed fields in WHERE clause
 where: {
-  requestStatus: RequestStatus.APPROVED_PENDING_PAYMENT, // Indexed
+  status: AppointmentStatus.APPROVED_PENDING_PAYMENT, // Indexed
   updatedAt: { lt: expiryThreshold },                    // Indexed
 }
 
 // Add database index
-@@index([requestStatus, updatedAt])
+@@index([status, updatedAt])  // renamed from @@index([status, updatedAt])
 ```
 
 ### Timeout Handling
@@ -594,7 +594,7 @@ await prisma.payment.delete({ where: { id } });
 
 // ✅ Good: Keep for audit trail, just revert status
 await prisma.consultation.update({
-  data: { requestStatus: RequestStatus.PENDING },
+  data: { status: AppointmentStatus.PENDING },
 });
 ```
 

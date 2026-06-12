@@ -755,7 +755,7 @@ export const options = {
 export default function () {
   const payload = JSON.stringify({
     appointmentType: "CONSULTATION",
-    slotStartTimeInUTC: "2025-01-15T10:00:00Z",
+    startsAt: "2025-01-15T10:00:00Z",
     // ... other fields
   });
 

@@ -179,7 +179,7 @@ sequenceDiagram
 | **Lock type**         | `lockTrialSlot()` -- key: `trial-slot-booking:{profileId}:{time}` | `lockSlotBooking()` -- key: `slot-booking:{profileId}:{time}` |
 | **Uniqueness**        | One per consultee-consultant pair                                 | Multiple allowed                                              |
 | **Conversion**        | Leads to Subscription (`convertedToSubscriptionId`)               | Standalone                                                    |
-| **Status field**      | `status` (TrialSessionStatus enum)                                | `requestStatus` (RequestStatus enum)                          |
+| **Status field**      | `status` (TrialSessionStatus enum)                                | `status` (AppointmentStatus enum)                          |
 | **Appointment type**  | `TRIAL`                                                           | `CONSULTATION`                                                |
 | **Booking flow**      | Request -> consultant schedules                                   | Direct checkout or request-based                              |
 | **Scheduling period** | None                                                              | None                                                          |
@@ -191,7 +191,7 @@ sequenceDiagram
 
 Trial scheduling uses the same distributed locking infrastructure as consultations and subscriptions, via `lockTrialSlot()` in `utils/appointmentlock.ts`.
 
-**Redis key pattern:** `trial-slot-booking:{consultantProfileId}:{slotStartTimeInUTC}`
+**Redis key pattern:** `trial-slot-booking:{consultantProfileId}:{startsAt}`
 
 | Parameter           | Value                                    |
 | ------------------- | ---------------------------------------- |
