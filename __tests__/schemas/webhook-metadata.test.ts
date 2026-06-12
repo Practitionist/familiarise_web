@@ -30,6 +30,11 @@ const NEW_KEYS = {
 describe("validateWebhookMetadata — slot-key rename dual-read", () => {
   it("accepts the NEW keys (post-rename orders)", () => {
     const parsed = validateWebhookMetadata({ ...BASE, ...NEW_KEYS });
+    // Narrow the discriminated union — only the consultation branch
+    // carries the slot keys.
+    if (parsed.appointmentType !== "CONSULTATION") {
+      throw new Error("expected consultation metadata");
+    }
     expect(parsed.startsAt).toBe(NEW_KEYS.startsAt);
     expect(parsed.endsAt).toBe(NEW_KEYS.endsAt);
   });
@@ -40,6 +45,9 @@ describe("validateWebhookMetadata — slot-key rename dual-read", () => {
       slotStartTimeInUTC: NEW_KEYS.startsAt,
       slotEndTimeInUTC: NEW_KEYS.endsAt,
     });
+    if (parsed.appointmentType !== "CONSULTATION") {
+      throw new Error("expected consultation metadata");
+    }
     expect(parsed.startsAt).toBe(NEW_KEYS.startsAt);
     expect(parsed.endsAt).toBe(NEW_KEYS.endsAt);
   });
