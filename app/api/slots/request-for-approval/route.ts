@@ -168,6 +168,10 @@ export async function POST(req: NextRequest) {
         startsAt: chunkStart,
         endsAt: new Date(chunkStart.getTime() + SLOT_DURATION_MS),
         isTentative: true, // Mark as tentative since it's pending approval
+        // #440 — the overlap-guard column must be set at CREATE time even on
+        // tentative rows: approval/webhook confirm flips isTentative via
+        // updateMany, so whatever is on the row rides into confirmed state.
+        consultantProfileId,
         user: {
           connect: [
             { id: session.user.id }, // Consultee

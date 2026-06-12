@@ -858,6 +858,8 @@ async function createAppointmentFromWebhook(
 // ============================================================================
 
 async function createConsultation(tx: Tx, data: ConsultationData) {
+  // #440 — the include rides the create so the overlap-guard column comes
+  // back without a second query inside the webhook transaction.
   const consultation = await tx.consultation.create({
     data: {
       consultationPlanId: data.planId,
@@ -865,6 +867,9 @@ async function createConsultation(tx: Tx, data: ConsultationData) {
       requestedById: data.consulteeProfileId,
       requestNotes: data.notes,
       bookingSource: "DIRECT_CHECKOUT",
+    },
+    include: {
+      consultationPlan: { select: { consultantProfileId: true } },
     },
   });
 
@@ -877,6 +882,7 @@ async function createConsultation(tx: Tx, data: ConsultationData) {
           startsAt: new Date(data.slotStartTimeInUTC),
           endsAt: new Date(data.slotEndTimeInUTC),
           isTentative: false,
+          consultantProfileId: consultation.consultationPlan.consultantProfileId,
           user: { connect: { id: data.userId } },
         },
       },
@@ -939,6 +945,9 @@ async function createSubscription(tx: Tx, data: SubscriptionData) {
         startsAt: new Date(data.slotStartTimeInUTC),
         endsAt: new Date(data.slotEndTimeInUTC),
         isTentative: false,
+        // #440 — same overlap-guard population as the consultation twin;
+        // a NULL here would bypass the exclusion constraint's scope.
+        consultantProfileId: plan.consultantProfileId,
         user: { connect: { id: data.userId } },
       },
     };
