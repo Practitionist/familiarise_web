@@ -10,8 +10,8 @@ graph TD
     end
 
     subgraph "API Layer"
-        B --> E["POST /api/events/{type}/{id}/validate"]
-        B --> F["PATCH /api/events/{type}/{id}/allocate"]
+        B --> E["POST /api/bookings/{type}/{id}/validate"]
+        B --> F["PATCH /api/bookings/{type}/{id}/allocate"]
     end
 
     subgraph "Validation Pipeline"
@@ -34,7 +34,7 @@ graph TD
 - **3 allocation modes** -- auto (system finds slots), manual (user selects), requested (consultee pre-selects, consultant approves)
 - **3 validation layers** -- Zod schemas (input format) -> SlotValidationService (business rules) -> Prisma (DB constraints)
 - **Sunday-to-Saturday weeks** -- `SlotCalculationService.countWeeks()` is the single source of truth
-- **`isTentative` flag** -- marks slots pending payment or reschedule; cleaned up by cron after 7 days
+- **`isTentative` flag** -- marks slots pending payment or reschedule; cleaned up by cron after 24 hours (`TENTATIVE_EXPIRATION_HOURS = 24`, reduced from 7 days by #833); users can self-release via `DELETE /api/checkout/pending/[paymentId]` (#849)
 - **`startDay`/`endDay` DayOfWeek enum + `startTimeUtc`/`endTimeUtc` Int** -- source of truth for weekly availability (minutes since midnight UTC, 0-1439; supports overnight/cross-midnight slots)
 
 ## Source Code Map
@@ -70,18 +70,18 @@ graph TD
 | `allocationAlgorithms.ts` | Preference-based auto allocation with time/day scoring                            |
 | `calendarUtils.ts`        | Calendar display: mapWeeklySlots, mapCustomSlots, getConsultantAvailabilityForDay |
 
-### API Routes (`app/api/events/`)
+### API Routes (`app/api/bookings/`)
 
 | Pattern                                   | Method | Purpose                     |
 | ----------------------------------------- | ------ | --------------------------- |
-| `/api/events/consultations/{id}/allocate` | PATCH  | Allocate consultation slots |
-| `/api/events/consultations/{id}/validate` | POST   | Validate consultation slots |
-| `/api/events/subscriptions/{id}/allocate` | PATCH  | Allocate subscription slots |
-| `/api/events/subscriptions/{id}/validate` | POST   | Validate subscription slots |
-| `/api/events/webinars/{id}/allocate`      | PATCH  | Allocate webinar slots      |
-| `/api/events/webinars/{id}/validate`      | POST   | Validate webinar slots      |
-| `/api/events/classes/{id}/allocate`       | PATCH  | Allocate class slots        |
-| `/api/events/classes/{id}/validate`       | POST   | Validate class slots        |
+| `/api/bookings/consultations/{id}/allocate` | PATCH  | Allocate consultation slots |
+| `/api/bookings/consultations/{id}/validate` | POST   | Validate consultation slots |
+| `/api/bookings/subscriptions/{id}/allocate` | PATCH  | Allocate subscription slots |
+| `/api/bookings/subscriptions/{id}/validate` | POST   | Validate subscription slots |
+| `/api/bookings/webinars/{id}/allocate`      | PATCH  | Allocate webinar slots      |
+| `/api/bookings/webinars/{id}/validate`      | POST   | Validate webinar slots      |
+| `/api/bookings/classes/{id}/allocate`       | PATCH  | Allocate class slots        |
+| `/api/bookings/classes/{id}/validate`       | POST   | Validate class slots        |
 
 ## Quick Navigation
 

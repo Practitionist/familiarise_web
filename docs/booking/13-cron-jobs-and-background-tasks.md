@@ -106,7 +106,7 @@ Both paths call the same core function exported from `scripts/appointments/`. Th
 
 **Action**: Within a Prisma `$transaction`:
 
-1. Updates consultation to `requestStatus = CANCELLED` with `cancellationNotes` indicating auto-cancellation and `cancelledAt` timestamp.
+1. Updates consultation to `status = CANCELLED` with `cancellationNotes` indicating auto-cancellation and `cancelledAt` timestamp.
 2. Deletes tentative `SlotOfAppointment` records tied to the appointment.
 
 **Safety**: Per-record `try/catch` wrapping the transaction. Each consultation is processed independently. The transaction ensures the status update and slot release are atomic -- if either fails, neither is committed.
@@ -136,7 +136,7 @@ Both paths call the same core function exported from `scripts/appointments/`. Th
 | Invalid duration consultations          | Total slot duration does not match `consultationPlan.durationInHours` (1% tolerance) | N/A -- cancels |
 | Invalid duration subscriptions          | Scheduling period months does not match `subscriptionPlan.durationInMonths`          | N/A -- cancels |
 
-**Action**: Sets `requestStatus = CANCELLED` on affected records. Also deletes associated `SlotOfAppointment` records to free availability. Records already in terminal states (`CANCELLED`, `REJECTED`, `EXPIRED`) are excluded from processing.
+**Action**: Sets `status = CANCELLED` on affected records. Also deletes associated `SlotOfAppointment` records to free availability. Records already in terminal states (`CANCELLED`, `REJECTED`, `EXPIRED`) are excluded from processing.
 
 **Safety**: Each of the four sub-tasks has its own `try/catch`. The API route uses `crypto.timingSafeEqual` for authorization header comparison, preventing timing-based attacks. The `runAllCleanupTasks` function handles database disconnection in a `finally` block.
 

@@ -45,7 +45,7 @@
 // After consultation approval
 const consultation = await prisma.consultation.update({
   where: { id: consultationId },
-  data: { requestStatus: "APPROVED" },
+  data: { status: "APPROVED" },
 });
 
 // Immediately create channel
@@ -99,7 +99,7 @@ Combine both strategies based on entity type:
 
 ```typescript
 // Eager for paid/approved entities
-if (consultation.requestStatus === "APPROVED") {
+if (consultation.status === "APPROVED") {
   await createConsultationChannel(consultation.id);
 }
 

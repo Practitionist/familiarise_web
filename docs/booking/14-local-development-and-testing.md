@@ -130,7 +130,7 @@ npm run db:seed:validation
 npx prisma studio
 ```
 
-Prisma Studio lets you browse all tables, filter by fields like `isTentative`, `requestStatus`, and `appointmentType`, and inspect relationships.
+Prisma Studio lets you browse all tables, filter by fields like `isTentative`, `status`, and `appointmentType`, and inspect relationships.
 
 ---
 
@@ -139,14 +139,14 @@ Prisma Studio lets you browse all tables, filter by fields like `isTentative`, `
 ### a. Create and Approve a Consultation
 
 1. **Seed or create** a consultant with availability and a consultation plan.
-2. **Checkout**: Call `checkoutAction` with `appointmentType: "CONSULTATION"`, a valid `planId`, and `slotStartTimeInUTC`/`slotEndTimeInUTC` within the consultant's availability. Set `isMockPayment: true` for local dev.
-3. **Verify**: The consultation should have `requestStatus: "PENDING"` and a tentative appointment.
+2. **Checkout**: Call `checkoutAction` with `appointmentType: "CONSULTATION"`, a valid `planId`, and `startsAt`/`endsAt` within the consultant's availability. Set `isMockPayment: true` for local dev.
+3. **Verify**: The consultation should have `status: "PENDING"` and a tentative appointment.
 4. **Approve**: Use the consultant's dashboard Requests tab, or call `SlotAllocationService.allocate` directly with `mode: "requested"` to confirm the requested slots.
-5. **Result**: `requestStatus` transitions to `APPROVED`, `isTentative` is cleared on all slots.
+5. **Result**: `status` transitions to `APPROVED`, `isTentative` is cleared on all slots.
 
 ### b. Set Up a Subscription with Slot Allocation
 
-1. **Create subscription**: Checkout a subscription plan. This creates a subscription with `requestStatus: "PENDING"` and a placeholder appointment.
+1. **Create subscription**: Checkout a subscription plan. This creates a subscription with `status: "PENDING"` and a placeholder appointment.
 2. **Auto allocation**: Call `SlotAllocationService.allocate({ eventType: "subscription", eventId, mode: "auto" })`. The service finds consecutive slots across weeks within the scheduling period and creates one appointment per session.
 3. **Manual allocation**: Call with `mode: "manual"` and provide explicit `slots` array (ISO strings). Slots must be in multiples of `slotsPerCall` (e.g., 2 for 1-hour sessions).
 4. **Verify**: Check that `callsPerWeek` is not exceeded per Sunday-Saturday week. Use `SubscriptionValidationService.validateSubscriptionSlots` to validate before allocating.
@@ -162,7 +162,7 @@ Prisma Studio lets you browse all tables, filter by fields like `isTentative`, `
 
 1. **POST** to `/api/appointments/{appointmentId}/cancel` with optional `reason` and `notes`.
 2. **Verify**:
-   - Consultation/subscription: `requestStatus` set to `CANCELLED`, `cancellationReason` and `cancelledBy` recorded.
+   - Consultation/subscription: `status` set to `CANCELLED`, `cancellationReason` and `cancelledBy` recorded.
    - Webinar/class: `status` set to `CANCELLED`, `handleSlotOpening` called to notify waitlist.
    - Slots deleted (`slotOfAppointment.deleteMany`), then appointment deleted.
    - `notifyAppointmentCancelled` fired to both consultant and consultee.
@@ -172,7 +172,7 @@ Prisma Studio lets you browse all tables, filter by fields like `isTentative`, `
 1. **POST** to `/api/appointments/{appointmentId}/reschedule?type=SUBSCRIPTION` with optional `slotIds` array in the body.
    - No `slotIds`: marks **all** subscription slots as tentative (entire booking reschedule).
    - With `slotIds`: marks only specified slots as tentative (individual/multiple session reschedule).
-2. **Verify**: Affected slots have `isTentative = true`, subscription `requestStatus` reverts to `PENDING`.
+2. **Verify**: Affected slots have `isTentative = true`, subscription `status` reverts to `PENDING`.
 3. **Re-allocate**: Consultant selects new slots via the Requests tab (uses `mode: "requested"`).
 
 **24-hour restriction**: Rescheduling is blocked if any affected slot starts within 24 hours. The API returns a `400` with details.
@@ -259,7 +259,7 @@ curl -X GET http://localhost:3000/api/cleanup/{job-name} \
 | Endpoint                                   | Schedule                         | Purpose                                                                    |
 | ------------------------------------------ | -------------------------------- | -------------------------------------------------------------------------- |
 | `/api/cleanup/auto-complete-appointments`  | `0 * * * *` (hourly)             | Transitions appointments to `COMPLETED` after session ends (1-hour buffer) |
-| `/api/cleanup/tentative-slots`             | `0 */2 * * *` (every 2h)         | Deletes tentative slots older than 7 days with no successful payment       |
+| `/api/cleanup/tentative-slots`             | `0 */2 * * *` (every 2h)         | Deletes tentative slots older than 24 hours with no successful payment     |
 | `/api/cleanup/stale-pending-consultations` | `30 * * * *` (hourly at :30)     | Cleans up consultations stuck in `PENDING` state                           |
 | `/api/cleanup/invalid-appointments`        | `0 * * * *` (hourly)             | Detects and removes duplicate or invalid appointment records               |
 | `/api/cleanup/expire-stale-requests`       | `0 1 * * *` (daily at 01:00 UTC) | Expires unanswered consultation/subscription requests                      |

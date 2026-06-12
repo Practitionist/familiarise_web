@@ -375,8 +375,8 @@ const appointment = await prisma.appointment.create({
     appointmentType: "PODCAST_LIVE",
     slotsOfAppointment: {
       create: {
-        slotStartTimeInUTC: new Date("2025-10-15T18:00:00Z"),
-        slotEndTimeInUTC: new Date("2025-10-15T19:00:00Z"),
+        startsAt: new Date("2025-10-15T18:00:00Z"),
+        endsAt: new Date("2025-10-15T19:00:00Z"),
       },
     },
   },

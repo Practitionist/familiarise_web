@@ -224,7 +224,7 @@ flowchart TB
 | `app/api/cleanup/appointment-reminders/route.ts`            | appointmentReminder (cron)                                     |
 | `scripts/appointments/auto-complete-appointments.ts`        | appointmentCompleted (cron)                                    |
 | `app/api/slots/request-for-approval/route.ts`               | newBookingRequest                                              |
-| `app/api/events/subscriptions/`                             | subscriptionStarted, subscriptionCancelled                     |
+| `app/api/bookings/subscriptions/`                             | subscriptionStarted, subscriptionCancelled                     |
 | `app/api/trials/route.ts` + `[trialId]/route.ts`            | trialSession\* (4)                                             |
 | `app/api/user/support-tickets/route.ts`                     | supportTicketCreated                                           |
 | `app/api/staff/support-tickets/[id]/responses/route.ts`     | supportTicketResponse                                          |

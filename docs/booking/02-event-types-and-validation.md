@@ -11,7 +11,7 @@
 | **Scheduling period**    | None                      | Required [startDate, endDate]                            | None                      | Required [startDate, endDate]                               | None                             |
 | **Appointments created** | 1                         | 1 per call (many)                                        | 1                         | 1 per session (many)                                        | 1                                |
 | **Weekly limit**         | N/A                       | `callsPerWeek` (0-7)                                     | N/A                       | `meetingsPerWeek`                                           | N/A                              |
-| **Status field**         | `requestStatus`           | `requestStatus`                                          | `status`                  | `status`                                                    | `status` (TrialSessionStatus)    |
+| **Status field**         | `status`           | `status`                                          | `status`                  | `status`                                                    | `status` (TrialSessionStatus)    |
 | **Allocation modes**     | auto, manual, requested   | auto, manual, requested                                  | auto, manual              | auto, manual                                                | Consultant-scheduled             |
 | **Min duration**         | 0.5h                      | 0.5h per session                                         | 0.5h                      | 0.5h per session                                            | 0.5h (fixed)                     |
 | **Payment**              | Required                  | Required                                                 | Required                  | Required                                                    | Free                             |
@@ -244,7 +244,7 @@ Prisma enforces:
 
 - Foreign key relationships (appointment -> event, slot -> appointment)
 - NOT NULL constraints on required fields
-- Enum constraints (`AppointmentsType`, `RequestStatus`, `DayOfWeek`)
+- Enum constraints (`AppointmentsType`, `AppointmentStatus`, `DayOfWeek`)
 - All appointment creation runs inside a Prisma transaction with 60-second timeout
 
 ---
