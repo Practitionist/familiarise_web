@@ -2,7 +2,10 @@ import type { Tx } from "@/lib/prisma";
 import prisma from "../../../lib/prisma";
 import { postLedgerTxn } from "@/lib/payments/ledger/post";
 import { sumPaise } from "@/lib/payments/utils/money";
-import { isLegalDisputeTransition } from "@/lib/payments/dispute-status";
+import {
+  isLegalDisputeTransition,
+  mapDisputeStatus,
+} from "@/lib/payments/dispute-status";
 import { Prisma, PaymentGateway } from "@prisma/client";
 import crypto from "crypto";
 import { stripeClient } from "@/lib/payments/core/stripe";
@@ -1078,13 +1081,21 @@ export async function handleDisputeCreated(
       return;
     }
 
-    // Create dispute record
+    // Create dispute record. An unmapped gateway status falls back to the
+    // protective NEEDS_RESPONSE hold — at creation the safe error is to
+    // treat the dispute as live and hold earnings, never to drop it.
+    const createdStatus = mapDisputeStatus(status);
+    if (createdStatus === null) {
+      console.warn(
+        `Unknown dispute status "${status}" for ${disputeId} — defaulting to NEEDS_RESPONSE`,
+      );
+    }
     await tx.dispute.create({
       data: {
         amountPaise: amount,
         currency: toCurrencyEnum(currency),
         reason,
-        status: mapDisputeStatus(status),
+        status: createdStatus ?? "NEEDS_RESPONSE",
         disputeId,
         paymentGateway: gateway,
         dueBy: dueBy ? new Date(dueBy * 1000) : null,
@@ -1115,7 +1126,7 @@ export async function handleDisputeCreated(
       amount,
       currency,
       reason,
-      status: mapDisputeStatus(status),
+      status: createdStatus ?? "NEEDS_RESPONSE",
       dashboardUrl: `${getAppUrl()}/dashboard`,
     });
   });
@@ -1153,6 +1164,16 @@ export async function handleDisputeUpdated(
       }
 
       const mappedStatus = mapDisputeStatus(status);
+      // An unmapped status on the UPDATE path is skipped, not coerced: a
+      // default-to-NEEDS_RESPONSE here could legally mis-advance a
+      // warning-cluster dispute into the live cluster on a status we never
+      // understood. The reconcile cron re-reads the gateway later.
+      if (mappedStatus === null) {
+        console.warn(
+          `Unknown dispute status "${status}" for ${disputeId} — skipping update`,
+        );
+        return;
+      }
 
       // #776 — skip a redelivered no-op so the resolution side effects below (earnings
       // flips, applyOrgChargeback) don't re-run on a webhook retry.
@@ -1181,8 +1202,15 @@ export async function handleDisputeUpdated(
 
       console.log(`✅ Dispute ${disputeId} updated to status ${mappedStatus}`);
 
-      // M1 FIX: Release or refund earnings based on dispute resolution
-      if (mappedStatus === "WON" || mappedStatus === "WARNING_CLOSED") {
+      // M1 FIX: Release or refund earnings based on dispute resolution.
+      // CLOSED releases too: anything still HELD wasn't consumed by a refund
+      // (the refund cascade flips those rows to REFUNDED first), so the
+      // updateMany is a no-op exactly when money already moved.
+      if (
+        mappedStatus === "WON" ||
+        mappedStatus === "WARNING_CLOSED" ||
+        mappedStatus === "CLOSED"
+      ) {
         // Dispute resolved in platform's favor — release held earnings back to READY
         const released = await tx.consultantEarnings.updateMany({
           where: { paymentId: dispute.paymentId, status: "HELD" },
@@ -1304,6 +1332,7 @@ export async function handleDisputeUpdated(
         "LOST",
         "CHARGE_REFUNDED",
         "WARNING_CLOSED",
+        "CLOSED",
       ];
       if (resolvedStatuses.includes(mappedStatus)) {
         const disputePayment = await tx.payment.findUnique({
@@ -1443,38 +1472,6 @@ async function applyOrgChargeback(
   });
 }
 
-function mapDisputeStatus(
-  status: string,
-):
-  | "WARNING_NEEDS_RESPONSE"
-  | "WARNING_UNDER_REVIEW"
-  | "WARNING_CLOSED"
-  | "NEEDS_RESPONSE"
-  | "UNDER_REVIEW"
-  | "CHARGE_REFUNDED"
-  | "WON"
-  | "LOST" {
-  switch (status.toLowerCase()) {
-    case "warning_needs_response":
-      return "WARNING_NEEDS_RESPONSE";
-    case "warning_under_review":
-      return "WARNING_UNDER_REVIEW";
-    case "warning_closed":
-      return "WARNING_CLOSED";
-    case "needs_response":
-      return "NEEDS_RESPONSE";
-    case "under_review":
-      return "UNDER_REVIEW";
-    case "charge_refunded":
-      return "CHARGE_REFUNDED";
-    case "won":
-      return "WON";
-    case "lost":
-      return "LOST";
-    default:
-      return "NEEDS_RESPONSE";
-  }
-}
 
 // ============================================================================
 // Webhook Event Logging

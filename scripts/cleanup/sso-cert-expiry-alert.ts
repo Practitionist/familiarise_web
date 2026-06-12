@@ -11,7 +11,7 @@
  *
  * Daily dedup: if an audit row with the same action+provider was emitted
  * in the last 20 hours we skip, so running the cron twice in a day does
- * not double-alert. The cron itself runs once daily at 03:00 UTC.
+ * not double-alert. The cron itself runs once daily at 03:25 UTC.
  *
  * Scope:
  *   - Only SAML providers (OIDC uses discovery endpoints, cert rotation
@@ -28,7 +28,7 @@
  *   - jobs/cleanup/sso-cert-expiry-alert.ts (GitHub Actions wrapper)
  *   - app/api/cleanup/sso-cert-expiry-alert/route.ts (HTTP endpoint)
  *
- * Schedule: Daily at 08:30 IST (03:00 UTC). Runs on its own slot so
+ * Schedule: Daily at 08:55 IST (03:25 UTC; #709 minute map). Runs on its own slot so
  *           it does not overlap cleanup-abandoned-org-top-ups (07:30
  *           IST / 02:00 UTC), stale-invitations (08:00 IST / 02:30
  *           UTC), or the subscription cron (05:30 IST / 00:00 UTC).

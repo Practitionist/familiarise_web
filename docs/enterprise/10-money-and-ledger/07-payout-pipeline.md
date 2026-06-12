@@ -86,13 +86,13 @@ The table below maps each gateway state onto our `PayoutStatus` as `mapPayoutSta
 | `pending` | `PENDING` (`mapPayoutStatus`) / `PROCESSING` (crons) | inconsistent | approval-workflow only; we do not use it |
 | `scheduled` | unmapped | gap | falls through to default; we never schedule |
 | `processing` | `PROCESSING` | yes | the normal in-flight state |
-| `processed` | `COMPLETED` | yes | UTR now available via `payout.updated` |
+| `processed` | `COMPLETED` | yes | event carries the UTR; persisted to `gatewayUtr` before the `COMPLETED` flip |
 | `reversed` | `FAILED` (poll path) / `REVERSED` (webhook path) | lossy in the poller only | `mapPayoutStatus` still collapses a polled `reversed` to `FAILED`; the `payout.reversed` webhook handler now stamps the dedicated `REVERSED` status and posts the inverse journal (§3, #812) |
 | `rejected` | `FAILED` | lossy | approval/deadline reject indistinguishable from bank failure |
 | `cancelled` | `CANCELLED` | yes | manual cancel of a queued/scheduled payout |
 | `failed` | `FAILED` | yes | Current-Account partner-bank rejection |
 
-The UTR (Unique Transaction Reference) is the bank-rail receipt a host org uses to trace funds with its bank. It is **null** while a payout is `processing` and only becomes available once the beneficiary bank confirms the credit, delivered to us on the `payout.updated` webhook — immediately for IMPS/UPI, within roughly ninety seconds for NEFT. IMPS and UPI payouts are near-instant (a typical lifecycle of about 180 seconds); if a payout is still `processing` after that window it is most likely in NPCI's "deemed success" state and may take up to **T+3** working days to resolve. NEFT and RTGS run only during bank working hours and not on the second and fourth Saturdays, Sundays, or RBI holidays. `determinePayoutMode` auto-selects the rail by amount and account type: UPI for a VPA fund account, IMPS for a bank transfer up to ₹5,00,000, and NEFT above that; RTGS (minimum ₹2,00,000) is available but not auto-selected.
+The UTR (Unique Transaction Reference) is the bank-rail receipt a host org uses to trace funds with its bank. It is **null** while a payout is `processing` and only becomes available once the beneficiary bank confirms the credit — immediately for IMPS/UPI, within roughly ninety seconds for NEFT. Our pipeline extracts it from the `payout.processed` payload (the entity carries `utr` by then) and persists it to `gatewayUtr` before flipping the row to `COMPLETED`, so the notification and audit log always hold the canonical bank reference. IMPS and UPI payouts are near-instant (a typical lifecycle of about 180 seconds); if a payout is still `processing` after that window it is most likely in NPCI's "deemed success" state and may take up to **T+3** working days to resolve. NEFT and RTGS run only during bank working hours and not on the second and fourth Saturdays, Sundays, or RBI holidays. `determinePayoutMode` auto-selects the rail by amount and account type: UPI for a VPA fund account, IMPS for a bank transfer up to ₹5,00,000, and NEFT above that; RTGS (minimum ₹2,00,000) is available but not auto-selected.
 
 Every Create-Payout request carries an `X-Payout-Idempotency` header, mandatory since 15 March 2025. Our `generateIdempotencyKey` returns a deterministic `payout_<id>`, so a cron retry of the same payout always lands on the same RazorpayX idempotency slot and never creates a duplicate transfer. The cardinal rule on retries is to **reuse the original key**: retrying an in-flight payout with a fresh key makes RazorpayX treat it as a new payout and process both, double-paying the recipient. For that reason the live-submission path classifies gateway errors as permanent 4xx (mark `FAILED`, release earnings, never retry) or transient 5xx/network (re-throw so the cron retries with the same key), via `classifyGatewaySubmissionError` (`org-payout-service.ts`).
 
@@ -110,15 +110,15 @@ sequenceDiagram
   CR->>SV: processOrgPayout — PENDING to PROCESSING (live flag on)
   SV->>GW: createPayout (X-Payout-Idempotency payout_id, queue_if_low_balance)
   GW-->>SV: payout id, status processing (UTR null)
-  GW-->>WH: payout.updated — UTR populated
-  GW-->>WH: payout.processed
+  GW-->>WH: payout.processed — UTR populated
+  WH->>WH: persist gatewayUtr
   WH->>SV: markOrgPayoutCompleted — PROCESSING to COMPLETED
   SV->>L: postLedgerTxn(orgpayout:id) — Dr ORG_PAYABLE / Cr CASH + TDS_PAYABLE
 ```
 
 > **Post-completion reversal is now handled (#812), with one remaining poller caveat.** The two facts that previously made a `COMPLETED → reversed` bounce a silent no-op are fixed. (a) `PayoutStatus` now carries a dedicated `REVERSED` value, so a bank reversal after settlement is no longer collapsed into `FAILED` and the audit signal survives. (b) `markOrgPayoutReversed` now claims a row from **`COMPLETED`** (not only `PROCESSING`): it flips it to `REVERSED`, posts the exact inverse `ORG_PAYOUT` journal (`idempotencyKey = orgpayout-reversal:<id>`), re-opens the linked earnings to `READY`, and writes the `PAYOUT_REVERSED` audit entry — all in one transaction. The consultant rail mirrors this via `markConsultantPayoutReversed` (inverse `PAYOUT` journal, `payout-reversal:<id>`). The nightly `reconcile-ledgers` job also now checks both rails for a missing original `PAYOUT`/`ORG_PAYOUT` posting, keyed on the original posting's idempotencyKey so a reversal row cannot mask a missing original (#812/#813). 🟡 **Remaining caveat:** the gateway **poller** (`scripts/payouts/reconcile-payout-status.ts`) still only re-polls `[PENDING, PROCESSING]` and `mapPayoutStatus` still collapses a polled `reversed` to `FAILED`, so a post-completion reversal is caught by the **webhook** path, not the poller. A poller-side `COMPLETED → reversed` re-poll is still a sensible fast-follow before high-value (NEFT/RTGS) payouts go live.
 
-> 🟡 **Gap — UTR not persisted from `payout.updated` (no issue filed yet).** `OrganizationPayout` has a `gatewayUtr` column, but the reconciler reads only `payout.status` and never writes `payout.utr`, and our handler set does not list `payout.updated` (the event that carries the UTR). Until that is wired we cannot show a host org the bank reference for a completed payout.
+> **UTR persistence — resolved.** An earlier revision flagged that `gatewayUtr` was written nowhere. The webhook handler now extracts `utr` from the `payout.processed` entity and persists it before `markOrgPayoutCompleted` runs (`app/api/webhooks/utils.ts`, payout switch), so a host org can trace a completed payout with its bank. The gateway poller still reads only `payout.status`; the webhook is the UTR's delivery path, which is acceptable because the stuck-webhook sweeper re-drives missed deliveries.
 
 ---
 
@@ -130,7 +130,7 @@ The model carries every column the Indian payout needs. TDS and the MSME deadlin
 tdsSectionApplied String?   // internal 1961-Act label: "194J" | "194O" | "194C" (map to §393 codes at export)
 tdsAmountPaise    Int?
 mustPayByDate     DateTime? // MSME §15 15/45-day rule
-gatewayUtr        String?   // populated from payout.updated (see §3 gap)
+gatewayUtr        String?   // populated from the payout.processed payload (§3)
 dtaaRateApplied   Decimal?
 rbiPurposeCode    String?   // P0802 | P0807
 fxRateUsed        Decimal?

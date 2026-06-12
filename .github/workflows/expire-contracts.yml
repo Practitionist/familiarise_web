@@ -2,9 +2,10 @@ name: Expire Contracts
 
 on:
   schedule:
-    # 03:00 UTC = 08:30 IST. Quiet slot — no other crons fire here
-    # (avoids the 00:00 / 01:00 / 02:00 contention zones).
-    - cron: "0 3 * * *"
+    # 03:10 UTC = 08:40 IST. #709 — moved off the 03:00 4-way pile-up
+    # (stream-recordings / expired-recordings / sso-cert) onto its own minute;
+    # still after auto-renew-contracts (02:30) so renewals supersede first.
+    - cron: "10 3 * * *"
   workflow_dispatch: # Allow manual triggering
 
 jobs:
@@ -40,6 +41,6 @@ jobs:
 
       - name: Notify on failure
         if: failure()
-        run: |
-          echo "Contract-expiry cron failed"
-          # TODO: wire to #ops-alerts Slack channel.
+        env:
+          SLACK_OPS_WEBHOOK_URL: ${{ secrets.SLACK_OPS_WEBHOOK_URL }}
+        run: bash scripts/ci/notify-ops-failure.sh "expire-contracts"

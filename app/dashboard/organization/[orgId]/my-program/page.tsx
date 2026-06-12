@@ -173,8 +173,13 @@ export default async function MyProgramPage({
                   ? (pool?.creditBudgetPerCycle ?? null)
                   : null;
             const used = a.engagementsUsed;
+            // ceil, not round (#752) — "1 of 10,000 used" must read 1%, never
+            // a pool-looks-untouched 0%. cap=0 can't pass Zod (min 1) but a
+            // hand-written row must not render Infinity%.
             const pct =
-              cap === null ? null : Math.min(100, Math.round((used / cap) * 100));
+              cap === null || cap === 0
+                ? null
+                : Math.min(100, Math.ceil((used / cap) * 100));
             const remaining = cap === null ? null : Math.max(0, cap - used);
             const unitLabel =
               a.program.type === "CREDIT_POOL" ? "credits" : "sessions";

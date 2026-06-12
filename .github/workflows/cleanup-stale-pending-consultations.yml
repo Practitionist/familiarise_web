@@ -3,7 +3,7 @@ name: Cleanup Stale Pending Consultations
 on:
   schedule:
     # Run hourly
-    - cron: "30 * * * *"
+    - cron: "37 * * * *"
   workflow_dispatch: # Allow manual triggering
 
 jobs:
@@ -40,6 +40,6 @@ jobs:
 
       - name: Notify on failure
         if: failure()
-        run: |
-          echo "Stale pending consultations cleanup job failed"
-          # Add notification logic here (Slack, email, etc.)
+        env:
+          SLACK_OPS_WEBHOOK_URL: ${{ secrets.SLACK_OPS_WEBHOOK_URL }}
+        run: bash scripts/ci/notify-ops-failure.sh "cleanup-stale-pending-consultations"

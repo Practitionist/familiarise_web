@@ -42,7 +42,7 @@
 ┌─────────────────────┐              ┌─────────────────────┐
 │    Stripe API       │              │   Razorpay API      │
 │  - Refunds          │              │   - Refunds         │
-│  - Disputes         │              │   - (No dispute API)│
+│  - Disputes         │              │   - Disputes        │
 └─────────────────────┘              └─────────────────────┘
 ```
 

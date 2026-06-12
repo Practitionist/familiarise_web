@@ -5,7 +5,7 @@ name: Sweep Orphaned Top-up Captures
 
 on:
   schedule:
-    - cron: "*/30 * * * *"
+    - cron: "23-59/30 * * * *"
   workflow_dispatch:
 
 jobs:
@@ -41,5 +41,6 @@ jobs:
 
       - name: Notify on failure
         if: failure()
-        run: |
-          echo "Captured-top-up sweep job failed"
+        env:
+          SLACK_OPS_WEBHOOK_URL: ${{ secrets.SLACK_OPS_WEBHOOK_URL }}
+        run: bash scripts/ci/notify-ops-failure.sh "sweep-orphaned-topup-captures"

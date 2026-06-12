@@ -3,7 +3,7 @@ title: Familiarise Enterprise — documentation
 band: index
 audience: sde1
 status: live
-last-reviewed: 2026-06-05
+last-reviewed: 2026-06-12
 ---
 
 # Familiarise Enterprise — documentation
@@ -97,7 +97,7 @@ The table below lists every band in reading order, with the documents each one c
 | `50-operations/` | **Operations** | API reference, route migration, runbooks, monitoring, system events, live-payout go-live |
 | `60-scenarios-and-verdicts/` | **Scenarios / verdict / partners** | worked scenarios, harness verdict, design-partner set |
 | `70-design-decisions/` | **Design decisions (ADRs)** | why the ledger, money representation, payouts, auth, and webhook designs are what they are |
-| `90-audits/` | **Audit artifacts (annex)** | readiness audit, subsystem checklist, verification guide, simplification proposal, superseded 2026-05-02 production-grade checklist |
+| `90-audits/` | **Audit artifacts (annex)** | readiness audit, subsystem checklist, verification guide, simplification proposal, superseded 2026-05-02 production-grade checklist, 2026-06-12 backlog triage + residuals register |
 
 ---
 
@@ -214,6 +214,7 @@ These are point-in-time audit artifacts; their `last-reviewed` dates intentional
 | 03 | [verification-guide](90-audits/03-verification-guide.md) | how to verify the enterprise subsystem |
 | 04 | [simplification-proposal](90-audits/04-simplification-proposal.md) | scope-simplification proposal |
 | 05 | [production-grade-checklist-2026-05-02](90-audits/05-production-grade-checklist-2026-05-02.md) | superseded 2026-05-02 production-grade checklist |
+| 06 | [backlog-triage-2026-06-12](90-audits/06-backlog-triage-2026-06-12.md) | 61-issue backlog triage — dispositions, evidence, and the launch-residuals register |
 
 ### The complete guide
 

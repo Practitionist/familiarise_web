@@ -14,7 +14,7 @@ name: Release PENDING_TRUST Earnings
 
 on:
   schedule:
-    - cron: "30 * * * *"
+    - cron: "42 * * * *"
   workflow_dispatch: # Allow manual triggering
 
 jobs:

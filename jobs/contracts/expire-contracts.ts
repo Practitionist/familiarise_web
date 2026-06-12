@@ -2,7 +2,7 @@
  * Cron: transition `Contract.status` from `ACTIVE` to `EXPIRED` for any
  * contract whose `effectiveTo` has passed.
  *
- * Schedule: daily at 03:00 IST (`.github/workflows/expire-contracts.yml`).
+ * Schedule: daily at 03:10 UTC / 08:40 IST (`.github/workflows/expire-contracts.yml`, #709 minute map).
  * Quiet slot — does not race with the 00:00 / 01:00 / 02:00 cron clusters.
  *
  * Soft enforcement: contract expiry does NOT take the org offline. The

@@ -47,6 +47,6 @@ jobs:
 
       - name: Notify on failure
         if: failure()
-        run: |
-          echo "MSME deadline alerts cron failed"
-          # TODO: wire to #ops-alerts Slack channel.
+        env:
+          SLACK_OPS_WEBHOOK_URL: ${{ secrets.SLACK_OPS_WEBHOOK_URL }}
+        run: bash scripts/ci/notify-ops-failure.sh "msme-payment-alerts"

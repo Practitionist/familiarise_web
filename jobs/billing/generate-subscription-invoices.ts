@@ -1,7 +1,7 @@
 /**
  * Cron: generate BillingSubscription-driven invoices — REAL (Issue #681).
  *
- * Schedule: daily at 01:00 IST.
+ * Schedule: daily at 01:00 UTC (06:30 IST).
  * Scope: every `BillingSubscription` with `nextInvoiceDate <= now`.
  *
  * Concurrency:

@@ -12,7 +12,8 @@
  *   - 194-O takes precedence over 194J in mixed-flow cases (platform-
  *     as-intermediary precedence per CBDT).
  *
- * PAN fallback (Section 206AA):
+ * PAN fallback (old Section 206AA — Section 397(2) of the IT Act 2025
+ * for deductions on/after 1 Apr 2026):
  *   - If `panNumber` is null OR doesn't match /^[A-Z]{5}[0-9]{4}[A-Z]$/,
  *     withhold at the 20% punitive rate. This wins over both DTAA and
  *     section default (it's the higher-of rule).
@@ -72,12 +73,13 @@ export const TDS_SECTION_DEFAULTS: Record<string, number> = {
   "194C": 0.02,
 };
 
-/** Section 206AA punitive rate when PAN is missing/malformed (applies to 194J/194C). */
+/** No-PAN punitive rate (old §206AA, now §397(2) IT Act 2025) — applies to 194J/194C. */
 export const PAN_FALLBACK_RATE = 0.2;
 
 /**
- * #771 P0-1 — Section 194-O carries its OWN no-PAN rate of 5%, a special
- * carve-out, NOT the 20% of 206AA. Applied when the section is 194-O and PAN is
+ * #771 P0-1 — the e-commerce (194-O) no-PAN rate is 5%, not the generic 20%.
+ * Under the IT Act 2025 both live in §397(2): 20% default with an explicit 5%
+ * e-commerce carve-out. Applied when the section is 194-O and PAN is
  * missing/invalid.
  */
 export const NO_PAN_RATE_194O = 0.05;

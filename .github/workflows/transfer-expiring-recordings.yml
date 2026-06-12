@@ -3,7 +3,7 @@ name: Transfer Expiring Recordings
 on:
   schedule:
     # Run every 6 hours
-    - cron: "0 */6 * * *"
+    - cron: "58 */6 * * *"
   workflow_dispatch: # Allow manual triggering
 
 jobs:
@@ -44,5 +44,6 @@ jobs:
 
       - name: Notify on failure
         if: failure()
-        run: |
-          echo "Transfer expiring recordings job failed"
+        env:
+          SLACK_OPS_WEBHOOK_URL: ${{ secrets.SLACK_OPS_WEBHOOK_URL }}
+        run: bash scripts/ci/notify-ops-failure.sh "transfer-expiring-recordings"

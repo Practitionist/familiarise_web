@@ -2,10 +2,10 @@ name: DPDP DataBreach 72h Deadline Alerts
 
 on:
   schedule:
-    # Hourly at :15 — the 72-hour DPDP reporting deadline is sharp;
-    # daily would risk crossing the cutoff between runs. The :15 slot
-    # is free across the existing cron grid.
-    - cron: "15 * * * *"
+    # Hourly at :27 — the 72-hour DPDP reporting deadline is sharp;
+    # daily would risk crossing the cutoff between runs. The :27 slot
+    # is free across the cron grid (#709 minute map).
+    - cron: "27 * * * *"
   workflow_dispatch:
 
 jobs:
@@ -47,6 +47,6 @@ jobs:
 
       - name: Notify on failure
         if: failure()
-        run: |
-          echo "DataBreach deadline alerts cron failed"
-          # TODO: wire to #ops-alerts Slack channel.
+        env:
+          SLACK_OPS_WEBHOOK_URL: ${{ secrets.SLACK_OPS_WEBHOOK_URL }}
+        run: bash scripts/ci/notify-ops-failure.sh "databreach-deadline-alerts"
