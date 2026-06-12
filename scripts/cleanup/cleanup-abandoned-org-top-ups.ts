@@ -22,7 +22,7 @@
  *   - jobs/cleanup/cleanup-abandoned-org-top-ups.ts (GitHub Actions wrapper)
  *   - app/api/cleanup/abandoned-org-top-ups/route.ts (HTTP endpoint)
  *
- * Schedule: Daily at 02:00 UTC (must NOT overlap subscription-cron at 00:00 UTC)
+ * Schedule: Daily at 02:00 UTC (must NOT overlap generate-subscription-invoices at 01:00 UTC)
  */
 
 import prisma from "../../lib/prisma";

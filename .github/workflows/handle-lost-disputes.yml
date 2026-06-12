@@ -40,7 +40,6 @@ jobs:
 
       - name: Notify on failure
         if: failure()
-        run: |
-          echo "Lost dispute handler failed or found critical cases"
-          # Add notification logic here (Slack, email, etc.)
-          # Critical: Notify if earnings were already paid when dispute lost
+        env:
+          SLACK_OPS_WEBHOOK_URL: ${{ secrets.SLACK_OPS_WEBHOOK_URL }}
+        run: bash scripts/ci/notify-ops-failure.sh "handle-lost-disputes"

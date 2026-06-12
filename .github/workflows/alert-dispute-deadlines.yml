@@ -40,6 +40,6 @@ jobs:
 
       - name: Notify on critical disputes
         if: failure()
-        run: |
-          echo "CRITICAL: Dispute deadlines require immediate attention!"
-          # Add notification logic here (Slack, email, PagerDuty, etc.)
+        env:
+          SLACK_OPS_WEBHOOK_URL: ${{ secrets.SLACK_OPS_WEBHOOK_URL }}
+        run: bash scripts/ci/notify-ops-failure.sh "alert-dispute-deadlines"

@@ -11,6 +11,7 @@
 
 import {
   isLegalDisputeTransition,
+  mapDisputeStatus,
   TERMINAL_DISPUTE_STATUSES,
 } from "@/lib/payments/dispute-status";
 
@@ -52,5 +53,26 @@ describe("isLegalDisputeTransition", () => {
   it("stays idempotent on same-status redelivery", () => {
     expect(isLegalDisputeTransition("CLOSED", "CLOSED")).toBe(true);
     expect(isLegalDisputeTransition("UNDER_REVIEW", "UNDER_REVIEW")).toBe(true);
+  });
+});
+
+describe("mapDisputeStatus", () => {
+  it("maps Razorpay's terminal `closed` to CLOSED, not a live state", () => {
+    expect(mapDisputeStatus("closed")).toBe("CLOSED");
+  });
+
+  it("maps Razorpay's opening `open` explicitly to NEEDS_RESPONSE", () => {
+    expect(mapDisputeStatus("open")).toBe("NEEDS_RESPONSE");
+  });
+
+  it("returns null for unknown statuses instead of coercing to a live state", () => {
+    expect(mapDisputeStatus("prevented")).toBeNull();
+    expect(mapDisputeStatus("some_future_status")).toBeNull();
+    expect(mapDisputeStatus("")).toBeNull();
+  });
+
+  it("is case-insensitive on gateway casing drift", () => {
+    expect(mapDisputeStatus("CLOSED")).toBe("CLOSED");
+    expect(mapDisputeStatus("Under_Review")).toBe("UNDER_REVIEW");
   });
 });

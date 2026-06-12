@@ -69,6 +69,10 @@ jobs:
           echo "## Waitlist Reminder Processing Complete" >> $GITHUB_STEP_SUMMARY
           echo "Sent 12-hour expiration reminders to waitlist users." >> $GITHUB_STEP_SUMMARY
 
+      # Deliberate divergence from notify-ops-failure.sh (the Slack money-cron
+      # pager): waitlist failures are product-ops triage, not money-path
+      # incidents, and the GitHub-issue thread keeps per-failure context a
+      # pager message would drop.
       - name: Notify on failure
         if: steps.run_script.outcome == 'failure'
         uses: actions/github-script@v7

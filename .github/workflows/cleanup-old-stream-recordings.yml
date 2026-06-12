@@ -28,5 +28,8 @@ jobs:
       - run: npm ci
       - run: npx prisma generate
       - run: npx tsx jobs/cleanup/cleanup-old-stream-recordings.ts
-      - if: failure()
-        run: echo "Stream retention sweep failed"
+      - name: Notify on failure
+        if: failure()
+        env:
+          SLACK_OPS_WEBHOOK_URL: ${{ secrets.SLACK_OPS_WEBHOOK_URL }}
+        run: bash scripts/ci/notify-ops-failure.sh "cleanup-old-stream-recordings"

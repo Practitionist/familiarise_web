@@ -693,10 +693,11 @@ model Invitation {
   @@index([organizationId, status])
   // Supports the dedup pre-check (orgId + email + status="pending")
   // before INSERT. The invariant — "at most one pending invite per
-  // (org, email)" — is DB-enforced by the partial unique index
+  // (org, lower(email))" — is DB-enforced by the partial unique index
   // `invitations_org_email_pending_key` in prisma/sql/check-constraints.sql
-  // (#747/#685); the Serializable transaction in invitations/route.ts stays
-  // as the first line. Migrate to native `@@unique(..., where:)` once the
+  // (#747/#685); the POST handler lowercases before write and the
+  // Serializable transaction in invitations/route.ts stays as the first
+  // line. Migrate to native `@@unique(..., where:)` once the
   // Prisma `partialIndexes` preview (buggy at 7.7.0 — prisma/prisma#29263,
   // #29415) reaches stable.
   @@index([organizationId, email, status])

@@ -40,8 +40,6 @@ jobs:
 
       - name: Notify on critical findings
         if: failure()
-        run: |
-          echo "CRITICAL: Orphaned payments detected!"
-          echo "Customers were charged but have no appointment."
-          echo "Manual recovery is required."
-          # Add notification logic here (Slack, email, etc.)
+        env:
+          SLACK_OPS_WEBHOOK_URL: ${{ secrets.SLACK_OPS_WEBHOOK_URL }}
+        run: bash scripts/ci/notify-ops-failure.sh "alert-orphaned-payments"

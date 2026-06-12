@@ -44,5 +44,6 @@ jobs:
 
       - name: Notify on failure
         if: failure()
-        run: |
-          echo "Transfer expiring recordings job failed"
+        env:
+          SLACK_OPS_WEBHOOK_URL: ${{ secrets.SLACK_OPS_WEBHOOK_URL }}
+        run: bash scripts/ci/notify-ops-failure.sh "transfer-expiring-recordings"

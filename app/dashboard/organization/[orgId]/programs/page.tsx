@@ -1553,8 +1553,10 @@ function ManageProgramDialog({
         </div>
 
         {/* #752 — never-used programs (typo'd cap, wrong contract) are
-            deletable; anything with assignments stays terminate-only. */}
-        {!assignments.isLoading && assignmentList.length === 0 && (
+            deletable; anything with assignments stays terminate-only.
+            isSuccess (not !isLoading): a failed assignments read must not
+            expose the CTA on an unverified zero. */}
+        {assignments.isSuccess && assignmentList.length === 0 && (
           <div className="space-y-2 rounded-md border border-red-200 p-4">
             <h4 className="text-sm font-semibold text-red-700">
               Delete program

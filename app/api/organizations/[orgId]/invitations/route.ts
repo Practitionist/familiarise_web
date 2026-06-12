@@ -111,7 +111,11 @@ export async function POST(
       { status: 400 },
     );
   }
-  const { email, role, expiresInDays } = parsed.data;
+  const { role, expiresInDays } = parsed.data;
+  // Normalize before any read or write: the accept flow compares lowercased
+  // emails and the sidecar unique index dedups on lower(email), so a
+  // mixed-case duplicate must not slip past the pre-check or the insert.
+  const email = parsed.data.email.trim().toLowerCase();
 
   // OWNER role gate (#789): only an OWNER can invite another OWNER. Without it
   // a MAINTAINER could invite an OWNER and, once accepted, gain the
@@ -167,11 +171,11 @@ export async function POST(
   // otherwise both observe `existing = null` under the default Read
   // Committed isolation and both INSERT, leaving two pending rows.
   //
-  // TODO(infra/partial-unique): once Prisma graduates the `partialIndexes`
-  // preview feature to stable we can lean on a true partial unique
-  // constraint in schema.prisma (see Invitation model) and demote this
-  // back to the default isolation level. Tracked in:
-  //   https://github.com/Practitionist/familiarise_web/issues/685
+  // The invariant is also DB-enforced (#747/#685): a partial unique index
+  // on (organizationId, lower(email)) WHERE status='pending' lives in
+  // prisma/sql/check-constraints.sql. The Serializable tx stays as the
+  // first line so the common case returns the typed 409 instead of a
+  // surfaced P2002.
   let wasExisting = false;
   let invitation;
   try {

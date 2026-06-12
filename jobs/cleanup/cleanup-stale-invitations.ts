@@ -4,7 +4,7 @@
  * Thin wrapper around scripts/cleanup/cleanup-stale-invitations.ts.
  * Adds GitHub Actions-specific outputs and error handling.
  *
- * Runs daily at 08:00 IST (02:30 UTC) via
+ * Runs daily at 08:10 IST (02:40 UTC; #709 minute map) via
  * .github/workflows/cleanup-stale-invitations.yml — offset from
  * cleanup-abandoned-org-top-ups at 07:30 IST (02:00 UTC) to avoid
  * Prisma connection contention.

@@ -73,7 +73,7 @@ The audit-series issues were executed across the v0–v4 trains and verified her
 | #721 OrgContextFilter | Mounted and wired on five surfaces (consultant appointments/planner/requests/documents, consultee appointments); the filter value drives the query params. |
 | #722 seed PaymentLeg mismatch | Premise obsolete: the seed rewrite under #771/#773 removed org-scoped seeded Payments entirely, and the reconcile LED-3 sweep only walks org-scoped payments, so a fresh seed has nothing to flag. |
 
-### 2.3 Done inside this PR (5)
+### 2.3 Done inside this PR (6)
 
 | Issue | What shipped here |
 | --- | --- |

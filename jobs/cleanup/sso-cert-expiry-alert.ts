@@ -3,9 +3,9 @@
  *
  * Thin wrapper around scripts/cleanup/sso-cert-expiry-alert.ts.
  *
- * Runs daily at 08:30 IST (03:00 UTC) via
+ * Runs daily at 08:55 IST (03:25 UTC; #709 minute map) via
  * .github/workflows/sso-cert-expiry-alert.yml — slot picked to avoid
- * overlap with the 07:30, 08:00, and 09:30-IST cron windows.
+ * overlap with the 07:30, 08:10, and 09:30-IST cron windows.
  */
 
 import fs from "fs";

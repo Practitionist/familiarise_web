@@ -97,7 +97,7 @@ The table below lists every band in reading order, with the documents each one c
 | `50-operations/` | **Operations** | API reference, route migration, runbooks, monitoring, system events, live-payout go-live |
 | `60-scenarios-and-verdicts/` | **Scenarios / verdict / partners** | worked scenarios, harness verdict, design-partner set |
 | `70-design-decisions/` | **Design decisions (ADRs)** | why the ledger, money representation, payouts, auth, and webhook designs are what they are |
-| `90-audits/` | **Audit artifacts (annex)** | readiness audit, subsystem checklist, verification guide, simplification proposal, superseded 2026-05-02 production-grade checklist |
+| `90-audits/` | **Audit artifacts (annex)** | readiness audit, subsystem checklist, verification guide, simplification proposal, superseded 2026-05-02 production-grade checklist, 2026-06-12 backlog triage + residuals register |
 
 ---
 

@@ -153,6 +153,11 @@ await prisma.dispute.update({
 - No transaction wrapping (unlike refunds)
 - External API call is outside any transaction
 - Evidence submission doesn't have race condition risks
+- The Stripe-only gate in the excerpt above mirrors the current code
+  (`app/api/payments/disputes/route.ts`): Razorpay now exposes contest/accept
+  APIs (see the Razorpay section below), but our evidence-submission route is
+  not wired to them yet — that wiring is tracked in the launch-residuals
+  register (#863)
 
 ---
 

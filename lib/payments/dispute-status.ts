@@ -55,3 +55,58 @@ export function isLegalDisputeTransition(
   if (TERMINAL_DISPUTE_STATUSES.includes(from)) return false;
   return ALLOWED[from]?.includes(to) ?? false;
 }
+
+/**
+ * Collapse a raw gateway dispute status (Razorpay/Stripe vocabulary) onto
+ * our DisputeStatus enum. Lives next to the transition guard so the mapping
+ * and the machine evolve together (and stay unit-testable without the
+ * webhook module graph).
+ */
+export function mapDisputeStatus(
+  status: string,
+):
+  | "WARNING_NEEDS_RESPONSE"
+  | "WARNING_UNDER_REVIEW"
+  | "WARNING_CLOSED"
+  | "NEEDS_RESPONSE"
+  | "UNDER_REVIEW"
+  | "CHARGE_REFUNDED"
+  | "WON"
+  | "LOST"
+  | "CLOSED"
+  | null {
+  switch (status.toLowerCase()) {
+    case "warning_needs_response":
+      return "WARNING_NEEDS_RESPONSE";
+    case "warning_under_review":
+      return "WARNING_UNDER_REVIEW";
+    case "warning_closed":
+      return "WARNING_CLOSED";
+    // Razorpay opens a dispute as `open`; it is the same live state as
+    // Stripe's needs_response on our machine.
+    case "open":
+    case "needs_response":
+      return "NEEDS_RESPONSE";
+    case "under_review":
+      return "UNDER_REVIEW";
+    case "charge_refunded":
+      return "CHARGE_REFUNDED";
+    case "won":
+      return "WON";
+    case "lost":
+      return "LOST";
+    // Razorpay `closed` is its own terminal: proceedings ended without a
+    // win/loss verdict (refund issued or details provided). Without this
+    // case it fell to `default` and a resolved dispute re-entered
+    // NEEDS_RESPONSE — or was rejected as a backward transition and never
+    // reached a terminal state.
+    case "closed":
+      return "CLOSED";
+    // An unmapped status must not silently coerce into a live state — the
+    // update path skips it (a coerced NEEDS_RESPONSE could mis-advance a
+    // warning-cluster dispute); the create path falls back to the
+    // protective NEEDS_RESPONSE hold explicitly at the call site.
+    default:
+      return null;
+  }
+}

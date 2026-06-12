@@ -2,7 +2,7 @@
  * #779 §A — Cron: auto-renew expiring contracts.
  *
  * Schedule: daily at 02:30 UTC (`.github/workflows/auto-renew-contracts.yml`)
- * — 30 min BEFORE expire-contracts.yml (03:00 UTC). Renewal must win the race
+ * — 40 min BEFORE expire-contracts.yml (03:10 UTC). Renewal must win the race
  * with expiry: we stamp the RENEWAL successor + flip the old contract to
  * EXPIRED here, so by the time expire-contracts runs there's nothing left for
  * it to expire (its claim gates on status=ACTIVE, which we've already moved).
