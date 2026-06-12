@@ -10,7 +10,7 @@ import {
   Appointment,
   AppointmentsType,
   Prisma,
-  RequestStatus,
+  AppointmentStatus,
   ScheduleType,
   SlotOfAppointment,
 } from "@prisma/client";
@@ -1784,7 +1784,7 @@ export class SlotAllocationService {
       case "consultation":
         await transitionConsultationRequest(tx, {
           where: { id: eventId },
-          to: RequestStatus.APPROVED,
+          to: AppointmentStatus.APPROVED,
           fromIn: ALLOCATION_APPROVABLE_FROM,
         });
         break;
@@ -1792,7 +1792,7 @@ export class SlotAllocationService {
       case "subscription":
         await transitionSubscriptionRequest(tx, {
           where: { id: eventId },
-          to: RequestStatus.APPROVED,
+          to: AppointmentStatus.APPROVED,
           fromIn: ALLOCATION_APPROVABLE_FROM,
           data: {
             // FIX: Only set schedulingPeriod if not already configured

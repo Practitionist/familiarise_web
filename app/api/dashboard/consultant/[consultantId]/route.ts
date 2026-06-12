@@ -75,7 +75,7 @@ const appointmentInclude = {
       },
       schedulingPeriodStartsAt: true,
       schedulingPeriodEndsAt: true,
-      requestStatus: true,
+      status: true,
     },
   },
   webinar: {
@@ -350,13 +350,13 @@ export async function GET(
             {
               consultation: {
                 consultationPlan: { consultantProfileId },
-                requestStatus: "APPROVED",
+                status: "APPROVED",
               },
             },
             {
               subscription: {
                 subscriptionPlan: { consultantProfileId },
-                requestStatus: "APPROVED",
+                status: "APPROVED",
               },
             },
             {
@@ -411,7 +411,7 @@ export async function GET(
               id: consultantProfileId,
             },
           },
-          requestStatus: "PENDING",
+          status: "PENDING",
         },
         include: consultationInclude,
         orderBy: {
@@ -424,7 +424,7 @@ export async function GET(
           subscriptionPlan: {
             consultantProfileId,
           },
-          requestStatus: "PENDING",
+          status: "PENDING",
         },
         include: subscriptionInclude,
         orderBy: {
@@ -553,7 +553,7 @@ export async function GET(
                 consultantProfile:
                   appointment.consultation.consultationPlan.consultantProfile,
               },
-              requestStatus: appointment.consultation.requestStatus,
+              status: appointment.consultation.status,
               requestedBy: {
                 id: appointment.consultation.requestedBy?.id ?? "",
                 user: {
@@ -573,7 +573,7 @@ export async function GET(
                 consultantProfile:
                   appointment.subscription.subscriptionPlan.consultantProfile,
               },
-              requestStatus: appointment.subscription.requestStatus,
+              status: appointment.subscription.status,
               requestedBy: {
                 id: appointment.subscription.requestedBy?.id ?? "",
                 user: {

@@ -217,8 +217,8 @@ export async function GET(
           return true;
         })
         .map((slot) => ({
-          slotStartTimeInUTC: slot.startsAt,
-          slotEndTimeInUTC: slot.endsAt,
+          startsAt: slot.startsAt,
+          endsAt: slot.endsAt,
         })),
     );
 
@@ -282,9 +282,9 @@ export async function GET(
       .map((slot) => ({
         id: slot.id,
         dayOfWeekforStartTimeInUTC: slot.startDay,
-        slotStartTimeInUTC: minuteUtcToDate(slot.startTimeUtc, referenceDate),
+        startsAt: minuteUtcToDate(slot.startTimeUtc, referenceDate),
         dayOfWeekforEndTimeInUTC: slot.endDay,
-        slotEndTimeInUTC: minuteUtcToDate(slot.endTimeUtc, referenceDate),
+        endsAt: minuteUtcToDate(slot.endTimeUtc, referenceDate),
       }));
 
     const customSlots: CustomSlot[] = consultant.slotsOfAvailabilityCustom
@@ -349,8 +349,8 @@ export async function GET(
       })
       .map((slot) => ({
         id: slot.id,
-        slotStartTimeInUTC: slot.startsAt,
-        slotEndTimeInUTC: slot.endsAt,
+        startsAt: slot.startsAt,
+        endsAt: slot.endsAt,
       }));
 
     // Apply schedule type filtering based on consultant's preference

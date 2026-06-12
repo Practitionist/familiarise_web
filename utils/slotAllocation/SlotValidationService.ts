@@ -9,7 +9,7 @@ import prisma, { type PrismaLike } from "@/lib/prisma";
 import {
   PrismaClient,
   Prisma,
-  RequestStatus,
+  AppointmentStatus,
   ScheduleType,
 } from "@prisma/client";
 import {
@@ -187,8 +187,8 @@ export class SlotValidationService {
    * - With range check: Both slots properly detected as conflicts
    *
    * DATABASE QUERY LOGIC:
-   * - slotStartTimeInUTC < slotEnd: Existing slot starts before proposed ends
-   * - slotEndTimeInUTC > slot: Existing slot ends after proposed starts
+   * - startsAt < slotEnd: Existing slot starts before proposed ends
+   * - endsAt > slot: Existing slot ends after proposed starts
    * - Together: Detects ANY time period overlap
    */
   /**
@@ -296,9 +296,9 @@ export class SlotValidationService {
         // FIX: Check if event is APPROVED_PENDING_PAYMENT with expired payment
         // If payment expired, slot is actually free (orphaned payment bug fix)
         const pendingStatus =
-          existingAppointment.consultation?.requestStatus ??
-          existingAppointment.subscription?.requestStatus;
-        if (pendingStatus === RequestStatus.APPROVED_PENDING_PAYMENT) {
+          existingAppointment.consultation?.status ??
+          existingAppointment.subscription?.status;
+        if (pendingStatus === AppointmentStatus.APPROVED_PENDING_PAYMENT) {
           const payment = existingAppointment.payment?.[0];
           if (payment?.expiresAt) {
             const now = new Date();

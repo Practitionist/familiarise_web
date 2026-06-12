@@ -9,14 +9,17 @@ import {
   AppointmentsType,
   PaymentStatus,
   Prisma,
-  RequestStatus,
+  AppointmentStatus,
 } from "@prisma/client";
 import { calculateSubscriptionEndDate } from "@/utils/dateUtils";
 import { buildOccupiedAppointmentFilter } from "@/utils/slotAllocation/occupancyPolicy";
 import { REQUEST_ALLOWED_FROM } from "@/lib/booking/transitions";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { recordSystemError } from "@/lib/enterprise/system-events";
-import { validateWebhookMetadata } from "@/schemas/webhooks/metadata";
+import {
+  normalizeLegacySlotKeys,
+  validateWebhookMetadata,
+} from "@/schemas/webhooks/metadata";
 import { ZodError } from "zod";
 import { sendPaymentSuccessEmail, sendPaymentFailedEmail } from "@/lib/email";
 import {
@@ -77,8 +80,8 @@ type PaymentWithUser = MoneyAsNumber<
  */
 interface ConsultationData {
   planId: string;
-  slotStartTimeInUTC: string;
-  slotEndTimeInUTC: string;
+  startsAt: string;
+  endsAt: string;
   notes?: string;
   consulteeProfileId: string;
   userId: string;
@@ -89,8 +92,8 @@ interface ConsultationData {
  */
 interface SubscriptionData {
   planId: string;
-  slotStartTimeInUTC?: string;
-  slotEndTimeInUTC?: string;
+  startsAt?: string;
+  endsAt?: string;
   schedulingPeriodStartsAt?: string;
   schedulingPeriodEndsAt?: string;
   notes?: string;
@@ -128,8 +131,13 @@ interface EventData {
  */
 export async function handlePaymentSuccess(
   paymentIntentId: string,
-  metadata: Record<string, string>,
+  rawMetadata: Record<string, string>,
 ): Promise<void> {
+  // #679 transition dual-read (see normalizeLegacySlotKeys) — in-flight
+  // Razorpay orders created pre-rename replay webhooks with legacy slot
+  // keys; normalize ONCE here so validation AND the legacy create flow
+  // read the same new-key shape.
+  const metadata = normalizeLegacySlotKeys(rawMetadata);
   // C1 FIX: Split into two phases:
   //   Phase 1 (transaction): Critical payment + appointment processing
   //   Phase 2 (post-tx): Earnings, invoice, waitlist, notifications
@@ -784,8 +792,8 @@ async function createAppointmentFromWebhook(
     appointmentType,
     planId,
     eventId,
-    slotStartTimeInUTC,
-    slotEndTimeInUTC,
+    startsAt,
+    endsAt,
     schedulingPeriodStartsAt,
     schedulingPeriodEndsAt,
     notes,
@@ -804,8 +812,8 @@ async function createAppointmentFromWebhook(
     case AppointmentsType.CONSULTATION:
       appointment = await createConsultation(tx, {
         planId,
-        slotStartTimeInUTC,
-        slotEndTimeInUTC,
+        startsAt,
+        endsAt,
         notes,
         consulteeProfileId,
         userId,
@@ -826,8 +834,8 @@ async function createAppointmentFromWebhook(
       );
       appointment = await createSubscription(tx, {
         planId,
-        slotStartTimeInUTC,
-        slotEndTimeInUTC,
+        startsAt,
+        endsAt,
         schedulingPeriodStartsAt,
         schedulingPeriodEndsAt,
         notes,
@@ -863,7 +871,7 @@ async function createConsultation(tx: Tx, data: ConsultationData) {
   const consultation = await tx.consultation.create({
     data: {
       consultationPlanId: data.planId,
-      requestStatus: RequestStatus.PENDING,
+      status: AppointmentStatus.PENDING,
       requestedById: data.consulteeProfileId,
       requestNotes: data.notes,
       bookingSource: "DIRECT_CHECKOUT",
@@ -879,8 +887,8 @@ async function createConsultation(tx: Tx, data: ConsultationData) {
       consultationId: consultation.id,
       slotsOfAppointment: {
         create: {
-          startsAt: new Date(data.slotStartTimeInUTC),
-          endsAt: new Date(data.slotEndTimeInUTC),
+          startsAt: new Date(data.startsAt),
+          endsAt: new Date(data.endsAt),
           isTentative: false,
           consultantProfileId: consultation.consultationPlan.consultantProfileId,
           user: { connect: { id: data.userId } },
@@ -919,7 +927,7 @@ async function createSubscription(tx: Tx, data: SubscriptionData) {
   const subscription = await tx.subscription.create({
     data: {
       subscriptionPlanId: data.planId,
-      requestStatus: RequestStatus.PENDING,
+      status: AppointmentStatus.PENDING,
       requestedById: data.consulteeProfileId,
       requestNotes: data.notes,
       bookingSource: "DIRECT_CHECKOUT",
@@ -937,13 +945,13 @@ async function createSubscription(tx: Tx, data: SubscriptionData) {
   // Only add slots if NOT a scheduling period request
   if (
     !isSchedulingPeriodRequest &&
-    data.slotStartTimeInUTC &&
-    data.slotEndTimeInUTC
+    data.startsAt &&
+    data.endsAt
   ) {
     appointmentData.slotsOfAppointment = {
       create: {
-        startsAt: new Date(data.slotStartTimeInUTC),
-        endsAt: new Date(data.slotEndTimeInUTC),
+        startsAt: new Date(data.startsAt),
+        endsAt: new Date(data.endsAt),
         isTentative: false,
         // #440 — same overlap-guard population as the consultation twin;
         // a NULL here would bypass the exclusion constraint's scope.
@@ -1058,11 +1066,11 @@ async function confirmApprovalStatus(
     const movedConsult = await tx.consultation.updateMany({
       where: {
         id: entityId,
-        requestStatus: {
-          in: [RequestStatus.PENDING, RequestStatus.APPROVED_PENDING_PAYMENT],
+        status: {
+          in: [AppointmentStatus.PENDING, AppointmentStatus.APPROVED_PENDING_PAYMENT],
         },
       },
-      data: { requestStatus: RequestStatus.APPROVED },
+      data: { status: AppointmentStatus.APPROVED },
     });
     if (movedConsult.count === 0) {
       // Re-read: the pre-read raced the very transition that made the CAS
@@ -1071,13 +1079,13 @@ async function confirmApprovalStatus(
       // APPROVED/SCHEDULED/COMPLETED) or money-for-nothing.
       const fresh = await tx.consultation.findUnique({
         where: { id: entityId },
-        select: { requestStatus: true },
+        select: { status: true },
       });
-      const freshStatus = fresh?.requestStatus ?? consultation.requestStatus;
+      const freshStatus = fresh?.status ?? consultation.status;
       if (
-        freshStatus !== RequestStatus.APPROVED &&
-        freshStatus !== RequestStatus.SCHEDULED &&
-        freshStatus !== RequestStatus.COMPLETED
+        freshStatus !== AppointmentStatus.APPROVED &&
+        freshStatus !== AppointmentStatus.SCHEDULED &&
+        freshStatus !== AppointmentStatus.COMPLETED
       ) {
         void recordSystemError({
           organizationId: null,
@@ -1101,21 +1109,21 @@ async function confirmApprovalStatus(
     // Do NOT change PENDING → APPROVED here!
     // Subscription stays PENDING until consultant allocates slots via Requests tab
     // SlotAllocationService.allocate() will set status to APPROVED when slots are allocated
-    if (subscription.requestStatus === RequestStatus.APPROVED_PENDING_PAYMENT) {
+    if (subscription.status === AppointmentStatus.APPROVED_PENDING_PAYMENT) {
       // CAS — the pre-read can race a cancel; the guard decides (B2).
       await tx.subscription.updateMany({
         where: {
           id: entityId,
-          requestStatus: RequestStatus.APPROVED_PENDING_PAYMENT,
+          status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
         },
-        data: { requestStatus: RequestStatus.APPROVED },
+        data: { status: AppointmentStatus.APPROVED },
       });
       console.log(
         `✅ Subscription ${entityId} payment completed - moving from APPROVED_PENDING_PAYMENT to APPROVED`,
       );
     } else {
       console.log(
-        `ℹ️ Subscription ${entityId} payment received - keeping status as ${subscription.requestStatus} (consultant will allocate slots)`,
+        `ℹ️ Subscription ${entityId} payment received - keeping status as ${subscription.status} (consultant will allocate slots)`,
       );
     }
   }
@@ -1334,18 +1342,18 @@ async function cleanupFailedPaymentAppointment(tx: Tx, appointmentId: string) {
           await tx.consultation.updateMany({
             where: {
               id: appointment.consultation.id,
-              requestStatus: { in: REQUEST_ALLOWED_FROM.EXPIRED },
+              status: { in: REQUEST_ALLOWED_FROM.EXPIRED },
             },
-            data: { requestStatus: RequestStatus.EXPIRED },
+            data: { status: AppointmentStatus.EXPIRED },
           });
         }
         if (appointment.subscription) {
           await tx.subscription.updateMany({
             where: {
               id: appointment.subscription.id,
-              requestStatus: { in: REQUEST_ALLOWED_FROM.EXPIRED },
+              status: { in: REQUEST_ALLOWED_FROM.EXPIRED },
             },
-            data: { requestStatus: RequestStatus.EXPIRED },
+            data: { status: AppointmentStatus.EXPIRED },
           });
         }
       }

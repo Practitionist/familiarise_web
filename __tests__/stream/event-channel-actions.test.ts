@@ -759,7 +759,7 @@ describe("Event Channel Actions", () => {
       expect(mockPrisma.consultation.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
-            requestStatus: { in: ["APPROVED", "SCHEDULED"] },
+            status: { in: ["APPROVED", "SCHEDULED"] },
           }),
         }),
       );
@@ -810,7 +810,7 @@ describe("Event Channel Actions", () => {
       expect(mockPrisma.subscription.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
-            requestStatus: { in: ["APPROVED", "SCHEDULED"] },
+            status: { in: ["APPROVED", "SCHEDULED"] },
           }),
         }),
       );

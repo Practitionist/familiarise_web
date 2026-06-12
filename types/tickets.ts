@@ -36,7 +36,7 @@ interface TicketAttachment {
 
 interface LinkedConsultation {
   id: string;
-  requestStatus: string;
+  status: string;
   consultationPlan: {
     title: string;
     price: number;

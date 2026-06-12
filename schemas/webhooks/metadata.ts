@@ -28,8 +28,8 @@ const baseMetadataSchema = z.object({
 export const consultationMetadataSchema = baseMetadataSchema.extend({
   appointmentType: z.literal(AppointmentsType.CONSULTATION),
   planId: z.string().cuid(),
-  slotStartTimeInUTC: z.string().datetime(),
-  slotEndTimeInUTC: z.string().datetime(),
+  startsAt: z.string().datetime(),
+  endsAt: z.string().datetime(),
 });
 
 /**
@@ -40,21 +40,21 @@ export const subscriptionMetadataSchema = baseMetadataSchema
   .extend({
     appointmentType: z.literal(AppointmentsType.SUBSCRIPTION),
     planId: z.string().cuid(),
-    slotStartTimeInUTC: z.string().datetime().optional(),
-    slotEndTimeInUTC: z.string().datetime().optional(),
+    startsAt: z.string().datetime().optional(),
+    endsAt: z.string().datetime().optional(),
     schedulingPeriodStartsAt: z.string().datetime().optional(),
     schedulingPeriodEndsAt: z.string().datetime().optional(),
   })
   .refine(
     (data) => {
-      const hasDirectSlots = data.slotStartTimeInUTC && data.slotEndTimeInUTC;
+      const hasDirectSlots = data.startsAt && data.endsAt;
       const hasSchedulingPeriod =
         data.schedulingPeriodStartsAt && data.schedulingPeriodEndsAt;
       return hasDirectSlots || hasSchedulingPeriod;
     },
     {
       message:
-        "Must provide either direct slots (slotStartTimeInUTC/slotEndTimeInUTC) OR scheduling period (schedulingPeriodStartsAt/schedulingPeriodEndsAt)",
+        "Must provide either direct slots (startsAt/endsAt) OR scheduling period (schedulingPeriodStartsAt/schedulingPeriodEndsAt)",
     },
   );
 
@@ -77,13 +77,42 @@ export const classMetadataSchema = baseMetadataSchema.extend({
 });
 
 /**
+ * #679 transition dual-read — REMOVE after 2026-07-12.
+ *
+ * Razorpay persists checkout metadata as order `notes`; orders created
+ * before the startsAt/endsAt rename deployed replay their webhooks with the
+ * LEGACY keys (`slotStartTimeInUTC`/`slotEndTimeInUTC`). Failing validation
+ * for those would strand real captured payments as
+ * CRITICAL_PAYMENT_WITHOUT_APPOINTMENT. Orders expire in minutes, but late
+ * captures and webhook redelivery stretch the tail — one month is
+ * conservative. This maps old keys onto the new names when the new ones are
+ * absent; it is wire-format compatibility for persisted external data, not
+ * a code alias.
+ */
+export function normalizeLegacySlotKeys(
+  metadata: Record<string, string>,
+): Record<string, string> {
+  const out = { ...metadata };
+  if (out.slotStartTimeInUTC && !out.startsAt) {
+    out.startsAt = out.slotStartTimeInUTC;
+  }
+  if (out.slotEndTimeInUTC && !out.endsAt) {
+    out.endsAt = out.slotEndTimeInUTC;
+  }
+  delete out.slotStartTimeInUTC;
+  delete out.slotEndTimeInUTC;
+  return out;
+}
+
+/**
  * Validate webhook metadata based on appointment type
  *
  * @param metadata - Metadata from payment gateway webhook
  * @returns Parsed and validated metadata
  * @throws ZodError if validation fails
  */
-export function validateWebhookMetadata(metadata: Record<string, string>) {
+export function validateWebhookMetadata(rawMetadata: Record<string, string>) {
+  const metadata = normalizeLegacySlotKeys(rawMetadata);
   // First parse appointmentType to determine which schema to use
   const { appointmentType } = baseMetadataSchema.parse(metadata);
 

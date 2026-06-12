@@ -118,7 +118,7 @@ export default function ConsultationPricingToggle({
     return brokenDownSlots.map((slot) => ({
       ...slot,
       _isPast:
-        new Date(slot.slotStartTimeInUTC).getTime() <
+        new Date(slot.startsAt).getTime() <
         now + MINIMUM_BOOKING_LEAD_TIME_MS,
     }));
   }, [slotTimings, selectedDuration, timezone, selectedDate]);
@@ -154,15 +154,15 @@ export default function ConsultationPricingToggle({
     try {
       const requestBody: {
         consultantProfileId: string;
-        slotStartTimeInUTC: string;
-        slotEndTimeInUTC: string;
+        startsAt: string;
+        endsAt: string;
         consultationPlanId: string;
         slotOfAvailabilityWeeklyId?: string;
         slotOfAvailabilityCustomId?: string;
       } = {
         consultantProfileId: consultantDetails.id,
-        slotStartTimeInUTC: selectedSlot.slotStartTimeInUTC,
-        slotEndTimeInUTC: selectedSlot.slotEndTimeInUTC,
+        startsAt: selectedSlot.startsAt,
+        endsAt: selectedSlot.endsAt,
         consultationPlanId: activePlan.id,
       };
 

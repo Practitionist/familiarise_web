@@ -127,8 +127,8 @@ export function ExpertProfileClient({
       }
 
       const params = new URLSearchParams();
-      const slotStartTimeInUTC = new Date(selectedSlot.slotStartTimeInUTC);
-      const slotEndTimeInUTC = new Date(selectedSlot.slotEndTimeInUTC);
+      const startsAt = new Date(selectedSlot.startsAt);
+      const endsAt = new Date(selectedSlot.endsAt);
 
       if (
         (selectedSlot as TSlotTiming & { type: "WEEKLY" | "CUSTOM" }).type ===
@@ -144,8 +144,8 @@ export function ExpertProfileClient({
           selectedSlot.slotOfAvailabilityId,
         );
       }
-      params.append("slotStartTimeInUTC", slotStartTimeInUTC.toISOString());
-      params.append("slotEndTimeInUTC", slotEndTimeInUTC.toISOString());
+      params.append("startsAt", startsAt.toISOString());
+      params.append("endsAt", endsAt.toISOString());
 
       const checkoutUrl = `/checkout/plans/consultation/${activePlan.id}?${params.toString()}`;
       window.location.href = checkoutUrl;

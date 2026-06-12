@@ -51,7 +51,7 @@ import {
   ScheduleType,
   DayOfWeek,
   AppointmentsType,
-  RequestStatus,
+  AppointmentStatus,
 } from "@prisma/client";
 import {
   makeWeeklyAvailabilitySlot,
@@ -445,7 +445,7 @@ describe("Manual allocation", () => {
       expect.objectContaining({
         where: expect.objectContaining({ id: "consult-1" }),
         data: expect.objectContaining({
-          requestStatus: RequestStatus.APPROVED,
+          status: AppointmentStatus.APPROVED,
         }),
       }),
     );
@@ -705,7 +705,7 @@ describe("Requested slot allocation", () => {
       expect.objectContaining({
         where: expect.objectContaining({ id: "consult-1" }),
         data: expect.objectContaining({
-          requestStatus: RequestStatus.APPROVED,
+          status: AppointmentStatus.APPROVED,
         }),
       }),
     );
@@ -1129,7 +1129,7 @@ describe("updateEventStatus", () => {
       expect.objectContaining({
         where: expect.objectContaining({ id: "sub-1" }),
         data: expect.objectContaining({
-          requestStatus: RequestStatus.APPROVED,
+          status: AppointmentStatus.APPROVED,
         }),
       }),
     );

@@ -22,16 +22,16 @@ import type { CustomSlot, SlotsType, WeeklySlot } from "./types";
 export interface WeeklySlotApiFormat {
   dayOfWeekforStartTimeInUTC: string;
   dayOfWeekforEndTimeInUTC: string;
-  slotStartTimeInUTC: string;
-  slotEndTimeInUTC: string;
+  startsAt: string;
+  endsAt: string;
 }
 
 /**
  * API format for custom (date-specific) slots
  */
 export interface CustomSlotApiFormat {
-  slotStartTimeInUTC: string;
-  slotEndTimeInUTC: string;
+  startsAt: string;
+  endsAt: string;
 }
 
 /**
@@ -218,8 +218,8 @@ function formatWeeklySlot(
       {
         dayOfWeekforStartTimeInUTC: actualStartDay,
         dayOfWeekforEndTimeInUTC: getNextDayOfWeek(actualStartDay),
-        slotStartTimeInUTC: startUTC,
-        slotEndTimeInUTC: endUTC,
+        startsAt: startUTC,
+        endsAt: endUTC,
       },
     ];
   }
@@ -228,8 +228,8 @@ function formatWeeklySlot(
     {
       dayOfWeekforStartTimeInUTC: actualStartDay,
       dayOfWeekforEndTimeInUTC: actualStartDay,
-      slotStartTimeInUTC: startUTC,
-      slotEndTimeInUTC: endUTC,
+      startsAt: startUTC,
+      endsAt: endUTC,
     },
   ];
 }
@@ -269,8 +269,8 @@ function formatCustomSlot(
   }
 
   return {
-    slotStartTimeInUTC: startTimeUtc,
-    slotEndTimeInUTC: endTimeUtc,
+    startsAt: startTimeUtc,
+    endsAt: endTimeUtc,
   };
 }
 

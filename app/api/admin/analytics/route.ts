@@ -100,7 +100,7 @@ export async function GET() {
       }),
       // Cancelled sessions
       prisma.consultation.count({
-        where: { requestStatus: "CANCELLED" },
+        where: { status: "CANCELLED" },
       }),
       // Payment stats
       prisma.payment.aggregate({

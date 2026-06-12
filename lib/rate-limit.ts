@@ -84,7 +84,7 @@ export const availabilityLimiter = makeLimiter(30, "1 m", "rl:availability");
 /** 30 per minute — GET /api/participants/{class,webinar}/[id] (per user) */
 export const participantReadLimiter = makeLimiter(30, "1 m", "rl:participants");
 
-/** 10 per minute — event mutations: /api/events/* POST/PATCH + [id]/validate + [id]/allocate (#831) */
+/** 10 per minute — event mutations: /api/bookings/* POST/PATCH + [id]/validate + [id]/allocate (#831) */
 export const eventMutationLimiter = makeLimiter(10, "1 m", "rl:event-mutation");
 
 // ============================================================================
