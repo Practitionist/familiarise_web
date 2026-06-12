@@ -16,7 +16,10 @@ import { buildOccupiedAppointmentFilter } from "@/utils/slotAllocation/occupancy
 import { REQUEST_ALLOWED_FROM } from "@/lib/booking/transitions";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { recordSystemError } from "@/lib/enterprise/system-events";
-import { validateWebhookMetadata } from "@/schemas/webhooks/metadata";
+import {
+  normalizeLegacySlotKeys,
+  validateWebhookMetadata,
+} from "@/schemas/webhooks/metadata";
 import { ZodError } from "zod";
 import { sendPaymentSuccessEmail, sendPaymentFailedEmail } from "@/lib/email";
 import {
@@ -77,8 +80,8 @@ type PaymentWithUser = MoneyAsNumber<
  */
 interface ConsultationData {
   planId: string;
-  slotStartTimeInUTC: string;
-  slotEndTimeInUTC: string;
+  startsAt: string;
+  endsAt: string;
   notes?: string;
   consulteeProfileId: string;
   userId: string;
@@ -89,8 +92,8 @@ interface ConsultationData {
  */
 interface SubscriptionData {
   planId: string;
-  slotStartTimeInUTC?: string;
-  slotEndTimeInUTC?: string;
+  startsAt?: string;
+  endsAt?: string;
   schedulingPeriodStartsAt?: string;
   schedulingPeriodEndsAt?: string;
   notes?: string;
@@ -128,8 +131,13 @@ interface EventData {
  */
 export async function handlePaymentSuccess(
   paymentIntentId: string,
-  metadata: Record<string, string>,
+  rawMetadata: Record<string, string>,
 ): Promise<void> {
+  // #679 transition dual-read (see normalizeLegacySlotKeys) — in-flight
+  // Razorpay orders created pre-rename replay webhooks with legacy slot
+  // keys; normalize ONCE here so validation AND the legacy create flow
+  // read the same new-key shape.
+  const metadata = normalizeLegacySlotKeys(rawMetadata);
   // C1 FIX: Split into two phases:
   //   Phase 1 (transaction): Critical payment + appointment processing
   //   Phase 2 (post-tx): Earnings, invoice, waitlist, notifications
@@ -784,8 +792,8 @@ async function createAppointmentFromWebhook(
     appointmentType,
     planId,
     eventId,
-    slotStartTimeInUTC,
-    slotEndTimeInUTC,
+    startsAt,
+    endsAt,
     schedulingPeriodStartsAt,
     schedulingPeriodEndsAt,
     notes,
@@ -804,8 +812,8 @@ async function createAppointmentFromWebhook(
     case AppointmentsType.CONSULTATION:
       appointment = await createConsultation(tx, {
         planId,
-        slotStartTimeInUTC,
-        slotEndTimeInUTC,
+        startsAt,
+        endsAt,
         notes,
         consulteeProfileId,
         userId,
@@ -826,8 +834,8 @@ async function createAppointmentFromWebhook(
       );
       appointment = await createSubscription(tx, {
         planId,
-        slotStartTimeInUTC,
-        slotEndTimeInUTC,
+        startsAt,
+        endsAt,
         schedulingPeriodStartsAt,
         schedulingPeriodEndsAt,
         notes,
@@ -879,8 +887,8 @@ async function createConsultation(tx: Tx, data: ConsultationData) {
       consultationId: consultation.id,
       slotsOfAppointment: {
         create: {
-          startsAt: new Date(data.slotStartTimeInUTC),
-          endsAt: new Date(data.slotEndTimeInUTC),
+          startsAt: new Date(data.startsAt),
+          endsAt: new Date(data.endsAt),
           isTentative: false,
           consultantProfileId: consultation.consultationPlan.consultantProfileId,
           user: { connect: { id: data.userId } },
@@ -937,13 +945,13 @@ async function createSubscription(tx: Tx, data: SubscriptionData) {
   // Only add slots if NOT a scheduling period request
   if (
     !isSchedulingPeriodRequest &&
-    data.slotStartTimeInUTC &&
-    data.slotEndTimeInUTC
+    data.startsAt &&
+    data.endsAt
   ) {
     appointmentData.slotsOfAppointment = {
       create: {
-        startsAt: new Date(data.slotStartTimeInUTC),
-        endsAt: new Date(data.slotEndTimeInUTC),
+        startsAt: new Date(data.startsAt),
+        endsAt: new Date(data.endsAt),
         isTentative: false,
         // #440 — same overlap-guard population as the consultation twin;
         // a NULL here would bypass the exclusion constraint's scope.

@@ -843,8 +843,8 @@ async function generatePaymentLink(consultation: ConsultationWithDetails) {
 
   // Extract slot times if appointment/slots exist
   const slot = appointment?.slotsOfAppointment?.[0];
-  const slotStartTimeInUTC = slot?.startsAt?.toISOString();
-  const slotEndTimeInUTC = slot?.endsAt?.toISOString();
+  const startsAt = slot?.startsAt?.toISOString();
+  const endsAt = slot?.endsAt?.toISOString();
 
   return await createApprovalPaymentIntent({
     userId: requestedBy.user.id,
@@ -852,8 +852,8 @@ async function generatePaymentLink(consultation: ConsultationWithDetails) {
     consultationId: consultation.id,
     planId: consultationPlan.id,
     paymentGateway: PaymentGateway.STRIPE, // Default to Stripe, could be made configurable
-    slotStartTimeInUTC,
-    slotEndTimeInUTC,
+    startsAt,
+    endsAt,
     notes: consultation.requestNotes ?? undefined,
   });
 }

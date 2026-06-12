@@ -4,8 +4,8 @@ import type { SlotConflictResult } from "@/utils/slotAllocation/types";
 /** Shape of a raw availability slot returned from the availability-with-allocation API */
 interface RawAvailabilityApiSlot {
   slotId: string;
-  slotStartTimeInUTC: string;
-  slotEndTimeInUTC: string;
+  startsAt: string;
+  endsAt: string;
   bookingStatus: "available" | "partially-booked" | "fully-booked";
   type: "WEEKLY" | "CUSTOM";
   dayOfWeek?: string;

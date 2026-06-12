@@ -168,8 +168,8 @@ const createConsultationAppointment = (
   consultationPlans: PlanRead<ConsultationPlan>[],
   defaultStatus: RequestStatus,
   isPastAppointment: boolean,
-  slotStartTimeInUTC: Date,
-  slotEndTimeInUTC: Date,
+  startsAt: Date,
+  endsAt: Date,
   consultantUserId?: string,
 ): Prisma.AppointmentCreateInput => {
   return {
@@ -181,8 +181,8 @@ const createConsultationAppointment = (
             ? [{ id: consultantUserId }, { id: consultee.id }]
             : [{ id: consultee.id }],
         },
-        startsAt: slotStartTimeInUTC,
-        endsAt: slotEndTimeInUTC,
+        startsAt: startsAt,
+        endsAt: endsAt,
         isTentative: defaultStatus === RequestStatus.PENDING,
         meetingSession: createMeetingSessionData(isPastAppointment),
       },
@@ -393,8 +393,8 @@ const createWebinarAppointment = async (
   webinarPlans: PlanRead<WebinarPlan>[],
   consultees: UserWithProfiles[],
   isPastAppointment: boolean,
-  slotStartTimeInUTC: Date,
-  slotEndTimeInUTC: Date,
+  startsAt: Date,
+  endsAt: Date,
   consultantUserId?: string,
 ): Promise<Prisma.AppointmentCreateInput> => {
   // Limit waitlist size to prevent transaction timeout
@@ -421,8 +421,8 @@ const createWebinarAppointment = async (
             ...additionalParticipants.map((c) => ({ id: c.id })),
           ],
         },
-        startsAt: slotStartTimeInUTC,
-        endsAt: slotEndTimeInUTC,
+        startsAt: startsAt,
+        endsAt: endsAt,
         isTentative: false,
         meetingSession: createMeetingSessionData(isPastAppointment),
       },

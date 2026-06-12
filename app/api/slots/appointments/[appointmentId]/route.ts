@@ -226,8 +226,8 @@ interface UpdateSlotsRequest {
     deleteMany?: Record<string, never>;
     createMany?: {
       data: Array<{
-        slotStartTimeInUTC: string;
-        slotEndTimeInUTC: string;
+        startsAt: string;
+        endsAt: string;
         type?: "WEEKLY" | "CUSTOM";
         isTentative?: boolean;
       }>;
@@ -585,8 +585,8 @@ export async function PATCH(
       slotsOfAppointment: {
         deleteMany: {},
         create: body.slotsOfAppointment.createMany.data.map((slot) => ({
-          startsAt: new Date(slot.slotStartTimeInUTC),
-          endsAt: new Date(slot.slotEndTimeInUTC),
+          startsAt: new Date(slot.startsAt),
+          endsAt: new Date(slot.endsAt),
           type: slot.type || "WEEKLY", // Default to WEEKLY if not specified
           isTentative: slot.isTentative ?? defaultIsTentative, // Explicit tentative flag
         })),

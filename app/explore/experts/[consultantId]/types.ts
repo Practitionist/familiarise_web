@@ -8,8 +8,8 @@ export type ConsultantDetailData = NonNullable<
 
 type OriginalSlotData = {
   id: string;
-  slotStartTimeInUTC: string;
-  slotEndTimeInUTC: string;
+  startsAt: string;
+  endsAt: string;
 };
 
 export interface ProcessedSlot {
@@ -19,7 +19,7 @@ export interface ProcessedSlot {
   originalSlot: OriginalSlotData;
   isAllocated?: boolean;
   bookingStatus?: "available" | "partially-booked" | "fully-booked";
-  slotStartTimeInUTC?: string;
-  slotEndTimeInUTC?: string;
+  startsAt?: string;
+  endsAt?: string;
   type?: "WEEKLY" | "CUSTOM";
 }

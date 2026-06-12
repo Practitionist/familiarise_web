@@ -84,14 +84,14 @@ describe("#788 — mergeConsecutiveSlots never merges across availability rows",
   const rowA = {
     ...base,
     slotOfAvailabilityId: "row-A",
-    slotStartTimeInUTC: "2026-06-26T14:00:00.000Z",
-    slotEndTimeInUTC: "2026-06-26T15:00:00.000Z",
+    startsAt: "2026-06-26T14:00:00.000Z",
+    endsAt: "2026-06-26T15:00:00.000Z",
   };
   const rowB = {
     ...base,
     slotOfAvailabilityId: "row-B",
-    slotStartTimeInUTC: "2026-06-26T15:00:00.000Z",
-    slotEndTimeInUTC: "2026-06-26T16:00:00.000Z",
+    startsAt: "2026-06-26T15:00:00.000Z",
+    endsAt: "2026-06-26T16:00:00.000Z",
   };
 
   it("keeps adjacent slots from DIFFERENT rows separate (the #788 mis-bind)", () => {
@@ -107,7 +107,7 @@ describe("#788 — mergeConsecutiveSlots never merges across availability rows",
     const sameRowB = { ...rowB, slotOfAvailabilityId: "row-A" };
     const merged = mergeConsecutiveSlots([rowA, sameRowB] as never);
     expect(merged).toHaveLength(1);
-    expect(merged[0].slotEndTimeInUTC).toBe("2026-06-26T16:00:00.000Z");
+    expect(merged[0].endsAt).toBe("2026-06-26T16:00:00.000Z");
   });
 });
 

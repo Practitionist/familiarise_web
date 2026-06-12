@@ -128,8 +128,8 @@ function buildPaymentMetadata(
     appointmentType: data.appointmentType,
     userId: userId,
     planId: data.planId,
-    slotStartTimeInUTC: data.slotStartTimeInUTC || "",
-    slotEndTimeInUTC: data.slotEndTimeInUTC || "",
+    startsAt: data.startsAt || "",
+    endsAt: data.endsAt || "",
     slotOfAvailabilityWeeklyId: data.slotOfAvailabilityWeeklyId || "",
     slotOfAvailabilityCustomId: data.slotOfAvailabilityCustomId || "",
     schedulingPeriodStartsAt: data.schedulingPeriodStartsAt || "",
@@ -559,10 +559,10 @@ export async function validateSlotAvailability(
   userId?: string,
   consultantUserId?: string, // NEW: Filter by consultant to prevent blocking across different consultants
 ) {
-  if (!data.slotStartTimeInUTC || !data.slotEndTimeInUTC) return;
+  if (!data.startsAt || !data.endsAt) return;
 
-  const slotStart = new Date(data.slotStartTimeInUTC);
-  const slotEnd = new Date(data.slotEndTimeInUTC);
+  const slotStart = new Date(data.startsAt);
+  const slotEnd = new Date(data.endsAt);
 
   // 0. Validate slot is not in the past or too soon (minimum lead time check)
   const timingError = validateSlotTiming(slotStart);
@@ -625,8 +625,8 @@ export async function validateSlotAvailability(
           availStartTimeUtc: avail.startTimeUtc,
           availEndTimeUtc: avail.endTimeUtc,
           utcOffsetMinutes: avail.utcOffsetMinutes,
-          slotStartISO: data.slotStartTimeInUTC,
-          slotEndISO: data.slotEndTimeInUTC,
+          slotStartISO: data.startsAt,
+          slotEndISO: data.endsAt,
           availId: data.slotOfAvailabilityWeeklyId,
           timestamp: new Date().toISOString(),
         }),
@@ -871,7 +871,7 @@ async function acquireCheckoutLock(
 
   // Strategy A: Slot-based locking (CONSULTATION + direct SUBSCRIPTION)
   // FIX Bug #04: Use consultantProfileId (not userId) to match request-for-approval lock key
-  if (data.slotStartTimeInUTC && data.slotEndTimeInUTC) {
+  if (data.startsAt && data.endsAt) {
     let consultantProfileId: string;
 
     if (
@@ -892,14 +892,14 @@ async function acquireCheckoutLock(
         type: "slot-based",
         appointmentType,
         consultantProfileId,
-        slot: data.slotStartTimeInUTC,
+        slot: data.startsAt,
         timestamp: new Date().toISOString(),
       }),
     );
 
     return await lockSlotBooking(
       consultantProfileId,
-      data.slotStartTimeInUTC,
+      data.startsAt,
       CHECKOUT_LOCK_TTL_MS[appointmentType], // #832 — per-type budget
     );
   }
@@ -1114,7 +1114,7 @@ async function revalidateInsideLock(
     switch (data.appointmentType) {
       case "CONSULTATION": {
         // Only validate if there are slots
-        if (data.slotStartTimeInUTC && data.slotEndTimeInUTC) {
+        if (data.startsAt && data.endsAt) {
           // FIX: Fetch plan to get consultant user ID for filtering
           const consultationPlan = await tx.consultationPlan.findUnique({
             where: { id: data.planId },
@@ -1157,8 +1157,8 @@ async function revalidateInsideLock(
                   slotsOfAppointment: {
                     some: {
                       AND: [
-                        { startsAt: { lt: new Date(data.slotEndTimeInUTC!) } },
-                        { endsAt: { gt: new Date(data.slotStartTimeInUTC!) } },
+                        { startsAt: { lt: new Date(data.endsAt!) } },
+                        { endsAt: { gt: new Date(data.startsAt!) } },
                         // userId (User.id) is the right scope — slots are
                         // connected to User records, not ConsulteeProfile records.
                         // This catches conflicts regardless of which org the
@@ -1183,7 +1183,7 @@ async function revalidateInsideLock(
       }
       case "SUBSCRIPTION": {
         // Only validate if there are slots
-        if (data.slotStartTimeInUTC && data.slotEndTimeInUTC) {
+        if (data.startsAt && data.endsAt) {
           // FIX: Fetch plan to get consultant user ID for filtering
           const subscriptionPlan = await tx.subscriptionPlan.findUnique({
             where: { id: data.planId },
@@ -1211,8 +1211,8 @@ async function revalidateInsideLock(
                   slotsOfAppointment: {
                     some: {
                       AND: [
-                        { startsAt: { lt: new Date(data.slotEndTimeInUTC!) } },
-                        { endsAt: { gt: new Date(data.slotStartTimeInUTC!) } },
+                        { startsAt: { lt: new Date(data.endsAt!) } },
+                        { endsAt: { gt: new Date(data.startsAt!) } },
                         { user: { some: { id: userId } } },
                       ],
                     },
@@ -1371,8 +1371,8 @@ export async function handleConsultationCheckout(
   // Each SlotOfAppointment is exactly 30 minutes so conflict detection works correctly.
   // Both consultant and consultee are connected so the user-scoped conflict filter works.
   const SLOT_MS = 30 * 60 * 1000;
-  const startTime = new Date(data.slotStartTimeInUTC!);
-  const endTime = new Date(data.slotEndTimeInUTC!);
+  const startTime = new Date(data.startsAt!);
+  const endTime = new Date(data.endsAt!);
   const slotChunks: { startsAt: Date; endsAt: Date }[] = [];
   let cur = new Date(startTime);
   while (cur < endTime) {
@@ -2036,7 +2036,7 @@ export async function handleCheckout(
 
     // STEP 2: ACQUIRE DISTRIBUTED LOCK (prevents race conditions)
     lock = await acquireCheckoutLock(validatedData, planData);
-    lockType = validatedData.slotStartTimeInUTC ? "slot-based" : "event-based";
+    lockType = validatedData.startsAt ? "slot-based" : "event-based";
 
     console.log(
       JSON.stringify({

@@ -106,8 +106,8 @@ interface ConsultantData {
  */
 export interface RawSlotData {
   slotId: string;
-  slotStartTimeInUTC: string;
-  slotEndTimeInUTC: string;
+  startsAt: string;
+  endsAt: string;
   bookingStatus: "available" | "partially-booked" | "fully-booked"; // KEY: Server-calculated status
   type: "WEEKLY" | "CUSTOM";
   dayOfWeek?: string;
@@ -212,8 +212,8 @@ export function useCalendarData(
     ];
 
     return allRawSlots.map((slot: RawSlotData) => ({
-      startTime: new Date(slot.slotStartTimeInUTC),
-      endTime: new Date(slot.slotEndTimeInUTC),
+      startTime: new Date(slot.startsAt),
+      endTime: new Date(slot.endsAt),
       isAvailable:
         slot.bookingStatus === "available" ||
         slot.bookingStatus === "partially-booked",
@@ -280,7 +280,7 @@ export function useCalendarData(
       const validatedData = {
         weekly: Array.isArray(data.weekly)
           ? data.weekly.filter((slot: RawSlotData) => {
-              if (!slot || !slot.slotStartTimeInUTC || !slot.slotEndTimeInUTC) {
+              if (!slot || !slot.startsAt || !slot.endsAt) {
                 console.warn(
                   "⚠️ fetchAvailabilitySlots: Filtering out invalid weekly slot",
                 );
@@ -291,7 +291,7 @@ export function useCalendarData(
           : [],
         custom: Array.isArray(data.custom)
           ? data.custom.filter((slot: RawSlotData) => {
-              if (!slot || !slot.slotStartTimeInUTC || !slot.slotEndTimeInUTC) {
+              if (!slot || !slot.startsAt || !slot.endsAt) {
                 console.warn(
                   "⚠️ fetchAvailabilitySlots: Filtering out invalid custom slot",
                 );
@@ -566,8 +566,8 @@ export function useCalendarData(
       ...(rawAvailabilitySlots.custom || []),
     ];
     return allRaw.map((slot) => ({
-      start: new Date(slot.slotStartTimeInUTC).getTime(),
-      end: new Date(slot.slotEndTimeInUTC).getTime(),
+      start: new Date(slot.startsAt).getTime(),
+      end: new Date(slot.endsAt).getTime(),
       bookingStatus: slot.bookingStatus || "available",
     }));
   }, [rawAvailabilitySlots]);

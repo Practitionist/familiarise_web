@@ -35,15 +35,15 @@ export async function POST(req: NextRequest) {
     }
     const {
       consultantProfileId,
-      slotStartTimeInUTC,
-      slotEndTimeInUTC,
+      startsAt,
+      endsAt,
       slotOfAvailabilityWeeklyId,
       slotOfAvailabilityCustomId,
       consultationPlanId,
     } = parseResult.data;
 
-    const startTime = new Date(slotStartTimeInUTC);
-    const endTime = new Date(slotEndTimeInUTC);
+    const startTime = new Date(startsAt);
+    const endTime = new Date(endsAt);
 
     // Lazy-create ConsulteeProfile on first consumer action — org-workspace
     // operators and consultants who book approvals will otherwise 404 here.
@@ -93,13 +93,13 @@ export async function POST(req: NextRequest) {
     try {
       // ACQUIRE LOCK for this specific slot
       // Use default 60s TTL (15s was too short for slow database operations)
-      lock = await lockSlotBooking(consultantProfileId, slotStartTimeInUTC);
+      lock = await lockSlotBooking(consultantProfileId, startsAt);
 
       console.log(
         JSON.stringify({
           event: "slot_booking_lock_acquired",
           consultant: consultantProfileId,
-          slot: slotStartTimeInUTC,
+          slot: startsAt,
           user: session.user.id,
           timestamp: new Date().toISOString(),
         }),
@@ -135,7 +135,7 @@ export async function POST(req: NextRequest) {
           JSON.stringify({
             event: "slot_booking_validation_failed",
             consultant: consultantProfileId,
-            slot: slotStartTimeInUTC,
+            slot: startsAt,
             user: session.user.id,
             errors: validation.errors,
             timestamp: new Date().toISOString(),
@@ -155,7 +155,7 @@ export async function POST(req: NextRequest) {
         JSON.stringify({
           event: "slot_booking_validation_passed",
           consultant: consultantProfileId,
-          slot: slotStartTimeInUTC,
+          slot: startsAt,
           user: session.user.id,
           timestamp: new Date().toISOString(),
         }),
@@ -223,7 +223,7 @@ export async function POST(req: NextRequest) {
           event: "slot_booking_success",
           consultationId: consultation.id,
           consultant: consultantProfileId,
-          slot: slotStartTimeInUTC,
+          slot: startsAt,
           user: session.user.id,
           timestamp: new Date().toISOString(),
         }),
@@ -253,7 +253,7 @@ export async function POST(req: NextRequest) {
         JSON.stringify({
           event: "slot_booking_error",
           consultant: consultantProfileId,
-          slot: slotStartTimeInUTC,
+          slot: startsAt,
           user: session.user.id,
           error:
             lockError instanceof Error ? lockError.message : "Unknown error",
@@ -281,7 +281,7 @@ export async function POST(req: NextRequest) {
           JSON.stringify({
             event: "slot_booking_lock_released",
             consultant: consultantProfileId,
-            slot: slotStartTimeInUTC,
+            slot: startsAt,
             user: session.user.id,
             timestamp: new Date().toISOString(),
           }),

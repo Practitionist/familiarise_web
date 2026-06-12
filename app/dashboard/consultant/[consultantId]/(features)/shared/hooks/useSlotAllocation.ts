@@ -1977,8 +1977,8 @@ export function useEventSlotAllocation(
             ...(fullPeriodData.custom || []),
           ];
           slotsForAllocation = allRawSlots.map((slot: RawSlotData) => ({
-            startTime: new Date(slot.slotStartTimeInUTC),
-            endTime: new Date(slot.slotEndTimeInUTC),
+            startTime: new Date(slot.startsAt),
+            endTime: new Date(slot.endsAt),
             isAvailable:
               slot.bookingStatus === "available" ||
               slot.bookingStatus === "partially-booked",

@@ -148,7 +148,7 @@ function filterSlots(
 ): TSlotTiming[] {
   return slots.filter((slot) => {
     const slotStart = parseISO(slot.dateInISO);
-    const slotEnd = parseISO(slot.slotEndTimeInUTC);
+    const slotEnd = parseISO(slot.endsAt);
     return slotStart < userDayEnd && slotEnd > userDayStart;
   });
 }
@@ -159,7 +159,7 @@ async function removeBookedSlots(
 ): Promise<TSlotTiming[]> {
   if (slots.length === 0) return slots;
 
-  const candidateTimes = slots.map((s) => parseISO(s.slotStartTimeInUTC));
+  const candidateTimes = slots.map((s) => parseISO(s.startsAt));
 
   const appointments = await prisma.appointment.findMany({
     where: {
@@ -196,7 +196,7 @@ async function removeBookedSlots(
   );
 
   return slots.filter(
-    (slot) => !bookedSlotTimes.has(slot.slotStartTimeInUTC),
+    (slot) => !bookedSlotTimes.has(slot.startsAt),
   );
 }
 
@@ -210,7 +210,7 @@ function filterExpiredSlots(slots: TSlotTiming[]): TSlotTiming[] {
   );
 
   return slots.filter((slot) => {
-    const slotStart = parseISO(slot.slotStartTimeInUTC);
+    const slotStart = parseISO(slot.startsAt);
     return slotStart >= minimumBookingTime;
   });
 }
@@ -284,12 +284,12 @@ function mapWeeklySlotToTiming(
       "yyyy-MM-dd'T'HH:mm:ssXXX",
     ),
     dayOfWeek: slot.startDay,
-    slotStartTimeInUTC: formatInTimeZone(
+    startsAt: formatInTimeZone(
       fromZonedTime(adjustedStart, userTimeZone),
       "UTC",
       "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
     ),
-    slotEndTimeInUTC: formatInTimeZone(
+    endsAt: formatInTimeZone(
       fromZonedTime(adjustedEnd, userTimeZone),
       "UTC",
       "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
@@ -324,12 +324,12 @@ function mapCustomSlotToTiming(
       "yyyy-MM-dd'T'HH:mm:ssXXX",
     ),
     dayOfWeek,
-    slotStartTimeInUTC: formatInTimeZone(
+    startsAt: formatInTimeZone(
       slot.startsAt,
       "UTC",
       "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
     ),
-    slotEndTimeInUTC: formatInTimeZone(
+    endsAt: formatInTimeZone(
       slot.endsAt,
       "UTC",
       "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",

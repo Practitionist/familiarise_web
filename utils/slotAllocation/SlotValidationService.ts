@@ -187,8 +187,8 @@ export class SlotValidationService {
    * - With range check: Both slots properly detected as conflicts
    *
    * DATABASE QUERY LOGIC:
-   * - slotStartTimeInUTC < slotEnd: Existing slot starts before proposed ends
-   * - slotEndTimeInUTC > slot: Existing slot ends after proposed starts
+   * - startsAt < slotEnd: Existing slot starts before proposed ends
+   * - endsAt > slot: Existing slot ends after proposed starts
    * - Together: Detects ANY time period overlap
    */
   /**
