@@ -34,8 +34,13 @@ function makeLimiter(
   });
 }
 
-/** 10 per 15 minutes — auth endpoints (sign-in, sign-up, forget-password) */
-export const authLimiter = makeLimiter(10, "15 m", "rl:auth");
+// Dev uses a separate Redis prefix (rl-dev:auth) so the generous limit
+// never leaks into production buckets, and the prod window stays tight.
+const isDev = process.env.NODE_ENV === "development";
+/** 10/15 min (prod) or 200/15 min (dev) — brute-force protection on auth endpoints */
+export const authLimiter = isDev
+  ? makeLimiter(200, "15 m", "rl-dev:auth")
+  : makeLimiter(10, "15 m", "rl:auth");
 
 /** 5 per minute — POST /api/checkout */
 export const checkoutLimiter = makeLimiter(5, "1 m", "rl:checkout");

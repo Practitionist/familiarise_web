@@ -95,3 +95,7 @@ node-payment-main/
 
 # scratch dir for agent/test scripts — never commit
 /temp/
+
+testsprite_tests/tmp/
+testsprite_tests/TC*.py
+testsprite_tests/testsprite-mcp-test-report.html

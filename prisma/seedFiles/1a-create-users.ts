@@ -331,6 +331,11 @@ const domains = [
 
 async function createDomainsSubdomainsTags() {
   for (const domain of domains) {
+    const existing = await prisma.domain.findUnique({ where: { name: domain.name } });
+    if (existing) {
+      console.log(`Skipping existing domain: ${domain.name}`);
+      continue;
+    }
     const createdDomain = await prisma.domain.create({
       data: {
         name: domain.name,
@@ -554,7 +559,7 @@ export async function createUsers(): Promise<UserWithProfiles[]> {
         address: sanitizeString(faker.location.streetAddress()),
         onlineStatus: faker.datatype.boolean(),
         timezone: sanitizeString(faker.location.timeZone()),
-        onboardingCompleted: faker.datatype.boolean(),
+        onboardingCompleted: true,
         role: userRole,
 
         // New fields for enhanced user

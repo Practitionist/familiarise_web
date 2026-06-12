@@ -1,0 +1,52 @@
+[
+  {
+    "id": "TC001",
+    "title": "postapiauthsigninemailwithvalidcredentials",
+    "description": "Test signing in with valid email and password credentials to receive a 200 response with a session cookie and user object."
+  },
+  {
+    "id": "TC002",
+    "title": "getapiahealthreturnshealthystatus",
+    "description": "Test the health check endpoint to ensure it returns a 200 status with platform health status including database connectivity and maintenance phase."
+  },
+  {
+    "id": "TC003",
+    "title": "getapiprofilesconsultantrequiresauthentication",
+    "description": "Test that accessing the consultant profile endpoint without authentication returns 401 Unauthorized, and with valid session returns 200 with ConsultantProfile data."
+  },
+  {
+    "id": "TC004",
+    "title": "getapiconsultantssearchrequiresauthentication",
+    "description": "Test searching consultants with valid query parameter and authentication returns 200 with wrapped consultant results; without authentication returns 401 Unauthorized."
+  },
+  {
+    "id": "TC005",
+    "title": "postapibookingsconsultationsconsultationidvalidatevalidslots",
+    "description": "Test validating consultation booking slots with valid session and slot data returns 200 ValidationResult; invalid or conflicting slots return 400 error."
+  },
+  {
+    "id": "TC006",
+    "title": "postapicheckoutcreatespaymentwithfundingsources",
+    "description": "Test creating a payment checkout with valid eventType, eventId, slots, and fundingSources returns 200 with paymentId, razorpayOrderId, and amount; conflicting slots return 409 Slot conflict."
+  },
+  {
+    "id": "TC007",
+    "title": "postapiwebhooksrazorpayvalidsignature",
+    "description": "Test posting Razorpay webhook events with valid signature and supported event types returns 200 OK; invalid signature returns 400 Invalid signature."
+  },
+  {
+    "id": "TC008",
+    "title": "postapipaymentspaymentidrefundinitiatesrefund",
+    "description": "Test initiating a refund for a payment with valid session returns 200 Refund; non-refundable payments return 400 error."
+  },
+  {
+    "id": "TC009",
+    "title": "postapicollaboratorsinvitescollaborator",
+    "description": "Test inviting a collaborator to an event with valid session and valid role and revenueShareBps returns 200 Collaborator; invalid role or revenueShareBps returns validation error."
+  },
+  {
+    "id": "TC010",
+    "title": "postapisupportticketscreatesupportticket",
+    "description": "Test creating a support ticket with valid subject, description, and priority returns 200 SupportTicket; missing subject or invalid priority returns validation error."
+  }
+]
