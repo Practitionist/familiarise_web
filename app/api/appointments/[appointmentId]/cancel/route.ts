@@ -187,7 +187,7 @@ export async function POST(
 
     // Prepare cancellation data
     const cancellationData = {
-      requestStatus: "CANCELLED" as const,
+      status: "CANCELLED" as const,
       cancellationReason: (validatedData.reason as CancellationReason) || null,
       cancellationNotes: validatedData.notes || null,
       cancelledAt: new Date(),
@@ -211,7 +211,7 @@ export async function POST(
             await tx.consultation.updateMany({
               where: {
                 id: appointment.consultation.id,
-                requestStatus: { in: [...CANCELLABLE_FROM] },
+                status: { in: [...CANCELLABLE_FROM] },
               },
               data: cancellationData,
             })
@@ -221,7 +221,7 @@ export async function POST(
             await tx.subscription.updateMany({
               where: {
                 id: appointment.subscription.id,
-                requestStatus: { in: [...CANCELLABLE_FROM] },
+                status: { in: [...CANCELLABLE_FROM] },
               },
               data: cancellationData,
             })

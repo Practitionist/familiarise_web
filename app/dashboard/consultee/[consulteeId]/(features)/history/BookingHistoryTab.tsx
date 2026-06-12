@@ -201,9 +201,9 @@ export function BookingHistoryTab({
 function getEventStatus(event: EventWithType): string {
   switch (event.type) {
     case "Consultation":
-      return event.requestStatus;
+      return event.status;
     case "Subscription":
-      return event.requestStatus;
+      return event.status;
     case "Webinar":
       return event.status;
     case "Class":

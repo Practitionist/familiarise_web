@@ -78,8 +78,8 @@ async function clearTentativeOnSuccessfulPayments(): Promise<{
           ],
           NOT: {
             OR: [
-              { consultation: { requestStatus: "PENDING" } },
-              { subscription: { requestStatus: "PENDING" } },
+              { consultation: { status: "PENDING" } },
+              { subscription: { status: "PENDING" } },
             ],
           },
         },

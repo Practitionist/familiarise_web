@@ -1,5 +1,5 @@
 import prisma from "@/lib/prisma";
-import { Prisma, RequestStatus } from "@prisma/client";
+import { Prisma, AppointmentStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { addMonths } from "date-fns";
 import {
@@ -26,7 +26,7 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const consultantProfileId = searchParams.get("consultantProfileId");
   const consulteeProfileId = searchParams.get("consulteeProfileId");
-  const status = searchParams.get("status") as RequestStatus | null;
+  const status = searchParams.get("status") as AppointmentStatus | null;
   const page = parseInt(searchParams.get("page") || "1");
   const limit = parseInt(searchParams.get("limit") || "10");
 
@@ -67,7 +67,7 @@ export async function GET(request: NextRequest) {
     }
 
     if (status) {
-      whereClause.requestStatus = status;
+      whereClause.status = status;
     }
 
     const [subscriptions, total] = await Promise.all([
@@ -265,7 +265,7 @@ export async function PATCH(request: NextRequest) {
       // If approved, notify consultee
       // Note: Appointment slots are created through SlotAllocationService during checkout,
       // not here. This handler only manages status transitions and notifications.
-      if (status === RequestStatus.APPROVED) {
+      if (status === AppointmentStatus.APPROVED) {
         // Fire-and-forget: notify consultee that subscription started
         const consulteeUserId = subscription.requestedBy?.user?.id;
         if (consulteeUserId) {
@@ -282,7 +282,7 @@ export async function PATCH(request: NextRequest) {
       }
 
       // Fire-and-forget: notify both parties on cancellation
-      if (status === RequestStatus.CANCELLED) {
+      if (status === AppointmentStatus.CANCELLED) {
         const consultantUserId =
           subscription.subscriptionPlan?.consultantProfile?.user?.id;
         const consulteeUserId = subscription.requestedBy?.user?.id;

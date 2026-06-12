@@ -4,7 +4,7 @@ export const mockEvents: EventWithType[] = [
   {
     id: "subscription-1",
     type: "Subscription",
-    requestStatus: "REJECTED",
+    status: "REJECTED",
     subscriptionPlan: {
       id: "plan-1",
       title: "Basic Subscription",
@@ -124,7 +124,7 @@ export const mockEvents: EventWithType[] = [
   {
     id: "consultation-1",
     type: "Consultation",
-    requestStatus: "REJECTED",
+    status: "REJECTED",
     consultationPlan: {
       id: "plan-3",
       title: "Extended Consultation",
@@ -233,7 +233,7 @@ export const pastEvent: EventWithType = {
 export const eventWithoutSlots: EventWithType = {
   id: "no-slots-event",
   type: "Consultation",
-  requestStatus: "PENDING",
+  status: "PENDING",
   consultationPlan: {
     id: "plan-noslot",
     title: "No Slot Plan",

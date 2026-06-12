@@ -100,7 +100,7 @@ export function usePrefetchDashboard({
       );
 
       // Priority 2: Secondary data (planner). The requests tab self-fetches
-      // /api/events/* — the old dashboard requests bundle was dead weight
+      // /api/bookings/* — the old dashboard requests bundle was dead weight
       // (data never read) and has been deleted.
       safePrefetch([queries.planner], "medium");
     } catch (error) {

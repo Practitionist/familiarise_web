@@ -29,7 +29,7 @@ Per affected model, follow the established module shape: one `export async funct
 Data realism for this domain (vary, don't clone):
 - **People**: a handful of consultants across specializations/experience/ratings, more consultees, 1–2 admins; WEEKLY vs CUSTOM schedules.
 - **Offerings**: consultation/subscription/webinar/class plans across realistic price bands and durations.
-- **Bookings**: past + current + future; every RequestStatus represented; DIRECT_CHECKOUT and REQUEST_SUBMITTED sources.
+- **Bookings**: past + current + future; every AppointmentStatus represented; DIRECT_CHECKOUT and REQUEST_SUBMITTED sources.
 - **Money**: multiple gateways (RAZORPAY paise-denominated especially), SUCCEEDED/PENDING/FAILED, a few refunds (partial + full), 1–2 disputes in different states — amounts must keep ledgers balanced if ledger postings are seeded.
 - **Enterprise** (15-band): organizations across statuses/funding sources, contracts → programs → assignments respecting the activation chain.
 - **Temporal spread**: createdAt over months, expirations both passed and upcoming; edge cases (expired, archived, free-tier) in small counts.

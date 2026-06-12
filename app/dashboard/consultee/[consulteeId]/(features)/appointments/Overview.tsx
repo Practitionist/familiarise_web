@@ -160,10 +160,10 @@ export function Overview({
   // Prepare sorted consultation items
   const sortedConsultations = sortFn(
     consultations
-      .filter((c) => shouldInclude(c.requestStatus.toString()))
+      .filter((c) => shouldInclude(c.status.toString()))
       .map((c) => ({
         data: c,
-        status: c.requestStatus.toString(),
+        status: c.status.toString(),
         firstSlotTime: c.appointment?.slotsOfAppointment?.[0]
           ? new Date(c.appointment.slotsOfAppointment[0].startsAt).getTime()
           : Infinity,
@@ -172,11 +172,11 @@ export function Overview({
 
   // Prepare sorted subscription + trial items
   const subItems = subscriptions
-    .filter((s) => shouldInclude(s.requestStatus.toString()))
+    .filter((s) => shouldInclude(s.status.toString()))
     .map((s) => ({
       kind: "subscription" as const,
       data: s,
-      status: s.requestStatus.toString(),
+      status: s.status.toString(),
       firstSlotTime: getNextSlotTime(s.appointments?.[0]?.slotsOfAppointment),
     }));
   const trialItems = trials
@@ -297,7 +297,7 @@ export function Overview({
                   image={
                     consultation.consultationPlan.consultantProfile?.user?.image
                   }
-                  status={consultation.requestStatus.toString()}
+                  status={consultation.status.toString()}
                   type="Consultation"
                   isTentative={nextSlot?.isTentative ?? false}
                   appointmentId={consultation.appointment?.id}
@@ -377,7 +377,7 @@ export function Overview({
                   image={
                     subscription.subscriptionPlan.consultantProfile?.user?.image
                   }
-                  status={subscription.requestStatus.toString()}
+                  status={subscription.status.toString()}
                   type="Subscription"
                   isTentative={nextSlot?.isTentative ?? false}
                   appointmentId={subscription.appointments?.[0]?.id}

@@ -77,7 +77,7 @@ async function investigateSundaySlots() {
     console.log("=== SUBSCRIPTION DETAILS ===");
     console.log(`ID: ${subscription.id}`);
     console.log(`Plan: ${subscription.subscriptionPlan.title}`);
-    console.log(`Status: ${subscription.requestStatus}`);
+    console.log(`Status: ${subscription.status}`);
     console.log(`Client: ${subscription.requestedBy.user.name}`);
     console.log(
       `Start: ${subscription.schedulingPeriodStartsAt.toISOString()}`,

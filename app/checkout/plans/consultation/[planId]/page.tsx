@@ -338,8 +338,8 @@ export default function ConsultationCheckoutPage({
           appointmentType: "CONSULTATION",
           planId: resolvedParams.planId,
           paymentGateway: gateway as PaymentGateway,
-          slotStartTimeInUTC: validatedSearchParams.slotStartTimeInUTC,
-          slotEndTimeInUTC: validatedSearchParams.slotEndTimeInUTC,
+          startsAt: validatedSearchParams.startsAt,
+          endsAt: validatedSearchParams.endsAt,
           slotOfAvailabilityWeeklyId:
             validatedSearchParams.slotOfAvailabilityWeeklyId,
           slotOfAvailabilityCustomId:
@@ -446,7 +446,7 @@ export default function ConsultationCheckoutPage({
         }
 
         // Staleness check: verify the selected slot hasn't passed or is too soon
-        const slotStart = new Date(validatedSearchParams.slotStartTimeInUTC);
+        const slotStart = new Date(validatedSearchParams.startsAt);
         const now = new Date();
         if (
           slotStart.getTime() <
@@ -530,7 +530,7 @@ export default function ConsultationCheckoutPage({
     if (!validatedSearchParams) return;
 
     const checkStaleness = () => {
-      const slotStart = new Date(validatedSearchParams.slotStartTimeInUTC);
+      const slotStart = new Date(validatedSearchParams.startsAt);
       const now = new Date();
       const minutesUntilSlot =
         (slotStart.getTime() - now.getTime()) / (60 * 1000);
@@ -652,7 +652,7 @@ export default function ConsultationCheckoutPage({
               <div>
                 {validatedSearchParams
                   ? new Date(
-                      validatedSearchParams.slotStartTimeInUTC,
+                      validatedSearchParams.startsAt,
                     ).toLocaleDateString(undefined, {
                       weekday: "long",
                       year: "numeric",
@@ -667,9 +667,9 @@ export default function ConsultationCheckoutPage({
               <div>
                 {validatedSearchParams
                   ? `${new Date(
-                      validatedSearchParams.slotStartTimeInUTC,
+                      validatedSearchParams.startsAt,
                     ).toLocaleTimeString()} - ${new Date(
-                      validatedSearchParams.slotEndTimeInUTC,
+                      validatedSearchParams.endsAt,
                     ).toLocaleTimeString()} (${Intl.DateTimeFormat().resolvedOptions().timeZone})`
                   : "—"}
               </div>
@@ -909,10 +909,10 @@ export default function ConsultationCheckoutPage({
                             appointmentType: "CONSULTATION",
                             planId: resolvedParams.planId,
                             paymentGateway: "RAZORPAY",
-                            slotStartTimeInUTC:
-                              validatedSearchParams.slotStartTimeInUTC,
-                            slotEndTimeInUTC:
-                              validatedSearchParams.slotEndTimeInUTC,
+                            startsAt:
+                              validatedSearchParams.startsAt,
+                            endsAt:
+                              validatedSearchParams.endsAt,
                             slotOfAvailabilityWeeklyId:
                               validatedSearchParams.slotOfAvailabilityWeeklyId,
                             slotOfAvailabilityCustomId:
@@ -958,10 +958,10 @@ export default function ConsultationCheckoutPage({
                             appointmentType: "CONSULTATION",
                             planId: resolvedParams.planId,
                             paymentGateway: "STRIPE",
-                            slotStartTimeInUTC:
-                              validatedSearchParams.slotStartTimeInUTC,
-                            slotEndTimeInUTC:
-                              validatedSearchParams.slotEndTimeInUTC,
+                            startsAt:
+                              validatedSearchParams.startsAt,
+                            endsAt:
+                              validatedSearchParams.endsAt,
                             slotOfAvailabilityWeeklyId:
                               validatedSearchParams.slotOfAvailabilityWeeklyId,
                             slotOfAvailabilityCustomId:

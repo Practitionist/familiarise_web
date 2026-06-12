@@ -162,7 +162,7 @@ async function verifyConsultantSlots() {
       console.log(`\nSubscription ${idx + 1}:`);
       console.log(`  ID: ${sub.id}`);
       console.log(`  Plan: ${sub.subscriptionPlan.title}`);
-      console.log(`  Status: ${sub.requestStatus}`);
+      console.log(`  Status: ${sub.status}`);
       console.log(
         `  Client: ${sub.requestedBy.user.name} (${sub.requestedBy.user.email})`,
       );

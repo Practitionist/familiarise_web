@@ -44,12 +44,12 @@ export interface Appointment {
   webinar?: { status: string; webinarPlan?: { title: string } };
   class?: { status: string; classPlan?: { title: string } };
   consultation?: {
-    requestStatus: string;
+    status: string;
     consultationPlan?: { title: string };
     requestedBy?: { user?: { name: string } };
   };
   subscription?: {
-    requestStatus: string;
+    status: string;
     subscriptionPlan?: { title: string };
     requestedBy?: { user?: { name: string } };
   };

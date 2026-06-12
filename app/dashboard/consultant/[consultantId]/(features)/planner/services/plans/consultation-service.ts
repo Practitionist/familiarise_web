@@ -24,7 +24,7 @@ export class ConsultationService {
       }
 
       const response = await fetch(
-        `/api/events/consultations/check-duplicate-title?${params}`,
+        `/api/bookings/consultations/check-duplicate-title?${params}`,
       );
       if (!response.ok) {
         const errorData = await response.json();

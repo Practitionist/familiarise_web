@@ -16,7 +16,7 @@
  */
 
 import prisma from "../../lib/prisma";
-import { RequestStatus } from "@prisma/client";
+import { AppointmentStatus } from "@prisma/client";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 
 // The per-cohort WHERE guards below (PENDING by requestedAt,
@@ -55,7 +55,7 @@ async function expirePendingConsultations(): Promise<{
     // Find stale PENDING consultations
     const staleConsultations = await prisma.consultation.findMany({
       where: {
-        requestStatus: RequestStatus.PENDING,
+        status: AppointmentStatus.PENDING,
         requestedAt: { lt: expirationDate },
       },
       include: {
@@ -90,11 +90,11 @@ async function expirePendingConsultations(): Promise<{
     // Bulk update to EXPIRED
     const result = await prisma.consultation.updateMany({
       where: {
-        requestStatus: RequestStatus.PENDING,
+        status: AppointmentStatus.PENDING,
         requestedAt: { lt: expirationDate },
       },
       data: {
-        requestStatus: RequestStatus.EXPIRED,
+        status: AppointmentStatus.EXPIRED,
       },
     });
 
@@ -124,7 +124,7 @@ async function expirePendingSubscriptions(): Promise<{
     // Find stale PENDING subscriptions
     const staleSubscriptions = await prisma.subscription.findMany({
       where: {
-        requestStatus: RequestStatus.PENDING,
+        status: AppointmentStatus.PENDING,
         requestedAt: { lt: expirationDate },
       },
       include: {
@@ -159,11 +159,11 @@ async function expirePendingSubscriptions(): Promise<{
     // Bulk update to EXPIRED
     const result = await prisma.subscription.updateMany({
       where: {
-        requestStatus: RequestStatus.PENDING,
+        status: AppointmentStatus.PENDING,
         requestedAt: { lt: expirationDate },
       },
       data: {
-        requestStatus: RequestStatus.EXPIRED,
+        status: AppointmentStatus.EXPIRED,
       },
     });
 
@@ -194,11 +194,11 @@ async function expirePaymentPendingRequests(): Promise<{
     // Expire consultations awaiting payment
     const consultationResult = await prisma.consultation.updateMany({
       where: {
-        requestStatus: RequestStatus.APPROVED_PENDING_PAYMENT,
+        status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
         updatedAt: { lt: expirationDate },
       },
       data: {
-        requestStatus: RequestStatus.EXPIRED,
+        status: AppointmentStatus.EXPIRED,
         pendingPaymentUrl: null, // Clear payment link
       },
     });
@@ -210,11 +210,11 @@ async function expirePaymentPendingRequests(): Promise<{
     // Expire subscriptions awaiting payment
     const subscriptionResult = await prisma.subscription.updateMany({
       where: {
-        requestStatus: RequestStatus.APPROVED_PENDING_PAYMENT,
+        status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
         updatedAt: { lt: expirationDate },
       },
       data: {
-        requestStatus: RequestStatus.EXPIRED,
+        status: AppointmentStatus.EXPIRED,
         pendingPaymentUrl: null, // Clear payment link
       },
     });

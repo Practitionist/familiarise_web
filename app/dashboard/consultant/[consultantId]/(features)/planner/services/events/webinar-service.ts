@@ -29,7 +29,7 @@ export class WebinarService {
       }
 
       const response = await fetch(
-        `/api/events/webinars/check-duplicate-title?${params}`,
+        `/api/bookings/webinars/check-duplicate-title?${params}`,
       );
       if (!response.ok) {
         const errorData = await response.json();
@@ -65,7 +65,7 @@ export class WebinarService {
         params.append("endDate", endDate.toISOString());
       }
 
-      const response = await fetch(`/api/events/webinars?${params}`);
+      const response = await fetch(`/api/bookings/webinars?${params}`);
       if (!response.ok) {
         throw new Error("Failed to fetch webinars");
       }
@@ -115,7 +115,7 @@ export class WebinarService {
         }
       }
 
-      const endpoint = "/api/events/webinars/crud-with-plan";
+      const endpoint = "/api/bookings/webinars/crud-with-plan";
       const method = isUpdate ? "PATCH" : "POST";
 
       const scheduledAtDate = this.parseScheduledDate(scheduledAt);
@@ -157,7 +157,7 @@ export class WebinarService {
    */
   static async deleteWebinar(webinarId: string): Promise<boolean> {
     try {
-      const response = await fetch(`/api/events/webinars/${webinarId}`, {
+      const response = await fetch(`/api/bookings/webinars/${webinarId}`, {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
       });

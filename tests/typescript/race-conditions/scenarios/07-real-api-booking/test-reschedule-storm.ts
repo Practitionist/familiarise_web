@@ -25,7 +25,7 @@ async function run() {
 
   const appointment = await prisma.appointment.findFirst({
     where: {
-      consultation: { requestStatus: { in: ["PENDING", "APPROVED"] } },
+      consultation: { status: { in: ["PENDING", "APPROVED"] } },
       slotsOfAppointment: { some: { completionStatus: "SCHEDULED" } },
     },
     select: { id: true, consultation: { select: { id: true } } },
@@ -39,7 +39,7 @@ async function run() {
   // Capture the fixture so repeat runs do not consume the seed pool.
   const originalConsultation = await prisma.consultation.findUniqueOrThrow({
     where: { id: appointment.consultation!.id },
-    select: { requestStatus: true },
+    select: { status: true },
   });
   const originalSlots = await prisma.slotOfAppointment.findMany({
     where: { appointmentId: appointment.id },
@@ -71,11 +71,11 @@ async function run() {
 
   const consultation = await prisma.consultation.findUnique({
     where: { id: appointment.consultation!.id },
-    select: { requestStatus: true },
+    select: { status: true },
   });
   check(
     "appointment ends in a single coherent state (PENDING)",
-    consultation?.requestStatus === "PENDING",
+    consultation?.status === "PENDING",
     consultation,
   );
 
@@ -94,7 +94,7 @@ async function run() {
   // Restore the fixture for repeat runs.
   await prisma.consultation.update({
     where: { id: appointment.consultation!.id },
-    data: { requestStatus: originalConsultation.requestStatus },
+    data: { status: originalConsultation.status },
   });
   for (const slot of originalSlots) {
     await prisma.slotOfAppointment.update({

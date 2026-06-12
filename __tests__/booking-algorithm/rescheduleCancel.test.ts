@@ -507,11 +507,11 @@ describe("Reschedule Route Handler - POST", () => {
       expect(mockTx.consultation.updateMany).toHaveBeenCalledWith({
         where: {
           id: "cons-1",
-          requestStatus: {
+          status: {
             in: ["PENDING", "APPROVED", "APPROVED_PENDING_PAYMENT", "SCHEDULED"],
           },
         },
-        data: { requestStatus: "PENDING" },
+        data: { status: "PENDING" },
       });
     });
   });
@@ -561,11 +561,11 @@ describe("Reschedule Route Handler - POST", () => {
       expect(mockTx.subscription.updateMany).toHaveBeenCalledWith({
         where: {
           id: "sub-1",
-          requestStatus: {
+          status: {
             in: ["PENDING", "APPROVED", "APPROVED_PENDING_PAYMENT", "SCHEDULED"],
           },
         },
-        data: { requestStatus: "PENDING" },
+        data: { status: "PENDING" },
       });
     });
 
@@ -871,12 +871,12 @@ describe("Cancel Route Handler - POST", () => {
       expect(mockTx.consultation.updateMany).toHaveBeenCalledWith({
         where: {
           id: "cons-1",
-          requestStatus: {
+          status: {
             in: ["PENDING", "APPROVED", "APPROVED_PENDING_PAYMENT", "SCHEDULED"],
           },
         },
         data: expect.objectContaining({
-          requestStatus: "CANCELLED",
+          status: "CANCELLED",
           cancellationReason: "SCHEDULE_CONFLICT",
           cancellationNotes: "Cannot make it",
           cancelledBy: "user-1",
@@ -924,12 +924,12 @@ describe("Cancel Route Handler - POST", () => {
       expect(mockTx.subscription.updateMany).toHaveBeenCalledWith({
         where: {
           id: "sub-1",
-          requestStatus: {
+          status: {
             in: ["PENDING", "APPROVED", "APPROVED_PENDING_PAYMENT", "SCHEDULED"],
           },
         },
         data: expect.objectContaining({
-          requestStatus: "CANCELLED",
+          status: "CANCELLED",
           cancellationReason: "FINANCIAL_REASONS",
           cancelledBy: "user-1",
         }),
@@ -1003,12 +1003,12 @@ describe("Cancel Route Handler - POST", () => {
     expect(mockTx.consultation.updateMany).toHaveBeenCalledWith({
       where: {
         id: "cons-1",
-        requestStatus: {
+        status: {
           in: ["PENDING", "APPROVED", "APPROVED_PENDING_PAYMENT", "SCHEDULED"],
         },
       },
       data: expect.objectContaining({
-        requestStatus: "CANCELLED",
+        status: "CANCELLED",
         cancellationReason: null,
         cancellationNotes: null,
       }),
@@ -1160,7 +1160,7 @@ describe("cleanupTentativeSlots", () => {
           payment: [],
           consultation: {
             id: "cons-1",
-            requestStatus: "PENDING",
+            status: "PENDING",
             requestedBy: {
               user: { name: "Test User", email: "test@example.com" },
             },

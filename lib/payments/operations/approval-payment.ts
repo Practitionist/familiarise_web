@@ -28,8 +28,8 @@ export interface CreateApprovalPaymentParams {
   subscriptionId?: string;
   planId: string;
   paymentGateway: PaymentGateway;
-  slotStartTimeInUTC?: string;
-  slotEndTimeInUTC?: string;
+  startsAt?: string;
+  endsAt?: string;
   schedulingPeriodStartsAt?: string;
   schedulingPeriodEndsAt?: string;
   notes?: string;
@@ -247,9 +247,9 @@ function buildApprovalMetadata(params: CreateApprovalPaymentParams): {
   }
 
   // Add slot times if provided
-  if (params.slotStartTimeInUTC && params.slotEndTimeInUTC) {
-    metadata.slotStartTimeInUTC = params.slotStartTimeInUTC;
-    metadata.slotEndTimeInUTC = params.slotEndTimeInUTC;
+  if (params.startsAt && params.endsAt) {
+    metadata.startsAt = params.startsAt;
+    metadata.endsAt = params.endsAt;
   }
 
   // Add scheduling period if provided

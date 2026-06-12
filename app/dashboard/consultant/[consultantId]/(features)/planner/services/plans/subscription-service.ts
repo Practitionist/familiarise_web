@@ -24,7 +24,7 @@ export class SubscriptionService {
       }
 
       const response = await fetch(
-        `/api/events/subscriptions/check-duplicate-title?${params}`,
+        `/api/bookings/subscriptions/check-duplicate-title?${params}`,
       );
       if (!response.ok) {
         const errorData = await response.json();

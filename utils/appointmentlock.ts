@@ -348,20 +348,20 @@ export async function unlockApproval(lock: ApprovalLock): Promise<void> {
 /**
  * Lock a specific time slot to prevent double-booking during consultation creation
  * @param consultantProfileId - The consultant's profile ID
- * @param slotStartTimeInUTC - The slot start time in ISO format
+ * @param startsAt - The slot start time in ISO format
  * @param ttl - Time to live in milliseconds (default 60 seconds)
  * @returns Lock instance (must be released with unlockSlotBooking)
  */
 export async function lockSlotBooking(
   consultantProfileId: string,
-  slotStartTimeInUTC: string,
+  startsAt: string,
   ttl: number = DEFAULT_LOCK_TTL,
 ): Promise<ApprovalLock> {
-  const key = `slot-booking:${consultantProfileId}:${slotStartTimeInUTC}`;
+  const key = `slot-booking:${consultantProfileId}:${startsAt}`;
   try {
     return await acquireLockWithRetry(key, ttl);
   } catch (error) {
-    throw new SlotLockError(consultantProfileId, slotStartTimeInUTC, 60);
+    throw new SlotLockError(consultantProfileId, startsAt, 60);
   }
 }
 
@@ -688,20 +688,20 @@ export async function isAppointmentLocked(
 /**
  * Lock a specific time slot to prevent double-booking during trial scheduling
  * @param consultantProfileId - The consultant's profile ID
- * @param slotStartTimeInUTC - The slot start time in ISO format
+ * @param startsAt - The slot start time in ISO format
  * @param ttl - Time to live in milliseconds (default 60 seconds)
  * @returns Lock instance (must be released with unlockTrialSlot)
  */
 export async function lockTrialSlot(
   consultantProfileId: string,
-  slotStartTimeInUTC: string,
+  startsAt: string,
   ttl: number = DEFAULT_LOCK_TTL,
 ): Promise<ApprovalLock> {
-  const key = `trial-slot-booking:${consultantProfileId}:${slotStartTimeInUTC}`;
+  const key = `trial-slot-booking:${consultantProfileId}:${startsAt}`;
   try {
     return await acquireLockWithRetry(key, ttl);
   } catch (error) {
-    throw new SlotLockError(consultantProfileId, slotStartTimeInUTC, 60);
+    throw new SlotLockError(consultantProfileId, startsAt, 60);
   }
 }
 

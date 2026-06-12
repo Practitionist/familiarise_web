@@ -45,14 +45,14 @@ const weeklySlotSchema = z.object({
     "SATURDAY",
     "SUNDAY",
   ]),
-  slotStartTimeInUTC: dateTimeSchema,
-  slotEndTimeInUTC: dateTimeSchema,
+  startsAt: dateTimeSchema,
+  endsAt: dateTimeSchema,
 });
 
 // Zod schema for custom slot
 const customSlotSchema = z.object({
-  slotStartTimeInUTC: dateTimeSchema,
-  slotEndTimeInUTC: dateTimeSchema,
+  startsAt: dateTimeSchema,
+  endsAt: dateTimeSchema,
 });
 
 // Main request body schema
@@ -387,9 +387,9 @@ export async function PUT(
         const weeklySlotData: Prisma.SlotOfAvailabilityWeeklyCreateManyInput[] =
           slotsOfAvailabilityWeekly.map((slot) => {
             const startTimeUtc = dateToMinuteUtc(
-              new Date(slot.slotStartTimeInUTC),
+              new Date(slot.startsAt),
             );
-            const endTimeUtc = dateToMinuteUtc(new Date(slot.slotEndTimeInUTC));
+            const endTimeUtc = dateToMinuteUtc(new Date(slot.endsAt));
             return {
               consultantProfileId: id,
               startDay: slot.dayOfWeekforStartTimeInUTC,
@@ -478,8 +478,8 @@ export async function PUT(
         const customSlotData: Prisma.SlotOfAvailabilityCustomCreateManyInput[] =
           slotsOfAvailabilityCustom.map((slot) => ({
             consultantProfileId: id,
-            startsAt: new Date(slot.slotStartTimeInUTC),
-            endsAt: new Date(slot.slotEndTimeInUTC),
+            startsAt: new Date(slot.startsAt),
+            endsAt: new Date(slot.endsAt),
           }));
 
         // Validate custom slot ordering and check for pairwise overlaps

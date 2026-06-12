@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { RequestStatus } from "@prisma/client";
+import { AppointmentStatus } from "@prisma/client";
 import {
   requireApiAuth,
   isPrivileged,
@@ -62,7 +62,7 @@ export async function GET(
         prisma.consultation.findMany({
           where: {
             requestedById: consulteeId,
-            requestStatus: RequestStatus.APPROVED_PENDING_PAYMENT,
+            status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
           },
           include: {
             consultationPlan: {
@@ -82,7 +82,7 @@ export async function GET(
         prisma.subscription.findMany({
           where: {
             requestedById: consulteeId,
-            requestStatus: RequestStatus.APPROVED_PENDING_PAYMENT,
+            status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
           },
           include: {
             subscriptionPlan: {
