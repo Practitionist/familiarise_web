@@ -38,8 +38,45 @@ export interface Session {
   email: string;
 }
 
+// Cross-PROCESS session cache: the master-runner spawns each scenario as
+// its own tsx process, and the auth limiter is 10 logins / 15 min per IP —
+// a full suite run plus one rerun starves it (observed three times). Cached
+// cookies are validated with a get-session call (unlimited) before reuse,
+// so a stale cookie falls through to a real login.
+const SESSION_CACHE_FILE = "/tmp/chaos-session-cache.json";
+
+function readSessionCache(): Record<string, string> {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    return JSON.parse(require("node:fs").readFileSync(SESSION_CACHE_FILE, "utf-8"));
+  } catch {
+    return {};
+  }
+}
+
+function writeSessionCache(cache: Record<string, string>): void {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    require("node:fs").writeFileSync(SESSION_CACHE_FILE, JSON.stringify(cache));
+  } catch {
+    // best-effort — cache misses just cost a login
+  }
+}
+
 /** Sign in as a seeded user and return the session cookie header value. */
 export async function loginAs(email: string): Promise<Session> {
+  const cache = readSessionCache();
+  const cached = cache[email];
+  if (cached) {
+    const probe = await fetch(`${BASE_URL}/api/auth/get-session`, {
+      headers: { Cookie: cached, origin: BASE_URL },
+    });
+    const body = await probe.json().catch(() => null);
+    if (probe.ok && body?.user) {
+      return { cookie: cached, email };
+    }
+  }
+
   const res = await fetch(`${BASE_URL}/api/auth/sign-in/email`, {
     method: "POST",
     headers: { "Content-Type": "application/json", origin: BASE_URL },
@@ -52,6 +89,8 @@ export async function loginAs(email: string): Promise<Session> {
     .getSetCookie()
     .map((c) => c.split(";")[0])
     .join("; ");
+  cache[email] = cookie;
+  writeSessionCache(cache);
   return { cookie, email };
 }
 
