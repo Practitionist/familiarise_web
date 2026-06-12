@@ -30,7 +30,7 @@
 | **Health** (`/api/health`)                               | Exempt -- always responds               | Exempt -- always responds  | None       |
 | **Auth** (`/api/auth/*`)                                 | Exempt -- always works                  | Exempt -- always works     | None       |
 | **Maintenance API** (`/api/admin/maintenance`)           | Exempt                                  | Exempt                     | None       |
-| **Checkout** (`/api/checkout`, `/api/checkout/verify`)   | Allowed (gap)                           | Blocked (503)              | HIGH       |
+| **Checkout** (`/api/checkout`, `/api/checkout/verify`, `DELETE /api/checkout/pending/[paymentId]`) | Allowed (gap) | Blocked (503) | HIGH |
 | **Cancel appointment** (`/api/appointments/[id]/cancel`) | Allowed (gap)                           | Blocked                    | MEDIUM     |
 | **Reschedule** (`/api/appointments/[id]/reschedule`)     | Allowed (gap)                           | Blocked                    | MEDIUM     |
 | **Documents** (`/api/appointments/[id]/documents`)       | Allowed                                 | Blocked                    | LOW        |
@@ -86,16 +86,11 @@
 
 **Remaining gap**: Checkout (`/api/checkout`), appointment cancel/reschedule, event CRUD, and trial routes are still **not** write-blocked in DEGRADED mode. These may be addressed in a future update.
 
-### Gap 2: Cron Jobs Bypass Middleware Entirely
+### Gap 2: Cron Jobs Bypass Middleware — Resolved via `abortIfMaintenance()`
 
-**Problem**: All 27 cron jobs run as standalone Node.js scripts via GitHub Actions. They connect directly to PostgreSQL via Prisma, completely bypassing the Next.js middleware.
+**Resolved**: All 27 cron jobs now call `abortIfMaintenance()` (`lib/maintenance-cron.ts`) at startup. On OFFLINE mode the job exits 0 cleanly; on DEGRADED mode it logs a warning and continues. The jobs cannot intercept maintenance state through the Next.js middleware (they run directly as `npx tsx` processes in GitHub Actions), but they check the same Redis key directly, achieving the same effect.
 
-**Impact**: During OFFLINE mode (especially DB migrations), cron jobs may:
-
-- Read/write to tables being migrated
-- Corrupt data if schema is changing
-- Create race conditions with migration scripts
-- Cancel valid payment intents (cleanup jobs)
+**Residual concern**: A job that is already mid-run when OFFLINE mode is activated will finish its current work. The guard is entry-time only — there is no checkpoint inside long jobs. For short jobs (typical <5s) this is harmless; for longer jobs (`sync-payment-earnings`, `reconcile-ledgers`) keep the 2-minute settling window in the pre-maintenance checklist.
 
 **Affected jobs**: All 27 -- see [Cron Jobs Reference](./04-cron-jobs-reference.md)
 
@@ -126,6 +121,7 @@
 
 - `POST /api/checkout` -- Create payment intent + initiate booking
 - `GET /api/checkout/verify` -- Verify payment completion
+- `DELETE /api/checkout/pending/[paymentId]` -- Cancel a PENDING payment and release its tentative slots (#849 cancel-vs-capture guard)
 
 ### Appointment Management Routes
 
