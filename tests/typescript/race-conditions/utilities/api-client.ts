@@ -43,7 +43,12 @@ export interface Session {
 // a full suite run plus one rerun starves it (observed three times). Cached
 // cookies are validated with a get-session call (unlimited) before reuse,
 // so a stale cookie falls through to a real login.
-const SESSION_CACHE_FILE = "/tmp/chaos-session-cache.json";
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const SESSION_CACHE_FILE = require("node:path").join(
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  require("node:os").tmpdir(),
+  "chaos-session-cache.json",
+);
 
 function readSessionCache(): Record<string, string> {
   try {
