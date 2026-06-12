@@ -91,7 +91,7 @@ The lock implementation includes a circuit breaker: after 5 consecutive Redis fa
 
 ### 4.2 Rate Limiting (Upstash + Arcjet)
 
-Seven rate-limit rules run at the Netlify edge before the request reaches the Next.js handler. These rules use Upstash's sliding-window algorithm, which survives Redis restarts because the window is stored in Redis sorted sets:
+Eight rate-limit rules run at the Netlify edge before the request reaches the Next.js handler. These rules use Upstash's sliding-window algorithm, which survives Redis restarts because the window is stored in Redis sorted sets:
 
 | Endpoint | Limit | Window | Key |
 |---|---|---|---|
@@ -139,7 +139,7 @@ The following risks are ordered by estimated impact at launch-scale load. The mi
 
 **Current mitigation.** The `DATABASE_URL` in `.env.sample` includes Supavisor's connection string. Whether it is configured for transaction mode or session mode depends on the `?pgbouncer=true&connection_limit=1` parameters appended to the URL.
 
-**Verification needed.** Confirm `DATABASE_URL` ends with `?pgbouncer=true&connection_limit=1` to force transaction-mode pooling. Run the k6 scenario below with 150 virtual users to trigger pool pressure and observe whether `P1001` errors appear.
+**Verification needed.** Confirm `DATABASE_URL` ends with `?pgbouncer=true&connection_limit=1` to force transaction-mode pooling. Run the k6 scenario below with its spike stage raised to 150 virtual users (the script peaks at 100 by default — bump the last non-zero `stages` target) to trigger pool pressure, and observe whether `P1001` errors appear.
 
 ### Risk 2 — ProgramAssignment Concurrent Increment (Severity: HIGH)
 
