@@ -312,7 +312,7 @@ export async function GET(
             planTitle: c.consultationPlan.title,
             consultantName: c.consultationPlan.consultantProfile.user.name,
             consultantImage: c.consultationPlan.consultantProfile.user.image,
-            status: c.requestStatus,
+            status: c.status,
             date:
               c.appointment?.slotsOfAppointment?.[0]?.startsAt || c.requestedAt,
             materials: c.consultationPlan.materials,
@@ -329,7 +329,7 @@ export async function GET(
             planTitle: s.subscriptionPlan.title,
             consultantName: s.subscriptionPlan.consultantProfile.user.name,
             consultantImage: s.subscriptionPlan.consultantProfile.user.image,
-            status: s.requestStatus,
+            status: s.status,
             date: s.schedulingPeriodStartsAt || s.requestedAt,
             materials: s.subscriptionPlan.materials,
             recordings: await extractRecordings(s.appointments),

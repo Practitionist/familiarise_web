@@ -90,8 +90,8 @@ function makeTx() {
       updateMany: jest.fn(async ({ where, data }: any) => {
         const c = state.consultations.get(where.id);
         if (!c) return { count: 0 };
-        const allowed = where.requestStatus?.in as string[] | undefined;
-        if (allowed && !allowed.includes(c.requestStatus as string))
+        const allowed = where.status?.in as string[] | undefined;
+        if (allowed && !allowed.includes(c.status as string))
           return { count: 0 };
         Object.assign(c, data);
         return { count: 1 };
@@ -101,8 +101,8 @@ function makeTx() {
       updateMany: jest.fn(async ({ where, data }: any) => {
         const s = state.subscriptions.get(where.id);
         if (!s) return { count: 0 };
-        const allowed = where.requestStatus?.in as string[] | undefined;
-        if (allowed && !allowed.includes(s.requestStatus as string))
+        const allowed = where.status?.in as string[] | undefined;
+        if (allowed && !allowed.includes(s.status as string))
           return { count: 0 };
         Object.assign(s, data);
         return { count: 1 };
@@ -151,11 +151,11 @@ import { IllegalTransitionError } from "../../lib/enterprise/transitions";
 
 function seedConsultationPayment({
   paymentStatus = "PENDING",
-  requestStatus = "APPROVED_PENDING_PAYMENT",
+  status = "APPROVED_PENDING_PAYMENT",
   isMockPayment = false,
 }: Partial<{
   paymentStatus: string;
-  requestStatus: string;
+  status: string;
   isMockPayment: boolean;
 }> = {}) {
   state.payments.set("pay-1", {
@@ -173,7 +173,7 @@ function seedConsultationPayment({
   });
   state.consultations.set("cons-1", {
     id: "cons-1",
-    requestStatus,
+    status,
   });
   state.slots.push({
     id: "slot-1",
@@ -203,7 +203,7 @@ describe("cancelPendingCheckout — happy path (consultation)", () => {
     expect(state.payments.get("pay-1")?.paymentStatus).toBe("EXPIRED");
     expect(state.slots).toHaveLength(0);
     const cons = state.consultations.get("cons-1");
-    expect(cons?.requestStatus).toBe("CANCELLED");
+    expect(cons?.status).toBe("CANCELLED");
     expect(cons?.cancellationNotes).toBe("Cancelled by user during checkout");
     expect(cons?.cancelledAt).toBeInstanceOf(Date);
     expect(cancelPaymentIntent).toHaveBeenCalledWith("order_abc", "RAZORPAY");
@@ -234,7 +234,7 @@ describe("cancelPendingCheckout — CAS / status guards", () => {
     expect(result).toEqual({ ok: false, code: "NOT_PENDING" });
     expect(state.payments.get("pay-1")?.paymentStatus).toBe("SUCCEEDED");
     expect(state.slots).toHaveLength(1);
-    expect(state.consultations.get("cons-1")?.requestStatus).toBe(
+    expect(state.consultations.get("cons-1")?.status).toBe(
       "APPROVED_PENDING_PAYMENT",
     );
     expect(cancelPaymentIntent).not.toHaveBeenCalled();
@@ -280,7 +280,7 @@ describe("cancelPendingCheckout — CAS / status guards", () => {
 
 describe("cancelPendingCheckout — narrow parent from-set", () => {
   it("throws IllegalTransitionError when the parent is already SCHEDULED (another payment won)", async () => {
-    seedConsultationPayment({ requestStatus: "SCHEDULED" });
+    seedConsultationPayment({ status: "SCHEDULED" });
 
     await expect(
       cancelPendingCheckout({ paymentId: "pay-1", userId: "user-1" }),
@@ -308,7 +308,7 @@ describe("cancelPendingCheckout — subscription parent", () => {
     });
     state.subscriptions.set("sub-1", {
       id: "sub-1",
-      requestStatus: "APPROVED_PENDING_PAYMENT",
+      status: "APPROVED_PENDING_PAYMENT",
     });
     state.slots.push({
       id: "slot-s",
@@ -326,7 +326,7 @@ describe("cancelPendingCheckout — subscription parent", () => {
     expect(result).toEqual({ ok: true, slotsReleased: 1 });
     expect(state.payments.get("pay-s")?.paymentStatus).toBe("EXPIRED");
     const sub = state.subscriptions.get("sub-1");
-    expect(sub?.requestStatus).toBe("CANCELLED");
+    expect(sub?.status).toBe("CANCELLED");
     expect(sub?.cancellationNotes).toBe("Cancelled by user during checkout");
     expect(sub?.cancelledAt).toBeInstanceOf(Date);
   });
@@ -345,7 +345,7 @@ describe("cancelPendingCheckout — subscription parent", () => {
       webinarId: null,
       classId: null,
     });
-    state.subscriptions.set("sub-2", { id: "sub-2", requestStatus: "SCHEDULED" });
+    state.subscriptions.set("sub-2", { id: "sub-2", status: "SCHEDULED" });
 
     await expect(
       cancelPendingCheckout({ paymentId: "pay-s2", userId: "user-1" }),

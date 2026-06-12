@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { AppointmentsType, Prisma, RequestStatus } from "@prisma/client";
+import { AppointmentsType, Prisma, AppointmentStatus } from "@prisma/client";
 import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
 import { resolveOrgScope } from "@/lib/api/scope/parse";
 
@@ -59,7 +59,7 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  // Validate statuses — consultation/subscription use RequestStatus enum,
+  // Validate statuses — consultation/subscription use AppointmentStatus enum,
   // webinar/class use their own event lifecycle statuses
   const validRequestStatuses = [
     "PENDING",
@@ -341,12 +341,12 @@ async function getAppointments(
   const statusFilters: Prisma.AppointmentWhereInput[] = [];
   if (statuses?.consultation) {
     statusFilters.push({
-      consultation: { requestStatus: statuses.consultation as RequestStatus },
+      consultation: { status: statuses.consultation as AppointmentStatus },
     });
   }
   if (statuses?.subscription) {
     statusFilters.push({
-      subscription: { requestStatus: statuses.subscription as RequestStatus },
+      subscription: { status: statuses.subscription as AppointmentStatus },
     });
   }
   if (statuses?.webinar) {
@@ -418,7 +418,7 @@ async function getAppointments(
           },
           schedulingPeriodStartsAt: true,
           schedulingPeriodEndsAt: true,
-          requestStatus: true,
+          status: true,
         },
       },
       webinar: {
@@ -585,7 +585,7 @@ export async function POST(request: NextRequest) {
             },
             schedulingPeriodStartsAt: true,
             schedulingPeriodEndsAt: true,
-            requestStatus: true,
+            status: true,
           },
         },
         webinar: {

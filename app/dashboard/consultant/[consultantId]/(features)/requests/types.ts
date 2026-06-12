@@ -1,4 +1,4 @@
-import { RequestStatus } from "@prisma/client";
+import { AppointmentStatus } from "@prisma/client";
 
 // --- API Response Type Definitions ---
 interface UserInfo {
@@ -43,7 +43,7 @@ export interface ConsultationApiResponse {
   requestedBy: RequestedBy;
   requestedAt: string;
   appointment?: AppointmentInfo;
-  requestStatus: RequestStatus;
+  status: AppointmentStatus;
   bookingSource?: "DIRECT_CHECKOUT" | "REQUEST_SUBMITTED"; // Booking source enum
 }
 
@@ -53,7 +53,7 @@ export interface SubscriptionApiResponse {
   requestedBy: RequestedBy;
   requestedAt: string;
   appointments?: AppointmentInfo[];
-  requestStatus: RequestStatus;
+  status: AppointmentStatus;
   bookingSource?: "DIRECT_CHECKOUT" | "REQUEST_SUBMITTED"; // Booking source enum
   // Correct field names from Prisma Subscription model
   schedulingPeriodStartsAt?: string;

@@ -510,7 +510,7 @@ export async function initializeAllChannels() {
       },
     }),
     prisma.consultation.findMany({
-      where: { requestStatus: "APPROVED" },
+      where: { status: "APPROVED" },
       include: {
         consultationPlan: {
           include: {
@@ -521,7 +521,7 @@ export async function initializeAllChannels() {
       },
     }),
     prisma.subscription.findMany({
-      where: { requestStatus: "APPROVED" },
+      where: { status: "APPROVED" },
       include: {
         subscriptionPlan: {
           include: {

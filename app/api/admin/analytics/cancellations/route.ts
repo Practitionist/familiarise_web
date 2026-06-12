@@ -33,7 +33,7 @@ export async function GET(req: NextRequest) {
     // Get cancelled consultations with reasons
     const cancelledConsultations = await prisma.consultation.findMany({
       where: {
-        requestStatus: "CANCELLED",
+        status: "CANCELLED",
         cancelledAt: {
           gte: startDate,
           lte: endDate,
@@ -57,7 +57,7 @@ export async function GET(req: NextRequest) {
     // Get cancelled subscriptions with reasons
     const cancelledSubscriptions = await prisma.subscription.findMany({
       where: {
-        requestStatus: "CANCELLED",
+        status: "CANCELLED",
         cancelledAt: {
           gte: startDate,
           lte: endDate,

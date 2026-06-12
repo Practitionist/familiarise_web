@@ -21,7 +21,7 @@ async function run() {
   await ensureServerOrSkip();
 
   const pending = await prisma.consultation.findFirst({
-    where: { requestStatus: "PENDING" },
+    where: { status: "PENDING" },
     select: { id: true },
   });
   if (!pending) {
@@ -34,12 +34,12 @@ async function run() {
   );
 
   const results = await Promise.all([
-    apiFetch(`/api/events/consultations/${pending.id}`, {
+    apiFetch(`/api/bookings/consultations/${pending.id}`, {
       method: "PATCH",
       session: admin,
       body: JSON.stringify({ status: "APPROVED" }),
     }),
-    apiFetch(`/api/events/consultations/${pending.id}`, {
+    apiFetch(`/api/bookings/consultations/${pending.id}`, {
       method: "PATCH",
       session: admin,
       body: JSON.stringify({ status: "REJECTED" }),
@@ -50,12 +50,12 @@ async function run() {
 
   const after = await prisma.consultation.findUnique({
     where: { id: pending.id },
-    select: { requestStatus: true },
+    select: { status: true },
   });
   check(
     "final state is one of the two requested outcomes",
     ["APPROVED", "APPROVED_PENDING_PAYMENT", "REJECTED"].includes(
-      after?.requestStatus ?? "",
+      after?.status ?? "",
     ),
     after,
   );
@@ -63,7 +63,7 @@ async function run() {
   // Restore the fixture for repeat runs.
   await prisma.consultation.update({
     where: { id: pending.id },
-    data: { requestStatus: "PENDING", pendingPaymentUrl: null },
+    data: { status: "PENDING", pendingPaymentUrl: null },
   });
 
   finish("approve-decline-race");

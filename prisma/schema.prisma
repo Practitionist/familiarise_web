@@ -2607,7 +2607,7 @@ model Consultation {
   consultationPlan   ConsultationPlan @relation(fields: [consultationPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultationPlanId String
 
-  requestStatus          RequestStatus    @default(PENDING)
+  status                 AppointmentStatus @default(PENDING) @map("requestStatus")
   requestedBy            ConsulteeProfile @relation(fields: [requestedById], references: [id], onUpdate: Cascade, onDelete: Cascade)
   requestedById          String
   requestedAt            DateTime         @default(now()) @db.Timestamptz
@@ -2634,9 +2634,9 @@ model Consultation {
   // Requests-tab hot path: all consultations for a plan filtered by status,
   // newest first — without this the planner-side list falls back to the
   // single-column indexes + sort.
-  @@index([consultationPlanId, requestStatus, requestedAt])
-  @@index([requestStatus])
-  @@index([requestedById, requestStatus])
+  @@index([consultationPlanId, status, requestedAt])
+  @@index([status])
+  @@index([requestedById, status])
   @@index([requestedAt])
   @@index([cancelledAt])
 }
@@ -2692,7 +2692,7 @@ model Subscription {
   schedulingPeriodEndsAt   DateTime @db.Timestamptz
   schedulingTimezone       String   @default("Asia/Kolkata")
 
-  requestStatus          RequestStatus    @default(PENDING)
+  status                 AppointmentStatus @default(PENDING) @map("requestStatus")
   requestedBy            ConsulteeProfile @relation(fields: [requestedById], references: [id], onUpdate: Cascade, onDelete: Cascade)
   requestedById          String
   requestedAt            DateTime         @default(now()) @db.Timestamptz
@@ -2721,14 +2721,14 @@ model Subscription {
   @@index([requestedById])
   @@index([subscriptionPlanId])
   // Requests-tab hot path — mirror of the Consultation composite.
-  @@index([subscriptionPlanId, requestStatus, requestedAt])
-  @@index([requestStatus])
-  @@index([requestedById, requestStatus])
+  @@index([subscriptionPlanId, status, requestedAt])
+  @@index([status])
+  @@index([requestedById, status])
   @@index([requestedAt])
   @@index([cancelledAt])
 }
 
-enum RequestStatus {
+enum AppointmentStatus {
   PENDING
   APPROVED
   APPROVED_PENDING_PAYMENT // Approved by consultant but awaiting payment
@@ -2737,6 +2737,8 @@ enum RequestStatus {
   REJECTED
   CANCELLED
   EXPIRED
+
+  @@map("RequestStatus")
 }
 
 // Free trial session tracking for subscriptions

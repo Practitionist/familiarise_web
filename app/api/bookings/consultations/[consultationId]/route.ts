@@ -4,7 +4,7 @@ import {
   PaymentGateway,
   PaymentStatus,
   Prisma,
-  RequestStatus,
+  AppointmentStatus,
 } from "@prisma/client";
 import { z } from "zod";
 import { addHours } from "date-fns";
@@ -213,7 +213,7 @@ export async function PUT(
     const body = await request.json();
 
     // Validate body to prevent arbitrary field injection
-    // #836 — requestStatus is NOT writable here: status changes flow only
+    // #836 — status is NOT writable here: status changes flow only
     // through PATCH, where the allowed-from guard rides the WHERE clause.
     // #831 — user-typed strings carry a .max()
     const consultationPutSchema = z
@@ -434,7 +434,7 @@ export async function PATCH(
     const { consultationId } = await params;
 
     const consultationPatchSchema = z.object({
-      status: z.nativeEnum(RequestStatus),
+      status: z.nativeEnum(AppointmentStatus),
     });
 
     const parseResult = consultationPatchSchema.safeParse(body);
@@ -507,7 +507,7 @@ export async function PATCH(
 
     // LAYER 1: Distributed lock (only for APPROVED status changes)
     let lock;
-    if (status === RequestStatus.APPROVED) {
+    if (status === AppointmentStatus.APPROVED) {
       try {
         lock = await lockConsultationApproval(consultationId, 30000); // 30-second TTL
       } catch (error) {
@@ -560,10 +560,10 @@ export async function PATCH(
           }
 
           // IDEMPOTENCY: Check if already in target state or processing
-          if (status === RequestStatus.APPROVED) {
+          if (status === AppointmentStatus.APPROVED) {
             if (
-              currentConsultation.requestStatus ===
-              RequestStatus.APPROVED_PENDING_PAYMENT
+              currentConsultation.status ===
+              AppointmentStatus.APPROVED_PENDING_PAYMENT
             ) {
               // Already processing, return existing state
               return {
@@ -573,7 +573,7 @@ export async function PATCH(
               };
             }
 
-            if (currentConsultation.requestStatus === RequestStatus.APPROVED) {
+            if (currentConsultation.status === AppointmentStatus.APPROVED) {
               return {
                 data: currentConsultation,
                 message: "Already approved",
@@ -619,7 +619,7 @@ export async function PATCH(
           });
 
           // If approved, check if payment exists
-          if (status === RequestStatus.APPROVED) {
+          if (status === AppointmentStatus.APPROVED) {
             const hasPayment = await checkConsultationPayment(
               tx,
               consultation.id,
@@ -645,7 +645,7 @@ export async function PATCH(
               // Update status to APPROVED_PENDING_PAYMENT — guarded (#836)
               await transitionConsultationRequest(tx, {
                 where: { id: consultationId },
-                to: RequestStatus.APPROVED_PENDING_PAYMENT,
+                to: AppointmentStatus.APPROVED_PENDING_PAYMENT,
                 data: {
                   pendingPaymentUrl: paymentResult.checkoutUrl,
                   requestNotes: consultation.requestNotes
@@ -744,7 +744,7 @@ export async function PATCH(
       }
 
       // --- Stream channel creation (fire-and-forget, only on approval) ---
-      if (!result.duplicate && status === RequestStatus.APPROVED)
+      if (!result.duplicate && status === AppointmentStatus.APPROVED)
         try {
           const consultationData = result.data;
           const consultantUserId =
@@ -843,8 +843,8 @@ async function generatePaymentLink(consultation: ConsultationWithDetails) {
 
   // Extract slot times if appointment/slots exist
   const slot = appointment?.slotsOfAppointment?.[0];
-  const slotStartTimeInUTC = slot?.startsAt?.toISOString();
-  const slotEndTimeInUTC = slot?.endsAt?.toISOString();
+  const startsAt = slot?.startsAt?.toISOString();
+  const endsAt = slot?.endsAt?.toISOString();
 
   return await createApprovalPaymentIntent({
     userId: requestedBy.user.id,
@@ -852,8 +852,8 @@ async function generatePaymentLink(consultation: ConsultationWithDetails) {
     consultationId: consultation.id,
     planId: consultationPlan.id,
     paymentGateway: PaymentGateway.STRIPE, // Default to Stripe, could be made configurable
-    slotStartTimeInUTC,
-    slotEndTimeInUTC,
+    startsAt,
+    endsAt,
     notes: consultation.requestNotes ?? undefined,
   });
 }

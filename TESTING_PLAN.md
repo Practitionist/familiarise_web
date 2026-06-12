@@ -194,7 +194,7 @@ import p from '@/lib/prisma';
     where: { consultation: { isNot: null }, slotsOfAppointment: { some: {} } },
     select: { id: true, consultation: { select: { id: true, requestedBy: { select: { user: { select: { id: true, email: true } } } } } } },
   });
-  await p.consultation.update({ where: { id: appt!.consultation!.id }, data: { requestStatus: 'APPROVED_PENDING_PAYMENT' } });
+  await p.consultation.update({ where: { id: appt!.consultation!.id }, data: { status: 'APPROVED_PENDING_PAYMENT' } });
   await p.slotOfAppointment.updateMany({ where: { appointmentId: appt!.id }, data: { isTentative: true } });
   const pay = await p.payment.create({ data: {
     amount: 10000, originalAmount: 10000, paymentMethod: 'card',

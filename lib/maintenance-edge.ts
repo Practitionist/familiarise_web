@@ -138,17 +138,17 @@ export function isMaintenanceExempt(pathname: string): boolean {
 
 // Transactional write routes to block during DEGRADED maintenance.
 // Read-only methods (GET, HEAD, OPTIONS) are always allowed.
-// Patterns support a single '*' wildcard segment (e.g. /api/events/*/allocate).
+// Patterns support a single '*' wildcard segment (e.g. /api/bookings/*/allocate).
 const WRITE_BLOCKED_IN_DEGRADED = [
   "/api/checkout",
   "/api/appointments/*/cancel",
   "/api/appointments/*/reschedule",
   "/api/appointments/*/documents",
-  "/api/events/consultations",
-  "/api/events/subscriptions",
-  "/api/events/webinars",
-  "/api/events/classes",
-  "/api/events/*/allocate",
+  "/api/bookings/consultations",
+  "/api/bookings/subscriptions",
+  "/api/bookings/webinars",
+  "/api/bookings/classes",
+  "/api/bookings/*/allocate",
   "/api/trials",
   "/api/plans/*/materials",
   "/api/stream/meetings", // Block new video call creation

@@ -706,7 +706,7 @@ export default function SupportTicketsPage() {
                         </p>
                         <p>
                           <strong>Status:</strong>{" "}
-                          {ticketDetail.linkedConsultation.requestStatus}
+                          {ticketDetail.linkedConsultation.status}
                         </p>
                         {ticketDetail.linkedConsultation.appointment && (
                           <p>

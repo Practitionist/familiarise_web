@@ -10,7 +10,7 @@ import {
 import { resolveOrgScope } from "@/lib/api/scope/parse";
 
 export async function GET(request: NextRequest) {
-  // Require authentication (middleware already enforces cookie presence for /api/events/)
+  // Require authentication (middleware already enforces cookie presence for /api/bookings/)
   const authResult = await requireApiAuth();
   if (authResult.error) return authResult.error;
   const { session } = authResult;

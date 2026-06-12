@@ -7,7 +7,7 @@ export const UpdateSubscriptionStatusSchema = z.object({
   status: RequestStatusEnum,
 });
 
-// #836 — requestStatus is NOT writable via PUT: status changes flow only
+// #836 — status is NOT writable via PUT: status changes flow only
 // through PATCH, where the allowed-from guard rides the WHERE clause.
 export const UpdateSubscriptionSchema = z.object({
   schedulingPeriodStartsAt: z.string().optional(),

@@ -86,7 +86,7 @@ export default function AppointmentsPage({
         ? `&orgScope=${encodeURIComponent(orgScopeQueryParam)}`
         : "";
       const res = await fetch(
-        `/api/events/classes?consultantProfileId=${consultantId}${orgScopeQs}`,
+        `/api/bookings/classes?consultantProfileId=${consultantId}${orgScopeQs}`,
       );
       if (!res.ok) throw new Error("Failed to fetch classes");
       const { data } = await res.json();
@@ -109,7 +109,7 @@ export default function AppointmentsPage({
         ? `&orgScope=${encodeURIComponent(orgScopeQueryParam)}`
         : "";
       const res = await fetch(
-        `/api/events/webinars?consultantProfileId=${consultantId}${orgScopeQs}`,
+        `/api/bookings/webinars?consultantProfileId=${consultantId}${orgScopeQs}`,
       );
       if (!res.ok) throw new Error("Failed to fetch webinars");
       const { data } = await res.json();

@@ -78,7 +78,7 @@ export function Calendar({
               start: startTime,
               end: new Date(slot.endsAt ?? slot.startsAt),
               type: "Consultation" as const,
-              status: c.requestStatus,
+              status: c.status,
               consultant:
                 c.consultationPlan.consultantProfile?.user?.name || "Unknown",
               subscriptionId: null,
@@ -100,7 +100,7 @@ export function Calendar({
               start: startTime,
               end: new Date(slot.endsAt ?? slot.startsAt),
               type: "Subscription" as const,
-              status: s.requestStatus,
+              status: s.status,
               consultant:
                 s.subscriptionPlan.consultantProfile?.user?.name || "Unknown",
               subscriptionId: s.id,
