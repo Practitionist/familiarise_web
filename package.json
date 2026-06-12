@@ -3,7 +3,7 @@
   "version": "0.2.0",
   "private": true,
   "scripts": {
-    "build": "npm run db:generate && next build",
+    "build": "npm run db:generate && NODE_OPTIONS='--max-old-space-size=8192' next build",
     "build:analyze": "ANALYZE=true npm run build",
     "build:prod": "npm run build",
     "db:generate": "prisma generate",
