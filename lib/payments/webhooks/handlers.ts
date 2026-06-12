@@ -945,6 +945,9 @@ async function createSubscription(tx: Tx, data: SubscriptionData) {
         startsAt: new Date(data.slotStartTimeInUTC),
         endsAt: new Date(data.slotEndTimeInUTC),
         isTentative: false,
+        // #440 — same overlap-guard population as the consultation twin;
+        // a NULL here would bypass the exclusion constraint's scope.
+        consultantProfileId: plan.consultantProfileId,
         user: { connect: { id: data.userId } },
       },
     };
