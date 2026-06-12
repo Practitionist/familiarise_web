@@ -19,6 +19,7 @@ export const TERMINAL_DISPUTE_STATUSES: DisputeStatus[] = [
   "WON",
   "LOST",
   "CHARGE_REFUNDED",
+  "CLOSED",
 ];
 
 /** Allowed forward transitions. Same-status is handled separately (idempotent). */
@@ -31,12 +32,14 @@ const ALLOWED: Record<DisputeStatus, DisputeStatus[]> = {
   WARNING_UNDER_REVIEW: ["WARNING_CLOSED", "NEEDS_RESPONSE"],
   // A closed early-warning can still escalate into a formal dispute later.
   WARNING_CLOSED: ["NEEDS_RESPONSE"],
-  NEEDS_RESPONSE: ["UNDER_REVIEW", "WON", "LOST", "CHARGE_REFUNDED"],
-  UNDER_REVIEW: ["WON", "LOST", "CHARGE_REFUNDED"],
-  // Terminal verdicts — no outgoing transitions.
+  NEEDS_RESPONSE: ["UNDER_REVIEW", "WON", "LOST", "CHARGE_REFUNDED", "CLOSED"],
+  UNDER_REVIEW: ["WON", "LOST", "CHARGE_REFUNDED", "CLOSED"],
+  // Terminal verdicts — no outgoing transitions. CLOSED is Razorpay's
+  // ended-without-verdict terminal (refund issued / details provided).
   WON: [],
   LOST: [],
   CHARGE_REFUNDED: [],
+  CLOSED: [],
 };
 
 /**

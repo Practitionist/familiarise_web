@@ -62,6 +62,10 @@ const STATUS_CONFIG: Record<
   CHARGE_REFUNDED: { label: "Charge refunded", variant: "destructive", open: false, lost: true },
   WON: { label: "Won", variant: "default", open: false, lost: false },
   LOST: { label: "Lost", variant: "destructive", open: false, lost: true },
+  // Razorpay terminal for ended-without-verdict (refund issued / details
+  // provided). Not "lost": the org wallet bore nothing beyond any refund
+  // already accounted by the refund path.
+  CLOSED: { label: "Closed", variant: "default", open: false, lost: false },
 };
 
 export default function OrgDisputesPage({

@@ -2,7 +2,15 @@
 
 import { use, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Briefcase, Loader2, Users, Pencil, Lock } from "lucide-react";
+import {
+  Plus,
+  Briefcase,
+  Loader2,
+  Users,
+  Pencil,
+  Lock,
+  Trash2,
+} from "lucide-react";
 import type {
   BillingCycle,
   FundingSource,
@@ -58,6 +66,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { formatCurrencyAmount } from "@/utils/formatting";
 
 // ---------------------------------------------------------------------------
@@ -115,7 +133,8 @@ function programUtilization(
     return {
       used: String(engagementsUsed),
       total: String(total),
-      pct: total > 0 ? Math.min(100, Math.round((engagementsUsed / total) * 100)) : null,
+      // ceil, not round (#752) — non-zero usage must never display as 0%.
+      pct: total > 0 ? Math.min(100, Math.ceil((engagementsUsed / total) * 100)) : null,
     };
   }
   if (p.type === "CREDIT_POOL") {
@@ -126,7 +145,7 @@ function programUtilization(
       total: budgetPaise > 0 ? formatCurrencyAmount(budgetPaise, "INR") : "∞",
       pct:
         budgetPaise > 0
-          ? Math.min(100, Math.round((consumedPaise / budgetPaise) * 100))
+          ? Math.min(100, Math.ceil((consumedPaise / budgetPaise) * 100))
           : null,
     };
   }
@@ -280,6 +299,21 @@ async function patchProgram(
     );
   }
   return json;
+}
+
+// DELETE is only legal for never-used programs (#752) — the server re-checks
+// assignments + utilization under Serializable and 409s otherwise; the UI
+// gate is affordance, not authority.
+async function deleteProgram(orgId: string, programId: string) {
+  const res = await fetch(`/api/organizations/${orgId}/programs/${programId}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const json = await res.json().catch(() => ({}));
+    throw new Error(
+      (json as { error?: string }).error ?? "Failed to delete program",
+    );
+  }
 }
 
 // Single-program shape from GET .../programs/[programId] — carries the
@@ -1303,6 +1337,21 @@ function ManageProgramDialog({
     onError: (err: Error) => setAssignError(err.message),
   });
 
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const deleteMutation = useMutation({
+    mutationFn: () => deleteProgram(orgId, program.id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["org-programs", orgId] });
+      setConfirmDelete(false);
+      onOpenChange(false);
+    },
+    onError: (err: Error) => {
+      setConfirmDelete(false);
+      setDeleteError(err.message);
+    },
+  });
+
   const handleAssign = () => {
     setAssignError(null);
     if (!membershipId) {
@@ -1502,6 +1551,64 @@ function ManageProgramDialog({
             </Table>
           )}
         </div>
+
+        {/* #752 — never-used programs (typo'd cap, wrong contract) are
+            deletable; anything with assignments stays terminate-only. */}
+        {!assignments.isLoading && assignmentList.length === 0 && (
+          <div className="space-y-2 rounded-md border border-red-200 p-4">
+            <h4 className="text-sm font-semibold text-red-700">
+              Delete program
+            </h4>
+            <p className="text-xs text-zinc-500">
+              This program has no assignments. If it was created by mistake,
+              delete it instead of leaving a terminated row behind. Programs
+              with assignments or booking history can only be paused or
+              cancelled.
+            </p>
+            {deleteError && <p className="text-sm text-red-600">{deleteError}</p>}
+            <Button
+              size="sm"
+              variant="outline"
+              className="border-red-300 text-red-700 hover:bg-red-50"
+              onClick={() => setConfirmDelete(true)}
+              disabled={deleteMutation.isPending}
+            >
+              {deleteMutation.isPending ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin mr-1" /> Deleting…
+                </>
+              ) : (
+                <>
+                  <Trash2 className="h-4 w-4 mr-1" /> Delete program
+                </>
+              )}
+            </Button>
+          </div>
+        )}
+
+        <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete program?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Permanently delete{" "}
+                <span className="font-medium">{program.name}</span>? This is
+                only possible because no members were ever assigned. The
+                deletion is recorded in the audit log.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-red-600 hover:bg-red-700 text-white"
+                onClick={() => deleteMutation.mutate()}
+                disabled={deleteMutation.isPending}
+              >
+                {deleteMutation.isPending ? "Deleting…" : "Delete"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </DialogContent>
     </Dialog>
   );

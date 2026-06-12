@@ -22,6 +22,7 @@ const DisputeStatusSchema = z.enum([
   "CHARGE_REFUNDED",
   "WON",
   "LOST",
+  "CLOSED",
 ]);
 
 const QuerySchema = z.object({

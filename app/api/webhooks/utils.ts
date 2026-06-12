@@ -1181,8 +1181,15 @@ export async function handleDisputeUpdated(
 
       console.log(`✅ Dispute ${disputeId} updated to status ${mappedStatus}`);
 
-      // M1 FIX: Release or refund earnings based on dispute resolution
-      if (mappedStatus === "WON" || mappedStatus === "WARNING_CLOSED") {
+      // M1 FIX: Release or refund earnings based on dispute resolution.
+      // CLOSED releases too: anything still HELD wasn't consumed by a refund
+      // (the refund cascade flips those rows to REFUNDED first), so the
+      // updateMany is a no-op exactly when money already moved.
+      if (
+        mappedStatus === "WON" ||
+        mappedStatus === "WARNING_CLOSED" ||
+        mappedStatus === "CLOSED"
+      ) {
         // Dispute resolved in platform's favor — release held earnings back to READY
         const released = await tx.consultantEarnings.updateMany({
           where: { paymentId: dispute.paymentId, status: "HELD" },
@@ -1453,7 +1460,8 @@ function mapDisputeStatus(
   | "UNDER_REVIEW"
   | "CHARGE_REFUNDED"
   | "WON"
-  | "LOST" {
+  | "LOST"
+  | "CLOSED" {
   switch (status.toLowerCase()) {
     case "warning_needs_response":
       return "WARNING_NEEDS_RESPONSE";
@@ -1471,6 +1479,13 @@ function mapDisputeStatus(
       return "WON";
     case "lost":
       return "LOST";
+    // Razorpay `closed` is its own terminal: proceedings ended without a
+    // win/loss verdict (refund issued or details provided). Without this
+    // case it fell to `default` and a resolved dispute re-entered
+    // NEEDS_RESPONSE — or was rejected as a backward transition and never
+    // reached a terminal state.
+    case "closed":
+      return "CLOSED";
     default:
       return "NEEDS_RESPONSE";
   }
