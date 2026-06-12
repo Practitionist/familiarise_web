@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma, { type Tx } from "@/lib/prisma";
-import { Prisma, PaymentStatus, RequestStatus } from "@prisma/client";
+import { Prisma, PaymentStatus, AppointmentStatus } from "@prisma/client";
 import {
   isDbHealthy,
   verifyHmacWebhookSignature,
@@ -312,7 +312,7 @@ async function createAppointmentFromPayment(
         data: {
           appointmentId: appointment.id,
           consultationPlanId: planId,
-          requestStatus: RequestStatus.PENDING,
+          status: AppointmentStatus.PENDING,
         } as unknown as Prisma.ConsultationUncheckedCreateInput,
       });
       break;
@@ -324,7 +324,7 @@ async function createAppointmentFromPayment(
         data: {
           appointmentId: appointment.id,
           subscriptionPlanId: planId,
-          requestStatus: RequestStatus.PENDING,
+          status: AppointmentStatus.PENDING,
         } as unknown as Prisma.SubscriptionUncheckedCreateInput,
       });
       break;
@@ -411,14 +411,14 @@ async function confirmExistingAppointment(tx: Tx, appointmentId: string) {
   if (appointment?.consultation) {
     await tx.consultation.update({
       where: { id: appointment.consultation.id },
-      data: { requestStatus: RequestStatus.PENDING },
+      data: { status: AppointmentStatus.PENDING },
     });
   }
 
   if (appointment?.subscription) {
     await tx.subscription.update({
       where: { id: appointment.subscription.id },
-      data: { requestStatus: RequestStatus.PENDING },
+      data: { status: AppointmentStatus.PENDING },
     });
   }
 

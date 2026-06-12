@@ -148,7 +148,7 @@ export interface UseEventSlotAllocationOptions {
   planId?: string;
 
   /** Request status for filtering and validation */
-  requestStatus?: "PENDING" | "APPROVED" | "REJECTED";
+  status?: "PENDING" | "APPROVED" | "REJECTED";
 
   /** Allocation method preference */
   allocationType?: "AUTO" | "MANUAL" | "REQUESTED";

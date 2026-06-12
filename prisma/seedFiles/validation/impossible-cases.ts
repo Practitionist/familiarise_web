@@ -339,7 +339,7 @@ export const impossibleCases: ValidationTestCase[] = [
       const appointment = await prisma.appointment.findFirst({
         where: {
           consultation: {
-            requestStatus: "COMPLETED",
+            status: "COMPLETED",
           },
         },
         include: { consultation: true },
@@ -353,7 +353,7 @@ export const impossibleCases: ValidationTestCase[] = [
       await prisma.consultation.update({
         where: { id: appointment.consultation.id },
         data: {
-          requestStatus: "PENDING", // Invalid: COMPLETED -> PENDING
+          status: "PENDING", // Invalid: COMPLETED -> PENDING
         },
       });
     },

@@ -19,7 +19,7 @@
  */
 
 import prisma from "../../lib/prisma";
-import { RequestStatus } from "@prisma/client";
+import { AppointmentStatus } from "@prisma/client";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 
 // Cancel consultations with APPROVED/APPROVED_PENDING_PAYMENT but no payment after 7 days
@@ -61,8 +61,8 @@ async function cleanupStalePendingConsultationsUnlocked(): Promise<StalePendingC
     // and no successful payment
     const staleConsultations = await prisma.consultation.findMany({
       where: {
-        requestStatus: {
-          in: [RequestStatus.APPROVED, RequestStatus.APPROVED_PENDING_PAYMENT],
+        status: {
+          in: [AppointmentStatus.APPROVED, AppointmentStatus.APPROVED_PENDING_PAYMENT],
         },
         updatedAt: { lt: staleDate },
         appointment: {
@@ -104,7 +104,7 @@ async function cleanupStalePendingConsultationsUnlocked(): Promise<StalePendingC
 
     for (const consultation of staleConsultations) {
       console.log(`\nProcessing consultation ${consultation.id}`);
-      console.log(`   Status: ${consultation.requestStatus}`);
+      console.log(`   Status: ${consultation.status}`);
       console.log(
         `   Consultee: ${consultation.requestedBy.user.name || "Unknown"}`,
       );
@@ -132,7 +132,7 @@ async function cleanupStalePendingConsultationsUnlocked(): Promise<StalePendingC
           await tx.consultation.update({
             where: { id: consultation.id },
             data: {
-              requestStatus: RequestStatus.CANCELLED,
+              status: AppointmentStatus.CANCELLED,
               cancellationNotes: `Auto-cancelled: No payment activity for ${STALE_THRESHOLD_DAYS} days`,
               cancelledAt: new Date(),
             },

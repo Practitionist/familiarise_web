@@ -152,7 +152,7 @@ describe("#827 — confirmExistingAppointment first-confirmed-wins", () => {
           updateMany: jest.fn().mockResolvedValue({ count: 1 }),
           findUnique: jest
             .fn()
-            .mockResolvedValue({ id: "c1", requestStatus: "APPROVED_PENDING_PAYMENT" }),
+            .mockResolvedValue({ id: "c1", status: "APPROVED_PENDING_PAYMENT" }),
         },
       } as never,
     };

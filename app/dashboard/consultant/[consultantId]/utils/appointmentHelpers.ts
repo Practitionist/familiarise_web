@@ -626,7 +626,7 @@ export const getGroupStatus = (appointments: TAppointment[]): string => {
   const type = firstAppointment.appointmentType;
 
   if (type === "SUBSCRIPTION" && firstAppointment.subscription) {
-    if (firstAppointment.subscription.requestStatus === "CANCELLED") {
+    if (firstAppointment.subscription.status === "CANCELLED") {
       return "Cancelled";
     }
 

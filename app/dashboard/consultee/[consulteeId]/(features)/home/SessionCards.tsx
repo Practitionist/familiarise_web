@@ -88,10 +88,10 @@ export const SlotCard = memo(function SlotCard({
   const appointmentType = appointment.appointmentType;
   switch (appointmentType) {
     case "CONSULTATION":
-      status = appointment.consultation?.requestStatus ?? "Unknown";
+      status = appointment.consultation?.status ?? "Unknown";
       break;
     case "SUBSCRIPTION":
-      status = appointment.subscription?.requestStatus ?? "Unknown";
+      status = appointment.subscription?.status ?? "Unknown";
       break;
     case "WEBINAR":
       status = appointment.webinar?.status ?? "Unknown";

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { RequestStatus } from "@prisma/client";
+import { AppointmentStatus } from "@prisma/client";
 import { lockSlotBooking, unlockSlotBooking } from "@/utils/appointmentlock";
 import { SlotLockError } from "@/utils/errors/SlotLockError";
 import { SlotValidationService } from "@/utils/slotAllocation/SlotValidationService";
@@ -184,7 +184,7 @@ export async function POST(req: NextRequest) {
         data: {
           consultationPlanId: consultationPlanId,
           requestedById: consulteeProfile.id,
-          requestStatus: RequestStatus.PENDING,
+          status: AppointmentStatus.PENDING,
           requestNotes: requestNotes,
           appointment: {
             create: {

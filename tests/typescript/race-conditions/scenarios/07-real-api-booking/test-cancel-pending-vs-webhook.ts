@@ -82,7 +82,7 @@ async function run() {
   const appointment = await prisma.appointment.findFirst({
     where: {
       consultation: {
-        requestStatus: {
+        status: {
           in: ["PENDING", "APPROVED", "APPROVED_PENDING_PAYMENT"],
         },
       },
@@ -94,7 +94,7 @@ async function run() {
         select: {
           id: true,
           consultationPlanId: true,
-          requestStatus: true,
+          status: true,
           cancellationNotes: true,
           cancelledAt: true,
           // requestedBy is the ConsulteeProfile; the login + Payment.userId
@@ -133,7 +133,7 @@ async function run() {
   // Arm the fixture: parent awaiting payment, slots tentative.
   await prisma.consultation.update({
     where: { id: consultation.id },
-    data: { requestStatus: "APPROVED_PENDING_PAYMENT" },
+    data: { status: "APPROVED_PENDING_PAYMENT" },
   });
   await prisma.slotOfAppointment.updateMany({
     where: { appointmentId: appointment.id },
@@ -227,7 +227,7 @@ async function run() {
       });
       const parent = await prisma.consultation.findUniqueOrThrow({
         where: { id: consultation.id },
-        select: { requestStatus: true },
+        select: { status: true },
       });
       const cancelWon = cancelRes.status === 200;
 
@@ -239,7 +239,7 @@ async function run() {
         });
         check(
           "leg1/A: parent CANCELLED",
-          parent.requestStatus === "CANCELLED",
+          parent.status === "CANCELLED",
           parent,
         );
       } else {
@@ -252,7 +252,7 @@ async function run() {
         if (cancelWon) {
           check(
             "leg1/C: late capture left no half-confirmed booking (slots deleted, parent CANCELLED)",
-            confirmed === 0 && parent.requestStatus === "CANCELLED",
+            confirmed === 0 && parent.status === "CANCELLED",
             { confirmed, parent },
           );
         } else {
@@ -263,7 +263,7 @@ async function run() {
           );
           check(
             "leg1/B: webhook win left the parent un-cancelled",
-            parent.requestStatus !== "CANCELLED",
+            parent.status !== "CANCELLED",
             parent,
           );
         }
@@ -278,7 +278,7 @@ async function run() {
     // Re-arm (leg 1 may have consumed the fixture state).
     await prisma.consultation.update({
       where: { id: consultation.id },
-      data: { requestStatus: "APPROVED_PENDING_PAYMENT" },
+      data: { status: "APPROVED_PENDING_PAYMENT" },
     });
     for (const slot of originalSlots) {
       await prisma.slotOfAppointment.upsert({
@@ -346,7 +346,7 @@ async function run() {
     await prisma.consultation.update({
       where: { id: consultation.id },
       data: {
-        requestStatus: consultation.requestStatus,
+        status: consultation.status,
         cancellationNotes: consultation.cancellationNotes,
         cancelledAt: consultation.cancelledAt,
       },

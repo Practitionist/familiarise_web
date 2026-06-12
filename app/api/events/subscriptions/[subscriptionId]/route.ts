@@ -3,7 +3,7 @@ import {
   PaymentGateway,
   PaymentStatus,
   Prisma,
-  RequestStatus,
+  AppointmentStatus,
 } from "@prisma/client";
 import { addMonths } from "date-fns";
 import { NextRequest, NextResponse } from "next/server";
@@ -454,7 +454,7 @@ export async function PATCH(
 
     // LAYER 1: Distributed lock (only for APPROVED status changes)
     let lock;
-    if (status === RequestStatus.APPROVED) {
+    if (status === AppointmentStatus.APPROVED) {
       try {
         lock = await lockSubscriptionApproval(subscriptionId, 30000); // 30-second TTL
       } catch (error) {
@@ -507,10 +507,10 @@ export async function PATCH(
           }
 
           // IDEMPOTENCY: Check if already in target state or processing
-          if (status === RequestStatus.APPROVED) {
+          if (status === AppointmentStatus.APPROVED) {
             if (
-              currentSubscription.requestStatus ===
-              RequestStatus.APPROVED_PENDING_PAYMENT
+              currentSubscription.status ===
+              AppointmentStatus.APPROVED_PENDING_PAYMENT
             ) {
               // Already processing, return existing state
               return {
@@ -520,7 +520,7 @@ export async function PATCH(
               };
             }
 
-            if (currentSubscription.requestStatus === RequestStatus.APPROVED) {
+            if (currentSubscription.status === AppointmentStatus.APPROVED) {
               return {
                 data: currentSubscription,
                 message: "Already approved",
@@ -566,7 +566,7 @@ export async function PATCH(
           });
 
           // If approved, check if payment exists
-          if (status === RequestStatus.APPROVED) {
+          if (status === AppointmentStatus.APPROVED) {
             const hasPayment = await checkSubscriptionPayment(
               tx,
               subscription.id,
@@ -609,7 +609,7 @@ export async function PATCH(
               // Update status to APPROVED_PENDING_PAYMENT — guarded (#836)
               await transitionSubscriptionRequest(tx, {
                 where: { id: subscriptionId },
-                to: RequestStatus.APPROVED_PENDING_PAYMENT,
+                to: AppointmentStatus.APPROVED_PENDING_PAYMENT,
                 data: {
                   schedulingPeriodStartsAt: startDate,
                   schedulingPeriodEndsAt: endDate,
@@ -716,7 +716,7 @@ export async function PATCH(
         const consultantUserId =
           subData.subscriptionPlan?.consultantProfile?.user?.id;
 
-        if (status === RequestStatus.APPROVED && consulteeUserId) {
+        if (status === AppointmentStatus.APPROVED && consulteeUserId) {
           void notifySubscriptionStarted(consulteeUserId, {
             subscriptionId: subData.id,
             planTitle: subData.subscriptionPlan?.title || "Subscription",
@@ -728,7 +728,7 @@ export async function PATCH(
           });
         }
 
-        if (status === RequestStatus.CANCELLED) {
+        if (status === AppointmentStatus.CANCELLED) {
           const userIds = [consultantUserId, consulteeUserId].filter(
             (id): id is string => !!id,
           );
@@ -765,7 +765,7 @@ export async function PATCH(
       // --- Stream channel creation (fire-and-forget, after transaction) ---
       if (
         !result.duplicate &&
-        status === RequestStatus.APPROVED &&
+        status === AppointmentStatus.APPROVED &&
         "data" in result &&
         result.data
       ) {

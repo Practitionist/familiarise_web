@@ -9,7 +9,7 @@ import {
   AppointmentsType,
   PaymentStatus,
   Prisma,
-  RequestStatus,
+  AppointmentStatus,
 } from "@prisma/client";
 import { calculateSubscriptionEndDate } from "@/utils/dateUtils";
 import { buildOccupiedAppointmentFilter } from "@/utils/slotAllocation/occupancyPolicy";
@@ -871,7 +871,7 @@ async function createConsultation(tx: Tx, data: ConsultationData) {
   const consultation = await tx.consultation.create({
     data: {
       consultationPlanId: data.planId,
-      requestStatus: RequestStatus.PENDING,
+      status: AppointmentStatus.PENDING,
       requestedById: data.consulteeProfileId,
       requestNotes: data.notes,
       bookingSource: "DIRECT_CHECKOUT",
@@ -927,7 +927,7 @@ async function createSubscription(tx: Tx, data: SubscriptionData) {
   const subscription = await tx.subscription.create({
     data: {
       subscriptionPlanId: data.planId,
-      requestStatus: RequestStatus.PENDING,
+      status: AppointmentStatus.PENDING,
       requestedById: data.consulteeProfileId,
       requestNotes: data.notes,
       bookingSource: "DIRECT_CHECKOUT",
@@ -1066,11 +1066,11 @@ async function confirmApprovalStatus(
     const movedConsult = await tx.consultation.updateMany({
       where: {
         id: entityId,
-        requestStatus: {
-          in: [RequestStatus.PENDING, RequestStatus.APPROVED_PENDING_PAYMENT],
+        status: {
+          in: [AppointmentStatus.PENDING, AppointmentStatus.APPROVED_PENDING_PAYMENT],
         },
       },
-      data: { requestStatus: RequestStatus.APPROVED },
+      data: { status: AppointmentStatus.APPROVED },
     });
     if (movedConsult.count === 0) {
       // Re-read: the pre-read raced the very transition that made the CAS
@@ -1079,13 +1079,13 @@ async function confirmApprovalStatus(
       // APPROVED/SCHEDULED/COMPLETED) or money-for-nothing.
       const fresh = await tx.consultation.findUnique({
         where: { id: entityId },
-        select: { requestStatus: true },
+        select: { status: true },
       });
-      const freshStatus = fresh?.requestStatus ?? consultation.requestStatus;
+      const freshStatus = fresh?.status ?? consultation.status;
       if (
-        freshStatus !== RequestStatus.APPROVED &&
-        freshStatus !== RequestStatus.SCHEDULED &&
-        freshStatus !== RequestStatus.COMPLETED
+        freshStatus !== AppointmentStatus.APPROVED &&
+        freshStatus !== AppointmentStatus.SCHEDULED &&
+        freshStatus !== AppointmentStatus.COMPLETED
       ) {
         void recordSystemError({
           organizationId: null,
@@ -1109,21 +1109,21 @@ async function confirmApprovalStatus(
     // Do NOT change PENDING → APPROVED here!
     // Subscription stays PENDING until consultant allocates slots via Requests tab
     // SlotAllocationService.allocate() will set status to APPROVED when slots are allocated
-    if (subscription.requestStatus === RequestStatus.APPROVED_PENDING_PAYMENT) {
+    if (subscription.status === AppointmentStatus.APPROVED_PENDING_PAYMENT) {
       // CAS — the pre-read can race a cancel; the guard decides (B2).
       await tx.subscription.updateMany({
         where: {
           id: entityId,
-          requestStatus: RequestStatus.APPROVED_PENDING_PAYMENT,
+          status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
         },
-        data: { requestStatus: RequestStatus.APPROVED },
+        data: { status: AppointmentStatus.APPROVED },
       });
       console.log(
         `✅ Subscription ${entityId} payment completed - moving from APPROVED_PENDING_PAYMENT to APPROVED`,
       );
     } else {
       console.log(
-        `ℹ️ Subscription ${entityId} payment received - keeping status as ${subscription.requestStatus} (consultant will allocate slots)`,
+        `ℹ️ Subscription ${entityId} payment received - keeping status as ${subscription.status} (consultant will allocate slots)`,
       );
     }
   }
@@ -1342,18 +1342,18 @@ async function cleanupFailedPaymentAppointment(tx: Tx, appointmentId: string) {
           await tx.consultation.updateMany({
             where: {
               id: appointment.consultation.id,
-              requestStatus: { in: REQUEST_ALLOWED_FROM.EXPIRED },
+              status: { in: REQUEST_ALLOWED_FROM.EXPIRED },
             },
-            data: { requestStatus: RequestStatus.EXPIRED },
+            data: { status: AppointmentStatus.EXPIRED },
           });
         }
         if (appointment.subscription) {
           await tx.subscription.updateMany({
             where: {
               id: appointment.subscription.id,
-              requestStatus: { in: REQUEST_ALLOWED_FROM.EXPIRED },
+              status: { in: REQUEST_ALLOWED_FROM.EXPIRED },
             },
-            data: { requestStatus: RequestStatus.EXPIRED },
+            data: { status: AppointmentStatus.EXPIRED },
           });
         }
       }

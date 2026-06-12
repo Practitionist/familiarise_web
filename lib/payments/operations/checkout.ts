@@ -12,7 +12,7 @@ import {
   PaymentGateway,
   PaymentStatus,
   Prisma,
-  RequestStatus,
+  AppointmentStatus,
   TrialSessionStatus,
 } from "@prisma/client";
 import { cancelPaymentIntent, createPaymentIntent } from "../index";
@@ -1358,9 +1358,9 @@ export async function handleConsultationCheckout(
   const consultation = await tx.consultation.create({
     data: {
       consultationPlanId: plan.id,
-      requestStatus: skipPayment
-        ? RequestStatus.APPROVED
-        : RequestStatus.PENDING,
+      status: skipPayment
+        ? AppointmentStatus.APPROVED
+        : AppointmentStatus.PENDING,
       requestedById: consulteeProfileId,
       requestNotes: data.notes,
       bookingSource: "DIRECT_CHECKOUT",
@@ -1455,11 +1455,11 @@ export async function handleSubscriptionCheckout(
     where: {
       subscriptionPlanId: plan.id,
       requestedById: consulteeProfileId,
-      requestStatus: {
+      status: {
         in: [
-          RequestStatus.PENDING,
-          RequestStatus.APPROVED,
-          RequestStatus.APPROVED_PENDING_PAYMENT,
+          AppointmentStatus.PENDING,
+          AppointmentStatus.APPROVED,
+          AppointmentStatus.APPROVED_PENDING_PAYMENT,
         ],
       },
       OR: [
@@ -1483,7 +1483,7 @@ export async function handleSubscriptionCheckout(
   const subscription = await tx.subscription.create({
     data: {
       subscriptionPlanId: plan.id,
-      requestStatus: RequestStatus.PENDING, // Always PENDING until consultant allocates slots
+      status: AppointmentStatus.PENDING, // Always PENDING until consultant allocates slots
       requestedById: consulteeProfileId,
       requestNotes: data.notes,
       bookingSource: "DIRECT_CHECKOUT",

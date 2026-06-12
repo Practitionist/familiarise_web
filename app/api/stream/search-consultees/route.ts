@@ -53,7 +53,7 @@ export async function GET(req: NextRequest) {
         consultationPlan: {
           consultantProfileId: consultantProfileId,
         },
-        requestStatus: {
+        status: {
           in: [
             "APPROVED",
             "APPROVED_PENDING_PAYMENT",
@@ -104,7 +104,7 @@ export async function GET(req: NextRequest) {
         subscriptionPlan: {
           consultantProfileId: consultantProfileId,
         },
-        requestStatus: {
+        status: {
           in: [
             "APPROVED",
             "APPROVED_PENDING_PAYMENT",

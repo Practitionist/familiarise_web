@@ -1,5 +1,5 @@
 import prisma from "@/lib/prisma";
-import { RequestStatus } from "@prisma/client";
+import { AppointmentStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { transitionConsultationRequest } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
@@ -20,7 +20,7 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const consultantProfileId = searchParams.get("consultantProfileId");
     const consulteeProfileId = searchParams.get("consulteeProfileId");
-    const status = searchParams.get("status") as RequestStatus | null;
+    const status = searchParams.get("status") as AppointmentStatus | null;
     const page = parseInt(searchParams.get("page") || "1");
     const limit = parseInt(searchParams.get("limit") || "10");
 
@@ -62,7 +62,7 @@ export async function GET(request: NextRequest) {
     }
 
     if (status) {
-      whereClause.requestStatus = status;
+      whereClause.status = status;
     }
 
     const [consultations, total] = await Promise.all([
@@ -145,7 +145,7 @@ export async function PATCH(request: NextRequest) {
       );
     }
 
-    if (!Object.values(RequestStatus).includes(status as RequestStatus)) {
+    if (!Object.values(AppointmentStatus).includes(status as AppointmentStatus)) {
       return NextResponse.json({ error: "Invalid status" }, { status: 400 });
     }
 

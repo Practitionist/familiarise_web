@@ -633,7 +633,7 @@ async function getDmPairsForUser(
       prisma.consultation.findMany({
         where: {
           consultationPlan: { consultantProfileId: user.consultantProfileId },
-          requestStatus: { in: ["APPROVED", "SCHEDULED"] },
+          status: { in: ["APPROVED", "SCHEDULED"] },
         },
         include: {
           requestedBy: { include: { user: { select: { id: true } } } },
@@ -642,7 +642,7 @@ async function getDmPairsForUser(
       prisma.subscription.findMany({
         where: {
           subscriptionPlan: { consultantProfileId: user.consultantProfileId },
-          requestStatus: { in: ["APPROVED", "SCHEDULED"] },
+          status: { in: ["APPROVED", "SCHEDULED"] },
         },
         include: {
           requestedBy: { include: { user: { select: { id: true } } } },
@@ -662,7 +662,7 @@ async function getDmPairsForUser(
       prisma.consultation.findMany({
         where: {
           requestedById: user.consulteeProfileId,
-          requestStatus: { in: ["APPROVED", "SCHEDULED"] },
+          status: { in: ["APPROVED", "SCHEDULED"] },
         },
         include: {
           consultationPlan: {
@@ -677,7 +677,7 @@ async function getDmPairsForUser(
       prisma.subscription.findMany({
         where: {
           requestedById: user.consulteeProfileId,
-          requestStatus: { in: ["APPROVED", "SCHEDULED"] },
+          status: { in: ["APPROVED", "SCHEDULED"] },
         },
         include: {
           subscriptionPlan: {

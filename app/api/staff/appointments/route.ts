@@ -132,7 +132,7 @@ export async function GET(req: NextRequest) {
           consultation: {
             select: {
               id: true,
-              requestStatus: true,
+              status: true,
               consultationPlan: {
                 select: {
                   id: true,
@@ -171,7 +171,7 @@ export async function GET(req: NextRequest) {
           subscription: {
             select: {
               id: true,
-              requestStatus: true,
+              status: true,
               subscriptionPlan: {
                 select: {
                   id: true,
@@ -292,7 +292,7 @@ export async function GET(req: NextRequest) {
       let consultant = null;
       let consultee = null;
       let title = "";
-      let requestStatus = null;
+      let status = null;
       let duration = 0;
 
       switch (apt.appointmentType) {
@@ -302,7 +302,7 @@ export async function GET(req: NextRequest) {
               apt.consultation.consultationPlan.consultantProfile.user;
             consultee = apt.consultation.requestedBy.user;
             title = apt.consultation.consultationPlan.title;
-            requestStatus = apt.consultation.requestStatus;
+            status = apt.consultation.status;
             duration = apt.consultation.consultationPlan.durationInHours * 60;
           }
           break;
@@ -312,7 +312,7 @@ export async function GET(req: NextRequest) {
               apt.subscription.subscriptionPlan.consultantProfile.user;
             consultee = apt.subscription.requestedBy.user;
             title = apt.subscription.subscriptionPlan.title;
-            requestStatus = apt.subscription.requestStatus;
+            status = apt.subscription.status;
           }
           break;
         case "WEBINAR":
@@ -325,7 +325,7 @@ export async function GET(req: NextRequest) {
               image: null,
             };
             title = apt.webinar.webinarPlan.title;
-            requestStatus = apt.webinar.status;
+            status = apt.webinar.status;
           }
           break;
         case "CLASS":
@@ -337,7 +337,7 @@ export async function GET(req: NextRequest) {
               image: null,
             };
             title = apt.class.classPlan.title;
-            requestStatus = apt.class.status;
+            status = apt.class.status;
           }
           break;
       }
@@ -347,8 +347,8 @@ export async function GET(req: NextRequest) {
 
       // Determine status for display
       let displayStatus = "scheduled";
-      if (requestStatus) {
-        const statusStr = String(requestStatus).toLowerCase();
+      if (status) {
+        const statusStr = String(status).toLowerCase();
         if (statusStr === "cancelled") displayStatus = "cancelled";
         else if (statusStr === "completed") displayStatus = "completed";
         else if (statusStr === "in_progress") displayStatus = "in_progress";
@@ -359,7 +359,7 @@ export async function GET(req: NextRequest) {
       // Check if there's an issue (cancelled, no payment, etc.)
       const hasIssue =
         displayStatus === "cancelled" ||
-        (!payment && requestStatus !== "PENDING");
+        (!payment && status !== "PENDING");
 
       return {
         id: apt.id,

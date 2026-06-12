@@ -147,7 +147,7 @@ describe("checkSlotAvailability", () => {
           },
         ],
         consultation: {
-          requestStatus: "APPROVED_PENDING_PAYMENT",
+          status: "APPROVED_PENDING_PAYMENT",
         },
         payment: [
           {
@@ -173,7 +173,7 @@ describe("checkSlotAvailability", () => {
           },
         ],
         subscription: {
-          requestStatus: "APPROVED_PENDING_PAYMENT",
+          status: "APPROVED_PENDING_PAYMENT",
         },
         payment: [
           {
@@ -199,7 +199,7 @@ describe("checkSlotAvailability", () => {
           },
         ],
         subscription: {
-          requestStatus: "APPROVED_PENDING_PAYMENT",
+          status: "APPROVED_PENDING_PAYMENT",
           requestedBy: { user: { name: "Active Sub User" } },
         },
         payment: [

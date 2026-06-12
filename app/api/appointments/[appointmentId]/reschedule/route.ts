@@ -314,9 +314,9 @@ export async function POST(
             await tx.consultation.updateMany({
               where: {
                 id: appointment.consultation.id,
-                requestStatus: { in: [...RESCHEDULABLE_FROM] },
+                status: { in: [...RESCHEDULABLE_FROM] },
               },
-              data: { requestStatus: "PENDING" },
+              data: { status: "PENDING" },
             })
           ).count;
         } else if (appointment.subscription) {
@@ -324,9 +324,9 @@ export async function POST(
             await tx.subscription.updateMany({
               where: {
                 id: appointment.subscription.id,
-                requestStatus: { in: [...RESCHEDULABLE_FROM] },
+                status: { in: [...RESCHEDULABLE_FROM] },
               },
-              data: { requestStatus: "PENDING" },
+              data: { status: "PENDING" },
             })
           ).count;
         } else if (appointment.webinar) {

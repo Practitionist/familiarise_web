@@ -23,7 +23,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { toast } from "@/components/ui/use-toast";
-import { AppointmentsType, RequestStatus } from "@prisma/client";
+import { AppointmentsType, AppointmentStatus } from "@prisma/client";
 import { AlertTriangle, CheckCircle2, RefreshCw } from "lucide-react";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
@@ -64,7 +64,7 @@ interface Request {
   requestedAt: string;
   requestedTimes?: string[]; // Kept for backward compatibility
   requestedSlots?: RequestedSlot[]; // New: includes isTentative flag
-  status: RequestStatus;
+  status: AppointmentStatus;
   requiredSlots: number;
   allocatedSlots?: string[];
   durationInMonths?: number;
@@ -207,7 +207,7 @@ export function RequestSlotAllocationTab({
                 startsAt: slot.startsAt,
                 isTentative: slot.isTentative ?? false,
               })),
-              status: consultation.requestStatus,
+              status: consultation.status,
               requiredSlots: Math.ceil(
                 (consultation.consultationPlan?.durationInHours || 1) / 0.5,
               ), // Convert hours to 30-min slots
@@ -252,7 +252,7 @@ export function RequestSlotAllocationTab({
                 startsAt: slot.startsAt,
                 isTentative: slot.isTentative ?? false,
               })),
-              status: subscription.requestStatus,
+              status: subscription.status,
               // When rescheduling (tentative slots exist), only require replacing those slots
               requiredSlots:
                 tentativeCount > 0
@@ -670,13 +670,13 @@ export function RequestSlotAllocationTab({
                         {getRequestStatusLabel(request.status)}
                       </Badge>
                       {request.status ===
-                        RequestStatus.APPROVED_PENDING_PAYMENT && (
+                        AppointmentStatus.APPROVED_PENDING_PAYMENT && (
                         <PaymentRequiredBadge variant="full" />
                       )}
                     </div>
                   </TableCell>
                   <TableCell>
-                    {request.status === RequestStatus.PENDING && (
+                    {request.status === AppointmentStatus.PENDING && (
                       <div className="flex flex-col gap-1.5">
                         {/* Hide "Use Requested Times" for directly booked consultations (Bug #8 fix) */}
                         {request.requestedTimes &&
@@ -848,43 +848,43 @@ export function RequestSlotAllocationTab({
 
 // Helper function for badge variant
 function getRequestStatusBadgeVariant(
-  status: RequestStatus,
+  status: AppointmentStatus,
 ): "outline" | "default" | "destructive" | "secondary" {
   switch (status) {
-    case RequestStatus.PENDING:
-    case RequestStatus.APPROVED_PENDING_PAYMENT:
+    case AppointmentStatus.PENDING:
+    case AppointmentStatus.APPROVED_PENDING_PAYMENT:
       return "outline";
-    case RequestStatus.APPROVED:
-    case RequestStatus.SCHEDULED:
+    case AppointmentStatus.APPROVED:
+    case AppointmentStatus.SCHEDULED:
       return "default";
-    case RequestStatus.COMPLETED:
+    case AppointmentStatus.COMPLETED:
       return "secondary";
-    case RequestStatus.REJECTED:
-    case RequestStatus.CANCELLED:
-    case RequestStatus.EXPIRED:
+    case AppointmentStatus.REJECTED:
+    case AppointmentStatus.CANCELLED:
+    case AppointmentStatus.EXPIRED:
       return "destructive";
     default:
       return "outline";
   }
 }
 
-function getRequestStatusLabel(status: RequestStatus): string {
+function getRequestStatusLabel(status: AppointmentStatus): string {
   switch (status) {
-    case RequestStatus.PENDING:
+    case AppointmentStatus.PENDING:
       return "Pending";
-    case RequestStatus.APPROVED:
+    case AppointmentStatus.APPROVED:
       return "Approved";
-    case RequestStatus.APPROVED_PENDING_PAYMENT:
+    case AppointmentStatus.APPROVED_PENDING_PAYMENT:
       return "Awaiting Payment";
-    case RequestStatus.SCHEDULED:
+    case AppointmentStatus.SCHEDULED:
       return "Scheduled";
-    case RequestStatus.COMPLETED:
+    case AppointmentStatus.COMPLETED:
       return "Completed";
-    case RequestStatus.REJECTED:
+    case AppointmentStatus.REJECTED:
       return "Rejected";
-    case RequestStatus.CANCELLED:
+    case AppointmentStatus.CANCELLED:
       return "Cancelled";
-    case RequestStatus.EXPIRED:
+    case AppointmentStatus.EXPIRED:
       return "Expired";
     default:
       return status;

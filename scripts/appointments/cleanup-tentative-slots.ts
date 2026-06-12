@@ -79,7 +79,7 @@ async function cleanupTentativeSlotsUnlocked(): Promise<TentativeSlotCleanupResu
                 { consultation: null },
                 {
                   consultation: {
-                    requestStatus: {
+                    status: {
                       notIn: ["PENDING", "APPROVED_PENDING_PAYMENT"],
                     },
                   },
@@ -91,7 +91,7 @@ async function cleanupTentativeSlotsUnlocked(): Promise<TentativeSlotCleanupResu
                 { subscription: null },
                 {
                   subscription: {
-                    requestStatus: {
+                    status: {
                       notIn: ["PENDING", "APPROVED_PENDING_PAYMENT"],
                     },
                   },
@@ -108,7 +108,7 @@ async function cleanupTentativeSlotsUnlocked(): Promise<TentativeSlotCleanupResu
             consultation: {
               select: {
                 id: true,
-                requestStatus: true,
+                status: true,
                 requestedBy: {
                   include: { user: { select: { name: true, email: true } } },
                 },
@@ -117,7 +117,7 @@ async function cleanupTentativeSlotsUnlocked(): Promise<TentativeSlotCleanupResu
             subscription: {
               select: {
                 id: true,
-                requestStatus: true,
+                status: true,
                 requestedBy: {
                   include: { user: { select: { name: true, email: true } } },
                 },

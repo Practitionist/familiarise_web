@@ -178,7 +178,7 @@ export async function GET(req: NextRequest) {
           subscription?.subscriptionPlan?.consultantProfile?.user?.name,
         startDate: subscription?.schedulingPeriodStartsAt,
         endDate: subscription?.schedulingPeriodEndsAt,
-        subscriptionStatus: subscription?.requestStatus,
+        subscriptionStatus: subscription?.status,
         status: isActive
           ? isExpiringSoon
             ? "expiring_soon"

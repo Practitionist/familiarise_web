@@ -54,14 +54,14 @@ interface EventPlanInfo {
 }
 
 interface AppointmentConsultation {
-  requestStatus?: string;
+  status?: string;
   consultationPlan?: EventPlanInfo;
   requestedBy?: { user?: { name?: string } };
 }
 
 interface AppointmentSubscription {
   id?: string;
-  requestStatus?: string;
+  status?: string;
   subscriptionPlan?: EventPlanInfo;
   requestedBy?: { user?: { name?: string } };
 }
@@ -378,13 +378,13 @@ export function useCalendarData(
       const activeAppointments = validatedAppointments.filter((appt: Appointment) => {
         const inactiveRequestStatuses = ["REJECTED", "CANCELLED", "EXPIRED"];
         // Check consultation status
-        if (appt.consultation?.requestStatus) {
-          if (inactiveRequestStatuses.includes(appt.consultation.requestStatus))
+        if (appt.consultation?.status) {
+          if (inactiveRequestStatuses.includes(appt.consultation.status))
             return false;
         }
         // Check subscription status
-        if (appt.subscription?.requestStatus) {
-          if (inactiveRequestStatuses.includes(appt.subscription.requestStatus))
+        if (appt.subscription?.status) {
+          if (inactiveRequestStatuses.includes(appt.subscription.status))
             return false;
         }
         // Check webinar status
@@ -427,18 +427,18 @@ export function useCalendarData(
       if (data && Array.isArray(data) && data.length > 0) {
         // Filter out cancelled/rejected appointments from event slots
         const activeData = data.filter((appt: Appointment) => {
-          if (appt.consultation?.requestStatus) {
+          if (appt.consultation?.status) {
             if (
               ["REJECTED", "CANCELLED", "EXPIRED"].includes(
-                appt.consultation.requestStatus,
+                appt.consultation.status,
               )
             )
               return false;
           }
-          if (appt.subscription?.requestStatus) {
+          if (appt.subscription?.status) {
             if (
               ["REJECTED", "CANCELLED", "EXPIRED"].includes(
-                appt.subscription.requestStatus,
+                appt.subscription.status,
               )
             )
               return false;

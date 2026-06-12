@@ -294,7 +294,7 @@ export const searchUsersWithRelationships = async (
             where: {
               consultationPlan: { consultantProfileId: currentUser.consultantProfileId },
               requestedById: { in: resultConsulteeProfileIds },
-              requestStatus: { in: ["APPROVED", "SCHEDULED"] },
+              status: { in: ["APPROVED", "SCHEDULED"] },
             },
             select: { requestedBy: { select: { user: { select: { id: true } } } } },
           })
@@ -309,7 +309,7 @@ export const searchUsersWithRelationships = async (
             where: {
               subscriptionPlan: { consultantProfileId: currentUser.consultantProfileId },
               requestedById: { in: resultConsulteeProfileIds },
-              requestStatus: { in: ["APPROVED", "SCHEDULED"] },
+              status: { in: ["APPROVED", "SCHEDULED"] },
               schedulingPeriodEndsAt: { gte: new Date() },
             },
             select: { requestedBy: { select: { user: { select: { id: true } } } } },
@@ -328,7 +328,7 @@ export const searchUsersWithRelationships = async (
             where: {
               consultationPlan: { consultantProfileId: { in: resultConsultantProfileIds } },
               requestedById: currentUser.consulteeProfileId,
-              requestStatus: { in: ["APPROVED", "SCHEDULED"] },
+              status: { in: ["APPROVED", "SCHEDULED"] },
             },
             select: {
               consultationPlan: {
@@ -345,7 +345,7 @@ export const searchUsersWithRelationships = async (
             where: {
               subscriptionPlan: { consultantProfileId: { in: resultConsultantProfileIds } },
               requestedById: currentUser.consulteeProfileId,
-              requestStatus: { in: ["APPROVED", "SCHEDULED"] },
+              status: { in: ["APPROVED", "SCHEDULED"] },
               schedulingPeriodEndsAt: { gte: new Date() },
             },
             select: {
@@ -480,7 +480,7 @@ async function checkConsultationRelationship(
               consultantProfileId: user1.consultantProfileId,
             },
             requestedById: user2.consulteeProfileId,
-            requestStatus: { in: ["APPROVED", "SCHEDULED"] },
+            status: { in: ["APPROVED", "SCHEDULED"] },
           },
           select: { id: true },
         })
@@ -498,7 +498,7 @@ async function checkConsultationRelationship(
               consultantProfileId: user2.consultantProfileId,
             },
             requestedById: user1.consulteeProfileId,
-            requestStatus: { in: ["APPROVED", "SCHEDULED"] },
+            status: { in: ["APPROVED", "SCHEDULED"] },
           },
           select: { id: true },
         })
@@ -539,7 +539,7 @@ async function checkSubscriptionRelationship(
               consultantProfileId: user1.consultantProfileId,
             },
             requestedById: user2.consulteeProfileId,
-            requestStatus: { in: ["APPROVED", "SCHEDULED"] },
+            status: { in: ["APPROVED", "SCHEDULED"] },
             schedulingPeriodEndsAt: { gte: new Date() },
           },
           select: { id: true },
@@ -557,7 +557,7 @@ async function checkSubscriptionRelationship(
               consultantProfileId: user2.consultantProfileId,
             },
             requestedById: user1.consulteeProfileId,
-            requestStatus: { in: ["APPROVED", "SCHEDULED"] },
+            status: { in: ["APPROVED", "SCHEDULED"] },
             schedulingPeriodEndsAt: { gte: new Date() },
           },
           select: { id: true },
