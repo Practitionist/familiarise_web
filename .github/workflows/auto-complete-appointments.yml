@@ -3,7 +3,7 @@ name: Auto-Complete Appointments
 on:
   schedule:
     # Run hourly
-    - cron: "0 * * * *"
+    - cron: "7 * * * *"
   workflow_dispatch: # Allow manual triggering
 
 jobs:

@@ -2,8 +2,8 @@ name: Reconcile Document Storage
 
 on:
   schedule:
-    # Run daily at 2 AM UTC
-    - cron: "0 2 * * *"
+    # Daily 02:35 UTC. #709 — off cleanup-abandoned-org-top-ups (02:00).
+    - cron: "35 2 * * *"
   workflow_dispatch: # Allow manual triggering
 
 jobs:

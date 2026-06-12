@@ -2,10 +2,10 @@ name: DPDP DataBreach 72h Deadline Alerts
 
 on:
   schedule:
-    # Hourly at :15 — the 72-hour DPDP reporting deadline is sharp;
-    # daily would risk crossing the cutoff between runs. The :15 slot
-    # is free across the existing cron grid.
-    - cron: "15 * * * *"
+    # Hourly at :27 — the 72-hour DPDP reporting deadline is sharp;
+    # daily would risk crossing the cutoff between runs. The :27 slot
+    # is free across the cron grid (#709 minute map).
+    - cron: "27 * * * *"
   workflow_dispatch:
 
 jobs:

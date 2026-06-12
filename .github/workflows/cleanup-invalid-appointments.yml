@@ -3,7 +3,7 @@ name: Cleanup Invalid Appointments
 on:
   schedule:
     # Run every hour
-    - cron: "0 * * * *"
+    - cron: "12 * * * *"
   workflow_dispatch: # Allow manual triggering
 
 jobs:

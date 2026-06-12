@@ -3,7 +3,7 @@ name: Alert Dispute Deadlines
 on:
   schedule:
     # Run hourly
-    - cron: "0 * * * *"
+    - cron: "2 * * * *"
   workflow_dispatch: # Allow manual triggering
 
 jobs:

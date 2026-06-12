@@ -3,7 +3,7 @@ name: Advance Program Cycles
 on:
   schedule:
     # 02:15 UTC — ahead of auto-renew-contracts (02:30) and expire-contracts
-    # (03:00) so assignments roll while their governing contract is still
+    # (03:10) so assignments roll while their governing contract is still
     # ACTIVE, before any contract-side state moves under them (#779).
     - cron: "15 2 * * *"
   workflow_dispatch: # Allow manual triggering

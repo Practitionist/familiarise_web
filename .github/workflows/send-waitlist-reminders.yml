@@ -3,7 +3,7 @@ name: Send Waitlist Reminders
 on:
   schedule:
     # Run every hour
-    - cron: "30 * * * *"
+    - cron: "47 * * * *"
   workflow_dispatch:
     inputs:
       dry_run:

@@ -5,7 +5,7 @@ on:
     # Every 10 minutes. Exports are async, low volume, but the
     # requester is waiting on an email so latency budget is single-
     # digit minutes.
-    - cron: "*/10 * * * *"
+    - cron: "9-59/10 * * * *"
   workflow_dispatch:
 
 jobs:

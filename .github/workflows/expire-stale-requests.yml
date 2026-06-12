@@ -2,8 +2,8 @@ name: Expire Stale Requests
 
 on:
   schedule:
-    # Run daily at 1 AM UTC
-    - cron: "0 1 * * *"
+    # Daily 01:20 UTC. #709 — off generate-subscription-invoices (01:00).
+    - cron: "20 1 * * *"
   workflow_dispatch: # Allow manual triggering
 
 jobs:

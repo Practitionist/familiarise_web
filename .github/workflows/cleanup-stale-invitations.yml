@@ -2,12 +2,12 @@ name: Cleanup Stale Invitations
 
 on:
   schedule:
-    # Daily at 08:00 IST (02:30 UTC). Offset from
-    # cleanup-abandoned-org-top-ups (07:30 IST / 02:00 UTC) and the
-    # subscription cron (05:30 IST / 00:00 UTC) to keep Prisma
+    # Daily at 08:10 IST (02:40 UTC). #709 — moved off the 02:30 pile-up
+    # (auto-renew-contracts keeps that slot); still offset from
+    # cleanup-abandoned-org-top-ups (07:30 IST / 02:00 UTC) to keep Prisma
     # connections + CPU from contending during the cron window.
     # GitHub Actions `schedule` interprets the cron expression in UTC.
-    - cron: "30 2 * * *"
+    - cron: "40 2 * * *"
   workflow_dispatch: # allow manual trigger from the Actions tab
 
 jobs:

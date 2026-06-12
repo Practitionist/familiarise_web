@@ -3,7 +3,7 @@ name: Cleanup Tentative Slots
 on:
   schedule:
     # Run every 2 hours
-    - cron: "0 */2 * * *"
+    - cron: "38 */2 * * *"
   workflow_dispatch: # Allow manual triggering
 
 jobs:

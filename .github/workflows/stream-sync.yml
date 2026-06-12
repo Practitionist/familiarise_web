@@ -2,8 +2,8 @@ name: Stream User Sync
 
 on:
   schedule:
-    # Runs at 03:30 UTC (9:00 AM IST) every day
-    - cron: "30 3 * * *"
+    # Daily 03:40 UTC (09:10 IST). #709 — off cleanup-empty-folders (03:30).
+    - cron: "40 3 * * *"
   workflow_dispatch: # Allow manual triggering
 
 jobs:

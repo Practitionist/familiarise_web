@@ -3,7 +3,7 @@ name: Cleanup Stale Pending Consultations
 on:
   schedule:
     # Run hourly
-    - cron: "30 * * * *"
+    - cron: "37 * * * *"
   workflow_dispatch: # Allow manual triggering
 
 jobs:

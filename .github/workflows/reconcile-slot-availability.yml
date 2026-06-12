@@ -3,7 +3,7 @@ name: Reconcile Slot Availability
 on:
   schedule:
     # Run hourly
-    - cron: "15 * * * *"
+    - cron: "32 * * * *"
   workflow_dispatch: # Allow manual triggering
 
 jobs:
