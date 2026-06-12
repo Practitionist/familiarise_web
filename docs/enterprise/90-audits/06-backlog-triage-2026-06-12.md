@@ -86,7 +86,7 @@ The audit-series issues were executed across the v0–v4 trains and verified her
 
 In addition this PR fixes a live money-path bug found during verification: `mapDisputeStatus` had no `case "closed"`, so Razorpay's terminal `closed` fell to the default branch and re-entered `NEEDS_RESPONSE` (or was rejected as a backward transition and stranded the dispute). A dedicated `CLOSED` terminal status now exists end to end (enum, mapper, transition guard, earnings release, query schema, dashboard config).
 
-### 2.4 Closed as superseded or wontfix (11)
+### 2.4 Closed as superseded or wontfix (10)
 
 These closures are deliberate decisions, not lost work. Each records why the issue should not survive.
 
@@ -102,7 +102,6 @@ These closures are deliberate decisions, not lost work. Each records why the iss
 | #630 payout overhaul | **Obsolete.** ADR 04's batch-payout-with-per-period-TDS architecture supersedes its premises: instant payouts conflict with TDS reckoning, tier commission was replaced by RateCard bps, fraud scoring has no schema. The one residual worth watching — milestone holds for recurring events (a consultant is fully paid after the hold even if later sessions are not delivered) — is in the residuals register with a re-file trigger. |
 | #737 B2C compliance audit | Superseded by #738 (the refined audit with the applicability filter); #738 stays open as the active tracker. |
 | #812 hardening umbrella | Core findings shipped via #825/#826/#838 (locks, DEAD_LETTER, CAS, GST gross-up tests); residuals (multi-collaborator refund journal, TdsAdjustment wiring, dunning-suspend cascade decision) move to the residuals register. |
-| #722 (also listed above) | Premise obsolete after the seed rewrite. |
 
 ---
 

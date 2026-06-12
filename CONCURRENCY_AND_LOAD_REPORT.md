@@ -290,7 +290,7 @@ docker run -i grafana/k6 run - <script.js
 
 ### 7.3 Ready-to-Run k6 Load Test Script
 
-Save this file as `load-tests/smoke.js` in the project root. Before running, set the environment variables `K6_BASE_URL`, `K6_TEST_EMAIL`, `K6_TEST_PASSWORD`, and `K6_CONSULTANT_ID` to point at your staging environment.
+Save this file as `load-tests/smoke.js` in the project root. Before running, set the environment variables `BASE_URL`, `TEST_EMAIL`, `TEST_PASSWORD`, and `CONSULTANT_ID` (the names the script reads via `__ENV`) to point at the environment under test.
 
 ```javascript
 // load-tests/smoke.js
@@ -333,29 +333,40 @@ const TEST_EMAIL = __ENV.TEST_EMAIL || "test@example.com";
 const TEST_PASSWORD = __ENV.TEST_PASSWORD || "testpassword123";
 const CONSULTANT_ID = __ENV.CONSULTANT_ID || "replace-with-real-id";
 
-// Each VU obtains a session cookie once on setup, then reuses it.
+// Login happens once in setup(), but as a POOL of sessions distributed
+// across VUs, not a single shared cookie: one cookie for 100 VUs makes the
+// run effectively single-user (skews per-user rate limits and hides
+// concurrency bugs), while a naive login-per-VU trips the auth limiter
+// (10/15min per IP — see §3) from a single load generator. A pool of up to
+// 8 sessions stays under the limiter and still exercises distinct sessions.
+const SESSION_POOL_SIZE = 8;
+
 export function setup() {
-  const loginRes = http.post(
-    `${BASE_URL}/api/auth/sign-in/email`,
-    JSON.stringify({ email: TEST_EMAIL, password: TEST_PASSWORD }),
-    { headers: { "Content-Type": "application/json" } }
-  );
-
-  check(loginRes, {
-    "login succeeded": (r) => r.status === 200,
-  });
-
-  const sessionCookie = loginRes.cookies["better-auth.session_token"]?.[0]?.value;
-  if (!sessionCookie) {
-    console.error("Login failed — no session cookie returned. Check credentials.");
+  const sessions = [];
+  for (let i = 0; i < SESSION_POOL_SIZE; i++) {
+    const loginRes = http.post(
+      `${BASE_URL}/api/auth/sign-in/email`,
+      JSON.stringify({ email: TEST_EMAIL, password: TEST_PASSWORD }),
+      { headers: { "Content-Type": "application/json" } }
+    );
+    const cookie = loginRes.cookies["better-auth.session_token"]?.[0]?.value;
+    if (!cookie) {
+      // Fail fast: without a session every request 401s and the run
+      // measures nothing but noise.
+      throw new Error(
+        `setup login ${i + 1}/${SESSION_POOL_SIZE} failed (status ${loginRes.status}) — check TEST_EMAIL/TEST_PASSWORD against ${BASE_URL}`
+      );
+    }
+    sessions.push(cookie);
   }
-  return { sessionCookie };
+  return { sessions };
 }
 
 export default function (data) {
+  const sessionCookie = data.sessions[__VU % data.sessions.length];
   const headers = {
     "Content-Type": "application/json",
-    Cookie: `better-auth.session_token=${data.sessionCookie}`,
+    Cookie: `better-auth.session_token=${sessionCookie}`,
   };
 
   // ── 1. Slot Availability (public, rate-limited 60/min/IP) ──────────────────
@@ -458,7 +469,7 @@ k6 run \
   load-tests/smoke.js
 ```
 
-**Running against the staging deployment:**
+**Running against the deployed dev environment (no separate staging exists today):**
 
 ```bash
 k6 run \
@@ -622,7 +633,7 @@ The Netlify free tier caps serverless function timeout at 10 seconds. Several ro
 
 ### Action 4 — Add a k6 Smoke Test to the Pre-Launch Checklist (Priority: Medium)
 
-Before the MVP launch, run the smoke test script above against the production (or staging) environment with 100 virtual users for 5 minutes. The test should complete with a p95 response time under 3 seconds and an error rate under 1%. If the test reveals `P1001` (connection refused) errors from Prisma, the Supabase connection pool is being exhausted and Action 1 has not been applied correctly.
+Before the MVP launch, run the smoke test script above against the deployed environment. The script ramps 20 → 50 → 100 virtual users over roughly 2.5 minutes (its `stages` block) and must pass its own thresholds: p95 response time under 3 seconds and an error rate under 5%. Tighten the thresholds and lengthen the soak only after the first pass is green. If the test reveals `P1001` (connection refused) errors from Prisma, the Supabase connection pool is being exhausted and Action 1 has not been applied correctly.
 
 ---
 

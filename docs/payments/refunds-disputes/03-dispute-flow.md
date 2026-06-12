@@ -22,10 +22,13 @@ stateDiagram-v2
     UNDER_REVIEW --> WON: Decision: Merchant Wins
     UNDER_REVIEW --> LOST: Decision: Customer Wins
     UNDER_REVIEW --> CHARGE_REFUNDED: Merchant Refunded
+    NEEDS_RESPONSE --> CLOSED: Razorpay closed (no verdict)
+    UNDER_REVIEW --> CLOSED: Razorpay closed (no verdict)
 
     WON --> [*]
     LOST --> [*]
     CHARGE_REFUNDED --> [*]
+    CLOSED --> [*]
     WARNING_CLOSED --> [*]
 ```
 
@@ -50,6 +53,7 @@ stateDiagram-v2
 | `WON`             | Merchant won the dispute              | None (terminal)                 |
 | `LOST`            | Customer won, funds returned          | None (terminal)                 |
 | `CHARGE_REFUNDED` | Merchant voluntarily refunded         | None (terminal)                 |
+| `CLOSED`          | Razorpay: ended without a verdict (details provided or refund made) | None (terminal) |
 
 ---
 
@@ -188,8 +192,11 @@ await prisma.dispute.update({
 **Webhook Events:**
 
 - `payment.dispute.created`
+- `payment.dispute.action_required`
+- `payment.dispute.under_review`
 - `payment.dispute.won`
 - `payment.dispute.lost`
+- `payment.dispute.closed` (maps to the terminal `CLOSED` status)
 
 ---
 

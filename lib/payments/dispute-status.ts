@@ -64,17 +64,7 @@ export function isLegalDisputeTransition(
  */
 export function mapDisputeStatus(
   status: string,
-):
-  | "WARNING_NEEDS_RESPONSE"
-  | "WARNING_UNDER_REVIEW"
-  | "WARNING_CLOSED"
-  | "NEEDS_RESPONSE"
-  | "UNDER_REVIEW"
-  | "CHARGE_REFUNDED"
-  | "WON"
-  | "LOST"
-  | "CLOSED"
-  | null {
+): DisputeStatus | null {
   switch (status.toLowerCase()) {
     case "warning_needs_response":
       return "WARNING_NEEDS_RESPONSE";
