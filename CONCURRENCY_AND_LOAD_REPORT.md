@@ -14,7 +14,7 @@ This report answers five questions: whether the stack can handle concurrent work
 2. **The primary bottleneck at scale is the Supabase connection pool (60 direct connections), not the application logic.** Every Netlify serverless function that opens a Prisma connection competes for a pool slot. This is the single most important thing to validate before launch.
 3. **You do not need Kafka, RabbitMQ, BullMQ, or Amazon SQS.** All four are architecturally incompatible with Netlify's serverless model or introduce AWS infrastructure footprint that is unjustified at this stage.
 4. **Upstash QStash and Inngest are worth evaluating post-MVP**, specifically for email retry queuing and parallelising the invoice/payout batch crons. They are not blocking pre-launch.
-5. **Add k6 load tests now.** k6 runs as a single binary locally and in GitHub Actions with no Kubernetes required. A minimal smoke-test suite targeting the five hottest endpoints (auth, slot availability, checkout, slot booking, webhook) will expose the connection-pool ceiling before real users do.
+5. **Add k6 load tests now.** k6 runs as a single binary locally and in GitHub Actions with no Kubernetes required. A minimal smoke-test suite targeting the five endpoints the script below actually exercises (auth sign-in, slot availability, health, consultant search, checkout context) will expose the connection-pool ceiling before real users do.
 
 ---
 
@@ -294,8 +294,9 @@ Save this file as `load-tests/smoke.js` in the project root. Before running, set
 
 ```javascript
 // load-tests/smoke.js
-// Smoke test: verifies the five hottest endpoints hold up under moderate concurrency.
-// Run: k6 run --env BASE_URL=https://staging.familiarise.com \
+// Smoke test: auth sign-in (setup), slot availability, health, consultant
+// search, and checkout context under moderate concurrency.
+// Run: k6 run --env BASE_URL=https://dev.familiarise.com \
 //            --env TEST_EMAIL=test@example.com \
 //            --env TEST_PASSWORD=testpassword123 \
 //            --env CONSULTANT_ID=clxxx123 \
@@ -309,7 +310,8 @@ const errorRate = new Rate("errors");
 const slotAvailabilityTrend = new Trend("slot_availability_duration");
 const checkoutTrend = new Trend("checkout_duration");
 
-// Test configuration: ramp to 50 VUs over 30s, hold for 1 minute, ramp down.
+// Test configuration: ramp to 20 VUs over 30s, hold 50 for a minute,
+// spike to 100 for 30s, ramp down (matches the stages block below).
 // Adjust vus and duration for more aggressive tests.
 export const options = {
   stages: [
