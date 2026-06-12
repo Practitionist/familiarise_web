@@ -58,7 +58,7 @@ The payment approval workflow includes automated cleanup jobs to handle expired 
 // app/api/cleanup/approval-payments/route.ts
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { AppointmentStatus } from "@prisma/client"; // renamed from AppointmentStatus
+import { AppointmentStatus } from "@prisma/client"; // renamed from `RequestStatus`
 
 /**
  * Cleanup expired payment links (48 hours)
@@ -501,7 +501,7 @@ where: {
 }
 
 // Add database index
-@@index([status, updatedAt])  // renamed from @@index([status, updatedAt])
+@@index([status, updatedAt])  // renamed from `@@index([requestStatus, updatedAt])`
 ```
 
 ### Timeout Handling

@@ -10,7 +10,7 @@ Approve or update consultation request status.
 
 ```typescript
 {
-  status: AppointmentStatus; // APPROVED, REJECTED, etc. (renamed from AppointmentStatus)
+  status: AppointmentStatus; // APPROVED, REJECTED, etc. (renamed from `RequestStatus`)
 }
 ```
 
@@ -100,7 +100,7 @@ Approve or update subscription request status.
 
 ```typescript
 {
-  status: AppointmentStatus; // APPROVED, REJECTED, etc. (renamed from AppointmentStatus)
+  status: AppointmentStatus; // APPROVED, REJECTED, etc. (renamed from `RequestStatus`)
 }
 ```
 
@@ -387,8 +387,8 @@ Create payment intent for approved consultations/subscriptions.
   subscriptionId?: string;
   planId: string;
   paymentGateway: "STRIPE";
-  startsAt?: string;    // renamed from startsAt
-  endsAt?: string;      // renamed from endsAt
+  startsAt?: string;    // renamed from `slotStartTimeInUTC`
+  endsAt?: string;      // renamed from `slotEndTimeInUTC`
   schedulingPeriodStartsAt?: string;
   schedulingPeriodEndsAt?: string;
   notes?: string;
@@ -415,8 +415,8 @@ const paymentResult = await createApprovalPaymentIntent({
   consultationId: "clx123abc",
   planId: "clxPlan123",
   paymentGateway: PaymentGateway.STRIPE,
-  startsAt: "2025-01-20T14:00:00.000Z",   // renamed from startsAt
-  endsAt: "2025-01-20T14:30:00.000Z",     // renamed from endsAt
+  startsAt: "2025-01-20T14:00:00.000Z",   // renamed from `slotStartTimeInUTC`
+  endsAt: "2025-01-20T14:30:00.000Z",     // renamed from `slotEndTimeInUTC`
   notes: "Career transition consultation",
 });
 ```

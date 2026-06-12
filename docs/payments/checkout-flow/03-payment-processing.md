@@ -35,8 +35,8 @@ Content-Type: application/json
   "appointmentType": "CONSULTATION" | "SUBSCRIPTION" | "WEBINAR" | "CLASS",
   "planId"?: "string",           // For consultation/subscription
   "eventId"?: "string",          // For webinar/class
-  "startsAt"?: "date",           // For consultation/subscription (renamed from startsAt)
-  "endsAt"?: "date",             // For consultation/subscription (renamed from endsAt)
+  "startsAt"?: "date",           // For consultation/subscription (renamed from `slotStartTimeInUTC`)
+  "endsAt"?: "date",             // For consultation/subscription (renamed from `slotEndTimeInUTC`)
   "notes"?: "string",            // Optional notes
   "isMockPayment"?: boolean      // Development mode flag
 }
@@ -406,8 +406,8 @@ All checkout data is stored in payment intent metadata for recovery:
   "appointmentType": "CONSULTATION",
   "planId": "plan-uuid",
   "eventId": "event-uuid",
-  "startsAt": "2025-11-07T10:00:00Z",       // renamed from startsAt
-  "endsAt": "2025-11-07T11:00:00Z",         // renamed from endsAt
+  "startsAt": "2025-11-07T10:00:00Z",       // renamed from `slotStartTimeInUTC`
+  "endsAt": "2025-11-07T11:00:00Z",         // renamed from `slotEndTimeInUTC`
   "notes": "User notes",
   "userId": "user-uuid",
   "consulteeProfileId": "profile-uuid"
@@ -673,8 +673,8 @@ async function createAppointmentFromWebhook(
     appointmentType,
     planId,
     eventId,
-    startsAt,    // renamed from startsAt; normalizeLegacySlotKeys() handles in-flight orders
-    endsAt,      // renamed from endsAt
+    startsAt,    // renamed from `slotStartTimeInUTC`; normalizeLegacySlotKeys() handles in-flight orders
+    endsAt,      // renamed from `slotEndTimeInUTC`
     notes,
   } = metadata;
 
@@ -759,13 +759,13 @@ async function confirmExistingAppointment(
   if (appointment?.consultation) {
     await tx.consultation.update({
       where: { id: appointment.consultation.id },
-      data: { status: AppointmentStatus.APPROVED },  // field renamed from status
+      data: { status: AppointmentStatus.APPROVED },  // field renamed from `requestStatus`
     });
   }
   if (appointment?.subscription) {
     await tx.subscription.update({
       where: { id: appointment.subscription.id },
-      data: { status: AppointmentStatus.APPROVED },   // field renamed from status
+      data: { status: AppointmentStatus.APPROVED },   // field renamed from `requestStatus`
     });
   }
   if (appointment?.webinar) {
@@ -1012,7 +1012,7 @@ stateDiagram-v2
     endsAt: "2025-11-07T11:00:00Z",
   }],
   consultation: {
-    status: AppointmentStatus.PENDING,  // field renamed from status
+    status: AppointmentStatus.PENDING,  // field renamed from `requestStatus`
   }
 }
 ```
@@ -1049,7 +1049,7 @@ stateDiagram-v2
     endsAt: "2025-11-07T11:00:00Z",
   }],
   consultation: {
-    status: AppointmentStatus.APPROVED,  // field renamed from status
+    status: AppointmentStatus.APPROVED,  // field renamed from `requestStatus`
   }
 }
 ```
@@ -1581,8 +1581,8 @@ If server crashes during payment, metadata enables full recovery:
 const metadata = {
   appointmentType: "CONSULTATION",
   planId: "plan-123",
-  startsAt: "2025-11-07T10:00:00Z",   // renamed from startsAt
-  endsAt: "2025-11-07T11:00:00Z",     // renamed from endsAt
+  startsAt: "2025-11-07T10:00:00Z",   // renamed from `slotStartTimeInUTC`
+  endsAt: "2025-11-07T11:00:00Z",     // renamed from `slotEndTimeInUTC`
   notes: "Follow-up consultation",
   userId: "user-456",
   consulteeProfileId: "profile-789",

@@ -106,7 +106,7 @@ The default lock TTL of 30 seconds may expire during slow database operations, e
 
 ```typescript
 // Current implementation
-return await lockSlotBooking(consultantUserId, data.startsAt, 30000); // 30 seconds (renamed from startsAt)
+return await lockSlotBooking(consultantUserId, data.startsAt, 30000); // 30 seconds (renamed from `slotStartTimeInUTC`)
 ```
 
 #### Impact Analysis
@@ -144,7 +144,7 @@ T=35s    User A's transaction commits → DOUBLE BOOKING
 
 export async function lockSlotBooking(
   consultantProfileId: string,
-  startsAt: string,           // renamed from startsAt
+  startsAt: string,           // renamed from `slotStartTimeInUTC`
   ttl: number = 60000,        // ← Increased from 15000 to 60000
 ): Promise<ApprovalLock> {
   const key = `slot-booking:${consultantProfileId}:${startsAt}`;
@@ -408,7 +408,7 @@ export async function handleSubscriptionCheckout(
     where: {
       subscriptionPlanId: plan.id,
       requestedById: consulteeProfileId,
-      status: { in: [AppointmentStatus.PENDING, AppointmentStatus.APPROVED] },  // field+enum renamed from status/AppointmentStatus
+      status: { in: [AppointmentStatus.PENDING, AppointmentStatus.APPROVED] },  // field+enum renamed from `requestStatus`/AppointmentStatus
       OR: [
         {
           AND: [
@@ -430,7 +430,7 @@ export async function handleSubscriptionCheckout(
   const subscription = await tx.subscription.create({
     data: {
       subscriptionPlanId: plan.id,
-      status: skipPayment                              // renamed from status; AppointmentStatus was AppointmentStatus
+      status: skipPayment                              // renamed from `requestStatus`; AppointmentStatus was AppointmentStatus
         ? AppointmentStatus.APPROVED
         : AppointmentStatus.PENDING,
       requestedById: consulteeProfileId,

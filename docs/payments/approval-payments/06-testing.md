@@ -196,8 +196,8 @@ describe("Approval Payment Operations", () => {
       consultationId: "clxConsult123",
       planId: "clxPlan123",
       paymentGateway: "STRIPE",
-      startsAt: "2025-01-20T14:00:00.000Z",     // renamed from startsAt
-      endsAt: "2025-01-20T14:30:00.000Z",       // renamed from endsAt
+      startsAt: "2025-01-20T14:00:00.000Z",     // renamed from `slotStartTimeInUTC`
+      endsAt: "2025-01-20T14:30:00.000Z",       // renamed from `slotEndTimeInUTC`
     });
 
     expect(result).toHaveProperty("checkoutUrl");
@@ -219,7 +219,7 @@ describe("Approval Payment Operations", () => {
 import { createMocks } from "node-mocks-http";
 import { PATCH } from "@/app/api/bookings/consultations/[consultationId]/route";
 import prisma from "@/lib/prisma";
-import { AppointmentStatus } from "@prisma/client"; // renamed from AppointmentStatus
+import { AppointmentStatus } from "@prisma/client"; // renamed from `RequestStatus`
 
 describe("Consultation Approval API", () => {
   let testConsultation: any;
@@ -668,7 +668,7 @@ export const mockRedis = {
 // __tests__/factories/consultation.ts
 import { faker } from "@faker-js/faker";
 import prisma from "@/lib/prisma";
-import { AppointmentStatus } from "@prisma/client"; // renamed from AppointmentStatus
+import { AppointmentStatus } from "@prisma/client"; // renamed from `RequestStatus`
 
 export async function createTestConsultation(overrides = {}) {
   return await prisma.consultation.create({

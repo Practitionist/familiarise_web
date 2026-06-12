@@ -95,8 +95,8 @@ All checkout data is stored in payment intent metadata:
   appointmentType: "CONSULTATION",
   planId: "plan_abc123",
   eventId: "event_xyz789",
-  startsAt: "2025-01-15T10:00:00.000Z",    // renamed from startsAt
-  endsAt: "2025-01-15T11:00:00.000Z",      // renamed from endsAt
+  startsAt: "2025-01-15T10:00:00.000Z",    // renamed from `slotStartTimeInUTC`
+  endsAt: "2025-01-15T11:00:00.000Z",      // renamed from `slotEndTimeInUTC`
   slotOfAvailabilityWeeklyId: "slot_weekly_123",
   notes: "User notes...",
   userId: "user_abc",
@@ -232,8 +232,8 @@ export const consultationSearchParamsSchema = z
 {
   appointmentType: "CONSULTATION",
   planId: "consultation_plan_id",
-  startsAt: "2025-01-15T10:00:00.000Z",       // renamed from startsAt
-  endsAt: "2025-01-15T11:00:00.000Z",         // renamed from endsAt
+  startsAt: "2025-01-15T10:00:00.000Z",       // renamed from `slotStartTimeInUTC`
+  endsAt: "2025-01-15T11:00:00.000Z",         // renamed from `slotEndTimeInUTC`
   slotOfAvailabilityWeeklyId: "slot_id",
   notes: "User notes",
   discountCode: "PROMO20",
@@ -480,7 +480,7 @@ if (pendingAttempts >= 3) {
 ```typescript
 const consultation = await tx.consultation.create({
   data: {
-    status: AppointmentStatus.PENDING,   // field renamed from status
+    status: AppointmentStatus.PENDING,   // field renamed from `requestStatus`
     requestNotes: data.notes,
     requestedById: consulteeProfileId,
     consultationPlanId: plan.id,
@@ -765,7 +765,7 @@ totalSessions = 13 * 2 = 26 sessions
 const subscription = await tx.subscription.create({
   data: {
     subscriptionPlanId: plan.id,
-    status: skipPayment ? AppointmentStatus.APPROVED : AppointmentStatus.PENDING,  // field renamed from status
+    status: skipPayment ? AppointmentStatus.APPROVED : AppointmentStatus.PENDING,  // field renamed from `requestStatus`
     requestedById: consulteeProfileId,
     requestNotes: data.notes,
     bookingSource: "DIRECT_CHECKOUT",
@@ -852,7 +852,7 @@ return {
 ```
 Subscription
 ├─ id: "sub_123"
-├─ status: PENDING           (field renamed from status; enum AppointmentStatus)
+├─ status: PENDING           (field renamed from `requestStatus`; enum AppointmentStatus)
 ├─ schedulingPeriodStartsAt: 2025-01-15
 ├─ schedulingPeriodEndsAt: 2025-04-15
 │
@@ -890,7 +890,7 @@ WHERE appointmentId IN (
 )
 
 UPDATE Subscription
-SET status = 'APPROVED'   -- field renamed from status; enum AppointmentStatus
+SET status = 'APPROVED'   -- field renamed from `requestStatus`; enum AppointmentStatus
 WHERE id = 'sub_123'
 ```
 

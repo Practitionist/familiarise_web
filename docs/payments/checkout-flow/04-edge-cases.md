@@ -596,8 +596,8 @@ if (currentParticipants >= plan.capacity) {
 
 ```typescript
 // Allows booking slots in the past
-startsAt: z.string().datetime(),   // renamed from startsAt
-endsAt: z.string().datetime(),     // renamed from endsAt
+startsAt: z.string().datetime(),   // renamed from `slotStartTimeInUTC`
+endsAt: z.string().datetime(),     // renamed from `slotEndTimeInUTC`
 ```
 
 **Recommendation:**
@@ -1142,8 +1142,8 @@ const response = await fetch("/api/checkout", {
   body: JSON.stringify({
     appointmentType: "CONSULTATION",
     planId: "plan-uuid",
-    startsAt: "2025-11-07T10:00:00Z",   // renamed from startsAt
-    endsAt: "2025-11-07T11:00:00Z",     // renamed from endsAt
+    startsAt: "2025-11-07T10:00:00Z",   // renamed from `slotStartTimeInUTC`
+    endsAt: "2025-11-07T11:00:00Z",     // renamed from `slotEndTimeInUTC`
     notes: "Follow-up consultation",
     isMockPayment: false, // Set to true for testing
   }),

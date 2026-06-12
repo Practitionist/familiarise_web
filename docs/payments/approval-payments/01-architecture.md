@@ -70,7 +70,7 @@ export async function PATCH(request, { params }) {
 
   // LAYER 1: Distributed Lock
   let lock;
-  if (status === AppointmentStatus.APPROVED) {  // enum renamed from AppointmentStatus
+  if (status === AppointmentStatus.APPROVED) {  // enum renamed from `RequestStatus`
     lock = await lockConsultationApproval(consultationId, 30000);
   }
 
@@ -86,7 +86,7 @@ export async function PATCH(request, { params }) {
         // LAYER 3: Idempotency Check
         if (
           currentConsultation.status ===
-          AppointmentStatus.APPROVED_PENDING_PAYMENT   // field/enum renamed from status/AppointmentStatus
+          AppointmentStatus.APPROVED_PENDING_PAYMENT   // field/enum renamed from `requestStatus`/AppointmentStatus
         ) {
           return { duplicate: true };
         }
@@ -197,7 +197,7 @@ export async function handlePaymentSuccess(paymentIntentId, metadata) {
 ```prisma
 model Consultation {
   id                  String        @id @default(cuid())
-  status              AppointmentStatus @default(PENDING)  // renamed from status/AppointmentStatus
+  status              AppointmentStatus @default(PENDING)  // renamed from `requestStatus`/AppointmentStatus
   requestNotes        String?       @db.Text
   consultationPlan    ConsultationPlan @relation(...)
   requestedBy         ConsulteeProfile @relation(...)
@@ -212,7 +212,7 @@ model Consultation {
 ```prisma
 model Subscription {
   id                       String        @id @default(cuid())
-  status                   AppointmentStatus @default(PENDING)  // renamed from status/AppointmentStatus
+  status                   AppointmentStatus @default(PENDING)  // renamed from `requestStatus`/AppointmentStatus
   requestNotes             String?       @db.Text
   schedulingPeriodStartsAt DateTime?
   schedulingPeriodEndsAt   DateTime?
