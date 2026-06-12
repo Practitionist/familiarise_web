@@ -117,6 +117,8 @@ model User {
   /// against this user) — Prisma requires the disambiguation since
   /// both edges target ErasureRequest.
   erasureRequestsProcessed ErasureRequest[] @relation("ErasureRequestProcessor")
+  // Disputes this admin owns (#269).
+  disputesAssigned         Dispute[]        @relation("DisputeAssignee")
 
   @@index([consultantProfileId])
   @@index([consulteeProfileId])
@@ -588,6 +590,9 @@ model Organization {
   // (that's a Programs v2 item in epic #703).
   trialsByOrg TrialSession[] @relation("TrialsByOrg")
 
+  // Referral attribution (#727) — same contract as TrialsByOrg.
+  referralsByOrg Referral[] @relation("ReferralsByOrg")
+
   // #674 personal-vs-org scope split — appointments / waitlist entries /
   // recordings booked or produced by org members. Mirrors TrialsByOrg.
   appointmentsByOrg   Appointment[]    @relation("AppointmentByOrg")
@@ -687,22 +692,13 @@ model Invitation {
   // and the dedup pre-check at POST /organizations/[orgId]/invitations.
   @@index([organizationId, status])
   // Supports the dedup pre-check (orgId + email + status="pending")
-  // before INSERT. The real invariant — "at most one pending invite per
-  // (org, email)" — is currently enforced at the application layer by a
-  // Serializable transaction in invitations/route.ts, plus P2002 handling.
-  //
-  // TODO(infra/partial-unique): replace this index with a true PARTIAL
-  // UNIQUE constraint once the Prisma `partialIndexes` preview feature
-  // graduates to stable. Target syntax:
-  //
-  //   @@unique([organizationId, email],
-  //            name: "invitations_org_email_pending_key",
-  //            where: { status: "pending" })
-  //
-  // As of Prisma 7.7.0 (2026-04) the feature is still preview with known
-  // migration-drift bugs (prisma/prisma#29263, #29415), so we deliberately
-  // stick to Serializable tx + regular index until GA. Tracked in:
-  //   https://github.com/Practitionist/familiarise_web/issues/685
+  // before INSERT. The invariant — "at most one pending invite per
+  // (org, email)" — is DB-enforced by the partial unique index
+  // `invitations_org_email_pending_key` in prisma/sql/check-constraints.sql
+  // (#747/#685); the Serializable transaction in invitations/route.ts stays
+  // as the first line. Migrate to native `@@unique(..., where:)` once the
+  // Prisma `partialIndexes` preview (buggy at 7.7.0 — prisma/prisma#29263,
+  // #29415) reaches stable.
   @@index([organizationId, email, status])
   @@map("invitations")
 }
@@ -2608,12 +2604,12 @@ model Consultation {
   consultationPlanId String
 
   status                 AppointmentStatus @default(PENDING) @map("requestStatus")
-  requestedBy            ConsulteeProfile @relation(fields: [requestedById], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  requestedBy            ConsulteeProfile  @relation(fields: [requestedById], references: [id], onUpdate: Cascade, onDelete: Cascade)
   requestedById          String
-  requestedAt            DateTime         @default(now()) @db.Timestamptz
+  requestedAt            DateTime          @default(now()) @db.Timestamptz
   requestNotes           String?
   pendingPaymentUrl      String? // Payment link while awaiting payment (cleared after payment)
-  bookingSource          BookingSource    @default(REQUEST_SUBMITTED)
+  bookingSource          BookingSource     @default(REQUEST_SUBMITTED)
   feedbackFromConsultee  String?
   feedbackFromConsultant String?
   rating                 Float?
@@ -2693,12 +2689,12 @@ model Subscription {
   schedulingTimezone       String   @default("Asia/Kolkata")
 
   status                 AppointmentStatus @default(PENDING) @map("requestStatus")
-  requestedBy            ConsulteeProfile @relation(fields: [requestedById], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  requestedBy            ConsulteeProfile  @relation(fields: [requestedById], references: [id], onUpdate: Cascade, onDelete: Cascade)
   requestedById          String
-  requestedAt            DateTime         @default(now()) @db.Timestamptz
+  requestedAt            DateTime          @default(now()) @db.Timestamptz
   requestNotes           String?
   pendingPaymentUrl      String? // Payment link while awaiting payment (cleared after payment)
-  bookingSource          BookingSource    @default(REQUEST_SUBMITTED)
+  bookingSource          BookingSource     @default(REQUEST_SUBMITTED)
   feedbackFromConsultee  String?
   feedbackFromConsultant String?
   rating                 Float?
@@ -3707,6 +3703,12 @@ model Dispute {
   payment   Payment @relation(fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: Restrict)
   paymentId String
 
+  // #269 — operator coordination. SetNull so an admin's departure never
+  // strands a dispute row; assignment UI tracked in the residuals register.
+  assignedTo       User?   @relation("DisputeAssignee", fields: [assignedToUserId], references: [id], onDelete: SetNull)
+  assignedToUserId String?
+  internalNotes    String? @db.Text
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -3715,6 +3717,7 @@ model Dispute {
   @@index([disputeId])
   @@index([dueBy])
   @@index([paymentId, status])
+  @@index([assignedToUserId])
 }
 
 enum DisputeStatus {
@@ -3726,6 +3729,7 @@ enum DisputeStatus {
   CHARGE_REFUNDED // Charge was refunded
   WON // Dispute won
   LOST // Dispute lost
+  CLOSED // Proceedings ended without a verdict (Razorpay `closed`) — terminal
 }
 
 ////////////////////////////////////////////// PAYOUT SYSTEM ////////////////////////////////////////////////////
@@ -4229,6 +4233,12 @@ model Referral {
   qualifiedAt          DateTime?
   qualifyingAction     String?
 
+  // #727 — attribution-only org tag, mirroring TrialSession.organizationId.
+  // Set when the referrer is a member of an active org; no money coupling
+  // (org-funded payments still block credit application per #766).
+  organization   Organization? @relation("ReferralsByOrg", fields: [organizationId], references: [id], onDelete: SetNull)
+  organizationId String?
+
   referralCode ReferralCode @relation(fields: [referralCodeId], references: [id])
   referredUser User         @relation("ReferredUser", fields: [referredUserId], references: [id], onUpdate: Cascade, onDelete: Cascade)
 
@@ -4237,6 +4247,7 @@ model Referral {
 
   @@index([referralCodeId])
   @@index([status])
+  @@index([organizationId])
 }
 
 model ReferralCredit {

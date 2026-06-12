@@ -61,3 +61,14 @@ ALTER TABLE "SlotOfAppointment" ADD CONSTRAINT "slot_no_confirmed_overlap"
     tstzrange("startsAt", "endsAt") WITH &&
   )
   WHERE ("consultantProfileId" IS NOT NULL AND NOT "isTentative");
+
+-- SPLIT
+-- #747 / #685 — DB-enforced "at most one pending invite per (org, email)".
+-- Prisma's `partialIndexes` is still preview at 7.7.0 (drift bugs
+-- prisma/prisma#29263 / #29415), so the partial unique index ships via this
+-- sidecar instead; the Serializable tx in invitations/route.ts stays as the
+-- first line. Applied to a clean schema (pre-MVP reset) — CREATE fails loudly
+-- if duplicate pending invites already exist, which is the correct outcome.
+CREATE UNIQUE INDEX IF NOT EXISTS "invitations_org_email_pending_key"
+  ON "invitations" ("organizationId", "email")
+  WHERE "status" = 'pending';
