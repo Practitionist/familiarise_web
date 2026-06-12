@@ -2,15 +2,16 @@
 
 ## Overview
 
-Booking operations use a three-layer concurrency protection model to prevent double-booking, race conditions, and data corruption:
+Booking operations use a four-layer concurrency protection model to prevent double-booking, race conditions, and data corruption:
 
 | Layer | Mechanism                       | Scope         | Purpose                                               |
 | ----- | ------------------------------- | ------------- | ----------------------------------------------------- |
 | 1     | Redis distributed lock          | Cross-process | Serializes concurrent requests for the same resource  |
 | 2     | Prisma interactive transaction  | Database      | Atomic multi-statement operations with isolation      |
 | 3     | Conflict validation (inside tx) | Application   | Detects overlapping slots from already-committed data |
+| 4     | `slot_no_confirmed_overlap` DB exclusion constraint | Database | btree_gist constraint rejects any INSERT/UPDATE that would create a confirmed (non-tentative) overlap for the same consultant; applied via `npm run db:constraints` (#440) |
 
-All three layers are required. Redis locks alone cannot guarantee consistency because they can expire under slow operations. Database transactions alone cannot prevent two processes from simultaneously passing validation checks on the same data. Conflict validation inside the transaction is the final safety net.
+All four layers are required. Redis locks alone cannot guarantee consistency because they can expire under slow operations. Database transactions alone cannot prevent two processes from simultaneously passing validation checks on the same data. Conflict validation inside the transaction catches application-level overlaps, and the `slot_no_confirmed_overlap` exclusion constraint is the final database-enforced backstop.
 
 **Source**: `utils/appointmentlock.ts`
 
@@ -62,8 +63,8 @@ Six lock functions cover all booking-related operations. Each wraps the core `ac
 | -------------------------- | --------------------------------------------------------------- | ------------ | --------------------------------------------------------------------- |
 | `lockConsultationApproval` | `consultation-approval:{consultationId}`                        | 60s          | Prevents concurrent approval of the same consultation                 |
 | `lockSubscriptionApproval` | `subscription-approval:{subscriptionId}`                        | 60s          | Prevents concurrent approval of the same subscription                 |
-| `lockSlotBooking`          | `slot-booking:{consultantProfileId}:{slotStartTimeInUTC}`       | 60s          | Prevents double-booking a specific consultant time slot               |
-| `lockTrialSlot`            | `trial-slot-booking:{consultantProfileId}:{slotStartTimeInUTC}` | 60s          | Prevents double-booking during trial scheduling                       |
+| `lockSlotBooking`          | `slot-booking:{consultantProfileId}:{startsAt}`       | 60s          | Prevents double-booking a specific consultant time slot               |
+| `lockTrialSlot`            | `trial-slot-booking:{consultantProfileId}:{startsAt}` | 60s          | Prevents double-booking during trial scheduling                       |
 | `lockEventCheckout`        | `event-checkout:{appointmentType}:{eventOrPlanId}`              | 60s          | Serializes checkout for a specific event (webinar/class/subscription) |
 | `lockAppointment`          | `appointment-lock:{appointmentId}`                              | 300s (5 min) | Legacy lock for appointment-level operations (cancel, reschedule)     |
 
@@ -323,6 +324,6 @@ try {
 | Lock expires during slow DB operation                | `extendLock` heartbeat       | Extends TTL without releasing; 120s transaction timeout aligned with extended lock |
 | Client crashes while holding lock                    | Redis TTL auto-expiry        | Lock expires after TTL, no manual intervention needed                              |
 | Lock released by wrong client                        | Safe release Lua script      | `GET` + `DEL` atomic with value verification                                       |
-| Slot passes validation but conflicts at commit       | Prisma transaction isolation | Transaction rollback on constraint violation                                       |
+| Slot passes validation but conflicts at commit       | Prisma transaction isolation + `slot_no_confirmed_overlap` exclusion constraint (#440) | Transaction rollback on constraint violation; DB rejects any confirmed overlap for same consultant even if application validation was bypassed |
 | Payment abandoned mid-checkout (events)              | Semaphore TTL expiry         | 5 min TTL auto-frees the reserved slot                                             |
 | Cancelled/rejected slots blocking new bookings       | `buildOccupiedAppointmentFilter()` | Conflict check excludes appointments with terminal statuses (CANCELLED, REJECTED, EXPIRED) |

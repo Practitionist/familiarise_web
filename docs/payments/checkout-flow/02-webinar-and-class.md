@@ -1076,7 +1076,7 @@ UPDATE SlotOfAppointment SET isTentative = false WHERE id = slotId
   appointmentType: "CONSULTATION" | "SUBSCRIPTION" | "WEBINAR" | "CLASS",
   planId: "...",
   eventId: "..." (for webinar/class),
-  slotStartTimeInUTC: "..." (for consultation/subscription),
+  startsAt: "..." (for consultation/subscription),
   ...all necessary data to recreate appointment
 }
 ```

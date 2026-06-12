@@ -290,6 +290,20 @@ Available balance is calculated as:
 availableBalance = payment.amount - SUM(SUCCEEDED refunds) - SUM(PENDING refunds)
 ```
 
+---
+
+## Org Audit Log — Wallet & Invoice Rows (#835)
+
+When a refund cascades through a WALLET-funded payment leg, `applyRefundCascade()` writes an **`OrgAuditLog` row** under the `WALLET` category with action `AUDIT_ACTIONS.WALLET.WALLET_REFUND`. Attribution:
+
+- `organizationId = payment.organizationId ?? credit.ownerOrgId` — the billing account's owner org is the fallback when the payment row itself carries no `organizationId` (B2C bookings funded by an org wallet).
+
+Additionally, for payments tagged with an `organizationId`, a **second `OrgAuditLog` row** is written with action `AUDIT_ACTIONS.INVOICE.INVOICE_REFUNDED`. These two rows are **intentional dual-writes** (wallet leg + invoice-level record) — both are inserted within the same Serializable transaction so they either both appear or neither does.
+
+**Code:** `lib/payments/operations/refund.ts` (WALLET\_REFUND row at line ≈ 416, INVOICE\_REFUNDED row at line ≈ 745).
+
+---
+
 ### Proportional Earnings Reversal (Mar 2026)
 
 When a partial refund is processed, `refundEarnings()` now accepts `refundAmount` and `paymentAmount` to compute proportional reversal of consultant earnings:

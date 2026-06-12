@@ -151,7 +151,7 @@ POST /api/checkout
 handleCheckout()
     |-- Create Payment record (status: PENDING)
     |-- For Subscription:
-    |   |-- Create Subscription record (requestStatus: PENDING)
+    |   |-- Create Subscription record (status: PENDING)
     |   |-- Create placeholder Appointment (appointmentType: SUBSCRIPTION)
     |   |-- Store schedulingPeriod dates
     |-- For Class:
@@ -173,7 +173,7 @@ Webhook handler (lib/payments/webhooks/handlers.ts):
     |-- Call createEarningsFromPayment() -> creates ConsultantEarnings
     |-- Call createInvoiceFromPayment() -> creates Invoice with GST
     |-- Send payment success notification (Novu + email)
-    |-- For Subscription: update requestStatus to APPROVED or SCHEDULED
+    |-- For Subscription: update status to APPROVED or SCHEDULED
 ```
 
 **Important:** The two-phase commit pattern is used here. Appointments are created with tentative slots (`isTentative = true`) before payment confirmation. The webhook atomically confirms them. See `docs/booking/06-booking-lifecycle.md` for the full pattern explanation.
@@ -190,10 +190,10 @@ This is the core scheduling engine that converts a purchased plan into concrete 
 Frontend (useSlotAllocation hook)
     |
     v
-Validation: POST /api/events/{subscriptions|classes}/[id]/validate
+Validation: POST /api/bookings/{subscriptions|classes}/[id]/validate
     |
     v
-Allocation: PATCH /api/events/{subscriptions|classes}/[id]/allocate
+Allocation: PATCH /api/bookings/{subscriptions|classes}/[id]/allocate
     |
     v
 SlotValidationService (business rules)
@@ -264,7 +264,7 @@ Before allocation, `SlotValidationService` checks:
 For a subscription with 8 sessions, 2 slots per session:
 
 ```
-Subscription (id: "sub_123", requestStatus: SCHEDULED)
+Subscription (id: "sub_123", status: SCHEDULED)
   |
   +-- Appointment #1 (appointmentType: SUBSCRIPTION, subscriptionId: "sub_123")
   |     +-- SlotOfAppointment (startsAt: Mon 10:00, endsAt: Mon 10:30, completionStatus: SCHEDULED)
@@ -433,7 +433,7 @@ Each party gets their own `ConsultantEarnings` record with `role = OWNER` or `CO
 See `docs/booking/08-cancellation-flow.md` for full details.
 
 **For recurring events:**
-- `Subscription.requestStatus` -> `CANCELLED` with `cancellationReason`, `cancellationNotes`, `cancelledAt`, `cancelledBy`
+- `Subscription.status` -> `CANCELLED` with `cancellationReason`, `cancellationNotes`, `cancelledAt`, `cancelledBy`
 - `Class.status` -> `CANCELLED`
 - All future `SlotOfAppointment` records -> `completionStatus: CANCELLED`
 - Completed sessions remain marked as `COMPLETED`
@@ -459,7 +459,7 @@ Recurring events depend on these automated jobs:
 | Job | Schedule | Purpose | Source |
 |-----|----------|---------|--------|
 | `auto-complete-appointments` | Hourly | Mark past sessions COMPLETED/UNVERIFIED | `scripts/appointments/auto-complete-appointments.ts` |
-| `tentative-slots` | Daily | Clean up stale tentative slots (> 7 days) | `app/api/cleanup/tentative-slots/` |
+| `tentative-slots` | Every 2 hours | Clean up stale tentative slots (> 24 hours, `TENTATIVE_EXPIRATION_HOURS = 24`) | `app/api/cleanup/tentative-slots/` |
 | `expire-stale-requests` | Daily | Mark PENDING requests as EXPIRED (> 30 days) | `app/api/cleanup/` |
 | `release-earnings` | Hourly | PENDING -> READY when hold expires | `jobs/earnings/release-earnings.ts` |
 | `create-payout-batch` | Weekly Mon | Collect READY earnings into batches | `jobs/payouts/create-payout-batch.ts` |
@@ -487,7 +487,7 @@ All cron jobs are triggered via GitHub Actions workflows in `.github/workflows/`
 | **Waitlist** | No | Yes (`Waitlist` model, status: WAITING -> NOTIFIED -> BOOKED/EXPIRED) |
 | **Curriculum model** | `SubscriptionContent` (session-by-session) | `ClassContent` (ordered, with `hoursAllotted`) |
 | **Scheduling field** | `callsPerWeek` | `meetingsPerWeek` |
-| **Request model** | `Subscription.requestStatus` (PENDING -> APPROVED -> SCHEDULED) | `Class.status` (SCHEDULED -> IN_PROGRESS -> COMPLETED) |
+| **Request model** | `Subscription.status` (PENDING -> APPROVED -> SCHEDULED) | `Class.status` (SCHEDULED -> IN_PROGRESS -> COMPLETED) |
 | **Hold period** | 168h (7 days) | 24h |
 
 ---

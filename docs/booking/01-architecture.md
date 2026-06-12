@@ -303,5 +303,5 @@ stateDiagram-v2
 
 - User deduplication: 5-minute window blocks same-user duplicate attempts
 - Rate limiting: max 3 pending attempts per slot per 30 minutes
-- Cleanup job: runs every 2 hours, releases tentative slots older than 7 days with no successful payment (see [13-cron-jobs-and-background-tasks.md](./13-cron-jobs-and-background-tasks.md))
+- Cleanup job: runs every 2 hours, releases tentative slots older than 24 hours with no successful payment (`TENTATIVE_EXPIRATION_HOURS = 24`, cut from 7 days by #833); users can also self-release via `DELETE /api/checkout/pending/[paymentId]` (#849) (see [13-cron-jobs-and-background-tasks.md](./13-cron-jobs-and-background-tasks.md))
 - Expired payment detection: `APPROVED_PENDING_PAYMENT` consultations with expired payments are treated as available slots

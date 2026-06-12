@@ -639,7 +639,7 @@ also resolved: the payout idempotency key is deterministic
 
 **Shipped by this train:** the B2C transition map (`lib/booking/transitions.ts`)
 guards approval, decline, expiry, and completion the same way #825 guarded
-the enterprise lifecycles, and removes `requestStatus` from the writable PUT
+the enterprise lifecycles, and removes `status` from the writable PUT
 surface (#836); checkout locks carry per-type TTLs with a checked renewal at
 the gateway boundary (#832); tentative holds expire in hours, not days
 (#833); every waitlist mutation is CAS-guarded (#834 code half); consumer

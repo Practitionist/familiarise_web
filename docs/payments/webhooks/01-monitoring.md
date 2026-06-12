@@ -113,8 +113,10 @@ npm run dev
 
 ```sql
 -- Check recent consultation bookings
-SELECT id, requestStatus, createdAt, updatedAt
-FROM Consultation
+-- NOTE: the DB column is still `requestStatus` — the Prisma field renamed
+-- to `status` via @map, the column did not.
+SELECT id, "requestStatus", "createdAt", "updatedAt"
+FROM "Consultation"
 ORDER BY createdAt DESC
 LIMIT 10;
 

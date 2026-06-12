@@ -35,8 +35,8 @@ Content-Type: application/json
   "appointmentType": "CONSULTATION" | "SUBSCRIPTION" | "WEBINAR" | "CLASS",
   "planId"?: "string",           // For consultation/subscription
   "eventId"?: "string",          // For webinar/class
-  "slotStartTimeInUTC"?: "date", // For consultation/subscription
-  "slotEndTimeInUTC"?: "date",   // For consultation/subscription
+  "startsAt"?: "date",           // For consultation/subscription (renamed from `slotStartTimeInUTC`)
+  "endsAt"?: "date",             // For consultation/subscription (renamed from `slotEndTimeInUTC`)
   "notes"?: "string",            // Optional notes
   "isMockPayment"?: boolean      // Development mode flag
 }
@@ -119,7 +119,7 @@ The API categorizes errors for client-side handling:
   "metadata": {
     "appointmentType": "CONSULTATION",
     "planId": "plan-uuid",
-    "slotStartTimeInUTC": "2025-11-07T10:00:00Z"
+    "startsAt": "2025-11-07T10:00:00Z"
   }
 }
 ```
@@ -133,6 +133,26 @@ The API categorizes errors for client-side handling:
   "timestamp": "2025-11-06T14:30:00.000Z"
 }
 ```
+
+### 1.5 Checkout Idempotency (#828) and Per-Type Lock Budgets (#832)
+
+**`clientIdempotencyKey`** — callers may supply an optional `clientIdempotencyKey` (8–128 chars, validated by `checkoutSchema`). A unique DB index on this column ensures that a second `POST /api/checkout` with the same key returns the existing payment record instead of creating a duplicate. This makes client-side retry-on-network-error safe. (`schemas/checkout.ts` line ≈ 89; `lib/payments/operations/checkout.ts` line ≈ 2294.)
+
+**`CHECKOUT_LOCK_TTL_MS`** — each `appointmentType` acquires a distributed lock before writing the tentative slot. The lock time-to-live varies by type to balance throughput vs. consistency:
+
+```typescript
+// utils/appointmentlock.ts lines 59-64
+export const CHECKOUT_LOCK_TTL_MS: Record<string, number> = {
+  CONSULTATION: 60_000,   //  60 s — single-slot write + gateway round-trip
+  SUBSCRIPTION: 120_000,  // 120 s — same as WEBINAR
+  WEBINAR:      120_000,  // 120 s — may write N seats
+  CLASS:        300_000,  // 300 s — N sessions × M slots
+};
+```
+
+A lock acquisition failure (budget exceeded) surfaces to the caller as a 409 Conflict with error type `LOCK_TIMEOUT`. (#832.)
+
+**Capacity counts include tentative holds** — the availability check reads `WHERE isTentative = false OR isTentative = true` for the event's current fill level. A tentative slot occupies a seat; the seat is not freed until the payment expires or is cancelled. This prevents over-selling in the window between checkout start and payment completion.
 
 ---
 
@@ -386,8 +406,8 @@ All checkout data is stored in payment intent metadata for recovery:
   "appointmentType": "CONSULTATION",
   "planId": "plan-uuid",
   "eventId": "event-uuid",
-  "slotStartTimeInUTC": "2025-11-07T10:00:00Z",
-  "slotEndTimeInUTC": "2025-11-07T11:00:00Z",
+  "startsAt": "2025-11-07T10:00:00Z",       // renamed from `slotStartTimeInUTC`
+  "endsAt": "2025-11-07T11:00:00Z",         // renamed from `slotEndTimeInUTC`
   "notes": "User notes",
   "userId": "user-uuid",
   "consulteeProfileId": "profile-uuid"
@@ -653,8 +673,8 @@ async function createAppointmentFromWebhook(
     appointmentType,
     planId,
     eventId,
-    slotStartTimeInUTC,
-    slotEndTimeInUTC,
+    startsAt,    // renamed from `slotStartTimeInUTC`; normalizeLegacySlotKeys() handles in-flight orders
+    endsAt,      // renamed from `slotEndTimeInUTC`
     notes,
   } = metadata;
 
@@ -664,8 +684,8 @@ async function createAppointmentFromWebhook(
     case AppointmentsType.CONSULTATION:
       appointment = await createConsultation(tx, {
         planId,
-        slotStartTimeInUTC,
-        slotEndTimeInUTC,
+        startsAt,
+        endsAt,
         notes,
         consulteeProfileId: payment.user.consulteeProfile.id,
       });
@@ -674,8 +694,8 @@ async function createAppointmentFromWebhook(
     case AppointmentsType.SUBSCRIPTION:
       appointment = await createSubscription(tx, {
         planId,
-        slotStartTimeInUTC,
-        slotEndTimeInUTC,
+        startsAt,
+        endsAt,
         notes,
         consulteeProfileId: payment.user.consulteeProfile.id,
       });
@@ -739,13 +759,13 @@ async function confirmExistingAppointment(
   if (appointment?.consultation) {
     await tx.consultation.update({
       where: { id: appointment.consultation.id },
-      data: { requestStatus: RequestStatus.APPROVED },
+      data: { status: AppointmentStatus.APPROVED },  // field renamed from `requestStatus`
     });
   }
   if (appointment?.subscription) {
     await tx.subscription.update({
       where: { id: appointment.subscription.id },
-      data: { requestStatus: RequestStatus.APPROVED },
+      data: { status: AppointmentStatus.APPROVED },   // field renamed from `requestStatus`
     });
   }
   if (appointment?.webinar) {
@@ -992,7 +1012,7 @@ stateDiagram-v2
     endsAt: "2025-11-07T11:00:00Z",
   }],
   consultation: {
-    requestStatus: RequestStatus.PENDING,
+    status: AppointmentStatus.PENDING,  // field renamed from `requestStatus`
   }
 }
 ```
@@ -1029,7 +1049,7 @@ stateDiagram-v2
     endsAt: "2025-11-07T11:00:00Z",
   }],
   consultation: {
-    requestStatus: RequestStatus.APPROVED,
+    status: AppointmentStatus.APPROVED,  // field renamed from `requestStatus`
   }
 }
 ```
@@ -1069,6 +1089,17 @@ stateDiagram-v2
 ---
 
 ## 7. Timeout & Expiration Handling
+
+### 7.0 Two Distinct TTLs
+
+Two separate expiration windows exist — do not conflate them:
+
+| TTL | What it governs | Value | Source |
+|-----|----------------|-------|--------|
+| `Payment.expiresAt` | Gateway checkout session lifetime — the window in which the user must complete payment | **30 minutes** | `lib/payments/operations/checkout.ts` line ≈ 2307 |
+| `isTentative` slot cleanup | Belt-and-braces sweep that frees orphaned tentative slots in case the webhook never arrived | **24 hours** (`TENTATIVE_EXPIRATION_HOURS = 24`) | `scripts/appointments/cleanup-tentative-slots.ts` line 28, #833 |
+
+The 24-hour slot-cleanup window replaced an earlier 7-day hold (#833 rationale: "gateway orders expire well inside a day, so a 7-day hold locked users out of rebooking for most of a week"). The `cleanup-abandoned-payments` job keys off `Payment.expiresAt` (30 min); the `cleanup-tentative-slots` job is a separate belt-and-braces sweep running every 2 hours.
 
 ### 7.1 30-Minute Timeout Policy
 
@@ -1550,8 +1581,8 @@ If server crashes during payment, metadata enables full recovery:
 const metadata = {
   appointmentType: "CONSULTATION",
   planId: "plan-123",
-  slotStartTimeInUTC: "2025-11-07T10:00:00Z",
-  slotEndTimeInUTC: "2025-11-07T11:00:00Z",
+  startsAt: "2025-11-07T10:00:00Z",   // renamed from `slotStartTimeInUTC`
+  endsAt: "2025-11-07T11:00:00Z",     // renamed from `slotEndTimeInUTC`
   notes: "Follow-up consultation",
   userId: "user-456",
   consulteeProfileId: "profile-789",
