@@ -239,6 +239,7 @@ type CreateProgramBody =
         coveredEngagementsPerCycle: number | null;
         overageBehavior: OverageBehavior;
         overageSurchargeBps: number | null;
+        maxOveragePerCyclePaise: number | null;
       };
     }
   | {
@@ -251,6 +252,7 @@ type CreateProgramBody =
         creditBudgetPerCycle: number;
         overageBehavior: OverageBehavior;
         overageSurchargeBps: number | null;
+        maxOveragePerCyclePaise: number | null;
       };
     };
 
@@ -280,6 +282,7 @@ type PatchProgramBody = {
   creditBudgetPerCycle?: number;
   overageBehavior?: OverageBehavior;
   overageSurchargeBps?: number | null;
+  maxOveragePerCyclePaise?: number | null;
 };
 
 async function patchProgram(
@@ -457,6 +460,10 @@ function CreateProgramDialog({
   // program types (the selector + this field render for LICENSED_SEAT and
   // CREDIT_POOL alike).
   const [overageSurchargePct, setOverageSurchargePct] = useState("");
+  // #768 #14/#15 — per-cycle overage ceiling in rupees (user-facing).
+  // Server requires positive paise value whenever overageBehavior !== BLOCK;
+  // shared across both program types.
+  const [maxOveragePerCycleRupees, setMaxOveragePerCycleRupees] = useState("");
   // 1 credit = ₹1; per-cycle cap is the user-facing input, paise conversion
   // is implicit (credits map to rupees end-to-end).
   const [creditBudgetPerCycle, setCreditsPerCycle] = useState("1000");
@@ -503,6 +510,7 @@ function CreateProgramDialog({
     setCoveredEngagementsPerCycle("");
     setOverageBehavior("BLOCK");
     setOverageSurchargePct("");
+    setMaxOveragePerCycleRupees("");
     setCreditsPerCycle("1000");
     setCoveredPlanTypes(["CONSULTATION"]);
     setError(null);
@@ -553,6 +561,20 @@ function CreateProgramDialog({
       setError("Overage surcharge must be blank or a non-negative percentage.");
       return;
     }
+    // #768 #14/#15 — per-cycle ceiling. Required (>=1 paise) for CHARGE_*,
+    // ignored otherwise. Mirror the server's refineOverageCombo so the form
+    // can't submit a 400 the user would only see as "Invalid body".
+    let maxOveragePerCyclePaise: number | null = null;
+    if (overageBehavior !== "BLOCK") {
+      const parsed = rupeesToPaise(maxOveragePerCycleRupees);
+      if (parsed === null || parsed < 1) {
+        setError(
+          "Max overage per cycle is required when overage charges the org/member — enter a positive rupee ceiling.",
+        );
+        return;
+      }
+      maxOveragePerCyclePaise = parsed;
+    }
     if (programType === "LICENSED_SEAT") {
       const ratePaise = rupeesToPaise(ratePerSeatRupees);
       if (ratePaise === null) {
@@ -578,6 +600,7 @@ function CreateProgramDialog({
           coveredEngagementsPerCycle: cap,
           overageBehavior,
           overageSurchargeBps: surchargeBps,
+          maxOveragePerCyclePaise,
         },
       });
     } else {
@@ -596,6 +619,7 @@ function CreateProgramDialog({
           creditBudgetPerCycle: credits,
           overageBehavior,
           overageSurchargeBps: surchargeBps,
+          maxOveragePerCyclePaise,
         },
       });
     }
@@ -884,6 +908,29 @@ function CreateProgramDialog({
             </div>
           )}
 
+          {/* #768 #14/#15 — per-cycle overage ceiling (circuit breaker).
+              Server requires a positive value when overage charges. */}
+          {overageBehavior !== "BLOCK" && (
+            <div className="space-y-2">
+              <Label htmlFor="max-overage">Max overage per cycle (₹)</Label>
+              <Input
+                id="max-overage"
+                type="number"
+                min={1}
+                step="1"
+                value={maxOveragePerCycleRupees}
+                onChange={(e) => setMaxOveragePerCycleRupees(e.target.value)}
+                placeholder="e.g. 100000 = ₹1,00,000 ceiling"
+              />
+              <p className="text-xs text-zinc-500">
+                Hard cap on the total over-cap amount this cycle (circuit
+                breaker). Once reached, further over-cap bookings are blocked
+                even with {overageBehavior === "CHARGE_ORG" ? "Charge org" : "Charge member"} enabled.
+                Required by the platform — keeps runaway overage liability bounded.
+              </p>
+            </div>
+          )}
+
           {error && <p className="text-sm text-red-600">{error}</p>}
         </div>
 
@@ -957,6 +1004,8 @@ function EditProgramDialog({
   const [overageBehavior, setOverageBehavior] =
     useState<OverageBehavior>("BLOCK");
   const [overageSurchargePct, setOverageSurchargePct] = useState("");
+  // #768 #14/#15 — circuit-breaker ceiling, parity with CreateProgramDialog.
+  const [maxOveragePerCycleRupees, setMaxOveragePerCycleRupees] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   // Seed the form from the fetched program once it lands (and on re-open).
@@ -974,6 +1023,13 @@ function EditProgramDialog({
       program.creditPoolConfig?.overageSurchargeBps ??
       null;
     setOverageSurchargePct(bps === null ? "" : String(bps / 100));
+    const maxOverage =
+      program.licensedSeatConfig?.maxOveragePerCyclePaise ??
+      program.creditPoolConfig?.maxOveragePerCyclePaise ??
+      null;
+    setMaxOveragePerCycleRupees(
+      maxOverage === null ? "" : String(maxOverage / 100),
+    );
     if (program.licensedSeatConfig) {
       setRatePerSeatRupees(
         String(program.licensedSeatConfig.ratePerSeatPaise / 100),
@@ -1031,6 +1087,23 @@ function EditProgramDialog({
       }
       body.overageBehavior = overageBehavior;
       body.overageSurchargeBps = surchargeBps;
+      // #768 #14/#15 — circuit-breaker ceiling. PATCH validation at
+      // [programId]/route.ts:225-239 merges with the existing config and
+      // requires the merged value to be positive when overage charges. We
+      // ALWAYS send the field (null when blank or overage=BLOCK) so the merge
+      // sees the user's intent and not a stale config row.
+      let maxOveragePerCyclePaise: number | null = null;
+      if (overageBehavior !== "BLOCK") {
+        const parsed = rupeesToPaise(maxOveragePerCycleRupees);
+        if (parsed === null || parsed < 1) {
+          setError(
+            "Max overage per cycle is required when overage charges the org/member — enter a positive rupee ceiling.",
+          );
+          return;
+        }
+        maxOveragePerCyclePaise = parsed;
+      }
+      body.maxOveragePerCyclePaise = maxOveragePerCyclePaise;
       if (program.type === "LICENSED_SEAT") {
         const ratePaise = rupeesToPaise(ratePerSeatRupees);
         if (ratePaise === null) {
@@ -1252,6 +1325,34 @@ function EditProgramDialog({
                   onChange={(e) => setOverageSurchargePct(e.target.value)}
                   placeholder="leave blank for no markup"
                 />
+              </div>
+            )}
+
+            {/* #768 #14/#15 — per-cycle overage ceiling (circuit breaker).
+                Field is in LOCKED_PROGRAM_FIELDS (02-programs.md §4) — read-only
+                once the program has any assignments. */}
+            {overageBehavior !== "BLOCK" && (
+              <div className="space-y-2">
+                <Label htmlFor="edit-max-overage">
+                  Max overage per cycle (₹)
+                  {locked && <LockedHint />}
+                </Label>
+                <Input
+                  id="edit-max-overage"
+                  type="number"
+                  min={1}
+                  step="1"
+                  disabled={locked}
+                  value={maxOveragePerCycleRupees}
+                  onChange={(e) =>
+                    setMaxOveragePerCycleRupees(e.target.value)
+                  }
+                  placeholder="e.g. 100000 = ₹1,00,000 ceiling"
+                />
+                <p className="text-xs text-zinc-500">
+                  Hard cap on total over-cap spend this cycle. Required when
+                  overage charges — caps runaway liability at a known ceiling.
+                </p>
               </div>
             )}
 
