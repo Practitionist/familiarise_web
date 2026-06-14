@@ -69,16 +69,15 @@ export default function PricingPage() {
           {/* Platform Commission */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-2xl">Platform Commission</CardTitle>
+              <CardTitle className="text-2xl">Platform Service Fee</CardTitle>
               <CardDescription>
-                Our commission structure enables us to maintain and improve the
-                platform
+                Our service fee enables us to maintain and improve the platform
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <p className="text-muted-foreground">
-                Familiarise charges a small platform fee on each transaction.
-                This fee helps us:
+                Familiarise charges a service fee on each transaction, which is
+                already included in the displayed price. This fee helps us:
               </p>
               <ul className="list-disc list-inside space-y-2 text-muted-foreground ml-4">
                 {PRICING_DATA.commissionBenefits.map((benefit, index) => (
@@ -87,9 +86,9 @@ export default function PricingPage() {
               </ul>
               <div className="bg-blue-50 dark:bg-blue-950 p-4 rounded-lg mt-4">
                 <p className="text-sm">
-                  <strong>Note:</strong> The commission is automatically
-                  included in the prices shown to students. Consultants receive
-                  their earnings after the platform fee is deducted.
+                  <strong>Note:</strong> The service fee is already included
+                  in the prices shown to students. Consultants receive their
+                  earnings after the service fee is deducted.
                 </p>
               </div>
             </CardContent>
