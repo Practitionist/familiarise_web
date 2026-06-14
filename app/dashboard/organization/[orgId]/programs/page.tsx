@@ -564,8 +564,23 @@ function CreateProgramDialog({
     // #768 #14/#15 — per-cycle ceiling. Required (>=1 paise) for CHARGE_*,
     // ignored otherwise. Mirror the server's refineOverageCombo so the form
     // can't submit a 400 the user would only see as "Invalid body".
+    //
+    // LICENSED_SEAT with unlimited cap (coveredEngagementsPerCycle blank/null)
+    // makes every overage knob dead config — the server's
+    // LicensedSeatConfigSchema.superRefine rejects overageBehavior != BLOCK
+    // (and any non-null circuit-breaker) in that case. Block it here too so
+    // the operator gets a single clear message instead of the opaque 400.
     let maxOveragePerCyclePaise: number | null = null;
     if (overageBehavior !== "BLOCK") {
+      if (
+        programType === "LICENSED_SEAT" &&
+        coveredEngagementsPerCycle.trim() === ""
+      ) {
+        setError(
+          "Overage settings have no effect when sessions per cycle is unlimited. Either enter a positive cap or switch overage behaviour to Block.",
+        );
+        return;
+      }
       const parsed = rupeesToPaise(maxOveragePerCycleRupees);
       if (parsed === null || parsed < 1) {
         setError(
@@ -1092,8 +1107,23 @@ function EditProgramDialog({
       // requires the merged value to be positive when overage charges. We
       // ALWAYS send the field (null when blank or overage=BLOCK) so the merge
       // sees the user's intent and not a stale config row.
+      //
+      // LICENSED_SEAT with unlimited cap (coveredEngagementsPerCycle blank)
+      // makes every overage knob dead config — the server's
+      // LicensedSeatConfigSchema.superRefine rejects overageBehavior != BLOCK
+      // (and any non-null circuit-breaker) in that case. Block it here too so
+      // the operator gets a single clear message instead of the opaque 400.
       let maxOveragePerCyclePaise: number | null = null;
       if (overageBehavior !== "BLOCK") {
+        if (
+          program.type === "LICENSED_SEAT" &&
+          coveredEngagementsPerCycle.trim() === ""
+        ) {
+          setError(
+            "Overage settings have no effect when sessions per cycle is unlimited. Either enter a positive cap or switch overage behaviour to Block.",
+          );
+          return;
+        }
         const parsed = rupeesToPaise(maxOveragePerCycleRupees);
         if (parsed === null || parsed < 1) {
           setError(
