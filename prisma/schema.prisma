@@ -2691,6 +2691,9 @@ model Subscription {
   id                       String   @id @default(cuid())
   schedulingPeriodStartsAt DateTime @db.Timestamptz
   schedulingPeriodEndsAt   DateTime @db.Timestamptz
+  // #676 AE-3 / #872 — ornamental at launch: allocation reads the consultant's
+  // user.timezone, never this. Kept as frozen schema; made load-bearing in #872
+  // to pin a subscription's scheduling zone independent of the consultant's.
   schedulingTimezone       String   @default("Asia/Kolkata")
 
   status                 AppointmentStatus @default(PENDING) @map("requestStatus")
@@ -2985,6 +2988,8 @@ model Class {
   id                       String      @id @default(cuid())
   schedulingPeriodStartsAt DateTime?   @db.Timestamptz
   schedulingPeriodEndsAt   DateTime?   @db.Timestamptz
+  // #676 AE-3 / #872 — ornamental at launch (allocation reads the consultant's
+  // user.timezone). Kept as frozen schema; made load-bearing in #872.
   schedulingTimezone       String      @default("Asia/Kolkata")
   status                   ClassStatus @default(SCHEDULED)
   waitlist                 Waitlist[]

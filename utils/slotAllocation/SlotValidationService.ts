@@ -66,6 +66,9 @@ export class SlotValidationService {
     consultant: ConsultantAllocationData,
     config: EventConfig,
     excludeAppointmentIds?: string[],
+    // #676 AE-1 — when set, the consultee's calendar is checked too, so a
+    // consultee can't be double-booked across event types at the same instant.
+    consulteeUserId?: string,
   ): Promise<ValidationResult> {
     // Universal validations (apply to all event types)
     const futureCheck = this.validateSlotsInFuture(slots);
@@ -86,6 +89,7 @@ export class SlotValidationService {
       consultant.userId,
       slotDurationMinutes,
       excludeAppointmentIds,
+      consulteeUserId,
     );
     if (!conflictCheck.isValid) return conflictCheck;
 
@@ -201,6 +205,9 @@ export class SlotValidationService {
     consultantUserId: string,
     slotDurationMinutes: number = 30,
     excludeAppointmentIds?: string[],
+    // #676 AE-1 — the consultee is a participant too; an overlapping slot
+    // sharing either party is a real conflict.
+    consulteeUserId?: string,
   ): Promise<ValidationResult> {
     const errors: string[] = [];
 
@@ -226,6 +233,12 @@ export class SlotValidationService {
       if (endMs > latestEnd) latestEnd = endMs;
     }
 
+    // #676 AE-1 — a slot is a conflict if EITHER the consultant or (when
+    // present) the consultee already holds an overlapping slot. One query.
+    const participantIds = consulteeUserId
+      ? [consultantUserId, consulteeUserId]
+      : [consultantUserId];
+
     // Step 2: Single query — find ALL occupied appointments overlapping the envelope
     const conflictingAppointments =
       await this.prismaClient.appointment.findMany({
@@ -249,7 +262,7 @@ export class SlotValidationService {
                   AND: [
                     { startsAt: { lt: new Date(latestEnd) } },
                     { endsAt: { gt: new Date(earliestStart) } },
-                    { user: { some: { id: consultantUserId } } },
+                    { user: { some: { id: { in: participantIds } } } },
                   ],
                 },
               },

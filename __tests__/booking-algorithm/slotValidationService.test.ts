@@ -731,3 +731,37 @@ describe("validate: subscription slot count modulo", () => {
     }
   });
 });
+
+// ─── #676 AE-1: consultee-side conflict check ───────────────────────────────
+
+describe("#676 AE-1: validate threads consulteeUserId into the conflict scan", () => {
+  it("includes the consultee in the conflict query when consulteeUserId is set", async () => {
+    await service.validate(
+      "consultation",
+      "event-1",
+      futureSlots(2, "2025-06-02T10:00:00Z"),
+      weeklyConsultant,
+      { durationInHours: 1 },
+      undefined,
+      "consultee-ae1",
+    );
+    // The single batched conflict query must scan the consultee's calendar too.
+    expect(
+      JSON.stringify(mockPrisma.appointment.findMany.mock.calls),
+    ).toContain("consultee-ae1");
+  });
+
+  it("does NOT add a consultee to the scan for group events", async () => {
+    mockPrisma.appointment.findMany.mockClear();
+    await service.validate(
+      "webinar",
+      "event-1",
+      futureSlots(2, "2025-06-02T10:00:00Z"),
+      weeklyConsultant,
+      { durationInHours: 1 },
+    );
+    expect(
+      JSON.stringify(mockPrisma.appointment.findMany.mock.calls),
+    ).not.toContain("consultee-ae1");
+  });
+});

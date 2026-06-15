@@ -1045,6 +1045,7 @@ describe("fetchEventData - config extraction", () => {
         schedulingPeriodEndsAt: expect.any(Date),
       }),
       expect.any(Array), // appointmentIdsToExclude
+      "consultee-1", // #676 AE-1 — consulteeUserId threaded for the conflict scan
     );
   });
 
@@ -1065,6 +1066,7 @@ describe("fetchEventData - config extraction", () => {
       expect.objectContaining({ userId: "consultant-1" }),
       expect.objectContaining({ durationInHours: 1 }),
       expect.any(Array), // appointmentIdsToExclude
+      undefined, // #676 AE-1 — group event, no single consultee
     );
   });
 
@@ -1108,6 +1110,7 @@ describe("fetchEventData - config extraction", () => {
         sessionDurationInHours: 1.5,
       }),
       expect.any(Array), // appointmentIdsToExclude
+      undefined, // #676 AE-1 — group event, no single consultee
     );
   });
 });

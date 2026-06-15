@@ -385,6 +385,7 @@ export class SlotAllocationService {
             consultant,
             config,
             appointmentIdsToExclude,
+            consulteeUserId, // #676 AE-1 — also check the consultee's calendar
           );
 
           if (!validation.isValid) {
@@ -659,6 +660,7 @@ export class SlotAllocationService {
             consultant,
             config,
             appointmentIdsToExclude,
+            consulteeUserId, // #676 AE-1 — also check the consultee's calendar
           );
 
           if (!validation.isValid) {
@@ -757,7 +759,8 @@ export class SlotAllocationService {
           throw new AllocationNotFoundError(`${eventType} not found`);
         }
 
-        const { consultant, config, requestedSlots } = eventData;
+        const { consultant, config, requestedSlots, consulteeUserId } =
+          eventData;
 
         if (!requestedSlots || requestedSlots.length === 0) {
           throw new AllocationValidationError("No requested slots found");
@@ -808,6 +811,7 @@ export class SlotAllocationService {
           consultant,
           config,
           existingAppointmentIds,
+          consulteeUserId, // #676 AE-1 — also check the consultee's calendar
         );
 
         if (!validation.isValid) {
