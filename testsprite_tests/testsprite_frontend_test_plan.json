@@ -1,1968 +1,702 @@
 [
   {
     "id": "TC001",
-    "title": "Sign in to access the account",
-    "description": "A returning user can sign in with valid credentials and reach an authenticated state for the app.",
-    "category": "Authentication",
+    "title": "Consultation booking: browse expert heatmap → pick slot → checkout with Mock Pay → appointment confirmed",
+    "category": "Booking - Consultation",
+    "description": "As consultee, sign in and navigate to the expert profile page. The availability heatmap shows available CUSTOM type slots. Click on an available slot to initiate booking. On the checkout page, complete payment using the Mock Pay button. Verify the appointment appears in the appointments dashboard.",
     "steps": [
       {
         "type": "action",
-        "description": "Navigate to /auth/signin"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the email field with {{LOGIN_USER}}"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
-      },
-      {
-        "type": "action",
-        "description": "Submit the sign-in form"
+        "description": "Navigate to /auth/signin. Fill in email aarav.campbell@hotmail.com and password SeedPass123! and submit the sign-in form."
       },
       {
         "type": "assertion",
-        "description": "Verify the user is signed in"
+        "description": "IMPORTANT: Do NOT pass this assertion if a loading spinner or the text 'Loading your dashboard' is shown. Wait up to 30 seconds for the spinner to disappear. Verify the consultee dashboard navigation bar is fully loaded and visible, showing nav items such as 'Appointments', 'Messages', or 'Payments'. The URL should be /dashboard/consultee/7e26dc8b-3013-4696-809b-85f5677c46f7/home or similar consultee dashboard path."
+      },
+      {
+        "type": "action",
+        "description": "Navigate to /explore/experts/fbe6e6b7-3b85-4747-b37c-bfcdc914641b (Aarav Anderson's expert profile)"
       },
       {
         "type": "assertion",
-        "description": "Verify authenticated account content is displayed"
+        "description": "Verify the expert profile page loads with the consultant's name 'Aarav Anderson', bio, and pricing plans visible."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the availability section is visible on the page, showing a calendar or heatmap of time slots for upcoming dates. Look for date labels and time slot cells."
+      },
+      {
+        "type": "action",
+        "description": "In the availability heatmap, click on any available slot (a cell that is not grayed out or marked as booked). The slot should be for a CUSTOM type booking. If a specific date picker is shown, navigate to June 14, 2026 and click the 2:00 PM slot."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the URL changes to a checkout page at /checkout/plans/consultation/[planId] with query params. The checkout page must show: the plan name, consultant name 'Aarav Anderson', the booked date/time, and a price around ₹3905."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify a button labeled 'Mock Pay' or 'Mock Pay (Razorpay)' is visible on the checkout page."
+      },
+      {
+        "type": "action",
+        "description": "Click the 'Mock Pay (Razorpay)' or 'Mock Pay' button to simulate payment in development mode."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the page shows a payment success state or redirects to a confirmation page or dashboard. The URL should change away from /checkout/. Do NOT pass if the checkout page is still shown unchanged."
+      },
+      {
+        "type": "action",
+        "description": "Navigate directly to /dashboard/consultee/7e26dc8b-3013-4696-809b-85f5677c46f7/appointments"
+      },
+      {
+        "type": "assertion",
+        "description": "IMPORTANT: Wait up to 20 seconds for appointment cards to load. Verify at least one appointment card is visible on the page showing 'Aarav Anderson' as consultant. The card should show a status of SCHEDULED and a date/time for the booked slot. Do NOT pass if the page shows a loading skeleton only."
       }
-    ],
-    "priority": "High"
+    ]
   },
   {
     "id": "TC002",
-    "title": "Complete consultation checkout and receive confirmation",
-    "description": "A signed-in user can pay for a consultation and see a confirmed appointment after checkout and allocation.",
-    "category": "Booking - Consultation (1:1 one-time)",
+    "title": "Subscription booking: select scheduling period → Mock Pay → subscription appears in dashboard",
+    "category": "Booking - Subscription",
+    "description": "As consultee, sign in, navigate to the expert profile, select a subscription plan with a 1-month scheduling period, complete checkout with Mock Pay, and verify the subscription appears in the consultee dashboard.",
     "steps": [
       {
         "type": "action",
-        "description": "Navigate to /auth/signin"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the email field with {{LOGIN_USER}}"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
-      },
-      {
-        "type": "action",
-        "description": "Submit the login form"
-      },
-      {
-        "type": "action",
-        "description": "Open the consultation booking page for a consultant"
-      },
-      {
-        "type": "action",
-        "description": "Select a valid consultation slot"
-      },
-      {
-        "type": "action",
-        "description": "Choose automatic allocation for the booking"
-      },
-      {
-        "type": "action",
-        "description": "Proceed to checkout and complete payment"
-      },
-      {
-        "type": "action",
-        "description": "Finalize slot allocation after payment"
+        "description": "Navigate to /auth/signin. Fill in email aarav.campbell@hotmail.com and password SeedPass123! and submit the sign-in form."
       },
       {
         "type": "assertion",
-        "description": "Verify the appointment is confirmed"
+        "description": "IMPORTANT: Do NOT pass if a loading spinner or 'Loading your dashboard' text is visible. Wait up to 30 seconds for the spinner to resolve. Verify the consultee dashboard navigation bar is fully loaded showing nav items like 'Appointments' and 'Messages'."
+      },
+      {
+        "type": "action",
+        "description": "Navigate to /explore/experts/fbe6e6b7-3b85-4747-b37c-bfcdc914641b"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the expert profile page loads showing pricing plan options."
+      },
+      {
+        "type": "action",
+        "description": "In the pricing/plans section, click the 'Subscription' tab or find the subscription plan option. Look for a '1 Month' plan labeled 'Basic Subscription'."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the subscription plan details are shown with price, sessions included, and a date range picker or scheduling period selector."
+      },
+      {
+        "type": "action",
+        "description": "Select a scheduling period: set start date to 2 days from today and end date to 33 days from today (approximately 1 month). Click 'Proceed to Checkout' or the booking CTA button."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify navigation to a checkout page with URL containing /checkout/plans/subscription/[planId]. The page shows subscription plan name, consultant name 'Aarav Anderson', scheduling period dates, and total price."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify a 'Mock Pay (Razorpay)' or 'Mock Pay' button is visible on the checkout page."
+      },
+      {
+        "type": "action",
+        "description": "Click the 'Mock Pay (Razorpay)' button to complete subscription payment."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the page redirects away from checkout after payment. The URL should no longer be /checkout/."
+      },
+      {
+        "type": "action",
+        "description": "Navigate to the consultee home dashboard at /dashboard/consultee/7e26dc8b-3013-4696-809b-85f5677c46f7/home and look for a subscriptions section or link."
+      },
+      {
+        "type": "assertion",
+        "description": "IMPORTANT: Wait up to 20 seconds for subscription data to load. Verify a subscription entry appears showing 'Aarav Anderson' as consultant and a status of ACTIVE or PENDING_ALLOCATION. Do NOT pass if only a loading skeleton is visible."
       }
-    ],
-    "priority": "High"
+    ]
   },
   {
     "id": "TC003",
-    "title": "Create a new account",
-    "description": "A new user can create an account with valid details and successfully enter the authenticated experience.",
-    "category": "Authentication",
+    "title": "Consultant allocates subscription request: sign in as consultant → view Requests tab → allocate time slots → CONFIRMED",
+    "category": "Booking - Subscription Allocation",
+    "description": "Sign in as consultant Aarav Anderson, navigate to the Requests tab in the consultant dashboard, find a pending subscription request, open the allocation interface, select 4 time slots across 4 weeks, confirm allocation, and verify the request status changes to CONFIRMED.",
     "steps": [
       {
         "type": "action",
-        "description": "Navigate to /auth/signin"
-      },
-      {
-        "type": "action",
-        "description": "Click the link to create a new account"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the name field with Test User"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the email field with a unique valid email address"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the password field with a valid password"
-      },
-      {
-        "type": "action",
-        "description": "Submit the sign-up form"
+        "description": "Navigate to /auth/signin. Fill in email aarav.anderson@gmail.com and password SeedPass123! and submit the sign-in form."
       },
       {
         "type": "assertion",
-        "description": "Verify the account creation succeeds"
+        "description": "IMPORTANT: Do NOT pass if a loading spinner or 'Loading your dashboard' text is visible. Wait up to 30 seconds. Verify the consultant dashboard is loaded — the URL should contain /dashboard/consultant/ and the page should show the consultant's name or dashboard navigation items."
+      },
+      {
+        "type": "action",
+        "description": "Look for a 'Requests' link or tab in the consultant dashboard navigation. Click it. The URL should navigate to a path containing /requests."
       },
       {
         "type": "assertion",
-        "description": "Verify authenticated account content is displayed"
+        "description": "IMPORTANT: Wait up to 20 seconds. Verify the Requests tab or page loads and shows at least one pending subscription request card. Do NOT pass if a loading spinner or 'no requests' empty state without any request cards is shown — if no requests exist, this test cannot continue and should be marked as BLOCKED."
+      },
+      {
+        "type": "action",
+        "description": "Click on a pending subscription request card to open the allocation dialog or detail view."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the request detail shows consultee name, scheduling period (start and end dates), and number of sessions to allocate. An availability calendar or time slot picker should be visible."
+      },
+      {
+        "type": "action",
+        "description": "Select 4 different time slots from the allocation calendar — pick one slot each in 4 different weeks within the scheduling period. Click each available slot to select it."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify 4 slots are shown as selected (highlighted or checked) in the calendar interface."
+      },
+      {
+        "type": "action",
+        "description": "Click 'Confirm Allocation' or 'Allocate Sessions' button."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify a success toast or confirmation message appears after allocation. Verify the request status changes to CONFIRMED or the request is removed from the pending list."
       }
-    ],
-    "priority": "High"
+    ]
   },
   {
     "id": "TC004",
-    "title": "Complete subscription checkout and receive allocated sessions",
-    "description": "A signed-in user can pay for a subscription and see the recurring appointments allocated after checkout.",
-    "category": "Booking - Subscription (1:1 recurring)",
+    "title": "Consultee views allocated subscription sessions in appointments dashboard",
+    "category": "Booking - Subscription View",
+    "description": "Sign in as consultee Aarav Campbell. Navigate to appointments. Verify allocated subscription sessions from the consultant appear as SCHEDULED appointments with correct consultant name and dates.",
     "steps": [
       {
         "type": "action",
-        "description": "Navigate to /auth/signin"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the email field with {{LOGIN_USER}}"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
-      },
-      {
-        "type": "action",
-        "description": "Submit the login form"
-      },
-      {
-        "type": "action",
-        "description": "Open the subscription booking page for a consultant"
-      },
-      {
-        "type": "action",
-        "description": "Select a valid recurring weekly slot set"
-      },
-      {
-        "type": "action",
-        "description": "Proceed to checkout and complete payment"
-      },
-      {
-        "type": "action",
-        "description": "Finalize recurring slot allocation after payment"
+        "description": "Navigate to /auth/signin. Fill in email aarav.campbell@hotmail.com and password SeedPass123! and submit."
       },
       {
         "type": "assertion",
-        "description": "Verify the recurring appointments are confirmed"
+        "description": "IMPORTANT: Do NOT pass if a loading spinner or 'Loading your dashboard' is shown. Wait up to 30 seconds for the spinner to resolve. Verify the consultee dashboard nav bar is visible with items like 'Appointments' and 'Messages'."
+      },
+      {
+        "type": "action",
+        "description": "Navigate directly to /dashboard/consultee/7e26dc8b-3013-4696-809b-85f5677c46f7/appointments"
+      },
+      {
+        "type": "assertion",
+        "description": "IMPORTANT: Wait up to 20 seconds for appointment cards to load. Verify the appointments page shows actual appointment cards (not just a loading skeleton). At least one card should show 'Aarav Anderson' as consultant with status SCHEDULED."
+      },
+      {
+        "type": "action",
+        "description": "Click on one of the appointment cards to view its details."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the appointment detail view shows: consultant name 'Aarav Anderson', session type, date and time, and appointment status. The detail should NOT be empty or stuck loading."
       }
-    ],
-    "priority": "High"
+    ]
   },
   {
     "id": "TC005",
-    "title": "Sign out of the current session",
-    "description": "A signed-in user can end the current session and return to an unauthenticated state.",
-    "category": "Authentication",
+    "title": "Reschedule appointment: find upcoming session → initiate reschedule → pick new slot → confirm",
+    "category": "Rescheduling",
+    "description": "Sign in as consultee. Find an upcoming SCHEDULED appointment. Click Reschedule. Select a different available time slot. Confirm the reschedule. Verify the appointment shows the new date/time.",
     "steps": [
       {
         "type": "action",
-        "description": "Navigate to /auth/signin"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the email field with {{LOGIN_USER}}"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
-      },
-      {
-        "type": "action",
-        "description": "Submit the sign-in form"
-      },
-      {
-        "type": "action",
-        "description": "Open the account menu"
-      },
-      {
-        "type": "action",
-        "description": "Click the sign-out action"
+        "description": "Navigate to /auth/signin. Fill in email aarav.campbell@hotmail.com and password SeedPass123! and submit."
       },
       {
         "type": "assertion",
-        "description": "Verify the user is signed out"
+        "description": "IMPORTANT: Do NOT pass if a loading spinner is visible. Wait up to 30 seconds for the consultee dashboard nav to appear with items like 'Appointments'."
+      },
+      {
+        "type": "action",
+        "description": "Navigate to /dashboard/consultee/7e26dc8b-3013-4696-809b-85f5677c46f7/appointments"
       },
       {
         "type": "assertion",
-        "description": "Verify sign-in content is displayed"
+        "description": "Wait up to 20 seconds. Verify appointment cards are loaded and visible on the page. If no appointment cards appear (only empty state), mark as BLOCKED."
+      },
+      {
+        "type": "action",
+        "description": "Find an upcoming SCHEDULED appointment card that has a 'Reschedule' button. Click the 'Reschedule' button."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify a reschedule dialog, modal, or new page opens showing available time slots. The dialog must contain a calendar or time picker with selectable options."
+      },
+      {
+        "type": "action",
+        "description": "Select a different available time slot from the reschedule options — pick a slot that is different from the current appointment time."
+      },
+      {
+        "type": "action",
+        "description": "Click 'Confirm Reschedule' or 'Save' button."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify a success toast or message appears confirming the reschedule. Verify the appointment card now shows the NEW date/time selected, not the original time."
       }
-    ],
-    "priority": "High"
+    ]
   },
   {
     "id": "TC006",
-    "title": "Validate a consultation slot before checkout",
-    "description": "A signed-in user can choose consultation slots and see that the selection is valid before paying.",
-    "category": "Booking - Consultation (1:1 one-time)",
+    "title": "Cancel appointment: find upcoming session → confirm cancellation → status shows CANCELLED",
+    "category": "Cancellation",
+    "description": "Sign in as consultee. Find an upcoming SCHEDULED appointment with a Cancel button. Click Cancel. Select a reason. Confirm cancellation. Verify the appointment status changes to CANCELLED.",
     "steps": [
       {
         "type": "action",
-        "description": "Navigate to /auth/signin"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the email field with {{LOGIN_USER}}"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
-      },
-      {
-        "type": "action",
-        "description": "Submit the login form"
-      },
-      {
-        "type": "action",
-        "description": "Open the consultation booking page for a consultant"
-      },
-      {
-        "type": "action",
-        "description": "Select a valid consultation slot"
-      },
-      {
-        "type": "action",
-        "description": "Choose automatic allocation for the booking"
-      },
-      {
-        "type": "action",
-        "description": "Validate the selected consultation slot"
+        "description": "Navigate to /auth/signin. Fill in email aarav.campbell@hotmail.com and password SeedPass123! and submit."
       },
       {
         "type": "assertion",
-        "description": "Verify the slot selection is accepted for checkout"
+        "description": "IMPORTANT: Do NOT pass if a loading spinner is visible. Wait up to 30 seconds for the consultee dashboard nav to appear."
+      },
+      {
+        "type": "action",
+        "description": "Navigate to /dashboard/consultee/7e26dc8b-3013-4696-809b-85f5677c46f7/appointments"
+      },
+      {
+        "type": "assertion",
+        "description": "Wait up to 20 seconds. Verify appointment cards are loaded. If no cancellable appointments appear, mark as BLOCKED."
+      },
+      {
+        "type": "action",
+        "description": "Find an upcoming SCHEDULED appointment card with a 'Cancel' button visible. Click 'Cancel'."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify a cancellation confirmation dialog appears with a reason selector or text input."
+      },
+      {
+        "type": "action",
+        "description": "Select a cancellation reason (e.g. 'No longer interested' or 'Schedule conflict') from the dropdown or options."
+      },
+      {
+        "type": "action",
+        "description": "Click 'Confirm Cancellation' or 'Cancel Appointment' button in the dialog."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify a success message or toast appears. Verify the appointment's status label changes to CANCELLED or the card moves to a cancelled section. Do NOT pass if the appointment still shows SCHEDULED status."
       }
-    ],
-    "priority": "High"
+    ]
   },
   {
     "id": "TC007",
-    "title": "User starts a meeting from an appointment",
-    "description": "This verifies that an authenticated user can start a meeting session for an appointment and see it become active.",
-    "category": "Meetings & Recordings",
+    "title": "Class enrollment: navigate to class detail page → Enroll Now → Mock Pay → class sessions in appointments",
+    "category": "Booking - Class",
+    "description": "Sign in as consultee. Navigate to the Beginner Class detail page. Click Enroll Now. Complete checkout with Mock Pay. Verify class sessions appear in the appointments dashboard.",
     "steps": [
       {
         "type": "action",
-        "description": "Navigate to /auth/signin"
-      },
-      {
-        "type": "action",
-        "description": "Fill in {{LOGIN_USER}} into the email field"
-      },
-      {
-        "type": "action",
-        "description": "Fill in {{LOGIN_PASSWORD}} into the password field"
-      },
-      {
-        "type": "action",
-        "description": "Submit the form"
-      },
-      {
-        "type": "action",
-        "description": "Open an appointment with a scheduled meeting"
-      },
-      {
-        "type": "action",
-        "description": "Start the meeting"
+        "description": "Navigate to /auth/signin. Fill in email aarav.campbell@hotmail.com and password SeedPass123! and submit."
       },
       {
         "type": "assertion",
-        "description": "Verify the meeting is marked as active"
+        "description": "IMPORTANT: Do NOT pass if a loading spinner or 'Loading your dashboard' text is visible. Wait up to 30 seconds for the consultee dashboard nav to appear with items like 'Appointments'."
+      },
+      {
+        "type": "action",
+        "description": "Navigate to /explore/programs/plans/classes/cmqb1ebni01b8txyojcy2qohz (Beginner Class by Aarav Anderson)"
       },
       {
         "type": "assertion",
-        "description": "Verify meeting session details are displayed"
+        "description": "Verify the class detail page loads showing: class name, 'Aarav Anderson' as instructor, session dates/times, price, available seats count, and an 'Enroll Now' or 'Book' button."
+      },
+      {
+        "type": "action",
+        "description": "Click the 'Enroll Now' or 'Book' button."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify navigation to a checkout page with URL containing /checkout/plans/class/cmqb1ebni01b8txyojcy2qohz. The page shows class name, instructor 'Aarav Anderson', and price. A 'Mock Pay (Razorpay)' button is visible."
+      },
+      {
+        "type": "action",
+        "description": "Click the 'Mock Pay (Razorpay)' button."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the page redirects away from /checkout/ after payment — a success state or dashboard redirect occurs."
+      },
+      {
+        "type": "action",
+        "description": "Navigate to /dashboard/consultee/7e26dc8b-3013-4696-809b-85f5677c46f7/appointments"
+      },
+      {
+        "type": "assertion",
+        "description": "IMPORTANT: Wait up to 20 seconds. Verify appointment cards are visible. At least one card should reference the class (Aarav Anderson as instructor) with status SCHEDULED. Do NOT pass if only a loading skeleton is shown."
       }
-    ],
-    "priority": "High"
+    ]
   },
   {
     "id": "TC008",
-    "title": "Book a webinar seat successfully",
-    "description": "A logged-in user can complete webinar checkout and receive a confirmed seat allocation.",
-    "category": "Booking - Webinar (1:many one-time)",
+    "title": "Webinar booking: navigate to webinar detail → Register → Mock Pay → webinar in appointments",
+    "category": "Booking - Webinar",
+    "description": "Sign in as consultee. Navigate to the Introduction Webinar detail page. Click Register. Complete checkout with Mock Pay. Verify the webinar booking appears in the appointments dashboard.",
     "steps": [
       {
         "type": "action",
-        "description": "Navigate to /auth/signin"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the email field with {{LOGIN_USER}}"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
-      },
-      {
-        "type": "action",
-        "description": "Submit the login form"
-      },
-      {
-        "type": "action",
-        "description": "Navigate to the webinar plans page"
-      },
-      {
-        "type": "action",
-        "description": "Choose an available webinar plan"
-      },
-      {
-        "type": "action",
-        "description": "Complete checkout for the selected webinar with valid seat selections and funding sources"
-      },
-      {
-        "type": "action",
-        "description": "Confirm the payment and seat allocation"
+        "description": "Navigate to /auth/signin. Fill in email aarav.campbell@hotmail.com and password SeedPass123! and submit."
       },
       {
         "type": "assertion",
-        "description": "Verify a confirmed webinar appointment is displayed"
+        "description": "IMPORTANT: Do NOT pass if a loading spinner is shown. Wait up to 30 seconds for the consultee dashboard nav bar to appear."
+      },
+      {
+        "type": "action",
+        "description": "Navigate to /explore/programs/plans/webinars/cmqb1ce23014ktxyo6y1p7udg (Introduction Webinar by Aarav Anderson)"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the webinar detail page loads showing: webinar name, host 'Aarav Anderson', date/time, seats available, and a 'Register' or 'Book Seat' button."
+      },
+      {
+        "type": "action",
+        "description": "Click the 'Register' or 'Book Seat' button."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify navigation to a checkout page. The page shows webinar name, host 'Aarav Anderson', date/time, and price. A 'Mock Pay (Razorpay)' button is visible."
+      },
+      {
+        "type": "action",
+        "description": "Click 'Mock Pay (Razorpay)' button."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the page redirects away from /checkout/ after payment."
+      },
+      {
+        "type": "action",
+        "description": "Navigate to /dashboard/consultee/7e26dc8b-3013-4696-809b-85f5677c46f7/appointments"
+      },
+      {
+        "type": "assertion",
+        "description": "IMPORTANT: Wait up to 20 seconds. Verify the webinar booking appears as an appointment card with 'Aarav Anderson' and status SCHEDULED or CONFIRMED. Do NOT pass if only a loading skeleton is visible."
       }
-    ],
-    "priority": "High"
+    ]
   },
   {
     "id": "TC009",
-    "title": "Reschedule an appointment successfully",
-    "description": "A signed-in user can reschedule an existing appointment to new valid slots and see the updated appointment details.",
-    "category": "Appointment Management",
+    "title": "Slot conflict: attempt checkout for a booked slot → see conflict error → recover with different slot",
+    "category": "Booking - Error Handling",
+    "description": "Navigate directly to a checkout URL for a slot that is already fully booked. The checkout page or payment step should surface a conflict error. Navigate back to the expert profile and book a different available slot successfully.",
     "steps": [
       {
         "type": "action",
-        "description": "Navigate to /auth/signin"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the login user field with {{LOGIN_USER}}"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the login password field with {{LOGIN_PASSWORD}}"
-      },
-      {
-        "type": "action",
-        "description": "Submit the login form"
-      },
-      {
-        "type": "action",
-        "description": "Navigate to the appointments page"
-      },
-      {
-        "type": "action",
-        "description": "Open an existing appointment"
-      },
-      {
-        "type": "action",
-        "description": "Start the reschedule flow"
-      },
-      {
-        "type": "action",
-        "description": "Select valid replacement slots"
-      },
-      {
-        "type": "action",
-        "description": "Confirm the reschedule"
+        "description": "Navigate to /auth/signin. Fill in email aarav.campbell@hotmail.com and password SeedPass123! and submit."
       },
       {
         "type": "assertion",
-        "description": "Verify the appointment shows the updated schedule"
+        "description": "IMPORTANT: Do NOT pass if a loading spinner is shown. Wait up to 30 seconds for the consultee dashboard nav bar to appear."
+      },
+      {
+        "type": "action",
+        "description": "Navigate directly to the checkout URL: /checkout/plans/consultation/cmqb1buwb00r8txyosl5lhyzp?slotOfAvailabilityCustomId=3096d692-bb05-4a88-9f15-aef464811244&startsAt=2026-06-14T14:00:00.000Z&endsAt=2026-06-14T14:30:00.000Z"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the checkout page loads showing the consultation plan details."
+      },
+      {
+        "type": "action",
+        "description": "Click 'Mock Pay (Razorpay)' to attempt payment for this slot."
+      },
+      {
+        "type": "assertion",
+        "description": "Observe the result. If the slot is already booked, an error message should appear (e.g. 'slot is unavailable', 'time conflict', 'already booked'). If the booking succeeds (slot was still available), note that this is a valid outcome. Record whichever outcome occurs."
+      },
+      {
+        "type": "action",
+        "description": "Navigate to /explore/experts/fbe6e6b7-3b85-4747-b37c-bfcdc914641b"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the expert profile loads and the availability heatmap is visible."
+      },
+      {
+        "type": "action",
+        "description": "Click on any available slot (not the June 14 2:00 PM slot, pick a different date/time). Navigate through checkout and click 'Mock Pay (Razorpay)'."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the booking succeeds: page redirects away from /checkout/ and no error is shown. The recovery booking with a different slot should succeed."
       }
-    ],
-    "priority": "High"
+    ]
   },
   {
     "id": "TC010",
-    "title": "Block consultation allocation when a slot is already taken",
-    "description": "A signed-in user sees that an already taken consultation slot cannot be allocated after payment.",
-    "category": "Booking - Consultation (1:1 one-time)",
+    "title": "Consultant dashboard: view pending requests tab and upcoming appointments tab",
+    "category": "Consultant Dashboard",
+    "description": "Sign in as consultant Aarav Anderson. Navigate to the Requests tab and verify pending subscription requests are shown. Navigate to the Appointments tab and verify upcoming sessions are listed.",
     "steps": [
       {
         "type": "action",
-        "description": "Navigate to /auth/signin"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the email field with {{LOGIN_USER}}"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
-      },
-      {
-        "type": "action",
-        "description": "Submit the login form"
-      },
-      {
-        "type": "action",
-        "description": "Open the consultation allocation page for a booking with a conflicting slot"
-      },
-      {
-        "type": "action",
-        "description": "Attempt to finalize allocation with the conflicting slot"
+        "description": "Navigate to /auth/signin. Fill in email aarav.anderson@gmail.com and password SeedPass123! and submit."
       },
       {
         "type": "assertion",
-        "description": "Verify a slot unavailable error is displayed"
+        "description": "IMPORTANT: Do NOT pass if a loading spinner or 'Loading your dashboard' text is visible. Wait up to 30 seconds for the consultant dashboard to fully load. Verify the URL contains /dashboard/consultant/ and the page shows consultant dashboard navigation."
+      },
+      {
+        "type": "action",
+        "description": "Look for a 'Requests' tab or link in the consultant dashboard sidebar or top navigation. Click it."
+      },
+      {
+        "type": "assertion",
+        "description": "IMPORTANT: Wait up to 20 seconds. Verify the Requests section loads and renders. It may show pending subscription allocation requests (with consultee names and scheduling periods) or an empty state message. Do NOT pass if only a loading skeleton is visible."
+      },
+      {
+        "type": "action",
+        "description": "Look for an 'Appointments' or 'Schedule' tab or link in the consultant dashboard navigation. Click it."
+      },
+      {
+        "type": "assertion",
+        "description": "IMPORTANT: Wait up to 20 seconds. Verify the Appointments section loads and renders. It may show upcoming session cards (with consultee names, dates, times) or an empty state. Do NOT pass if only a loading skeleton is visible."
       }
-    ],
-    "priority": "High"
+    ]
   },
   {
     "id": "TC011",
-    "title": "Reject incorrect sign-in credentials",
-    "description": "A user cannot sign in when the email or password is invalid and remains unable to access the account.",
-    "category": "Authentication",
+    "title": "Consultant earnings page: verify earnings data renders without error",
+    "category": "Consultant Dashboard - Earnings",
+    "description": "Sign in as consultant Aarav Anderson. Navigate to the Earnings section. Verify the page renders earnings data (or an empty state) without crashing.",
     "steps": [
       {
         "type": "action",
-        "description": "Navigate to /auth/signin"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the email field with an invalid email address"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the password field with an incorrect password"
-      },
-      {
-        "type": "action",
-        "description": "Submit the sign-in form"
+        "description": "Navigate to /auth/signin. Fill in email aarav.anderson@gmail.com and password SeedPass123! and submit."
       },
       {
         "type": "assertion",
-        "description": "Verify a sign-in validation error is visible"
+        "description": "IMPORTANT: Do NOT pass if a loading spinner is visible. Wait up to 30 seconds for the consultant dashboard nav to appear."
+      },
+      {
+        "type": "action",
+        "description": "In the consultant dashboard navigation, look for an 'Earnings' or 'Payments' link and click it."
       },
       {
         "type": "assertion",
-        "description": "Verify the user is not signed in"
+        "description": "IMPORTANT: Wait up to 20 seconds. Verify the Earnings page loads and renders content — either earnings data (amounts, session counts) or a clear empty state ('No earnings yet' message). Do NOT pass if only a loading skeleton or spinner is visible, or if the page shows an error boundary with 'Something went wrong'."
+      },
+      {
+        "type": "action",
+        "description": "Look for a 'Payouts' section or link and navigate to it."
+      },
+      {
+        "type": "assertion",
+        "description": "IMPORTANT: Wait up to 20 seconds. Verify the payouts section loads and renders content or a clear empty state. Do NOT pass if only a loading skeleton is visible."
       }
-    ],
-    "priority": "High"
+    ]
   },
   {
     "id": "TC012",
-    "title": "Enroll in a class and receive scheduled sessions",
-    "description": "A logged-in user can complete class checkout and receive allocated recurring class sessions.",
-    "category": "Booking - Class (1:many recurring)",
+    "title": "Create support ticket: fill form → submit → ticket appears with OPEN status",
+    "category": "Support",
+    "description": "Sign in as consultee. Navigate to the support tickets section. Create a new ticket with subject and description. Submit it. Verify the ticket appears in the list with status OPEN.",
     "steps": [
       {
         "type": "action",
-        "description": "Navigate to /auth/signin"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the email field with {{LOGIN_USER}}"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
-      },
-      {
-        "type": "action",
-        "description": "Submit the login form"
-      },
-      {
-        "type": "action",
-        "description": "Navigate to the class plans page"
-      },
-      {
-        "type": "action",
-        "description": "Choose an available class plan"
-      },
-      {
-        "type": "action",
-        "description": "Complete checkout for the selected class with valid recurring slot selections and funding sources"
-      },
-      {
-        "type": "action",
-        "description": "Confirm the payment and class allocation"
+        "description": "Navigate to /auth/signin. Fill in email aarav.campbell@hotmail.com and password SeedPass123! and submit."
       },
       {
         "type": "assertion",
-        "description": "Verify recurring class appointments are displayed"
+        "description": "IMPORTANT: Do NOT pass if a loading spinner is visible. Wait up to 30 seconds for the consultee dashboard nav bar to appear."
+      },
+      {
+        "type": "action",
+        "description": "Navigate to /dashboard/consultee/7e26dc8b-3013-4696-809b-85f5677c46f7/feedback (the support/feedback section)"
+      },
+      {
+        "type": "assertion",
+        "description": "IMPORTANT: Wait up to 20 seconds. Verify the support/feedback page loads and renders — either a list of existing tickets or an empty state with a 'Create Ticket' or 'New Ticket' button. Do NOT pass if only a loading skeleton is shown."
+      },
+      {
+        "type": "action",
+        "description": "Click 'Create Ticket', 'New Ticket', or '+' button to open the ticket creation form."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify a ticket creation form or modal appears with at minimum a subject/title field and a description field."
+      },
+      {
+        "type": "action",
+        "description": "Fill in subject: 'Test booking issue — payment not confirmed'. Fill in description: 'I completed payment but my appointment is not showing in my dashboard.'"
+      },
+      {
+        "type": "action",
+        "description": "If a priority selector is shown, select MEDIUM. Click 'Submit' or 'Create Ticket'."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify a success message or toast appears. Verify the ticket list now shows the new ticket with subject 'Test booking issue' and status OPEN (or similar created state). Do NOT pass if the form is still showing without confirmation."
       }
-    ],
-    "priority": "High"
+    ]
   },
   {
     "id": "TC013",
-    "title": "Reject an invalid Razorpay webhook signature",
-    "description": "A webhook request with an invalid signature is rejected and does not proceed as a valid event.",
-    "category": "Razorpay Webhook Handler",
+    "title": "Full subscription loop: consultee books → sign out → consultant allocates → sign out → consultee sees sessions",
+    "category": "Full Subscription Flow",
+    "description": "Complete end-to-end subscription flow with two actors. Part 1: consultee books a subscription. Part 2: consultant signs in and allocates sessions. Part 3: consultee signs back in and verifies allocated sessions appear.",
     "steps": [
       {
         "type": "action",
-        "description": "Navigate to /api/webhooks/razorpay"
-      },
-      {
-        "type": "action",
-        "description": "Send a webhook event with an invalid signature"
+        "description": "PART 1 — CONSULTEE: Navigate to /auth/signin. Sign in as aarav.campbell@hotmail.com / SeedPass123!."
       },
       {
         "type": "assertion",
-        "description": "Verify an invalid signature response is returned"
+        "description": "IMPORTANT: Do NOT pass if a loading spinner is shown. Wait up to 30 seconds for the consultee dashboard nav to appear."
+      },
+      {
+        "type": "action",
+        "description": "Navigate to /explore/experts/fbe6e6b7-3b85-4747-b37c-bfcdc914641b. Find the Subscription plan option. Select a 1-month scheduling period starting from 2 days from now."
+      },
+      {
+        "type": "action",
+        "description": "Proceed to checkout and click 'Mock Pay (Razorpay)'."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the subscription booking succeeds — page redirects away from /checkout/."
+      },
+      {
+        "type": "action",
+        "description": "Sign out: click the user menu or avatar in the top navigation and select 'Sign Out'. Verify redirect to /auth/signin or home page."
+      },
+      {
+        "type": "action",
+        "description": "PART 2 — CONSULTANT: Sign in to /auth/signin as aarav.anderson@gmail.com / SeedPass123!."
+      },
+      {
+        "type": "assertion",
+        "description": "IMPORTANT: Do NOT pass if a loading spinner is shown. Wait up to 30 seconds for the consultant dashboard to appear."
+      },
+      {
+        "type": "action",
+        "description": "Navigate to the Requests tab in the consultant dashboard. Find the pending subscription request."
+      },
+      {
+        "type": "action",
+        "description": "Open the pending request. Select 4 time slots from the allocation calendar. Click 'Confirm Allocation'."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify a success confirmation appears and the request status changes to CONFIRMED."
+      },
+      {
+        "type": "action",
+        "description": "Sign out as consultant."
+      },
+      {
+        "type": "action",
+        "description": "PART 3 — CONSULTEE VERIFICATION: Sign back in as aarav.campbell@hotmail.com / SeedPass123!."
+      },
+      {
+        "type": "assertion",
+        "description": "IMPORTANT: Do NOT pass if a loading spinner is shown. Wait up to 30 seconds for the consultee dashboard nav to appear."
+      },
+      {
+        "type": "action",
+        "description": "Navigate to /dashboard/consultee/7e26dc8b-3013-4696-809b-85f5677c46f7/appointments"
+      },
+      {
+        "type": "assertion",
+        "description": "IMPORTANT: Wait up to 20 seconds. Verify the allocated subscription sessions appear as SCHEDULED appointments with 'Aarav Anderson' as consultant. Do NOT pass if only a loading skeleton is visible or if no appointments are shown."
       }
-    ],
-    "priority": "High"
+    ]
   },
   {
     "id": "TC014",
-    "title": "User ends an active meeting",
-    "description": "This verifies that an authenticated user can end an active meeting and see the session close.",
-    "category": "Meetings & Recordings",
+    "title": "Consultee profile settings: update display name → save → verify persisted",
+    "category": "Profile Management",
+    "description": "Sign in as consultee. Navigate to profile settings. Update the display name. Save. Verify the change persists after navigating away.",
     "steps": [
       {
         "type": "action",
-        "description": "Navigate to /auth/signin"
-      },
-      {
-        "type": "action",
-        "description": "Fill in {{LOGIN_USER}} into the email field"
-      },
-      {
-        "type": "action",
-        "description": "Fill in {{LOGIN_PASSWORD}} into the password field"
-      },
-      {
-        "type": "action",
-        "description": "Submit the form"
-      },
-      {
-        "type": "action",
-        "description": "Open an active meeting"
-      },
-      {
-        "type": "action",
-        "description": "End the meeting"
+        "description": "Navigate to /auth/signin. Fill in email aarav.campbell@hotmail.com and password SeedPass123! and submit."
       },
       {
         "type": "assertion",
-        "description": "Verify the meeting is marked as ended"
+        "description": "IMPORTANT: Do NOT pass if a loading spinner is shown. Wait up to 30 seconds for the consultee dashboard nav bar to appear."
+      },
+      {
+        "type": "action",
+        "description": "Navigate to /dashboard/consultee/7e26dc8b-3013-4696-809b-85f5677c46f7/settings (or find the Settings link in the dashboard navigation)."
       },
       {
         "type": "assertion",
-        "description": "Verify meeting controls are no longer available"
+        "description": "IMPORTANT: Wait up to 20 seconds. Verify the settings/profile page loads showing editable fields (name, bio, or profile details). Do NOT pass if only a loading skeleton is shown."
+      },
+      {
+        "type": "action",
+        "description": "Find the name or display name field. Clear it and enter 'Aarav Campbell Updated'."
+      },
+      {
+        "type": "action",
+        "description": "Click 'Save', 'Update Profile', or the submit button."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify a success toast or message appears confirming the profile was saved."
+      },
+      {
+        "type": "action",
+        "description": "Refresh the page by navigating away and back to /dashboard/consultee/7e26dc8b-3013-4696-809b-85f5677c46f7/settings."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the name field shows the updated value 'Aarav Campbell Updated'. Do NOT pass if the field reverted to the old name."
       }
-    ],
-    "priority": "High"
+    ]
   },
   {
     "id": "TC015",
-    "title": "Validate a recurring subscription schedule",
-    "description": "A signed-in user can select recurring weekly slots for a subscription and see that the schedule is valid before paying.",
-    "category": "Booking - Subscription (1:1 recurring)",
+    "title": "Explore experts: browse listing → filter/search → view profile → back to listing",
+    "category": "Explore / Discovery",
+    "description": "Navigate to the explore experts page. Browse consultant listings. Click on a consultant to view their profile. Navigate back to the listing. Verify the full navigation flow works.",
     "steps": [
       {
         "type": "action",
-        "description": "Navigate to /auth/signin"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the email field with {{LOGIN_USER}}"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
-      },
-      {
-        "type": "action",
-        "description": "Submit the login form"
-      },
-      {
-        "type": "action",
-        "description": "Open the subscription booking page for a consultant"
-      },
-      {
-        "type": "action",
-        "description": "Select a valid recurring weekly slot set"
-      },
-      {
-        "type": "action",
-        "description": "Validate the recurring schedule"
+        "description": "Navigate to /auth/signin. Fill in email aarav.campbell@hotmail.com and password SeedPass123! and submit."
       },
       {
         "type": "assertion",
-        "description": "Verify the recurring slot selection is accepted"
+        "description": "IMPORTANT: Do NOT pass if a loading spinner is shown. Wait up to 30 seconds for the consultee dashboard nav bar to appear."
+      },
+      {
+        "type": "action",
+        "description": "Navigate to /explore/experts"
+      },
+      {
+        "type": "assertion",
+        "description": "IMPORTANT: Wait up to 20 seconds. Verify the explore experts page loads and shows consultant profile cards with names, specializations, and prices. Do NOT pass if only a loading skeleton is visible."
+      },
+      {
+        "type": "action",
+        "description": "If a search bar is visible, type 'consulting' or 'career' to filter results. Observe the filter results."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the search/filter interaction works — either the results update or the same results remain (no crash or error)."
+      },
+      {
+        "type": "action",
+        "description": "Click on a consultant profile card (Aarav Anderson if visible, or any other card) to navigate to the expert detail page."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the expert profile page loads at /explore/experts/[consultantProfileId] showing the consultant's name, bio, and pricing plans. The availability heatmap should also be visible."
+      },
+      {
+        "type": "action",
+        "description": "Click the browser back button or navigate to /explore/experts to return to the listing."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the explore experts listing page loads again showing consultant cards. The navigation back to listing must work without a crash or blank page."
       }
-    ],
-    "priority": "High"
-  },
-  {
-    "id": "TC016",
-    "title": "Cancel an appointment",
-    "description": "A signed-in user can cancel a booked appointment from its detail view and the appointment is removed from the active booking state.",
-    "category": "Appointment Management",
-    "steps": [
-      {
-        "type": "action",
-        "description": "Navigate to /auth/signin"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the login user field with {{LOGIN_USER}}"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the login password field with {{LOGIN_PASSWORD}}"
-      },
-      {
-        "type": "action",
-        "description": "Submit the login form"
-      },
-      {
-        "type": "action",
-        "description": "Navigate to the appointments page"
-      },
-      {
-        "type": "action",
-        "description": "Open an existing appointment"
-      },
-      {
-        "type": "action",
-        "description": "Cancel the appointment"
-      },
-      {
-        "type": "action",
-        "description": "Confirm the cancellation"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify the appointment is no longer active"
-      }
-    ],
-    "priority": "High"
-  },
-  {
-    "id": "TC017",
-    "title": "Consultant sees dashboard summary after signing in",
-    "description": "This verifies that a consultant can sign in and reach the dashboard with summary information visible.",
-    "category": "Consultant Dashboard",
-    "steps": [
-      {
-        "type": "action",
-        "description": "Navigate to /auth/signin"
-      },
-      {
-        "type": "action",
-        "description": "Fill in {{LOGIN_USER}} into the email field"
-      },
-      {
-        "type": "action",
-        "description": "Fill in {{LOGIN_PASSWORD}} into the password field"
-      },
-      {
-        "type": "action",
-        "description": "Submit the form"
-      },
-      {
-        "type": "action",
-        "description": "Click the consultant dashboard link"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify consultant dashboard summary information is displayed"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify earnings or availability context is displayed"
-      }
-    ],
-    "priority": "High"
-  },
-  {
-    "id": "TC018",
-    "title": "Reject an invalid consultation slot selection",
-    "description": "A signed-in user sees validation feedback when the chosen consultation slots cannot be booked together.",
-    "category": "Booking - Consultation (1:1 one-time)",
-    "steps": [
-      {
-        "type": "action",
-        "description": "Navigate to /auth/signin"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the email field with {{LOGIN_USER}}"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
-      },
-      {
-        "type": "action",
-        "description": "Submit the login form"
-      },
-      {
-        "type": "action",
-        "description": "Open the consultation booking page for a consultant"
-      },
-      {
-        "type": "action",
-        "description": "Select conflicting consultation slots"
-      },
-      {
-        "type": "action",
-        "description": "Choose automatic allocation for the booking"
-      },
-      {
-        "type": "action",
-        "description": "Validate the selected consultation slots"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify a slot validation error is displayed"
-      }
-    ],
-    "priority": "High"
-  },
-  {
-    "id": "TC019",
-    "title": "Prevent subscription allocation before payment",
-    "description": "A signed-in user cannot allocate recurring subscription sessions until the payment flow is completed.",
-    "category": "Booking - Subscription (1:1 recurring)",
-    "steps": [
-      {
-        "type": "action",
-        "description": "Navigate to /auth/signin"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the email field with {{LOGIN_USER}}"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
-      },
-      {
-        "type": "action",
-        "description": "Submit the login form"
-      },
-      {
-        "type": "action",
-        "description": "Open the subscription allocation page for a pending booking"
-      },
-      {
-        "type": "action",
-        "description": "Attempt to finalize recurring allocation without a successful payment"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify recurring allocation is blocked until payment is completed"
-      }
-    ],
-    "priority": "High"
-  },
-  {
-    "id": "TC020",
-    "title": "User starts call recording",
-    "description": "This verifies that an authenticated user can start recording during a meeting and see recording status appear.",
-    "category": "Meetings & Recordings",
-    "steps": [
-      {
-        "type": "action",
-        "description": "Navigate to /auth/signin"
-      },
-      {
-        "type": "action",
-        "description": "Fill in {{LOGIN_USER}} into the email field"
-      },
-      {
-        "type": "action",
-        "description": "Fill in {{LOGIN_PASSWORD}} into the password field"
-      },
-      {
-        "type": "action",
-        "description": "Submit the form"
-      },
-      {
-        "type": "action",
-        "description": "Open an active meeting"
-      },
-      {
-        "type": "action",
-        "description": "Start recording the meeting"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify recording status is displayed"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify the recording is marked as started"
-      }
-    ],
-    "priority": "High"
-  },
-  {
-    "id": "TC021",
-    "title": "Prevent consultation allocation before payment",
-    "description": "A signed-in user cannot finalize a consultation appointment until payment is completed.",
-    "category": "Booking - Consultation (1:1 one-time)",
-    "steps": [
-      {
-        "type": "action",
-        "description": "Navigate to /auth/signin"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the email field with {{LOGIN_USER}}"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
-      },
-      {
-        "type": "action",
-        "description": "Submit the login form"
-      },
-      {
-        "type": "action",
-        "description": "Open the consultation allocation page for a pending booking"
-      },
-      {
-        "type": "action",
-        "description": "Attempt to finalize allocation without a successful payment"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify allocation is blocked until payment is completed"
-      }
-    ],
-    "priority": "High"
-  },
-  {
-    "id": "TC022",
-    "title": "View booked appointments",
-    "description": "A signed-in user can open their appointments list and see their booked appointments displayed.",
-    "category": "Appointment Management",
-    "steps": [
-      {
-        "type": "action",
-        "description": "Navigate to /auth/signin"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the login user field with {{LOGIN_USER}}"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the login password field with {{LOGIN_PASSWORD}}"
-      },
-      {
-        "type": "action",
-        "description": "Submit the login form"
-      },
-      {
-        "type": "action",
-        "description": "Navigate to the appointments page"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify booked appointments are displayed"
-      }
-    ],
-    "priority": "High"
-  },
-  {
-    "id": "TC023",
-    "title": "Reject an invalid recurring subscription schedule",
-    "description": "A signed-in user sees validation feedback when a recurring subscription schedule cannot be booked.",
-    "category": "Booking - Subscription (1:1 recurring)",
-    "steps": [
-      {
-        "type": "action",
-        "description": "Navigate to /auth/signin"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the email field with {{LOGIN_USER}}"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
-      },
-      {
-        "type": "action",
-        "description": "Submit the login form"
-      },
-      {
-        "type": "action",
-        "description": "Open the subscription booking page for a consultant"
-      },
-      {
-        "type": "action",
-        "description": "Select an invalid recurring weekly slot set"
-      },
-      {
-        "type": "action",
-        "description": "Validate the recurring schedule"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify a recurring slot validation error is displayed"
-      }
-    ],
-    "priority": "High"
-  },
-  {
-    "id": "TC024",
-    "title": "View and update consultant profile details",
-    "description": "A signed-in consultant can review current profile data and save updated profile information successfully.",
-    "category": "User Onboarding & Profile",
-    "steps": [
-      {
-        "type": "action",
-        "description": "Navigate to /auth/signin"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the email field with {{LOGIN_USER}}"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
-      },
-      {
-        "type": "action",
-        "description": "Submit the sign-in form"
-      },
-      {
-        "type": "action",
-        "description": "Open the profile page"
-      },
-      {
-        "type": "action",
-        "description": "Update the consultant bio field with a short professional bio"
-      },
-      {
-        "type": "action",
-        "description": "Update the consultant headline field with a concise professional headline"
-      },
-      {
-        "type": "action",
-        "description": "Save the profile changes"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify the updated consultant profile is displayed"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify the profile changes are persisted"
-      }
-    ],
-    "priority": "High"
-  },
-  {
-    "id": "TC025",
-    "title": "Release a tentative booking hold",
-    "description": "A signed-in user can release a tentative appointment hold from the pending checkout flow and the tentative slot is cleared.",
-    "category": "Appointment Management",
-    "steps": [
-      {
-        "type": "action",
-        "description": "Navigate to /auth/signin"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the login user field with {{LOGIN_USER}}"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the login password field with {{LOGIN_PASSWORD}}"
-      },
-      {
-        "type": "action",
-        "description": "Submit the login form"
-      },
-      {
-        "type": "action",
-        "description": "Open the pending checkout flow"
-      },
-      {
-        "type": "action",
-        "description": "Release the tentative booking"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify the tentative hold is cleared"
-      }
-    ],
-    "priority": "High"
-  },
-  {
-    "id": "TC026",
-    "title": "User views recording status and access details",
-    "description": "This verifies that an authenticated user can open a recording detail view and see its status and access information.",
-    "category": "Meetings & Recordings",
-    "steps": [
-      {
-        "type": "action",
-        "description": "Navigate to /auth/signin"
-      },
-      {
-        "type": "action",
-        "description": "Fill in {{LOGIN_USER}} into the email field"
-      },
-      {
-        "type": "action",
-        "description": "Fill in {{LOGIN_PASSWORD}} into the password field"
-      },
-      {
-        "type": "action",
-        "description": "Submit the form"
-      },
-      {
-        "type": "action",
-        "description": "Open a recording detail view"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify recording status is displayed"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify recording access information is displayed"
-      }
-    ],
-    "priority": "High"
-  },
-  {
-    "id": "TC027",
-    "title": "Open the onboarding flow after signing in",
-    "description": "A consultant can start the onboarding experience after authentication and proceed to profile setup.",
-    "category": "User Onboarding & Profile",
-    "steps": [
-      {
-        "type": "action",
-        "description": "Navigate to /auth/signin"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the email field with {{LOGIN_USER}}"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
-      },
-      {
-        "type": "action",
-        "description": "Submit the sign-in form"
-      },
-      {
-        "type": "action",
-        "description": "Open the onboarding flow"
-      },
-      {
-        "type": "action",
-        "description": "Continue to the next onboarding step"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify onboarding setup content is displayed"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify profile completion guidance is displayed"
-      }
-    ],
-    "priority": "High"
-  },
-  {
-    "id": "TC028",
-    "title": "Process a captured Razorpay webhook event",
-    "description": "A valid Razorpay payment captured event is accepted and the webhook endpoint confirms successful processing.",
-    "category": "Razorpay Webhook Handler",
-    "steps": [
-      {
-        "type": "action",
-        "description": "Navigate to /api/webhooks/razorpay"
-      },
-      {
-        "type": "action",
-        "description": "Send a valid payment captured webhook event"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify a successful response is returned"
-      }
-    ],
-    "priority": "High"
-  },
-  {
-    "id": "TC029",
-    "title": "Create and convert a free trial session",
-    "description": "A logged-in user can book a free trial session and convert it into a subscription from the same journey.",
-    "category": "Booking - Trial Session (free 1:1)",
-    "steps": [
-      {
-        "type": "action",
-        "description": "Navigate to /auth/signin"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the email field with {{LOGIN_USER}}"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
-      },
-      {
-        "type": "action",
-        "description": "Submit the login form"
-      },
-      {
-        "type": "action",
-        "description": "Open the trial session booking flow"
-      },
-      {
-        "type": "action",
-        "description": "Choose an available consultant"
-      },
-      {
-        "type": "action",
-        "description": "Select valid trial session slots"
-      },
-      {
-        "type": "action",
-        "description": "Create the trial session"
-      },
-      {
-        "type": "action",
-        "description": "Convert the trial session into a subscription"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify a subscription confirmation is displayed"
-      }
-    ],
-    "priority": "High"
-  },
-  {
-    "id": "TC030",
-    "title": "Find a consultant from discovery",
-    "description": "A signed-in user can search for consultants and see relevant results for a matching query.",
-    "category": "Explore & Discovery",
-    "steps": [
-      {
-        "type": "action",
-        "description": "Navigate to /auth/signin"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the email field with {{LOGIN_USER}}"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
-      },
-      {
-        "type": "action",
-        "description": "Submit the login form"
-      },
-      {
-        "type": "action",
-        "description": "Navigate to the consultant search page"
-      },
-      {
-        "type": "action",
-        "description": "Search for consultants using a relevant keyword"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify consultant search results are displayed"
-      }
-    ],
-    "priority": "High"
-  },
-  {
-    "id": "TC031",
-    "title": "Non-consultant cannot access consultant dashboard",
-    "description": "This verifies that a signed-in non-consultant user is blocked from viewing consultant dashboard content.",
-    "category": "Consultant Dashboard",
-    "steps": [
-      {
-        "type": "action",
-        "description": "Navigate to /auth/signin"
-      },
-      {
-        "type": "action",
-        "description": "Fill in {{LOGIN_USER}} into the email field"
-      },
-      {
-        "type": "action",
-        "description": "Fill in {{LOGIN_PASSWORD}} into the password field"
-      },
-      {
-        "type": "action",
-        "description": "Submit the form"
-      },
-      {
-        "type": "action",
-        "description": "Click the consultant dashboard link"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify an authorization or role error is displayed"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify consultant dashboard content is not displayed"
-      }
-    ],
-    "priority": "High"
-  },
-  {
-    "id": "TC032",
-    "title": "View consultant and consultee profile data",
-    "description": "A signed-in user can open profile information and see the current user and profile details needed for onboarding and account management.",
-    "category": "User Onboarding & Profile",
-    "steps": [
-      {
-        "type": "action",
-        "description": "Navigate to /auth/signin"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the email field with {{LOGIN_USER}}"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
-      },
-      {
-        "type": "action",
-        "description": "Submit the sign-in form"
-      },
-      {
-        "type": "action",
-        "description": "Open the profile page"
-      },
-      {
-        "type": "action",
-        "description": "Switch to the consultant profile section"
-      },
-      {
-        "type": "action",
-        "description": "Switch to the consultee profile section"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify consultant profile content is displayed"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify consultee profile content is displayed"
-      }
-    ],
-    "priority": "High"
-  },
-  {
-    "id": "TC033",
-    "title": "Continue from a consultant profile to booking",
-    "description": "A signed-in user can open a consultant profile from discovery and proceed toward booking from that profile.",
-    "category": "Explore & Discovery",
-    "steps": [
-      {
-        "type": "action",
-        "description": "Navigate to /auth/signin"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the email field with {{LOGIN_USER}}"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
-      },
-      {
-        "type": "action",
-        "description": "Submit the login form"
-      },
-      {
-        "type": "action",
-        "description": "Navigate to the consultant search page"
-      },
-      {
-        "type": "action",
-        "description": "Search for consultants using a relevant keyword"
-      },
-      {
-        "type": "action",
-        "description": "Open a consultant profile from the search results"
-      },
-      {
-        "type": "action",
-        "description": "Continue to the booking flow from the profile"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify the booking flow is available from the consultant profile"
-      }
-    ],
-    "priority": "High"
-  },
-  {
-    "id": "TC034",
-    "title": "Join a full webinar waitlist",
-    "description": "A logged-in user can join the waitlist for a full webinar and see confirmation of their waitlist entry.",
-    "category": "Booking - Webinar (1:many one-time)",
-    "steps": [
-      {
-        "type": "action",
-        "description": "Navigate to /auth/signin"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the email field with {{LOGIN_USER}}"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
-      },
-      {
-        "type": "action",
-        "description": "Submit the login form"
-      },
-      {
-        "type": "action",
-        "description": "Navigate to the webinar plans page"
-      },
-      {
-        "type": "action",
-        "description": "Open a webinar that is shown as full"
-      },
-      {
-        "type": "action",
-        "description": "Join the waitlist for the webinar"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify a waitlist confirmation is displayed"
-      }
-    ],
-    "priority": "High"
-  },
-  {
-    "id": "TC035",
-    "title": "Consultant reviews earnings",
-    "description": "This verifies that a consultant can open the earnings view and see earnings entries.",
-    "category": "Consultant Earnings & Payouts",
-    "steps": [
-      {
-        "type": "action",
-        "description": "Navigate to /auth/signin"
-      },
-      {
-        "type": "action",
-        "description": "Fill in {{LOGIN_USER}} into the email field"
-      },
-      {
-        "type": "action",
-        "description": "Fill in {{LOGIN_PASSWORD}} into the password field"
-      },
-      {
-        "type": "action",
-        "description": "Submit the form"
-      },
-      {
-        "type": "action",
-        "description": "Click the earnings section link"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify earnings entries are displayed"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify earnings summary information is displayed"
-      }
-    ],
-    "priority": "High"
-  },
-  {
-    "id": "TC036",
-    "title": "Prevent rescheduling outside the allowed window",
-    "description": "A signed-in user cannot reschedule an appointment when the booking is outside the allowed reschedule window and sees a validation message.",
-    "category": "Appointment Management",
-    "steps": [
-      {
-        "type": "action",
-        "description": "Navigate to /auth/signin"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the login user field with {{LOGIN_USER}}"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the login password field with {{LOGIN_PASSWORD}}"
-      },
-      {
-        "type": "action",
-        "description": "Submit the login form"
-      },
-      {
-        "type": "action",
-        "description": "Navigate to the appointments page"
-      },
-      {
-        "type": "action",
-        "description": "Open an existing appointment"
-      },
-      {
-        "type": "action",
-        "description": "Start the reschedule flow"
-      },
-      {
-        "type": "action",
-        "description": "Select valid replacement slots"
-      },
-      {
-        "type": "action",
-        "description": "Confirm the reschedule"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify a reschedule validation message is visible"
-      }
-    ],
-    "priority": "High"
-  },
-  {
-    "id": "TC037",
-    "title": "Process a failed Razorpay webhook event",
-    "description": "A valid Razorpay payment failed event is accepted and the webhook endpoint confirms successful processing.",
-    "category": "Razorpay Webhook Handler",
-    "steps": [
-      {
-        "type": "action",
-        "description": "Navigate to /api/webhooks/razorpay"
-      },
-      {
-        "type": "action",
-        "description": "Send a valid payment failed webhook event"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify a successful response is returned"
-      }
-    ],
-    "priority": "High"
-  },
-  {
-    "id": "TC038",
-    "title": "Request a password reset link",
-    "description": "A user who has forgotten their password can request a reset link from the recovery flow.",
-    "category": "Authentication",
-    "steps": [
-      {
-        "type": "action",
-        "description": "Navigate to /auth/signin"
-      },
-      {
-        "type": "action",
-        "description": "Click the link to recover the account"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the email field with {{LOGIN_USER}}"
-      },
-      {
-        "type": "action",
-        "description": "Submit the password reset request"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify a password reset confirmation is visible"
-      }
-    ],
-    "priority": "High"
-  },
-  {
-    "id": "TC039",
-    "title": "Consultant adds a payout account",
-    "description": "This verifies that a consultant can save a valid bank or UPI payout account and see it reflected in the UI.",
-    "category": "Consultant Earnings & Payouts",
-    "steps": [
-      {
-        "type": "action",
-        "description": "Navigate to /auth/signin"
-      },
-      {
-        "type": "action",
-        "description": "Fill in {{LOGIN_USER}} into the email field"
-      },
-      {
-        "type": "action",
-        "description": "Fill in {{LOGIN_PASSWORD}} into the password field"
-      },
-      {
-        "type": "action",
-        "description": "Submit the form"
-      },
-      {
-        "type": "action",
-        "description": "Open the payout accounts section"
-      },
-      {
-        "type": "action",
-        "description": "Add a valid payout account"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify the payout account is saved and displayed"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify payout account details are visible in the list"
-      }
-    ],
-    "priority": "High"
-  },
-  {
-    "id": "TC040",
-    "title": "Process Razorpay refund and dispute events",
-    "description": "Refund and dispute webhook events are accepted so downstream payment lifecycle processing can occur.",
-    "category": "Razorpay Webhook Handler",
-    "steps": [
-      {
-        "type": "action",
-        "description": "Navigate to /api/webhooks/razorpay"
-      },
-      {
-        "type": "action",
-        "description": "Send a valid refund created webhook event"
-      },
-      {
-        "type": "action",
-        "description": "Send a valid dispute created webhook event"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify successful responses are returned for the webhook events"
-      }
-    ],
-    "priority": "Medium"
-  },
-  {
-    "id": "TC041",
-    "title": "Consultant starts a payout request",
-    "description": "This verifies that a consultant can initiate a payout batch from available earnings.",
-    "category": "Consultant Earnings & Payouts",
-    "steps": [
-      {
-        "type": "action",
-        "description": "Navigate to /auth/signin"
-      },
-      {
-        "type": "action",
-        "description": "Fill in {{LOGIN_USER}} into the email field"
-      },
-      {
-        "type": "action",
-        "description": "Fill in {{LOGIN_PASSWORD}} into the password field"
-      },
-      {
-        "type": "action",
-        "description": "Submit the form"
-      },
-      {
-        "type": "action",
-        "description": "Open the payouts section"
-      },
-      {
-        "type": "action",
-        "description": "Initiate a payout request"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify a payout request confirmation is visible"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify the new payout appears in the payout history"
-      }
-    ],
-    "priority": "Medium"
-  },
-  {
-    "id": "TC042",
-    "title": "Reset the password with a valid token",
-    "description": "A user can complete the password reset flow with a valid token and set a new password.",
-    "category": "Authentication",
-    "steps": [
-      {
-        "type": "action",
-        "description": "Navigate to /auth/signin"
-      },
-      {
-        "type": "action",
-        "description": "Click the link to recover the account"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the email field with {{LOGIN_USER}}"
-      },
-      {
-        "type": "action",
-        "description": "Submit the password reset request"
-      },
-      {
-        "type": "action",
-        "description": "Open the password reset page from the generated reset link"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the new password field with a valid new password"
-      },
-      {
-        "type": "action",
-        "description": "Confirm the new password"
-      },
-      {
-        "type": "action",
-        "description": "Submit the password reset form"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify the password reset completes successfully"
-      }
-    ],
-    "priority": "Medium"
-  },
-  {
-    "id": "TC043",
-    "title": "Reject invalid webinar seat selection",
-    "description": "A logged-in user sees validation feedback when they try to reserve invalid webinar seats before checkout completes.",
-    "category": "Booking - Webinar (1:many one-time)",
-    "steps": [
-      {
-        "type": "action",
-        "description": "Navigate to /auth/signin"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the email field with {{LOGIN_USER}}"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
-      },
-      {
-        "type": "action",
-        "description": "Submit the login form"
-      },
-      {
-        "type": "action",
-        "description": "Navigate to the webinar plans page"
-      },
-      {
-        "type": "action",
-        "description": "Choose an available webinar plan"
-      },
-      {
-        "type": "action",
-        "description": "Enter an invalid seat selection"
-      },
-      {
-        "type": "action",
-        "description": "Attempt to validate the selected webinar seats"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify a seat validation error is displayed"
-      }
-    ],
-    "priority": "Medium"
-  },
-  {
-    "id": "TC044",
-    "title": "Prevent allocating an occupied class slot",
-    "description": "A logged-in user sees a conflict when trying to allocate a class slot that is already occupied.",
-    "category": "Booking - Class (1:many recurring)",
-    "steps": [
-      {
-        "type": "action",
-        "description": "Navigate to /auth/signin"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the email field with {{LOGIN_USER}}"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
-      },
-      {
-        "type": "action",
-        "description": "Submit the login form"
-      },
-      {
-        "type": "action",
-        "description": "Navigate to the class plans page"
-      },
-      {
-        "type": "action",
-        "description": "Choose an available class plan"
-      },
-      {
-        "type": "action",
-        "description": "Select a slot that is already occupied"
-      },
-      {
-        "type": "action",
-        "description": "Attempt to allocate the class slot"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify a slot conflict message is displayed"
-      }
-    ],
-    "priority": "Medium"
-  },
-  {
-    "id": "TC045",
-    "title": "View a dispute for a payment",
-    "description": "An authenticated user can open a payment dispute record and see its current status details.",
-    "category": "Disputes",
-    "steps": [
-      {
-        "type": "action",
-        "description": "Navigate to /auth/signin"
-      },
-      {
-        "type": "action",
-        "description": "Fill in {{LOGIN_USER}} into the email field"
-      },
-      {
-        "type": "action",
-        "description": "Fill in {{LOGIN_PASSWORD}} into the password field"
-      },
-      {
-        "type": "action",
-        "description": "Submit the login form"
-      },
-      {
-        "type": "action",
-        "description": "Navigate to the dispute details page for a payment that has an existing dispute"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify dispute details are displayed"
-      }
-    ],
-    "priority": "Medium"
-  },
-  {
-    "id": "TC046",
-    "title": "Reject invalid consultant profile values",
-    "description": "A signed-in consultant cannot save profile fields that violate validation rules and the form remains unchanged.",
-    "category": "User Onboarding & Profile",
-    "steps": [
-      {
-        "type": "action",
-        "description": "Navigate to /auth/signin"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the email field with {{LOGIN_USER}}"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
-      },
-      {
-        "type": "action",
-        "description": "Submit the sign-in form"
-      },
-      {
-        "type": "action",
-        "description": "Open the profile page"
-      },
-      {
-        "type": "action",
-        "description": "Enter invalid consultant profile values"
-      },
-      {
-        "type": "action",
-        "description": "Save the profile changes"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify a profile validation error is visible"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify the invalid profile changes are not saved"
-      }
-    ],
-    "priority": "Medium"
-  },
-  {
-    "id": "TC047",
-    "title": "Persist combined notification preferences",
-    "description": "A signed-in user can update multiple notification settings in one save and see all chosen preferences retained.",
-    "category": "Notifications",
-    "steps": [
-      {
-        "type": "action",
-        "description": "Navigate to /auth/signin"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the login form with {{LOGIN_USER}} and {{LOGIN_PASSWORD}}"
-      },
-      {
-        "type": "action",
-        "description": "Submit the login form"
-      },
-      {
-        "type": "action",
-        "description": "Navigate to /settings"
-      },
-      {
-        "type": "action",
-        "description": "Update notification channels and quiet hours"
-      },
-      {
-        "type": "action",
-        "description": "Save the notification preference changes"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify the updated notification channels are displayed"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify the updated quiet hours are displayed"
-      }
-    ],
-    "priority": "Medium"
-  },
-  {
-    "id": "TC048",
-    "title": "Prevent conflicting trial session bookings",
-    "description": "A logged-in user sees a conflict when trying to book a trial session that overlaps an existing slot.",
-    "category": "Booking - Trial Session (free 1:1)",
-    "steps": [
-      {
-        "type": "action",
-        "description": "Navigate to /auth/signin"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the email field with {{LOGIN_USER}}"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
-      },
-      {
-        "type": "action",
-        "description": "Submit the login form"
-      },
-      {
-        "type": "action",
-        "description": "Open the trial session booking flow"
-      },
-      {
-        "type": "action",
-        "description": "Choose an available consultant"
-      },
-      {
-        "type": "action",
-        "description": "Select conflicting trial session slots"
-      },
-      {
-        "type": "action",
-        "description": "Attempt to create the trial session"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify a slot conflict error is displayed"
-      }
-    ],
-    "priority": "Medium"
-  },
-  {
-    "id": "TC049",
-    "title": "Validate a discount code",
-    "description": "A user can verify that a valid promo code is recognized and its discount details are returned.",
-    "category": "Discount Codes",
-    "steps": [
-      {
-        "type": "action",
-        "description": "Navigate to /payments/discount"
-      },
-      {
-        "type": "action",
-        "description": "Fill in a valid discount code in the code field"
-      },
-      {
-        "type": "action",
-        "description": "Submit the code lookup"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify discount details are displayed"
-      }
-    ],
-    "priority": "Medium"
-  },
-  {
-    "id": "TC050",
-    "title": "Create a referral code",
-    "description": "An authenticated user can generate a referral code and see it available afterward.",
-    "category": "Referral System",
-    "steps": [
-      {
-        "type": "action",
-        "description": "Navigate to /auth/signin"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the login credentials with {{LOGIN_USER}} and {{LOGIN_PASSWORD}}"
-      },
-      {
-        "type": "action",
-        "description": "Submit the login form"
-      },
-      {
-        "type": "action",
-        "description": "Open the referral code creation flow"
-      },
-      {
-        "type": "action",
-        "description": "Create a referral code"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify a referral code is displayed"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify the new code appears in the user's referral codes list"
-      }
-    ],
-    "priority": "Medium"
+    ]
   }
 ]
