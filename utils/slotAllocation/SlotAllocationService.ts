@@ -28,6 +28,7 @@ import { SlotCalculationService } from "./SlotCalculationService";
 import { SlotValidationService } from "./SlotValidationService";
 import { buildOccupiedAppointmentFilter } from "./occupancyPolicy";
 import { lockAutoAllocate, unlockAutoAllocate } from "@/utils/appointmentlock";
+import { isExclusionViolation, isUniqueViolation } from "@/lib/db/pg-errors";
 import {
   ALLOCATION_APPROVABLE_FROM,
   transitionConsultationRequest,
@@ -132,17 +133,17 @@ export class SlotAllocationService {
       return { errorCode: "ILLEGAL_TRANSITION", httpStatus: error.httpStatus };
     }
 
-    // Prisma unique constraint violation (P2002) — concurrent duplicate booking race
-    if (
-      error &&
-      typeof error === "object" &&
-      "code" in error &&
-      (error as { code: string }).code === "P2002"
-    ) {
+    // Structured DB-conflict detection (no message sniffing): unique (P2002 /
+    // 23505) and the #440 exclusion constraint (23P01). createAppointments
+    // already rethrows these as a typed AllocationConflictError at the source;
+    // this is the safety net for the conflict paths that don't (e.g. the
+    // requested-slots isTentative flip).
+    if (isUniqueViolation(error) || isExclusionViolation(error)) {
       return { errorCode: "LOCK_CONTENTION", httpStatus: 409 };
     }
 
-    // Fallback: string matching for errors thrown by dependencies or legacy code paths
+    // Last-resort fallback for untyped throws from legacy code paths. Matching on
+    // message text is fragile; migrating these callers to typed errors is #837.
     const msg = error instanceof Error ? error.message : "";
     if (
       msg.includes("lock") ||
@@ -1406,45 +1407,58 @@ export class SlotAllocationService {
       );
     }
 
-    // Create appointment for each call
-    const appointments = await Promise.all(
-      calls.map((callSlots) => {
-        const slotsToCreate = callSlots.map((slotStart) => {
-          const endTime = new Date(slotStart.getTime() + 30 * 60 * 1000);
-          return {
-            startsAt: slotStart,
-            endsAt: endTime,
-            isTentative: false,
-            consultantProfileId: consultantProfileRow.id,
-            user: {
-              connect: consulteeUserId
-                ? [{ id: consultantUserId }, { id: consulteeUserId }]
-                : [{ id: consultantUserId }],
-            },
-          };
-        });
+    // Create appointment for each call. A concurrent booking that overlaps an
+    // existing confirmed slot trips the #440 exclusion constraint (or the unique
+    // guard); convert it to a typed 409 here at the source so classifyError can
+    // stay typed-only rather than sniffing Postgres error strings (#837).
+    let appointments: any[];
+    try {
+      appointments = await Promise.all(
+        calls.map((callSlots) => {
+          const slotsToCreate = callSlots.map((slotStart) => {
+            const endTime = new Date(slotStart.getTime() + 30 * 60 * 1000);
+            return {
+              startsAt: slotStart,
+              endsAt: endTime,
+              isTentative: false,
+              consultantProfileId: consultantProfileRow.id,
+              user: {
+                connect: consulteeUserId
+                  ? [{ id: consultantUserId }, { id: consulteeUserId }]
+                  : [{ id: consultantUserId }],
+              },
+            };
+          });
 
-        return tx.appointment.create({
-          data: {
-            appointmentType: this.getAppointmentType(eventType),
-            [this.getEventRelationField(eventType)]: {
-              connect: { id: eventId },
+          return tx.appointment.create({
+            data: {
+              appointmentType: this.getAppointmentType(eventType),
+              [this.getEventRelationField(eventType)]: {
+                connect: { id: eventId },
+              },
+              ...(organizationId ? { organizationId } : {}),
+              // B1 — freeze the refund terms at booking (see cancellation-policy.ts).
+              cancellationPolicySnapshot: JSON.parse(
+                JSON.stringify(resolveCancellationPolicySnapshot()),
+              ),
+              slotsOfAppointment: {
+                create: slotsToCreate,
+              },
             },
-            ...(organizationId ? { organizationId } : {}),
-            // B1 — freeze the refund terms at booking (see cancellation-policy.ts).
-            cancellationPolicySnapshot: JSON.parse(
-              JSON.stringify(resolveCancellationPolicySnapshot()),
-            ),
-            slotsOfAppointment: {
-              create: slotsToCreate,
+            include: {
+              slotsOfAppointment: true,
             },
-          },
-          include: {
-            slotsOfAppointment: true,
-          },
-        });
-      }),
-    );
+          });
+        }),
+      );
+    } catch (error) {
+      if (isExclusionViolation(error) || isUniqueViolation(error)) {
+        throw new AllocationConflictError(
+          "This time slot was just booked by someone else. Please pick another time.",
+        );
+      }
+      throw error;
+    }
 
     // Issue #710: per-allocation cap debit for SUBSCRIPTION.
     //

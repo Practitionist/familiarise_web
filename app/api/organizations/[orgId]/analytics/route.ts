@@ -106,10 +106,10 @@ export async function GET(
         > => {
           const entries = await prisma.ledgerEntry.findMany({
             where: {
+              // #783 — INR-only ledger; WALLET is keyed INR by every posting.
               accountId: ledgerAccountId({
                 kind: "WALLET",
                 organizationId: orgId,
-                currency: org.billingAccount!.currency,
               }),
               createdAt: { gte: thirtyDaysAgo },
             },

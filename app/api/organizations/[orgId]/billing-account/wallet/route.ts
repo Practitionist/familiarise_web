@@ -77,10 +77,12 @@ export async function GET(
   // / refund-in, DEBIT = booking spend / top-up refund-out). We surface a
   // WalletEntry-compatible shape (signed deltaPaise + reason) so the client
   // ledger view is unchanged.
+  // #783 — INR-only ledger; the WALLET account is keyed INR by every posting,
+  // so read it the same way (keying by ba.currency would miss a non-INR org's
+  // history now that the postings omit currency).
   const walletAccountId = ledgerAccountId({
     kind: "WALLET",
     organizationId: orgId,
-    currency: ba.currency,
   });
   const [total, entries] = await prisma.$transaction([
     prisma.ledgerEntry.count({ where: { accountId: walletAccountId } }),

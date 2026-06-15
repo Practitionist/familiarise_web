@@ -1293,7 +1293,9 @@ model BookingUtilization {
   createdAt    DateTime      @default(now())
   overageEvent OverageEvent?
 
-  @@index([programAssignmentId])
+  // #781 §D — createdAt-ordered utilization scans (statements / reconcile). The
+  // composite also serves programAssignmentId-only lookups (leftmost prefix).
+  @@index([programAssignmentId, createdAt])
 }
 
 enum ProgramType {
@@ -1594,6 +1596,9 @@ model OrganizationInvoice {
   status        OrgInvoiceStatus @default(DRAFT)
 
   // Money
+  // #781 §A — invoices display the constrained Currency enum (a formal document
+  // shows only settleable currencies), unlike Payment.displayCurrencyAtCheckout /
+  // Refund.displayCurrency, which snapshot the raw buyer-facing code as free text.
   displayCurrency    Currency
   fxRateUsed         Decimal?
   inrEquivalentPaise BigInt // always captured for GST filings
@@ -2522,17 +2527,16 @@ model SlotOfAvailabilityWeekly {
   endDay            DayOfWeek
   endTimeUtc        Int        @db.SmallInt // Minutes since midnight UTC (0-1439)
   utcOffsetMinutes  Int        @default(0) @db.SmallInt // UTC offset in minutes at slot creation (e.g. 330 for IST, -300 for EST)
-  /// #503 — DST-proof source of truth: the consultant's LOCAL wall-clock
-  /// window plus the IANA zone. The frozen utcOffsetMinutes above breaks for
-  /// any DST zone (the offset at creation is wrong half the year). Write-side
-  /// populated now; the slot math migrates read-side in #503's follow-up,
-  /// then the offset column retires. Nullable until backfilled.
-  timezone          String?    @db.VarChar(64)
+  // #872 — DST schema finalized, implementation deferred. IST-only at launch, so
+  // the frozen utcOffsetMinutes above is the live source of truth. The columns
+  // below are the DST-correct representation (RFC 5545 / Calendly-style: local
+  // wall-clock + IANA zone, materialized to UTC per occurrence — a frozen offset
+  // drifts across DST). They are frozen into the launch schema now but left
+  // nullable + UNWRITTEN until the post-MVP algorithm + UI lands, so going
+  // DST-aware needs no post-launch migration.
+  timezone          String?    @db.VarChar(64) // IANA zone, e.g. "Asia/Kolkata"
   localStartMinutes Int?       @db.SmallInt
   localEndMinutes   Int?       @db.SmallInt
-  /// Review catch on #843 — the offset can roll the LOCAL day across
-  /// midnight relative to the UTC startDay/endDay (IST 00:30 Mon local =
-  /// 19:00 Sun UTC), so local-day queries need their own columns.
   localStartDay     DayOfWeek?
   localEndDay       DayOfWeek?
 
@@ -3149,6 +3153,13 @@ model Appointment {
   appointmentType    AppointmentsType
   slotsOfAppointment SlotOfAppointment[]
 
+  // Reserved dedupe surface for allocation retries (client double-submit,
+  // webhook redelivery): a batch will stamp its first appointment with the
+  // originating idempotency key so a replay trips @unique (P2002 → 409) instead
+  // of double-booking. Nullable by design — only real keys dedupe, NULLs don't
+  // collide. Column frozen now (schema gate); wiring tracked in #837.
+  allocationIdempotencyKey String? @unique
+
   consultation   Consultation? @relation(fields: [consultationId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultationId String?       @unique
 
@@ -3297,10 +3308,12 @@ model SlotOfAppointment {
   appointmentId String
 
   /// #440 — denormalized consultant for the DB-level overlap guard. The
-  /// exclusion constraint itself (btree_gist on (consultantProfileId,
-  /// tstzrange(startsAt, endsAt)) WHERE NOT isTentative) needs raw SQL and
-  /// lands with prisma-migrate adoption; the COLUMN is schema-freeze-gated
-  /// and checkout populates it from booking onward. Nullable for pre-#440 rows.
+  /// exclusion constraint (btree_gist on (consultantProfileId,
+  /// tstzrange(startsAt, endsAt)) WHERE NOT isTentative) is LIVE in the raw-SQL
+  /// sidecar (prisma/sql/check-constraints.sql: slot_no_confirmed_overlap); a
+  /// violation surfaces as Postgres 23P01 → 409 (SlotAllocationService
+  /// .classifyError). Nullable for attendee (webinar/class) slots, which the
+  /// partial-index guard excludes.
   consultantProfileId String?
 
   meetingSession MeetingSession?

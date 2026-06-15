@@ -136,7 +136,8 @@ export async function walletCredit(
       paymentId: params.paymentId ?? null,
       postings: [
         {
-          account: { kind: "CASH", currency: acct.currency },
+          // #783 — ledger is INR-only; never key accounts by acct.currency.
+          account: { kind: "CASH" },
           direction: "DEBIT",
           amountPaise: params.amountPaise,
         },
@@ -144,7 +145,6 @@ export async function walletCredit(
           account: {
             kind: "WALLET",
             organizationId: acct.ownerOrgId,
-            currency: acct.currency,
           },
           direction: "CREDIT",
           amountPaise: params.amountPaise,

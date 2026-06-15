@@ -701,18 +701,20 @@ export async function handleRefundCreated(
             idempotencyKey: `topup-refund:${providerPaymentId}`,
             kind: "TOPUP_REFUND",
             description: `Refund for top-up ${topUp.providerOrderId} (gateway refund ${refundId})`,
+            // #783 — ledger is INR-only; never key accounts by acct.currency.
+            // Must mirror the INR-keyed top-up posting (lib/api/organizations/
+            // wallet.ts) so the refund reversal nets against the same account.
             postings: [
               {
                 account: {
                   kind: "WALLET",
                   organizationId: acct.ownerOrgId,
-                  currency: acct.currency,
                 },
                 direction: "DEBIT",
                 amountPaise: refundAmt,
               },
               {
-                account: { kind: "CASH", currency: acct.currency },
+                account: { kind: "CASH" },
                 direction: "CREDIT",
                 amountPaise: refundAmt,
               },
