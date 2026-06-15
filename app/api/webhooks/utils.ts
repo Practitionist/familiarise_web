@@ -36,6 +36,7 @@ import {
 } from "@/lib/payments/operations/refund";
 import { recordTdsReversal } from "@/lib/payments/tax/tds-service";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { recordSystemError } from "@/lib/enterprise/system-events";
 
 // Re-export payment handlers from lib (architectural fix)
 export {
@@ -956,6 +957,17 @@ export async function handleRefundCreated(
       return;
     }
 
+    // PM-13 — a `refund.failed` for a refund we never recorded (e.g. a refund
+    // initiated from the Razorpay dashboard, not our app) would otherwise mint
+    // an orphan FAILED Refund row attached to the B2C payment. No money moves
+    // either way on a failed refund, so there's nothing to record — skip it.
+    if (mapRefundStatus(status) === "FAILED" && !existingRefund) {
+      console.log(
+        `↩️ Ignoring refund.failed for unknown refund ${refundId} (no existing row, no money movement)`,
+      );
+      return;
+    }
+
     // Create new refund record
     const createdRefund = await tx.refund.create({
       data: {
@@ -1064,12 +1076,32 @@ export async function handleDisputeCreated(
             `Failed to fetch Razorpay payment ${chargeId} to link dispute:`,
             error,
           );
+          // PM-4 — without the gateway lookup we can't link the dispute, so
+          // earnings won't be held. The 6h reconcile-disputes cron is the only
+          // backstop; page so it isn't silently dropped for 6h.
+          void recordSystemError({
+            category: "WEBHOOK",
+            summary: `CRITICAL_DISPUTE_UNLINKED: Razorpay payment lookup failed for dispute ${disputeId}`,
+            err: error,
+            context: { disputeId, chargeId, gateway },
+            correlationId: disputeId,
+          }).catch(() => {});
         }
       }
     }
 
     if (!payment) {
       console.warn(`Payment not found for dispute: ${disputeId}`);
+      // PM-4 — dispute couldn't be linked to a payment (lookup miss, or the
+      // gateway fetch above threw). Dropping it silently means disputed
+      // earnings stay payable until the 6h reconcile-disputes cron — page on it.
+      void recordSystemError({
+        category: "WEBHOOK",
+        summary: `CRITICAL_DISPUTE_UNLINKED: no payment matched dispute ${disputeId}`,
+        err: new Error("dispute payment not found"),
+        context: { disputeId, chargeId, gateway },
+        correlationId: disputeId,
+      }).catch(() => {});
       return;
     }
 
@@ -1734,6 +1766,9 @@ export async function handleRazorpayPayoutWebhook(
     payoutData.id,
     status,
     payoutData.failure_reason,
+    // UTR — forward the bank reference so a completing consultant payout
+    // persists it, mirroring the org branch above.
+    payoutData.utr,
   );
 
   console.log(

@@ -119,6 +119,9 @@ model User {
   erasureRequestsProcessed ErasureRequest[] @relation("ErasureRequestProcessor")
   // Disputes this admin owns (#269).
   disputesAssigned         Dispute[]        @relation("DisputeAssignee")
+  // A8 — documents this consultant reviewed (back-relation for the FK-ified
+  // AppointmentDocument.reviewedById; named to avoid the implicit-relation guess).
+  documentsReviewed        AppointmentDocument[] @relation("DocumentReviewer")
 
   @@index([consultantProfileId])
   @@index([consulteeProfileId])
@@ -1468,13 +1471,14 @@ model OrganizationEarnings {
   consultantBpsApplied Int?
 
   status    EarningStatus
-  holdUntil DateTime?
+  holdUntil DateTime?     @db.Timestamptz
 
   orgPayoutId String?
   orgPayout   OrganizationPayout? @relation(fields: [orgPayoutId], references: [id])
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  // A6/A7/PM-16 — Timestamptz on the money models (#676).
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
 
   @@unique([paymentId, organizationId])
   // #781 §D — createdAt-ordered finance reads (payout batching, statements)
@@ -1492,8 +1496,8 @@ model OrganizationPayout {
   status         PayoutStatus
   paymentGateway PaymentGateway
 
-  periodStart DateTime
-  periodEnd   DateTime
+  periodStart DateTime @db.Timestamptz
+  periodEnd   DateTime @db.Timestamptz
 
   grossRevenuePaise BigInt
   platformFeePaise  BigInt
@@ -1503,7 +1507,7 @@ model OrganizationPayout {
   // India statutory (fields final; cron + derivation stubbed in v1)
   tdsSectionApplied String? // "194J" | "194O" | "194C"
   tdsAmountPaise    BigInt?
-  mustPayByDate     DateTime? // derived from MSME 15/45-day rule
+  mustPayByDate     DateTime? @db.Timestamptz // derived from MSME 15/45-day rule
   // #781 §A — rail the batch was (or will be) submitted on.
   paRouteProvider   PayoutRailProvider?
   paReferenceId     String?
@@ -1516,12 +1520,14 @@ model OrganizationPayout {
 
   payoutReference String?
   failureReason   String?
-  processedAt     DateTime?
-  failedAt        DateTime?
+  processedAt     DateTime? @db.Timestamptz
+  failedAt        DateTime? @db.Timestamptz
 
   /// A1: live RazorpayX/Stripe Connect submission response.
   /// `gatewayPayoutId` is the gateway's `id` (Razorpay payout id or
-  /// Stripe transfer id). `gatewayUtr` populates only after the
+  /// Stripe transfer id). UTR — Unique Transaction Reference; the bank/RBI
+  /// settlement reference the gateway returns on a completed NEFT/IMPS/UPI
+  /// payout. `gatewayUtr` populates only after the
   /// `payout.processed`/`transfer.paid` webhook reconciles. The full
   /// response is stashed in `gatewayResponseRaw` for debugging.
   gatewayPayoutId    String? @unique
@@ -1532,7 +1538,7 @@ model OrganizationPayout {
   /// rolled into this payout is later refunded. Manual recovery only
   /// in v1; admin sees this in the payout-detail page.
   clawbackAmountPaise BigInt    @default(0)
-  clawbackInitiatedAt DateTime?
+  clawbackInitiatedAt DateTime? @db.Timestamptz
 
   /// Cron-driven duplicate-guard key. The weekly batch cron derives a
   /// deterministic key from (organizationId, periodStart) so a retried
@@ -1543,8 +1549,9 @@ model OrganizationPayout {
 
   earnings OrganizationEarnings[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  // A6/A7/PM-16 — Timestamptz on the money models (#676).
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
 
   @@index([organizationId, status])
   @@index([periodStart, periodEnd])
@@ -2561,6 +2568,8 @@ model SlotOfAvailabilityCustom {
   updatedAt DateTime @updatedAt @db.Timestamptz
 
   @@index([consultantProfileId])
+  // CA-1 — availability-window range scans by consultant (#676).
+  @@index([consultantProfileId, startsAt, endsAt])
 }
 
 //////////////////////////////////////////////////// PRICING PLANS ////////////////////////////////////////////////////
@@ -3186,6 +3195,10 @@ model Appointment {
   organization   Organization? @relation("AppointmentByOrg", fields: [organizationId], references: [id], onDelete: SetNull)
   organizationId String?
 
+  // A10 — soft-delete tombstone (#676). Mirrors Payment.deletedAt; money rows
+  // Restrict their parents, so removal is a soft-delete, not a hard delete.
+  deletedAt DateTime? @db.Timestamptz
+
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
 
@@ -3221,7 +3234,10 @@ model AppointmentDocument {
   reviewStatus DocumentReviewStatus @default(PENDING)
   reviewNotes  String?
   reviewedAt   DateTime?
-  reviewedBy   String? // Consultant user ID
+  // A8 — FK-ified from a raw `reviewedBy String?` (#676). SetNull keeps the
+  // document if the reviewing user is deleted; the review history survives.
+  reviewedById String?
+  reviewedBy   User?     @relation("DocumentReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
 
   // Upload role - who uploaded this document
   uploadedByRole DocumentUploadRole @default(CONSULTEE)
@@ -3243,6 +3259,7 @@ model AppointmentDocument {
   @@index([reviewStatus])
   @@index([uploadedByRole])
   @@index([responseToDocumentId])
+  @@index([reviewedById])
 }
 
 enum DocumentReviewStatus {
@@ -3322,6 +3339,9 @@ model SlotOfAppointment {
   consultantProfileId String?
 
   meetingSession MeetingSession?
+
+  // A10 — soft-delete tombstone (#676). Mirrors Appointment.deletedAt.
+  deletedAt DateTime? @db.Timestamptz
 
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
@@ -3497,8 +3517,8 @@ model Payment {
   clientIdempotencyKey String?        @unique
   // #781 §B — financial rows Restrict their parents; removal = soft-delete.
   // Hard delete remains possible only while no money row references this.
-  deletedAt            DateTime?
-  expiresAt            DateTime? // For tracking payment intent expiration
+  deletedAt            DateTime?      @db.Timestamptz
+  expiresAt            DateTime?      @db.Timestamptz // For tracking payment intent expiration
   isMockPayment        Boolean        @default(false) // For development: mock payments skip gateway calls
 
   // International payment tracking
@@ -3563,8 +3583,9 @@ model Payment {
   parentPayment   Payment?  @relation("OverageSideCharge", fields: [parentPaymentId], references: [id], onDelete: SetNull)
   childPayments   Payment[] @relation("OverageSideCharge")
 
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
+  // A6/A7/PM-16 — Timestamptz on the money models (#676).
+  createdAt     DateTime       @default(now()) @db.Timestamptz
+  updatedAt     DateTime       @updatedAt @db.Timestamptz
   overageEvents OverageEvent[]
 
   // Allow multiple users to pay for same appointment (webinars/classes)
@@ -3679,18 +3700,22 @@ model Refund {
   // cascade (legs/wallet/earnings/ledger/utilization/credit-note) has run, so the
   // app, gateway-webhook and backstop-cron paths each apply it exactly once. The
   // cron selects SUCCEEDED refunds where this is null.
-  cascadedAt DateTime?
+  cascadedAt DateTime? @db.Timestamptz
 
   /// #779 §A — gateway-failure capture for FAILED refunds. `reason` above is the
   /// OPERATOR's reason for refunding; `failureReason` is WHY the gateway rejected
   /// it. failedAt drives the "refund failed, action needed" notify; the reconcile
   /// cron selects FAILED refunds where failedNotifiedAt is null.
   failureReason    String?   @db.VarChar(500)
-  failedAt         DateTime?
-  failedNotifiedAt DateTime?
+  failedAt         DateTime? @db.Timestamptz
+  failedNotifiedAt DateTime? @db.Timestamptz
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  // A10 — soft-delete tombstone (#676).
+  deletedAt DateTime? @db.Timestamptz
+
+  // A6/A7/PM-16 — Timestamptz on the money models (#676).
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
 
   @@index([paymentId])
   @@index([status])
@@ -3716,7 +3741,7 @@ model Dispute {
   disputeId          String         @unique // Gateway-specific dispute ID
   paymentGateway     PaymentGateway
   evidence           Json? // Evidence submitted to gateway
-  dueBy              DateTime? // Deadline to respond to dispute
+  dueBy              DateTime?      @db.Timestamptz // Deadline to respond to dispute
   isChargeRefundable Boolean        @default(true)
 
   payment   Payment @relation(fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: Restrict)
@@ -3728,8 +3753,9 @@ model Dispute {
   assignedToUserId String?
   internalNotes    String? @db.Text
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  // A6/A7/PM-16 — Timestamptz on the money models (#676).
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
 
   @@index([paymentId])
   @@index([status])
@@ -3813,14 +3839,15 @@ model ConsultantEarnings {
 
   // Status tracking
   status    EarningStatus @default(PENDING)
-  holdUntil DateTime // Release after hold period
-  paidAt    DateTime?
+  holdUntil DateTime      @db.Timestamptz // Release after hold period
+  paidAt    DateTime?     @db.Timestamptz
 
   // Currency (always INR for MVP, extensible for multi-currency)
   currency Currency @default(INR)
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  // A6/A7/PM-16 — Timestamptz on the money models (#676).
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
 
   consultantProfile ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Restrict)
   payment           Payment           @relation(fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: Restrict)
@@ -3857,22 +3884,29 @@ model ConsultantPayout {
   // MSME 43B(h) settlement deadline; mirrors OrganizationPayout. #776 — the
   // consultant is the supplier here, so the deadline derives from the
   // consultant's own msmeStatus/writtenAgreement, not the buyer org's.
-  mustPayByDate DateTime?
+  mustPayByDate DateTime? @db.Timestamptz
 
   // Processing
   failureReason String?
   retryCount    Int       @default(0)
-  processedAt   DateTime?
-  approvedAt    DateTime?
+  processedAt   DateTime? @db.Timestamptz
+  approvedAt    DateTime? @db.Timestamptz
   approvedBy    String?
+
+  // UTR — Unique Transaction Reference; the bank/RBI settlement reference the
+  // gateway returns on a completed NEFT/IMPS/UPI payout. Mirrors
+  // OrganizationPayout.gatewayUtr; populates only after the
+  // payout.processed/transfer.paid webhook reconciles.
+  gatewayUtr String?
 
   // Idempotency (required by Razorpay from March 2025). #778 §B — NOT NULL:
   // both payout creators stamp `payout_<profile>_<batch>`; a transfer must never
   // submit without a dedupe key.
   idempotencyKey String @unique
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  // A6/A7/PM-16 — Timestamptz on the money models (#676).
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
 
   consultantProfile ConsultantProfile    @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Restrict)
   earnings          ConsultantEarnings[]
@@ -3966,6 +4000,12 @@ model TDSRecord {
   // Filing status
   reportedInForm26Q Boolean   @default(false)
   form26QFilingDate DateTime?
+
+  // PM-24 — TRACES filing artifacts (#676). Schema frozen now; population
+  // (challan recon, Form 16A cert + ack capture) deferred to #738.
+  challanNumber     String?
+  certificateNumber String?
+  ackNumber         String?
 
   consultantProfile ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Restrict)
   payout            ConsultantPayout? @relation(fields: [payoutId], references: [id])

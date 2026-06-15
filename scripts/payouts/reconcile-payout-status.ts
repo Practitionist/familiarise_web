@@ -20,6 +20,22 @@
 import prisma from "../../lib/prisma";
 import { PayoutStatus, PaymentGateway } from "@prisma/client";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
+import { handlePayoutWebhook } from "@/lib/payments/payouts";
+
+// #677 PM-15 — narrow PayoutStatus to the status union handlePayoutWebhook
+// accepts. mapGatewayStatus only ever returns these four, so the rest map to
+// undefined (treated as "no canonical transition" at the call site).
+const WEBHOOK_STATUS_MAP: Partial<
+  Record<
+    PayoutStatus,
+    "PENDING" | "PROCESSING" | "COMPLETED" | "FAILED" | "CANCELLED"
+  >
+> = {
+  [PayoutStatus.COMPLETED]: "COMPLETED",
+  [PayoutStatus.PROCESSING]: "PROCESSING",
+  [PayoutStatus.FAILED]: "FAILED",
+  [PayoutStatus.CANCELLED]: "CANCELLED",
+};
 
 // Only reconcile payouts older than 48 hours (give webhooks time)
 const MIN_AGE_HOURS = 48;
@@ -81,7 +97,7 @@ async function getStripePayoutStatus(
  */
 async function getRazorpayPayoutStatus(
   providerPayoutId: string,
-): Promise<{ status: string; failureReason?: string } | null> {
+): Promise<{ status: string; failureReason?: string; utr?: string } | null> {
   const keyId = process.env.RAZORPAY_KEY_ID;
   // #677 PM-1 — prod env defines RAZORPAY_SECRET (the canonical name the
   // core lib reads); reading only RAZORPAY_KEY_SECRET silently disabled
@@ -114,6 +130,9 @@ async function getRazorpayPayoutStatus(
     return {
       status: payout.status,
       failureReason: payout.failure_reason,
+      // #677 PM-15 — RazorpayX returns the bank UTR on a processed payout;
+      // capture it so the COMPLETED delegation can persist the reference.
+      utr: payout.utr,
     };
   } catch (error) {
     console.error(`Failed to get RazorpayX payout status: ${error}`);
@@ -257,6 +276,7 @@ async function reconcilePayoutStatusUnlocked(): Promise<PayoutReconciliationResu
       status: string;
       failureMessage?: string;
       failureReason?: string;
+      utr?: string;
     } | null = null;
 
     if (payout.provider === PaymentGateway.STRIPE) {
@@ -301,35 +321,46 @@ async function reconcilePayoutStatusUnlocked(): Promise<PayoutReconciliationResu
       discrepancies.push(discrepancy);
       console.log(`   ⚠️ DISCREPANCY: ${discrepancy}`);
 
-      await prisma.consultantPayout.update({
-        where: { id: payout.id },
-        data: {
-          status: mappedStatus,
-          failureReason:
-            mappedStatus === PayoutStatus.FAILED
-              ? (gatewayStatus.status.toLowerCase() === "reversed"
-                  ? "gateway reversed pre-completion (net-zero round trip): "
-                  : "") +
-                (gatewayStatus.failureMessage ||
-                  gatewayStatus.failureReason ||
-                  gatewayStatus.status)
-              : undefined,
-          processedAt:
-            mappedStatus === PayoutStatus.COMPLETED ? new Date() : undefined,
-        },
-      });
+      // #677 PM-15 — the old inline `status=COMPLETED` + `earnings PAID` flip
+      // bypassed the canonical webhook handler, so on this reconcile path TDS
+      // was never recorded, the payout ledger postings (revenue/payable
+      // counters) never ran, and the gateway UTR was dropped. Delegate the
+      // full money recording to handlePayoutWebhook, the same engine the live
+      // webhook uses. It claims `status notIn [COMPLETED, CANCELLED]`, so it is
+      // idempotent against a live webhook racing this reconcile — whichever
+      // fires first wins and the other no-ops.
+      const webhookStatus = WEBHOOK_STATUS_MAP[mappedStatus];
+      if (!webhookStatus) {
+        // mapGatewayStatus only yields COMPLETED/PROCESSING/FAILED/CANCELLED,
+        // so this is unreachable; keep it explicit rather than silently drop.
+        console.log(`   No webhook mapping for ${mappedStatus} - skipping`);
+        skippedCount++;
+        continue;
+      }
 
-      console.log(`   Updated status: ${payout.status} → ${mappedStatus}`);
+      await handlePayoutWebhook(
+        payout.provider,
+        payout.providerPayoutId,
+        webhookStatus,
+        mappedStatus === PayoutStatus.FAILED
+          ? (gatewayStatus.status.toLowerCase() === "reversed"
+              ? "gateway reversed pre-completion (net-zero round trip): "
+              : "") +
+              (gatewayStatus.failureMessage ||
+                gatewayStatus.failureReason ||
+                gatewayStatus.status)
+          : undefined,
+        // UTR persists only on the COMPLETED branch inside the handler.
+        gatewayStatus.utr,
+      );
+
+      console.log(
+        `   Reconciled via webhook handler: ${payout.status} → ${mappedStatus}`,
+      );
       reconciledCount++;
 
       if (mappedStatus === PayoutStatus.COMPLETED) {
         completedCount++;
-        // Update linked earnings to PAID
-        await prisma.consultantEarnings.updateMany({
-          where: { payoutId: payout.id },
-          data: { status: "PAID" },
-        });
-        console.log(`   Updated linked earnings to PAID`);
       } else if (mappedStatus === PayoutStatus.FAILED) {
         failedCount++;
         console.log(`   ⚠️ Payout failed - consultant may need notification!`);

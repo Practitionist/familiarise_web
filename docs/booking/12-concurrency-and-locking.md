@@ -2,18 +2,17 @@
 
 ## Overview
 
-Booking operations use a four-layer concurrency protection model to prevent double-booking, race conditions, and data corruption:
+Booking operations defend against double-booking, race conditions, and data corruption with three complementary mechanisms. The Redis distributed lock is a cheap first gate that removes common-case contention, but it is never the correctness guarantee on its own, because it can expire under a slow operation. The database is the source of truth: the booking transaction re-reads the contended state inside the transaction, and for one-to-one bookings the `slot_no_confirmed_overlap` exclusion constraint is the final backstop, with a violation surfacing as Postgres `23P01` (mapped to a 409). Event checkout additionally runs at Serializable isolation so that its finite-capacity participant recount is conflict-safe. This is the booking-subsystem expression of the platform-wide posture recorded in [ADR 13](../enterprise/70-design-decisions/13-postgres-native-concurrency.md), which keeps concurrency control Postgres-native with no message broker or workflow engine, and [ADR 14](../enterprise/70-design-decisions/14-async-queue-posture.md), which keeps async work queue-less for launch.
 
-| Layer | Mechanism                       | Scope         | Purpose                                               |
-| ----- | ------------------------------- | ------------- | ----------------------------------------------------- |
-| 1     | Redis distributed lock          | Cross-process | Serializes concurrent requests for the same resource  |
-| 2     | Prisma interactive transaction  | Database      | Atomic multi-statement operations with isolation      |
-| 3     | Conflict validation (inside tx) | Application   | Detects overlapping slots from already-committed data |
-| 4     | `slot_no_confirmed_overlap` DB exclusion constraint | Database | btree_gist constraint rejects any INSERT/UPDATE that would create a confirmed (non-tentative) overlap for the same consultant; applied via `npm run db:constraints` (#440) |
+The three mechanisms are described below in the order a request meets them.
 
-All four layers are required. Redis locks alone cannot guarantee consistency because they can expire under slow operations. Database transactions alone cannot prevent two processes from simultaneously passing validation checks on the same data. Conflict validation inside the transaction catches application-level overlaps, and the `slot_no_confirmed_overlap` exclusion constraint is the final database-enforced backstop.
+The first mechanism is a **Redis distributed lock**, acquired before the transaction opens. It serializes concurrent requests for the same resource across processes, so the expensive database work runs without contention in the common case. The lock functions live in `utils/appointmentlock.ts`.
 
-**Source**: `utils/appointmentlock.ts`
+The second mechanism is **in-transaction re-validation**, which carries the real correctness guarantee — though the two booking paths enforce it differently. For a one-to-one slot, the allocation transaction (default Read Committed isolation) re-scans committed appointments for a conflict inside the transaction, and the `slot_no_confirmed_overlap` exclusion constraint is the database backstop: a concurrent overlap that slips past the scan is rejected at write time with Postgres `23P01`, which `SlotAllocationService.classifyError` maps to a 409. For a finite-capacity event, checkout opens the transaction at `isolationLevel: "Serializable"` and recounts participants (tentative-inclusive); PostgreSQL serializable snapshot isolation then aborts the loser of a last-seat race with Prisma error `P2034`. In both cases the database, not the application, enforces the invariant.
+
+The third mechanism is the **`slot_no_confirmed_overlap` database exclusion constraint** (#440), a `btree_gist` `EXCLUDE` constraint on `SlotOfAppointment` that rejects any INSERT or UPDATE which would create a confirmed (non-tentative) overlap for the same consultant. It applies to the exclusive booking types — consultations and subscription sessions, where a consultant can hold only one slot at a given time — and is the final backstop even if a lock is missed and the in-transaction validation is somehow bypassed. The constraint ships with the schema, and `npm run db:push` now applies it automatically because that script chains `db:constraints` after the schema push; the previously separate `npm run db:constraints` step is therefore redundant, though harmless to run.
+
+**Source**: `utils/appointmentlock.ts`, `lib/payments/operations/checkout.ts`
 
 ---
 
@@ -165,66 +164,17 @@ end
 
 ---
 
-## Event Slot Semaphore
+## Event Capacity Control
 
-Standard distributed locks serialize access to one client at a time. For multi-participant events (webinars and classes), a counting semaphore allows multiple concurrent checkouts up to the `maxParticipants` limit.
+Finite-capacity events — webinars and classes — must admit at most `maxParticipants` enrollments no matter how many buyers arrive at the same instant. There is no Redis counting semaphore for this; capacity is guarded entirely by the database. Two cooperating mechanisms enforce it, and `lib/payments/operations/checkout.ts` is the single source.
 
-### Redis Keys
+The first is a **per-event distributed mutex**, `lockEventCheckout` (key pattern `event-checkout:{appointmentType}:{eventOrPlanId}`). It serializes checkouts for one event so the common case never contends, and it fails closed: if Redis is unreachable, `lockEventCheckout` throws `EventCheckoutLockUnavailableError` (HTTP 503) rather than letting an unlocked buyer through, because an unlocked checkout could clear the same finite capacity twice. Genuine contention — another buyer already holding the lock — is a benign retry-later case that fails open with a "please try again" message.
 
-| Key                                                       | Type                 | TTL   | Purpose                                     |
-| --------------------------------------------------------- | -------------------- | ----- | ------------------------------------------- |
-| `event-counter:{eventType}:{eventId}`                     | Integer (counter)    | 5 min | Current number of active reservations       |
-| `event-reservation:{eventType}:{eventId}:{reservationId}` | String (slot number) | 5 min | Individual reservation tracking for cleanup |
+The second, and the real capacity guard, is a **Serializable participant recount inside the checkout transaction**. The checkout `prisma.$transaction` runs at `isolationLevel: "Serializable"`, and inside it the code re-reads every enrollment for the event and recounts participants with `countWebinarParticipants` (webinars) or `countUniqueParticipants` (classes, where a buyer enrolled across N sessions still counts once). The recount is tentative-inclusive: it counts the in-flight tentative slots of other concurrent checkouts, not only confirmed enrollments, so two buyers racing for the last seat both observe the contended rows. If the recount is at or above `maxParticipants`, the transaction rejects with a "Webinar is full" / "Class is full" 4xx. When two last-seat checkouts interleave such that neither sees the other's write under the snapshot, PostgreSQL serializable snapshot isolation aborts the loser with Prisma error `P2034`; exactly one enrollment commits. The mutex makes that abort rare; the Serializable recount is what makes the cap correct when it is not.
 
-### Operations
+For the exclusive booking types (consultations and subscription sessions, which occupy a consultant one-to-one) the `slot_no_confirmed_overlap` exclusion constraint described in the [Overview](#overview) is the database-level backstop. It does not apply to webinars and classes, whose participants legitimately share one slot; their cap is the Serializable recount above.
 
-**`acquireEventSlot`** -- Atomic increment with capacity check:
-
-```lua
-local current = redis.call("get", KEYS[1])
-if current == false then
-  current = 0
-else
-  current = tonumber(current)
-end
-
-if current >= tonumber(ARGV[1]) then
-  return -1
-end
-
-local newCount = redis.call("incr", KEYS[1])
-if newCount == 1 then
-  redis.call("pexpire", KEYS[1], ARGV[2])
-end
-
-return newCount
-```
-
-- Returns `-1` if at capacity (event full).
-- Returns the new slot number on success.
-- Sets TTL only on the first reservation (counter creation).
-- After acquiring, stores an individual reservation key for cleanup tracking.
-
-**`releaseEventSlot`** -- Decrement on payment failure or cancellation:
-
-```lua
-local current = redis.call("get", KEYS[1])
-if current and tonumber(current) > 0 then
-  return redis.call("decr", KEYS[1])
-end
-return 0
-```
-
-- Only decrements if counter is above zero (prevents negative counts).
-- Checks reservation key existence before decrementing (idempotent).
-- Deletes the individual reservation key.
-
-**`confirmEventSlot`** -- On successful payment:
-
-- Deletes only the reservation tracking key.
-- Does NOT decrement the counter (the slot is now permanently booked in the database).
-
-**`getEventSlotCount`** -- Read current reservation count without modifying state.
+This event-capacity design follows [ADR 13](../enterprise/70-design-decisions/13-postgres-native-concurrency.md): the database is the correctness authority and Redis is load-bearing only for cheap mutual exclusion, never for the count itself.
 
 ### Concurrent Checkout Flow
 
@@ -232,49 +182,31 @@ return 0
 sequenceDiagram
     participant U1 as User A
     participant U2 as User B
-    participant U3 as User C
     participant API as API
-    participant Redis as Redis Semaphore
-    participant DB as Database
+    participant Redis as Redis (mutex)
+    participant Prisma as Serializable TX
+    participant DB as PostgreSQL
 
-    Note over Redis: Webinar capacity: 2 seats
+    Note over DB: Webinar capacity: 1 free seat
 
     U1->>API: Checkout webinar
-    API->>Redis: acquireEventSlot(WEBINAR, id, max=2)
-    Redis-->>API: slotNumber=1 (counter: 1)
+    U2->>API: Checkout webinar (same instant)
+
+    API->>Redis: lockEventCheckout(WEBINAR, id)
+    Redis-->>API: U1 acquires; U2 retries / waits
+
+    API->>Prisma: $transaction (Serializable) for U1
+    Prisma->>DB: Recount participants (tentative-inclusive)
+    DB-->>Prisma: count < max
+    Prisma->>DB: INSERT tentative slot + COMMIT
     API-->>U1: Proceed to payment
 
-    U2->>API: Checkout webinar
-    API->>Redis: acquireEventSlot(WEBINAR, id, max=2)
-    Redis-->>API: slotNumber=2 (counter: 2)
-    API-->>U2: Proceed to payment
-
-    U3->>API: Checkout webinar
-    API->>Redis: acquireEventSlot(WEBINAR, id, max=2)
-    Redis-->>API: -1 (at capacity)
-    API-->>U3: 409 Event full
-
-    U1->>API: Payment success
-    API->>Redis: confirmEventSlot (delete reservation key only)
-    API->>DB: INSERT booking record
-
-    U2->>API: Payment failed
-    API->>Redis: releaseEventSlot (DECR counter to 1)
-    Note over Redis: Counter: 1. Slot freed.
-
-    U3->>API: Retry checkout
-    API->>Redis: acquireEventSlot(WEBINAR, id, max=2)
-    Redis-->>API: slotNumber=2 (counter: 2)
-    API-->>U3: Proceed to payment
+    API->>Prisma: $transaction (Serializable) for U2
+    Prisma->>DB: Recount participants (tentative-inclusive)
+    DB-->>Prisma: count >= max (sees U1) -> "Webinar is full"
+    Note over Prisma,DB: If snapshots overlap, SSI aborts U2 with P2034 instead
+    API-->>U2: 4xx Webinar is full
 ```
-
-### TTL and Cleanup
-
-The 5-minute TTL (300,000ms) covers the payment completion window. If a user abandons checkout without explicit cancellation:
-
-- The reservation key expires after 5 minutes.
-- The counter key also expires, resetting to zero.
-- Database-level participant counts remain the source of truth for availability queries outside the checkout window.
 
 ---
 
@@ -292,19 +224,22 @@ All slot allocation and cancellation operations run inside Prisma interactive tr
 The transaction provides two guarantees:
 
 1. **Atomicity** -- All database writes succeed or all roll back. No partial bookings.
-2. **Isolation** -- Conflict validation inside the transaction reads committed data, preventing two concurrent transactions from both passing validation on the same slot.
+2. **Isolation** -- The contended state is re-read inside the transaction. Slot-booking and event-checkout transactions run at Serializable isolation, so two concurrent transactions that read the same rows and both write cannot both commit: PostgreSQL aborts the loser with a P2034 serialization failure rather than allowing both to pass validation on the same slot or the same last seat.
 
-The pattern in every booking route:
+The pattern in every booking route is to take the cheap Redis lock first, then do the authoritative re-read and write inside the transaction, and always release the lock in `finally`:
 
 ```
-lock = await lockSlotBooking(...)    // Layer 1: Redis lock
+lock = await lockSlotBooking(...)    // Redis mutex (common-case contention)
 try {
-  await prisma.$transaction(tx => {  // Layer 2: Prisma transaction
-    validate(tx, ...)                // Layer 3: Conflict check inside tx
-    create(tx, ...)
-  })
+  await prisma.$transaction(             // Serializable: the correctness guarantee
+    async (tx) => {
+      validate(tx, ...)                  // Re-read contended state inside the tx
+      create(tx, ...)
+    },
+    { isolationLevel: "Serializable" },  // SSI aborts the last-seat loser with P2034
+  )
 } finally {
-  await unlockSlotBooking(lock)      // Always release
+  await unlockSlotBooking(lock)          // Always release
 }
 ```
 
@@ -317,13 +252,13 @@ try {
 | Two users book the same consultant slot              | `lockSlotBooking`            | `slot-booking:{profileId}:{slotTime}` -- serializes access to the specific slot    |
 | Two admins approve the same consultation             | `lockConsultationApproval`   | `consultation-approval:{id}` -- only one approval proceeds                         |
 | Two admins approve the same subscription             | `lockSubscriptionApproval`   | `subscription-approval:{id}` -- only one approval proceeds                         |
-| Multiple webinar checkouts at capacity               | Event slot semaphore         | `acquireEventSlot` atomic Lua INCR with max check                                  |
-| Multiple class checkouts at capacity                 | Event slot semaphore         | Same semaphore pattern, different `eventType`                                      |
+| Multiple webinar checkouts at capacity               | `lockEventCheckout` + Serializable recount | Per-event mutex, then a tentative-inclusive `countWebinarParticipants` recount inside the Serializable checkout tx; SSI aborts the last-seat loser with P2034 |
+| Multiple class checkouts at capacity                 | `lockEventCheckout` + Serializable recount | Same path with `countUniqueParticipants` (a buyer across N sessions counts once)   |
 | Two users schedule the same trial slot               | `lockTrialSlot`              | `trial-slot-booking:{profileId}:{slotTime}`                                        |
 | Concurrent cancel and reschedule on same appointment | `lockAppointment`            | `appointment-lock:{appointmentId}` -- 5 min TTL                                    |
 | Lock expires during slow DB operation                | `extendLock` heartbeat       | Extends TTL without releasing; 120s transaction timeout aligned with extended lock |
 | Client crashes while holding lock                    | Redis TTL auto-expiry        | Lock expires after TTL, no manual intervention needed                              |
 | Lock released by wrong client                        | Safe release Lua script      | `GET` + `DEL` atomic with value verification                                       |
-| Slot passes validation but conflicts at commit       | Prisma transaction isolation + `slot_no_confirmed_overlap` exclusion constraint (#440) | Transaction rollback on constraint violation; DB rejects any confirmed overlap for same consultant even if application validation was bypassed |
-| Payment abandoned mid-checkout (events)              | Semaphore TTL expiry         | 5 min TTL auto-frees the reserved slot                                             |
+| Slot passes validation but conflicts at commit       | Serializable isolation + `slot_no_confirmed_overlap` exclusion constraint (#440) | SSI aborts the racing transaction with P2034; the DB exclusion constraint rejects any confirmed overlap for the same consultant even if application validation was bypassed |
+| Payment abandoned mid-checkout (events)              | Tentative-slot cleanup cron  | The tentative slot is released by the 24-hour idempotent cleanup (and the buyer can free it early via `DELETE /api/checkout/pending/[paymentId]`); see [ADR B5](./00-architecture-decisions.md) |
 | Cancelled/rejected slots blocking new bookings       | `buildOccupiedAppointmentFilter()` | Conflict check excludes appointments with terminal statuses (CANCELLED, REJECTED, EXPIRED) |

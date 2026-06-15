@@ -247,7 +247,7 @@ export async function POST(
         appointmentId,
         // Consultant uploads don't need review
         reviewStatus: "APPROVED",
-        reviewedBy: userId,
+        reviewedById: userId, // A8 — FK scalar (#676)
         reviewedAt: new Date(),
       },
     });

@@ -1028,7 +1028,7 @@ Five issues have been validated against the codebase. All are legitimate and tra
 
 ### Issue 2: Status Always Set to PENDING
 
-**Priority:** HIGH | **Status:** Planned fix (Phase 1)
+**Priority:** HIGH | **Status:** Tracked in [#448](https://github.com/Practitionist/familiarise_web/issues/448).
 
 **The problem:** When a subscription reschedule occurs, the subscription's `status` is unconditionally set to `PENDING`, regardless of whether it is a partial or full reschedule.
 
@@ -1071,7 +1071,7 @@ In practice, this edge case is unlikely because sessions rarely span midnight. B
 
 ### Issue 5: Toast Shows Slot Count, Not Session Count
 
-**Priority:** HIGH | **Status:** Planned fix (Phase 1)
+**Priority:** HIGH | **Status:** Tracked in [#448](https://github.com/Practitionist/familiarise_web/issues/448).
 
 **The problem:** The API returns `slotsAffected` (e.g., 72 slots for 18 four-slot sessions), and the frontend displays this as a session count. The user sees "72 sessions marked for rescheduling" when it should say "18 sessions."
 

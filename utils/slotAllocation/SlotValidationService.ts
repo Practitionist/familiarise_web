@@ -23,6 +23,47 @@ import { SubscriptionValidationService } from "../subscriptionValidation";
 import { buildOccupiedAppointmentFilter } from "./occupancyPolicy";
 import { isMinuteWithinWeeklySlot } from "./slotTimeUtils";
 
+// AE-5/RV-6 — every slot is uniformly 30 minutes. The old slotDurationMinutes
+// param invited callers to pass arbitrary values that silently mismatch the
+// rest of the booking math; inline the one true duration instead.
+const SLOT_DURATION_MS = 30 * 60 * 1000;
+
+/**
+ * RV-2 — minimal shape needed to decide whether an overlapping appointment is a
+ * live blocker. Both the validator and the allocator build occupancy from the
+ * same rule via {@link isOccupiedByLiveAppointment}; keeping it here (rather than
+ * duplicating the expiry check) is what stops `/validate` and `findAvailableSlots`
+ * from disagreeing on expired APPROVED_PENDING_PAYMENT holds.
+ */
+export interface LiveAppointmentOccupancy {
+  consultation?: { status?: AppointmentStatus | null } | null;
+  subscription?: { status?: AppointmentStatus | null } | null;
+  payment?: Array<{ expiresAt?: Date | null }> | null;
+}
+
+/**
+ * RV-2 — an overlapping appointment genuinely occupies its slot unless it is an
+ * APPROVED_PENDING_PAYMENT request whose payment window has already lapsed (the
+ * orphaned-payment case): that slot is free again. Any other state, or a payment
+ * that has not expired, still blocks.
+ *
+ * @param now - injectable clock so callers share a single transaction timestamp.
+ */
+export function isOccupiedByLiveAppointment(
+  appointment: LiveAppointmentOccupancy,
+  now: Date = new Date(),
+): boolean {
+  const pendingStatus =
+    appointment.consultation?.status ?? appointment.subscription?.status;
+  if (pendingStatus === AppointmentStatus.APPROVED_PENDING_PAYMENT) {
+    const payment = appointment.payment?.[0];
+    if (payment?.expiresAt && new Date(payment.expiresAt) < now) {
+      return false;
+    }
+  }
+  return true;
+}
+
 /**
  * Service for validating slot allocations
  */
@@ -35,20 +76,12 @@ export class SlotValidationService {
    *
    * USE CASE: Re-validation inside distributed lock after acquisition
    * This ensures the slot is still available before creating the booking.
-   *
-   * FIX Issue #11: Added slotDurationMinutes parameter for configurable slot duration
-   * @param slotDurationMinutes - Duration of each slot in minutes (default: 30)
    */
   async checkSlotAvailability(
     slots: Date[],
     consultantUserId: string,
-    slotDurationMinutes: number = 30,
   ): Promise<ValidationResult> {
-    return await this.validateNoConflicts(
-      slots,
-      consultantUserId,
-      slotDurationMinutes,
-    );
+    return await this.validateNoConflicts(slots, consultantUserId);
   }
 
   /**
@@ -77,17 +110,9 @@ export class SlotValidationService {
     const scheduleCheck = this.validateMatchesSchedule(slots, consultant);
     if (!scheduleCheck.isValid) return scheduleCheck;
 
-    // FIX: All slots are uniformly 30 minutes. Previously this divided total
-    // session duration by slot count, which is circular logic — it happens to
-    // give 30 for correct inputs but gives wrong values when slots.length is
-    // wrong, and this conflict check runs BEFORE event-specific validators
-    // would catch the slot count mismatch.
-    const slotDurationMinutes = 30;
-
     const conflictCheck = await this.validateNoConflicts(
       slots,
       consultant.userId,
-      slotDurationMinutes,
       excludeAppointmentIds,
       consulteeUserId,
     );
@@ -122,7 +147,14 @@ export class SlotValidationService {
         return this.validateWebinar(slots, config);
 
       case "class":
-        return this.validateClass(slots, config);
+        // RV-5 — pass eventId + caller exclusions so the weekly-limit check can
+        // seed from this class's existing confirmed slots, matching the allocator.
+        return this.validateClass(
+          eventId,
+          slots,
+          config,
+          excludeAppointmentIds,
+        );
 
       default:
         return {
@@ -195,15 +227,9 @@ export class SlotValidationService {
    * - endsAt > slot: Existing slot ends after proposed starts
    * - Together: Detects ANY time period overlap
    */
-  /**
-   * FIX Issue #11: Slot duration is now configurable
-   * Default remains 30 minutes for backwards compatibility
-   * @param slotDurationMinutes - Duration of each slot in minutes (default: 30)
-   */
   private async validateNoConflicts(
     slots: Date[],
     consultantUserId: string,
-    slotDurationMinutes: number = 30,
     excludeAppointmentIds?: string[],
     // #676 AE-1 — the consultee is a participant too; an overlapping slot
     // sharing either party is a real conflict.
@@ -222,13 +248,12 @@ export class SlotValidationService {
     // Step 1: Compute time envelope across ALL proposed slots.
     // Slots may not be sorted (checkSlotAvailability doesn't sort),
     // so compute min/max explicitly.
-    const slotDurationMs = slotDurationMinutes * 60 * 1000;
     let earliestStart = slots[0].getTime();
-    let latestEnd = slots[0].getTime() + slotDurationMs;
+    let latestEnd = slots[0].getTime() + SLOT_DURATION_MS;
 
     for (const slot of slots) {
       const startMs = slot.getTime();
-      const endMs = startMs + slotDurationMs;
+      const endMs = startMs + SLOT_DURATION_MS;
       if (startMs < earliestStart) earliestStart = startMs;
       if (endMs > latestEnd) latestEnd = endMs;
     }
@@ -294,8 +319,9 @@ export class SlotValidationService {
       });
 
     // Step 3: Match conflicts back to specific proposed slots in JS
+    const now = new Date();
     for (const slot of slots) {
-      const slotEnd = new Date(slot.getTime() + slotDurationMs);
+      const slotEnd = new Date(slot.getTime() + SLOT_DURATION_MS);
 
       const existingAppointment = conflictingAppointments.find((appt) =>
         appt.slotsOfAppointment.some(
@@ -306,20 +332,10 @@ export class SlotValidationService {
       );
 
       if (existingAppointment) {
-        // FIX: Check if event is APPROVED_PENDING_PAYMENT with expired payment
-        // If payment expired, slot is actually free (orphaned payment bug fix)
-        const pendingStatus =
-          existingAppointment.consultation?.status ??
-          existingAppointment.subscription?.status;
-        if (pendingStatus === AppointmentStatus.APPROVED_PENDING_PAYMENT) {
-          const payment = existingAppointment.payment?.[0];
-          if (payment?.expiresAt) {
-            const now = new Date();
-            if (new Date(payment.expiresAt) < now) {
-              // Payment expired - slot is actually available, skip this conflict
-              continue;
-            }
-          }
+        // RV-2 — an expired APPROVED_PENDING_PAYMENT hold leaves its slot free;
+        // shared with the allocator so /validate and findAvailableSlots agree.
+        if (!isOccupiedByLiveAppointment(existingAppointment, now)) {
+          continue;
         }
 
         // Slot is genuinely booked - add error
@@ -782,8 +798,23 @@ export class SlotValidationService {
   /**
    * EVENT-SPECIFIC: Validate class slots
    * Rules: Must respect weekly limits and session grouping
+   *
+   * RV-5 — the weekly-limit check seeds each week from this class's already
+   * confirmed (non-tentative) sessions, mirroring the allocator's
+   * `existingCallsPerWeek`. Without this seed a partial reschedule that proposes
+   * a full week of new sessions passes validate but exceeds the real limit once
+   * the surviving confirmed sessions are counted.
+   *
+   * @param excludeAppointmentIds - caller exclusions (e.g. the "use requested
+   *   slots" flow). Merged with this class's own tentative appointments so a
+   *   tentative session being replaced is never counted toward the seed.
    */
-  private validateClass(slots: Date[], config: EventConfig): ValidationResult {
+  private async validateClass(
+    classId: string,
+    slots: Date[],
+    config: EventConfig,
+    excludeAppointmentIds?: string[],
+  ): Promise<ValidationResult> {
     const errors: string[] = [];
     const warnings: string[] = [];
 
@@ -853,18 +884,59 @@ export class SlotValidationService {
       }
     }
 
+    // RV-5 — seed each week with this class's surviving confirmed sessions.
+    // Fetch the class's appointments and exclude the tentative ones (and any
+    // caller exclusions) that are about to be replaced, so the seed reflects
+    // exactly the calls the allocator would also count.
+    const classAppointments = await this.prismaClient.appointment.findMany({
+      where: { classId },
+      select: {
+        id: true,
+        slotsOfAppointment: {
+          select: { startsAt: true, isTentative: true },
+        },
+      },
+    });
+    const tentativeIds = classAppointments
+      .filter((a) => a.slotsOfAppointment.some((s) => s.isTentative))
+      .map((a) => a.id);
+    const excludeSet = new Set([
+      ...(excludeAppointmentIds || []),
+      ...tentativeIds,
+    ]);
+
+    // One confirmed appointment = one session, keyed by its earliest slot's
+    // week (same key the allocator and groupSlotsByWeek use).
+    const existingSessionsPerWeek = new Map<string, number>();
+    for (const appt of classAppointments) {
+      if (excludeSet.has(appt.id)) continue;
+      if (appt.slotsOfAppointment.length === 0) continue;
+      const firstSlot = appt.slotsOfAppointment.reduce((earliest, s) =>
+        new Date(s.startsAt) < new Date(earliest.startsAt) ? s : earliest,
+      );
+      const weekKey = SlotCalculationService.startOfWeekSunday(
+        new Date(firstSlot.startsAt),
+      ).toISOString();
+      existingSessionsPerWeek.set(
+        weekKey,
+        (existingSessionsPerWeek.get(weekKey) || 0) + 1,
+      );
+    }
+
     // Validate weekly limits
     const slotsByWeek = SlotCalculationService.groupSlotsByWeek(
       slots.map((s) => ({
         startTime: s,
-        endTime: new Date(s.getTime() + 30 * 60 * 1000),
+        endTime: new Date(s.getTime() + SLOT_DURATION_MS),
         isAvailable: true,
         isBooked: false,
       })),
     );
 
     slotsByWeek.forEach((weekSlots, weekKey) => {
-      const sessionsThisWeek = Math.floor(weekSlots.length / slotsPerSession);
+      const proposedSessions = Math.floor(weekSlots.length / slotsPerSession);
+      const sessionsThisWeek =
+        proposedSessions + (existingSessionsPerWeek.get(weekKey) || 0);
       if (sessionsThisWeek > config.callsPerWeek!) {
         errors.push(
           `[WEEKLY_LIMIT] Week of ${new Date(weekKey).toLocaleDateString()} has ${sessionsThisWeek} sessions but max is ${config.callsPerWeek}`,
