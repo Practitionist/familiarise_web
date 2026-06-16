@@ -56,10 +56,13 @@ export function isOccupiedByLiveAppointment(
   const pendingStatus =
     appointment.consultation?.status ?? appointment.subscription?.status;
   if (pendingStatus === AppointmentStatus.APPROVED_PENDING_PAYMENT) {
-    const payment = appointment.payment?.[0];
-    if (payment?.expiresAt && new Date(payment.expiresAt) < now) {
-      return false;
-    }
+    // #873 — free the slot only when EVERY payment row is expired; a later
+    // active retry row can still be live even if payment[0] lapsed.
+    const payments = appointment.payment ?? [];
+    const allPaymentsExpired =
+      payments.length > 0 &&
+      payments.every((p) => !!p.expiresAt && new Date(p.expiresAt) < now);
+    if (allPaymentsExpired) return false;
   }
   return true;
 }

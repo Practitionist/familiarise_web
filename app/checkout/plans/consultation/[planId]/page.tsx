@@ -903,7 +903,10 @@ export default function ConsultationCheckoutPage({
                             message?: string;
                           }) =>
                             handleApiError({
-                              error: error.description ?? error.message,
+                              error:
+                                error.description ??
+                                error.message ??
+                                error.reason,
                               errorType: error.code,
                             })
                           }

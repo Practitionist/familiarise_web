@@ -138,6 +138,9 @@ describe("PM-15 — payout reconcile delegates to handlePayoutWebhook", () => {
     expect(status).toBe("FAILED");
     expect(reason).toContain("net-zero round trip");
     expect(reason).toContain("bounced");
+    // #873 — a reversed payout has no settlement UTR; the 5th arg must be undefined.
+    const [, , , , utr] = handlePayoutWebhook.mock.calls[0];
+    expect(utr).toBeUndefined();
   });
 
   it("still-processing payout → no delegation (status unchanged)", async () => {

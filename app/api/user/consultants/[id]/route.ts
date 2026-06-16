@@ -381,7 +381,7 @@ export async function PUT(
           .then((u) => u?.timezone ?? null);
         const utcOffsetMinutes = userTimezone
           ? getTimezoneOffsetMinutes(userTimezone)
-          : 0;
+          : 330; // #872 — IST-only at launch: default a missing timezone to IST, never UTC 0.
 
         const weeklySlotData: Prisma.SlotOfAvailabilityWeeklyCreateManyInput[] =
           slotsOfAvailabilityWeekly.map((slot) => {

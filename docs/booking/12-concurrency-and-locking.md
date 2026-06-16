@@ -228,7 +228,7 @@ The transaction provides two guarantees:
 
 The pattern in every booking route is to take the cheap Redis lock first, then do the authoritative re-read and write inside the transaction, and always release the lock in `finally`:
 
-```
+```ts
 lock = await lockSlotBooking(...)    // Redis mutex (common-case contention)
 try {
   await prisma.$transaction(             // default Read Committed isolation

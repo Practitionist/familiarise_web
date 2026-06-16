@@ -1044,6 +1044,9 @@ export async function handleDisputeCreated(
     // Find payment by charge ID or payment intent
     // For Stripe, we need to get the payment intent from the charge
     let payment;
+    // #873 — page once per dispute-unlink incident: the Razorpay-lookup catch
+    // and the !payment branch below must not both fire for the same webhook.
+    let unlinkAlertRecorded = false;
     if (gateway === "STRIPE" && stripeClient) {
       try {
         const charge = await stripeClient.charges.retrieve(chargeId);
@@ -1086,6 +1089,7 @@ export async function handleDisputeCreated(
             context: { disputeId, chargeId, gateway },
             correlationId: disputeId,
           }).catch(() => {});
+          unlinkAlertRecorded = true;
         }
       }
     }
@@ -1094,14 +1098,17 @@ export async function handleDisputeCreated(
       console.warn(`Payment not found for dispute: ${disputeId}`);
       // PM-4 — dispute couldn't be linked to a payment (lookup miss, or the
       // gateway fetch above threw). Dropping it silently means disputed
-      // earnings stay payable until the 6h reconcile-disputes cron — page on it.
-      void recordSystemError({
-        category: "WEBHOOK",
-        summary: `CRITICAL_DISPUTE_UNLINKED: no payment matched dispute ${disputeId}`,
-        err: new Error("dispute payment not found"),
-        context: { disputeId, chargeId, gateway },
-        correlationId: disputeId,
-      }).catch(() => {});
+      // earnings stay payable until the 6h reconcile-disputes cron — page on it,
+      // unless the lookup-failure catch above already paged for this incident.
+      if (!unlinkAlertRecorded) {
+        void recordSystemError({
+          category: "WEBHOOK",
+          summary: `CRITICAL_DISPUTE_UNLINKED: no payment matched dispute ${disputeId}`,
+          err: new Error("dispute payment not found"),
+          context: { disputeId, chargeId, gateway },
+          correlationId: disputeId,
+        }).catch(() => {});
+      }
       return;
     }
 

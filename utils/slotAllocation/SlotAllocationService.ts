@@ -1435,6 +1435,8 @@ export class SlotAllocationService {
     // existing confirmed slot trips the #440 exclusion constraint (or the unique
     // guard); convert it to a typed 409 here at the source so classifyError can
     // stay typed-only rather than sniffing Postgres error strings (#837).
+    // #873 — kept as any[]: tx.appointment.create's include-payload type does
+    // not narrow to AppointmentWithSlots through Promise.all+map here (tsc rejects).
     let appointments: any[];
     try {
       appointments = await Promise.all(

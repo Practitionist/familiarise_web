@@ -12,8 +12,13 @@ import { Currency } from "@prisma/client";
 // surfaces a gateway booking a currency we can't represent — callers on
 // webhook paths must catch and dead-letter, not 500-loop.
 export function toCurrencyEnum(raw: string | null | undefined): Currency {
-  if (raw == null || raw.trim() === "") return Currency.INR;
+  if (raw == null) return Currency.INR;
   const up = raw.trim().toUpperCase();
+  // #873 — a present-but-blank gateway currency is dead-lettered, not coerced
+  // to INR; only null/undefined defaults (webhook refund/dispute write path).
+  if (up === "") {
+    throw new Error("Unsupported currency code from gateway: <blank>");
+  }
   // The Currency enum IS the settlement allowlist — deliberately narrower than
   // CURRENCY_MULTIPLIERS (lib/payments/index.ts), which lists display-FX codes
   // we can render but not settle. A gateway code outside the enum throws so the

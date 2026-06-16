@@ -446,8 +446,19 @@ export async function lockEventCheckout(
         throw error; // Redis I/O error → propagate to the breaker
       }
     });
-  } catch {
+  } catch (error: unknown) {
     // Circuit open or Redis unreachable during acquisition → fail closed.
+    // #873 — log the original cause so triage can tell a real Redis outage
+    // from another fault before rethrowing the opaque typed error.
+    console.error(
+      JSON.stringify({
+        event: "event_checkout_lock_unavailable",
+        key,
+        appointmentType,
+        error: getErrorMessage(error),
+        timestamp: new Date().toISOString(),
+      }),
+    );
     throw new EventCheckoutLockUnavailableError(appointmentType);
   }
 
