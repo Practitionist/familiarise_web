@@ -61,6 +61,16 @@ import {
 // page's rows (which would give an incomplete list under pagination).
 const APPOINTMENT_TYPES = ["Consultation", "Subscription"] as const;
 
+// The reviewable document statuses, single-sourced so the status filter and the
+// single + bulk review dialogs can't drift. Labels come from getStatusLabel().
+const REVIEW_STATUSES = [
+  "PENDING",
+  "IN_REVIEW",
+  "APPROVED",
+  "REJECTED",
+  "NEEDS_REVISION",
+];
+
 interface ExtendedDocumentsTabProps extends DocumentsTabProps {
   onRefresh?: () => void;
 }
@@ -199,39 +209,42 @@ export function DocumentsTab({
     setIsBulkUpdating(true);
 
     try {
-      const selectedDocs = documents.filter((d) => selectedIds.has(d.id));
-      const results = await Promise.allSettled(
-        selectedDocs.map((doc) =>
-          fetch(
-            `/api/appointments/${doc.appointmentId}/documents/${doc.id}`,
-            {
-              method: "PATCH",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                reviewStatus: newStatus,
-                reviewNotes: notes?.trim() || null,
-              }),
-            },
-          ),
-        ),
-      );
+      const documentIds = Array.from(selectedIds);
+      // #347 — one transactional bulk-review request instead of an N-PATCH
+      // fan-out; the server reports how many it actually updated.
+      const res = await fetch("/api/documents/bulk-review", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          documentIds,
+          reviewStatus: newStatus,
+          reviewNotes: notes?.trim() || null,
+        }),
+      });
 
-      const succeeded = results.filter((r) => r.status === "fulfilled").length;
-      const failed = results.length - succeeded;
+      if (!res.ok) throw new Error("Bulk review failed");
+
+      const { data } = await res.json();
+      const updated: number = data?.updated ?? 0;
+      const failed = documentIds.length - updated;
 
       toast({
         title: "Bulk Review Complete",
         description: failed
-          ? `${succeeded} updated, ${failed} failed`
-          : `${succeeded} document${succeeded !== 1 ? "s" : ""} updated to ${getStatusLabel(newStatus)}`,
+          ? `${updated} updated, ${failed} not updated`
+          : `${updated} document${updated !== 1 ? "s" : ""} updated to ${getStatusLabel(newStatus)}`,
         variant: failed ? "destructive" : "default",
       });
 
-      setSelectedIds(new Set());
-      setBulkReviewDialogOpen(false);
-      setBulkReviewStatus("");
-      setBulkReviewNotes("");
       onRefresh?.();
+      // Only clear the selection + close on full success; on a partial failure
+      // keep the dialog open so the consultant sees what didn't update and can retry.
+      if (failed === 0) {
+        setSelectedIds(new Set());
+        setBulkReviewDialogOpen(false);
+        setBulkReviewStatus("");
+        setBulkReviewNotes("");
+      }
     } catch {
       toast({
         title: "Error",
@@ -364,11 +377,11 @@ export function DocumentsTab({
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Statuses</SelectItem>
-            <SelectItem value="PENDING">Pending</SelectItem>
-            <SelectItem value="IN_REVIEW">In Review</SelectItem>
-            <SelectItem value="APPROVED">Approved</SelectItem>
-            <SelectItem value="REJECTED">Rejected</SelectItem>
-            <SelectItem value="NEEDS_REVISION">Needs Revision</SelectItem>
+            {REVIEW_STATUSES.map((s) => (
+              <SelectItem key={s} value={s}>
+                {getStatusLabel(s)}
+              </SelectItem>
+            ))}
           </SelectContent>
         </Select>
         <Select value={typeFilter} onValueChange={onTypeFilterChange}>
@@ -661,11 +674,11 @@ export function DocumentsTab({
                   <SelectValue placeholder="Select status" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="PENDING">Pending</SelectItem>
-                  <SelectItem value="IN_REVIEW">In Review</SelectItem>
-                  <SelectItem value="APPROVED">Approved</SelectItem>
-                  <SelectItem value="REJECTED">Rejected</SelectItem>
-                  <SelectItem value="NEEDS_REVISION">Needs Revision</SelectItem>
+                  {REVIEW_STATUSES.map((s) => (
+                    <SelectItem key={s} value={s}>
+                      {getStatusLabel(s)}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -742,11 +755,11 @@ export function DocumentsTab({
                   <SelectValue placeholder="Select status" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="PENDING">Pending</SelectItem>
-                  <SelectItem value="IN_REVIEW">In Review</SelectItem>
-                  <SelectItem value="APPROVED">Approved</SelectItem>
-                  <SelectItem value="REJECTED">Rejected</SelectItem>
-                  <SelectItem value="NEEDS_REVISION">Needs Revision</SelectItem>
+                  {REVIEW_STATUSES.map((s) => (
+                    <SelectItem key={s} value={s}>
+                      {getStatusLabel(s)}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
