@@ -41,7 +41,19 @@ export async function PATCH(request: NextRequest) {
     );
     if (limited) return limited;
 
-    const parsed = BulkReviewSchema.safeParse(await request.json());
+    // A malformed body throws here, before Zod — that's a bad client payload
+    // (400), not a server failure (which the outer catch would mislabel 500).
+    let rawBody: unknown;
+    try {
+      rawBody = await request.json();
+    } catch {
+      return NextResponse.json(
+        { error: "Invalid JSON body", code: "INVALID_INPUT" },
+        { status: 400 },
+      );
+    }
+
+    const parsed = BulkReviewSchema.safeParse(rawBody);
     if (!parsed.success) {
       return NextResponse.json(
         {

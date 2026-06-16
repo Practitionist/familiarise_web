@@ -40,6 +40,15 @@ function req(body: unknown) {
   }) as never;
 }
 
+// Raw (possibly invalid) body so request.json() can throw.
+function rawReq(text: string) {
+  return new Request("http://localhost/api/documents/bulk-review", {
+    method: "PATCH",
+    body: text,
+    headers: { "Content-Type": "application/json" },
+  }) as never;
+}
+
 beforeEach(() => {
   jest.clearAllMocks();
   mockedApplyRateLimit.mockResolvedValue(null);
@@ -70,6 +79,25 @@ describe("PATCH /api/documents/bulk-review", () => {
       req({ documentIds: [], reviewStatus: "APPROVED" }),
     );
     expect(res.status).toBe(400);
+    expect(mockedUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("400s on a malformed JSON body (not 500)", async () => {
+    const res = await PATCH(rawReq("{ not valid json"));
+    expect(res.status).toBe(400);
+    expect(mockedUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("returns the rate-limit response and skips the write", async () => {
+    mockedApplyRateLimit.mockResolvedValue(
+      new Response(JSON.stringify({ error: "Too many requests" }), {
+        status: 429,
+      }),
+    );
+    const res = await PATCH(
+      req({ documentIds: ["d1"], reviewStatus: "APPROVED" }),
+    );
+    expect(res.status).toBe(429);
     expect(mockedUpdateMany).not.toHaveBeenCalled();
   });
 
