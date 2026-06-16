@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { CancellationReason } from "@prisma/client";
+import { sumPaise } from "@/lib/payments/utils/money";
 
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
 
@@ -17,7 +18,6 @@ export async function GET(req: NextRequest) {
   try {
     const auth = await requirePrivilegedAuth();
     if (auth.error) return auth.error;
-    const session = auth.session;
 
     // Parse query parameters
     const { searchParams } = new URL(req.url);
@@ -33,7 +33,7 @@ export async function GET(req: NextRequest) {
     // Get cancelled consultations with reasons
     const cancelledConsultations = await prisma.consultation.findMany({
       where: {
-        requestStatus: "CANCELLED",
+        status: "CANCELLED",
         cancelledAt: {
           gte: startDate,
           lte: endDate,
@@ -57,7 +57,7 @@ export async function GET(req: NextRequest) {
     // Get cancelled subscriptions with reasons
     const cancelledSubscriptions = await prisma.subscription.findMany({
       where: {
-        requestStatus: "CANCELLED",
+        status: "CANCELLED",
         cancelledAt: {
           gte: startDate,
           lte: endDate,
@@ -180,7 +180,7 @@ export async function GET(req: NextRequest) {
         status: "SUCCEEDED",
       },
       _sum: {
-        amount: true,
+        amountPaise: true,
       },
       _count: true,
     });
@@ -210,7 +210,7 @@ export async function GET(req: NextRequest) {
         cancellationRate: `${cancellationRate}%`,
         totalBookingsInPeriod: totalBookings,
         potentialRefundAmount,
-        actualRefundedAmount: refunds._sum.amount || 0,
+        actualRefundedAmount: sumPaise(refunds._sum?.amountPaise),
         refundCount: refunds._count,
       },
       byReason,

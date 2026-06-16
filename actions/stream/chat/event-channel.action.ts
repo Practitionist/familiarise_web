@@ -2,7 +2,11 @@
 
 import { z } from "zod";
 import prisma from "@/lib/prisma";
-import { getStreamChatClient } from "@/lib/stream-client";
+import {
+  getStreamChatClient,
+  withStreamCircuitBreaker,
+  StreamUnavailableError,
+} from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
 import {
   isChannelCached,
@@ -71,14 +75,22 @@ export async function checkEventChannelExists(
 
   try {
     const channel = client.channel(channelType, channelId);
-    await channel.query({ state: false, messages: { limit: 0 } });
+    // #473 — fast-fail under a Stream outage instead of blocking the dashboard
+    // for the full 30s timeout. Breaker-open degrades to "false" (same as a
+    // query failure), so the caller treats the channel as not-yet-existing.
+    await withStreamCircuitBreaker(
+      () => channel.query({ state: false, messages: { limit: 0 } }),
+      () => {
+        throw new StreamUnavailableError();
+      },
+    );
 
     // Cache the result
     markChannelExists(channelType, channelId);
     streamLogger.debug("Channel exists", { channelId });
     return true;
   } catch (error) {
-    // Channel doesn't exist if query fails
+    // Channel doesn't exist if query fails (or Stream is unavailable)
     streamLogger.debug("Channel does not exist", { channelId });
     return false;
   }
@@ -117,7 +129,15 @@ export async function addUserToEventChannel(
 
     // Try to add member directly (works for existing channels)
     try {
-      await channel.addMembers([userId]);
+      // #473 — breaker-open rethrows StreamUnavailableError, which propagates
+      // out of the outer try (so we don't masquerade an outage as "channel
+      // missing" and attempt a pointless create that also fast-fails).
+      await withStreamCircuitBreaker(
+        () => channel.addMembers([userId]),
+        () => {
+          throw new StreamUnavailableError();
+        },
+      );
       markMembership(channelId, userId, true);
       streamLogger.debug("Added user to existing channel", {
         channelId,
@@ -125,6 +145,7 @@ export async function addUserToEventChannel(
       });
       return { success: true, channelId };
     } catch (addError) {
+      if (addError instanceof StreamUnavailableError) throw addError;
       // Channel might not exist, try to create it
       streamLogger.debug("Channel may not exist, attempting creation", {
         channelId,
@@ -162,7 +183,13 @@ export async function addUserToEventChannel(
       eventChannelData as Record<string, unknown>,
     );
 
-    await channelWithData.create();
+    // #473 — fast-fail channel creation under a Stream outage.
+    await withStreamCircuitBreaker(
+      () => channelWithData.create(),
+      () => {
+        throw new StreamUnavailableError();
+      },
+    );
 
     markChannelExists(channelType, channelId);
     markMembership(channelId, userId, true);
@@ -381,10 +408,18 @@ export async function getUserEventChannels(userId: string) {
   const client = getStreamChatClient();
 
   try {
-    const channels = await client.queryChannels(
-      { members: { $in: [userId] } },
-      { last_message_at: -1 },
-      { limit: 100 },
+    // #473 — dashboard hot path. Breaker-open returns an empty channel list so
+    // the page renders (degraded) rather than hanging on the 30s Stream timeout.
+    const channels = await withStreamCircuitBreaker(
+      () =>
+        client.queryChannels(
+          { members: { $in: [userId] } },
+          { last_message_at: -1 },
+          { limit: 100 },
+        ),
+      // #473 — degrade to an empty list when the breaker is open (T is inferred
+      // from the operation, so the empty array needs no cast).
+      () => [],
     );
 
     return channels.map((channel) => ({
@@ -538,10 +573,17 @@ export async function syncUserEventChannels(
     let offset = 0;
     let page;
     do {
-      page = await client.queryChannels(
-        { members: { $in: [userId] } },
-        {},
-        { limit: PAGE_SIZE, offset },
+      // #473 — breaker-open returns [] so reconciliation simply skips the
+      // stale-cleanup pass this run rather than blocking the sync on a dead
+      // Stream backend; the add-pass above already short-circuits too.
+      page = await withStreamCircuitBreaker(
+        () =>
+          client.queryChannels(
+            { members: { $in: [userId] } },
+            {},
+            { limit: PAGE_SIZE, offset },
+          ),
+        () => [], // #473 — degrade to empty page when the breaker is open.
       );
       allStreamChannels = allStreamChannels.concat(page);
       offset += PAGE_SIZE;
@@ -633,7 +675,7 @@ async function getDmPairsForUser(
       prisma.consultation.findMany({
         where: {
           consultationPlan: { consultantProfileId: user.consultantProfileId },
-          requestStatus: { in: ["APPROVED", "SCHEDULED"] },
+          status: { in: ["APPROVED", "SCHEDULED"] },
         },
         include: {
           requestedBy: { include: { user: { select: { id: true } } } },
@@ -642,7 +684,7 @@ async function getDmPairsForUser(
       prisma.subscription.findMany({
         where: {
           subscriptionPlan: { consultantProfileId: user.consultantProfileId },
-          requestStatus: { in: ["APPROVED", "SCHEDULED"] },
+          status: { in: ["APPROVED", "SCHEDULED"] },
         },
         include: {
           requestedBy: { include: { user: { select: { id: true } } } },
@@ -662,7 +704,7 @@ async function getDmPairsForUser(
       prisma.consultation.findMany({
         where: {
           requestedById: user.consulteeProfileId,
-          requestStatus: { in: ["APPROVED", "SCHEDULED"] },
+          status: { in: ["APPROVED", "SCHEDULED"] },
         },
         include: {
           consultationPlan: {
@@ -677,7 +719,7 @@ async function getDmPairsForUser(
       prisma.subscription.findMany({
         where: {
           requestedById: user.consulteeProfileId,
-          requestStatus: { in: ["APPROVED", "SCHEDULED"] },
+          status: { in: ["APPROVED", "SCHEDULED"] },
         },
         include: {
           subscriptionPlan: {
@@ -727,10 +769,18 @@ async function addUserToDmChannel(
 
   // Try adding to existing channel first
   try {
-    await channel.addMembers([currentUserId]);
+    // #473 — surface breaker-open as StreamUnavailableError so an outage
+    // doesn't get mistaken for "channel missing" and trigger a doomed create.
+    await withStreamCircuitBreaker(
+      () => channel.addMembers([currentUserId]),
+      () => {
+        throw new StreamUnavailableError();
+      },
+    );
     markMembership(channelId, currentUserId, true);
     return { success: true, channelId };
-  } catch {
+  } catch (addError) {
+    if (addError instanceof StreamUnavailableError) throw addError;
     // Channel may not exist — fall through to creation
   }
 
@@ -742,7 +792,12 @@ async function addUserToDmChannel(
     dm_consultant_user_id: consultantUserId,
     dm_consultee_user_id: consulteeUserId,
   } as Record<string, unknown>);
-  await channelWithData.create();
+  await withStreamCircuitBreaker(
+    () => channelWithData.create(),
+    () => {
+      throw new StreamUnavailableError();
+    },
+  );
 
   markChannelExists(channelType, channelId);
   markMembership(channelId, currentUserId, true);

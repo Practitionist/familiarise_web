@@ -5,12 +5,12 @@
  * Handles auto, manual, and requested slot allocation.
  */
 
-import prisma from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
 import {
   Appointment,
   AppointmentsType,
   Prisma,
-  RequestStatus,
+  AppointmentStatus,
   ScheduleType,
   SlotOfAppointment,
 } from "@prisma/client";
@@ -20,15 +20,24 @@ import {
   AllocationRequest,
   AllocationResult,
   EventType,
-  PrismaTransaction,
   ConsultantAllocationData,
   EventConfig,
   isRecurringEventType,
 } from "./types";
 import { SlotCalculationService } from "./SlotCalculationService";
-import { SlotValidationService } from "./SlotValidationService";
+import {
+  SlotValidationService,
+  isOccupiedByLiveAppointment,
+} from "./SlotValidationService";
 import { buildOccupiedAppointmentFilter } from "./occupancyPolicy";
 import { lockAutoAllocate, unlockAutoAllocate } from "@/utils/appointmentlock";
+import { isExclusionViolation, isUniqueViolation } from "@/lib/db/pg-errors";
+import {
+  ALLOCATION_APPROVABLE_FROM,
+  transitionConsultationRequest,
+  transitionSubscriptionRequest,
+} from "@/lib/booking/transitions";
+import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import {
   DAY_OF_WEEK_TO_INDEX,
   isMinuteWithinWeeklySlot,
@@ -39,6 +48,11 @@ import {
   AllocationNotFoundError,
   AllocationConflictError,
 } from "./errors";
+import {
+  recordBookingUtilization,
+  ProgramAssignmentLimitError,
+} from "@/lib/api/organizations/program-helpers";
+import { resolveCancellationPolicySnapshot } from "@/lib/payments/operations/cancellation-policy";
 
 type AppointmentWithSlots = Appointment & {
   slotsOfAppointment: SlotOfAppointment[];
@@ -116,18 +130,23 @@ export class SlotAllocationService {
     if (error instanceof AllocationConflictError) {
       return { errorCode: error.errorCode, httpStatus: error.httpStatus };
     }
+    // #836 — consultee cancelled (or request expired) while the consultant
+    // was allocating; the whole allocation tx rolled back.
+    if (error instanceof IllegalTransitionError) {
+      return { errorCode: "ILLEGAL_TRANSITION", httpStatus: error.httpStatus };
+    }
 
-    // Prisma unique constraint violation (P2002) — concurrent duplicate booking race
-    if (
-      error &&
-      typeof error === "object" &&
-      "code" in error &&
-      (error as { code: string }).code === "P2002"
-    ) {
+    // Structured DB-conflict detection (no message sniffing): unique (P2002 /
+    // 23505) and the #440 exclusion constraint (23P01). createAppointments
+    // already rethrows these as a typed AllocationConflictError at the source;
+    // this is the safety net for the conflict paths that don't (e.g. the
+    // requested-slots isTentative flip).
+    if (isUniqueViolation(error) || isExclusionViolation(error)) {
       return { errorCode: "LOCK_CONTENTION", httpStatus: 409 };
     }
 
-    // Fallback: string matching for errors thrown by dependencies or legacy code paths
+    // Last-resort fallback for untyped throws from legacy code paths. Matching on
+    // message text is fragile; migrating these callers to typed errors is #837.
     const msg = error instanceof Error ? error.message : "";
     if (
       msg.includes("lock") ||
@@ -232,7 +251,8 @@ export class SlotAllocationService {
             throw new AllocationNotFoundError(`${eventType} not found`);
           }
 
-          const { consultant, config, consulteeUserId } = eventData;
+          const { consultant, config, consulteeUserId, organizationId } =
+            eventData;
 
           // CRITICAL FIX: Check for existing appointments to detect reschedule scenario
           // If tentative slots exist, this is a reschedule and we should preserve the original slot count
@@ -368,6 +388,7 @@ export class SlotAllocationService {
             consultant,
             config,
             appointmentIdsToExclude,
+            consulteeUserId, // #676 AE-1 — also check the consultee's calendar
           );
 
           if (!validation.isValid) {
@@ -380,13 +401,14 @@ export class SlotAllocationService {
           // For reschedules: only delete appointments with tentative slots (preserve confirmed ones)
           // For in-progress: only delete future slots (preserve past confirmed ones)
           // For initial allocation: delete all (shouldn't be any, but safety measure)
-          const { enrolledUserIds } = await this.deleteExistingAppointments(
-            tx,
-            eventType,
-            eventId,
-            isReschedule,
-            isInProgressReallocation,
-          );
+          const { enrolledUserIds, deletedAppointmentIds } =
+            await this.deleteExistingAppointments(
+              tx,
+              eventType,
+              eventId,
+              isReschedule,
+              isInProgressReallocation,
+            );
 
           // Create appointments
           const appointments = await this.createAppointments(
@@ -397,6 +419,7 @@ export class SlotAllocationService {
             consultant.userId,
             consulteeUserId,
             config,
+            organizationId,
           );
 
           // Reconnect enrolled users to new slots (for group events like classes)
@@ -422,6 +445,7 @@ export class SlotAllocationService {
             success: true,
             appointments,
             warnings: validation.warnings,
+            deletedAppointmentIds, // AE-4
           };
         },
         {
@@ -487,7 +511,8 @@ export class SlotAllocationService {
             throw new AllocationNotFoundError(`${eventType} not found`);
           }
 
-          const { consultant, config, consulteeUserId } = eventData;
+          const { consultant, config, consulteeUserId, organizationId } =
+            eventData;
 
           // Convert to Date objects with validation
           const slots = slotStrings.map((s, i) => {
@@ -640,6 +665,7 @@ export class SlotAllocationService {
             consultant,
             config,
             appointmentIdsToExclude,
+            consulteeUserId, // #676 AE-1 — also check the consultee's calendar
           );
 
           if (!validation.isValid) {
@@ -652,13 +678,14 @@ export class SlotAllocationService {
           // For reschedules: only delete tentative slots (preserve confirmed ones)
           // For in-progress: only delete future slots (preserve past confirmed ones)
           // For initial allocation: delete all
-          const { enrolledUserIds } = await this.deleteExistingAppointments(
-            tx,
-            eventType,
-            eventId,
-            isReschedule,
-            isInProgressReallocation,
-          );
+          const { enrolledUserIds, deletedAppointmentIds } =
+            await this.deleteExistingAppointments(
+              tx,
+              eventType,
+              eventId,
+              isReschedule,
+              isInProgressReallocation,
+            );
 
           // Create appointments
           const appointments = await this.createAppointments(
@@ -669,6 +696,7 @@ export class SlotAllocationService {
             consultant.userId,
             consulteeUserId,
             config,
+            organizationId,
           );
 
           // Reconnect enrolled users to new slots (for group events like classes)
@@ -694,6 +722,7 @@ export class SlotAllocationService {
             success: true,
             appointments,
             warnings: validation.warnings,
+            deletedAppointmentIds, // AE-4
           };
         },
         {
@@ -737,7 +766,8 @@ export class SlotAllocationService {
           throw new AllocationNotFoundError(`${eventType} not found`);
         }
 
-        const { consultant, config, requestedSlots } = eventData;
+        const { consultant, config, requestedSlots, consulteeUserId } =
+          eventData;
 
         if (!requestedSlots || requestedSlots.length === 0) {
           throw new AllocationValidationError("No requested slots found");
@@ -788,6 +818,7 @@ export class SlotAllocationService {
           consultant,
           config,
           existingAppointmentIds,
+          consulteeUserId, // #676 AE-1 — also check the consultee's calendar
         );
 
         if (!validation.isValid) {
@@ -879,7 +910,7 @@ export class SlotAllocationService {
    * Find available consecutive slots for auto-allocation
    */
   private static async findAvailableSlots(
-    tx: PrismaTransaction,
+    tx: Tx,
     consultant: ConsultantAllocationData,
     totalSlotsNeeded: number,
     slotsPerCall: number,
@@ -919,15 +950,28 @@ export class SlotAllocationService {
       },
       include: {
         slotsOfAppointment: true,
+        // RV-2 — status + payment let isOccupiedByLiveAppointment drop expired
+        // APPROVED_PENDING_PAYMENT holds, matching what the validator skips.
+        consultation: { select: { status: true } },
+        subscription: { select: { status: true } },
+        payment: { select: { expiresAt: true } },
       },
     });
 
+    // RV-2 — an expired pending-payment hold is not a live blocker, so its slots
+    // must not enter bookedSlots; otherwise the allocator avoids a slot the
+    // validator would happily accept and the two disagree.
+    const occupancyNow = new Date();
     const bookedSlots = new Set(
-      existingAppointments.flatMap((appointment) =>
-        appointment.slotsOfAppointment.map((slot) =>
-          new Date(slot.startsAt).toISOString(),
+      existingAppointments
+        .filter((appointment) =>
+          isOccupiedByLiveAppointment(appointment, occupancyNow),
+        )
+        .flatMap((appointment) =>
+          appointment.slotsOfAppointment.map((slot) =>
+            new Date(slot.startsAt).toISOString(),
+          ),
         ),
-      ),
     );
 
     // Validate availability exists
@@ -1327,13 +1371,19 @@ export class SlotAllocationService {
    * by the caller, but we verify again to prevent data corruption.
    */
   private static async createAppointments(
-    tx: PrismaTransaction,
+    tx: Tx,
     eventType: EventType,
     eventId: string,
     slots: Date[],
     consultantUserId: string,
     consulteeUserId?: string,
     config?: EventConfig,
+    // #768 Comment 5 — slots created here inherit the org context
+    // resolved by fetchEventData. SUBSCRIPTION pulls from the placeholder
+    // Appointment's Payment.organizationId; CLASS pulls from
+    // classPlan.organizationId (host wins per #768 design decision);
+    // CONSULTATION/WEBINAR re-read the existing Appointment's tag.
+    organizationId?: string | null,
   ): Promise<any[]> {
     const slotsPerCall = SlotCalculationService.getSlotsPerCall(
       config?.sessionDurationInHours || config?.durationInHours || 1,
@@ -1367,41 +1417,216 @@ export class SlotAllocationService {
       );
     }
 
-    // Create appointment for each call
-    const appointments = await Promise.all(
-      calls.map((callSlots) => {
-        const slotsToCreate = callSlots.map((slotStart) => {
-          const endTime = new Date(slotStart.getTime() + 30 * 60 * 1000);
-          return {
-            startsAt: slotStart,
-            endsAt: endTime,
-            isTentative: false,
-            user: {
-              connect: consulteeUserId
-                ? [{ id: consultantUserId }, { id: consulteeUserId }]
-                : [{ id: consultantUserId }],
-            },
-          };
-        });
+    // #440 — denormalize the consultant onto each slot for the DB-level
+    // overlap guard. The column is nullable for LEGACY rows only — an active
+    // allocation without a resolvable profile would silently disable the
+    // guard, so it throws instead (review catch on #843).
+    const consultantProfileRow = await tx.consultantProfile.findFirst({
+      where: { user: { id: consultantUserId } },
+      select: { id: true },
+    });
+    if (!consultantProfileRow) {
+      throw new Error(
+        `Consultant profile not found for user ${consultantUserId} — refusing to create slots without the #440 overlap-guard column`,
+      );
+    }
 
-        return tx.appointment.create({
-          data: {
-            appointmentType: this.getAppointmentType(eventType),
-            [this.getEventRelationField(eventType)]: {
-              connect: { id: eventId },
+    // Create appointment for each call. A concurrent booking that overlaps an
+    // existing confirmed slot trips the #440 exclusion constraint (or the unique
+    // guard); convert it to a typed 409 here at the source so classifyError can
+    // stay typed-only rather than sniffing Postgres error strings (#837).
+    // #873 — kept as any[]: tx.appointment.create's include-payload type does
+    // not narrow to AppointmentWithSlots through Promise.all+map here (tsc rejects).
+    let appointments: any[];
+    try {
+      appointments = await Promise.all(
+        calls.map((callSlots) => {
+          const slotsToCreate = callSlots.map((slotStart) => {
+            const endTime = new Date(slotStart.getTime() + 30 * 60 * 1000);
+            return {
+              startsAt: slotStart,
+              endsAt: endTime,
+              isTentative: false,
+              consultantProfileId: consultantProfileRow.id,
+              user: {
+                connect: consulteeUserId
+                  ? [{ id: consultantUserId }, { id: consulteeUserId }]
+                  : [{ id: consultantUserId }],
+              },
+            };
+          });
+
+          return tx.appointment.create({
+            data: {
+              appointmentType: this.getAppointmentType(eventType),
+              [this.getEventRelationField(eventType)]: {
+                connect: { id: eventId },
+              },
+              ...(organizationId ? { organizationId } : {}),
+              // B1 — freeze the refund terms at booking (see cancellation-policy.ts).
+              cancellationPolicySnapshot: JSON.parse(
+                JSON.stringify(resolveCancellationPolicySnapshot()),
+              ),
+              slotsOfAppointment: {
+                create: slotsToCreate,
+              },
             },
-            slotsOfAppointment: {
-              create: slotsToCreate,
+            include: {
+              slotsOfAppointment: true,
             },
-          },
-          include: {
-            slotsOfAppointment: true,
-          },
-        });
-      }),
-    );
+          });
+        }),
+      );
+    } catch (error) {
+      if (isExclusionViolation(error) || isUniqueViolation(error)) {
+        throw new AllocationConflictError(
+          "This time slot was just booked by someone else. Please pick another time.",
+        );
+      }
+      throw error;
+    }
+
+    // Issue #710: per-allocation cap debit for SUBSCRIPTION.
+    //
+    // CONSULTATION/WEBINAR debit at checkout (1 engagement, slots known
+    // synchronously). CLASS debits at enrolment (N engagements, all
+    // appointments pre-allocated by the consultant). SUBSCRIPTION is the
+    // only event type with truly lazy slot allocation — the consultant
+    // adds calls one-at-a-time via the Requests tab — so the cap debit
+    // must happen here, once per Appointment row created.
+    //
+    // The original Payment carries the org tag; we re-resolve the
+    // ProgramAssignment fresh because cycles may have rolled since
+    // signup and we want today's cap, not signup-time's cap. If the
+    // booking wasn't org-sponsored (no organizationId on the original
+    // Payment) we skip silently.
+    if (
+      eventType === "subscription" &&
+      consulteeUserId &&
+      appointments.length > 0
+    ) {
+      await this.recordSubscriptionAllocationCap(
+        tx,
+        eventId,
+        consulteeUserId,
+        appointments.map((a) => a.id),
+      );
+    }
 
     return appointments;
+  }
+
+  /**
+   * For SUBSCRIPTION: debit `engagementsConsumed` per Appointment created
+   * in this allocation batch against the consultee's active org program
+   * assignment. No-op when the booking isn't org-sponsored.
+   *
+   * Throws `ProgramAssignmentLimitError` if the cap is BLOCK and would
+   * be exceeded — the surrounding transaction rolls back the new slots.
+   */
+  private static async recordSubscriptionAllocationCap(
+    tx: Tx,
+    subscriptionId: string,
+    consulteeUserId: string,
+    newAppointmentIds: string[],
+  ): Promise<void> {
+    // Find the original signup Payment via the placeholder Appointment.
+    // SUBSCRIPTION checkout creates exactly one Appointment with a
+    // linked Payment; subsequent allocation appointments have no Payment
+    // of their own.
+    const subscription = await tx.subscription.findUnique({
+      where: { id: subscriptionId },
+      include: {
+        appointments: {
+          include: { payment: true },
+        },
+      },
+    });
+
+    // Schema declares Appointment.payment as Payment[] (one Appointment
+    // can carry multiple Payments historically — refunds/retries chain
+    // off the original). Flatten and pick the org-tagged one.
+    const orgPayment = subscription?.appointments
+      .flatMap((a) => a.payment)
+      .find((p) => !!p.organizationId);
+
+    if (!orgPayment || !orgPayment.organizationId) {
+      // PERSONAL-funded subscription — no org cap to debit.
+      return;
+    }
+
+    const membership = await tx.membership.findUnique({
+      where: {
+        userId_organizationId: {
+          userId: consulteeUserId,
+          organizationId: orgPayment.organizationId,
+        },
+      },
+    });
+    if (!membership || membership.status !== "ACTIVE") return;
+
+    // Re-resolve the active ProgramAssignment at allocation time.
+    // Mirrors the resolver in lib/payments/operations/checkout.ts so the
+    // same coverage filters apply (program ACTIVE, contract ACTIVE,
+    // covers SUBSCRIPTION).
+    const now = new Date();
+    const assignment = await tx.programAssignment.findFirst({
+      where: {
+        membershipId: membership.id,
+        periodStart: { lte: now },
+        periodEnd: { gte: now },
+        program: {
+          status: "ACTIVE",
+          OR: [
+            { coveredPlanTypes: { isEmpty: true } },
+            { coveredPlanTypes: { has: "SUBSCRIPTION" } },
+          ],
+          contract: {
+            organizationId: orgPayment.organizationId,
+            status: "ACTIVE",
+            effectiveFrom: { lte: now },
+            OR: [{ effectiveTo: null }, { effectiveTo: { gte: now } }],
+          },
+        },
+      },
+      orderBy: { periodEnd: "desc" },
+      select: { id: true },
+    });
+    if (!assignment) return;
+
+    // priceAtBookingPaise: full upfront sub price on the very first
+    // allocation (so the BookingUtilization row carries it for
+    // analytics); 0 on subsequent allocations (no new money). The
+    // helper's upsert preserves the first-create priceAtBookingPaise.
+    const existingUtil = await tx.bookingUtilization.findUnique({
+      where: { paymentId: orgPayment.id },
+      select: { id: true },
+    });
+    const priceAtBookingPaise = existingUtil ? 0 : orgPayment.amount;
+
+    try {
+      await recordBookingUtilization(tx, {
+        programAssignmentId: assignment.id,
+        paymentId: orgPayment.id,
+        engagementsConsumed: newAppointmentIds.length,
+        priceAtBookingPaise,
+        // PR-1e (G3): pass the appointment ids so re-allocation
+        // (delete+recreate of the same slot) can't double-debit. The
+        // helper computes the set diff against
+        // BookingUtilization.appointmentIds and increments only by the
+        // genuinely-new ids.
+        appointmentIds: newAppointmentIds,
+      });
+    } catch (err) {
+      if (err instanceof ProgramAssignmentLimitError) {
+        // Cap exceeded with BLOCK behavior — surface upward so the
+        // transaction rolls back the newly-created appointments. The
+        // SlotAllocationService.allocate() error mapper translates this
+        // to the appropriate HTTP status for the route handler.
+        throw err;
+      }
+      throw err;
+    }
   }
 
   /**
@@ -1411,7 +1636,7 @@ export class SlotAllocationService {
    * M2M links are lost. This restores them on the new slots.
    */
   private static async reconnectEnrolledUsers(
-    tx: PrismaTransaction,
+    tx: Tx,
     appointments: AppointmentWithSlots[],
     enrolledUserIds: string[],
     consultantUserId: string,
@@ -1445,14 +1670,20 @@ export class SlotAllocationService {
    *                            Used for in-progress reallocation of classes/subscriptions.
    * @returns preservedSlotCount - Number of past slots that were preserved.
    * @returns enrolledUserIds - User IDs connected to deleted future slots (for reconnection).
+   * @returns deletedAppointmentIds - AE-4: appointment ids whose tentative slots
+   *   were freed (partial reschedule path), so callers can refresh those slots.
    */
   private static async deleteExistingAppointments(
-    tx: PrismaTransaction,
+    tx: Tx,
     eventType: EventType,
     eventId: string,
     onlyTentative: boolean = false,
     preservePastSlots: boolean = false,
-  ): Promise<{ preservedSlotCount: number; enrolledUserIds: string[] }> {
+  ): Promise<{
+    preservedSlotCount: number;
+    enrolledUserIds: string[];
+    deletedAppointmentIds: string[];
+  }> {
     const relationField = this.getEventRelationField(eventType);
     const whereClause = {
       [`${relationField}Id`]: eventId,
@@ -1462,9 +1693,18 @@ export class SlotAllocationService {
       // Find appointments with tentative slots for this event
       const appointments = await tx.appointment.findMany({
         where: whereClause,
-        include: { slotsOfAppointment: true },
+        include: {
+          slotsOfAppointment: true,
+          // B8 — Payment has onDelete: Cascade on Appointment; deleting an
+          // appointment with payment rows destroys the payment/refund audit
+          // trail. Count them so the delete below can refuse.
+          _count: { select: { payment: true } },
+        },
       });
 
+      // AE-4 — record which appointments had tentative slots freed here (ids
+      // captured from the pre-fetched rows, before the deleteMany runs).
+      const deletedAppointmentIds: string[] = [];
       for (const appointment of appointments) {
         const hasConfirmed = appointment.slotsOfAppointment.some(
           (slot) => !slot.isTentative,
@@ -1474,6 +1714,7 @@ export class SlotAllocationService {
         );
 
         if (hasTentative) {
+          deletedAppointmentIds.push(appointment.id);
           // Delete only tentative slots using a direct query (not stale IDs)
           await tx.slotOfAppointment.deleteMany({
             where: {
@@ -1482,15 +1723,17 @@ export class SlotAllocationService {
             },
           });
 
-          // If no confirmed slots exist, delete the now-empty appointment
-          if (!hasConfirmed) {
+          // If no confirmed slots exist, delete the now-empty appointment —
+          // unless payments reference it (B8): the empty shell is cheaper
+          // than a destroyed audit trail; the orphan sweep reports it.
+          if (!hasConfirmed && appointment._count.payment === 0) {
             await tx.appointment.delete({
               where: { id: appointment.id },
             });
           }
         }
       }
-      return { preservedSlotCount: 0, enrolledUserIds: [] };
+      return { preservedSlotCount: 0, enrolledUserIds: [], deletedAppointmentIds };
     } else if (preservePastSlots) {
       // In-progress reallocation: only delete future slots, preserve past ones
       const now = new Date();
@@ -1557,6 +1800,9 @@ export class SlotAllocationService {
       return {
         preservedSlotCount,
         enrolledUserIds: Array.from(enrolledUserIdSet),
+        // AE-4 — in-progress path frees future slots, not tentative ones; the
+        // freed-id contract is scoped to the partial-reschedule case.
+        deletedAppointmentIds: [],
       };
     } else {
       // Full delete: remove all appointments for this event
@@ -1569,7 +1815,7 @@ export class SlotAllocationService {
           tx.appointment.delete({ where: { id: appointment.id } }),
         ),
       );
-      return { preservedSlotCount: 0, enrolledUserIds: [] };
+      return { preservedSlotCount: 0, enrolledUserIds: [], deletedAppointmentIds: [] };
     }
   }
 
@@ -1577,25 +1823,31 @@ export class SlotAllocationService {
    * Update event status after allocation
    */
   private static async updateEventStatus(
-    tx: PrismaTransaction,
+    tx: Tx,
     eventType: EventType,
     eventId: string,
     firstSlot: Date,
     config: EventConfig,
   ): Promise<void> {
     switch (eventType) {
+      // #836 — allocation racing a cancel/expiry must not resurrect the
+      // request to APPROVED; the allowed-from guard rides the WHERE and a
+      // miss rolls back the whole allocation tx. fromIn keeps the APPROVED
+      // self-edge legal for re-allocation of an already-approved event.
       case "consultation":
-        await tx.consultation.update({
+        await transitionConsultationRequest(tx, {
           where: { id: eventId },
-          data: { requestStatus: RequestStatus.APPROVED },
+          to: AppointmentStatus.APPROVED,
+          fromIn: ALLOCATION_APPROVABLE_FROM,
         });
         break;
 
       case "subscription":
-        await tx.subscription.update({
+        await transitionSubscriptionRequest(tx, {
           where: { id: eventId },
+          to: AppointmentStatus.APPROVED,
+          fromIn: ALLOCATION_APPROVABLE_FROM,
           data: {
-            requestStatus: RequestStatus.APPROVED,
             // FIX: Only set schedulingPeriod if not already configured
             // This prevents overwriting the user's scheduling period with the first allocated slot
             // which could cause slots to appear outside the intended scheduling window
@@ -1651,7 +1903,7 @@ export class SlotAllocationService {
    * Fetch event data including consultant and config
    */
   private static async fetchEventData(
-    tx: PrismaTransaction,
+    tx: Tx,
     eventType: EventType,
     eventId: string,
   ): Promise<{
@@ -1659,6 +1911,11 @@ export class SlotAllocationService {
     config: EventConfig;
     consulteeUserId?: string;
     requestedSlots?: Date[];
+    /**
+     * Org context for any Appointment rows created by this allocation.
+     * Resolved per event type; see #768 Comment 5.
+     */
+    organizationId?: string | null;
   } | null> {
     const consultantProfileSelect = {
       select: {
@@ -1681,6 +1938,8 @@ export class SlotAllocationService {
     let config: EventConfig;
     let consulteeUserId: string | undefined;
     let requestedSlots: Date[] | undefined;
+    // #768 Comment 5
+    let organizationId: string | null = null;
 
     switch (eventType) {
       case "consultation": {
@@ -1703,6 +1962,8 @@ export class SlotAllocationService {
         requestedSlots = event.appointment?.slotsOfAppointment?.map(
           (s) => new Date(s.startsAt),
         );
+        // #768 — preserve org tag across reschedule (delete+recreate).
+        organizationId = event.appointment?.organizationId ?? null;
         break;
       }
 
@@ -1714,7 +1975,12 @@ export class SlotAllocationService {
               include: { consultantProfile: consultantProfileSelect },
             },
             requestedBy: { include: { user: true } },
-            appointments: { include: { slotsOfAppointment: true } },
+            appointments: {
+              include: {
+                slotsOfAppointment: true,
+                payment: { select: { organizationId: true } },
+              },
+            },
           },
         });
         if (!event) return null;
@@ -1732,6 +1998,14 @@ export class SlotAllocationService {
         requestedSlots = event.appointments?.flatMap((app) =>
           app.slotsOfAppointment.map((s) => new Date(s.startsAt)),
         );
+        // #768 — placeholder Appointment from checkout carries the org
+        // tag. New lazy-allocated slots inherit it.
+        organizationId =
+          event.appointments?.find((a) => a.organizationId)?.organizationId ??
+          event.appointments
+            ?.flatMap((a) => a.payment)
+            .find((p) => p?.organizationId)?.organizationId ??
+          null;
         break;
       }
 
@@ -1749,6 +2023,9 @@ export class SlotAllocationService {
         config = {
           durationInHours: event.webinarPlan?.durationInHours,
         };
+        // #768 — WEBINAR Appointment is SHARED across registrants from
+        // multiple orgs; tag with the plan's host org if any.
+        organizationId = event.webinarPlan?.organizationId ?? null;
         break;
       }
 
@@ -1782,6 +2059,9 @@ export class SlotAllocationService {
           schedulingPeriodStartsAt: event.schedulingPeriodStartsAt ?? undefined,
           schedulingPeriodEndsAt: event.schedulingPeriodEndsAt ?? undefined,
         };
+        // #768 — CLASS sessions inherit host-org from the plan; locked
+        // even on reschedule. Marketplace classes stay null.
+        organizationId = event.classPlan?.organizationId ?? null;
         break;
       }
     }
@@ -1813,6 +2093,7 @@ export class SlotAllocationService {
       config,
       consulteeUserId,
       requestedSlots,
+      organizationId,
     };
   }
 

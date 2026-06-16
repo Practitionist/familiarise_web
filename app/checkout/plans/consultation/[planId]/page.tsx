@@ -21,6 +21,8 @@ import {
   MINIMUM_BOOKING_LEAD_TIME_MINUTES,
 } from "@/lib/payments/constants";
 import type { AppliedDiscount } from "@/types/checkout";
+import { OrgPayerSelector } from "@/app/checkout/components/OrgPayerSelector";
+import { useSession } from "@/lib/auth-client";
 import {
   ConsultantProfile,
   ConsultantReview,
@@ -32,11 +34,15 @@ import { CompanyLogo } from "@/components/ui/company-logo";
 import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import RazorpayCheckout from "../../../components/RazorpayCheckout";
 import StripeCheckout from "../../../components/StripeCheckout";
+import { createHandleApiError } from "../../utils";
 import { calculatePricing, formatPercentage } from "../../math";
 import { useCurrency } from "@/hooks/useCurrency";
 import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
+import { mintClientIdempotencyKey } from "@/app/checkout/plans/utils";
 
-type ConsultationPlanWithConsultant = ConsultationPlan & {
+// price arrives as number: extended client + JSON serialization (#780)
+type ConsultationPlanWithConsultant = Omit<ConsultationPlan, "price"> & {
+  price: number;
   consultantProfile: ConsultantProfile & {
     user: {
       id: string;
@@ -72,11 +78,15 @@ export default function ConsultationCheckoutPage({
   const { formatPrice, currency } = useCurrency();
   const checkoutTaxContext = useCheckoutTaxContext();
   const [eventData, setEventData] = useState<ConsultationResponse | null>(null);
-  const [_slotData, setSlotData] = useState<Record<string, unknown> | null>(null);
+  const [_slotData, setSlotData] = useState<Record<string, unknown> | null>(
+    null,
+  );
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [_reviews, setReviews] = useState<ConsultantReview[]>([]);
   const [isCheckoutProcessing, setIsCheckoutProcessing] = useState(false);
+  // #828 — useState's lazy initializer runs once per mount.
+  const [idempotencyKey] = useState(mintClientIdempotencyKey);
   const isProcessingRef = useRef(false);
   const [processingGateway, setProcessingGateway] = useState<string | null>(
     null,
@@ -87,6 +97,19 @@ export default function ConsultationCheckoutPage({
   const [isApplyingDiscount, setIsApplyingDiscount] = useState(false);
   const [discountError, setDiscountError] = useState<string | null>(null);
   const [useReferralCredits, setUseReferralCredits] = useState(false);
+  const [selectedOrganizationId, setSelectedOrganizationId] = useState<
+    string | null
+  >(null);
+  const { data: session } = useSession();
+  const selectedOrgFundingSource = useMemo(() => {
+    if (!selectedOrganizationId) return null;
+    const memberships = session?.user?.organizationMemberships ?? [];
+    return (
+      memberships.find((m) => m.organizationId === selectedOrganizationId)
+        ?.fundingSource ?? null
+    );
+  }, [selectedOrganizationId, session?.user?.organizationMemberships]);
+  const isLicenseCovered = selectedOrgFundingSource === "LICENSE";
   const [availableCredits, setAvailableCredits] = useState(0);
   const [isLoadingCredits, setIsLoadingCredits] = useState(true);
 
@@ -98,7 +121,8 @@ export default function ConsultationCheckoutPage({
 
   // Validate search params once with Zod — single source of truth for all checkout flows
   const validatedSearchParams = useMemo((): ConsultationSearchParams | null => {
-    const result = consultationSearchParamsSchema.safeParse(resolvedSearchParams);
+    const result =
+      consultationSearchParamsSchema.safeParse(resolvedSearchParams);
     return result.success ? result.data : null;
   }, [resolvedSearchParams]);
 
@@ -210,63 +234,33 @@ export default function ConsultationCheckoutPage({
     }
   }, [resolvedSearchParams, toast]);
 
-  // Common error handling logic
-  const handleApiError = useCallback((errorData: { error?: string; errorType?: string }) => {
-    const errorMessage = errorData.error || "Operation failed";
-    const errorType = errorData.errorType || "UNKNOWN_ERROR";
-
-    const errorMessages = {
-      PAYMENT_CONFIG_ERROR: {
-        title: "Payment System Error",
-        description: "Payment system unavailable. Please contact support.",
-      },
-      PAYMENT_PROCESSING_ERROR: {
-        title: "Payment Error",
-        description: "Payment processing error. Please try again later.",
-      },
-      DATABASE_ERROR: {
-        title: "System Error",
-        description: "System error. Please try again.",
-      },
-      NOT_FOUND_ERROR: {
-        title: "Not Found",
-        description: errorMessage,
-      },
-      AVAILABILITY_ERROR: {
-        title: "Booking Unavailable",
-        description: errorMessage,
-      },
-      UNKNOWN_ERROR: {
-        title: "Operation Failed",
-        description: errorMessage,
-      },
-    };
-
-    const error =
-      errorMessages[errorType as keyof typeof errorMessages] ||
-      errorMessages.UNKNOWN_ERROR;
-
-    toast({
-      title: error.title,
-      description: error.description,
-      variant: "destructive",
-    });
-  }, [toast]);
+  // Shared error map covers slot-conflict types (AVAILABILITY, LOCK_CONTENTION)
+  // so a slot taken mid-checkout shows a clear "pick another time" toast.
+  // Matches subscription/class/webinar pages (de-dupes the old inline map).
+  const handleApiError = useMemo(() => createHandleApiError(toast), [toast]);
 
   // Common API request logic
-  const makeCheckoutRequest = useCallback(async (
-    checkoutData: CheckoutInput,
-    _gateway: string,
-    isMockPayment: boolean = false,
-  ) => {
-    return fetch("/api/checkout", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ ...checkoutData, isMockPayment }),
-    });
-  }, []);
+  const makeCheckoutRequest = useCallback(
+    async (
+      checkoutData: CheckoutInput,
+      _gateway: string,
+      isMockPayment: boolean = false,
+    ) => {
+      return fetch("/api/checkout", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          ...checkoutData,
+          isMockPayment,
+          // #828 — stable per-mount; the server dedupes retries on this key.
+          clientIdempotencyKey: idempotencyKey,
+        }),
+      });
+    },
+    [idempotencyKey],
+  );
 
   const handleCheckout = useCallback(
     async (gateway: PaymentGateway, isMockPayment: boolean = false) => {
@@ -304,14 +298,19 @@ export default function ConsultationCheckoutPage({
           appointmentType: "CONSULTATION",
           planId: resolvedParams.planId,
           paymentGateway: gateway as PaymentGateway,
-          slotStartTimeInUTC: validatedSearchParams.slotStartTimeInUTC,
-          slotEndTimeInUTC: validatedSearchParams.slotEndTimeInUTC,
-          slotOfAvailabilityWeeklyId: validatedSearchParams.slotOfAvailabilityWeeklyId,
-          slotOfAvailabilityCustomId: validatedSearchParams.slotOfAvailabilityCustomId,
+          startsAt: validatedSearchParams.startsAt,
+          endsAt: validatedSearchParams.endsAt,
+          slotOfAvailabilityWeeklyId:
+            validatedSearchParams.slotOfAvailabilityWeeklyId,
+          slotOfAvailabilityCustomId:
+            validatedSearchParams.slotOfAvailabilityCustomId,
           discountCode: appliedDiscount?.code,
           displayCurrency: currency,
           notes: validatedSearchParams.notes,
-          useReferralCredits,
+          useReferralCredits: selectedOrganizationId
+            ? false
+            : useReferralCredits,
+          organizationId: selectedOrganizationId ?? undefined,
         });
 
         // Make single API call - backend decides dev vs prod flow
@@ -335,10 +334,20 @@ export default function ConsultationCheckoutPage({
           throw new Error("Invalid response format from server");
         }
 
+        // Handle application-level errors returned with HTTP 200 (e.g. expired contract, credit limit)
+        if (!data.success) {
+          handleApiError({ error: data.error, errorType: data.errorType });
+          return;
+        }
+
         // handleCheckout is only invoked by the dev-only Mock Pay button (isMockPayment=true).
         // Real payments go through StripeCheckout/RazorpayCheckout components.
         // FIX #520: Also handle zero-amount payments (credits covered full cost)
-        if (data.skipPayment || data.isMockPayment || data.isZeroAmountPayment) {
+        if (
+          data.skipPayment ||
+          data.isMockPayment ||
+          data.isZeroAmountPayment
+        ) {
           toast({
             title: "✅ Consultation Booked Successfully!",
             description: data.isZeroAmountPayment
@@ -377,6 +386,7 @@ export default function ConsultationCheckoutPage({
       maintenanceBlockReason,
       appliedDiscount,
       useReferralCredits,
+      selectedOrganizationId,
       validatedSearchParams,
       currency,
       handleApiError,
@@ -396,9 +406,12 @@ export default function ConsultationCheckoutPage({
         }
 
         // Staleness check: verify the selected slot hasn't passed or is too soon
-        const slotStart = new Date(validatedSearchParams.slotStartTimeInUTC);
+        const slotStart = new Date(validatedSearchParams.startsAt);
         const now = new Date();
-        if (slotStart.getTime() < now.getTime() + MINIMUM_BOOKING_LEAD_TIME_MS) {
+        if (
+          slotStart.getTime() <
+          now.getTime() + MINIMUM_BOOKING_LEAD_TIME_MS
+        ) {
           throw new Error(
             "The selected time slot is no longer available. It has either passed or starts too soon. Please go back and select a new slot.",
           );
@@ -477,7 +490,7 @@ export default function ConsultationCheckoutPage({
     if (!validatedSearchParams) return;
 
     const checkStaleness = () => {
-      const slotStart = new Date(validatedSearchParams.slotStartTimeInUTC);
+      const slotStart = new Date(validatedSearchParams.startsAt);
       const now = new Date();
       const minutesUntilSlot =
         (slotStart.getTime() - now.getTime()) / (60 * 1000);
@@ -599,7 +612,7 @@ export default function ConsultationCheckoutPage({
               <div>
                 {validatedSearchParams
                   ? new Date(
-                      validatedSearchParams.slotStartTimeInUTC,
+                      validatedSearchParams.startsAt,
                     ).toLocaleDateString(undefined, {
                       weekday: "long",
                       year: "numeric",
@@ -614,9 +627,9 @@ export default function ConsultationCheckoutPage({
               <div>
                 {validatedSearchParams
                   ? `${new Date(
-                      validatedSearchParams.slotStartTimeInUTC,
+                      validatedSearchParams.startsAt,
                     ).toLocaleTimeString()} - ${new Date(
-                      validatedSearchParams.slotEndTimeInUTC,
+                      validatedSearchParams.endsAt,
                     ).toLocaleTimeString()} (${Intl.DateTimeFormat().resolvedOptions().timeZone})`
                   : "—"}
               </div>
@@ -643,6 +656,17 @@ export default function ConsultationCheckoutPage({
             </div>
           </div>
         </div>
+        <Separator className="bg-zinc-200" />
+        <OrgPayerSelector
+          selectedOrganizationId={selectedOrganizationId}
+          planType="CONSULTATION"
+          planId={resolvedParams.planId}
+          onSelect={(id) => {
+            setSelectedOrganizationId(id);
+            // Disable referral credits when org is selected
+            if (id) setUseReferralCredits(false);
+          }}
+        />
         <Separator className="bg-zinc-200" />
         <div className="grid gap-4">
           <div className="font-semibold">Discount Codes</div>
@@ -783,8 +807,18 @@ export default function ConsultationCheckoutPage({
               <Separator className="bg-zinc-200" />
               <div className="flex items-center justify-between font-semibold">
                 <div>Total</div>
-                <div>{formatPrice(pricing.total)}</div>
+                <div>
+                  {isLicenseCovered
+                    ? formatPrice(0)
+                    : formatPrice(pricing.total)}
+                </div>
               </div>
+              {isLicenseCovered && (
+                <p className="text-xs text-emerald-600">
+                  Session value {formatPrice(pricing.total)} — covered by
+                  enterprise license
+                </p>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -828,20 +862,28 @@ export default function ConsultationCheckoutPage({
                   </div>
                   {gateway.isActive ? (
                     <div className="flex gap-2">
-                      {validatedSearchParams && gateway.gateway === "RAZORPAY" ? (
+                      {validatedSearchParams &&
+                      gateway.gateway === "RAZORPAY" ? (
                         <RazorpayCheckout
                           checkoutData={createCheckoutData({
                             appointmentType: "CONSULTATION",
                             planId: resolvedParams.planId,
                             paymentGateway: "RAZORPAY",
-                            slotStartTimeInUTC: validatedSearchParams.slotStartTimeInUTC,
-                            slotEndTimeInUTC: validatedSearchParams.slotEndTimeInUTC,
-                            slotOfAvailabilityWeeklyId: validatedSearchParams.slotOfAvailabilityWeeklyId,
-                            slotOfAvailabilityCustomId: validatedSearchParams.slotOfAvailabilityCustomId,
+                            startsAt:
+                              validatedSearchParams.startsAt,
+                            endsAt:
+                              validatedSearchParams.endsAt,
+                            slotOfAvailabilityWeeklyId:
+                              validatedSearchParams.slotOfAvailabilityWeeklyId,
+                            slotOfAvailabilityCustomId:
+                              validatedSearchParams.slotOfAvailabilityCustomId,
                             discountCode: appliedDiscount?.code,
                             displayCurrency: currency,
                             notes: validatedSearchParams.notes,
-                            useReferralCredits,
+                            useReferralCredits: selectedOrganizationId
+                              ? false
+                              : useReferralCredits,
+                            organizationId: selectedOrganizationId ?? undefined,
                           })}
                           onPaymentSuccess={(response: {
                             razorpay_payment_id?: string;
@@ -854,32 +896,47 @@ export default function ConsultationCheckoutPage({
                             window.location.href = "/dashboard";
                           }}
                           disabled={isMaintenanceBlocked}
-                          onPaymentError={(error: { description?: string; code?: string; reason?: string; message?: string }) => {
-                            toast({
-                              title: "Payment Failed",
-                              description:
-                                error.description ||
-                                "Something went wrong while processing your payment. Please try again.",
-                              variant: "destructive",
-                            });
-                          }}
+                          onPaymentError={(error: {
+                            description?: string;
+                            code?: string;
+                            reason?: string;
+                            message?: string;
+                          }) =>
+                            handleApiError({
+                              error:
+                                error.description ??
+                                error.message ??
+                                error.reason,
+                              errorType: error.code,
+                            })
+                          }
                         />
-                      ) : validatedSearchParams && gateway.gateway === "STRIPE" ? (
+                      ) : validatedSearchParams &&
+                        gateway.gateway === "STRIPE" ? (
                         <StripeCheckout
                           checkoutData={createCheckoutData({
                             appointmentType: "CONSULTATION",
                             planId: resolvedParams.planId,
                             paymentGateway: "STRIPE",
-                            slotStartTimeInUTC: validatedSearchParams.slotStartTimeInUTC,
-                            slotEndTimeInUTC: validatedSearchParams.slotEndTimeInUTC,
-                            slotOfAvailabilityWeeklyId: validatedSearchParams.slotOfAvailabilityWeeklyId,
-                            slotOfAvailabilityCustomId: validatedSearchParams.slotOfAvailabilityCustomId,
+                            startsAt:
+                              validatedSearchParams.startsAt,
+                            endsAt:
+                              validatedSearchParams.endsAt,
+                            slotOfAvailabilityWeeklyId:
+                              validatedSearchParams.slotOfAvailabilityWeeklyId,
+                            slotOfAvailabilityCustomId:
+                              validatedSearchParams.slotOfAvailabilityCustomId,
                             discountCode: appliedDiscount?.code,
                             displayCurrency: currency,
                             notes: validatedSearchParams.notes,
-                            useReferralCredits,
+                            useReferralCredits: selectedOrganizationId
+                              ? false
+                              : useReferralCredits,
+                            organizationId: selectedOrganizationId ?? undefined,
                           })}
-                          onPaymentSuccess={(response: { message?: string }) => {
+                          onPaymentSuccess={(response: {
+                            message?: string;
+                          }) => {
                             toast({
                               title: "Payment Successful",
                               description:
@@ -889,16 +946,16 @@ export default function ConsultationCheckoutPage({
                             window.location.href = "/dashboard";
                           }}
                           disabled={isMaintenanceBlocked}
-                          onPaymentError={(error: { message?: string; description?: string }) => {
-                            toast({
-                              title: "Payment Failed",
-                              description:
-                                error.message ||
-                                error.description ||
-                                "Something went wrong while processing your payment. Please try again.",
-                              variant: "destructive",
-                            });
-                          }}
+                          onPaymentError={(error: {
+                            message?: string;
+                            description?: string;
+                            errorType?: string;
+                          }) =>
+                            handleApiError({
+                              error: error.message ?? error.description,
+                              errorType: error.errorType,
+                            })
+                          }
                         />
                       ) : null}
                       {/* Mock Payment Button - development only */}
@@ -906,7 +963,9 @@ export default function ConsultationCheckoutPage({
                         <Button
                           variant="secondary"
                           onClick={() => handleCheckout(gateway.gateway, true)}
-                          disabled={isCheckoutProcessing || isMaintenanceBlocked}
+                          disabled={
+                            isCheckoutProcessing || isMaintenanceBlocked
+                          }
                         >
                           {isCheckoutProcessing &&
                           processingGateway === `${gateway.gateway}-mock` ? (

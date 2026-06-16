@@ -22,7 +22,6 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
   try {
     const auth = await requirePrivilegedAuth();
     if (auth.error) return auth.error;
-    const session = auth.session;
 
     const { ticketId } = await params;
 
@@ -139,7 +138,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
             where: { id: ticket.refundId },
             select: {
               id: true,
-              amount: true,
+              amountPaise: true,
               currency: true,
               status: true,
               reason: true,
@@ -173,7 +172,6 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
   try {
     const auth = await requirePrivilegedAuth();
     if (auth.error) return auth.error;
-    const session = auth.session;
 
     const { ticketId } = await params;
     const body = await req.json();

@@ -14,6 +14,9 @@ on:
 
 env:
   DATABASE_URL: ${{ secrets.DATABASE_URL }}
+  # #476 cron locks load lib/redis at import — every job entry needs these
+  UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
+  UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
   DIRECT_URL: ${{ secrets.DIRECT_URL }}
   RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
   NEXT_PUBLIC_APP_URL: ${{ secrets.NEXT_PUBLIC_APP_URL }}
@@ -47,7 +50,7 @@ jobs:
         id: run_script
         run: |
           set -o pipefail
-          npx tsx scripts/waitlist/process-expired-notifications.ts 2>&1 | tee /tmp/job-output.txt
+          npx tsx jobs/waitlist/process-expired-notifications.ts 2>&1 | tee /tmp/job-output.txt
         env:
           DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
         continue-on-error: true
@@ -67,6 +70,10 @@ jobs:
           echo "## Waitlist Expiration Processing Complete" >> $GITHUB_STEP_SUMMARY
           echo "Processed expired notifications and notified next users in queue." >> $GITHUB_STEP_SUMMARY
 
+      # Deliberate divergence from notify-ops-failure.sh (the Slack money-cron
+      # pager): waitlist failures are product-ops triage, not money-path
+      # incidents, and the GitHub-issue thread keeps per-failure context a
+      # pager message would drop.
       - name: Notify on failure
         if: steps.run_script.outcome == 'failure'
         uses: actions/github-script@v7

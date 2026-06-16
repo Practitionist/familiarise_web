@@ -10,6 +10,7 @@ import { RecordingService } from "@/lib/stream/recording-service";
 import { RecordingTransferService } from "@/lib/stream/recording-transfer-service";
 import prisma from "@/lib/prisma";
 import { streamLogger } from "@/lib/stream-logger";
+import { isPaymentEntitled } from "@/lib/payments/utils/refund-balance";
 
 import { getSession } from "@/lib/auth-server";
 type RouteParams = {
@@ -57,7 +58,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
           appointment.webinar.webinarPlan.consultantProfileId ===
           consultantProfileId;
         if (!hasAccess && consultantProfileId) {
-          const collab = await prisma.webinarCollaborator.findFirst({
+          const collab = await prisma.collaborator.findFirst({
             where: {
               webinarPlanId: appointment.webinar.webinarPlan.id,
               consultantProfileId,
@@ -71,7 +72,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
           appointment.class.classPlan.consultantProfileId ===
           consultantProfileId;
         if (!hasAccess && consultantProfileId) {
-          const collab = await prisma.classCollaborator.findFirst({
+          const collab = await prisma.collaborator.findFirst({
             where: {
               classPlanId: appointment.class.classPlan.id,
               consultantProfileId,
@@ -82,35 +83,29 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         }
       }
     } else if (session.user.role === "CONSULTEE") {
-      // Consultee can access recordings for sessions they participated in
+      // Consultee can access recordings for sessions they participated in.
       // Use plan-level entitlement: the recording's appointment is the consultant's
-      // allocation slot, not the attendee's enrollment slot, so we check by plan ID
-      if (appointment?.webinar?.webinarPlan?.id) {
-        const payment = await prisma.payment.findFirst({
+      // allocation slot, not the attendee's enrollment slot, so we check by plan ID.
+      const planFilter = appointment?.webinar?.webinarPlan?.id
+        ? { webinar: { webinarPlanId: appointment.webinar.webinarPlan.id } }
+        : appointment?.class?.classPlan?.id
+          ? { class: { classPlanId: appointment.class.classPlan.id } }
+          : null;
+      if (planFilter) {
+        const payments = await prisma.payment.findMany({
           where: {
             userId: session.user.id,
             paymentStatus: "SUCCEEDED",
-            appointment: {
-              webinar: {
-                webinarPlanId: appointment.webinar.webinarPlan.id,
-              },
-            },
+            appointment: planFilter,
+          },
+          select: {
+            amount: true,
+            refunds: { select: { amountPaise: true, status: true } },
           },
         });
-        hasAccess = !!payment;
-      } else if (appointment?.class?.classPlan?.id) {
-        const payment = await prisma.payment.findFirst({
-          where: {
-            userId: session.user.id,
-            paymentStatus: "SUCCEEDED",
-            appointment: {
-              class: {
-                classPlanId: appointment.class.classPlan.id,
-              },
-            },
-          },
-        });
-        hasAccess = !!payment;
+        // #689 — a SUCCEEDED payment fully reversed by refunds is no longer an
+        // entitlement; access needs at least one net-positive purchase for the plan.
+        hasAccess = payments.some(isPaymentEntitled);
       }
     } else if (session.user.role === "ADMIN" || session.user.role === "STAFF") {
       // Admin and staff can access all recordings

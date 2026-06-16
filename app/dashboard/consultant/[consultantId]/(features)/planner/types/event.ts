@@ -13,15 +13,19 @@ import { ConsultationPlan, SubscriptionPlan } from "@/schemas/plans";
 export type WebinarEvent = Omit<TWebinar, "webinarPlan"> & {
   type: "webinar";
   scheduledAt?: Date;
-  webinarPlan: Omit<TWebinar["webinarPlan"], "topics"> & {
+  // price is number at runtime via the extended client (#780)
+  webinarPlan: Omit<TWebinar["webinarPlan"], "topics" | "price"> & {
     topics: string[];
+    price: number;
   };
 };
 
 export type ClassEvent = Omit<TClass, "classPlan"> & {
   type: "class";
-  classPlan: Omit<TClass["classPlan"], "topics"> & {
+  // price is number at runtime via the extended client (#780)
+  classPlan: Omit<TClass["classPlan"], "topics" | "price"> & {
     topics: string[];
+    price: number;
   };
 };
 
@@ -145,7 +149,7 @@ export type FormData = {
     }
 );
 
-export interface BasePlannerProps {
+interface BasePlannerProps {
   isOpen: boolean;
   onClose: () => void;
   consultantId: string;
@@ -187,7 +191,7 @@ export type ClassContentInput = {
 };
 
 // Define input type for SubscriptionContent (session roadmap)
-export type SubscriptionContentInput = {
+type SubscriptionContentInput = {
   id?: string; // Optional for new content
   title: string;
   description: string;

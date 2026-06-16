@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "lib/prisma";
 import { getSession } from "@/lib/auth-server";
+import { spamLimiter, applyRateLimit } from "@/lib/rate-limit";
+import { assertBodySize } from "@/lib/validation/limits";
+import { CreateSupportResponseSchema } from "@/schemas/support";
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ ticketId: string }> },
@@ -15,8 +18,24 @@ export async function POST(
       );
     }
 
+    // #831 — raw body.message was unbounded and unlimited
+    const rl = await applyRateLimit(
+      spamLimiter,
+      `ticket-response:${session.user.id}`,
+    );
+    if (rl) return rl;
+    const tooLarge = assertBodySize(req);
+    if (tooLarge) return tooLarge;
+
     const { ticketId } = resolvedParams;
-    const body = await req.json();
+    const parsed = CreateSupportResponseSchema.safeParse(await req.json());
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: "Validation failed", details: parsed.error.issues },
+        { status: 400 },
+      );
+    }
+    const body = parsed.data;
 
     // Verify the ticket exists and belongs to the user
     const ticket = await prisma.supportTicket.findFirst({

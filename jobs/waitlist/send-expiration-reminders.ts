@@ -1,116 +1,81 @@
 /**
- * Job: Send Waitlist Expiration Reminders
+ * Send Waitlist Reminders Job (GitHub Actions Wrapper)
  *
- * Modular job function that can be called from various schedulers
- * (GitHub Actions, Vercel Cron, AWS Lambda, etc.)
+ * Thin wrapper around scripts/waitlist/send-expiration-reminders.ts (#856 —
+ * this file previously held a full duplicate implementation that had already
+ * drifted from the script; the script's core is now the single source).
+ * Adds GitHub Actions-specific outputs and error handling.
+ *
+ * Runs hourly at :30 via scheduled workflow.
  */
 
-import prisma from "@/lib/prisma";
-import { WaitlistStatus } from "@prisma/client";
-import { sendWaitlistExpiringEmail } from "@/lib/waitlist/notifications";
+import {
+  sendExpirationReminders,
+  disconnectDatabase,
+  type SendRemindersResult,
+} from "../../scripts/waitlist/send-expiration-reminders";
+import fs from "fs";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
+import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
 
-export interface SendRemindersResult {
-  found: number;
-  sent: number;
-  errors: Array<{ id: string; error: string }>;
-  duration: number;
-}
+function outputToGitHubActions(result: SendRemindersResult): void {
+  if (!process.env.GITHUB_ACTIONS) return;
 
-/**
- * Send reminder emails to users whose spot offers expire in ~12 hours
- *
- * 1. Find entries where status = NOTIFIED AND expiresAt - now() < 12 hours AND not already reminded
- * 2. Send reminder email
- * 3. Mark as reminded
- */
-export async function sendExpirationRemindersJob(): Promise<SendRemindersResult> {
-  await abortIfMaintenance("send-expiration-reminders");
-  const startTime = Date.now();
-  const errors: Array<{ id: string; error: string }> = [];
+  const outputFile = process.env.GITHUB_OUTPUT;
+  if (outputFile) {
+    const outputs = [
+      `found=${result.found}`,
+      `sent=${result.sent}`,
+      `success=${result.success}`,
+    ].join("\n");
 
-  const now = new Date();
-  const twelveHoursFromNow = new Date(now.getTime() + 12 * 60 * 60 * 1000);
-  const thirteenHoursFromNow = new Date(now.getTime() + 13 * 60 * 60 * 1000);
-
-  // Find NOTIFIED entries expiring in 12-13 hours that haven't been reminded yet
-  const entriesToRemind = await prisma.waitlist.findMany({
-    where: {
-      status: WaitlistStatus.NOTIFIED,
-      expiresAt: {
-        gte: twelveHoursFromNow,
-        lt: thirteenHoursFromNow,
-      },
-      reminderSentAt: null,
-    },
-    include: {
-      user: {
-        select: {
-          email: true,
-          name: true,
-        },
-      },
-      webinar: {
-        include: {
-          webinarPlan: true,
-        },
-      },
-      class: {
-        include: {
-          classPlan: true,
-        },
-      },
-    },
-  });
-
-  let sent = 0;
-
-  for (const entry of entriesToRemind) {
-    const eventTitle =
-      entry.webinar?.webinarPlan.title ||
-      entry.class?.classPlan.title ||
-      "Event";
-    const eventType = entry.webinarId ? "webinar" : "class";
-    const planId = entry.webinar?.webinarPlan.id || entry.class?.classPlan.id;
-    const eventId = entry.webinarId || entry.classId;
-
-    if (!entry.user.email || !entry.expiresAt || !planId || !eventId) {
-      errors.push({ id: entry.id, error: "Missing required data" });
-      continue;
-    }
-
-    try {
-      // Send reminder email
-      await sendWaitlistExpiringEmail({
-        email: entry.user.email,
-        name: entry.user.name || "Valued User",
-        eventTitle,
-        eventType,
-        eventId: eventId,
-        expiresAt: entry.expiresAt,
-        waitlistId: entry.id,
-      });
-
-      // Mark as reminded
-      await prisma.waitlist.update({
-        where: { id: entry.id },
-        data: { reminderSentAt: now },
-      });
-
-      sent++;
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error";
-      errors.push({ id: entry.id, error: errorMessage });
-    }
+    fs.appendFileSync(outputFile, outputs + "\n");
   }
 
-  return {
-    found: entriesToRemind.length,
-    sent,
-    errors,
-    duration: Date.now() - startTime,
-  };
+  if (!result.success) {
+    console.log(
+      `::warning::Waitlist reminders had errors: ${result.errors
+        .map((e) => `${e.id}: ${e.error}`)
+        .join("; ")}`,
+    );
+  }
 }
 
-export default sendExpirationRemindersJob;
+async function main(): Promise<void> {
+  await abortIfMaintenance("send-expiration-reminders");
+  console.log("🔔 Starting expiration reminder sender...");
+  console.log(`Timestamp: ${new Date().toISOString()}`);
+
+  try {
+    const result = await sendExpirationReminders();
+
+    console.log("\n📊 Job Results:");
+    console.log(`   Found: ${result.found}`);
+    console.log(`   Sent: ${result.sent}`);
+    console.log(`   Errors: ${result.errors.length}`);
+
+    outputToGitHubActions(result);
+
+    if (!result.success) {
+      process.exit(1);
+    }
+  } catch (error) {
+    // #476 — lock held = another run is live; skip cleanly (exit 0).
+    if (error instanceof CronLockHeldError) {
+      console.log(`⏭️  ${error.message}`);
+      return;
+    }
+    console.error("❌ Error sending expiration reminders:", error);
+    process.exit(1);
+  } finally {
+    await disconnectDatabase();
+  }
+}
+
+// Run the job — the catch covers rejections that escape main's own
+// try/catch (e.g. abortIfMaintenance), matching the payouts wrapper.
+main().catch((error) => {
+  console.error("❌ expiration reminder job failed:");
+  console.error(error);
+  process.exit(1);
+});

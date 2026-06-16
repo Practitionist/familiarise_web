@@ -5,6 +5,7 @@
 
 import { StreamChat } from "stream-chat";
 import { StreamClient } from "@stream-io/node-sdk";
+import { withCircuitBreaker } from "@/lib/redis";
 
 // Environment validation
 const STREAM_API_KEY = process.env.NEXT_PUBLIC_STREAM_API_KEY;
@@ -140,6 +141,50 @@ export function resetClients(): void {
   chatClientInstance = null;
   videoClientInstance = null;
   isInitialized = false;
+}
+
+/**
+ * Sentinel thrown by withStreamCircuitBreaker when the breaker is OPEN and the
+ * caller did not supply a fallback. Lets hot paths distinguish "Stream is down,
+ * we fast-failed" from a genuine Stream API error and degrade accordingly.
+ */
+export class StreamUnavailableError extends Error {
+  constructor() {
+    super("Stream circuit breaker is OPEN — Stream temporarily unavailable");
+    this.name = "StreamUnavailableError";
+  }
+}
+
+/**
+ * #473 — wrap a hot-path Stream network call in the shared circuit breaker so a
+ * Stream outage fast-fails (sub-ms) instead of every dashboard load eating the
+ * full 30s client timeout and cascading.
+ *
+ * Closed-breaker behaviour is identical to calling `operation` directly: a real
+ * Stream error rejects with the original error (we pass NO fallback to
+ * withCircuitBreaker, so it rethrows). Only when the breaker is already OPEN
+ * does withCircuitBreaker reject with its generic "circuit breaker is OPEN"
+ * Error — we intercept that to run the caller's `fallback` (graceful
+ * degradation) or throw the typed StreamUnavailableError so callers can branch.
+ */
+export async function withStreamCircuitBreaker<T>(
+  operation: () => Promise<T>,
+  fallback?: () => T,
+): Promise<T> {
+  try {
+    return await withCircuitBreaker(operation);
+  } catch (error) {
+    // Distinguish "breaker is OPEN, we never tried" from a real Stream error.
+    if (
+      error instanceof Error &&
+      error.message.includes("circuit breaker is OPEN")
+    ) {
+      if (fallback) return fallback();
+      throw new StreamUnavailableError();
+    }
+    // Genuine Stream/operation error — preserve original behaviour, rethrow.
+    throw error;
+  }
 }
 
 // Type exports for external use

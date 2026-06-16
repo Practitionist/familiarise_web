@@ -11,6 +11,8 @@
  * Session Events:
  * - call.session_ended
  * - call.ended
+ * - call.session_participant_joined
+ * - call.session_participant_left
  *
  * Chat Moderation Events:
  * - user.flagged
@@ -32,8 +34,12 @@ import {
 import {
   handleSessionEnded,
   handleCallEnded,
+  handleSessionParticipantJoined,
+  handleSessionParticipantLeft,
   StreamSessionEndedEvent,
   StreamCallEndedEvent,
+  StreamSessionParticipantJoinedEvent,
+  StreamSessionParticipantLeftEvent,
 } from "@/lib/stream/session-handlers";
 import {
   handleUserFlagged,
@@ -57,6 +63,9 @@ const HANDLED_EVENT_TYPES = [
   // Session events
   "call.session_ended",
   "call.ended",
+  // STR-4 — per-attendee presence (unblocks #471 no-show / #472 overrun)
+  "call.session_participant_joined",
+  "call.session_participant_left",
   // Chat moderation events
   "user.flagged",
   "message.flagged",
@@ -140,6 +149,27 @@ const streamCallEndedSchema = streamCallBaseEventSchema.extend({
     })
     .optional(),
   ended_by_user_id: z.string().optional(),
+});
+
+// STR-4 — participant joined/left. We only need the nested app user id
+// (participant.user.id) + session_id; everything else is passed through loosely.
+const streamParticipantSchema = z.object({
+  user: z.object({ id: z.string() }),
+  user_session_id: z.string().optional(),
+  role: z.string().optional(),
+});
+
+const streamSessionParticipantJoinedSchema = streamCallBaseEventSchema.extend({
+  type: z.literal("call.session_participant_joined"),
+  session_id: z.string(),
+  participant: streamParticipantSchema,
+});
+
+const streamSessionParticipantLeftSchema = streamCallBaseEventSchema.extend({
+  type: z.literal("call.session_participant_left"),
+  session_id: z.string(),
+  duration_seconds: z.number().optional(),
+  participant: streamParticipantSchema,
 });
 
 // Chat moderation: user flagged schema
@@ -306,6 +336,24 @@ export async function POST(req: NextRequest) {
         case "call.ended": {
           const callEndedEvent = streamCallEndedSchema.parse(event);
           await handleCallEnded(callEndedEvent as StreamCallEndedEvent);
+          break;
+        }
+
+        // STR-4 — per-attendee presence
+        case "call.session_participant_joined": {
+          const joinedEvent =
+            streamSessionParticipantJoinedSchema.parse(event);
+          await handleSessionParticipantJoined(
+            joinedEvent as StreamSessionParticipantJoinedEvent,
+          );
+          break;
+        }
+
+        case "call.session_participant_left": {
+          const leftEvent = streamSessionParticipantLeftSchema.parse(event);
+          await handleSessionParticipantLeft(
+            leftEvent as StreamSessionParticipantLeftEvent,
+          );
           break;
         }
 

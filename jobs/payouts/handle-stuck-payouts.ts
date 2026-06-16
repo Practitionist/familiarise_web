@@ -14,6 +14,11 @@ import {
 } from "../../scripts/payouts/handle-stuck-payouts";
 import fs from "fs";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
+import {
+  recordSystemEvent,
+  recordSystemError,
+} from "../../lib/enterprise/system-events";
+import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
 
 /**
  * Output results to GitHub Actions
@@ -35,7 +40,11 @@ function outputToGitHubActions(result: StuckPayoutsResult): void {
     fs.appendFileSync(outputFile, outputs + "\n");
   }
 
-  if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
+  // #677 PM-1 — match the canonical name the underlying script reads
+  if (
+    !process.env.RAZORPAY_KEY_ID ||
+    !(process.env.RAZORPAY_SECRET ?? process.env.RAZORPAY_KEY_SECRET)
+  ) {
     console.log(
       `::warning::Razorpay credentials not configured — Razorpay records were skipped`,
     );
@@ -80,11 +89,39 @@ async function main(): Promise<void> {
 
     outputToGitHubActions(result);
 
+    // #776 §K — stuck/failed payouts mean a consultant isn't getting paid;
+    // page on it rather than leaving it in CI logs.
+    if (result.failedCount > 0 || !result.success) {
+      await recordSystemEvent({
+        category: "PAYOUT",
+        severity: "ERROR",
+        message: `Stuck-payout handler: ${result.failedCount} permanently failed, success=${result.success}`,
+        context: {
+          totalProcessed: result.totalProcessed,
+          failedCount: result.failedCount,
+          retriedCount: result.retriedCount,
+          errors: result.errors,
+        },
+      });
+    }
+
     if (!result.success) {
       process.exit(1);
     }
   } catch (error) {
+    // #476 — lock held = another run is live; skipping is the correct
+    // outcome (exit 0, no page). CronLockUnavailableError falls through
+    // to exit 1 so the workflow's notify step pages.
+    if (error instanceof CronLockHeldError) {
+      console.log(`⏭️  ${error.message}`);
+      return;
+    }
     console.error("❌ Fatal error in stuck payouts handler:", error);
+    await recordSystemError({
+      category: "PAYOUT",
+      summary: "Stuck-payout handler crashed",
+      err: error,
+    });
     process.exit(1);
   } finally {
     await disconnectDatabase();

@@ -167,7 +167,7 @@ export async function createDisputes(): Promise<void> {
 
       await prisma.dispute.create({
         data: {
-          amount: payment.amount,
+          amountPaise: payment.amount,
           currency: payment.currency,
           reason,
           status,

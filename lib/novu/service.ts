@@ -26,6 +26,7 @@ import {
   type DisputePayload,
   type RecordingPayload,
   type RecordingFailedPayload,
+  type RecordingExpiringPayload,
   type ConsultantApplicationPayload,
   type ReferralBonusPayload,
   type RefereeWelcomeBonusPayload,
@@ -34,6 +35,7 @@ import {
   type CollaboratorAcceptedPayload,
   type CollaboratorRemovedPayload,
   type MaintenancePayload,
+  type OrgExpertRemovedPayload,
 } from "./workflows";
 
 // ============================================================================
@@ -240,6 +242,15 @@ export async function notifyRefundProcessed(
   return triggerWorkflow(NOVU_WORKFLOWS.REFUND_PROCESSED, userId, payload);
 }
 
+// #779 §A — the gateway rejected a refund (Refund.status = FAILED). Notifies
+// the payer; `reason` on the payload carries the gateway failure reason.
+export async function notifyRefundFailed(
+  userId: string,
+  payload: RefundPayload,
+) {
+  return triggerWorkflow(NOVU_WORKFLOWS.REFUND_FAILED, userId, payload);
+}
+
 export async function notifyRefundRequested(
   adminUserIds: string[],
   payload: RefundPayload,
@@ -424,6 +435,22 @@ export async function notifyPayoutProcessed(
   );
 }
 
+/**
+ * A7: notify a consultant that their EXPERT membership at an organization
+ * was soft-deleted. Fire-and-forget — a Novu outage must not block the
+ * member-DELETE API response. Caller is expected to wrap in try/catch.
+ */
+export async function notifyOrgExpertRemoved(
+  consultantUserId: string,
+  payload: OrgExpertRemovedPayload,
+) {
+  return triggerWorkflow(
+    NOVU_WORKFLOWS.ORG_EXPERT_REMOVED,
+    consultantUserId,
+    payload,
+  );
+}
+
 // ============================================================================
 // Admin / System Notifications
 // ============================================================================
@@ -498,6 +525,18 @@ export async function notifyRecordingFailed(
   return triggerWorkflow(
     NOVU_WORKFLOWS.RECORDING_FAILED,
     subscriberId,
+    payload,
+  );
+}
+
+// STR-3 — warn a consultant their STREAM_ONLY recording(s) expire soon.
+export async function notifyRecordingExpiring(
+  consultantUserId: string,
+  payload: RecordingExpiringPayload,
+) {
+  return triggerWorkflow(
+    NOVU_WORKFLOWS.RECORDING_EXPIRING,
+    consultantUserId,
     payload,
   );
 }

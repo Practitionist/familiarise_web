@@ -4,7 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { signUp, useSession } from "@/lib/auth-client";
+import { signIn, signUp, useSession } from "@/lib/auth-client";
+import { ssoSigninWithGuard } from "@/lib/sso/signin-with-toast";
 import { GlobeIcon } from "@/components/auth/auth-icons";
 import { SocialLoginButtons } from "@/components/auth/social-login-buttons";
 import Link from "next/link";
@@ -30,6 +31,7 @@ function SignUpContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const referralCode = searchParams.get("ref");
+  const callbackUrl = searchParams.get("callbackUrl");
   const { data: session, isPending } = useSession();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -37,17 +39,33 @@ function SignUpContent() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [refCode, setRefCode] = useState(referralCode || "");
+  const [ssoCheck, setSsoCheck] = useState<{
+    enforceSSO: boolean;
+    organizationName: string;
+    ssoBody: { providerId: string; domain: string; callbackURL: string };
+  } | null>(null);
+  const [ssoChecking, setSsoChecking] = useState(false);
+
+  // Build onboarding URL with optional callbackUrl passthrough (for org invite flow)
+  const onboardingUrl = callbackUrl
+    ? `/form/onboarding?callbackUrl=${encodeURIComponent(callbackUrl)}`
+    : "/form/onboarding";
 
   // Redirect authenticated users based on onboarding status
   useEffect(() => {
     if (!isPending && session?.user) {
       if (session.user.onboardingCompleted) {
-        router.push("/dashboard");
+        // If there's a callbackUrl (e.g., from an invite link), honor it
+        if (callbackUrl?.startsWith("/") && !callbackUrl.startsWith("//")) {
+          router.push(callbackUrl);
+        } else {
+          router.push("/dashboard");
+        }
       } else {
-        router.push("/form/onboarding");
+        router.push(onboardingUrl);
       }
     }
-  }, [session, isPending, router]);
+  }, [session, isPending, router, callbackUrl, onboardingUrl]);
 
   // Show loading while checking session status (fallback for when middleware doesn't catch)
   if (isPending) {
@@ -70,6 +88,66 @@ function SignUpContent() {
     );
   }
 
+  const handleEmailBlur = async () => {
+    if (!email || !email.includes("@")) return;
+    setSsoChecking(true);
+    try {
+      const res = await fetch(`/api/auth/sso/domain-check?email=${encodeURIComponent(email)}`);
+      if (res.ok) {
+        const data = await res.json();
+        setSsoCheck(data.enforceSSO ? {
+          enforceSSO: true,
+          organizationName: data.organizationName,
+          ssoBody: data.ssoBody,
+        } : null);
+      }
+    } catch {
+      // ignore — fall through to normal signup
+    } finally {
+      setSsoChecking(false);
+    }
+  };
+
+  /**
+   * Translate BetterAuth's developer-facing validation errors into
+   * user-friendly messages. Raw errors look like:
+   *   "[body.email] Invalid email address; [body.password] Too small: ..."
+   */
+  const handleSSOSignIn = async () => {
+    if (!ssoCheck) return;
+    // Use the guarded wrapper around signIn.sso() so SSO failures
+    // (resolve-with-error, 500-with-empty-body, no-redirect-after-2s)
+    // surface as a destructive toast instead of a silent dead-end on
+    // the signup form. See `lib/sso/signin-with-toast.ts` + audit B.1.
+    const result = await ssoSigninWithGuard({
+      providerId: ssoCheck.ssoBody.providerId,
+      domain: ssoCheck.ssoBody.domain,
+      callbackURL: ssoCheck.ssoBody.callbackURL,
+    });
+    if (!result.ok && result.errorMessage) {
+      toast({
+        title: "SSO sign-in failed",
+        description: result.errorMessage,
+        variant: "destructive",
+      });
+    }
+  };
+
+  const friendlyAuthError = (raw: string | undefined): string => {
+    if (!raw) return "An unexpected error occurred. Please try again.";
+    const lower = raw.toLowerCase();
+    const issues: string[] = [];
+    if (lower.includes("email") && (lower.includes("invalid") || lower.includes("required")))
+      issues.push("Please enter a valid email address.");
+    if (lower.includes("password") && (lower.includes("too small") || lower.includes(">=") || lower.includes("required")))
+      issues.push("Password must be at least 8 characters.");
+    if (lower.includes("already") || lower.includes("exists"))
+      return "An account with this email already exists. Try signing in instead.";
+    if (issues.length > 0) return issues.join(" ");
+    // Strip "[body.field]" prefixes for anything we didn't catch
+    return raw.replace(/\[body\.\w+\]\s*/g, "").trim() || "An unexpected error occurred.";
+  };
+
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
     if (password !== confirmPassword) {
@@ -89,7 +167,7 @@ function SignUpContent() {
       if (error) {
         toast({
           title: "Sign Up Failed",
-          description: error.message || "An unexpected error occurred.",
+          description: friendlyAuthError(error.message),
           variant: "destructive",
         });
       } else if (data) {
@@ -109,7 +187,7 @@ function SignUpContent() {
           title: "Account Created Successfully!",
           description: "Redirecting to onboarding...",
         });
-        router.push("/form/onboarding");
+        router.push(onboardingUrl);
       }
     } catch (error: unknown) {
       console.error("Sign up error:", error);
@@ -186,35 +264,40 @@ function SignUpContent() {
                 autoCorrect="off"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
+                onBlur={handleEmailBlur}
                 required
-                disabled={isLoading}
+                disabled={isLoading || ssoChecking}
               />
             </div>
-            <div className="grid gap-2 mt-4">
-              <Label htmlFor="password">Password</Label>
-              <Input
-                id="password"
-                type="password"
-                placeholder="••••••••"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                disabled={isLoading}
-              />
-            </div>
-            <div className="grid gap-2 mt-4">
-              <Label htmlFor="confirm-password">Confirm Password</Label>
-              <Input
-                id="confirm-password"
-                type="password"
-                placeholder="••••••••"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                required
-                disabled={isLoading}
-              />
-            </div>
-            {!referralCode && (
+            {!ssoCheck?.enforceSSO && (
+              <>
+                <div className="grid gap-2 mt-4">
+                  <Label htmlFor="password">Password</Label>
+                  <Input
+                    id="password"
+                    type="password"
+                    placeholder="••••••••"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                    disabled={isLoading}
+                  />
+                </div>
+                <div className="grid gap-2 mt-4">
+                  <Label htmlFor="confirm-password">Confirm Password</Label>
+                  <Input
+                    id="confirm-password"
+                    type="password"
+                    placeholder="••••••••"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    required
+                    disabled={isLoading}
+                  />
+                </div>
+              </>
+            )}
+            {!referralCode && !ssoCheck?.enforceSSO && (
               <div className="grid gap-2 mt-4">
                 <Label htmlFor="referral-code">Referral Code (optional)</Label>
                 <Input
@@ -227,7 +310,7 @@ function SignUpContent() {
                 />
               </div>
             )}
-            {referralCode && (
+            {referralCode && !ssoCheck?.enforceSSO && (
               <div className="mt-4 p-3 rounded-md bg-green-900/30 border border-green-700">
                 <p className="text-sm text-green-400">
                   Referral code{" "}
@@ -236,31 +319,53 @@ function SignUpContent() {
                 </p>
               </div>
             )}
-            <Button
-              type="submit"
-              className="w-full mt-4 bg-gray-800 hover:bg-gray-700"
-              disabled={isLoading}
-            >
-              {isLoading ? "Creating Account..." : "Create Account"}
-            </Button>
+            {!ssoCheck?.enforceSSO && (
+              <Button
+                type="submit"
+                className="w-full mt-4 bg-gray-800 hover:bg-gray-700"
+                disabled={isLoading}
+              >
+                {isLoading ? "Creating Account..." : "Create Account"}
+              </Button>
+            )}
           </form>
 
-          <div className="relative my-4 md:my-6">
-            <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-gray-600" />
+          {ssoCheck?.enforceSSO && (
+            <div className="mt-4 p-4 rounded-md bg-blue-900/30 border border-blue-700">
+              <p className="text-sm text-blue-300 mb-3">
+                Your organization requires SSO sign-in. Use the button below to authenticate.
+              </p>
+              <Button
+                type="button"
+                className="w-full bg-blue-600 hover:bg-blue-500"
+                onClick={handleSSOSignIn}
+              >
+                Sign in with {ssoCheck.organizationName} SSO &rarr;
+              </Button>
             </div>
-            <div className="relative flex justify-center text-sm">
-              <span className="px-2 bg-gray-900 text-gray-400">
-                OR CONTINUE WITH
-              </span>
-            </div>
-          </div>
+          )}
 
-          <SocialLoginButtons
-            callbackURL="/dashboard"
-            newUserCallbackURL="/form/onboarding"
-            isLoading={isLoading}
-          />
+          {!ssoCheck?.enforceSSO && (
+            <>
+              <div className="relative my-4 md:my-6">
+                <div className="absolute inset-0 flex items-center">
+                  <div className="w-full border-t border-gray-600" />
+                </div>
+                <div className="relative flex justify-center text-sm">
+                  <span className="px-2 bg-gray-900 text-gray-400">
+                    OR CONTINUE WITH
+                  </span>
+                </div>
+              </div>
+
+              <SocialLoginButtons
+                callbackURL={callbackUrl || "/dashboard"}
+                newUserCallbackURL={onboardingUrl}
+                isLoading={isLoading}
+                ssoEnforced={false}
+              />
+            </>
+          )}
 
           <p className="text-xs text-gray-400 mt-4 md:mt-6">
             Already have an account?{" "}

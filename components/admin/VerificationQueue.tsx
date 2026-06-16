@@ -260,5 +260,3 @@ export function VerificationQueue({
     </>
   );
 }
-
-export default VerificationQueue;

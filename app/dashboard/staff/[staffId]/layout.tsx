@@ -24,6 +24,7 @@ import { signOut, useSession } from "@/lib/auth-client";
 import { disconnectStreamClients } from "@/providers/StreamProvider";
 import NovuProvider from "@/providers/NovuProvider";
 import { NotificationInbox } from "@/components/notifications/NotificationInbox";
+import { OrganizationSwitcher } from "@/components/dashboard/OrganizationSwitcher";
 import { useNovuSubscriberSync } from "@/hooks/useNovuSubscriberSync";
 import { useQuery } from "@tanstack/react-query";
 import { fetchUserDetails } from "@/lib/user";
@@ -192,6 +193,7 @@ export default function StaffDashboardLayout({
         {/* Main Content */}
         <main className="flex-1 overflow-y-auto">
           <div className="sticky top-0 z-30 flex items-center justify-end gap-2 px-6 py-2 border-b border-zinc-200/50 bg-white/80 dark:bg-zinc-900/80 backdrop-blur-xl">
+            <OrganizationSwitcher />
             <NotificationInbox />
           </div>
           <div className="p-6">{children}</div>

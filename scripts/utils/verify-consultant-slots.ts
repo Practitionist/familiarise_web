@@ -11,10 +11,9 @@
  * - node scripts/verify-consultant-slots.ts
  */
 
-import { PrismaClient } from "@prisma/client";
+import "dotenv/config";
+import prisma from "@/lib/prisma";
 import { minutesToTimeString } from "@/utils/slotAllocation/slotTimeUtils";
-
-const prisma = new PrismaClient();
 
 const CONSULTANT_ID = "31e2e9f4-c9d5-4c4c-b281-e8531da623dd";
 
@@ -163,7 +162,7 @@ async function verifyConsultantSlots() {
       console.log(`\nSubscription ${idx + 1}:`);
       console.log(`  ID: ${sub.id}`);
       console.log(`  Plan: ${sub.subscriptionPlan.title}`);
-      console.log(`  Status: ${sub.requestStatus}`);
+      console.log(`  Status: ${sub.status}`);
       console.log(
         `  Client: ${sub.requestedBy.user.name} (${sub.requestedBy.user.email})`,
       );

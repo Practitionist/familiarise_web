@@ -13,11 +13,11 @@ export function mergeConsecutiveSlotsForDisplay(
   if (!slots || slots.length === 0) return [];
 
   const sorted = [...slots].sort((a, b) => {
-    const aStart = a.slotStartTimeInUTC
-      ? new Date(a.slotStartTimeInUTC).getTime()
+    const aStart = a.startsAt
+      ? new Date(a.startsAt).getTime()
       : 0;
-    const bStart = b.slotStartTimeInUTC
-      ? new Date(b.slotStartTimeInUTC).getTime()
+    const bStart = b.startsAt
+      ? new Date(b.startsAt).getTime()
       : 0;
     return aStart - bStart;
   });
@@ -28,11 +28,11 @@ export function mergeConsecutiveSlotsForDisplay(
   for (let i = 1; i < sorted.length; i++) {
     const next = sorted[i];
 
-    const currentEnd = current.slotEndTimeInUTC
-      ? new Date(current.slotEndTimeInUTC).getTime()
+    const currentEnd = current.endsAt
+      ? new Date(current.endsAt).getTime()
       : 0;
-    const nextStart = next.slotStartTimeInUTC
-      ? new Date(next.slotStartTimeInUTC).getTime()
+    const nextStart = next.startsAt
+      ? new Date(next.startsAt).getTime()
       : 0;
 
     const isConsecutive = Math.abs(currentEnd - nextStart) <= 60000; // 1-min tolerance
@@ -42,7 +42,7 @@ export function mergeConsecutiveSlotsForDisplay(
       // Extend the current merged slot
       current = {
         ...current,
-        slotEndTimeInUTC: next.slotEndTimeInUTC,
+        endsAt: next.endsAt,
         localEndTime: next.localEndTime,
       };
     } else {

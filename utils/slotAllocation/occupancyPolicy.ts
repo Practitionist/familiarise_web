@@ -9,7 +9,7 @@
  * (not yet completed, cancelled, rejected, or expired).
  */
 
-import { RequestStatus, TrialSessionStatus, Prisma } from "@prisma/client";
+import { AppointmentStatus, TrialSessionStatus, Prisma } from "@prisma/client";
 
 /**
  * Consultation/Subscription statuses that count as "slot occupied"
@@ -20,11 +20,11 @@ import { RequestStatus, TrialSessionStatus, Prisma } from "@prisma/client";
  * - APPROVED_PENDING_PAYMENT: Approved but payment not yet completed
  * - SCHEDULED: Fully scheduled and confirmed
  */
-export const OCCUPIED_REQUEST_STATUSES: RequestStatus[] = [
-  RequestStatus.PENDING,
-  RequestStatus.APPROVED,
-  RequestStatus.APPROVED_PENDING_PAYMENT,
-  RequestStatus.SCHEDULED,
+export const OCCUPIED_REQUEST_STATUSES: AppointmentStatus[] = [
+  AppointmentStatus.PENDING,
+  AppointmentStatus.APPROVED,
+  AppointmentStatus.APPROVED_PENDING_PAYMENT,
+  AppointmentStatus.SCHEDULED,
 ];
 
 /**
@@ -50,7 +50,7 @@ export function buildOccupiedAppointmentFilter(
         ...(consultantProfileId
           ? { consultationPlan: { consultantProfileId } }
           : {}),
-        requestStatus: { in: OCCUPIED_REQUEST_STATUSES },
+        status: { in: OCCUPIED_REQUEST_STATUSES },
       },
     },
     {
@@ -58,7 +58,7 @@ export function buildOccupiedAppointmentFilter(
         ...(consultantProfileId
           ? { subscriptionPlan: { consultantProfileId } }
           : {}),
-        requestStatus: { in: OCCUPIED_REQUEST_STATUSES },
+        status: { in: OCCUPIED_REQUEST_STATUSES },
       },
     },
     {

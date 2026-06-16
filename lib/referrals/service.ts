@@ -1,15 +1,34 @@
-import prisma from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
+import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { Prisma as PrismaNamespace } from "@prisma/client";
-import type {
+import type { ReferralCode, Referral, ReferralCredit } from "@prisma/client";
+import { sumPaise } from "@/lib/payments/utils/money";
+import { QUALIFICATION_WINDOW_DAYS, CREDIT_EXPIRY_MONTHS } from "./constants";
+
+// #780 — bare model types still say bigint; the extended client returns number
+export type ReferralCodeRow = Omit<
   ReferralCode,
+  "referrerReward" | "refereeReward" | "totalEarned"
+> & {
+  referrerReward: number | null;
+  refereeReward: number | null;
+  totalEarned: number;
+};
+export type ReferralRow = Omit<
   Referral,
+  "referrerRewardAmount" | "refereeRewardAmount"
+> & {
+  referrerRewardAmount: number | null;
+  refereeRewardAmount: number | null;
+};
+export type ReferralCreditRow = Omit<
   ReferralCredit,
-  Prisma,
-} from "@prisma/client";
-import {
-  QUALIFICATION_WINDOW_DAYS,
-  CREDIT_EXPIRY_MONTHS,
-} from "./constants";
+  "amount" | "usedAmount" | "remainingAmount"
+> & {
+  amount: number;
+  usedAmount: number;
+  remainingAmount: number;
+};
 
 // Re-export so existing server-side consumers can still import from service
 export { QUALIFICATION_WINDOW_DAYS, CREDIT_EXPIRY_MONTHS };
@@ -17,43 +36,13 @@ export { QUALIFICATION_WINDOW_DAYS, CREDIT_EXPIRY_MONTHS };
 // Constants
 const DEFAULT_REFERRER_REWARD = 50000; // ₹500 in paise
 const DEFAULT_REFEREE_REWARD = 20000; // ₹200 in paise
-const SERIALIZABLE_MAX_RETRIES = 3;
-
-/**
- * Retries a function that may fail due to Prisma serialization conflicts (P2034).
- * Applies exponential backoff between retries.
- */
-async function withSerializableRetry<T>(
-  fn: () => Promise<T>,
-  maxRetries = SERIALIZABLE_MAX_RETRIES,
-): Promise<T> {
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-      return await fn();
-    } catch (error) {
-      const isSerializationFailure =
-        error instanceof PrismaNamespace.PrismaClientKnownRequestError &&
-        error.code === "P2034";
-
-      if (!isSerializationFailure || attempt === maxRetries) {
-        throw error;
-      }
-
-      const backoffMs = 50 * 2 ** attempt; // 50ms, 100ms, 200ms
-      await new Promise((resolve) => setTimeout(resolve, backoffMs));
-    }
-  }
-
-  // Unreachable, but satisfies TypeScript
-  throw new Error("withSerializableRetry: exhausted retries");
-}
 
 /**
  * Creates or returns an existing referral code for a user.
  */
 export async function createReferralCode(
   userId: string,
-): Promise<ReferralCode> {
+): Promise<ReferralCodeRow> {
   const existing = await prisma.referralCode.findUnique({
     where: { userId },
   });
@@ -162,8 +151,8 @@ export async function generateUniqueCode(
  */
 export async function validateReferralCode(
   code: string,
-  db: Prisma.TransactionClient | typeof prisma = prisma,
-): Promise<ReferralCode | null> {
+  db: Tx | typeof prisma = prisma,
+): Promise<ReferralCodeRow | null> {
   return db.referralCode.findFirst({
     where: {
       OR: [{ code: code.toUpperCase() }, { customCode: code.toUpperCase() }],
@@ -183,7 +172,7 @@ export async function validateReferralCode(
 export async function applyReferralCode(
   newUserId: string,
   code: string,
-): Promise<Referral | null> {
+): Promise<ReferralRow | null> {
   return withSerializableRetry(() =>
     prisma.$transaction(
       async (tx) => {
@@ -257,23 +246,21 @@ export async function processQualifyingAction(
 
         if (!referral || referral.status !== "SIGNED_UP") return;
 
-        // Check if within qualification window
-        const daysSinceSignup = Math.floor(
-          (Date.now() - referral.signedUpAt.getTime()) / (1000 * 60 * 60 * 24),
+        // REF-3 (#692) — claim the reward atomically: status still SIGNED_UP AND
+        // within the qualification window, both asserted in the WHERE. Folding the
+        // window into the guarded write (rather than an app-side Date.now() check
+        // separate from the status guard) makes reward-vs-expire a single decision
+        // against the committed row, closing the gap where a stale read or the
+        // expireStaleReferrals cron disagrees with the app-computed window.
+        const windowCutoff = new Date(
+          Date.now() - QUALIFICATION_WINDOW_DAYS * 24 * 60 * 60 * 1000,
         );
-
-        if (daysSinceSignup > QUALIFICATION_WINDOW_DAYS) {
-          await tx.referral.update({
-            where: { id: referral.id },
-            data: { status: "EXPIRED" },
-          });
-          return;
-        }
-
-        // Conditional update: only succeeds if status is still SIGNED_UP.
-        // This prevents concurrent calls from both creating rewards.
         const updated = await tx.referral.updateMany({
-          where: { id: referral.id, status: "SIGNED_UP" },
+          where: {
+            id: referral.id,
+            status: "SIGNED_UP",
+            signedUpAt: { gte: windowCutoff },
+          },
           data: {
             status: "REWARDED",
             qualifiedAt: new Date(),
@@ -284,8 +271,20 @@ export async function processQualifyingAction(
           },
         });
 
-        // If no rows updated, another concurrent call already processed this
-        if (updated.count === 0) return;
+        // No reward claimed → either a concurrent call already processed it, or
+        // it's past the window. Expire it iff it's still an un-rewarded SIGNED_UP
+        // past the cutoff (the status guard makes this a no-op against a REWARDED row).
+        if (updated.count === 0) {
+          await tx.referral.updateMany({
+            where: {
+              id: referral.id,
+              status: "SIGNED_UP",
+              signedUpAt: { lt: windowCutoff },
+            },
+            data: { status: "EXPIRED" },
+          });
+          return;
+        }
 
         // Give referrer their bonus
         const referrerReward = referral.referrerRewardAmount;
@@ -349,10 +348,10 @@ export async function processQualifyingAction(
  */
 export async function getUserCredits(
   userId: string,
-  db: Prisma.TransactionClient | typeof prisma = prisma,
+  db: Tx | typeof prisma = prisma,
 ): Promise<{
   totalAvailable: number;
-  credits: ReferralCredit[];
+  credits: ReferralCreditRow[];
 }> {
   const credits = await db.referralCredit.findMany({
     where: {
@@ -378,7 +377,7 @@ export async function getUserCredits(
 export async function applyCreditsToPayment(
   userId: string,
   paymentAmount: number,
-  tx: Prisma.TransactionClient,
+  tx: Tx,
   paymentId?: string,
 ): Promise<{ creditsUsed: number; remainingToPay: number }> {
   const { credits } = await getUserCredits(userId, tx);
@@ -404,12 +403,27 @@ export async function applyCreditsToPayment(
 
     // Create ledger entry for accurate per-payment tracking and reversal
     if (paymentId) {
-      await tx.referralCreditUsage.create({
+      const usage = await tx.referralCreditUsage.create({
         data: {
           creditId: credit.id,
           paymentId,
           amount: useAmount,
           originalAmount: useAmount,
+        },
+      });
+
+      // Enterprise (Arch 4-Modified): every credit consumption writes a
+      // matching PaymentLeg so the per-payment leg invariant
+      // (`docs/enterprise/10-money-and-ledger/09-payment-legs.md`) holds for any flow that
+      // mixes referral credits with card / wallet / invoice. `sourceRef`
+      // points at the ReferralCreditUsage row so refund + reversal can
+      // join the credit ledger without scanning by paymentId+credit.
+      await tx.paymentLeg.create({
+        data: {
+          paymentId,
+          source: "REFERRAL_CREDIT",
+          amountPaise: useAmount,
+          sourceRef: usage.id,
         },
       });
     }
@@ -435,13 +449,15 @@ export async function applyCreditsToPayment(
  */
 export async function reverseCreditsForPayment(
   paymentId: string,
-  tx: Prisma.TransactionClient,
+  tx: Tx,
   refundAmount?: number,
   originalPaymentAmount?: number,
 ): Promise<number> {
-  // Find all usage records for this payment from the ledger
+  // Find all usage records for this payment from the ledger. Carry the credit's
+  // expiry so we don't restore onto a credit that has since lapsed (REF-2).
   const usageRecords = await tx.referralCreditUsage.findMany({
     where: { paymentId },
+    include: { credit: { select: { expiresAt: true } } },
   });
 
   if (usageRecords.length === 0) return 0;
@@ -462,15 +478,33 @@ export async function reverseCreditsForPayment(
   if (isPartialRefund) {
     const aggregate = await tx.refund.aggregate({
       where: { paymentId, status: "SUCCEEDED" },
-      _sum: { amount: true },
+      _sum: { amountPaise: true },
     });
-    cumulativeRefunded = aggregate._sum.amount ?? refundAmount ?? 0;
+    // #780 — aggregates bypass the result extension and still return bigint
+    const refundedSum = aggregate._sum?.amountPaise;
+    cumulativeRefunded =
+      refundedSum == null ? (refundAmount ?? 0) : sumPaise(refundedSum);
   }
 
   let totalRestored = 0;
+  let skippedExpired = 0;
+  const now = new Date();
 
   for (const usage of usageRecords) {
     if (usage.amount <= 0) continue;
+
+    // REF-2 (#692) — never resurrect an expired credit. If the credit lapsed
+    // after it was applied, restoring remainingAmount onto it just leaves dead
+    // balance (getUserCredits filters expiry; the expiry cron re-zeroes it).
+    // Skip + log; the usage row stays so the credit reads as still consumed.
+    // (Issuing fresh credit on refund-of-expired is a product decision, not done here.)
+    // `credit` is a required FK relation that the findMany above always includes,
+    // so it is never null here — no optional chain needed.
+    const creditExpiresAt = usage.credit.expiresAt;
+    if (creditExpiresAt && creditExpiresAt.getTime() < now.getTime()) {
+      skippedExpired += usage.amount;
+      continue;
+    }
 
     let restoreAmount: number;
 
@@ -526,6 +560,13 @@ export async function reverseCreditsForPayment(
       `🔄 Restored ${totalRestored} referral credits for ${isPartialRefund ? "partially " : ""}refunded payment ${paymentId}`,
     );
   }
+  if (skippedExpired > 0) {
+    // REF-2 — visibility: credit value (in paise) not returned because the
+    // underlying credit had already expired.
+    console.log(
+      `⏭️  Skipped restoring ${skippedExpired} paise of expired referral credit for refunded payment ${paymentId}`,
+    );
+  }
 
   return totalRestored;
 }
@@ -536,7 +577,7 @@ export async function reverseCreditsForPayment(
 export async function setCustomCode(
   userId: string,
   customCode: string,
-): Promise<ReferralCode | null> {
+): Promise<ReferralCodeRow | null> {
   const referralCode = await prisma.referralCode.findUnique({
     where: { userId },
   });
@@ -566,7 +607,7 @@ export async function setCustomCode(
  */
 export async function getReferralCode(
   userId: string,
-): Promise<ReferralCode | null> {
+): Promise<ReferralCodeRow | null> {
   return prisma.referralCode.findUnique({
     where: { userId },
   });
@@ -578,7 +619,7 @@ export async function getReferralCode(
 export async function getUserReferrals(
   userId: string,
 ): Promise<
-  (Referral & { referredUser: { name: string; image: string | null } })[]
+  (ReferralRow & { referredUser: { name: string; image: string | null } })[]
 > {
   const referralCode = await prisma.referralCode.findUnique({
     where: { userId },
@@ -603,7 +644,7 @@ export async function getUserReferrals(
  */
 export async function getCreditHistory(
   userId: string,
-): Promise<ReferralCredit[]> {
+): Promise<ReferralCreditRow[]> {
   return prisma.referralCredit.findMany({
     where: { userId },
     orderBy: { createdAt: "desc" },
@@ -724,7 +765,7 @@ export async function processConsultantBookingReferral(
   const collaboratorUserIds: string[] = [];
 
   if (webinarPlanId) {
-    const collabs = await prisma.webinarCollaborator.findMany({
+    const collabs = await prisma.collaborator.findMany({
       where: { webinarPlanId, status: "ACCEPTED" },
       select: { consultantProfile: { select: { userId: true } } },
     });
@@ -732,7 +773,7 @@ export async function processConsultantBookingReferral(
   }
 
   if (classPlanId) {
-    const collabs = await prisma.classCollaborator.findMany({
+    const collabs = await prisma.collaborator.findMany({
       where: { classPlanId, status: "ACCEPTED" },
       select: { consultantProfile: { select: { userId: true } } },
     });

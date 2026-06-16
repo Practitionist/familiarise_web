@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { AppointmentsType, Prisma, RequestStatus } from "@prisma/client";
+import { AppointmentsType, Prisma, AppointmentStatus } from "@prisma/client";
 import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
+import { resolveOrgScope } from "@/lib/api/scope/parse";
 
 export async function GET(request: NextRequest) {
   const authResult = await requireApiAuth();
@@ -58,7 +59,7 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  // Validate statuses — consultation/subscription use RequestStatus enum,
+  // Validate statuses — consultation/subscription use AppointmentStatus enum,
   // webinar/class use their own event lifecycle statuses
   const validRequestStatuses = [
     "PENDING",
@@ -101,6 +102,37 @@ export async function GET(request: NextRequest) {
     );
   }
 
+  // #674 personal-vs-org scope filter. The leak this closes: a consultant
+  // who hosts under Acme + Zeta would see appointments from both orgs in
+  // a single "Appointments" tab regardless of which org context the
+  // dashboard had selected. Filter via the denormalized
+  // Appointment.organizationId column populated by the #674 backfill.
+  const callerMembershipsForScope = await prisma.membership.findMany({
+    where: { userId: session.user.id, status: "ACTIVE" },
+    select: { organizationId: true, status: true },
+  });
+  const scopeResolution = resolveOrgScope({
+    raw: searchParams.get("orgScope"),
+    memberships: callerMembershipsForScope,
+    userRole: session.user.role,
+    // Self-scoped: non-admin callers are already locked to their own
+    // profileId via `hasOwnFilter` above, so `?orgScope=all` here just
+    // means "all of MY data" — safe for any role.
+    allowAllForOwner: true,
+  });
+  if (!scopeResolution.ok) {
+    return NextResponse.json(
+      { error: scopeResolution.message, code: scopeResolution.code },
+      { status: scopeResolution.status },
+    );
+  }
+  const apptOrgFilter: Partial<Prisma.AppointmentWhereInput> =
+    scopeResolution.scope.kind === "personal"
+      ? { organizationId: null }
+      : scopeResolution.scope.kind === "org"
+        ? { organizationId: scopeResolution.scope.orgId }
+        : {};
+
   try {
     const startDate = searchParams.get("startDate");
     const endDate = searchParams.get("endDate");
@@ -124,6 +156,7 @@ export async function GET(request: NextRequest) {
         consultationId,
         subscriptionId,
       },
+      apptOrgFilter,
     );
 
     return NextResponse.json({ data: appointments });
@@ -155,8 +188,12 @@ async function getAppointments(
     consultationId?: string | null;
     subscriptionId?: string | null;
   },
+  /// #674 org-scope filter resolved upstream — { organizationId: null }
+  /// for personal scope, { organizationId: <id> } for an org context,
+  /// {} for admin all-scope. Spread into the appointment WHERE clause.
+  orgScopeFilter: Partial<Prisma.AppointmentWhereInput> = {},
 ) {
-  const whereClause: Prisma.AppointmentWhereInput = {};
+  const whereClause: Prisma.AppointmentWhereInput = { ...orgScopeFilter };
 
   // Date range filtering for appointments. This is the primary filter.
   // It looks for appointments where any of its slots overlap with the given date range.
@@ -304,12 +341,12 @@ async function getAppointments(
   const statusFilters: Prisma.AppointmentWhereInput[] = [];
   if (statuses?.consultation) {
     statusFilters.push({
-      consultation: { requestStatus: statuses.consultation as RequestStatus },
+      consultation: { status: statuses.consultation as AppointmentStatus },
     });
   }
   if (statuses?.subscription) {
     statusFilters.push({
-      subscription: { requestStatus: statuses.subscription as RequestStatus },
+      subscription: { status: statuses.subscription as AppointmentStatus },
     });
   }
   if (statuses?.webinar) {
@@ -381,7 +418,7 @@ async function getAppointments(
           },
           schedulingPeriodStartsAt: true,
           schedulingPeriodEndsAt: true,
-          requestStatus: true,
+          status: true,
         },
       },
       webinar: {
@@ -548,7 +585,7 @@ export async function POST(request: NextRequest) {
             },
             schedulingPeriodStartsAt: true,
             schedulingPeriodEndsAt: true,
-            requestStatus: true,
+            status: true,
           },
         },
         webinar: {

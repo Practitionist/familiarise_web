@@ -33,13 +33,14 @@ interface EarningsSummary {
 
 interface EarningRecord {
   id: string;
-  consultantShare: number;
-  platformFee: number;
+  consultantSharePaise: number;
+  platformFeePaise: number;
   status: EarningStatus;
   holdUntil: string | null;
   createdAt: string;
   role: "OWNER" | "COLLABORATOR";
-  sharePercentage: number;
+  // #772 B5 — basis points (10000 = 100%); divide by 100 for display.
+  shareBps: number;
   payment: {
     id: string;
     amount: number;
@@ -340,9 +341,9 @@ export default function EarningsPage({
                             }`}
                           >
                             {earning.role === "COLLABORATOR"
-                              ? `Collab ${earning.sharePercentage}%`
-                              : earning.sharePercentage < 100
-                                ? `Owner ${earning.sharePercentage}%`
+                              ? `Collab ${earning.shareBps / 100}%`
+                              : earning.shareBps < 10000
+                                ? `Owner ${earning.shareBps / 100}%`
                                 : "Owner"}
                           </span>
                         </td>
@@ -354,13 +355,13 @@ export default function EarningsPage({
                         </td>
                         <td className="px-4 py-3 text-right font-medium text-zinc-900">
                           {formatEarningAmount(
-                            earning.consultantShare,
+                            earning.consultantSharePaise,
                             earning.payment?.currency ?? "INR",
                           )}
                         </td>
                         <td className="px-4 py-3 text-right text-zinc-400">
                           {formatEarningAmount(
-                            earning.platformFee,
+                            earning.platformFeePaise,
                             earning.payment?.currency ?? "INR",
                           )}
                         </td>

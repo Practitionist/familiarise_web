@@ -3,7 +3,7 @@ name: Handle Lost Disputes
 on:
   schedule:
     # Run every 6 hours
-    - cron: "0 */6 * * *"
+    - cron: "8 */6 * * *"
   workflow_dispatch: # Allow manual triggering
 
 jobs:
@@ -15,6 +15,9 @@ jobs:
       # Database connection (required for Prisma)
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       DIRECT_URL: ${{ secrets.DIRECT_URL }}
+      # #476 — fail-closed cron lock: without these the job refuses to run.
+      UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
+      UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
 
     steps:
       - name: Checkout code
@@ -37,7 +40,6 @@ jobs:
 
       - name: Notify on failure
         if: failure()
-        run: |
-          echo "Lost dispute handler failed or found critical cases"
-          # Add notification logic here (Slack, email, etc.)
-          # Critical: Notify if earnings were already paid when dispute lost
+        env:
+          SLACK_OPS_WEBHOOK_URL: ${{ secrets.SLACK_OPS_WEBHOOK_URL }}
+        run: bash scripts/ci/notify-ops-failure.sh "handle-lost-disputes"

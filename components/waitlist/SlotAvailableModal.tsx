@@ -231,5 +231,3 @@ export function SlotAvailableModal({
     </Dialog>
   );
 }
-
-export default SlotAvailableModal;

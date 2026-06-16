@@ -46,9 +46,9 @@ function getServerSnapshot(): string {
   return DEFAULT_CURRENCY;
 }
 
-// ---------- public setter (used by navbar dropdown) ----------
+// ---------- setter (wrapped by the hook's setCurrency) ----------
 
-export function setPreferredCurrency(code: string) {
+function setPreferredCurrency(code: string) {
   localStorage.setItem(STORAGE_KEY, code);
   emitChange();
 }

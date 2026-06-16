@@ -158,22 +158,6 @@ export const paginationSchema = z.object({
 });
 
 /**
- * TYPESCRIPT TYPE EXPORTS
- *
- * These types are automatically inferred from the Zod schemas above.
- * Use these instead of manually defining TypeScript interfaces.
- *
- * BENEFITS:
- * - Single source of truth (schema = type)
- * - Schemas and types always stay in sync
- * - No duplicate type definitions
- */
-export type AllocationRequest = z.infer<typeof allocationRequestSchema>;
-export type ValidationRequest = z.infer<typeof validationRequestSchema>;
-export type EventId = z.infer<typeof eventIdSchema>;
-export type PaginationParams = z.infer<typeof paginationSchema>;
-
-/**
  * HELPER: Parse and format Zod errors for API responses
  *
  * Converts Zod's detailed error structure into user-friendly messages.

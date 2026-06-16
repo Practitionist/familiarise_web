@@ -146,10 +146,26 @@ function makeMockTx(appointmentData: any) {
       findMany: jest.fn().mockResolvedValue([]),
       delete: jest.fn(),
     },
-    consultation: { update: jest.fn() },
-    subscription: { update: jest.fn() },
-    webinar: { update: jest.fn() },
-    class: { update: jest.fn() },
+    consultation: {
+      update: jest.fn(),
+      // B2 — the cancel/reschedule CAS guards use updateMany.
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
+    subscription: {
+      update: jest.fn(),
+      // B2 — the cancel/reschedule CAS guards use updateMany.
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
+    webinar: {
+      update: jest.fn(),
+      // B2 — the cancel/reschedule CAS guards use updateMany.
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
+    class: {
+      update: jest.fn(),
+      // B2 — the cancel/reschedule CAS guards use updateMany.
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
     slotOfAppointment: { updateMany: jest.fn(), deleteMany: jest.fn() },
   };
 }

@@ -5,7 +5,6 @@
  * consistency and reduce duplication.
  */
 
-import { Prisma } from "@prisma/client";
 
 /**
  * Allocation modes supported by the system
@@ -39,20 +38,6 @@ export interface AllocationRequest {
   eventId: string;
   mode: AllocationMode;
   slots?: string[]; // ISO date strings for manual allocation
-}
-
-/**
- * Constraints for auto-allocation algorithm
- */
-export interface AllocationConstraints {
-  schedulingPeriodStartsAt: Date;
-  schedulingPeriodEndsAt: Date;
-  slotsRequired: number;
-  sessionDurationInHours: number;
-  callsPerWeek?: number; // For subscriptions/classes
-  slotsPerCall?: number; // Calculated from sessionDurationInHours
-  mustBeConsecutive?: boolean; // True for consultations/webinars
-  mustBeSameDay?: boolean; // True for consultations
 }
 
 /**
@@ -94,6 +79,7 @@ export type AllocationErrorCode =
   | "NOT_FOUND" // event/consultant missing — 400
   | "INVALID_MODE" // unknown allocation mode — 400
   | "LOCK_CONTENTION" // Redis lock busy — 409
+  | "ILLEGAL_TRANSITION" // event left the approvable state mid-allocation (#836) — 409
   | "UNKNOWN_ERROR"; // infra / unexpected — 500
 
 /**
@@ -106,6 +92,9 @@ export interface AllocationResult {
   errorCode?: AllocationErrorCode;
   httpStatus?: number;
   warnings?: string[];
+  // AE-4 — appointment ids whose tentative slots were freed during a partial
+  // reschedule, so callers (calendar refresh, notifications) know what to drop.
+  deletedAppointmentIds?: string[];
 }
 
 /**
@@ -163,11 +152,3 @@ export interface EventConfig {
   schedulingPeriodStartsAt?: Date; // For subscriptions/classes
   schedulingPeriodEndsAt?: Date; // For subscriptions/classes
 }
-
-/**
- * Prisma transaction client type
- */
-export type PrismaTransaction = Omit<
-  Prisma.TransactionClient,
-  "$connect" | "$disconnect" | "$on" | "$transaction" | "$use"
->;

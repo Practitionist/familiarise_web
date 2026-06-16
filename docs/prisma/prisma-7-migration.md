@@ -540,7 +540,7 @@ These instances don't have the adapter configured, causing the error.
 | `scripts/appointments/cleanup-invalid-appointments.ts` | Cleanup invalid appointments  |
 | `scripts/earnings/release-earnings.ts`                 | Release consultant earnings   |
 | `scripts/payouts/create-payout-batch.ts`               | Create payout batches         |
-| `scripts/payouts/process-payouts.ts`                   | Process approved payouts      |
+| `jobs/payouts/process-payouts.ts` (was `scripts/payouts/…`, #850) | Process approved payouts |
 | `utils/appointmentUtils.ts`                            | Appointment utility functions |
 
 #### Solution

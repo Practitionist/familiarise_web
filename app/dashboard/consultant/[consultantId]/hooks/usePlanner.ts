@@ -76,7 +76,7 @@ export function useWebinarMutations(consultantId: string) {
       // FIX #622: Use the guarded route that checks for active payments
       // and upcoming slots before allowing deletion.
       const response = await fetch(
-        `/api/events/webinars/${webinarId}`,
+        `/api/bookings/webinars/${webinarId}`,
         {
           method: "DELETE",
         },
@@ -119,7 +119,7 @@ export function useClassMutations(consultantId: string) {
       // FIX #622: Use the guarded route that checks for active payments
       // and upcoming slots before allowing deletion.
       const response = await fetch(
-        `/api/events/classes/${classId}`,
+        `/api/bookings/classes/${classId}`,
         {
           method: "DELETE",
         },

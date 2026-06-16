@@ -6,7 +6,7 @@ import type {
 } from "@prisma/client";
 import type { ICollaboratorInfo } from "../../types";
 
-export type TClassSessionWithSchedule = PrismaClass & {
+type TClassSessionWithSchedule = PrismaClass & {
   appointments: (PrismaAppointment & {
     slotsOfAppointment: (PrismaSlotOfAppointment & {
       user: { id: string }[];
@@ -30,8 +30,10 @@ export type TClassPlanDetailsData = Omit<
       classContents: true;
     };
   }>,
-  "classes"
+  "classes" | "price"
 > & {
+  // price is number at runtime via the extended client (#780)
+  price: number;
   classes: TClassSessionWithSchedule[];
   type: "class";
   imageUrl: string;

@@ -23,29 +23,13 @@
  */
 
 export { getOperatorDashboardStats, getStaffDashboardStats } from "./stats";
-export type {
-  OperatorDashboardStats,
-  StaffDashboardStats,
-  StaffDashboardRecentTicket,
-} from "./stats";
+export type { OperatorDashboardStats, StaffDashboardStats } from "./stats";
 
 export { getOperatorInvoices } from "./invoices";
-export type {
-  OperatorInvoiceFilters,
-  OperatorInvoice,
-  OperatorInvoiceResult,
-} from "./invoices";
+export type { OperatorInvoice, OperatorInvoiceResult } from "./invoices";
 
 export { getOperatorPayouts } from "./payouts";
-export type {
-  OperatorPayoutFilters,
-  OperatorPayout,
-  OperatorPayoutResult,
-} from "./payouts";
+export type { OperatorPayout, OperatorPayoutResult } from "./payouts";
 
 export { getVerificationQueue } from "./verification";
-export type {
-  OperatorVerificationFilters,
-  OperatorVerificationCounts,
-  OperatorVerificationResult,
-} from "./verification";
+export type { OperatorVerificationResult } from "./verification";

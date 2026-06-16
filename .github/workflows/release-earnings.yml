@@ -3,8 +3,15 @@ name: Release Earnings from Hold
 on:
   schedule:
     # Run hourly
-    - cron: "0 * * * *"
+    - cron: "17 * * * *"
   workflow_dispatch: # Allow manual triggering
+
+# #776 — never let two release runs overlap. Queue a new run behind an in-flight
+# one (do NOT cancel — a mid-flight money job must finish) so the find-then-claim
+# can't double-process. Belt to the in-code atomic claim's suspenders.
+concurrency:
+  group: release-earnings
+  cancel-in-progress: false
 
 jobs:
   release-earnings:
@@ -15,6 +22,9 @@ jobs:
       # Database connection (required for Prisma)
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       DIRECT_URL: ${{ secrets.DIRECT_URL }}
+      # #476 — fail-closed cron lock: without these the job refuses to run.
+      UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
+      UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
 
     steps:
       - name: Checkout code
@@ -37,6 +47,6 @@ jobs:
 
       - name: Notify on failure
         if: failure()
-        run: |
-          echo "Release earnings job failed"
-          # Add notification logic here (Slack, email, etc.)
+        env:
+          SLACK_OPS_WEBHOOK_URL: ${{ secrets.SLACK_OPS_WEBHOOK_URL }}
+        run: bash scripts/ci/notify-ops-failure.sh "release-earnings"

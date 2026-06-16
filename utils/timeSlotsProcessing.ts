@@ -40,20 +40,20 @@ export const dayToNumber: Record<DayOfWeek, number> = {
 export interface WeeklySlot {
   id: string;
   dayOfWeekforStartTimeInUTC: DayOfWeek;
-  slotStartTimeInUTC: Date;
+  startsAt: Date;
   dayOfWeekforEndTimeInUTC: DayOfWeek;
-  slotEndTimeInUTC: Date;
+  endsAt: Date;
 }
 
 export interface CustomSlot {
   id: string;
-  slotStartTimeInUTC: Date;
-  slotEndTimeInUTC: Date;
+  startsAt: Date;
+  endsAt: Date;
 }
 
 export interface AppointmentSlot {
-  slotStartTimeInUTC: Date;
-  slotEndTimeInUTC: Date;
+  startsAt: Date;
+  endsAt: Date;
 }
 
 export interface ProcessedSlot {
@@ -121,8 +121,8 @@ export function processWeeklySlots(
       if (
         !slot ||
         !slot.id ||
-        !slot.slotStartTimeInUTC ||
-        !slot.slotEndTimeInUTC
+        !slot.startsAt ||
+        !slot.endsAt
       ) {
         console.warn(
           `⚠️ processWeeklySlots: skipping slot with missing required fields`,
@@ -132,8 +132,8 @@ export function processWeeklySlots(
       if (slot.dayOfWeekforStartTimeInUTC === dayOfWeekEnum) {
         // Extract LOCAL time patterns from the stored weekly slot
         // Convert the stored UTC times to the target timezone to get the local time pattern
-        const startTimeLocal = toZonedTime(slot.slotStartTimeInUTC, timezone);
-        const endTimeLocal = toZonedTime(slot.slotEndTimeInUTC, timezone);
+        const startTimeLocal = toZonedTime(slot.startsAt, timezone);
+        const endTimeLocal = toZonedTime(slot.endsAt, timezone);
 
         const startHour = startTimeLocal.getHours();
         const startMinute = startTimeLocal.getMinutes();
@@ -210,8 +210,8 @@ export function processCustomSlots(
       if (
         !slot ||
         !slot.id ||
-        !slot.slotStartTimeInUTC ||
-        !slot.slotEndTimeInUTC
+        !slot.startsAt ||
+        !slot.endsAt
       ) {
         console.warn(
           `⚠️ processCustomSlots: skipping slot with missing required fields`,
@@ -220,8 +220,8 @@ export function processCustomSlots(
       }
 
       // Defensive: Validate dates are valid
-      const start = new Date(slot.slotStartTimeInUTC);
-      const end = new Date(slot.slotEndTimeInUTC);
+      const start = new Date(slot.startsAt);
+      const end = new Date(slot.endsAt);
       if (isNaN(start.getTime()) || isNaN(end.getTime())) {
         console.warn(
           `⚠️ processCustomSlots: skipping slot ${slot.id} with invalid date format`,
@@ -239,15 +239,15 @@ export function processCustomSlots(
 
       // Only include slots that overlap with our date range
       return hasTimeOverlap(
-        slot.slotStartTimeInUTC,
-        slot.slotEndTimeInUTC,
+        slot.startsAt,
+        slot.endsAt,
         startDate,
         endDate,
       );
     })
     .map((slot) => ({
-      start: slot.slotStartTimeInUTC,
-      end: slot.slotEndTimeInUTC,
+      start: slot.startsAt,
+      end: slot.endsAt,
       availabilityId: slot.id,
       type: "CUSTOM",
     }));
@@ -320,8 +320,8 @@ export function isSlotAllocated(
     hasTimeOverlap(
       slotStart,
       slotEnd,
-      apptSlot.slotStartTimeInUTC,
-      apptSlot.slotEndTimeInUTC,
+      apptSlot.startsAt,
+      apptSlot.endsAt,
     ),
   );
 }
@@ -362,14 +362,14 @@ export function getSlotBookingStatus(
     // Defensive: Skip invalid appointment slots
     if (
       !apptSlot ||
-      !apptSlot.slotStartTimeInUTC ||
-      !apptSlot.slotEndTimeInUTC
+      !apptSlot.startsAt ||
+      !apptSlot.endsAt
     ) {
       return false;
     }
 
-    const start = new Date(apptSlot.slotStartTimeInUTC);
-    const end = new Date(apptSlot.slotEndTimeInUTC);
+    const start = new Date(apptSlot.startsAt);
+    const end = new Date(apptSlot.endsAt);
     if (isNaN(start.getTime()) || isNaN(end.getTime())) {
       return false;
     }
@@ -377,8 +377,8 @@ export function getSlotBookingStatus(
     return hasTimeOverlap(
       slotStart,
       slotEnd,
-      apptSlot.slotStartTimeInUTC,
-      apptSlot.slotEndTimeInUTC,
+      apptSlot.startsAt,
+      apptSlot.endsAt,
     );
   });
 
@@ -388,8 +388,8 @@ export function getSlotBookingStatus(
 
   // Calculate total covered duration by merging overlapping appointments
   const intervals = overlappingAppointments.map((appt) => ({
-    start: Math.max(slotStart.getTime(), appt.slotStartTimeInUTC.getTime()),
-    end: Math.min(slotEnd.getTime(), appt.slotEndTimeInUTC.getTime()),
+    start: Math.max(slotStart.getTime(), appt.startsAt.getTime()),
+    end: Math.min(slotEnd.getTime(), appt.endsAt.getTime()),
   }));
 
   // Sort intervals by start time
@@ -449,8 +449,8 @@ export function convertToSlotTimings(
       slotId: `${slot.availabilityId}-${slot.start.toISOString()}`,
       dateInISO: slot.start.toISOString(),
       dayOfWeek: dayMap[zonedStart.getDay()],
-      slotStartTimeInUTC: slot.start.toISOString(),
-      slotEndTimeInUTC: slot.end.toISOString(),
+      startsAt: slot.start.toISOString(),
+      endsAt: slot.end.toISOString(),
       slotOfAvailabilityId: slot.availabilityId,
       slotOfAppointmentId: "",
       localStartTime: formatInTimeZone(slot.start, timezone, "p"),
@@ -467,8 +467,8 @@ export function convertToSlotTimings(
   // Sort chronologically by start time
   slotTimings.sort(
     (a, b) =>
-      new Date(a.slotStartTimeInUTC).getTime() -
-      new Date(b.slotStartTimeInUTC).getTime(),
+      new Date(a.startsAt).getTime() -
+      new Date(b.startsAt).getTime(),
   );
 
   return slotTimings;
@@ -495,8 +495,8 @@ export function mergeConsecutiveSlots(
   // Sort slots by start time
   const sortedSlots = [...slots].sort(
     (a, b) =>
-      new Date(a.slotStartTimeInUTC).getTime() -
-      new Date(b.slotStartTimeInUTC).getTime(),
+      new Date(a.startsAt).getTime() -
+      new Date(b.startsAt).getTime(),
   );
 
   const mergedSlots: (TSlotTiming & {
@@ -508,20 +508,28 @@ export function mergeConsecutiveSlots(
 
   for (let i = 1; i < sortedSlots.length; i++) {
     const currentSlot = sortedSlots[i];
-    const currentMergedEnd = new Date(currentMerged.slotEndTimeInUTC).getTime();
-    const nextSlotStart = new Date(currentSlot.slotStartTimeInUTC).getTime();
+    const currentMergedEnd = new Date(currentMerged.endsAt).getTime();
+    const nextSlotStart = new Date(currentSlot.startsAt).getTime();
 
     // Check if slots are consecutive (end time equals start time) and both are available
     // Allow a small tolerance of 1 minute for edge cases
     const isConsecutive = Math.abs(currentMergedEnd - nextSlotStart) <= 60000;
     const bothAvailable =
       !currentMerged.isAllocated && !currentSlot.isAllocated;
+    // #788 — never merge across different availability rows. The merge keeps
+    // row A's slotOfAvailabilityId, so a cross-row merge mis-binds every
+    // sliced sub-window from row B's range to row A's ID and checkout's
+    // window validator correctly rejects the booking. The merge was designed
+    // (c9ad0de3) to fuse sub-windows WITHIN one row for trials; cross-row
+    // fusion was an accident no flow relies on.
+    const sameSource =
+      currentMerged.slotOfAvailabilityId === currentSlot.slotOfAvailabilityId;
 
-    if (isConsecutive && bothAvailable) {
+    if (isConsecutive && bothAvailable && sameSource) {
       // Extend the current merged slot
       currentMerged = {
         ...currentMerged,
-        slotEndTimeInUTC: currentSlot.slotEndTimeInUTC,
+        endsAt: currentSlot.endsAt,
         localEndTime: currentSlot.localEndTime,
       };
     } else {
@@ -565,8 +573,8 @@ export function breakDownSlotsByDuration(
   const durationInMillis = durationInHours * 60 * 60 * 1000;
 
   slots.forEach((slot) => {
-    const start = new Date(slot.slotStartTimeInUTC);
-    const end = new Date(slot.slotEndTimeInUTC);
+    const start = new Date(slot.startsAt);
+    const end = new Date(slot.endsAt);
 
     // Generate sliding windows
     let currentStart = start;
@@ -593,8 +601,8 @@ export function breakDownSlotsByDuration(
       brokenDownSlots.push({
         ...slot,
         slotId: `${slot.slotOfAvailabilityId}-${currentStart.getTime()}`,
-        slotStartTimeInUTC: currentStart.toISOString(),
-        slotEndTimeInUTC: currentEnd.toISOString(),
+        startsAt: currentStart.toISOString(),
+        endsAt: currentEnd.toISOString(),
         localStartTime: formatInTimeZone(currentStart, timezone, "p"),
         localEndTime: formatInTimeZone(currentEnd, timezone, "p"),
         isAllocated: isSegmentAllocated,
@@ -609,8 +617,8 @@ export function breakDownSlotsByDuration(
   // Sort chronologically
   brokenDownSlots.sort(
     (a, b) =>
-      new Date(a.slotStartTimeInUTC).getTime() -
-      new Date(b.slotStartTimeInUTC).getTime(),
+      new Date(a.startsAt).getTime() -
+      new Date(b.startsAt).getTime(),
   );
 
   return brokenDownSlots;
@@ -635,7 +643,7 @@ export function groupSlotsByDate(
   const slotsByDate = slotTimings.reduce(
     (acc, slot) => {
       const dateKey = format(
-        toZonedTime(new Date(slot.slotStartTimeInUTC), timezone),
+        toZonedTime(new Date(slot.startsAt), timezone),
         "yyyy-MM-dd",
       );
       if (!acc[dateKey]) {
@@ -657,8 +665,8 @@ export function groupSlotsByDate(
   Object.keys(slotsByDate).forEach((dateKey) => {
     slotsByDate[dateKey].sort(
       (a, b) =>
-        new Date(a.slotStartTimeInUTC).getTime() -
-        new Date(b.slotStartTimeInUTC).getTime(),
+        new Date(a.startsAt).getTime() -
+        new Date(b.startsAt).getTime(),
     );
   });
 
@@ -758,8 +766,8 @@ export function breakDownSlotsPreservingStatus(
   })[] = [];
 
   for (const slot of mergedSlots) {
-    const slotStart = new Date(slot.slotStartTimeInUTC).getTime();
-    const slotEnd = new Date(slot.slotEndTimeInUTC).getTime();
+    const slotStart = new Date(slot.startsAt).getTime();
+    const slotEnd = new Date(slot.endsAt).getTime();
 
     let windowStart = slotStart;
     while (windowStart + durationInMillis <= slotEnd) {
@@ -767,8 +775,8 @@ export function breakDownSlotsPreservingStatus(
 
       // Find all original API sub-slots overlapping this window
       const overlapping = apiSlots.filter((s) => {
-        const sStart = new Date(s.slotStartTimeInUTC).getTime();
-        const sEnd = new Date(s.slotEndTimeInUTC).getTime();
+        const sStart = new Date(s.startsAt).getTime();
+        const sEnd = new Date(s.endsAt).getTime();
         return sStart < windowEnd && sEnd > windowStart;
       });
 
@@ -802,8 +810,8 @@ export function breakDownSlotsPreservingStatus(
       result.push({
         ...slot,
         slotId: `${slot.slotOfAvailabilityId}-${windowStart}`,
-        slotStartTimeInUTC: windowStartDate.toISOString(),
-        slotEndTimeInUTC: windowEndDate.toISOString(),
+        startsAt: windowStartDate.toISOString(),
+        endsAt: windowEndDate.toISOString(),
         localStartTime: formatInTimeZone(windowStartDate, timezone, "p"),
         localEndTime: formatInTimeZone(windowEndDate, timezone, "p"),
         isAllocated: windowAllocated,
@@ -816,8 +824,8 @@ export function breakDownSlotsPreservingStatus(
 
   result.sort(
     (a, b) =>
-      new Date(a.slotStartTimeInUTC).getTime() -
-      new Date(b.slotStartTimeInUTC).getTime(),
+      new Date(a.startsAt).getTime() -
+      new Date(b.startsAt).getTime(),
   );
 
   return result;

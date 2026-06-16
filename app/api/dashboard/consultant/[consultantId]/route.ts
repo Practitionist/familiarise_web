@@ -3,6 +3,7 @@ import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
 import { PAYOUT_CONSTANTS } from "@/lib/payments/payouts/constants";
+import { sumPaise } from "@/lib/payments/utils/money";
 
 // =============================================================================
 // Prisma Query Types - Derived from actual query shape for type safety
@@ -74,7 +75,7 @@ const appointmentInclude = {
       },
       schedulingPeriodStartsAt: true,
       schedulingPeriodEndsAt: true,
-      requestStatus: true,
+      status: true,
     },
   },
   webinar: {
@@ -213,16 +214,23 @@ const subscriptionInclude = {
   },
 } satisfies Prisma.SubscriptionInclude;
 
-// Derive types from the include objects
-type DashboardAppointment = Prisma.AppointmentGetPayload<{
-  include: typeof appointmentInclude;
-}>;
-type DashboardConsultation = Prisma.ConsultationGetPayload<{
-  include: typeof consultationInclude;
-}>;
-type DashboardSubscription = Prisma.SubscriptionGetPayload<{
-  include: typeof subscriptionInclude;
-}>;
+// Derive types from the include objects via the extended client — raw
+// GetPayload would re-introduce bigint money fields (#780).
+type DashboardAppointment = Prisma.Result<
+  typeof prisma.appointment,
+  { include: typeof appointmentInclude },
+  "findFirstOrThrow"
+>;
+type DashboardConsultation = Prisma.Result<
+  typeof prisma.consultation,
+  { include: typeof consultationInclude },
+  "findFirstOrThrow"
+>;
+type DashboardSubscription = Prisma.Result<
+  typeof prisma.subscription,
+  { include: typeof subscriptionInclude },
+  "findFirstOrThrow"
+>;
 
 // =============================================================================
 // Helper Functions
@@ -342,13 +350,13 @@ export async function GET(
             {
               consultation: {
                 consultationPlan: { consultantProfileId },
-                requestStatus: "APPROVED",
+                status: "APPROVED",
               },
             },
             {
               subscription: {
                 subscriptionPlan: { consultantProfileId },
-                requestStatus: "APPROVED",
+                status: "APPROVED",
               },
             },
             {
@@ -403,7 +411,7 @@ export async function GET(
               id: consultantProfileId,
             },
           },
-          requestStatus: "PENDING",
+          status: "PENDING",
         },
         include: consultationInclude,
         orderBy: {
@@ -416,7 +424,7 @@ export async function GET(
           subscriptionPlan: {
             consultantProfileId,
           },
-          requestStatus: "PENDING",
+          status: "PENDING",
         },
         include: subscriptionInclude,
         orderBy: {
@@ -436,7 +444,7 @@ export async function GET(
       // --- Performance Snapshot Queries ---
       // 1a. Earnings this month (consultant share from ConsultantEarnings, excluding refunded, minus partial refunds)
       prisma.consultantEarnings.aggregate({
-        _sum: { consultantShare: true, refundedShareAmount: true },
+        _sum: { consultantSharePaise: true, refundedShareAmount: true },
         where: {
           consultantProfileId,
           status: { not: "REFUNDED" },
@@ -445,7 +453,7 @@ export async function GET(
       }),
       // 1b. Earnings last month
       prisma.consultantEarnings.aggregate({
-        _sum: { consultantShare: true, refundedShareAmount: true },
+        _sum: { consultantSharePaise: true, refundedShareAmount: true },
         where: {
           consultantProfileId,
           status: { not: "REFUNDED" },
@@ -483,7 +491,7 @@ export async function GET(
       // --- Financial Summary Queries ---
       // 5. Net earnings (all-time, excluding refunded, minus partial refunds)
       prisma.consultantEarnings.aggregate({
-        _sum: { consultantShare: true, refundedShareAmount: true },
+        _sum: { consultantSharePaise: true, refundedShareAmount: true },
         where: {
           consultantProfileId,
           status: { not: "REFUNDED" },
@@ -491,7 +499,7 @@ export async function GET(
       }),
       // 6. Ready earnings (eligible for next payout — not yet assigned to a payout)
       prisma.consultantEarnings.aggregate({
-        _sum: { consultantShare: true, refundedShareAmount: true },
+        _sum: { consultantSharePaise: true, refundedShareAmount: true },
         where: {
           consultantProfileId,
           status: "READY",
@@ -517,6 +525,10 @@ export async function GET(
       (appointment: DashboardAppointment) => ({
         id: appointment.id,
         appointmentType: appointment.appointmentType,
+        // Org-funding marker — drives the "Sponsored · <Org>" badge on
+        // the consultant Home + Appointments surfaces. Previously dropped
+        // by this manual field-mapping transform.
+        organizationId: appointment.organizationId,
         slotsOfAppointment: appointment.slotsOfAppointment.map((slot) => ({
           id: slot.id,
           startsAt: slot.startsAt,
@@ -541,7 +553,7 @@ export async function GET(
                 consultantProfile:
                   appointment.consultation.consultationPlan.consultantProfile,
               },
-              requestStatus: appointment.consultation.requestStatus,
+              status: appointment.consultation.status,
               requestedBy: {
                 id: appointment.consultation.requestedBy?.id ?? "",
                 user: {
@@ -561,7 +573,7 @@ export async function GET(
                 consultantProfile:
                   appointment.subscription.subscriptionPlan.consultantProfile,
               },
-              requestStatus: appointment.subscription.requestStatus,
+              status: appointment.subscription.status,
               requestedBy: {
                 id: appointment.subscription.requestedBy?.id ?? "",
                 user: {
@@ -659,12 +671,13 @@ export async function GET(
     }));
 
     // --- Compute Performance Snapshot derived values ---
+    // #780 — _sum bypasses the result extension: bigint until sumPaise'd.
     const earningsThisMonthVal =
-      (earningsThisMonth._sum.consultantShare ?? 0) -
-      (earningsThisMonth._sum.refundedShareAmount ?? 0);
+      sumPaise(earningsThisMonth._sum.consultantSharePaise) -
+      sumPaise(earningsThisMonth._sum.refundedShareAmount);
     const earningsLastMonthVal =
-      (earningsLastMonth._sum.consultantShare ?? 0) -
-      (earningsLastMonth._sum.refundedShareAmount ?? 0);
+      sumPaise(earningsLastMonth._sum.consultantSharePaise) -
+      sumPaise(earningsLastMonth._sum.refundedShareAmount);
 
     // Earnings trend: percentage change (guard against division by zero)
     const earningsTrend =
@@ -692,24 +705,20 @@ export async function GET(
         : null;
 
     // Trial conversion rate
-    const trialCountMap = new Map(
-      trialCounts.map((t) => [t.status, t._count]),
-    );
+    const trialCountMap = new Map(trialCounts.map((t) => [t.status, t._count]));
     const completedTrials = trialCountMap.get("COMPLETED") ?? 0;
     const convertedTrials = trialCountMap.get("CONVERTED") ?? 0;
     const trialDenom = completedTrials + convertedTrials;
     const trialConversionRate =
-      trialDenom > 0
-        ? Math.round((convertedTrials / trialDenom) * 100)
-        : null;
+      trialDenom > 0 ? Math.round((convertedTrials / trialDenom) * 100) : null;
 
     // --- Financial Summary derived values ---
     const netEarningsVal =
-      (netEarningsAgg._sum.consultantShare ?? 0) -
-      (netEarningsAgg._sum.refundedShareAmount ?? 0);
+      sumPaise(netEarningsAgg._sum.consultantSharePaise) -
+      sumPaise(netEarningsAgg._sum.refundedShareAmount);
     const readyEarningsVal =
-      (readyEarningsAgg._sum.consultantShare ?? 0) -
-      (readyEarningsAgg._sum.refundedShareAmount ?? 0);
+      sumPaise(readyEarningsAgg._sum.consultantSharePaise) -
+      sumPaise(readyEarningsAgg._sum.refundedShareAmount);
     const payoutMinimum = PAYOUT_CONSTANTS.MINIMUM_PAYOUT_AMOUNT;
     const payoutEligible = readyEarningsVal >= payoutMinimum;
 
@@ -719,12 +728,13 @@ export async function GET(
     const activeClassIds = new Set<string>();
     for (const apt of sortedAppointments) {
       const isCompleted = apt.slotsOfAppointment.every(
-        (s) => s.completionStatus === "COMPLETED" || s.completionStatus === "CANCELLED",
+        (s) =>
+          s.completionStatus === "COMPLETED" ||
+          s.completionStatus === "CANCELLED",
       );
       if (isCompleted) continue;
       const consulteeId =
-        apt.consultation?.requestedBy?.id ??
-        apt.subscription?.requestedBy?.id;
+        apt.consultation?.requestedBy?.id ?? apt.subscription?.requestedBy?.id;
       if (consulteeId) activeClientIds.add(consulteeId);
       if (apt.subscription?.id) activeSubIds.add(apt.subscription.id);
       if (apt.class?.id) activeClassIds.add(apt.class.id);

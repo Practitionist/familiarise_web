@@ -19,7 +19,8 @@
  */
 
 import prisma from "../../lib/prisma";
-import { RequestStatus } from "@prisma/client";
+import { AppointmentStatus } from "@prisma/client";
+import { withCronLock } from "@/lib/cron/with-cron-lock";
 
 // Cancel consultations with APPROVED/APPROVED_PENDING_PAYMENT but no payment after 7 days
 const STALE_THRESHOLD_DAYS = 7;
@@ -35,7 +36,15 @@ export interface StalePendingConsultationsResult {
 /**
  * Cleanup stale pending consultations
  */
+// #476 — locked at the core so every entry (GH Actions / HTTP) shares one
+// mutual exclusion; fail-open: repeat-safe side effects, lock is belt-and-braces.
 export async function cleanupStalePendingConsultations(): Promise<StalePendingConsultationsResult> {
+  return withCronLock("cleanup-stale-pending-consultations", { failMode: "open" }, () =>
+    cleanupStalePendingConsultationsUnlocked(),
+  );
+}
+
+async function cleanupStalePendingConsultationsUnlocked(): Promise<StalePendingConsultationsResult> {
   const errors: string[] = [];
   let consultationsCancelled = 0;
   let slotsReleased = 0;
@@ -52,8 +61,8 @@ export async function cleanupStalePendingConsultations(): Promise<StalePendingCo
     // and no successful payment
     const staleConsultations = await prisma.consultation.findMany({
       where: {
-        requestStatus: {
-          in: [RequestStatus.APPROVED, RequestStatus.APPROVED_PENDING_PAYMENT],
+        status: {
+          in: [AppointmentStatus.APPROVED, AppointmentStatus.APPROVED_PENDING_PAYMENT],
         },
         updatedAt: { lt: staleDate },
         appointment: {
@@ -95,7 +104,7 @@ export async function cleanupStalePendingConsultations(): Promise<StalePendingCo
 
     for (const consultation of staleConsultations) {
       console.log(`\nProcessing consultation ${consultation.id}`);
-      console.log(`   Status: ${consultation.requestStatus}`);
+      console.log(`   Status: ${consultation.status}`);
       console.log(
         `   Consultee: ${consultation.requestedBy.user.name || "Unknown"}`,
       );
@@ -123,7 +132,7 @@ export async function cleanupStalePendingConsultations(): Promise<StalePendingCo
           await tx.consultation.update({
             where: { id: consultation.id },
             data: {
-              requestStatus: RequestStatus.CANCELLED,
+              status: AppointmentStatus.CANCELLED,
               cancellationNotes: `Auto-cancelled: No payment activity for ${STALE_THRESHOLD_DAYS} days`,
               cancelledAt: new Date(),
             },

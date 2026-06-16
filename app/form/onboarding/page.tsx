@@ -1,6 +1,10 @@
 "use client";
 
-import { updateOnboardingInformationAction } from "@/actions/forms/onboarding.action";
+import {
+  updateOnboardingInformationAction,
+  setOnboardingRoleAction,
+  completeOrgWorkspaceOnboardingAction,
+} from "@/actions/forms/onboarding.action";
 import {
   OnboardingFormData,
   OnboardingFormDataSchema,
@@ -25,6 +29,7 @@ import PersonalInfoAndRoleForm from "./components/PersonalInfoAndRoleForm";
 import StaffAgreementForm from "./components/StaffAgreementForm";
 import StaffProfileForm from "./components/StaffProfileForm";
 import StaffReviewForm from "./components/StaffReviewForm";
+import { CreateOrganizationWizard } from "@/components/organization/create-wizard/Wizard";
 
 // Step labels for progress indicator
 const STEP_LABELS = {
@@ -42,6 +47,11 @@ const STEP_LABELS = {
     "Agreement",
     "Review",
   ],
+  // ORG_WORKSPACE: the onboarding shell only owns "Personal Info". Once the
+  // role is committed, the shared CreateOrganizationWizard (stepper +
+  // cards) takes over the remainder — its own progress bar shows the
+  // 5-6 wizard steps, so we don't duplicate them here.
+  ORG_WORKSPACE: ["Personal Info"],
 };
 
 const MultiStepForm: React.FC = () => {
@@ -62,25 +72,58 @@ const MultiStepForm: React.FC = () => {
     } satisfies Partial<OnboardingFormData>,
   });
 
-  const handleNext = (stepData: Partial<OnboardingFormData>) => {
-    setFormData((prevData) => {
-      const updatedData = {
-        ...prevData,
-        ...stepData,
-      };
-
-      if (stepData.scheduleType) {
-        updatedData.scheduleType = stepData.scheduleType;
-        if (stepData.weeklySlots) {
-          updatedData.weeklySlots = [...stepData.weeklySlots];
-        }
-        if (stepData.customSlots) {
-          updatedData.customSlots = [...stepData.customSlots];
-        }
+  const handleNext = async (stepData: Partial<OnboardingFormData>) => {
+    // Merge new data first so the async role-flip below reads the
+    // freshest values (React setState batching would otherwise give us
+    // stale formData).
+    const merged: Partial<OnboardingFormData> = { ...formData, ...stepData };
+    if (stepData.scheduleType) {
+      merged.scheduleType = stepData.scheduleType;
+      if (stepData.weeklySlots) {
+        merged.weeklySlots = [...stepData.weeklySlots];
       }
+      if (stepData.customSlots) {
+        merged.customSlots = [...stepData.customSlots];
+      }
+    }
+    setFormData(merged);
 
-      return updatedData;
-    });
+    // ORG_WORKSPACE handoff: the onboarding shell only owns step 0. When the
+    // user completes Personal Info we commit their role on the User row
+    // so step 1's `POST /api/organizations` authorizes — the API gate
+    // requires `UserRole === "ORG_WORKSPACE"` and the signup default is
+    // CONSULTEE. The shared wizard then takes over for the remaining
+    // steps. Any other role keeps using this page's step machine.
+    if (step === 0 && merged.role === "ORG_WORKSPACE") {
+      const userId = session?.user?.id;
+      if (!userId) {
+        toast({
+          title: "Session Expired",
+          description: "Please sign in again to continue.",
+          variant: "destructive",
+        });
+        signOut();
+        return;
+      }
+      // Controlled inputs surface blanks as "" — coerce to undefined so the
+      // action's Zod validator (which rejects "" to avoid colliding on the
+      // `User.phone @unique` index) sees the field as truly omitted.
+      const trimmedPhone = merged.phone?.trim();
+      const result = await setOnboardingRoleAction(userId, "ORG_WORKSPACE", {
+        name: merged.name?.trim() || undefined,
+        phone: trimmedPhone || undefined,
+        timezone: merged.timezone?.trim() || undefined,
+      });
+      if (!result.success) {
+        toast({
+          title: "Unable to continue",
+          description: result.error ?? "Please try again.",
+          variant: "destructive",
+        });
+        return;
+      }
+    }
+
     setStep((prevStep) => prevStep + 1);
   };
 
@@ -191,6 +234,32 @@ const MultiStepForm: React.FC = () => {
         });
       }
 
+      // Check for a pending org invitation token stored by the invite page.
+      // This bridges the signup → onboarding → dashboard chain where the
+      // callbackUrl would otherwise be lost.
+      const pendingToken =
+        typeof window !== "undefined"
+          ? localStorage.getItem("pendingOrgInviteToken")
+          : null;
+      if (pendingToken) {
+        localStorage.removeItem("pendingOrgInviteToken");
+        router.push(`/organizations/invite/${pendingToken}`);
+        return;
+      }
+
+      // Check for a callbackUrl query param (passed through from signup page)
+      const callbackUrl = new URLSearchParams(window.location.search).get(
+        "callbackUrl",
+      );
+      if (callbackUrl?.startsWith("/") && !callbackUrl.startsWith("//")) {
+        router.push(callbackUrl);
+        return;
+      }
+
+      // ORG_WORKSPACE flow never reaches this handler — the shared
+      // CreateOrganizationWizard's Review step owns the finalize +
+      // redirect via `completeOrgWorkspaceOnboardingAction`.
+
       // Redirect based on role (server has already updated the user record,
       // session cookie will refresh automatically)
       if (finalData.role === "CONSULTANT" && result.user.consultantProfileId) {
@@ -259,7 +328,7 @@ const MultiStepForm: React.FC = () => {
               <StaffProfileForm
                 onNext={handleNext}
                 onBack={handleBack}
-                initialData={formData}
+                initialData={formData as Parameters<typeof StaffProfileForm>[0]["initialData"]}
               />
             );
           default:
@@ -280,7 +349,7 @@ const MultiStepForm: React.FC = () => {
               <ConsulteeAgreementForm
                 onNext={handleNext}
                 onBack={handleBack}
-                formData={formData}
+                formData={formData as Parameters<typeof ConsulteeAgreementForm>[0]["formData"]}
               />
             );
           case "STAFF":
@@ -288,7 +357,7 @@ const MultiStepForm: React.FC = () => {
               <StaffAgreementForm
                 onNext={handleNext}
                 onBack={handleBack}
-                initialData={formData}
+                initialData={formData as Parameters<typeof StaffAgreementForm>[0]["initialData"]}
               />
             );
           default:
@@ -309,7 +378,7 @@ const MultiStepForm: React.FC = () => {
               <ConsulteeReviewForm
                 onSubmit={handleSubmit}
                 onBack={handleBack}
-                formData={formData}
+                formData={formData as Parameters<typeof ConsulteeReviewForm>[0]["formData"]}
                 onGoToStep={handleGoToStep}
               />
             );
@@ -318,7 +387,7 @@ const MultiStepForm: React.FC = () => {
               <StaffReviewForm
                 onSubmit={handleSubmit}
                 onBack={handleBack}
-                formData={formData}
+                formData={formData as Parameters<typeof StaffReviewForm>[0]["formData"]}
                 onGoToStep={handleGoToStep}
               />
             );
@@ -355,6 +424,24 @@ const MultiStepForm: React.FC = () => {
   // Use wider layout for steps that need more horizontal space
   const wideLayoutSteps = ["Availability"];
   const useWideLayout = wideLayoutSteps.includes(stepLabels[step]);
+
+  // ORG_WORKSPACE handoff: after Personal Info commits the role, render the
+  // shared create-org wizard instead of this page's shell. The wizard
+  // owns the remaining 5-6 steps (Org Info → Review) and has its own
+  // stepper; afterLaunch flips `user.onboardingCompleted = true` so the
+  // user lands on their new org's home fully onboarded.
+  if (currentRole === "ORG_WORKSPACE" && step > 0) {
+    const userId = session?.user?.id;
+    return (
+      <CreateOrganizationWizard
+        onCancel={() => setStep(0)}
+        afterLaunch={async () => {
+          if (!userId) return;
+          await completeOrgWorkspaceOnboardingAction(userId);
+        }}
+      />
+    );
+  }
 
   return (
     <FormProvider {...methods}>

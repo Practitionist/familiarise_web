@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { ConsulteeDashboardSkeleton } from "@/components/ui/dashboard-skeleton";
 import { createConsulteeQueries } from "@/lib/dashboard-queries";
+import { useOrgScope } from "@/hooks/useOrgScope";
 import HomeTab from "./HomeTab";
 import { useUser } from "../../UserContext";
 
@@ -18,9 +19,23 @@ export default function HomePage({ params }: Readonly<PageProps>) {
   const { consulteeId } = resolvedParams;
   const { userDetails } = useUser();
 
-  // Use the centralized query configuration with optimized settings for immediate rendering
+  // Default to "All activity" so an org learner sees both personal AND
+  // org-funded upcoming sessions on their landing page. Without this the
+  // events fetcher defaulted to ?orgScope=personal and silently hid every
+  // org-funded session on Home (visible only after navigating to
+  // Appointments and toggling the filter). The /api/dashboard/consultee/
+  // <id>/events route is self-scoped (consulteeProfileId match), so
+  // `?orgScope=all` is safe — see lib/api/scope/parse.ts allowAllForOwner.
+  const { scope } = useOrgScope({ defaultForOrgMember: "all" });
+  const orgScopeParam =
+    scope.kind === "personal"
+      ? "personal"
+      : scope.kind === "all"
+        ? "all"
+        : scope.orgId;
+
   const eventsQuery = {
-    ...createConsulteeQueries(consulteeId).events,
+    ...createConsulteeQueries(consulteeId, orgScopeParam).events,
     // Show stale data immediately while fetching in background
     staleTime: 0,
     refetchOnWindowFocus: false,

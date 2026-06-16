@@ -111,7 +111,7 @@ The `checkoutSchema` enforces per-type requirements via `superRefine`:
 
 | Appointment Type | Required Fields                                                                                              | Notes                                                |
 | ---------------- | ------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------- |
-| CONSULTATION     | `slotStartTimeInUTC`, `slotEndTimeInUTC`, one of `slotOfAvailabilityWeeklyId` / `slotOfAvailabilityCustomId` | Slot timing validated against minimum lead time      |
+| CONSULTATION     | `startsAt`, `endsAt`, one of `slotOfAvailabilityWeeklyId` / `slotOfAvailabilityCustomId` | Slot timing validated against minimum lead time      |
 | SUBSCRIPTION     | Either slot data OR `schedulingPeriodStartsAt` + `schedulingPeriodEndsAt`                                    | If slots provided, availability ID also required     |
 | WEBINAR          | `eventId`                                                                                                    | No slot times needed (uses master slot from webinar) |
 | CLASS            | `eventId`                                                                                                    | No slot times needed (uses session slots from class) |
@@ -120,7 +120,7 @@ The `checkoutSchema` enforces per-type requirements via `superRefine`:
 Cross-field validations:
 
 - Cannot provide both weekly and custom slot availability IDs
-- `slotStartTimeInUTC` must be before `slotEndTimeInUTC`
+- `startsAt` must be before `endsAt`
 - `schedulingPeriodStartsAt` must be before `schedulingPeriodEndsAt`
 - Slot must pass `validateSlotTiming()` (not in the past, respects minimum booking lead time)
 
@@ -166,8 +166,8 @@ When `isMockPayment = true`:
 
 | Event Type                       | Lock Function       | Key Pattern                                            | Default TTL |
 | -------------------------------- | ------------------- | ------------------------------------------------------ | ----------- |
-| Consultation                     | `lockSlotBooking`   | `slot-booking:{consultantUserId}:{slotStartTimeInUTC}` | 60s         |
-| Subscription (with slots)        | `lockSlotBooking`   | `slot-booking:{consultantUserId}:{slotStartTimeInUTC}` | 60s         |
+| Consultation                     | `lockSlotBooking`   | `slot-booking:{consultantUserId}:{startsAt}` | 60s         |
+| Subscription (with slots)        | `lockSlotBooking`   | `slot-booking:{consultantUserId}:{startsAt}` | 60s         |
 | Subscription (scheduling period) | `lockEventCheckout` | `event-checkout:SUBSCRIPTION:{planId}`                 | 60s         |
 | Webinar                          | `lockEventCheckout` | `event-checkout:WEBINAR:{eventId}`                     | 60s         |
 | Class                            | `lockEventCheckout` | `event-checkout:CLASS:{eventId}`                       | 60s         |

@@ -5,6 +5,7 @@ import { useToast } from "@/hooks/use-toast";
 import { loadScript } from "../plans/utils";
 import { CheckoutInput } from "@/schemas/checkout";
 import { useState } from "react";
+import { mintClientIdempotencyKey } from "@/app/checkout/plans/utils";
 
 interface RazorpayPaymentResponse {
   razorpay_payment_id: string;
@@ -75,6 +76,10 @@ export default function RazorpayCheckout({
 }: RazorpayCheckoutProps) {
   const { toast } = useToast();
   const [isProcessing, setIsProcessing] = useState(false);
+  // #828 — stable per-mount; the server dedupes retries on this key.
+  // useState's lazy initializer runs once, unlike a useRef(arg) expression
+  // which would mint a key every render.
+  const [idempotencyKey] = useState(mintClientIdempotencyKey);
 
   const handleCheckout = async () => {
     setIsProcessing(true);
@@ -98,7 +103,10 @@ export default function RazorpayCheckout({
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(checkoutData),
+        body: JSON.stringify({
+          ...checkoutData,
+          clientIdempotencyKey: idempotencyKey,
+        }),
       });
 
       if (!response.ok) {

@@ -223,10 +223,10 @@ CFO-level business documentation. See [finances/README.md](./finances/README.md)
 - [03-pricing-calculator.md](./finances/03-pricing-calculator.md) - Pricing calculator
 - [04-profitability-analysis.md](./finances/04-profitability-analysis.md) - Profitability
 - [05-saas-metrics-monthly.md](./finances/05-saas-metrics-monthly.md) - SaaS metrics
-- [06-saas-expenditures.md](./finances/06-saas-expenditures.md) - Expenditures
-- [07-tax-compliance-india.md](./finances/07-tax-compliance-india.md) - Tax compliance
-- [08-tax-compliance-marketplace-obligations.md](./finances/08-tax-compliance-marketplace-obligations.md) - Marketplace obligations
-- [09-tax-essentials-simplified.md](./finances/09-tax-essentials-simplified.md) - Simplified tax guide
+- [06-tax-compliance-india.md](./finances/06-tax-compliance-india.md) - Tax compliance
+- [07-tax-compliance-marketplace-obligations.md](./finances/07-tax-compliance-marketplace-obligations.md) - Marketplace obligations
+- [08-tax-essentials-simplified.md](./finances/08-tax-essentials-simplified.md) - Simplified tax guide
+- [09-pricing-strategy.md](./finances/09-pricing-strategy.md) - Competitive pricing strategy
 
 ---
 
@@ -263,7 +263,7 @@ All documentation for features, integrations, and improvements that are **not ye
 ### Highlights
 
 - [Auth Migration (BetterAuth)](./roadmap/auth/betterauth-migration.md) - NextAuth → BetterAuth migration
-- [Enterprise B2B Tier](./roadmap/enterprise/README.md) - SSO, org management, recording library
+- [Enterprise Subsystem](enterprise/00-foundations/01-overview.md) - SSO, org management, billing, payouts (canonical implementation docs)
 - [Infrastructure Hardening](./roadmap/infrastructure/README.md) - Security, monitoring, scaling (14 audit documents)
 - [Service Integration Architecture](./roadmap/content-strategy/README.md) - Directus, ConvertKit, Enterprise interlinking (planned)
 - [Content Strategy](./roadmap/content-strategy/README.md) - CMS, blog, gated community

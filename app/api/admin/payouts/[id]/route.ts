@@ -68,7 +68,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     const { action, reason } = actionSchema.parse(body);
 
     // Verify payout exists and is pending
-    const payout = await prisma.payout.findUnique({
+    const payout = await prisma.consultantPayout.findUnique({
       where: { id },
     });
 

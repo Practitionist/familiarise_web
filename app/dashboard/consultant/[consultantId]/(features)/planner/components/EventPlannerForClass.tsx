@@ -60,6 +60,7 @@ import { ClassEvent, ClassPlannerProps } from "../types/event";
 import { PlanMaterialsUpload } from "./PlanMaterialsUpload";
 import { CollaboratorsTab } from "@/components/collaborators/CollaboratorsTab";
 import { PlanImageUploader } from "@/components/plans/PlanImageUploader";
+import { toCurrencyEnum } from "@/lib/payments/validation/currency-guards";
 
 export function EventPlannerForClass({
   isOpen,
@@ -285,7 +286,7 @@ export function EventPlannerForClass({
           title: formData.title,
           description: formData.description || "",
           price: Math.round(formData.price * 100),
-          priceCurrency: formData.priceCurrency ?? "INR",
+          priceCurrency: toCurrencyEnum(formData.priceCurrency),
           durationInMonths: formData.durationInMonths,
           maxParticipants: formData.maxParticipants,
           language: formData.language ?? "English",
@@ -296,6 +297,10 @@ export function EventPlannerForClass({
           topics: formData.topics,
           consultantProfileId: consultantId,
           consultantProfile: null,
+          organizationId: null,
+          // #726 — personal plans default to PUBLIC; org-owned plans
+          // surface a visibility toggle in their dedicated catalog UI.
+          visibility: initialData?.classPlan?.visibility ?? "PUBLIC",
           certificateProvided: formData.certificateProvided ?? false,
           recordingEnabled: formData.recordingEnabled ?? false,
           recordingStoragePolicy: initialData?.classPlan?.recordingStoragePolicy ?? "STREAM_ONLY",

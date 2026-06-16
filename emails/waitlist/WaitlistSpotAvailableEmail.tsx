@@ -162,8 +162,6 @@ export const WaitlistSpotAvailableEmail = ({
   );
 };
 
-export default WaitlistSpotAvailableEmail;
-
 // Styles
 const main = {
   backgroundColor: "#f5f5f5",

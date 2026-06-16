@@ -1,15 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
-import crypto from "crypto";
-import prisma from "@/lib/prisma";
-import { Prisma, PaymentStatus, RequestStatus } from "@prisma/client";
-import { isDbHealthy } from "@/app/api/webhooks/utils";
+import prisma, { type Tx } from "@/lib/prisma";
+import { Prisma, PaymentStatus, AppointmentStatus } from "@prisma/client";
+import {
+  isDbHealthy,
+  verifyHmacWebhookSignature,
+} from "@/app/api/webhooks/utils";
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.text();
-    const signature = req.headers.get("x-signature");
-
-    if (!process.env.LEMON_SQUEEZY_WEBHOOK_SECRET) {
+    // #813 — capture the secret once before verification.
+    const secret = process.env.LEMON_SQUEEZY_WEBHOOK_SECRET;
+    if (!secret) {
       console.error("LEMON_SQUEEZY_WEBHOOK_SECRET not configured");
       return NextResponse.json(
         { error: "Webhook secret not configured" },
@@ -17,20 +18,21 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Verify webhook signature for Lemon Squeezy
-    if (signature) {
-      const expectedSignature = crypto
-        .createHmac("sha256", process.env.LEMON_SQUEEZY_WEBHOOK_SECRET)
-        .update(body)
-        .digest("hex");
-
-      if (signature !== `sha256=${expectedSignature}`) {
-        console.error("Lemon Squeezy webhook signature verification failed");
-        return NextResponse.json(
-          { error: "Invalid signature" },
-          { status: 400 },
-        );
-      }
+    // #813/#812 — shared strict HMAC verify (hex-decode + length-64 gate +
+    // timingSafeEqual). REJECT a missing header (a forged unsigned POST used to
+    // skip verification). Lemon prefixes the digest with `sha256=`.
+    const { isValid, body, missingHeader } = await verifyHmacWebhookSignature(
+      req,
+      secret,
+      { header: "x-signature", prefix: "sha256=" },
+    );
+    if (missingHeader) {
+      console.error("Lemon Squeezy webhook missing signature header");
+      return NextResponse.json({ error: "Missing signature" }, { status: 401 });
+    }
+    if (!isValid) {
+      console.error("Lemon Squeezy webhook signature verification failed");
+      return NextResponse.json({ error: "Invalid signature" }, { status: 400 });
     }
 
     // DB health check — return 503 if DB is unreachable so Lemon Squeezy retries
@@ -237,7 +239,7 @@ async function handleLemonSqueezyPaymentFailure(paymentIdentifier: string) {
 }
 
 // Helper function to create appointment from payment record
-async function createAppointmentFromPayment(_tx: Prisma.TransactionClient, _payment: unknown) {
+async function createAppointmentFromPayment(_tx: Tx, _payment: unknown) {
   // For Lemon Squeezy, like Razorpay, we need to store appointment metadata
   // in the payment record or use custom_data from the webhook
   console.log(
@@ -254,7 +256,7 @@ async function createAppointmentFromPayment(_tx: Prisma.TransactionClient, _paym
 }
 
 // Helper function to confirm existing appointment
-async function confirmExistingAppointment(tx: Prisma.TransactionClient, appointmentId: string) {
+async function confirmExistingAppointment(tx: Tx, appointmentId: string) {
   // Make slots non-tentative
   await tx.slotOfAppointment.updateMany({
     where: { appointmentId },
@@ -275,14 +277,14 @@ async function confirmExistingAppointment(tx: Prisma.TransactionClient, appointm
   if (appointment?.consultation) {
     await tx.consultation.update({
       where: { id: appointment.consultation.id },
-      data: { requestStatus: RequestStatus.PENDING }, // Keep as PENDING for consultant approval
+      data: { status: AppointmentStatus.PENDING }, // Keep as PENDING for consultant approval
     });
   }
 
   if (appointment?.subscription) {
     await tx.subscription.update({
       where: { id: appointment.subscription.id },
-      data: { requestStatus: RequestStatus.PENDING }, // Keep as PENDING for consultant approval
+      data: { status: AppointmentStatus.PENDING }, // Keep as PENDING for consultant approval
     });
   }
 
@@ -302,7 +304,7 @@ async function confirmExistingAppointment(tx: Prisma.TransactionClient, appointm
 }
 
 // Helper function to cleanup failed payment appointments
-async function cleanupFailedPaymentAppointment(tx: Prisma.TransactionClient, appointmentId: string) {
+async function cleanupFailedPaymentAppointment(tx: Tx, appointmentId: string) {
   const appointment = await tx.appointment.findUnique({
     where: { id: appointmentId },
     include: {

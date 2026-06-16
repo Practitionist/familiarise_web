@@ -6,7 +6,6 @@ export async function GET(req: NextRequest) {
   try {
     const auth = await requirePrivilegedAuth();
     if (auth.error) return auth.error;
-    const session = auth.session;
 
     // Parse query parameters
     const searchParams = req.nextUrl.searchParams;
@@ -15,6 +14,10 @@ export async function GET(req: NextRequest) {
     const page = parseInt(searchParams.get("page") || "1");
     const limit = 20;
     const skip = (page - 1) * limit;
+    // #674 comment 7 — optional org-scope filter. Filters to users with
+    // an ACTIVE Membership at the given org. Useful for support staff
+    // looking up "all members of Acme."
+    const orgId = searchParams.get("orgId");
 
     // Build where clause with proper typing
     const where: Prisma.UserWhereInput = {};
@@ -33,6 +36,12 @@ export async function GET(req: NextRequest) {
         { name: { contains: search, mode: "insensitive" } },
         { email: { contains: search, mode: "insensitive" } },
       ];
+    }
+
+    if (orgId) {
+      where.memberships = {
+        some: { organizationId: orgId, status: "ACTIVE" },
+      };
     }
 
     // Fetch users with pagination

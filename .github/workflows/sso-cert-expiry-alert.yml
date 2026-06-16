@@ -1,0 +1,47 @@
+name: SSO Cert Expiry Alert
+
+on:
+  schedule:
+    # Daily at 08:55 IST (03:25 UTC). #709 — moved off the 03:00 pile-up
+    # (cleanup-old-stream-recordings keeps that slot); avoids
+    # cleanup-stale-invitations (08:10 IST / 02:40 UTC) and
+    # settle-invoice-accruals (09:30 IST / 04:00 UTC on day-1).
+    # GitHub Actions `schedule` interprets the cron expression in UTC.
+    - cron: "25 3 * * *"
+  workflow_dispatch: # allow manual trigger after rotating a cert
+
+jobs:
+  sso-cert-expiry-alert:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DIRECT_URL: ${{ secrets.DIRECT_URL }}
+      UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
+      UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Run SSO cert expiry scan
+        run: npx tsx jobs/cleanup/sso-cert-expiry-alert.ts
+
+      - name: Notify on failure
+        if: failure()
+        env:
+          SLACK_OPS_WEBHOOK_URL: ${{ secrets.SLACK_OPS_WEBHOOK_URL }}
+        run: bash scripts/ci/notify-ops-failure.sh "sso-cert-expiry-alert"

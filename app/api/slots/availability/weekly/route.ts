@@ -176,7 +176,9 @@ export async function POST(req: NextRequest) {
 
     const utcOffsetMinutes = consultantProfile.user?.timezone
       ? getTimezoneOffsetMinutes(consultantProfile.user.timezone)
-      : 0;
+      : 330; // #872 — IST-only at launch: default a missing timezone to IST, never UTC 0.
+    // TODO(#872): restore the local wall-clock + IANA-zone source of truth when
+    // non-IST consultants onboard; DST is parked post-MVP (IST-only at launch).
 
     const newWeeklySlot = await prisma.slotOfAvailabilityWeekly.create({
       data: {

@@ -69,7 +69,9 @@ export async function createRazorpayOrder({
       amount: amount, // already in smallest currency unit (paise)
       currency,
       notes: metadata,
-      receipt: `receipt_${Date.now()}`,
+      // PM-11 — Date.now() collides for two orders in the same ms; the uuid
+      // suffix keeps the receipt unique so Razorpay doesn't reject the dupe.
+      receipt: `receipt_${Date.now()}_${globalThis.crypto.randomUUID().slice(0, 8)}`,
     });
 
     return {
@@ -148,7 +150,11 @@ export async function createRazorpayRefund({
       );
     }
 
-    const payment = payments.items[0];
+    // PM-12 — an order can carry failed attempts before the captured one;
+    // items[0] is creation-ordered, so refunding it blindly can target a
+    // non-captured payment. Prefer the captured payment.
+    const payment =
+      payments.items.find((p) => p.status === "captured") ?? payments.items[0];
 
     // Create refund on the payment
     const refund = await razorpayClient.payments.refund(payment.id, {
@@ -228,7 +234,10 @@ export async function listRazorpayRefunds(
     if (payments.count === 0) {
       return []; // No payments for this order, so no refunds
     }
-    const paymentId = payments.items[0].id;
+    // PM-12 — prefer the captured payment over a failed earlier attempt.
+    const paymentId = (
+      payments.items.find((p) => p.status === "captured") ?? payments.items[0]
+    ).id;
 
     // Fetch refunds for the specific payment using the SDK method
     const refundsResponse = await razorpayClient.payments.fetchMultipleRefund(

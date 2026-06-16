@@ -6,7 +6,7 @@
 import prisma from "@/lib/prisma";
 import { WaitlistStatus } from "@prisma/client";
 import {
-  getNextInQueue,
+  getNextBatchInQueue,
   updatePositions,
   calculatePosition,
 } from "./queue-manager";
@@ -49,96 +49,100 @@ export async function handleSlotOpening(params: SlotOpeningParams): Promise<{
   const notified: string[] = [];
   const errors: Array<{ userId: string; error: string }> = [];
 
-  // Notify up to `slotsAvailable` users
-  for (let i = 0; i < slotsAvailable; i++) {
-    const nextInQueue = await getNextInQueue({ webinarId, classId });
+  // Batched claim (write-path scale hardening): the old shape ran a
+  // findFirst + guarded updateMany PER SLOT with an `i--` retry on every
+  // race loss — a webinar cancellation freeing N seats against M concurrent
+  // openings cost O(N×M) query waves. Each round below is one ordered
+  // findMany + one $transaction of per-id CAS claims (a single round trip
+  // whose per-id counts say exactly which candidates THIS call won — a
+  // bulk updateMany can't report that). Losers shrink the next round's
+  // batch; the loop ends when the queue runs dry or all slots are claimed.
+  let remaining = slotsAvailable;
+  while (remaining > 0) {
+    const candidates = await getNextBatchInQueue(
+      { webinarId, classId },
+      remaining,
+    );
+    if (candidates.length === 0) break;
 
-    if (!nextInQueue) {
-      // No more users waiting
-      break;
-    }
+    const now = new Date();
+    const expiresAt = new Date(
+      now.getTime() + NOTIFICATION_WINDOW_HOURS * 60 * 60 * 1000,
+    );
 
-    try {
-      const now = new Date();
-      const expiresAt = new Date(
-        now.getTime() + NOTIFICATION_WINDOW_HOURS * 60 * 60 * 1000,
-      );
+    // Same per-entry CAS guard as before (status must still be WAITING),
+    // batched into one transaction.
+    const claims = await prisma.$transaction(
+      candidates.map((candidate) =>
+        prisma.waitlist.updateMany({
+          where: { id: candidate.id, status: WaitlistStatus.WAITING },
+          data: {
+            status: WaitlistStatus.NOTIFIED,
+            notifiedAt: now,
+            expiresAt,
+          },
+        }),
+      ),
+    );
+    const winners = candidates.filter((_, i) => claims[i].count === 1);
+    remaining -= winners.length;
 
-      // Use updateMany with a status guard to prevent double-notification under concurrent
-      // slot openings. If two calls race on the same top-of-queue user, only one updateMany
-      // will match (the other sees status already = NOTIFIED and returns count=0).
-      const updated = await prisma.waitlist.updateMany({
-        where: { id: nextInQueue.id, status: WaitlistStatus.WAITING },
-        data: {
-          status: WaitlistStatus.NOTIFIED,
-          notifiedAt: now,
-          expiresAt,
-        },
-      });
+    for (const winner of winners) {
+      try {
+        // Send notification email. A failed delivery is recorded but the
+        // claim stands — the 48h expiration cron recycles the spot, same
+        // backstop as before.
+        if (winner.user.email) {
+          const eventTitle =
+            winner.webinar?.webinarPlan.title ||
+            winner.class?.classPlan.title ||
+            "Event";
 
-      if (updated.count === 0) {
-        // This entry was already claimed by a concurrent slot-opening call.
-        // Decrement i so we retry this iteration and pick the next person in queue.
-        i--;
-        continue;
-      }
+          const eventType = winner.webinarId ? "webinar" : "class";
+          const eventId = winner.webinarId || winner.classId;
 
-      // Send notification email
-      if (nextInQueue.user.email) {
-        const eventTitle =
-          nextInQueue.webinar?.webinarPlan.title ||
-          nextInQueue.class?.classPlan.title ||
-          "Event";
+          // Get scheduled date if available
+          let scheduledDate: Date | undefined;
+          if (winner.webinar?.appointment?.slotsOfAppointment?.[0]) {
+            scheduledDate =
+              winner.webinar.appointment.slotsOfAppointment[0].startsAt;
+          } else if (winner.class?.appointments?.[0]?.slotsOfAppointment?.[0]) {
+            scheduledDate =
+              winner.class.appointments[0].slotsOfAppointment[0].startsAt;
+          }
 
-        const eventType = nextInQueue.webinarId ? "webinar" : "class";
-        const eventId = nextInQueue.webinarId || nextInQueue.classId;
-
-        // Get scheduled date if available
-        let scheduledDate: Date | undefined;
-        if (nextInQueue.webinar?.appointment?.slotsOfAppointment?.[0]) {
-          scheduledDate =
-            nextInQueue.webinar.appointment.slotsOfAppointment[0].startsAt;
-        } else if (
-          nextInQueue.class?.appointments?.[0]?.slotsOfAppointment?.[0]
-        ) {
-          scheduledDate =
-            nextInQueue.class.appointments[0].slotsOfAppointment[0].startsAt;
+          await sendWaitlistSpotAvailableEmail({
+            email: winner.user.email,
+            name: winner.user.name || "Valued User",
+            eventTitle,
+            eventType,
+            eventId: eventId!,
+            scheduledDate,
+            expiresAt,
+            waitlistId: winner.id,
+          });
         }
 
-        await sendWaitlistSpotAvailableEmail({
-          email: nextInQueue.user.email,
-          name: nextInQueue.user.name || "Valued User",
-          eventTitle,
-          eventType,
-          eventId: eventId!,
-          scheduledDate,
-          expiresAt,
-          waitlistId: nextInQueue.id,
-        });
+        notified.push(winner.userId);
+
+        console.log(
+          JSON.stringify({
+            event: "waitlist_user_notified",
+            waitlistId: winner.id,
+            userId: winner.userId,
+            webinarId,
+            classId,
+            reason,
+            expiresAt: expiresAt.toISOString(),
+            timestamp: new Date().toISOString(),
+          }),
+        );
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : "Unknown error";
+        errors.push({ userId: winner.userId, error: errorMessage });
+        console.error(`Error notifying waitlist user ${winner.userId}:`, error);
       }
-
-      notified.push(nextInQueue.userId);
-
-      console.log(
-        JSON.stringify({
-          event: "waitlist_user_notified",
-          waitlistId: nextInQueue.id,
-          userId: nextInQueue.userId,
-          webinarId,
-          classId,
-          reason,
-          expiresAt: expiresAt.toISOString(),
-          timestamp: new Date().toISOString(),
-        }),
-      );
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error";
-      errors.push({ userId: nextInQueue.userId, error: errorMessage });
-      console.error(
-        `Error notifying waitlist user ${nextInQueue.userId}:`,
-        error,
-      );
     }
   }
 
@@ -195,8 +199,10 @@ export async function handleWaitlistResponse(params: {
 
   // Check if notification has expired
   if (entry.expiresAt && new Date() > entry.expiresAt) {
-    await prisma.waitlist.update({
-      where: { id: waitlistId },
+    // #834 — CAS: only NOTIFIED may expire; a racing respond/expire-cron
+    // already moved it on if count is 0.
+    await prisma.waitlist.updateMany({
+      where: { id: waitlistId, status: WaitlistStatus.NOTIFIED },
       data: {
         status: WaitlistStatus.EXPIRED,
         respondedAt: new Date(),
@@ -232,14 +238,21 @@ export async function handleWaitlistResponse(params: {
     }
 
     case "DECLINE": {
-      // User doesn't want the spot - remove from waitlist
-      await prisma.waitlist.update({
-        where: { id: waitlistId },
+      // #834 — CAS: two tabs declining concurrently must fire exactly one
+      // handleSlotOpening; the loser would double-notify the next in queue.
+      const declined = await prisma.waitlist.updateMany({
+        where: { id: waitlistId, status: WaitlistStatus.NOTIFIED },
         data: {
           status: WaitlistStatus.CANCELLED,
           respondedAt: now,
         },
       });
+      if (declined.count === 0) {
+        return {
+          success: false,
+          message: "This spot offer was already responded to.",
+        };
+      }
 
       // Notify next person in queue
       await handleSlotOpening({
@@ -256,14 +269,21 @@ export async function handleWaitlistResponse(params: {
     }
 
     case "SKIP": {
-      // User wants to skip this time - move to back of queue
-      await prisma.waitlist.update({
-        where: { id: waitlistId },
+      // #834 — CAS: a double-submitted SKIP must not insert two back-of-queue
+      // rows or double-fire handleSlotOpening.
+      const skipped = await prisma.waitlist.updateMany({
+        where: { id: waitlistId, status: WaitlistStatus.NOTIFIED },
         data: {
           status: WaitlistStatus.SKIPPED,
           respondedAt: now,
         },
       });
+      if (skipped.count === 0) {
+        return {
+          success: false,
+          message: "This spot offer was already responded to.",
+        };
+      }
 
       // Create a new waitlist entry at the back of the queue
       await prisma.waitlist.create({
@@ -308,8 +328,13 @@ export async function handleWaitlistResponse(params: {
  * Mark a waitlist entry as booked after successful payment
  */
 export async function markWaitlistAsBooked(waitlistId: string): Promise<void> {
-  await prisma.waitlist.update({
-    where: { id: waitlistId },
+  // #834 — CAS: webhook replays re-stamp, and a CANCELLED/EXPIRED entry must
+  // not be resurrected to BOOKED. Zero rows = already stamped or moved on.
+  const res = await prisma.waitlist.updateMany({
+    where: {
+      id: waitlistId,
+      status: { in: [WaitlistStatus.NOTIFIED, WaitlistStatus.WAITING] },
+    },
     data: {
       status: WaitlistStatus.BOOKED,
       bookedAt: new Date(),
@@ -319,7 +344,10 @@ export async function markWaitlistAsBooked(waitlistId: string): Promise<void> {
 
   console.log(
     JSON.stringify({
-      event: "waitlist_booking_completed",
+      event:
+        res.count === 0
+          ? "waitlist_booking_already_stamped"
+          : "waitlist_booking_completed",
       waitlistId,
       timestamp: new Date().toISOString(),
     }),
@@ -567,13 +595,24 @@ export async function leaveWaitlist(params: {
     };
   }
 
-  await prisma.waitlist.update({
-    where: { id: waitlistId },
+  // #834 — CAS: the pre-check above is friendly error text; the WHERE is
+  // what prevents a leave racing a respond/expire from double-firing.
+  const left = await prisma.waitlist.updateMany({
+    where: {
+      id: waitlistId,
+      status: { in: [WaitlistStatus.WAITING, WaitlistStatus.NOTIFIED] },
+    },
     data: {
       status: WaitlistStatus.CANCELLED,
       respondedAt: new Date(),
     },
   });
+  if (left.count === 0) {
+    return {
+      success: false,
+      message: "Cannot leave waitlist with current status",
+    };
+  }
 
   // If the entry was NOTIFIED, notify next person
   if (entry.status === WaitlistStatus.NOTIFIED) {

@@ -42,7 +42,7 @@ import { isRecurringEventType } from "@/utils/slotAllocation/types";
 /**
  * Validation result structure for slot allocation
  */
-export interface ValidationResult {
+interface ValidationResult {
   isValid: boolean;
   errors: string[];
   warnings: string[];
@@ -59,7 +59,7 @@ export interface ValidationResult {
 /**
  * Event-specific constraints configuration
  */
-export interface EventConstraints {
+interface EventConstraints {
   requireConsecutive: boolean;
   maxHoursPerDay?: number;
   maxCallsPerDay?: number;
@@ -73,7 +73,7 @@ export interface EventConstraints {
 /**
  * Slot allocation limits for display and validation
  */
-export interface SlotLimits {
+interface SlotLimits {
   minSlots: number;
   maxSlots: number;
   slotsPerSession: number;
@@ -148,7 +148,7 @@ export interface UseEventSlotAllocationOptions {
   planId?: string;
 
   /** Request status for filtering and validation */
-  requestStatus?: "PENDING" | "APPROVED" | "REJECTED";
+  status?: "PENDING" | "APPROVED" | "REJECTED";
 
   /** Allocation method preference */
   allocationType?: "AUTO" | "MANUAL" | "REQUESTED";
@@ -1977,8 +1977,8 @@ export function useEventSlotAllocation(
             ...(fullPeriodData.custom || []),
           ];
           slotsForAllocation = allRawSlots.map((slot: RawSlotData) => ({
-            startTime: new Date(slot.slotStartTimeInUTC),
-            endTime: new Date(slot.slotEndTimeInUTC),
+            startTime: new Date(slot.startsAt),
+            endTime: new Date(slot.endsAt),
             isAvailable:
               slot.bookingStatus === "available" ||
               slot.bookingStatus === "partially-booked",
@@ -2220,22 +2220,3 @@ export function useEventSlotAllocation(
     getSlotSuggestions,
   };
 }
-
-// ============================================================================
-// LEGACY COMPATIBILITY EXPORTS
-// ============================================================================
-
-/**
- * @deprecated Use UseEventSlotAllocationOptions instead
- */
-export type UseSlotAllocationOptions = UseEventSlotAllocationOptions;
-
-/**
- * @deprecated Use UseEventSlotAllocationReturn instead
- */
-export type UseSlotAllocationReturn = UseEventSlotAllocationReturn;
-
-/**
- * @deprecated Use useEventSlotAllocation instead
- */
-export const useSlotAllocation = useEventSlotAllocation;

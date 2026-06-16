@@ -94,7 +94,6 @@ export type TWebinar = Prisma.WebinarGetPayload<{
       };
     };
     waitlist: true;
-    meetingRoom: true;
   };
 }>;
 
@@ -131,7 +130,6 @@ export type TClass = Prisma.ClassGetPayload<{
         payment: true;
       };
     };
-    meetingRoom: true;
   };
 }>;
 
@@ -214,9 +212,6 @@ export type TAppointment = Prisma.AppointmentGetPayload<{
     };
   };
 }>;
-
-// Utility type for creating appointments
-export type TAppointmentCreateInput = Prisma.AppointmentCreateInput;
 
 // Extract slot type from TAppointment for reuse
 export type TSlotOfAppointment = TAppointment["slotsOfAppointment"][number];

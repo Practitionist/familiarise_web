@@ -115,7 +115,13 @@ export function DocumentsTab({
   }, [search]);
 
   // Documents and pagination metadata come straight from the server envelope.
-  const documents = documentsPage?.data ?? [];
+  // Memoise documents so the reference is stable across renders where the
+  // underlying SWR data has not changed — this keeps the filteredDocuments
+  // useMemo below from invalidating on unrelated parent re-renders.
+  const documents = useMemo(
+    () => documentsPage?.data ?? [],
+    [documentsPage?.data],
+  );
   const pagination = documentsPage?.pagination;
   const totalCount = pagination?.totalCount ?? 0;
   const totalPages = pagination?.totalPages ?? 1;

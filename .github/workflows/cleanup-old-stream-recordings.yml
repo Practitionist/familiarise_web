@@ -1,0 +1,35 @@
+name: Cleanup Old Stream Recordings
+
+on:
+  schedule:
+    # 03:00 UTC daily. Staggered after abandoned-top-ups (02:00) and
+    # reconcile-ledgers (02:30) to avoid Prisma pool contention.
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  cleanup-old-stream-recordings:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      # #476 cron locks load lib/redis at import — every job entry needs these
+      UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
+      UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
+      DIRECT_URL: ${{ secrets.DIRECT_URL }}
+
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: "npm"
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npx tsx jobs/cleanup/cleanup-old-stream-recordings.ts
+      - name: Notify on failure
+        if: failure()
+        env:
+          SLACK_OPS_WEBHOOK_URL: ${{ secrets.SLACK_OPS_WEBHOOK_URL }}
+        run: bash scripts/ci/notify-ops-failure.sh "cleanup-old-stream-recordings"

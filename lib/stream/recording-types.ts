@@ -3,7 +3,15 @@
  * Prisma payload types for type-safe recording queries
  */
 
-import { Prisma } from "@prisma/client";
+import { Prisma, type Recording } from "@prisma/client";
+import type { Db } from "@/lib/prisma";
+
+// #780 — payload types derive from the extended client (Prisma.Result), not
+// Prisma.RecordingGetPayload, so BigInt columns (fileSize, plan.price) type
+// as number — matching what the client actually returns.
+export type RecordingRow = Omit<Recording, "fileSize"> & {
+  fileSize: number | null;
+};
 
 // ============================================================================
 // Consultant Recordings Include Structure
@@ -49,9 +57,11 @@ export const consultantRecordingInclude =
     },
   });
 
-export type ConsultantRecordingWithDetails = Prisma.RecordingGetPayload<{
-  include: typeof consultantRecordingInclude;
-}>;
+export type ConsultantRecordingWithDetails = Prisma.Result<
+  Db["recording"],
+  { include: typeof consultantRecordingInclude },
+  "findFirstOrThrow"
+>;
 
 // ============================================================================
 // Recording with Access Control Include Structure
@@ -84,9 +94,11 @@ export const recordingWithAccessControlInclude =
     },
   });
 
-export type RecordingWithAccessControl = Prisma.RecordingGetPayload<{
-  include: typeof recordingWithAccessControlInclude;
-}>;
+export type RecordingWithAccessControl = Prisma.Result<
+  Db["recording"],
+  { include: typeof recordingWithAccessControlInclude },
+  "findFirstOrThrow"
+>;
 
 // ============================================================================
 // Webinar Plan Recordings Include Structure
@@ -114,9 +126,11 @@ export const webinarPlanRecordingInclude =
     },
   });
 
-export type WebinarPlanRecordingWithDetails = Prisma.RecordingGetPayload<{
-  include: typeof webinarPlanRecordingInclude;
-}>;
+export type WebinarPlanRecordingWithDetails = Prisma.Result<
+  Db["recording"],
+  { include: typeof webinarPlanRecordingInclude },
+  "findFirstOrThrow"
+>;
 
 // ============================================================================
 // Class Plan Recordings Include Structure
@@ -144,9 +158,11 @@ export const classPlanRecordingInclude =
     },
   });
 
-export type ClassPlanRecordingWithDetails = Prisma.RecordingGetPayload<{
-  include: typeof classPlanRecordingInclude;
-}>;
+export type ClassPlanRecordingWithDetails = Prisma.Result<
+  Db["recording"],
+  { include: typeof classPlanRecordingInclude },
+  "findFirstOrThrow"
+>;
 
 // ============================================================================
 // Consultee Recordings Include Structure
@@ -189,6 +205,8 @@ export const consulteeRecordingInclude =
     },
   });
 
-export type ConsulteeRecordingWithDetails = Prisma.RecordingGetPayload<{
-  include: typeof consulteeRecordingInclude;
-}>;
+export type ConsulteeRecordingWithDetails = Prisma.Result<
+  Db["recording"],
+  { include: typeof consulteeRecordingInclude },
+  "findFirstOrThrow"
+>;

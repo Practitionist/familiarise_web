@@ -215,7 +215,7 @@ export async function freezeAppointments(
           await tx.consultation.update({
             where: { id: consultation.id },
             data: {
-              requestStatus: "CANCELLED",
+              status: "CANCELLED",
               cancellationReason: "TECHNICAL_ISSUE",
               cancellationNotes:
                 "Cancelled due to scheduled platform maintenance",
@@ -244,7 +244,7 @@ export async function freezeAppointments(
           await tx.subscription.update({
             where: { id: subscription.id },
             data: {
-              requestStatus: "CANCELLED",
+              status: "CANCELLED",
               cancellationReason: "TECHNICAL_ISSUE",
               cancellationNotes:
                 "Cancelled due to scheduled platform maintenance",
@@ -378,7 +378,7 @@ export async function freezeAppointments(
       });
       await prisma.refund.create({
         data: {
-          amount: payment.amount,
+          amountPaise: payment.amount,
           currency: payment.currency,
           reason: "Scheduled platform maintenance",
           status: result.status,
@@ -404,7 +404,7 @@ export async function freezeAppointments(
       try {
         await prisma.refund.create({
           data: {
-            amount: payment.amount,
+            amountPaise: payment.amount,
             currency: payment.currency,
             reason: "Scheduled platform maintenance",
             status: "PENDING",

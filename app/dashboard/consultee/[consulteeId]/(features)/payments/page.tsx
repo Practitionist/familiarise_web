@@ -4,6 +4,7 @@ import { use } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { PageSkeleton } from "@/components/dashboard/DashboardSkeletons";
+import { useOrgScope } from "@/hooks/useOrgScope";
 import { PaymentsTab } from "./PaymentsTab";
 
 type PageProps = {
@@ -13,15 +14,33 @@ type PageProps = {
 export default function PaymentsPage({ params }: Readonly<PageProps>) {
   const { consulteeId } = use(params);
 
+  // Default to "All activity" so an org learner sees both personal AND
+  // org-funded payments in one history view. Without this the events
+  // route defaulted to ?orgScope=personal and silently hid every
+  // org-funded transaction — same fix pattern as Home + Appointments.
+  // The /api/dashboard/consultee/<id>/payments route has
+  // allowAllForOwner: true, so ?orgScope=all is safe.
+  const { scope } = useOrgScope({ defaultForOrgMember: "all" });
+  const orgScopeParam =
+    scope.kind === "personal"
+      ? "personal"
+      : scope.kind === "all"
+        ? "all"
+        : scope.orgId;
+
   const {
     data: paymentsData,
     isLoading,
     error,
   } = useQuery({
-    queryKey: ["consultee-payments", consulteeId],
+    queryKey: ["consultee-payments", consulteeId, orgScopeParam] as const,
     queryFn: async () => {
+      const qs =
+        orgScopeParam && orgScopeParam !== "personal"
+          ? `?orgScope=${encodeURIComponent(orgScopeParam)}`
+          : "";
       const res = await fetch(
-        `/api/dashboard/consultee/${consulteeId}/payments`,
+        `/api/dashboard/consultee/${consulteeId}/payments${qs}`,
       );
       if (!res.ok) throw new Error("Failed to fetch payments");
       const json = await res.json();

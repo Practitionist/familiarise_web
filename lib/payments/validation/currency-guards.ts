@@ -5,6 +5,29 @@
  * All prices are stored in INR paise for MVP. These guards prevent
  * cross-currency mismatches that could cause incorrect charges.
  */
+import { Currency } from "@prisma/client";
+
+// #781 §A — money rows store the Currency enum; gateways hand back free-form
+// ISO strings. Throwing (rather than defaulting) on an unsupported code
+// surfaces a gateway booking a currency we can't represent — callers on
+// webhook paths must catch and dead-letter, not 500-loop.
+export function toCurrencyEnum(raw: string | null | undefined): Currency {
+  if (raw == null) return Currency.INR;
+  const up = raw.trim().toUpperCase();
+  // #873 — a present-but-blank gateway currency is dead-lettered, not coerced
+  // to INR; only null/undefined defaults (webhook refund/dispute write path).
+  if (up === "") {
+    throw new Error("Unsupported currency code from gateway: <blank>");
+  }
+  // The Currency enum IS the settlement allowlist — deliberately narrower than
+  // CURRENCY_MULTIPLIERS (lib/payments/index.ts), which lists display-FX codes
+  // we can render but not settle. A gateway code outside the enum throws so the
+  // caller dead-letters it; it must never silently settle.
+  if ((Object.values(Currency) as string[]).includes(up)) {
+    return up as Currency;
+  }
+  throw new Error(`Unsupported currency code from gateway: ${raw}`);
+}
 
 /**
  * Validate that a plan's price currency matches the expected charge currency.

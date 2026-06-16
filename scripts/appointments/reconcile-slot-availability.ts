@@ -20,6 +20,7 @@
 
 import prisma from "../../lib/prisma";
 import { PaymentStatus } from "@prisma/client";
+import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 
 export interface SlotReconciliationResult {
   success: boolean;
@@ -77,8 +78,8 @@ async function clearTentativeOnSuccessfulPayments(): Promise<{
           ],
           NOT: {
             OR: [
-              { consultation: { requestStatus: "PENDING" } },
-              { subscription: { requestStatus: "PENDING" } },
+              { consultation: { status: "PENDING" } },
+              { subscription: { status: "PENDING" } },
             ],
           },
         },
@@ -337,7 +338,15 @@ async function detectDoubleBookings(): Promise<{
 /**
  * Main function to reconcile slot availability
  */
+// #476 — locked at the core so every entry (GH Actions / HTTP) shares one
+// mutual exclusion; fail-open: repeat-safe side effects, lock is belt-and-braces.
 export async function reconcileSlotAvailability(): Promise<SlotReconciliationResult> {
+  return withCronLock("reconcile-slot-availability", { failMode: "open", ttlMs: LONG_JOB_TTL_MS }, () =>
+    reconcileSlotAvailabilityUnlocked(),
+  );
+}
+
+async function reconcileSlotAvailabilityUnlocked(): Promise<SlotReconciliationResult> {
   const allErrors: string[] = [];
 
   console.log("🔄 Starting slot availability reconciliation...");

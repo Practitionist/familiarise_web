@@ -189,7 +189,7 @@ describe("Schedule Data Consistency Tests", () => {
       if (!subscriptionEvent || subscriptionEvent.type !== "Subscription") {
         throw new Error("Subscription event not found");
       }
-      expect(subscriptionEvent.requestStatus).toBe("REJECTED");
+      expect(subscriptionEvent.status).toBe("REJECTED");
     });
 
     it("should maintain REJECTED status for consultation events", () => {
@@ -199,7 +199,7 @@ describe("Schedule Data Consistency Tests", () => {
       if (!consultationEvent || consultationEvent.type !== "Consultation") {
         throw new Error("Consultation event not found");
       }
-      expect(consultationEvent.requestStatus).toBe("REJECTED");
+      expect(consultationEvent.status).toBe("REJECTED");
     });
 
     it("should show correct time slots for Intermediate Class", () => {
@@ -228,7 +228,7 @@ describe("Schedule Data Consistency Tests", () => {
         throw new Error("Consultation event not found");
       }
 
-      expect(consultation.requestStatus).toBe("REJECTED");
+      expect(consultation.status).toBe("REJECTED");
       expect(consultation.appointment).toEqual({
         id: "appointment-3",
         appointmentType: "CONSULTATION",
@@ -687,7 +687,7 @@ describe("Schedule Data Consistency Tests", () => {
           createdAt: new Date(),
           updatedAt: new Date(),
         },
-        requestStatus: "APPROVED",
+        status: "APPROVED",
         createdAt: new Date(),
         updatedAt: new Date(),
       } as unknown as EventWithType;

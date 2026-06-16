@@ -15,7 +15,6 @@ export async function POST(_req: NextRequest) {
   try {
     const auth = await requireAdminAuth();
     if (auth.error) return auth.error;
-    const session = auth.session;
 
     // Process approved payouts
     const results = await processApprovedPayouts();

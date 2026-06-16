@@ -15,6 +15,9 @@ export async function GET(req: NextRequest) {
     const status = searchParams.get("status") as DisputeStatus | null;
     const gateway = searchParams.get("gateway") as PaymentGateway | null;
     const search = searchParams.get("search");
+    // #674 comment 7 — optional org-scope filter. Disputes inherit the
+    // org tag via the joined Payment row.
+    const orgId = searchParams.get("orgId");
 
     // Build where clause
     const where: Prisma.DisputeWhereInput = {};
@@ -32,6 +35,10 @@ export async function GET(req: NextRequest) {
         contains: search,
         mode: "insensitive",
       };
+    }
+
+    if (orgId) {
+      where.payment = { is: { organizationId: orgId } };
     }
 
     // Fetch disputes with pagination

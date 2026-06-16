@@ -15,7 +15,7 @@
  * - jobs/stream/stream-sync.ts (GitHub Actions)
  * - app/api/cleanup/stream-sync/route.ts (API endpoint)
  *
- * Schedule: Daily at 03:30 UTC (9:00 AM IST)
+ * Schedule: Daily at 03:40 UTC (09:10 IST; #709 minute map)
  */
 
 import { StreamChat, UserResponse } from "stream-chat";

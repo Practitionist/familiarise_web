@@ -54,14 +54,14 @@ interface EventPlanInfo {
 }
 
 interface AppointmentConsultation {
-  requestStatus?: string;
+  status?: string;
   consultationPlan?: EventPlanInfo;
   requestedBy?: { user?: { name?: string } };
 }
 
 interface AppointmentSubscription {
   id?: string;
-  requestStatus?: string;
+  status?: string;
   subscriptionPlan?: EventPlanInfo;
   requestedBy?: { user?: { name?: string } };
 }
@@ -76,14 +76,14 @@ interface AppointmentClass {
   classPlan?: EventPlanInfo;
 }
 
-export interface AppointmentSlotRaw {
+interface AppointmentSlotRaw {
   startsAt: string;
   endsAt: string;
   isTentative?: boolean;
   user?: Array<{ name?: string }>;
 }
 
-export interface Appointment {
+interface Appointment {
   id: string;
   appointmentType: string;
   slotsOfAppointment?: AppointmentSlotRaw[];
@@ -93,7 +93,7 @@ export interface Appointment {
   class?: AppointmentClass;
 }
 
-export interface ConsultantData {
+interface ConsultantData {
   id: string;
   name: string;
   // Add other consultant properties as needed
@@ -106,8 +106,8 @@ export interface ConsultantData {
  */
 export interface RawSlotData {
   slotId: string;
-  slotStartTimeInUTC: string;
-  slotEndTimeInUTC: string;
+  startsAt: string;
+  endsAt: string;
   bookingStatus: "available" | "partially-booked" | "fully-booked"; // KEY: Server-calculated status
   type: "WEEKLY" | "CUSTOM";
   dayOfWeek?: string;
@@ -120,7 +120,7 @@ export interface RawSlotData {
  * BEFORE: Confusing mix of isBooked, isConflicting, etc.
  * AFTER: Clear separation: isBookedForDisplay (gray), isPartiallyBooked (yellow)
  */
-export interface SlotStatusResult {
+interface SlotStatusResult {
   isAvailable: boolean;
   isBooked: boolean; // For backwards compatibility
   isBookedForDisplay: boolean; // Fully booked (gray) - FIXED: Clear naming
@@ -139,7 +139,7 @@ export interface SlotStatusResult {
   }>;
 }
 
-export interface CalendarData {
+interface CalendarData {
   consultantDetails: ConsultantData | null;
   availableSlots: TimeSlot[];
   existingAppointments: Appointment[];
@@ -212,8 +212,8 @@ export function useCalendarData(
     ];
 
     return allRawSlots.map((slot: RawSlotData) => ({
-      startTime: new Date(slot.slotStartTimeInUTC),
-      endTime: new Date(slot.slotEndTimeInUTC),
+      startTime: new Date(slot.startsAt),
+      endTime: new Date(slot.endsAt),
       isAvailable:
         slot.bookingStatus === "available" ||
         slot.bookingStatus === "partially-booked",
@@ -280,7 +280,7 @@ export function useCalendarData(
       const validatedData = {
         weekly: Array.isArray(data.weekly)
           ? data.weekly.filter((slot: RawSlotData) => {
-              if (!slot || !slot.slotStartTimeInUTC || !slot.slotEndTimeInUTC) {
+              if (!slot || !slot.startsAt || !slot.endsAt) {
                 console.warn(
                   "⚠️ fetchAvailabilitySlots: Filtering out invalid weekly slot",
                 );
@@ -291,7 +291,7 @@ export function useCalendarData(
           : [],
         custom: Array.isArray(data.custom)
           ? data.custom.filter((slot: RawSlotData) => {
-              if (!slot || !slot.slotStartTimeInUTC || !slot.slotEndTimeInUTC) {
+              if (!slot || !slot.startsAt || !slot.endsAt) {
                 console.warn(
                   "⚠️ fetchAvailabilitySlots: Filtering out invalid custom slot",
                 );
@@ -378,13 +378,13 @@ export function useCalendarData(
       const activeAppointments = validatedAppointments.filter((appt: Appointment) => {
         const inactiveRequestStatuses = ["REJECTED", "CANCELLED", "EXPIRED"];
         // Check consultation status
-        if (appt.consultation?.requestStatus) {
-          if (inactiveRequestStatuses.includes(appt.consultation.requestStatus))
+        if (appt.consultation?.status) {
+          if (inactiveRequestStatuses.includes(appt.consultation.status))
             return false;
         }
         // Check subscription status
-        if (appt.subscription?.requestStatus) {
-          if (inactiveRequestStatuses.includes(appt.subscription.requestStatus))
+        if (appt.subscription?.status) {
+          if (inactiveRequestStatuses.includes(appt.subscription.status))
             return false;
         }
         // Check webinar status
@@ -427,18 +427,18 @@ export function useCalendarData(
       if (data && Array.isArray(data) && data.length > 0) {
         // Filter out cancelled/rejected appointments from event slots
         const activeData = data.filter((appt: Appointment) => {
-          if (appt.consultation?.requestStatus) {
+          if (appt.consultation?.status) {
             if (
               ["REJECTED", "CANCELLED", "EXPIRED"].includes(
-                appt.consultation.requestStatus,
+                appt.consultation.status,
               )
             )
               return false;
           }
-          if (appt.subscription?.requestStatus) {
+          if (appt.subscription?.status) {
             if (
               ["REJECTED", "CANCELLED", "EXPIRED"].includes(
-                appt.subscription.requestStatus,
+                appt.subscription.status,
               )
             )
               return false;
@@ -566,8 +566,8 @@ export function useCalendarData(
       ...(rawAvailabilitySlots.custom || []),
     ];
     return allRaw.map((slot) => ({
-      start: new Date(slot.slotStartTimeInUTC).getTime(),
-      end: new Date(slot.slotEndTimeInUTC).getTime(),
+      start: new Date(slot.startsAt).getTime(),
+      end: new Date(slot.endsAt).getTime(),
       bookingStatus: slot.bookingStatus || "available",
     }));
   }, [rawAvailabilitySlots]);

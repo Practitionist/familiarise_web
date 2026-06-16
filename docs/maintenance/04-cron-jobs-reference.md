@@ -1,6 +1,6 @@
 # Cron Jobs Reference
 
-All 27 scheduled jobs run as GitHub Actions workflows, executing standalone Node.js scripts that connect directly to PostgreSQL via Prisma. **None of these jobs are aware of maintenance mode** -- they bypass the Next.js middleware entirely.
+All 27 scheduled jobs run as GitHub Actions workflows, executing standalone Node.js scripts that connect directly to PostgreSQL via Prisma. They bypass the Next.js middleware entirely, but **all jobs call `abortIfMaintenance()` at startup** (`lib/maintenance-cron.ts`) — a clean exit (0) on OFFLINE mode, a logged warning on DEGRADED. The middleware bypass means they must check Redis themselves, which is exactly what this guard does.
 
 ## Summary by Category
 
@@ -350,7 +350,7 @@ All 27 scheduled jobs run as GitHub Actions workflows, executing standalone Node
 
 | Field                | Value                                                                                                           |
 | -------------------- | --------------------------------------------------------------------------------------------------------------- |
-| **Schedule**         | `0 * * * *` (hourly)                                                                                            |
+| **Schedule**         | `5 * * * *` (hourly, at :05 — staggered to avoid pool contention at the top-of-hour spike)                     |
 | **Script**           | `jobs/waitlist/process-expired-notifications.ts`                                                                |
 | **Description**      | Marks expired waitlist notifications as EXPIRED, sends expiration email, and notifies the next person in queue. |
 | **DB Connection**    | Yes (Prisma)                                                                                                    |

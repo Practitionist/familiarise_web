@@ -21,7 +21,7 @@ import type { BookingStatus } from "@/components/ui/waitlist-status-badge";
  * Unified event type for display in the dashboard
  */
 // Collaborator info for co-hosts display
-export interface ProcessedCollaborator {
+interface ProcessedCollaborator {
   name: string;
   image?: string | null;
   role: string;
@@ -46,6 +46,10 @@ export interface ProcessedEvent {
   waitlistPosition?: number;
   // Collaborators (co-hosts) for webinars/classes
   collaborators?: ProcessedCollaborator[];
+  // Org sponsorship — `Appointment.organizationId` (null = personal).
+  // Drives the "Sponsored by <Org>" pill on the Home card so org-funded
+  // sessions are visually distinct from personal bookings.
+  organizationId?: string | null;
 }
 
 /**
@@ -79,7 +83,7 @@ function findNextSlot(slots: SlotWithContext[]): SlotWithContext | null {
 /**
  * Process a consultation into a ProcessedEvent
  */
-export function processConsultation(
+function processConsultation(
   consultation: TConsultationWithPlan,
 ): ProcessedEvent | null {
   const slots = consultation.appointment?.slotsOfAppointment;
@@ -130,7 +134,7 @@ export function processConsultation(
       consultation.consultationPlan?.consultantProfile?.user?.image,
     startsAt: new Date(firstSlot.startsAt),
     endsAt: new Date(firstSlot.endsAt ?? firstSlot.startsAt),
-    status: consultation.requestStatus ?? "PENDING",
+    status: consultation.status ?? "PENDING",
     slots: slots.map((s) => ({
       startsAt: new Date(s.startsAt),
       endsAt: new Date(s.endsAt ?? s.startsAt),
@@ -139,13 +143,14 @@ export function processConsultation(
     appointmentId,
     joinableAppointment,
     joinableSlot,
+    organizationId: consultation.appointment?.organizationId ?? null,
   };
 }
 
 /**
  * Process a subscription into a ProcessedEvent
  */
-export function processSubscription(
+function processSubscription(
   subscription: TSubscriptionWithPlan,
 ): ProcessedEvent | null {
   const allSlots: SlotWithContext[] = [];
@@ -211,18 +216,19 @@ export function processSubscription(
       subscription.subscriptionPlan?.consultantProfile?.user?.image,
     startsAt: nextSlot.startsAt,
     endsAt: nextSlot.endsAt,
-    status: subscription.requestStatus ?? "PENDING",
+    status: subscription.status ?? "PENDING",
     slots: allSlots.map((s) => ({ startsAt: s.startsAt, endsAt: s.endsAt, appointmentId: s.appointmentId })),
     appointmentId: nextSlot.appointmentId,
     joinableAppointment,
     joinableSlot: nextSlot.rawSlot,
+    organizationId: nextAppointment?.organizationId ?? null,
   };
 }
 
 /**
  * Process a webinar into a ProcessedEvent
  */
-export function processWebinar(
+function processWebinar(
   webinar: TConsulteeWebinar,
 ): ProcessedEvent | null {
   const allSlots: SlotWithContext[] = [];
@@ -315,13 +321,14 @@ export function processWebinar(
     bookingStatus,
     waitlistPosition,
     collaborators,
+    organizationId: webinar.appointment?.organizationId ?? null,
   };
 }
 
 /**
  * Process a class into a ProcessedEvent
  */
-export function processClass(
+function processClass(
   classEvent: TConsulteeClass,
 ): ProcessedEvent | null {
   const allSlots: SlotWithContext[] = [];
@@ -421,6 +428,7 @@ export function processClass(
     bookingStatus,
     waitlistPosition,
     collaborators,
+    organizationId: nextAppointment?.organizationId ?? null,
   };
 }
 

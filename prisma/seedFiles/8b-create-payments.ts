@@ -21,8 +21,8 @@ export async function createPayments(users: UserWithProfiles[]) {
         none: {},
       },
       OR: [
-        { consultation: { requestStatus: "APPROVED" } },
-        { subscription: { requestStatus: "APPROVED" } },
+        { consultation: { status: "APPROVED" } },
+        { subscription: { status: "APPROVED" } },
         { webinar: { status: "SCHEDULED" } },
         { class: { status: "SCHEDULED" } },
       ],

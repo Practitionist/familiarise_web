@@ -1,0 +1,89 @@
+/**
+ * Outbound Webhook Dispatch Job (GitHub Actions Wrapper)
+ *
+ * Thin wrapper around scripts/cleanup/dispatch-outbound-webhooks.ts.
+ * Adds GitHub Actions-specific stdout output and exit-code mapping.
+ *
+ * Runs every minute via .github/workflows/dispatch-outbound-webhooks.yml.
+ */
+
+// Why: tsx does not auto-load .env when run outside the Next.js runtime;
+// without dotenv/config DATABASE_URL is undefined and PrismaClient throws.
+// See docs/enterprise/50-operations/03-runbooks.md "Running cron jobs locally".
+import "dotenv/config";
+
+import {
+  dispatchOutboundWebhooks,
+  disconnectDatabase,
+  type DispatchOutboundWebhooksResult,
+} from "../../scripts/cleanup/dispatch-outbound-webhooks";
+import { abortIfMaintenance } from "../../lib/maintenance-cron";
+import prisma from "../../lib/prisma";
+import { recordSystemEvent } from "../../lib/enterprise/system-events";
+import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
+
+// The delivery table IS the queue (see worker.ts). If overdue rows pile up
+// past this, the worker isn't keeping pace — page someone (#776 §K).
+const QUEUE_BACKLOG_THRESHOLD = 200;
+
+async function checkQueueBacklog(): Promise<void> {
+  const backlog = await prisma.outboundWebhookDelivery.count({
+    where: {
+      OR: [
+        { status: "PENDING" },
+        { status: "RETRY", nextRetryAt: { lte: new Date() } },
+      ],
+    },
+  });
+  if (backlog > QUEUE_BACKLOG_THRESHOLD) {
+    await recordSystemEvent({
+      category: "WEBHOOK",
+      severity: "WARN",
+      message: `Outbound webhook queue backlog: ${backlog} deliveries due`,
+      context: { backlog, threshold: QUEUE_BACKLOG_THRESHOLD },
+    });
+  }
+}
+
+function outputToGitHubActions(result: DispatchOutboundWebhooksResult): void {
+  if (!process.env.GITHUB_ACTIONS) return;
+
+  const outputFile = process.env.GITHUB_OUTPUT;
+  if (!outputFile) return;
+
+  const outputs = [
+    `scanned=${result.scanned}`,
+    `succeeded=${result.succeeded}`,
+    `retried=${result.retried}`,
+    `failed=${result.failed}`,
+    `success=${result.success}`,
+  ].join("\n");
+
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const fs = require("fs") as typeof import("fs");
+  fs.appendFileSync(outputFile, outputs + "\n");
+}
+
+if (require.main === module) {
+  (async () => {
+    await abortIfMaintenance("dispatch-outbound-webhooks");
+    console.log("📤 Dispatching outbound webhooks...");
+    try {
+      const result = await dispatchOutboundWebhooks();
+      console.log(JSON.stringify(result, null, 2));
+      outputToGitHubActions(result);
+      await checkQueueBacklog();
+      if (!result.success) process.exit(1);
+    } catch (err) {
+      // #476 — lock held = another run is live; skip cleanly (exit 0).
+      if (err instanceof CronLockHeldError) {
+        console.log(`⏭️  ${err.message}`);
+        return;
+      }
+      console.error("Fatal error:", err);
+      process.exit(1);
+    } finally {
+      await disconnectDatabase();
+    }
+  })();
+}

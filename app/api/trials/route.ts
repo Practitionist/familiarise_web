@@ -6,6 +6,7 @@ import { notifyTrialSessionRequested } from "@/lib/novu";
 import { CreateTrialSchema } from "@/schemas/trials";
 import { getSession } from "@/lib/auth-server";
 import { trialRequestLimiter, applyRateLimit } from "@/lib/rate-limit";
+import { resolveOrgScope } from "@/lib/api/scope/parse";
 
 /**
  * GET /api/trials
@@ -75,7 +76,35 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const whereClause: Prisma.TrialSessionWhereInput = {};
+    // #674 org-scope filter. TrialSession.organizationId is populated by
+    // the backfill — keeps Acme-context views from leaking Zeta trial
+    // bookings into the consultant's "Trials" tab.
+    const callerMemberships = await prisma.membership.findMany({
+      where: { userId: session.user.id, status: "ACTIVE" },
+      select: { organizationId: true, status: true },
+    });
+    const scopeResolution = resolveOrgScope({
+      raw: searchParams.get("orgScope"),
+      memberships: callerMemberships,
+      userRole: session.user.role,
+      // Non-admin callers are already locked to their own
+      // consultant/consulteeProfileId (lines 50-73), so `?orgScope=all`
+      // means "all of MY trials" — safe for any role.
+      allowAllForOwner: true,
+    });
+    if (!scopeResolution.ok) {
+      return NextResponse.json(
+        { error: scopeResolution.message, code: scopeResolution.code },
+        { status: scopeResolution.status },
+      );
+    }
+
+    const whereClause: Prisma.TrialSessionWhereInput =
+      scopeResolution.scope.kind === "personal"
+        ? { organizationId: null }
+        : scopeResolution.scope.kind === "org"
+          ? { organizationId: scopeResolution.scope.orgId }
+          : {};
 
     if (consultantProfileId) {
       whereClause.consultantProfileId = consultantProfileId;
@@ -207,6 +236,7 @@ export async function POST(request: NextRequest) {
       consultantProfileId,
       subscriptionPlanId,
       notes,
+      organizationId,
     } = result.data;
 
     const isPrivileged =
@@ -218,11 +248,13 @@ export async function POST(request: NextRequest) {
       ) {
         return NextResponse.json({ error: "Forbidden" }, { status: 403 });
       }
-
-      // Rate limit: 3 trial requests per 24 hours per consultee (prevents inbox flooding)
-      const rl = await applyRateLimit(trialRequestLimiter, session.user.id);
-      if (rl) return rl;
     }
+
+    // Rate limit: 3 trial requests per 24 hours per creator. #831 — applied
+    // uniformly: a privileged session can still flood consultant inboxes,
+    // so role no longer bypasses the limiter.
+    const rl = await applyRateLimit(trialRequestLimiter, session.user.id);
+    if (rl) return rl;
 
     // Check if a trial already exists for this consultee-consultant pair
     const existingTrial = await prisma.trialSession.findUnique({
@@ -295,6 +327,36 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Enterprise: if the caller passed `organizationId`, verify they're
+    // an ACTIVE LEARNER (or higher) member of that org before we stamp
+    // attribution. Trials are free, so this is org-tagging for analytics
+    // (conversion-rate per org) — never a payment claim. Silently
+    // dropping the field on membership mismatch would let a curious
+    // user forge org-tagged trial attribution; we return 403 instead so
+    // the client bug becomes obvious. `findFirst` with `userId`
+    // resolves against the BetterAuth User id on the session.
+    let resolvedOrgId: string | null = null;
+    if (organizationId) {
+      const membership = await prisma.membership.findFirst({
+        where: {
+          organizationId,
+          userId: session.user.id,
+          status: "ACTIVE",
+        },
+        select: { id: true },
+      });
+      if (!membership) {
+        return NextResponse.json(
+          {
+            error:
+              "You are not an active member of the specified organization.",
+          },
+          { status: 403 },
+        );
+      }
+      resolvedOrgId = organizationId;
+    }
+
     // Create the trial session
     const trialSession = await prisma.trialSession.create({
       data: {
@@ -303,6 +365,7 @@ export async function POST(request: NextRequest) {
         subscriptionPlanId,
         notes,
         status: TrialSessionStatus.PENDING,
+        organizationId: resolvedOrgId,
       },
       include: {
         consulteeProfile: {

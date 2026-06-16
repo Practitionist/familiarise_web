@@ -15,11 +15,11 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { User } from "@prisma/client";
-import type { TConsultantDetailData } from "@/types/consultant";
+import type { ConsultantDetailData } from "../types";
 
 interface ProfileHeaderProps {
   userDetails: User;
-  consultantDetails: TConsultantDetailData;
+  consultantDetails: ConsultantDetailData;
   reviewCount: number;
 }
 
