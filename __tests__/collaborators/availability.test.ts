@@ -28,16 +28,19 @@ function makeDb(opts: {
     },
     slotOfAppointment: {
       findFirst: jest.fn().mockImplementation(({ where }) => {
-        // The per-collaborator profile id lives in the appointment OR filter;
-        // resolve a conflict if that collaborator is in the conflict set.
-        const profileId =
-          where.appointment.OR[0].consultation.consultationPlan
-            .consultantProfileId;
-        return Promise.resolve(
-          opts.conflictForProfileIds?.includes(profileId)
-            ? { id: "conflict-slot" }
-            : null,
+        // The appointment OR filter names a consultantProfileId per commitment
+        // clause. This works for both the batched detection query (every co-host
+        // in one OR) and the per-co-host probe (one co-host's clauses): resolve a
+        // conflict if any named profile is in the conflict set.
+        const orClauses: Array<{
+          consultation?: { consultationPlan?: { consultantProfileId?: string } };
+        }> = where.appointment.OR;
+        const clash = orClauses.some((clause) =>
+          opts.conflictForProfileIds?.includes(
+            clause.consultation?.consultationPlan?.consultantProfileId ?? "",
+          ),
         );
+        return Promise.resolve(clash ? { id: "conflict-slot" } : null);
       }),
     },
   };

@@ -498,7 +498,9 @@ export async function reverseCreditsForPayment(
     // balance (getUserCredits filters expiry; the expiry cron re-zeroes it).
     // Skip + log; the usage row stays so the credit reads as still consumed.
     // (Issuing fresh credit on refund-of-expired is a product decision, not done here.)
-    const creditExpiresAt = usage.credit.expiresAt;
+    // Optional-chain the relation defensively: if a credit row is ever absent
+    // we treat it as non-expired and fall through to the normal restore.
+    const creditExpiresAt = usage.credit?.expiresAt;
     if (creditExpiresAt && creditExpiresAt.getTime() < now.getTime()) {
       skippedExpired += usage.amount;
       continue;
@@ -559,9 +561,10 @@ export async function reverseCreditsForPayment(
     );
   }
   if (skippedExpired > 0) {
-    // REF-2 — visibility: credit value not returned because it had expired.
+    // REF-2 — visibility: credit value (in paise) not returned because the
+    // underlying credit had already expired.
     console.log(
-      `⏭️  Skipped restoring ${skippedExpired} expired referral credit(s) for refunded payment ${paymentId}`,
+      `⏭️  Skipped restoring ${skippedExpired} paise of expired referral credit for refunded payment ${paymentId}`,
     );
   }
 
