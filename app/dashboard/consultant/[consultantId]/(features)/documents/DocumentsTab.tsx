@@ -61,6 +61,16 @@ import {
 // page's rows (which would give an incomplete list under pagination).
 const APPOINTMENT_TYPES = ["Consultation", "Subscription"] as const;
 
+// The reviewable document statuses, single-sourced so the status filter and the
+// single + bulk review dialogs can't drift. Labels come from getStatusLabel().
+const REVIEW_STATUSES = [
+  "PENDING",
+  "IN_REVIEW",
+  "APPROVED",
+  "REJECTED",
+  "NEEDS_REVISION",
+];
+
 interface ExtendedDocumentsTabProps extends DocumentsTabProps {
   onRefresh?: () => void;
 }
@@ -99,6 +109,11 @@ export function DocumentsTab({
   // Bulk selection state
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isBulkUpdating, setIsBulkUpdating] = useState(false);
+
+  // Bulk review dialog state
+  const [bulkReviewDialogOpen, setBulkReviewDialogOpen] = useState(false);
+  const [bulkReviewStatus, setBulkReviewStatus] = useState<string>("");
+  const [bulkReviewNotes, setBulkReviewNotes] = useState<string>("");
 
   // Debounce search input. Search is local to the current page, so we don't
   // need to reset server-side pagination on every keystroke.
@@ -189,38 +204,47 @@ export function DocumentsTab({
     setSelectedIds(next);
   };
 
-  const handleBulkStatusUpdate = async (newStatus: string) => {
+  const handleBulkStatusUpdate = async (newStatus: string, notes?: string) => {
     if (selectedIds.size === 0) return;
     setIsBulkUpdating(true);
 
     try {
-      const selectedDocs = documents.filter((d) => selectedIds.has(d.id));
-      const results = await Promise.allSettled(
-        selectedDocs.map((doc) =>
-          fetch(
-            `/api/appointments/${doc.appointmentId}/documents/${doc.id}`,
-            {
-              method: "PATCH",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ reviewStatus: newStatus }),
-            },
-          ),
-        ),
-      );
+      const documentIds = Array.from(selectedIds);
+      // #347 — one transactional bulk-review request instead of an N-PATCH
+      // fan-out; the server reports how many it actually updated.
+      const res = await fetch("/api/documents/bulk-review", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          documentIds,
+          reviewStatus: newStatus,
+          reviewNotes: notes?.trim() || null,
+        }),
+      });
 
-      const succeeded = results.filter((r) => r.status === "fulfilled").length;
-      const failed = results.length - succeeded;
+      if (!res.ok) throw new Error("Bulk review failed");
+
+      const { data } = await res.json();
+      const updated: number = data?.updated ?? 0;
+      const failed = documentIds.length - updated;
 
       toast({
-        title: "Bulk Update Complete",
+        title: "Bulk Review Complete",
         description: failed
-          ? `${succeeded} updated, ${failed} failed`
-          : `${succeeded} document${succeeded !== 1 ? "s" : ""} updated to ${getStatusLabel(newStatus)}`,
+          ? `${updated} updated, ${failed} not updated`
+          : `${updated} document${updated !== 1 ? "s" : ""} updated to ${getStatusLabel(newStatus)}`,
         variant: failed ? "destructive" : "default",
       });
 
-      setSelectedIds(new Set());
       onRefresh?.();
+      // Only clear the selection + close on full success; on a partial failure
+      // keep the dialog open so the consultant sees what didn't update and can retry.
+      if (failed === 0) {
+        setSelectedIds(new Set());
+        setBulkReviewDialogOpen(false);
+        setBulkReviewStatus("");
+        setBulkReviewNotes("");
+      }
     } catch {
       toast({
         title: "Error",
@@ -353,11 +377,11 @@ export function DocumentsTab({
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Statuses</SelectItem>
-            <SelectItem value="PENDING">Pending</SelectItem>
-            <SelectItem value="IN_REVIEW">In Review</SelectItem>
-            <SelectItem value="APPROVED">Approved</SelectItem>
-            <SelectItem value="REJECTED">Rejected</SelectItem>
-            <SelectItem value="NEEDS_REVISION">Needs Revision</SelectItem>
+            {REVIEW_STATUSES.map((s) => (
+              <SelectItem key={s} value={s}>
+                {getStatusLabel(s)}
+              </SelectItem>
+            ))}
           </SelectContent>
         </Select>
         <Select value={typeFilter} onValueChange={onTypeFilterChange}>
@@ -414,26 +438,13 @@ export function DocumentsTab({
           <span className="text-sm font-medium text-blue-800">
             {selectedIds.size} selected
           </span>
-          <Select
-            value=""
-            onValueChange={handleBulkStatusUpdate}
+          <Button
+            size="sm"
+            onClick={() => setBulkReviewDialogOpen(true)}
             disabled={isBulkUpdating}
           >
-            <SelectTrigger className="w-[180px] h-8">
-              <SelectValue
-                placeholder={
-                  isBulkUpdating ? "Updating..." : "Set status..."
-                }
-              />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="PENDING">Pending</SelectItem>
-              <SelectItem value="IN_REVIEW">In Review</SelectItem>
-              <SelectItem value="APPROVED">Approved</SelectItem>
-              <SelectItem value="REJECTED">Rejected</SelectItem>
-              <SelectItem value="NEEDS_REVISION">Needs Revision</SelectItem>
-            </SelectContent>
-          </Select>
+            {isBulkUpdating ? "Updating..." : "Review Selected"}
+          </Button>
           <Button
             variant="ghost"
             size="sm"
@@ -663,11 +674,11 @@ export function DocumentsTab({
                   <SelectValue placeholder="Select status" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="PENDING">Pending</SelectItem>
-                  <SelectItem value="IN_REVIEW">In Review</SelectItem>
-                  <SelectItem value="APPROVED">Approved</SelectItem>
-                  <SelectItem value="REJECTED">Rejected</SelectItem>
-                  <SelectItem value="NEEDS_REVISION">Needs Revision</SelectItem>
+                  {REVIEW_STATUSES.map((s) => (
+                    <SelectItem key={s} value={s}>
+                      {getStatusLabel(s)}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -713,6 +724,92 @@ export function DocumentsTab({
               disabled={isUpdating || !reviewStatus}
             >
               {isUpdating ? "Updating..." : "Update Review"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Bulk Review Dialog */}
+      <Dialog
+        open={bulkReviewDialogOpen}
+        onOpenChange={(open) => {
+          setBulkReviewDialogOpen(open);
+          if (!open) {
+            setBulkReviewStatus("");
+            setBulkReviewNotes("");
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>Review {selectedIds.size} Documents</DialogTitle>
+            <DialogDescription>
+              Set a review status and optional notes for all selected documents.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Review Status</label>
+              <Select value={bulkReviewStatus} onValueChange={setBulkReviewStatus}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select status" />
+                </SelectTrigger>
+                <SelectContent>
+                  {REVIEW_STATUSES.map((s) => (
+                    <SelectItem key={s} value={s}>
+                      {getStatusLabel(s)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">
+                Shared Notes{" "}
+                <span className="text-gray-400 font-normal">(optional)</span>
+              </label>
+              <Textarea
+                placeholder="Add notes that will apply to all selected documents..."
+                value={bulkReviewNotes}
+                onChange={(e) => setBulkReviewNotes(e.target.value)}
+                className="min-h-[100px]"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Selected Documents</label>
+              <div className="max-h-[200px] overflow-y-auto border rounded-md p-2 space-y-2">
+                {documents
+                  .filter((d) => selectedIds.has(d.id))
+                  .map((doc) => (
+                    <div
+                      key={doc.id}
+                      className="flex items-center justify-between text-sm py-1"
+                    >
+                      <span className="truncate mr-2">{doc.originalName}</span>
+                      <Badge
+                        variant="secondary"
+                        className={`shrink-0 ${getStatusColor(doc.reviewStatus)}`}
+                      >
+                        {getStatusLabel(doc.reviewStatus)}
+                      </Badge>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setBulkReviewDialogOpen(false)}
+              disabled={isBulkUpdating}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => handleBulkStatusUpdate(bulkReviewStatus, bulkReviewNotes)}
+              disabled={isBulkUpdating || !bulkReviewStatus}
+            >
+              {isBulkUpdating ? "Updating..." : "Review All"}
             </Button>
           </DialogFooter>
         </DialogContent>

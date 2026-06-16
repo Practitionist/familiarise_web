@@ -97,6 +97,13 @@ export const eventMutationLimiter = makeLimiter(10, "1 m", "rl:event-mutation");
  */
 export const documentUploadLimiter = makeLimiter(10, "1 m", "rl:document-upload");
 
+/**
+ * 30 per minute per user — #347 bulk document review. One request reviews many
+ * documents in a single transaction (replacing the old N-PATCH fan-out), so the
+ * limit is generous; it only guards against a script hammering the endpoint.
+ */
+export const documentReviewLimiter = makeLimiter(30, "1 m", "rl:document-review");
+
 // ============================================================================
 // Enterprise (arch-4) — per-org / per-IP buckets for org-specific surfaces.
 //
