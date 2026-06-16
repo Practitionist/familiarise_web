@@ -28,17 +28,30 @@ function makeDb(opts: {
     },
     slotOfAppointment: {
       findFirst: jest.fn().mockImplementation(({ where }) => {
-        // The appointment OR filter names a consultantProfileId per commitment
-        // clause. This works for both the batched detection query (every co-host
-        // in one OR) and the per-co-host probe (one co-host's clauses): resolve a
-        // conflict if any named profile is in the conflict set.
-        const orClauses: Array<{
-          consultation?: { consultationPlan?: { consultantProfileId?: string } };
-        }> = where.appointment.OR;
+        // Each commitment clause names a consultantProfileId via one of six
+        // shapes (consultation/subscription/webinar/class owner, plus webinar/
+        // class collaborator). Extract from ALL of them so a regression in any
+        // shape — notably the collaborator predicates — is actually exercised.
+        type Owned = { consultantProfileId?: string };
+        type Collab = {
+          collaborators?: { some?: { consultantProfileId?: string } };
+        };
+        type Clause = {
+          consultation?: { consultationPlan?: Owned };
+          subscription?: { subscriptionPlan?: Owned };
+          webinar?: { webinarPlan?: Owned & Collab };
+          class?: { classPlan?: Owned & Collab };
+        };
+        const profileIdOf = (c: Clause): string | undefined =>
+          c.consultation?.consultationPlan?.consultantProfileId ??
+          c.subscription?.subscriptionPlan?.consultantProfileId ??
+          c.webinar?.webinarPlan?.consultantProfileId ??
+          c.webinar?.webinarPlan?.collaborators?.some?.consultantProfileId ??
+          c.class?.classPlan?.consultantProfileId ??
+          c.class?.classPlan?.collaborators?.some?.consultantProfileId;
+        const orClauses: Clause[] = where.appointment.OR;
         const clash = orClauses.some((clause) =>
-          opts.conflictForProfileIds?.includes(
-            clause.consultation?.consultationPlan?.consultantProfileId ?? "",
-          ),
+          opts.conflictForProfileIds?.includes(profileIdOf(clause) ?? ""),
         );
         return Promise.resolve(clash ? { id: "conflict-slot" } : null);
       }),
