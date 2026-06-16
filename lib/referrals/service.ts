@@ -498,9 +498,9 @@ export async function reverseCreditsForPayment(
     // balance (getUserCredits filters expiry; the expiry cron re-zeroes it).
     // Skip + log; the usage row stays so the credit reads as still consumed.
     // (Issuing fresh credit on refund-of-expired is a product decision, not done here.)
-    // Optional-chain the relation defensively: if a credit row is ever absent
-    // we treat it as non-expired and fall through to the normal restore.
-    const creditExpiresAt = usage.credit?.expiresAt;
+    // `credit` is a required FK relation that the findMany above always includes,
+    // so it is never null here — no optional chain needed.
+    const creditExpiresAt = usage.credit.expiresAt;
     if (creditExpiresAt && creditExpiresAt.getTime() < now.getTime()) {
       skippedExpired += usage.amount;
       continue;
