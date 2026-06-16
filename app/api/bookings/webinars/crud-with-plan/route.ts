@@ -7,6 +7,10 @@ import { findOrCreateTopics, transformNestedPlanTopics } from "@/lib/topics";
 import { handleSlotOpening } from "@/lib/waitlist/slot-handler";
 import { checkConsultantVerification } from "@/lib/verification";
 import { countWebinarParticipants } from "@/lib/payments/utils/participants";
+import {
+  assertCollaboratorsAvailable,
+  CollaboratorUnavailableError,
+} from "@/lib/collaborators/availability";
 
 import { getSession } from "@/lib/auth-server";
 // Schema for POST request body based on WebinarPlanSchema
@@ -693,6 +697,17 @@ export async function PATCH(request: NextRequest) {
             // Check if recalculation happened
             const appointment = updatedWebinar.appointment;
 
+            // AE-2 (#784) — block (re)scheduling onto a time any ACCEPTED co-host
+            // is already committed to; co-hosts aren't slot participants, so no
+            // other guard catches their double-booking. Throws → 409 below.
+            await assertCollaboratorsAvailable(tx, {
+              planType: "WEBINAR",
+              planId: id,
+              startsAt: startTime,
+              endsAt: endTime,
+              excludeAppointmentId: appointment?.id ?? null,
+            });
+
             if (appointment) {
               // Update existing appointment slots
               if (
@@ -851,6 +866,11 @@ export async function PATCH(request: NextRequest) {
       );
     }
     // --- End Zod Error Handling ---
+
+    // AE-2 — co-host clash is a conflict, not a server error.
+    if (error instanceof CollaboratorUnavailableError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
 
     console.error("Error updating webinar with plan:", error);
 

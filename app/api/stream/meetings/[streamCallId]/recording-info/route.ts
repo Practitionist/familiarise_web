@@ -7,6 +7,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { isPaymentEntitled } from "@/lib/payments/utils/refund-balance";
 
 import { getSession } from "@/lib/auth-server";
 type RouteParams = {
@@ -143,7 +144,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
             enrollmentConditions.push({ classId });
           }
 
-          const hasEnrollment = await prisma.payment.findFirst({
+          const enrollments = await prisma.payment.findMany({
             where: {
               userId: session.user.id,
               paymentStatus: "SUCCEEDED",
@@ -151,9 +152,14 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
                 OR: enrollmentConditions,
               },
             },
+            select: {
+              amount: true,
+              refunds: { select: { amountPaise: true, status: true } },
+            },
           });
 
-          if (!hasEnrollment) {
+          // #689 — a fully-refunded enrollment is no longer access.
+          if (!enrollments.some(isPaymentEntitled)) {
             return NextResponse.json(
               { error: "Access denied" },
               { status: 403 },

@@ -246,23 +246,21 @@ export async function processQualifyingAction(
 
         if (!referral || referral.status !== "SIGNED_UP") return;
 
-        // Check if within qualification window
-        const daysSinceSignup = Math.floor(
-          (Date.now() - referral.signedUpAt.getTime()) / (1000 * 60 * 60 * 24),
+        // REF-3 (#692) — claim the reward atomically: status still SIGNED_UP AND
+        // within the qualification window, both asserted in the WHERE. Folding the
+        // window into the guarded write (rather than an app-side Date.now() check
+        // separate from the status guard) makes reward-vs-expire a single decision
+        // against the committed row, closing the gap where a stale read or the
+        // expireStaleReferrals cron disagrees with the app-computed window.
+        const windowCutoff = new Date(
+          Date.now() - QUALIFICATION_WINDOW_DAYS * 24 * 60 * 60 * 1000,
         );
-
-        if (daysSinceSignup > QUALIFICATION_WINDOW_DAYS) {
-          await tx.referral.update({
-            where: { id: referral.id },
-            data: { status: "EXPIRED" },
-          });
-          return;
-        }
-
-        // Conditional update: only succeeds if status is still SIGNED_UP.
-        // This prevents concurrent calls from both creating rewards.
         const updated = await tx.referral.updateMany({
-          where: { id: referral.id, status: "SIGNED_UP" },
+          where: {
+            id: referral.id,
+            status: "SIGNED_UP",
+            signedUpAt: { gte: windowCutoff },
+          },
           data: {
             status: "REWARDED",
             qualifiedAt: new Date(),
@@ -273,8 +271,20 @@ export async function processQualifyingAction(
           },
         });
 
-        // If no rows updated, another concurrent call already processed this
-        if (updated.count === 0) return;
+        // No reward claimed → either a concurrent call already processed it, or
+        // it's past the window. Expire it iff it's still an un-rewarded SIGNED_UP
+        // past the cutoff (the status guard makes this a no-op against a REWARDED row).
+        if (updated.count === 0) {
+          await tx.referral.updateMany({
+            where: {
+              id: referral.id,
+              status: "SIGNED_UP",
+              signedUpAt: { lt: windowCutoff },
+            },
+            data: { status: "EXPIRED" },
+          });
+          return;
+        }
 
         // Give referrer their bonus
         const referrerReward = referral.referrerRewardAmount;
@@ -443,9 +453,11 @@ export async function reverseCreditsForPayment(
   refundAmount?: number,
   originalPaymentAmount?: number,
 ): Promise<number> {
-  // Find all usage records for this payment from the ledger
+  // Find all usage records for this payment from the ledger. Carry the credit's
+  // expiry so we don't restore onto a credit that has since lapsed (REF-2).
   const usageRecords = await tx.referralCreditUsage.findMany({
     where: { paymentId },
+    include: { credit: { select: { expiresAt: true } } },
   });
 
   if (usageRecords.length === 0) return 0;
@@ -475,9 +487,22 @@ export async function reverseCreditsForPayment(
   }
 
   let totalRestored = 0;
+  let skippedExpired = 0;
+  const now = new Date();
 
   for (const usage of usageRecords) {
     if (usage.amount <= 0) continue;
+
+    // REF-2 (#692) — never resurrect an expired credit. If the credit lapsed
+    // after it was applied, restoring remainingAmount onto it just leaves dead
+    // balance (getUserCredits filters expiry; the expiry cron re-zeroes it).
+    // Skip + log; the usage row stays so the credit reads as still consumed.
+    // (Issuing fresh credit on refund-of-expired is a product decision, not done here.)
+    const creditExpiresAt = usage.credit.expiresAt;
+    if (creditExpiresAt && creditExpiresAt.getTime() < now.getTime()) {
+      skippedExpired += usage.amount;
+      continue;
+    }
 
     let restoreAmount: number;
 
@@ -531,6 +556,12 @@ export async function reverseCreditsForPayment(
   if (totalRestored > 0) {
     console.log(
       `🔄 Restored ${totalRestored} referral credits for ${isPartialRefund ? "partially " : ""}refunded payment ${paymentId}`,
+    );
+  }
+  if (skippedExpired > 0) {
+    // REF-2 — visibility: credit value not returned because it had expired.
+    console.log(
+      `⏭️  Skipped restoring ${skippedExpired} expired referral credit(s) for refunded payment ${paymentId}`,
     );
   }
 
