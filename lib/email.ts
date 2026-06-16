@@ -136,6 +136,10 @@ export async function sendWelcomeEmail({
       `Attempting to send welcome email to ${email} from onboarding@familiarise.com`,
     );
     const data = await resend.emails.send(sentMessage);
+    // #474 — Resend resolves (does not throw) on API-level errors, returning a
+    // non-null `error`. Throw so the catch below dead-letters the message
+    // instead of reporting a false success.
+    if (data.error) throw new Error(data.error.message || "Resend API error");
 
     console.log("Resend API response:", data);
     return { success: true, data };
@@ -186,6 +190,10 @@ export async function sendPasswordResetEmail({
     };
 
     const data = await resend.emails.send(sentMessage);
+    // #474 — Resend resolves (does not throw) on API-level errors, returning a
+    // non-null `error`. Throw so the catch below dead-letters the message
+    // instead of reporting a false success.
+    if (data.error) throw new Error(data.error.message || "Resend API error");
 
     return { success: true, data };
   } catch (error) {
@@ -238,6 +246,10 @@ export async function sendAccountLinkedEmail({
     };
 
     const data = await resend.emails.send(sentMessage);
+    // #474 — Resend resolves (does not throw) on API-level errors, returning a
+    // non-null `error`. Throw so the catch below dead-letters the message
+    // instead of reporting a false success.
+    if (data.error) throw new Error(data.error.message || "Resend API error");
 
     return { success: true, data };
   } catch (error) {
@@ -313,6 +325,10 @@ export async function sendPaymentLinkEmail({
     );
 
     const data = await resend.emails.send(sentMessage);
+    // #474 — Resend resolves (does not throw) on API-level errors, returning a
+    // non-null `error`. Throw so the catch below dead-letters the message
+    // instead of reporting a false success.
+    if (data.error) throw new Error(data.error.message || "Resend API error");
 
     console.log(
       "Payment link email sent successfully:",
@@ -392,6 +408,10 @@ export async function sendPaymentSuccessEmail({
     );
 
     const data = await resend.emails.send(sentMessage);
+    // #474 — Resend resolves (does not throw) on API-level errors, returning a
+    // non-null `error`. Throw so the catch below dead-letters the message
+    // instead of reporting a false success.
+    if (data.error) throw new Error(data.error.message || "Resend API error");
 
     console.log(
       "Payment success email sent successfully:",
@@ -474,6 +494,10 @@ export async function sendPaymentFailedEmail({
     );
 
     const data = await resend.emails.send(sentMessage);
+    // #474 — Resend resolves (does not throw) on API-level errors, returning a
+    // non-null `error`. Throw so the catch below dead-letters the message
+    // instead of reporting a false success.
+    if (data.error) throw new Error(data.error.message || "Resend API error");
 
     console.log(
       "Payment failed email sent successfully:",
@@ -526,6 +550,10 @@ export async function sendOrgInvitationEmail({
     };
 
     const data = await resend.emails.send(sentMessage);
+    // #474 — Resend resolves (does not throw) on API-level errors, returning a
+    // non-null `error`. Throw so the catch below dead-letters the message
+    // instead of reporting a false success.
+    if (data.error) throw new Error(data.error.message || "Resend API error");
 
     console.log(`Org invitation email sent to ${email}:`, data);
     return { success: true, data };

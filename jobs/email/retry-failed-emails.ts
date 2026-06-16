@@ -128,7 +128,7 @@ export async function runEmailRetryTick(params: {
     try {
       // Verbatim re-send of the stored rendered message. No dispatcher, no
       // re-render: replay exactly what the original sender handed Resend.
-      await emails.send({
+      const result = await emails.send({
         from: row.fromAddress ?? DEFAULT_FROM_ADDRESS,
         to: row.recipient,
         subject: row.subject,
@@ -136,6 +136,11 @@ export async function runEmailRetryTick(params: {
         text: row.textBody ?? undefined,
         replyTo: row.replyTo ?? undefined,
       });
+      // Resend resolves (does not throw) on API-level errors — a non-null
+      // `error` is still a failure, so it must not be mistaken for a success.
+      if (result.error) {
+        sendError = result.error.message || "Resend API error";
+      }
     } catch (err) {
       sendError = err instanceof Error ? err.message : String(err);
     }

@@ -123,8 +123,7 @@ describe("runEmailRetryTick — backoff schedule", () => {
     });
 
     const result = await runEmailRetryTick({
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      prisma: stub.prisma as any,
+      prisma: stub.prisma,
       resend,
       now: () => FROZEN_NOW_MS,
     });
@@ -154,8 +153,7 @@ describe("runEmailRetryTick — success path", () => {
     }));
 
     const result = await runEmailRetryTick({
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      prisma: stub.prisma as any,
+      prisma: stub.prisma,
       resend,
       now: () => FROZEN_NOW_MS,
     });
@@ -189,8 +187,7 @@ describe("runEmailRetryTick — success path", () => {
     }));
 
     await runEmailRetryTick({
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      prisma: stub.prisma as any,
+      prisma: stub.prisma,
       resend,
       now: () => FROZEN_NOW_MS,
     });
@@ -202,6 +199,34 @@ describe("runEmailRetryTick — success path", () => {
         replyTo: undefined,
       }),
     );
+  });
+
+  it("treats a Resend error returned without throwing as a failure", async () => {
+    const stub = makePrismaStub(makeRow());
+    // Resend resolves with { error } on API-level failures (rate limit, invalid
+    // key, validation) instead of throwing — this must NOT be read as a success.
+    const resend = mockResend(async () => ({
+      data: null,
+      error: {
+        message: "rate_limited",
+        name: "rate_limit_exceeded",
+        statusCode: 429,
+      },
+      headers: null,
+    }));
+
+    const result = await runEmailRetryTick({
+      prisma: stub.prisma,
+      resend,
+      now: () => FROZEN_NOW_MS,
+    });
+
+    expect(result.sent).toBe(0);
+    expect(result.retried).toBe(1);
+    expect(stub.updates[0].data).toMatchObject({
+      status: "RETRY",
+      lastError: "rate_limited",
+    });
   });
 });
 
@@ -219,8 +244,7 @@ describe("runEmailRetryTick — no sender", () => {
     const stub = makePrismaStub(makeRow());
 
     const result = await runEmailRetryTick({
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      prisma: stub.prisma as any,
+      prisma: stub.prisma,
       // No `resend` injected and RESEND_API_KEY unset in the test env.
       now: () => FROZEN_NOW_MS,
     });

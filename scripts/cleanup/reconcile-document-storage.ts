@@ -207,30 +207,30 @@ async function persistMissingState(
   missingFiles: MissingFile[],
   recoveredIds: string[],
 ): Promise<number> {
-  let marked = 0;
+  // Only flag (and count) rows whose flag flips false → true. Batch the writes
+  // into two updateMany calls instead of one query per row (avoids the N+1).
+  const newlyMissingIds = missingFiles
+    .filter((doc) => !doc.isStorageMissing)
+    .map((doc) => doc.id);
 
-  for (const doc of missingFiles) {
-    // Only write (and count) when the flag flips false → true.
-    if (doc.isStorageMissing) continue;
-    await prisma.appointmentDocument.update({
-      where: { id: doc.id },
+  if (newlyMissingIds.length > 0) {
+    await prisma.appointmentDocument.updateMany({
+      where: { id: { in: newlyMissingIds } },
       data: { isStorageMissing: true, missingDetectedAt: new Date() },
-    });
-    marked++;
-  }
-
-  for (const id of recoveredIds) {
-    await prisma.appointmentDocument.update({
-      where: { id },
-      data: { isStorageMissing: false, missingDetectedAt: null },
     });
   }
 
   if (recoveredIds.length > 0) {
-    console.log(`   ♻️ Cleared missing flag on ${recoveredIds.length} recovered files`);
+    await prisma.appointmentDocument.updateMany({
+      where: { id: { in: recoveredIds } },
+      data: { isStorageMissing: false, missingDetectedAt: null },
+    });
+    console.log(
+      `   ♻️ Cleared missing flag on ${recoveredIds.length} recovered files`,
+    );
   }
 
-  return marked;
+  return newlyMissingIds.length;
 }
 
 /**
