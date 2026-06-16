@@ -7,6 +7,7 @@ import { getStreamVideoClient } from "@/lib/stream-client";
 import prisma from "@/lib/prisma";
 import { Prisma, RecordingStatus } from "@prisma/client";
 import { streamLogger } from "@/lib/stream-logger";
+import { isPaymentEntitled } from "@/lib/payments/utils/refund-balance";
 import { generateRecordingTitle } from "@/lib/stream/recording-utils";
 import type {
   RecordingRow,
@@ -385,6 +386,8 @@ export class RecordingService {
         },
       },
       select: {
+        amount: true,
+        refunds: { select: { amountPaise: true, status: true } },
         appointment: {
           select: {
             webinar: { select: { webinarPlanId: true } },
@@ -394,16 +397,20 @@ export class RecordingService {
       },
     });
 
+    // #689 — drop fully-refunded purchases before deriving entitled plans; a
+    // SUCCEEDED payment whose refunds cover it no longer grants recording access.
+    const entitled = enrolledAppointments.filter(isPaymentEntitled);
+
     const webinarPlanIds = Array.from(
       new Set(
-        enrolledAppointments
+        entitled
           .map((e) => e.appointment?.webinar?.webinarPlanId)
           .filter((id): id is string => !!id),
       ),
     );
     const classPlanIds = Array.from(
       new Set(
-        enrolledAppointments
+        entitled
           .map((e) => e.appointment?.class?.classPlanId)
           .filter((id): id is string => !!id),
       ),
@@ -906,6 +913,8 @@ export class RecordingService {
           },
         },
         include: {
+          // #689 — net refunds so a fully-refunded enrollment doesn't re-sync recordings.
+          refunds: { select: { amountPaise: true, status: true } },
           appointment: {
             include: {
               slotsOfAppointment: {
@@ -957,6 +966,7 @@ export class RecordingService {
 
       for (const payment of paidEnrollments) {
         if (!payment.appointment) continue;
+        if (!isPaymentEntitled(payment)) continue; // #689 — skip fully-refunded
         for (const slot of payment.appointment.slotsOfAppointment) {
           if (slot.meetingSession && slot.meetingSession.streamCallId) {
             meetingSessions.push(slot.meetingSession);
