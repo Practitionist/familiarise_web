@@ -24,31 +24,29 @@ export class CollaboratorUnavailableError extends Error {
  * collaboration on. Mirrors the booked-slots query behind
  * /api/collaborators/[consultantProfileId]/availability.
  */
-function commitmentWhere(
+function commitmentClauses(
   consultantProfileId: string,
-): Prisma.AppointmentWhereInput {
-  return {
-    OR: [
-      { consultation: { consultationPlan: { consultantProfileId } } },
-      { subscription: { subscriptionPlan: { consultantProfileId } } },
-      { webinar: { webinarPlan: { consultantProfileId } } },
-      { class: { classPlan: { consultantProfileId } } },
-      {
-        webinar: {
-          webinarPlan: {
-            collaborators: { some: { consultantProfileId, status: "ACCEPTED" } },
-          },
+): Prisma.AppointmentWhereInput[] {
+  return [
+    { consultation: { consultationPlan: { consultantProfileId } } },
+    { subscription: { subscriptionPlan: { consultantProfileId } } },
+    { webinar: { webinarPlan: { consultantProfileId } } },
+    { class: { classPlan: { consultantProfileId } } },
+    {
+      webinar: {
+        webinarPlan: {
+          collaborators: { some: { consultantProfileId, status: "ACCEPTED" } },
         },
       },
-      {
-        class: {
-          classPlan: {
-            collaborators: { some: { consultantProfileId, status: "ACCEPTED" } },
-          },
+    },
+    {
+      class: {
+        classPlan: {
+          collaborators: { some: { consultantProfileId, status: "ACCEPTED" } },
         },
       },
-    ],
-  };
+    },
+  ];
 }
 
 /**
@@ -84,19 +82,41 @@ export async function assertCollaboratorsAvailable(
   });
   if (collaborators.length === 0) return;
 
+  // A confirmed, non-soft-deleted slot overlapping the window. deletedAt:null on
+  // both the slot and its appointment keeps cancelled/soft-deleted bookings from
+  // surfacing as phantom clashes.
+  const overlapWhere = (
+    appointment: Prisma.AppointmentWhereInput,
+  ): Prisma.SlotOfAppointmentWhereInput => ({
+    // Half-open overlap: existing.start < new.end AND existing.end > new.start.
+    startsAt: { lt: endsAt },
+    endsAt: { gt: startsAt },
+    isTentative: false,
+    deletedAt: null,
+    ...(excludeAppointmentId
+      ? { appointmentId: { not: excludeAppointmentId } }
+      : {}),
+    appointment: { deletedAt: null, ...appointment },
+  });
+
+  // Fast path: one query asking whether ANY co-host clashes — no N+1 on the
+  // common no-conflict scheduling path.
+  const anyClash = await db.slotOfAppointment.findFirst({
+    where: overlapWhere({
+      OR: collaborators.flatMap((c) =>
+        commitmentClauses(c.consultantProfileId),
+      ),
+    }),
+    select: { id: true },
+  });
+  if (!anyClash) return;
+
+  // A clash exists and will block scheduling; resolve which co-host(s) for the
+  // 409 message. This per-co-host probe runs only in that rare blocking case.
   const clashing: string[] = [];
   for (const c of collaborators) {
     const conflict = await db.slotOfAppointment.findFirst({
-      where: {
-        // Half-open overlap: existing.start < new.end AND existing.end > new.start.
-        startsAt: { lt: endsAt },
-        endsAt: { gt: startsAt },
-        isTentative: false,
-        ...(excludeAppointmentId
-          ? { appointmentId: { not: excludeAppointmentId } }
-          : {}),
-        appointment: commitmentWhere(c.consultantProfileId),
-      },
+      where: overlapWhere({ OR: commitmentClauses(c.consultantProfileId) }),
       select: { id: true },
     });
     if (conflict) {
