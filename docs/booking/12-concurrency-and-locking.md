@@ -218,29 +218,31 @@ All slot allocation and cancellation operations run inside Prisma interactive tr
 | --------------------------------------- | ------- | -------- | ----------------------------------------- |
 | Slot allocation (auto/manual/requested) | 120s    | Default  | `SlotAllocationService.ts`                |
 | Appointment cancellation                | 30s     | 10s      | `appointments/[id]/cancel/route.ts`       |
-| Payment transactions                    | 30s     | 5s       | `lib/payments/core/transactions.ts`       |
-| Webinar CRUD                            | 10s     | 5s       | `events/webinars/crud-with-plan/route.ts` |
+| Payment / checkout transactions         | 30s     | 5s       | `lib/payments/operations/checkout.ts`     |
+| Webinar CRUD                            | 10s     | 5s       | `app/api/bookings/webinars/crud-with-plan/route.ts` |
 
 The transaction provides two guarantees:
 
 1. **Atomicity** -- All database writes succeed or all roll back. No partial bookings.
-2. **Isolation** -- The contended state is re-read inside the transaction. Slot-booking and event-checkout transactions run at Serializable isolation, so two concurrent transactions that read the same rows and both write cannot both commit: PostgreSQL aborts the loser with a P2034 serialization failure rather than allowing both to pass validation on the same slot or the same last seat.
+2. **Isolation** -- The contended state is re-read inside the transaction. The slot-booking transaction runs at the default Read Committed isolation and relies on the `slot_no_confirmed_overlap` exclusion constraint as its commit-time backstop: a racing transaction that would create a confirmed overlap on the same consultant is rejected with a Postgres `23P01` exclusion violation (mapped to a 409). The event-checkout transaction additionally runs at Serializable isolation, so two buyers racing for the same last seat cannot both commit -- PostgreSQL aborts the loser with a `P2034` serialization failure.
 
 The pattern in every booking route is to take the cheap Redis lock first, then do the authoritative re-read and write inside the transaction, and always release the lock in `finally`:
 
 ```
 lock = await lockSlotBooking(...)    // Redis mutex (common-case contention)
 try {
-  await prisma.$transaction(             // Serializable: the correctness guarantee
+  await prisma.$transaction(             // default Read Committed isolation
     async (tx) => {
       validate(tx, ...)                  // Re-read contended state inside the tx
-      create(tx, ...)
-    },
-    { isolationLevel: "Serializable" },  // SSI aborts the last-seat loser with P2034
+      create(tx, ...)                    // slot_no_confirmed_overlap rejects a confirmed
+    },                                   // overlap at commit -> Postgres 23P01 -> 409
+    { timeout: 120_000 },
   )
 } finally {
   await unlockSlotBooking(lock)          // Always release
 }
+// Event checkout follows the same shape but adds { isolationLevel: "Serializable" }
+// so the last-seat participant recount aborts the loser with P2034.
 ```
 
 ---
@@ -259,6 +261,6 @@ try {
 | Lock expires during slow DB operation                | `extendLock` heartbeat       | Extends TTL without releasing; 120s transaction timeout aligned with extended lock |
 | Client crashes while holding lock                    | Redis TTL auto-expiry        | Lock expires after TTL, no manual intervention needed                              |
 | Lock released by wrong client                        | Safe release Lua script      | `GET` + `DEL` atomic with value verification                                       |
-| Slot passes validation but conflicts at commit       | Serializable isolation + `slot_no_confirmed_overlap` exclusion constraint (#440) | SSI aborts the racing transaction with P2034; the DB exclusion constraint rejects any confirmed overlap for the same consultant even if application validation was bypassed |
+| Slot passes validation but conflicts at commit       | `slot_no_confirmed_overlap` exclusion constraint (#440) | The DB exclusion constraint rejects any confirmed overlap for the same consultant even if application validation was bypassed, raising Postgres `23P01` (mapped to a 409). SSI/P2034 covers the event-checkout last-seat race above, not slot booking. |
 | Payment abandoned mid-checkout (events)              | Tentative-slot cleanup cron  | The tentative slot is released by the 24-hour idempotent cleanup (and the buyer can free it early via `DELETE /api/checkout/pending/[paymentId]`); see [ADR B5](./00-architecture-decisions.md) |
 | Cancelled/rejected slots blocking new bookings       | `buildOccupiedAppointmentFilter()` | Conflict check excludes appointments with terminal statuses (CANCELLED, REJECTED, EXPIRED) |
