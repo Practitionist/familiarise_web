@@ -100,13 +100,13 @@ export function ConsultantAvailability({
               localEndTime: slot.localEndTime,
               originalSlot: {
                 id: slot.slotOfAvailabilityId,
-                slotStartTimeInUTC: slot.slotStartTimeInUTC,
-                slotEndTimeInUTC: slot.slotEndTimeInUTC,
+                startsAt: slot.startsAt,
+                endsAt: slot.endsAt,
               },
               isAllocated: slot.isAllocated,
               bookingStatus: slot.bookingStatus || "available",
-              slotStartTimeInUTC: slot.slotStartTimeInUTC,
-              slotEndTimeInUTC: slot.slotEndTimeInUTC,
+              startsAt: slot.startsAt,
+              endsAt: slot.endsAt,
               type: "WEEKLY",
             } as ProcessedSlot);
           });
@@ -133,13 +133,13 @@ export function ConsultantAvailability({
           localEndTime: slot.localEndTime,
           originalSlot: {
             id: slot.slotOfAvailabilityId,
-            slotStartTimeInUTC: slot.slotStartTimeInUTC,
-            slotEndTimeInUTC: slot.slotEndTimeInUTC,
+            startsAt: slot.startsAt,
+            endsAt: slot.endsAt,
           },
           isAllocated: slot.isAllocated,
           bookingStatus: slot.bookingStatus || "available",
-          slotStartTimeInUTC: slot.slotStartTimeInUTC,
-          slotEndTimeInUTC: slot.slotEndTimeInUTC,
+          startsAt: slot.startsAt,
+          endsAt: slot.endsAt,
           type: "CUSTOM",
         }));
 

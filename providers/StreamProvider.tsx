@@ -27,8 +27,10 @@ import { clearAllStreamCaches } from "@/lib/stream-cache";
 const clientSyncCompletedUsers = new Set<string>();
 import StreamErrorBoundary from "@/components/stream/StreamErrorBoundary";
 
-// Import Stream Chat CSS
+// Stream CSS co-located with the provider that renders Stream UI — the
+// video stylesheet was previously imported by both dashboard layouts.
 import "stream-chat-react/dist/css/v2/index.css";
+import "@stream-io/video-react-sdk/dist/css/styles.css";
 
 const apiKey = process.env.NEXT_PUBLIC_STREAM_API_KEY;
 

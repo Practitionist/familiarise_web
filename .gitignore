@@ -92,3 +92,6 @@ node-payment-main/
 # Local Netlify folder
 .netlify
 *.png
+
+# scratch dir for agent/test scripts — never commit
+/temp/

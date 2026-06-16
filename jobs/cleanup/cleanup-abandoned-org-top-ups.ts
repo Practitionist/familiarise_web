@@ -5,7 +5,7 @@
  * Adds GitHub Actions-specific outputs and error handling.
  *
  * Runs daily at 02:00 UTC via .github/workflows/cleanup-abandoned-org-top-ups.yml
- * (must NOT overlap subscription-cron at 00:00 UTC — Prisma connection contention).
+ * (must NOT overlap generate-subscription-invoices at 01:00 UTC — Prisma connection contention).
  */
 
 import {

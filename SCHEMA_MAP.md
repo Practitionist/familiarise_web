@@ -605,7 +605,7 @@ erDiagram
         string id
         string consultationPlanId
         string requestedById
-        RequestStatus requestStatus
+        AppointmentStatus status
         BookingSource bookingSource
         string pendingPaymentUrl
         CancellationReason cancellationReason
@@ -623,7 +623,7 @@ erDiagram
         string id
         string subscriptionPlanId
         string requestedById
-        RequestStatus requestStatus
+        AppointmentStatus status
         BookingSource bookingSource
         string pendingPaymentUrl
         datetime schedulingPeriodStartsAt
@@ -725,11 +725,11 @@ erDiagram
     }
     Consultation {
         string id
-        RequestStatus requestStatus
+        AppointmentStatus status
     }
     Subscription {
         string id
-        RequestStatus requestStatus
+        AppointmentStatus status
     }
     Webinar {
         string id
@@ -1870,7 +1870,7 @@ Every enum in the schema and its values.
 | `ResidencyStatus` | RESIDENT, NON_RESIDENT |
 | `MsmeStatus` | NONE, MICRO, SMALL, MEDIUM |
 | `PayoutArrangement` | DIRECT, AOR, EOR |
-| `RequestStatus` | PENDING, APPROVED, APPROVED_PENDING_PAYMENT, SCHEDULED, COMPLETED, REJECTED, CANCELLED, EXPIRED |
+| `AppointmentStatus` | PENDING, APPROVED, APPROVED_PENDING_PAYMENT, SCHEDULED, COMPLETED, REJECTED, CANCELLED, EXPIRED |
 | `AppointmentsType` | CONSULTATION, SUBSCRIPTION, WEBINAR, CLASS, TRIAL |
 | `SlotCompletionStatus` | SCHEDULED, COMPLETED, UNVERIFIED, CANCELLED, RESCHEDULED |
 | `BookingSource` | DIRECT_CHECKOUT, REQUEST_SUBMITTED |

@@ -78,9 +78,9 @@ Both paths call the same core function exported from `scripts/appointments/`. Th
 
 **Purpose**: Releases slots marked `isTentative = true` that are associated with abandoned booking flows. These tentative slots block consultant availability; if not cleaned up, abandoned checkouts permanently reduce the consultant's bookable calendar.
 
-**Threshold**: 7 days since slot creation (`TENTATIVE_EXPIRATION_DAYS = 7`).
+**Threshold**: 24 hours since slot creation (`TENTATIVE_EXPIRATION_HOURS = 24`, cut from 7 days by #833).
 
-**Criteria**: Slot has `isTentative = true`, `createdAt` older than 7 days, AND the associated appointment has no payment with `paymentStatus = SUCCEEDED`.
+**Criteria**: Slot has `isTentative = true`, `createdAt` older than 24 hours, AND the associated appointment has no payment with `paymentStatus = SUCCEEDED`. Users can also release their own holds immediately via `DELETE /api/checkout/pending/[paymentId]` (#849) instead of waiting for this cron.
 
 **Action**: Deletes the stale `SlotOfAppointment` records using `deleteMany`. This frees the time range for new bookings.
 
@@ -106,7 +106,7 @@ Both paths call the same core function exported from `scripts/appointments/`. Th
 
 **Action**: Within a Prisma `$transaction`:
 
-1. Updates consultation to `requestStatus = CANCELLED` with `cancellationNotes` indicating auto-cancellation and `cancelledAt` timestamp.
+1. Updates consultation to `status = CANCELLED` with `cancellationNotes` indicating auto-cancellation and `cancelledAt` timestamp.
 2. Deletes tentative `SlotOfAppointment` records tied to the appointment.
 
 **Safety**: Per-record `try/catch` wrapping the transaction. Each consultation is processed independently. The transaction ensures the status update and slot release are atomic -- if either fails, neither is committed.
@@ -136,7 +136,7 @@ Both paths call the same core function exported from `scripts/appointments/`. Th
 | Invalid duration consultations          | Total slot duration does not match `consultationPlan.durationInHours` (1% tolerance) | N/A -- cancels |
 | Invalid duration subscriptions          | Scheduling period months does not match `subscriptionPlan.durationInMonths`          | N/A -- cancels |
 
-**Action**: Sets `requestStatus = CANCELLED` on affected records. Also deletes associated `SlotOfAppointment` records to free availability. Records already in terminal states (`CANCELLED`, `REJECTED`, `EXPIRED`) are excluded from processing.
+**Action**: Sets `status = CANCELLED` on affected records. Also deletes associated `SlotOfAppointment` records to free availability. Records already in terminal states (`CANCELLED`, `REJECTED`, `EXPIRED`) are excluded from processing.
 
 **Safety**: Each of the four sub-tasks has its own `try/catch`. The API route uses `crypto.timingSafeEqual` for authorization header comparison, preventing timing-based attacks. The `runAllCleanupTasks` function handles database disconnection in a `finally` block.
 
@@ -189,7 +189,9 @@ Both paths call the same core function exported from `scripts/appointments/`. Th
 - Tentative flag mismatches: Automatically corrected.
 - Double bookings: Logged and returned in the response. The API returns HTTP `207` when double bookings are detected (vs `200` for clean results).
 
-**Safety**: Two independent `try/catch` blocks. The double booking detection is read-only and does not modify data. The GitHub Actions workflow is configured to trigger a failure notification specifically for double booking scenarios.
+**Ownership of the 207 response**: A `207` is a degraded-but-not-broken signal, not a page. The GitHub Actions workflow posts it to the ops Slack channel configured via `SLACK_OPS_WEBHOOK_URL`, and the on-call engineer owns the follow-up. That engineer is responsible for triaging the reported overlaps, manually resolving the affected bookings (the job never auto-resolves them), and confirming the next hourly run returns `200`. Treat a `207` that persists across more than one run as the trigger to escalate.
+
+**Safety**: Two independent `try/catch` blocks. The double booking detection is read-only and does not modify data. The GitHub Actions workflow is configured to trigger a failure notification specifically for double booking scenarios, routed to the ops Slack channel (`SLACK_OPS_WEBHOOK_URL`) described above.
 
 ---
 

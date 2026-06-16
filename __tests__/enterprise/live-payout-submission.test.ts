@@ -147,7 +147,11 @@ describe("processOrgPayout — live submission gating", () => {
 
     const result = await processOrgPayout(PAYOUT_ID);
 
-    expect(result).toEqual({ status: "PENDING", submittedToGateway: false });
+    expect(result).toEqual({
+      status: "PENDING",
+      submittedToGateway: false,
+      claimed: false,
+    });
     // The row was NOT advanced — no PENDING→PROCESSING claim happened.
     expect(mockedPrisma.organizationPayout.updateMany).not.toHaveBeenCalled();
     expect(createPayout).not.toHaveBeenCalled();
@@ -171,7 +175,11 @@ describe("processOrgPayout — live submission gating", () => {
 
     const result = await processOrgPayout(PAYOUT_ID);
 
-    expect(result).toEqual({ status: "PROCESSING", submittedToGateway: true });
+    expect(result).toEqual({
+      status: "PROCESSING",
+      submittedToGateway: true,
+      claimed: true,
+    });
     expect(createPayout).toHaveBeenCalledTimes(1);
     expect(createPayout).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -294,7 +302,11 @@ describe("processOrgPayout — live submission gating", () => {
 
     const result = await processOrgPayout(PAYOUT_ID);
 
-    expect(result).toEqual({ status: "PROCESSING", submittedToGateway: false });
+    expect(result).toEqual({
+      status: "PROCESSING",
+      submittedToGateway: false,
+      claimed: false,
+    });
     expect(createPayout).not.toHaveBeenCalled();
     // The factory should also not be touched on the no-op path —
     // confirms we early-returned BEFORE the submission helper.

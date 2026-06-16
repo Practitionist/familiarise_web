@@ -294,7 +294,7 @@ export async function redeemGift(
       data: {
         consultationPlanId: voucher.consultationPlanId,
         consulteeProfileId: consulteeProfile!.id,
-        requestStatus: "SCHEDULED",
+        status: "SCHEDULED",
         bookingSource: "GIFT_REDEMPTION",
       },
     });

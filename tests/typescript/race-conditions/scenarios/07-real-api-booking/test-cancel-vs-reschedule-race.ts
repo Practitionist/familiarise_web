@@ -25,7 +25,7 @@ async function run() {
   // Fixture: a consultation appointment in a cancellable state with live slots.
   const appointment = await prisma.appointment.findFirst({
     where: {
-      consultation: { requestStatus: { in: ["PENDING", "APPROVED"] } },
+      consultation: { status: { in: ["PENDING", "APPROVED"] } },
       slotsOfAppointment: { some: { completionStatus: "SCHEDULED" } },
     },
     select: { id: true, consultation: { select: { id: true } } },
@@ -38,7 +38,7 @@ async function run() {
   // Capture the fixture so repeat runs do not consume the seed pool.
   const originalConsultation = await prisma.consultation.findUniqueOrThrow({
     where: { id: appointment.consultation!.id },
-    select: { requestStatus: true },
+    select: { status: true },
   });
   const originalSlots = await prisma.slotOfAppointment.findMany({
     where: { appointmentId: appointment.id },
@@ -75,17 +75,17 @@ async function run() {
   // in the reschedule-first ordering, and then the cancel's verdict stands.)
   const finalState = await prisma.consultation.findUniqueOrThrow({
     where: { id: appointment.consultation!.id },
-    select: { requestStatus: true },
+    select: { status: true },
   });
   const cancelWon = cancelRes.status >= 200 && cancelRes.status < 300;
   check(
     "a successful cancel is never resurrected",
-    !cancelWon || finalState.requestStatus === "CANCELLED",
+    !cancelWon || finalState.status === "CANCELLED",
     { cancelWon, finalState, h: histogram(results) },
   );
   check(
     "reschedule-only outcome lands on PENDING",
-    cancelWon || finalState.requestStatus === "PENDING",
+    cancelWon || finalState.status === "PENDING",
     { cancelWon, finalState },
   );
 
@@ -105,7 +105,7 @@ async function run() {
   await prisma.consultation.update({
     where: { id: appointment.consultation!.id },
     data: {
-      requestStatus: originalConsultation.requestStatus,
+      status: originalConsultation.status,
       cancellationReason: null,
       cancellationNotes: null,
       cancelledAt: null,

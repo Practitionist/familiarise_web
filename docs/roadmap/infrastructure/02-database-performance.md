@@ -84,8 +84,8 @@ Appointment (1) ──┬── Consultation (0..1)
 
 | Table           | Field           | Current  | Query Impact                 |
 | --------------- | --------------- | -------- | ---------------------------- |
-| `Consultation`  | `requestStatus` | No index | Full table scan on filtering |
-| `Subscription`  | `requestStatus` | No index | Full table scan on filtering |
+| `Consultation`  | `status` | No index | Full table scan on filtering |
+| `Subscription`  | `status` | No index | Full table scan on filtering |
 | `Feedback`      | `status`        | No index | Support dashboard slow       |
 | `SupportTicket` | `status`        | No index | Ticket listing slow          |
 | `Class`         | `status`        | No index | Event filtering slow         |
@@ -103,9 +103,9 @@ Appointment (1) ──┬── Consultation (0..1)
 
 | Use Case                 | Fields                                           | Priority |
 | ------------------------ | ------------------------------------------------ | -------- |
-| Plan status filtering    | `(subscriptionPlanId, requestStatus)`            | HIGH     |
+| Plan status filtering    | `(subscriptionPlanId, status)`            | HIGH     |
 | Consultant history       | `(consultantProfileId, createdAt)`               | HIGH     |
-| Consultee timeline       | `(consulteeProfileId, requestStatus, createdAt)` | HIGH     |
+| Consultee timeline       | `(consulteeProfileId, status, createdAt)` | HIGH     |
 | Slot collision detection | `(appointmentId, startsAt, endsAt)`              | CRITICAL |
 | Payment queries          | `(paymentStatus, paymentGateway)`                | MEDIUM   |
 
@@ -119,8 +119,8 @@ model Consultation {
 
   @@index([consultationPlanId])
   @@index([requestedById])
-  @@index([requestStatus])
-  @@index([consultationPlanId, requestStatus])
+  @@index([status])
+  @@index([consultationPlanId, status])
 }
 
 model Subscription {
@@ -128,8 +128,8 @@ model Subscription {
 
   @@index([subscriptionPlanId])
   @@index([requestedById])
-  @@index([requestStatus])
-  @@index([subscriptionPlanId, requestStatus])
+  @@index([status])
+  @@index([subscriptionPlanId, status])
 }
 
 model Webinar {
@@ -217,7 +217,7 @@ include: {
 
 #### Subscription Listing (HIGH)
 
-**File:** `app/api/events/subscriptions/route.ts`
+**File:** `app/api/bookings/subscriptions/route.ts`
 **Lines:** 39-73
 
 ```typescript
@@ -404,12 +404,12 @@ await tx.refund.create({...});
 
 #### Subscription Approval (HIGH)
 
-**File:** `app/api/events/subscriptions/route.ts:176-213`
+**File:** `app/api/bookings/subscriptions/route.ts:176-213`
 
 ```typescript
 const subscription = await prisma.subscription.update({...});
 // Another request might approve same subscription
-if (status === RequestStatus.APPROVED) {
+if (status === AppointmentStatus.APPROVED) {
   await createAppointmentsForSubscription(subscription);
 }
 ```
@@ -711,8 +711,8 @@ model WebhookLog {
 #### Fix N+1 Queries
 
 1. Refactor `app/api/slots/appointments/route.ts`
-2. Refactor `app/api/events/subscriptions/route.ts`
-3. Refactor `app/api/events/consultations/route.ts`
+2. Refactor `app/api/bookings/subscriptions/route.ts`
+3. Refactor `app/api/bookings/consultations/route.ts`
 4. Implement DataLoader pattern for user fetching
 
 #### Add Query Monitoring
@@ -823,7 +823,7 @@ export const options = {
 
 export default function () {
   const endpoints = [
-    "/api/events/subscriptions",
+    "/api/bookings/subscriptions",
     "/api/slots/appointments",
     "/api/user/consultants",
   ];

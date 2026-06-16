@@ -210,7 +210,7 @@ export class SubscriptionValidationService {
         },
         // FIX Bug #15: Use centralized occupancy statuses for consistency
         subscription: {
-          requestStatus: {
+          status: {
             in: OCCUPIED_REQUEST_STATUSES,
           },
         },

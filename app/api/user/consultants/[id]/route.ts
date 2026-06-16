@@ -12,7 +12,6 @@ import { experienceValidation } from "@/schemas/shared";
 import { checkActiveAppointments } from "../utils/consultant-appointments";
 import { getSession } from "@/lib/auth-server";
 import { apiError } from "@/lib/errors";
-import { toLocalMinutes, toLocalDay } from "@/utils/slotAllocation/localTime";
 import {
   dateToMinuteUtc,
   validateWeeklySlotTimeOrder,
@@ -45,14 +44,14 @@ const weeklySlotSchema = z.object({
     "SATURDAY",
     "SUNDAY",
   ]),
-  slotStartTimeInUTC: dateTimeSchema,
-  slotEndTimeInUTC: dateTimeSchema,
+  startsAt: dateTimeSchema,
+  endsAt: dateTimeSchema,
 });
 
 // Zod schema for custom slot
 const customSlotSchema = z.object({
-  slotStartTimeInUTC: dateTimeSchema,
-  slotEndTimeInUTC: dateTimeSchema,
+  startsAt: dateTimeSchema,
+  endsAt: dateTimeSchema,
 });
 
 // Main request body schema
@@ -382,14 +381,14 @@ export async function PUT(
           .then((u) => u?.timezone ?? null);
         const utcOffsetMinutes = userTimezone
           ? getTimezoneOffsetMinutes(userTimezone)
-          : 0;
+          : 330; // #872 — IST-only at launch: default a missing timezone to IST, never UTC 0.
 
         const weeklySlotData: Prisma.SlotOfAvailabilityWeeklyCreateManyInput[] =
           slotsOfAvailabilityWeekly.map((slot) => {
             const startTimeUtc = dateToMinuteUtc(
-              new Date(slot.slotStartTimeInUTC),
+              new Date(slot.startsAt),
             );
-            const endTimeUtc = dateToMinuteUtc(new Date(slot.slotEndTimeInUTC));
+            const endTimeUtc = dateToMinuteUtc(new Date(slot.endsAt));
             return {
               consultantProfileId: id,
               startDay: slot.dayOfWeekforStartTimeInUTC,
@@ -397,20 +396,8 @@ export async function PUT(
               startTimeUtc,
               endTimeUtc,
               utcOffsetMinutes,
-              // #503 — DST-proof columns written alongside the frozen offset.
-              timezone: userTimezone,
-              localStartMinutes: toLocalMinutes(startTimeUtc, utcOffsetMinutes),
-              localEndMinutes: toLocalMinutes(endTimeUtc, utcOffsetMinutes),
-              localStartDay: toLocalDay(
-                slot.dayOfWeekforStartTimeInUTC,
-                startTimeUtc,
-                utcOffsetMinutes,
-              ),
-              localEndDay: toLocalDay(
-                slot.dayOfWeekforEndTimeInUTC,
-                endTimeUtc,
-                utcOffsetMinutes,
-              ),
+              // TODO(#872): restore local wall-clock + IANA-zone source of truth
+              // for non-IST consultants; DST parked post-MVP (IST-only at launch).
             };
           });
 
@@ -478,8 +465,8 @@ export async function PUT(
         const customSlotData: Prisma.SlotOfAvailabilityCustomCreateManyInput[] =
           slotsOfAvailabilityCustom.map((slot) => ({
             consultantProfileId: id,
-            startsAt: new Date(slot.slotStartTimeInUTC),
-            endsAt: new Date(slot.slotEndTimeInUTC),
+            startsAt: new Date(slot.startsAt),
+            endsAt: new Date(slot.endsAt),
           }));
 
         // Validate custom slot ordering and check for pairwise overlaps

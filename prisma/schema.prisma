@@ -117,6 +117,11 @@ model User {
   /// against this user) — Prisma requires the disambiguation since
   /// both edges target ErasureRequest.
   erasureRequestsProcessed ErasureRequest[] @relation("ErasureRequestProcessor")
+  // Disputes this admin owns (#269).
+  disputesAssigned         Dispute[]        @relation("DisputeAssignee")
+  // A8 — documents this consultant reviewed (back-relation for the FK-ified
+  // AppointmentDocument.reviewedById; named to avoid the implicit-relation guess).
+  documentsReviewed        AppointmentDocument[] @relation("DocumentReviewer")
 
   @@index([consultantProfileId])
   @@index([consulteeProfileId])
@@ -588,6 +593,9 @@ model Organization {
   // (that's a Programs v2 item in epic #703).
   trialsByOrg TrialSession[] @relation("TrialsByOrg")
 
+  // Referral attribution (#727) — same contract as TrialsByOrg.
+  referralsByOrg Referral[] @relation("ReferralsByOrg")
+
   // #674 personal-vs-org scope split — appointments / waitlist entries /
   // recordings booked or produced by org members. Mirrors TrialsByOrg.
   appointmentsByOrg   Appointment[]    @relation("AppointmentByOrg")
@@ -687,22 +695,14 @@ model Invitation {
   // and the dedup pre-check at POST /organizations/[orgId]/invitations.
   @@index([organizationId, status])
   // Supports the dedup pre-check (orgId + email + status="pending")
-  // before INSERT. The real invariant — "at most one pending invite per
-  // (org, email)" — is currently enforced at the application layer by a
-  // Serializable transaction in invitations/route.ts, plus P2002 handling.
-  //
-  // TODO(infra/partial-unique): replace this index with a true PARTIAL
-  // UNIQUE constraint once the Prisma `partialIndexes` preview feature
-  // graduates to stable. Target syntax:
-  //
-  //   @@unique([organizationId, email],
-  //            name: "invitations_org_email_pending_key",
-  //            where: { status: "pending" })
-  //
-  // As of Prisma 7.7.0 (2026-04) the feature is still preview with known
-  // migration-drift bugs (prisma/prisma#29263, #29415), so we deliberately
-  // stick to Serializable tx + regular index until GA. Tracked in:
-  //   https://github.com/Practitionist/familiarise_web/issues/685
+  // before INSERT. The invariant — "at most one pending invite per
+  // (org, lower(email))" — is DB-enforced by the partial unique index
+  // `invitations_org_email_pending_key` in prisma/sql/check-constraints.sql
+  // (#747/#685); the POST handler lowercases before write and the
+  // Serializable transaction in invitations/route.ts stays as the first
+  // line. Migrate to native `@@unique(..., where:)` once the
+  // Prisma `partialIndexes` preview (buggy at 7.7.0 — prisma/prisma#29263,
+  // #29415) reaches stable.
   @@index([organizationId, email, status])
   @@map("invitations")
 }
@@ -1296,7 +1296,9 @@ model BookingUtilization {
   createdAt    DateTime      @default(now())
   overageEvent OverageEvent?
 
-  @@index([programAssignmentId])
+  // #781 §D — createdAt-ordered utilization scans (statements / reconcile). The
+  // composite also serves programAssignmentId-only lookups (leftmost prefix).
+  @@index([programAssignmentId, createdAt])
 }
 
 enum ProgramType {
@@ -1469,13 +1471,14 @@ model OrganizationEarnings {
   consultantBpsApplied Int?
 
   status    EarningStatus
-  holdUntil DateTime?
+  holdUntil DateTime?     @db.Timestamptz
 
   orgPayoutId String?
   orgPayout   OrganizationPayout? @relation(fields: [orgPayoutId], references: [id])
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  // A6/A7/PM-16 — Timestamptz on the money models (#676).
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
 
   @@unique([paymentId, organizationId])
   // #781 §D — createdAt-ordered finance reads (payout batching, statements)
@@ -1493,8 +1496,8 @@ model OrganizationPayout {
   status         PayoutStatus
   paymentGateway PaymentGateway
 
-  periodStart DateTime
-  periodEnd   DateTime
+  periodStart DateTime @db.Timestamptz
+  periodEnd   DateTime @db.Timestamptz
 
   grossRevenuePaise BigInt
   platformFeePaise  BigInt
@@ -1504,7 +1507,7 @@ model OrganizationPayout {
   // India statutory (fields final; cron + derivation stubbed in v1)
   tdsSectionApplied String? // "194J" | "194O" | "194C"
   tdsAmountPaise    BigInt?
-  mustPayByDate     DateTime? // derived from MSME 15/45-day rule
+  mustPayByDate     DateTime? @db.Timestamptz // derived from MSME 15/45-day rule
   // #781 §A — rail the batch was (or will be) submitted on.
   paRouteProvider   PayoutRailProvider?
   paReferenceId     String?
@@ -1517,12 +1520,14 @@ model OrganizationPayout {
 
   payoutReference String?
   failureReason   String?
-  processedAt     DateTime?
-  failedAt        DateTime?
+  processedAt     DateTime? @db.Timestamptz
+  failedAt        DateTime? @db.Timestamptz
 
   /// A1: live RazorpayX/Stripe Connect submission response.
   /// `gatewayPayoutId` is the gateway's `id` (Razorpay payout id or
-  /// Stripe transfer id). `gatewayUtr` populates only after the
+  /// Stripe transfer id). UTR — Unique Transaction Reference; the bank/RBI
+  /// settlement reference the gateway returns on a completed NEFT/IMPS/UPI
+  /// payout. `gatewayUtr` populates only after the
   /// `payout.processed`/`transfer.paid` webhook reconciles. The full
   /// response is stashed in `gatewayResponseRaw` for debugging.
   gatewayPayoutId    String? @unique
@@ -1533,7 +1538,7 @@ model OrganizationPayout {
   /// rolled into this payout is later refunded. Manual recovery only
   /// in v1; admin sees this in the payout-detail page.
   clawbackAmountPaise BigInt    @default(0)
-  clawbackInitiatedAt DateTime?
+  clawbackInitiatedAt DateTime? @db.Timestamptz
 
   /// Cron-driven duplicate-guard key. The weekly batch cron derives a
   /// deterministic key from (organizationId, periodStart) so a retried
@@ -1544,8 +1549,9 @@ model OrganizationPayout {
 
   earnings OrganizationEarnings[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  // A6/A7/PM-16 — Timestamptz on the money models (#676).
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
 
   @@index([organizationId, status])
   @@index([periodStart, periodEnd])
@@ -1597,6 +1603,9 @@ model OrganizationInvoice {
   status        OrgInvoiceStatus @default(DRAFT)
 
   // Money
+  // #781 §A — invoices display the constrained Currency enum (a formal document
+  // shows only settleable currencies), unlike Payment.displayCurrencyAtCheckout /
+  // Refund.displayCurrency, which snapshot the raw buyer-facing code as free text.
   displayCurrency    Currency
   fxRateUsed         Decimal?
   inrEquivalentPaise BigInt // always captured for GST filings
@@ -2525,17 +2534,16 @@ model SlotOfAvailabilityWeekly {
   endDay            DayOfWeek
   endTimeUtc        Int        @db.SmallInt // Minutes since midnight UTC (0-1439)
   utcOffsetMinutes  Int        @default(0) @db.SmallInt // UTC offset in minutes at slot creation (e.g. 330 for IST, -300 for EST)
-  /// #503 — DST-proof source of truth: the consultant's LOCAL wall-clock
-  /// window plus the IANA zone. The frozen utcOffsetMinutes above breaks for
-  /// any DST zone (the offset at creation is wrong half the year). Write-side
-  /// populated now; the slot math migrates read-side in #503's follow-up,
-  /// then the offset column retires. Nullable until backfilled.
-  timezone          String?    @db.VarChar(64)
+  // #872 — DST schema finalized, implementation deferred. IST-only at launch, so
+  // the frozen utcOffsetMinutes above is the live source of truth. The columns
+  // below are the DST-correct representation (RFC 5545 / Calendly-style: local
+  // wall-clock + IANA zone, materialized to UTC per occurrence — a frozen offset
+  // drifts across DST). They are frozen into the launch schema now but left
+  // nullable + UNWRITTEN until the post-MVP algorithm + UI lands, so going
+  // DST-aware needs no post-launch migration.
+  timezone          String?    @db.VarChar(64) // IANA zone, e.g. "Asia/Kolkata"
   localStartMinutes Int?       @db.SmallInt
   localEndMinutes   Int?       @db.SmallInt
-  /// Review catch on #843 — the offset can roll the LOCAL day across
-  /// midnight relative to the UTC startDay/endDay (IST 00:30 Mon local =
-  /// 19:00 Sun UTC), so local-day queries need their own columns.
   localStartDay     DayOfWeek?
   localEndDay       DayOfWeek?
 
@@ -2560,6 +2568,8 @@ model SlotOfAvailabilityCustom {
   updatedAt DateTime @updatedAt @db.Timestamptz
 
   @@index([consultantProfileId])
+  // CA-1 — availability-window range scans by consultant (#676).
+  @@index([consultantProfileId, startsAt, endsAt])
 }
 
 //////////////////////////////////////////////////// PRICING PLANS ////////////////////////////////////////////////////
@@ -2607,13 +2617,13 @@ model Consultation {
   consultationPlan   ConsultationPlan @relation(fields: [consultationPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultationPlanId String
 
-  requestStatus          RequestStatus    @default(PENDING)
-  requestedBy            ConsulteeProfile @relation(fields: [requestedById], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  status                 AppointmentStatus @default(PENDING) @map("requestStatus")
+  requestedBy            ConsulteeProfile  @relation(fields: [requestedById], references: [id], onUpdate: Cascade, onDelete: Cascade)
   requestedById          String
-  requestedAt            DateTime         @default(now()) @db.Timestamptz
+  requestedAt            DateTime          @default(now()) @db.Timestamptz
   requestNotes           String?
   pendingPaymentUrl      String? // Payment link while awaiting payment (cleared after payment)
-  bookingSource          BookingSource    @default(REQUEST_SUBMITTED)
+  bookingSource          BookingSource     @default(REQUEST_SUBMITTED)
   feedbackFromConsultee  String?
   feedbackFromConsultant String?
   rating                 Float?
@@ -2631,8 +2641,12 @@ model Consultation {
 
   @@index([requestedById])
   @@index([consultationPlanId])
-  @@index([requestStatus])
-  @@index([requestedById, requestStatus])
+  // Requests-tab hot path: all consultations for a plan filtered by status,
+  // newest first — without this the planner-side list falls back to the
+  // single-column indexes + sort.
+  @@index([consultationPlanId, status, requestedAt])
+  @@index([status])
+  @@index([requestedById, status])
   @@index([requestedAt])
   @@index([cancelledAt])
 }
@@ -2686,15 +2700,18 @@ model Subscription {
   id                       String   @id @default(cuid())
   schedulingPeriodStartsAt DateTime @db.Timestamptz
   schedulingPeriodEndsAt   DateTime @db.Timestamptz
+  // #676 AE-3 / #872 — ornamental at launch: allocation reads the consultant's
+  // user.timezone, never this. Kept as frozen schema; made load-bearing in #872
+  // to pin a subscription's scheduling zone independent of the consultant's.
   schedulingTimezone       String   @default("Asia/Kolkata")
 
-  requestStatus          RequestStatus    @default(PENDING)
-  requestedBy            ConsulteeProfile @relation(fields: [requestedById], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  status                 AppointmentStatus @default(PENDING) @map("requestStatus")
+  requestedBy            ConsulteeProfile  @relation(fields: [requestedById], references: [id], onUpdate: Cascade, onDelete: Cascade)
   requestedById          String
-  requestedAt            DateTime         @default(now()) @db.Timestamptz
+  requestedAt            DateTime          @default(now()) @db.Timestamptz
   requestNotes           String?
   pendingPaymentUrl      String? // Payment link while awaiting payment (cleared after payment)
-  bookingSource          BookingSource    @default(REQUEST_SUBMITTED)
+  bookingSource          BookingSource     @default(REQUEST_SUBMITTED)
   feedbackFromConsultee  String?
   feedbackFromConsultant String?
   rating                 Float?
@@ -2716,13 +2733,15 @@ model Subscription {
 
   @@index([requestedById])
   @@index([subscriptionPlanId])
-  @@index([requestStatus])
-  @@index([requestedById, requestStatus])
+  // Requests-tab hot path — mirror of the Consultation composite.
+  @@index([subscriptionPlanId, status, requestedAt])
+  @@index([status])
+  @@index([requestedById, status])
   @@index([requestedAt])
   @@index([cancelledAt])
 }
 
-enum RequestStatus {
+enum AppointmentStatus {
   PENDING
   APPROVED
   APPROVED_PENDING_PAYMENT // Approved by consultant but awaiting payment
@@ -2731,6 +2750,8 @@ enum RequestStatus {
   REJECTED
   CANCELLED
   EXPIRED
+
+  @@map("RequestStatus")
 }
 
 // Free trial session tracking for subscriptions
@@ -2976,6 +2997,8 @@ model Class {
   id                       String      @id @default(cuid())
   schedulingPeriodStartsAt DateTime?   @db.Timestamptz
   schedulingPeriodEndsAt   DateTime?   @db.Timestamptz
+  // #676 AE-3 / #872 — ornamental at launch (allocation reads the consultant's
+  // user.timezone). Kept as frozen schema; made load-bearing in #872.
   schedulingTimezone       String      @default("Asia/Kolkata")
   status                   ClassStatus @default(SCHEDULED)
   waitlist                 Waitlist[]
@@ -3120,6 +3143,10 @@ model Waitlist {
   @@index([status, webinarId])
   @@index([status, classId])
   @@index([expiresAt])
+  // Cron hot path: reminder + expiration jobs range-scan NOTIFIED entries
+  // by expiresAt window; the single-column indexes force a bitmap AND or a
+  // seq scan as the table grows.
+  @@index([status, expiresAt])
   @@index([priority, joinedAt])
   @@index([organizationId, createdAt])
 }
@@ -3139,6 +3166,13 @@ model Appointment {
   id                 String              @id @default(uuid())
   appointmentType    AppointmentsType
   slotsOfAppointment SlotOfAppointment[]
+
+  // Reserved dedupe surface for allocation retries (client double-submit,
+  // webhook redelivery): a batch will stamp its first appointment with the
+  // originating idempotency key so a replay trips @unique (P2002 → 409) instead
+  // of double-booking. Nullable by design — only real keys dedupe, NULLs don't
+  // collide. Column frozen now (schema gate); wiring tracked in #837.
+  allocationIdempotencyKey String? @unique
 
   consultation   Consultation? @relation(fields: [consultationId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultationId String?       @unique
@@ -3160,6 +3194,10 @@ model Appointment {
   // #674 personal-vs-org scope split — set at checkout for org-context bookings.
   organization   Organization? @relation("AppointmentByOrg", fields: [organizationId], references: [id], onDelete: SetNull)
   organizationId String?
+
+  // A10 — soft-delete tombstone (#676). Mirrors Payment.deletedAt; money rows
+  // Restrict their parents, so removal is a soft-delete, not a hard delete.
+  deletedAt DateTime? @db.Timestamptz
 
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
@@ -3196,7 +3234,10 @@ model AppointmentDocument {
   reviewStatus DocumentReviewStatus @default(PENDING)
   reviewNotes  String?
   reviewedAt   DateTime?
-  reviewedBy   String? // Consultant user ID
+  // A8 — FK-ified from a raw `reviewedBy String?` (#676). SetNull keeps the
+  // document if the reviewing user is deleted; the review history survives.
+  reviewedById String?
+  reviewedBy   User?     @relation("DocumentReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
 
   // Upload role - who uploaded this document
   uploadedByRole DocumentUploadRole @default(CONSULTEE)
@@ -3210,6 +3251,11 @@ model AppointmentDocument {
   appointment   Appointment @relation(fields: [appointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   appointmentId String
 
+  // DOC-3 (#694) — reconcile flags rows whose storage object is gone so the UI
+  // can badge them and they're held out of review until re-uploaded.
+  isStorageMissing  Boolean   @default(false)
+  missingDetectedAt DateTime? @db.Timestamptz
+
   // Metadata
   uploadedAt DateTime @default(now())
   updatedAt  DateTime @updatedAt
@@ -3218,6 +3264,8 @@ model AppointmentDocument {
   @@index([reviewStatus])
   @@index([uploadedByRole])
   @@index([responseToDocumentId])
+  @@index([reviewedById])
+  @@index([isStorageMissing])
 }
 
 enum DocumentReviewStatus {
@@ -3288,13 +3336,18 @@ model SlotOfAppointment {
   appointmentId String
 
   /// #440 — denormalized consultant for the DB-level overlap guard. The
-  /// exclusion constraint itself (btree_gist on (consultantProfileId,
-  /// tstzrange(startsAt, endsAt)) WHERE NOT isTentative) needs raw SQL and
-  /// lands with prisma-migrate adoption; the COLUMN is schema-freeze-gated
-  /// and checkout populates it from booking onward. Nullable for pre-#440 rows.
+  /// exclusion constraint (btree_gist on (consultantProfileId,
+  /// tstzrange(startsAt, endsAt)) WHERE NOT isTentative) is LIVE in the raw-SQL
+  /// sidecar (prisma/sql/check-constraints.sql: slot_no_confirmed_overlap); a
+  /// violation surfaces as Postgres 23P01 → 409 (SlotAllocationService
+  /// .classifyError). Nullable for attendee (webinar/class) slots, which the
+  /// partial-index guard excludes.
   consultantProfileId String?
 
   meetingSession MeetingSession?
+
+  // A10 — soft-delete tombstone (#676). Mirrors Appointment.deletedAt.
+  deletedAt DateTime? @db.Timestamptz
 
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
@@ -3339,7 +3392,8 @@ model MeetingSession {
   endedAt     DateTime? // When session actually ended
   endedReason String? // "call_ended", "session_timeout", "error"
 
-  recordings Recording[]
+  recordings  Recording[]
+  attendances MeetingAttendance[] // STR-4 (#689) — per-participant join/leave audit
 
   slotOfAppointment   SlotOfAppointment @relation(fields: [slotOfAppointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   slotOfAppointmentId String            @unique
@@ -3360,6 +3414,29 @@ model MeetingSession {
 
   @@index([isRecording])
   @@index([organizationId, createdAt])
+}
+
+/// STR-4 (#689) — one row per (session, participant). Stream's
+/// call.session_participant_joined/left webhooks upsert here: firstJoinedAt is
+/// set on the first join, lastLeftAt advances on each leave, joinCount tracks
+/// rejoins. Drives #471 (no-show = no row) and #472 (overrun = lastLeftAt/
+/// endedAt past the slot end). userId is the Stream user_id, which equals our
+/// User.id — stored plain like MeetingSession.recordingStartedBy, no FK.
+model MeetingAttendance {
+  id               String         @id @default(cuid())
+  meetingSession   MeetingSession @relation(fields: [meetingSessionId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  meetingSessionId String
+  userId           String
+  firstJoinedAt    DateTime       @db.Timestamptz
+  lastLeftAt       DateTime?      @db.Timestamptz
+  joinCount        Int            @default(1)
+
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
+
+  @@unique([meetingSessionId, userId])
+  @@index([meetingSessionId])
+  @@index([userId])
 }
 
 // Recording storage types
@@ -3423,6 +3500,14 @@ model Recording {
   streamUrlExpiresAt DateTime? // When Stream S3 URL expires
   transferredAt      DateTime? // When transferred to Supabase
 
+  // STR-2/3 (#689) — transfer-to-Supabase health. A failed transfer reverts
+  // status to READY and re-attempts next cron; these track repeated failures so
+  // the job can alert (transferFailureAlertedAt dedupes the page) before a
+  // STREAM_ONLY recording lapses at streamUrlExpiresAt.
+  transferAttempts         Int       @default(0)
+  lastTransferError        String?
+  transferFailureAlertedAt DateTime? @db.Timestamptz
+
   meetingSession   MeetingSession @relation(fields: [meetingSessionId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   meetingSessionId String
 
@@ -3470,8 +3555,8 @@ model Payment {
   clientIdempotencyKey String?        @unique
   // #781 §B — financial rows Restrict their parents; removal = soft-delete.
   // Hard delete remains possible only while no money row references this.
-  deletedAt            DateTime?
-  expiresAt            DateTime? // For tracking payment intent expiration
+  deletedAt            DateTime?      @db.Timestamptz
+  expiresAt            DateTime?      @db.Timestamptz // For tracking payment intent expiration
   isMockPayment        Boolean        @default(false) // For development: mock payments skip gateway calls
 
   // International payment tracking
@@ -3536,8 +3621,9 @@ model Payment {
   parentPayment   Payment?  @relation("OverageSideCharge", fields: [parentPaymentId], references: [id], onDelete: SetNull)
   childPayments   Payment[] @relation("OverageSideCharge")
 
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
+  // A6/A7/PM-16 — Timestamptz on the money models (#676).
+  createdAt     DateTime       @default(now()) @db.Timestamptz
+  updatedAt     DateTime       @updatedAt @db.Timestamptz
   overageEvents OverageEvent[]
 
   // Allow multiple users to pay for same appointment (webinars/classes)
@@ -3652,18 +3738,22 @@ model Refund {
   // cascade (legs/wallet/earnings/ledger/utilization/credit-note) has run, so the
   // app, gateway-webhook and backstop-cron paths each apply it exactly once. The
   // cron selects SUCCEEDED refunds where this is null.
-  cascadedAt DateTime?
+  cascadedAt DateTime? @db.Timestamptz
 
   /// #779 §A — gateway-failure capture for FAILED refunds. `reason` above is the
   /// OPERATOR's reason for refunding; `failureReason` is WHY the gateway rejected
   /// it. failedAt drives the "refund failed, action needed" notify; the reconcile
   /// cron selects FAILED refunds where failedNotifiedAt is null.
   failureReason    String?   @db.VarChar(500)
-  failedAt         DateTime?
-  failedNotifiedAt DateTime?
+  failedAt         DateTime? @db.Timestamptz
+  failedNotifiedAt DateTime? @db.Timestamptz
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  // A10 — soft-delete tombstone (#676).
+  deletedAt DateTime? @db.Timestamptz
+
+  // A6/A7/PM-16 — Timestamptz on the money models (#676).
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
 
   @@index([paymentId])
   @@index([status])
@@ -3689,20 +3779,28 @@ model Dispute {
   disputeId          String         @unique // Gateway-specific dispute ID
   paymentGateway     PaymentGateway
   evidence           Json? // Evidence submitted to gateway
-  dueBy              DateTime? // Deadline to respond to dispute
+  dueBy              DateTime?      @db.Timestamptz // Deadline to respond to dispute
   isChargeRefundable Boolean        @default(true)
 
   payment   Payment @relation(fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: Restrict)
   paymentId String
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  // #269 — operator coordination. SetNull so an admin's departure never
+  // strands a dispute row; assignment UI tracked in the residuals register.
+  assignedTo       User?   @relation("DisputeAssignee", fields: [assignedToUserId], references: [id], onDelete: SetNull)
+  assignedToUserId String?
+  internalNotes    String? @db.Text
+
+  // A6/A7/PM-16 — Timestamptz on the money models (#676).
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
 
   @@index([paymentId])
   @@index([status])
   @@index([disputeId])
   @@index([dueBy])
   @@index([paymentId, status])
+  @@index([assignedToUserId])
 }
 
 enum DisputeStatus {
@@ -3714,6 +3812,7 @@ enum DisputeStatus {
   CHARGE_REFUNDED // Charge was refunded
   WON // Dispute won
   LOST // Dispute lost
+  CLOSED // Proceedings ended without a verdict (Razorpay `closed`) — terminal
 }
 
 ////////////////////////////////////////////// PAYOUT SYSTEM ////////////////////////////////////////////////////
@@ -3778,14 +3877,15 @@ model ConsultantEarnings {
 
   // Status tracking
   status    EarningStatus @default(PENDING)
-  holdUntil DateTime // Release after hold period
-  paidAt    DateTime?
+  holdUntil DateTime      @db.Timestamptz // Release after hold period
+  paidAt    DateTime?     @db.Timestamptz
 
   // Currency (always INR for MVP, extensible for multi-currency)
   currency Currency @default(INR)
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  // A6/A7/PM-16 — Timestamptz on the money models (#676).
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
 
   consultantProfile ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Restrict)
   payment           Payment           @relation(fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: Restrict)
@@ -3822,22 +3922,29 @@ model ConsultantPayout {
   // MSME 43B(h) settlement deadline; mirrors OrganizationPayout. #776 — the
   // consultant is the supplier here, so the deadline derives from the
   // consultant's own msmeStatus/writtenAgreement, not the buyer org's.
-  mustPayByDate DateTime?
+  mustPayByDate DateTime? @db.Timestamptz
 
   // Processing
   failureReason String?
   retryCount    Int       @default(0)
-  processedAt   DateTime?
-  approvedAt    DateTime?
+  processedAt   DateTime? @db.Timestamptz
+  approvedAt    DateTime? @db.Timestamptz
   approvedBy    String?
+
+  // UTR — Unique Transaction Reference; the bank/RBI settlement reference the
+  // gateway returns on a completed NEFT/IMPS/UPI payout. Mirrors
+  // OrganizationPayout.gatewayUtr; populates only after the
+  // payout.processed/transfer.paid webhook reconciles.
+  gatewayUtr String?
 
   // Idempotency (required by Razorpay from March 2025). #778 §B — NOT NULL:
   // both payout creators stamp `payout_<profile>_<batch>`; a transfer must never
   // submit without a dedupe key.
   idempotencyKey String @unique
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  // A6/A7/PM-16 — Timestamptz on the money models (#676).
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
 
   consultantProfile ConsultantProfile    @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Restrict)
   earnings          ConsultantEarnings[]
@@ -3931,6 +4038,12 @@ model TDSRecord {
   // Filing status
   reportedInForm26Q Boolean   @default(false)
   form26QFilingDate DateTime?
+
+  // PM-24 — TRACES filing artifacts (#676). Schema frozen now; population
+  // (challan recon, Form 16A cert + ack capture) deferred to #738.
+  challanNumber     String?
+  certificateNumber String?
+  ackNumber         String?
 
   consultantProfile ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Restrict)
   payout            ConsultantPayout? @relation(fields: [payoutId], references: [id])
@@ -4217,6 +4330,12 @@ model Referral {
   qualifiedAt          DateTime?
   qualifyingAction     String?
 
+  // #727 — attribution-only org tag, mirroring TrialSession.organizationId.
+  // Set when the referrer is a member of an active org; no money coupling
+  // (org-funded payments still block credit application per #766).
+  organization   Organization? @relation("ReferralsByOrg", fields: [organizationId], references: [id], onDelete: SetNull)
+  organizationId String?
+
   referralCode ReferralCode @relation(fields: [referralCodeId], references: [id])
   referredUser User         @relation("ReferredUser", fields: [referredUserId], references: [id], onUpdate: Cascade, onDelete: Cascade)
 
@@ -4225,6 +4344,7 @@ model Referral {
 
   @@index([referralCodeId])
   @@index([status])
+  @@index([organizationId])
 }
 
 model ReferralCredit {
@@ -4798,6 +4918,43 @@ enum DeliveryStatus {
   /// All retry attempts exhausted — terminal, operator-replayable via the
   /// redeliver route. FAILED stays for receiver-rejected (permanent 4xx /
   /// endpoint paused) deliveries.
+  DEAD_LETTER
+}
+
+/// #474 — transactional-email dead-letter. lib/email.ts persists the already
+/// RENDERED message here when a Resend send fails (instead of swallowing it).
+/// Storing the rendered fields (not the sender args) keeps retry a verbatim
+/// re-send — no Json payload, no re-render dispatcher: the worker
+/// (jobs/email/retry-failed-emails.ts) polls (status, nextRetryAt), re-sends the
+/// stored html/text, walks the backoff schedule, marks DEAD_LETTER once
+/// exhausted (operator-replayable). `emailType` is a plain tag for metrics only.
+model FailedEmail {
+  id          String              @id @default(cuid())
+  recipient   String
+  fromAddress String?
+  replyTo     String?
+  subject     String
+  htmlBody    String              @db.Text
+  textBody    String?             @db.Text
+  emailType   String
+  status      EmailDeliveryStatus @default(PENDING)
+  attempts    Int                 @default(0)
+  nextRetryAt DateTime?           @db.Timestamptz
+  lastError   String?             @db.Text
+  sentAt      DateTime?           @db.Timestamptz
+
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
+
+  @@index([status, nextRetryAt])
+  @@index([status, updatedAt])
+}
+
+enum EmailDeliveryStatus {
+  PENDING
+  RETRY
+  SENT
+  /// All retries exhausted — terminal, operator-replayable.
   DEAD_LETTER
 }
 

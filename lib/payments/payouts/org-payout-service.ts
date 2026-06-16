@@ -503,7 +503,14 @@ export async function createOrgPayoutBatch(
  */
 export async function processOrgPayout(
   payoutId: string,
-): Promise<{ status: PayoutStatus; submittedToGateway: boolean }> {
+): Promise<{
+  status: PayoutStatus;
+  submittedToGateway: boolean;
+  /** True only when THIS invocation won the PENDING→PROCESSING claim —
+   * lets batch callers count real advancement instead of another worker's
+   * no-op echo of the current status. */
+  claimed: boolean;
+}> {
   const liveEnabled = process.env.ENABLE_LIVE_PAYOUTS === "true";
 
   return prisma
@@ -598,6 +605,7 @@ export async function processOrgPayout(
         return {
           status: result.status,
           submittedToGateway: result.submittedToGateway,
+          claimed: result.claimed,
         };
       }
 
@@ -608,7 +616,11 @@ export async function processOrgPayout(
       // 5xx / network error → throw so the cron retries with the same key.
       try {
         await submitOrgPayoutToGateway(payoutId);
-        return { status: "PROCESSING" as const, submittedToGateway: true };
+        return {
+          status: "PROCESSING" as const,
+          submittedToGateway: true,
+          claimed: true,
+        };
       } catch (err) {
         const cls = classifyGatewaySubmissionError(err);
         if (cls === "PERMANENT_4XX") {
@@ -619,7 +631,11 @@ export async function processOrgPayout(
           // Set true because we DID submit to the gateway — the rejection
           // is recorded on the row. False would imply we early-returned
           // before any gateway call, which isn't the case.
-          return { status: "FAILED" as PayoutStatus, submittedToGateway: true };
+          return {
+            status: "FAILED" as PayoutStatus,
+            submittedToGateway: true,
+            claimed: true,
+          };
         }
         // Transient — leave row in PROCESSING and re-throw so the cron
         // retries with the same idempotency key.
@@ -778,6 +794,45 @@ async function markPayoutFailedFromSubmission(
 }
 
 /**
+ * #850 — batch driver over `processOrgPayout` for every PENDING org payout
+ * (ported from the deleted scripts/payouts/process-payouts.ts CLI loop so
+ * the weekly GH job keeps advancing org payouts). Errors against a single
+ * payout never abort the rest of the run.
+ */
+export interface OrgProcessingResult {
+  scanned: number;
+  advanced: number;
+  errors: string[];
+}
+
+export async function processPendingOrgPayouts(): Promise<OrgProcessingResult> {
+  const result: OrgProcessingResult = { scanned: 0, advanced: 0, errors: [] };
+
+  // String literals — PayoutStatus is an `import type` in this module.
+  const pending = await prisma.organizationPayout.findMany({
+    where: { status: "PENDING" },
+    select: { id: true },
+  });
+  result.scanned = pending.length;
+
+  for (const p of pending) {
+    try {
+      const out = await processOrgPayout(p.id);
+      // Count only claims THIS run won — a status echo of a row another
+      // worker already moved to PROCESSING is not our advancement.
+      if (out.claimed) {
+        result.advanced++;
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      result.errors.push(`OrgPayout ${p.id}: ${message}`);
+    }
+  }
+
+  return result;
+}
+
+/**
  * Idempotent PROCESSING → COMPLETED transition for an OrganizationPayout.
  *
  * Called by the gateway-webhook reconciler that PR-3 wires up; the
@@ -846,25 +901,27 @@ export async function markOrgPayoutCompleted(payoutId: string): Promise<{
     //   Dr ORG_PAYABLE (gross)   Cr CASH (paid)   Cr TDS_PAYABLE (withheld)
     const orgTds = payout.tdsAmountPaise ?? 0;
     if (payout.netPayoutPaise > 0) {
+      // #783 — ledger is INR-only; never key accounts by the payout's settlement
+      // currency (would orphan INR paise in a foreign-labelled account). Matches
+      // the consultant payout postings, which already omit currency.
       const orgPostings: Posting[] = [
         {
           account: {
             kind: "ORG_PAYABLE",
             organizationId: payout.organizationId,
-            currency: payout.currency,
           },
           direction: "DEBIT",
           amountPaise: payout.netPayoutPaise + orgTds,
         },
         {
-          account: { kind: "CASH", currency: payout.currency },
+          account: { kind: "CASH" },
           direction: "CREDIT",
           amountPaise: payout.netPayoutPaise,
         },
       ];
       if (orgTds > 0) {
         orgPostings.push({
-          account: { kind: "TDS_PAYABLE", currency: payout.currency },
+          account: { kind: "TDS_PAYABLE" },
           direction: "CREDIT",
           amountPaise: orgTds,
         });
@@ -1068,9 +1125,11 @@ export async function markOrgPayoutReversed(
     // here only un-does this payout's accrual, which is correct for a bounce.)
     const orgTds = payout.tdsAmountPaise ?? 0;
     if (payout.netPayoutPaise > 0) {
+      // #783 — INR-only ledger; the reversal keys the same INR accounts as the
+      // original posting (which now omits currency) so the pair nets to zero.
       const reversal: Posting[] = [
         {
-          account: { kind: "CASH", currency: payout.currency },
+          account: { kind: "CASH" },
           direction: "DEBIT",
           amountPaise: payout.netPayoutPaise,
         },
@@ -1078,7 +1137,6 @@ export async function markOrgPayoutReversed(
           account: {
             kind: "ORG_PAYABLE",
             organizationId: payout.organizationId,
-            currency: payout.currency,
           },
           direction: "CREDIT",
           amountPaise: payout.netPayoutPaise + orgTds,
@@ -1086,7 +1144,7 @@ export async function markOrgPayoutReversed(
       ];
       if (orgTds > 0) {
         reversal.push({
-          account: { kind: "TDS_PAYABLE", currency: payout.currency },
+          account: { kind: "TDS_PAYABLE" },
           direction: "DEBIT",
           amountPaise: orgTds,
         });

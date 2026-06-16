@@ -26,6 +26,7 @@ import {
   type DisputePayload,
   type RecordingPayload,
   type RecordingFailedPayload,
+  type RecordingExpiringPayload,
   type ConsultantApplicationPayload,
   type ReferralBonusPayload,
   type RefereeWelcomeBonusPayload,
@@ -524,6 +525,18 @@ export async function notifyRecordingFailed(
   return triggerWorkflow(
     NOVU_WORKFLOWS.RECORDING_FAILED,
     subscriberId,
+    payload,
+  );
+}
+
+// STR-3 — warn a consultant their STREAM_ONLY recording(s) expire soon.
+export async function notifyRecordingExpiring(
+  consultantUserId: string,
+  payload: RecordingExpiringPayload,
+) {
+  return triggerWorkflow(
+    NOVU_WORKFLOWS.RECORDING_EXPIRING,
+    consultantUserId,
     payload,
   );
 }

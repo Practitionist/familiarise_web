@@ -26,6 +26,10 @@ jest.mock("../../lib/prisma", () => ({
 
 jest.mock("../../lib/stream-client", () => ({
   getStreamChatClient: jest.fn(() => mockStreamClient),
+  // #473 — pass-through breaker (closed-state behaviour) so the upsert
+  // assertions exercise the real Stream client mock unchanged.
+  withStreamCircuitBreaker: jest.fn((op: () => unknown) => op()),
+  StreamUnavailableError: class StreamUnavailableError extends Error {},
 }));
 
 jest.mock("../../lib/stream-logger", () => ({

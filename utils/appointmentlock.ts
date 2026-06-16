@@ -1,10 +1,40 @@
 import { Redis } from "@upstash/redis";
-import redisClient from "../lib/redis";
+import redisClient, { withCircuitBreaker, checkRedisHealth } from "../lib/redis";
 import crypto from "crypto";
 import { SlotLockError } from "./errors/SlotLockError";
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+// CN-1 (#676) — retries exhausted because the lock is genuinely HELD (SET NX
+// kept returning non-OK), as opposed to a thrown Redis error. Typed so callers
+// can tell benign contention apart from an unreachable Redis and decide whether
+// to fail open (retry-later) or closed (503). Subclasses Error, so existing
+// catch-all callers are unaffected.
+export class LockContentionError extends Error {
+  constructor(
+    readonly key: string,
+    readonly attempts: number,
+  ) {
+    super(`Failed to acquire lock for ${key} after ${attempts} attempts`);
+    this.name = "LockContentionError";
+  }
+}
+
+// CN-1 (#676) — Redis is unreachable / the circuit is open, so NO real lock can
+// be taken. The event-checkout path must fail CLOSED (reject) on this rather
+// than proceed unlocked: without a lock, two concurrent buyers can both clear
+// the same finite event capacity. Mirrors CronLockUnavailableError.
+export class EventCheckoutLockUnavailableError extends Error {
+  readonly httpStatus = 503 as const;
+  readonly code = "EVENT_CHECKOUT_LOCK_UNAVAILABLE" as const;
+  constructor(readonly appointmentType: string) {
+    super(
+      `Cannot secure a checkout lock for this ${appointmentType.toLowerCase()} right now (locking service unavailable). Please try again shortly.`,
+    );
+    this.name = "EventCheckoutLockUnavailableError";
+  }
 }
 
 // ============================================================================
@@ -27,13 +57,6 @@ interface LockRetryConfig {
   driftFactor: number; // Clock drift factor (default: 0.01)
 }
 
-interface EventSlotReservation {
-  reservationId: string;
-  slotNumber: number;
-  eventType: string;
-  eventId: string;
-}
-
 // ============================================================================
 // Configuration
 // ============================================================================
@@ -49,7 +72,6 @@ const DEFAULT_RETRY_CONFIG: LockRetryConfig = {
 // FIX Issue #2: Increased default TTLs from 15-30s to 60s
 // This prevents lock expiration during slow database operations
 const DEFAULT_LOCK_TTL = 60000; // 60 seconds
-const DEFAULT_EVENT_SLOT_TTL = 300000; // 5 minutes for payment completion
 
 // #832 — one 60s budget cannot cover every checkout shape: a class checkout
 // writes N sessions × M slots plus a gateway round-trip and can outlive its
@@ -164,9 +186,18 @@ async function acquireLockWithRetry(
   }
 
   const totalDuration = Date.now() - startTime;
-  throw new Error(
-    `Failed to acquire lock after ${config.retryCount + 1} attempts (${totalDuration}ms)`,
+  // CN-1 — typed contention (lock was HELD, never a Redis error; those rethrow
+  // above). The ms detail rides the log, not the message, so the class is clean.
+  console.log(
+    JSON.stringify({
+      event: "lock_contention_exhausted",
+      key,
+      attempts: config.retryCount + 1,
+      duration_ms: totalDuration,
+      timestamp: new Date().toISOString(),
+    }),
   );
+  throw new LockContentionError(key, config.retryCount + 1);
 }
 
 /**
@@ -348,20 +379,20 @@ export async function unlockApproval(lock: ApprovalLock): Promise<void> {
 /**
  * Lock a specific time slot to prevent double-booking during consultation creation
  * @param consultantProfileId - The consultant's profile ID
- * @param slotStartTimeInUTC - The slot start time in ISO format
+ * @param startsAt - The slot start time in ISO format
  * @param ttl - Time to live in milliseconds (default 60 seconds)
  * @returns Lock instance (must be released with unlockSlotBooking)
  */
 export async function lockSlotBooking(
   consultantProfileId: string,
-  slotStartTimeInUTC: string,
+  startsAt: string,
   ttl: number = DEFAULT_LOCK_TTL,
 ): Promise<ApprovalLock> {
-  const key = `slot-booking:${consultantProfileId}:${slotStartTimeInUTC}`;
+  const key = `slot-booking:${consultantProfileId}:${startsAt}`;
   try {
     return await acquireLockWithRetry(key, ttl);
   } catch (error) {
-    throw new SlotLockError(consultantProfileId, slotStartTimeInUTC, 60);
+    throw new SlotLockError(consultantProfileId, startsAt, 60);
   }
 }
 
@@ -391,13 +422,55 @@ export async function lockEventCheckout(
   ttl: number = DEFAULT_LOCK_TTL,
 ): Promise<ApprovalLock> {
   const key = `event-checkout:${appointmentType}:${eventOrPlanId}`;
+
+  // CN-1 (#676) — was: catch ALL errors → benign contention message, which
+  // failed OPEN (a Redis outage let the caller proceed UNLOCKED and double-book
+  // an event's capacity). Now we fail CLOSED on an unreachable Redis. The probe
+  // mirrors withCronLock's checkRedisHealth gate and closes the entry window.
+  if (!(await checkRedisHealth())) {
+    throw new EventCheckoutLockUnavailableError(appointmentType);
+  }
+
+  // Acquire through the circuit breaker (same breaker as lib/redis.ts /
+  // lib/maintenance.ts) so a mid-flight outage trips it and fails closed too.
+  // Genuine contention is returned as a sentinel — NOT thrown — so the breaker
+  // doesn't count "lock held" as a Redis failure; only real I/O errors throw
+  // inside the operation and feed the breaker.
+  let lock: ApprovalLock | "CONTENTION";
   try {
-    return await acquireLockWithRetry(key, ttl);
-  } catch (error) {
+    lock = await withCircuitBreaker<ApprovalLock | "CONTENTION">(async () => {
+      try {
+        return await acquireLockWithRetry(key, ttl);
+      } catch (error) {
+        if (error instanceof LockContentionError) return "CONTENTION";
+        throw error; // Redis I/O error → propagate to the breaker
+      }
+    });
+  } catch (error: unknown) {
+    // Circuit open or Redis unreachable during acquisition → fail closed.
+    // #873 — log the original cause so triage can tell a real Redis outage
+    // from another fault before rethrowing the opaque typed error.
+    console.error(
+      JSON.stringify({
+        event: "event_checkout_lock_unavailable",
+        key,
+        appointmentType,
+        error: getErrorMessage(error),
+        timestamp: new Date().toISOString(),
+      }),
+    );
+    throw new EventCheckoutLockUnavailableError(appointmentType);
+  }
+
+  if (lock === "CONTENTION") {
+    // Genuine contention — another buyer holds the lock. Fail OPEN (retry-later),
+    // exactly as before; this is a benign, expected outcome, not an outage.
     throw new Error(
       `Another user is currently checking out this ${appointmentType.toLowerCase()}. Please try again in a few seconds.`,
     );
   }
+
+  return lock;
 }
 
 /**
@@ -406,239 +479,6 @@ export async function lockEventCheckout(
  */
 export async function unlockEventCheckout(lock: ApprovalLock): Promise<void> {
   await releaseLock(lock);
-}
-
-// ============================================================================
-// Public API - Event Slot Semaphore (for multi-participant events)
-// FIX Issue #5: Event Lock Granularity Too Coarse
-// ============================================================================
-
-/**
- * Acquire a slot in a semaphore (for multi-participant events like webinars/classes)
- * This allows multiple concurrent checkouts up to maxParticipants limit.
- * Returns reservation ID if successful, null if event is full.
- *
- * @param eventType - Type of event (WEBINAR, CLASS)
- * @param eventId - Event ID
- * @param maxParticipants - Maximum number of concurrent reservations
- * @param ttl - Time to live in milliseconds (default 5 minutes for payment completion)
- * @returns Reservation info if successful, null if event is full
- */
-export async function acquireEventSlot(
-  eventType: string,
-  eventId: string,
-  maxParticipants: number,
-  ttl: number = DEFAULT_EVENT_SLOT_TTL,
-): Promise<EventSlotReservation | null> {
-  const client = redisClient as Redis;
-  const counterKey = `event-counter:${eventType}:${eventId}`;
-  const reservationId = crypto.randomUUID();
-
-  try {
-    // Atomic increment with limit check using Lua script
-    const script = `
-      local current = redis.call("get", KEYS[1])
-      if current == false then
-        current = 0
-      else
-        current = tonumber(current)
-      end
-
-      if current >= tonumber(ARGV[1]) then
-        return -1
-      end
-
-      local newCount = redis.call("incr", KEYS[1])
-      if newCount == 1 then
-        redis.call("pexpire", KEYS[1], ARGV[2])
-      end
-
-      return newCount
-    `;
-
-    const slotNumber = (await client.eval(
-      script,
-      [counterKey],
-      [maxParticipants.toString(), ttl.toString()],
-    )) as number;
-
-    if (slotNumber === -1) {
-      console.log(
-        JSON.stringify({
-          event: "event_slot_full",
-          eventType,
-          eventId,
-          maxParticipants,
-          timestamp: new Date().toISOString(),
-        }),
-      );
-      return null;
-    }
-
-    // Store reservation for cleanup tracking
-    const reservationKey = `event-reservation:${eventType}:${eventId}:${reservationId}`;
-    await client.set(reservationKey, slotNumber.toString(), { px: ttl });
-
-    console.log(
-      JSON.stringify({
-        event: "event_slot_acquired",
-        eventType,
-        eventId,
-        slotNumber,
-        reservationId,
-        timestamp: new Date().toISOString(),
-      }),
-    );
-
-    return { reservationId, slotNumber, eventType, eventId };
-  } catch (error: unknown) {
-    console.error(
-      JSON.stringify({
-        event: "event_slot_acquisition_error",
-        eventType,
-        eventId,
-        error: getErrorMessage(error),
-        timestamp: new Date().toISOString(),
-      }),
-    );
-    throw error;
-  }
-}
-
-/**
- * Release an event slot (on payment failure or cancellation)
- * Decrements the counter to allow another user to book.
- *
- * @param reservation - The reservation to release
- */
-export async function releaseEventSlot(
-  reservation: EventSlotReservation,
-): Promise<void> {
-  const client = redisClient as Redis;
-  const counterKey = `event-counter:${reservation.eventType}:${reservation.eventId}`;
-  const reservationKey = `event-reservation:${reservation.eventType}:${reservation.eventId}:${reservation.reservationId}`;
-
-  try {
-    // Check if reservation exists before decrementing
-    const exists = await client.exists(reservationKey);
-    if (exists) {
-      // Atomic decrement (don't go below 0) using Lua script
-      const script = `
-        local current = redis.call("get", KEYS[1])
-        if current and tonumber(current) > 0 then
-          return redis.call("decr", KEYS[1])
-        end
-        return 0
-      `;
-
-      await client.del(reservationKey);
-      await client.eval(script, [counterKey], []);
-
-      console.log(
-        JSON.stringify({
-          event: "event_slot_released",
-          eventType: reservation.eventType,
-          eventId: reservation.eventId,
-          reservationId: reservation.reservationId,
-          timestamp: new Date().toISOString(),
-        }),
-      );
-    } else {
-      console.log(
-        JSON.stringify({
-          event: "event_slot_already_released",
-          eventType: reservation.eventType,
-          eventId: reservation.eventId,
-          reservationId: reservation.reservationId,
-          timestamp: new Date().toISOString(),
-        }),
-      );
-    }
-  } catch (error: unknown) {
-    // Log but don't throw - cleanup should be best-effort
-    console.error(
-      JSON.stringify({
-        event: "event_slot_release_error",
-        eventType: reservation.eventType,
-        eventId: reservation.eventId,
-        reservationId: reservation.reservationId,
-        error: getErrorMessage(error),
-        timestamp: new Date().toISOString(),
-      }),
-    );
-  }
-}
-
-/**
- * Confirm an event slot (on successful payment)
- * Removes reservation tracking but keeps counter (slot is now permanent in DB).
- *
- * @param reservation - The reservation to confirm
- */
-export async function confirmEventSlot(
-  reservation: EventSlotReservation,
-): Promise<void> {
-  const client = redisClient as Redis;
-  const reservationKey = `event-reservation:${reservation.eventType}:${reservation.eventId}:${reservation.reservationId}`;
-
-  try {
-    // Just remove reservation tracking, counter stays (slot is confirmed in DB)
-    await client.del(reservationKey);
-
-    console.log(
-      JSON.stringify({
-        event: "event_slot_confirmed",
-        eventType: reservation.eventType,
-        eventId: reservation.eventId,
-        reservationId: reservation.reservationId,
-        timestamp: new Date().toISOString(),
-      }),
-    );
-  } catch (error: unknown) {
-    // Log but don't throw - confirmation should proceed
-    console.error(
-      JSON.stringify({
-        event: "event_slot_confirmation_error",
-        eventType: reservation.eventType,
-        eventId: reservation.eventId,
-        reservationId: reservation.reservationId,
-        error: getErrorMessage(error),
-        timestamp: new Date().toISOString(),
-      }),
-    );
-  }
-}
-
-/**
- * Get current reservation count for an event
- * Useful for checking availability without reserving
- *
- * @param eventType - Type of event (WEBINAR, CLASS)
- * @param eventId - Event ID
- * @returns Current count of reservations
- */
-export async function getEventSlotCount(
-  eventType: string,
-  eventId: string,
-): Promise<number> {
-  const client = redisClient as Redis;
-  const counterKey = `event-counter:${eventType}:${eventId}`;
-
-  try {
-    const count = await client.get(counterKey);
-    return count ? parseInt(count as string, 10) : 0;
-  } catch (error: unknown) {
-    console.error(
-      JSON.stringify({
-        event: "event_slot_count_error",
-        eventType,
-        eventId,
-        error: getErrorMessage(error),
-        timestamp: new Date().toISOString(),
-      }),
-    );
-    return 0;
-  }
 }
 
 // ============================================================================
@@ -688,20 +528,20 @@ export async function isAppointmentLocked(
 /**
  * Lock a specific time slot to prevent double-booking during trial scheduling
  * @param consultantProfileId - The consultant's profile ID
- * @param slotStartTimeInUTC - The slot start time in ISO format
+ * @param startsAt - The slot start time in ISO format
  * @param ttl - Time to live in milliseconds (default 60 seconds)
  * @returns Lock instance (must be released with unlockTrialSlot)
  */
 export async function lockTrialSlot(
   consultantProfileId: string,
-  slotStartTimeInUTC: string,
+  startsAt: string,
   ttl: number = DEFAULT_LOCK_TTL,
 ): Promise<ApprovalLock> {
-  const key = `trial-slot-booking:${consultantProfileId}:${slotStartTimeInUTC}`;
+  const key = `trial-slot-booking:${consultantProfileId}:${startsAt}`;
   try {
     return await acquireLockWithRetry(key, ttl);
   } catch (error) {
-    throw new SlotLockError(consultantProfileId, slotStartTimeInUTC, 60);
+    throw new SlotLockError(consultantProfileId, startsAt, 60);
   }
 }
 

@@ -103,10 +103,10 @@ app/api/user/consultees/route.ts              → Add auth
 app/api/user/consultees/[id]/route.ts         → Add auth
 app/api/user/consultants/route.ts             → Add auth
 app/api/user/reviews/route.ts                 → Add auth to POST
-app/api/events/classes/route.ts               → Add auth
-app/api/events/consultations/route.ts         → Add auth
-app/api/events/subscriptions/route.ts         → Add auth
-app/api/events/webinars/route.ts              → Add auth
+app/api/bookings/classes/route.ts               → Add auth
+app/api/bookings/consultations/route.ts         → Add auth
+app/api/bookings/subscriptions/route.ts         → Add auth
+app/api/bookings/webinars/route.ts              → Add auth
 app/api/plans/*/route.ts                      → Add auth to all
 app/api/participants/*/route.ts               → Add auth to all
 app/api/slots/appointments/route.ts           → Add auth
@@ -185,13 +185,13 @@ if (!isOwner && !isAdmin) {
 model Consultation {
   @@index([consultationPlanId])
   @@index([requestedById])
-  @@index([requestStatus])
+  @@index([status])
 }
 
 model Subscription {
   @@index([subscriptionPlanId])
   @@index([requestedById])
-  @@index([requestStatus])
+  @@index([status])
 }
 
 model SlotOfAppointment {
@@ -267,8 +267,8 @@ model WebhookLog {
 **Priority Files:**
 
 1. `app/api/slots/appointments/route.ts`
-2. `app/api/events/subscriptions/route.ts`
-3. `app/api/events/consultations/route.ts`
+2. `app/api/bookings/subscriptions/route.ts`
+3. `app/api/bookings/consultations/route.ts`
 
 **Pattern:**
 

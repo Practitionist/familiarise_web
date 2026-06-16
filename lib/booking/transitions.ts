@@ -16,7 +16,7 @@ import type { Tx } from "@/lib/prisma";
 import type {
   ClassStatus,
   Prisma,
-  RequestStatus,
+  AppointmentStatus,
   SlotCompletionStatus,
   WebinarStatus,
 } from "@prisma/client";
@@ -30,7 +30,7 @@ import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 // from the wider RESCHEDULABLE_FROM set below — that flow owns its own edge
 // because rescheduling a SCHEDULED booking back to PENDING is policy-gated
 // (24h window), not a generic transition.
-export const REQUEST_ALLOWED_FROM: Record<RequestStatus, RequestStatus[]> = {
+export const REQUEST_ALLOWED_FROM: Record<AppointmentStatus, AppointmentStatus[]> = {
   PENDING: ["APPROVED_PENDING_PAYMENT"],
   APPROVED: ["PENDING", "APPROVED_PENDING_PAYMENT"],
   APPROVED_PENDING_PAYMENT: ["PENDING", "APPROVED"],
@@ -44,7 +44,7 @@ export const REQUEST_ALLOWED_FROM: Record<RequestStatus, RequestStatus[]> = {
 // Hoisted from cancel/reschedule routes (#838) so the map is the single
 // source of legality. CANCELLED's allowed-from IS the cancellable set.
 export const CANCELLABLE_FROM = REQUEST_ALLOWED_FROM.CANCELLED;
-export const RESCHEDULABLE_FROM: RequestStatus[] = [
+export const RESCHEDULABLE_FROM: AppointmentStatus[] = [
   "PENDING",
   "APPROVED",
   "APPROVED_PENDING_PAYMENT",
@@ -55,7 +55,7 @@ export const RESCHEDULABLE_FROM: RequestStatus[] = [
 // (reschedule / in-progress reallocation), so the self-edge is legal THERE
 // via `fromIn` — the guard's only job on that path is keeping terminal
 // states dead. The PATCH approval path uses the strict map (#836).
-export const ALLOCATION_APPROVABLE_FROM: RequestStatus[] = [
+export const ALLOCATION_APPROVABLE_FROM: AppointmentStatus[] = [
   "PENDING",
   "APPROVED_PENDING_PAYMENT",
   "APPROVED",
@@ -65,18 +65,18 @@ export async function transitionConsultationRequest(
   tx: Pick<Tx, "consultation">,
   args: {
     where: { id: string };
-    to: RequestStatus;
-    data?: Omit<Prisma.ConsultationUncheckedUpdateManyInput, "requestStatus">;
+    to: AppointmentStatus;
+    data?: Omit<Prisma.ConsultationUncheckedUpdateManyInput, "status">;
     /** Narrow or widen the from-set for flow-specific edges (overage-transitions idiom). */
-    fromIn?: RequestStatus[];
+    fromIn?: AppointmentStatus[];
   },
 ): Promise<void> {
   const res = await tx.consultation.updateMany({
     where: {
       ...args.where,
-      requestStatus: { in: args.fromIn ?? REQUEST_ALLOWED_FROM[args.to] },
+      status: { in: args.fromIn ?? REQUEST_ALLOWED_FROM[args.to] },
     },
-    data: { requestStatus: args.to, ...args.data },
+    data: { status: args.to, ...args.data },
   });
   if (res.count === 0) throw new IllegalTransitionError("Consultation", args.to);
 }
@@ -85,18 +85,18 @@ export async function transitionSubscriptionRequest(
   tx: Pick<Tx, "subscription">,
   args: {
     where: { id: string };
-    to: RequestStatus;
-    data?: Omit<Prisma.SubscriptionUncheckedUpdateManyInput, "requestStatus">;
+    to: AppointmentStatus;
+    data?: Omit<Prisma.SubscriptionUncheckedUpdateManyInput, "status">;
     /** Narrow or widen the from-set for flow-specific edges (overage-transitions idiom). */
-    fromIn?: RequestStatus[];
+    fromIn?: AppointmentStatus[];
   },
 ): Promise<void> {
   const res = await tx.subscription.updateMany({
     where: {
       ...args.where,
-      requestStatus: { in: args.fromIn ?? REQUEST_ALLOWED_FROM[args.to] },
+      status: { in: args.fromIn ?? REQUEST_ALLOWED_FROM[args.to] },
     },
-    data: { requestStatus: args.to, ...args.data },
+    data: { status: args.to, ...args.data },
   });
   if (res.count === 0) throw new IllegalTransitionError("Subscription", args.to);
 }

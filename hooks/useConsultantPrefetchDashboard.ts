@@ -99,8 +99,10 @@ export function usePrefetchDashboard({
         "high",
       );
 
-      // Priority 2: Secondary data (requests, planner)
-      safePrefetch([queries.requests, queries.planner], "medium");
+      // Priority 2: Secondary data (planner). The requests tab self-fetches
+      // /api/bookings/* — the old dashboard requests bundle was dead weight
+      // (data never read) and has been deleted.
+      safePrefetch([queries.planner], "medium");
     } catch (error) {
       console.warn("Consultant data prefetching failed:", error);
     }
@@ -154,9 +156,6 @@ export function usePrefetchDashboard({
               break;
             case "planner":
               safePrefetch([queries.planner], "high");
-              break;
-            case "requests":
-              safePrefetch([queries.requests], "high");
               break;
             default:
               // For other tabs, prefetch consultant details as fallback

@@ -26,6 +26,10 @@ jest.mock("../../lib/prisma", () => ({
 
 jest.mock("../../lib/stream-client", () => ({
   getStreamChatClient: jest.fn(() => mockStreamClient),
+  // #473 — pass-through breaker (closed-state behaviour): run the operation
+  // directly so existing assertions on the Stream calls still hold.
+  withStreamCircuitBreaker: jest.fn((op: () => unknown) => op()),
+  StreamUnavailableError: class StreamUnavailableError extends Error {},
 }));
 
 jest.mock("../../lib/stream-logger", () => ({
@@ -759,7 +763,7 @@ describe("Event Channel Actions", () => {
       expect(mockPrisma.consultation.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
-            requestStatus: { in: ["APPROVED", "SCHEDULED"] },
+            status: { in: ["APPROVED", "SCHEDULED"] },
           }),
         }),
       );
@@ -810,7 +814,7 @@ describe("Event Channel Actions", () => {
       expect(mockPrisma.subscription.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
-            requestStatus: { in: ["APPROVED", "SCHEDULED"] },
+            status: { in: ["APPROVED", "SCHEDULED"] },
           }),
         }),
       );

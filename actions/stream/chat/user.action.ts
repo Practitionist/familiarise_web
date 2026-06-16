@@ -3,7 +3,11 @@
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { mapRoleToStream } from "@/lib/user";
-import { getStreamChatClient } from "@/lib/stream-client";
+import {
+  getStreamChatClient,
+  withStreamCircuitBreaker,
+  StreamUnavailableError,
+} from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
 import { markUserSynced, isUserSynced } from "@/lib/stream-cache";
 import { checkConsent } from "@/lib/compliance/dpdp";
@@ -77,13 +81,22 @@ export const upsertUserToStream = async (userId: string) => {
     });
 
     // Upsert the user to Stream Chat
-    const streamUser = await client.upsertUser({
-      id: user.id,
-      name: user.name ?? user.id,
-      email: user.email,
-      image: user.image ?? undefined,
-      role: streamRole,
-    });
+    // #473 — fast-fail under a Stream outage instead of blocking the dashboard
+    // on the 30s timeout. Breaker-open rethrows StreamUnavailableError, which
+    // the caller's existing catch logs and surfaces gracefully.
+    const streamUser = await withStreamCircuitBreaker(
+      () =>
+        client.upsertUser({
+          id: user.id,
+          name: user.name ?? user.id,
+          email: user.email,
+          image: user.image ?? undefined,
+          role: streamRole,
+        }),
+      () => {
+        throw new StreamUnavailableError();
+      },
+    );
 
     // Mark as synced in cache
     markUserSynced(user.id);
@@ -191,8 +204,15 @@ export const upsertUsersToStream = async (userIds: string[]) => {
 
     // Single batch API call
     // Cast to satisfy TypeScript (custom user data in stream-chat v9)
-    const result = await client.upsertUsers(
-      streamUsers as Parameters<typeof client.upsertUsers>[0],
+    // #473 — fast-fail the batch upsert under a Stream outage.
+    const result = await withStreamCircuitBreaker(
+      () =>
+        client.upsertUsers(
+          streamUsers as Parameters<typeof client.upsertUsers>[0],
+        ),
+      () => {
+        throw new StreamUnavailableError();
+      },
     );
 
     // Mark all as synced
@@ -294,7 +314,7 @@ export const searchUsersWithRelationships = async (
             where: {
               consultationPlan: { consultantProfileId: currentUser.consultantProfileId },
               requestedById: { in: resultConsulteeProfileIds },
-              requestStatus: { in: ["APPROVED", "SCHEDULED"] },
+              status: { in: ["APPROVED", "SCHEDULED"] },
             },
             select: { requestedBy: { select: { user: { select: { id: true } } } } },
           })
@@ -309,7 +329,7 @@ export const searchUsersWithRelationships = async (
             where: {
               subscriptionPlan: { consultantProfileId: currentUser.consultantProfileId },
               requestedById: { in: resultConsulteeProfileIds },
-              requestStatus: { in: ["APPROVED", "SCHEDULED"] },
+              status: { in: ["APPROVED", "SCHEDULED"] },
               schedulingPeriodEndsAt: { gte: new Date() },
             },
             select: { requestedBy: { select: { user: { select: { id: true } } } } },
@@ -328,7 +348,7 @@ export const searchUsersWithRelationships = async (
             where: {
               consultationPlan: { consultantProfileId: { in: resultConsultantProfileIds } },
               requestedById: currentUser.consulteeProfileId,
-              requestStatus: { in: ["APPROVED", "SCHEDULED"] },
+              status: { in: ["APPROVED", "SCHEDULED"] },
             },
             select: {
               consultationPlan: {
@@ -345,7 +365,7 @@ export const searchUsersWithRelationships = async (
             where: {
               subscriptionPlan: { consultantProfileId: { in: resultConsultantProfileIds } },
               requestedById: currentUser.consulteeProfileId,
-              requestStatus: { in: ["APPROVED", "SCHEDULED"] },
+              status: { in: ["APPROVED", "SCHEDULED"] },
               schedulingPeriodEndsAt: { gte: new Date() },
             },
             select: {
@@ -480,7 +500,7 @@ async function checkConsultationRelationship(
               consultantProfileId: user1.consultantProfileId,
             },
             requestedById: user2.consulteeProfileId,
-            requestStatus: { in: ["APPROVED", "SCHEDULED"] },
+            status: { in: ["APPROVED", "SCHEDULED"] },
           },
           select: { id: true },
         })
@@ -498,7 +518,7 @@ async function checkConsultationRelationship(
               consultantProfileId: user2.consultantProfileId,
             },
             requestedById: user1.consulteeProfileId,
-            requestStatus: { in: ["APPROVED", "SCHEDULED"] },
+            status: { in: ["APPROVED", "SCHEDULED"] },
           },
           select: { id: true },
         })
@@ -539,7 +559,7 @@ async function checkSubscriptionRelationship(
               consultantProfileId: user1.consultantProfileId,
             },
             requestedById: user2.consulteeProfileId,
-            requestStatus: { in: ["APPROVED", "SCHEDULED"] },
+            status: { in: ["APPROVED", "SCHEDULED"] },
             schedulingPeriodEndsAt: { gte: new Date() },
           },
           select: { id: true },
@@ -557,7 +577,7 @@ async function checkSubscriptionRelationship(
               consultantProfileId: user2.consultantProfileId,
             },
             requestedById: user1.consulteeProfileId,
-            requestStatus: { in: ["APPROVED", "SCHEDULED"] },
+            status: { in: ["APPROVED", "SCHEDULED"] },
             schedulingPeriodEndsAt: { gte: new Date() },
           },
           select: { id: true },

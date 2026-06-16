@@ -2,9 +2,9 @@ name: Auto-Renew Contracts
 
 on:
   schedule:
-    # 02:30 UTC — 30 min BEFORE expire-contracts (03:00 UTC). Renewal must win
+    # 02:30 UTC — 40 min BEFORE expire-contracts (03:10 UTC). Renewal must win
     # the race with expiry: this job supersedes + EXPIREs the old contract, so
-    # by 03:00 expire-contracts has nothing left to flip (#779).
+    # by 03:10 expire-contracts has nothing left to flip (#779).
     - cron: "30 2 * * *"
   workflow_dispatch: # Allow manual triggering
 
@@ -41,6 +41,6 @@ jobs:
 
       - name: Notify on failure
         if: failure()
-        run: |
-          echo "Contract-auto-renew cron failed"
-          # TODO: wire to #ops-alerts Slack channel.
+        env:
+          SLACK_OPS_WEBHOOK_URL: ${{ secrets.SLACK_OPS_WEBHOOK_URL }}
+        run: bash scripts/ci/notify-ops-failure.sh "auto-renew-contracts"

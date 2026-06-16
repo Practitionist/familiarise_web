@@ -23,7 +23,7 @@
  *   - jobs/cleanup/cleanup-stale-invitations.ts (GitHub Actions wrapper)
  *   - app/api/cleanup/stale-invitations/route.ts (HTTP endpoint)
  *
- * Schedule: Daily at 08:00 IST (02:30 UTC). Runs on its own slot so
+ * Schedule: Daily at 08:10 IST (02:40 UTC; #709 minute map). Runs on its own slot so
  *           it does not overlap cleanup-abandoned-org-top-ups (07:30
  *           IST / 02:00 UTC) or the subscription cron (05:30 IST /
  *           00:00 UTC).

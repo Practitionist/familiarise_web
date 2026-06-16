@@ -95,7 +95,8 @@ function OverageWarning({
  * Each org option renders a funding-source-aware subtitle so the learner
  * knows what picking that org actually costs them before they confirm:
  *   - PERSONAL → "You pay — the org is tagged for reporting only"
- *   - WALLET   → "Credits: ₹X remaining"
+ *   - WALLET   → "Wallet: ₹X remaining" (#752 — "Credits" overloaded wallet
+ *     balance with CREDIT_POOL metering; the value shown is wallet balance)
  *   - INVOICE  → "Added to the org's monthly invoice"
  *   - LICENSE  → "Free — covered by the org's enterprise license"
  *
@@ -220,7 +221,7 @@ function renderSubtitle(m: {
       const paise = m.walletBalance ?? 0;
       return (
         <span className={paise === 0 ? "text-red-500" : "text-zinc-500"}>
-          Credits: ₹{(paise / 100).toLocaleString("en-IN")} remaining
+          Wallet: ₹{(paise / 100).toLocaleString("en-IN")} remaining
         </span>
       );
     }

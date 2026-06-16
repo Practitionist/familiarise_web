@@ -18,7 +18,7 @@
  *   4. Accountant / legal sign-off on IRN format and invoice sequence
  *   5. Retry dashboard and ops runbook in place (see docs/enterprise/50-operations/03-runbooks.md)
  *
- * Schedule: daily at 02:30 UTC (08:00 IST).
+ * Schedule: daily at 02:50 UTC (08:20 IST; #709 minute map).
  * GH Actions: `.github/workflows/irp-uploader.yml`.
  * Scope: OrganizationInvoice with irpStatus=PENDING, issuedAt within 30d
  *        (CBIC cut-off for retroactive IRN generation). Batch size: 50.

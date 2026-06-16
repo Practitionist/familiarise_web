@@ -28,8 +28,8 @@ export interface CreateApprovalPaymentParams {
   subscriptionId?: string;
   planId: string;
   paymentGateway: PaymentGateway;
-  slotStartTimeInUTC?: string;
-  slotEndTimeInUTC?: string;
+  startsAt?: string;
+  endsAt?: string;
   schedulingPeriodStartsAt?: string;
   schedulingPeriodEndsAt?: string;
   notes?: string;
@@ -184,8 +184,8 @@ async function calculateAmount(params: CreateApprovalPaymentParams): Promise<{
       throw new Error("Consultation plan not found");
     }
 
-    // Use plan currency instead of deriving from gateway
-    const currency = plan.priceCurrency || "INR";
+    // #781 §A — priceCurrency is the non-null Currency enum; no gateway fallback.
+    const currency = plan.priceCurrency;
 
     return {
       amount: plan.price,
@@ -207,8 +207,8 @@ async function calculateAmount(params: CreateApprovalPaymentParams): Promise<{
       throw new Error("Subscription plan not found");
     }
 
-    // Use plan currency instead of deriving from gateway
-    const currency = plan.priceCurrency || "INR";
+    // #781 §A — priceCurrency is the non-null Currency enum; no gateway fallback.
+    const currency = plan.priceCurrency;
 
     return {
       amount: plan.price,
@@ -247,9 +247,9 @@ function buildApprovalMetadata(params: CreateApprovalPaymentParams): {
   }
 
   // Add slot times if provided
-  if (params.slotStartTimeInUTC && params.slotEndTimeInUTC) {
-    metadata.slotStartTimeInUTC = params.slotStartTimeInUTC;
-    metadata.slotEndTimeInUTC = params.slotEndTimeInUTC;
+  if (params.startsAt && params.endsAt) {
+    metadata.startsAt = params.startsAt;
+    metadata.endsAt = params.endsAt;
   }
 
   // Add scheduling period if provided

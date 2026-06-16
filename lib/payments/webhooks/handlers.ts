@@ -9,14 +9,18 @@ import {
   AppointmentsType,
   PaymentStatus,
   Prisma,
-  RequestStatus,
+  AppointmentStatus,
 } from "@prisma/client";
 import { calculateSubscriptionEndDate } from "@/utils/dateUtils";
 import { buildOccupiedAppointmentFilter } from "@/utils/slotAllocation/occupancyPolicy";
 import { REQUEST_ALLOWED_FROM } from "@/lib/booking/transitions";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { recordSystemError } from "@/lib/enterprise/system-events";
-import { validateWebhookMetadata } from "@/schemas/webhooks/metadata";
+import { refundPayment } from "@/lib/payments/operations/refund";
+import {
+  normalizeLegacySlotKeys,
+  validateWebhookMetadata,
+} from "@/schemas/webhooks/metadata";
 import { ZodError } from "zod";
 import { sendPaymentSuccessEmail, sendPaymentFailedEmail } from "@/lib/email";
 import {
@@ -77,8 +81,8 @@ type PaymentWithUser = MoneyAsNumber<
  */
 interface ConsultationData {
   planId: string;
-  slotStartTimeInUTC: string;
-  slotEndTimeInUTC: string;
+  startsAt: string;
+  endsAt: string;
   notes?: string;
   consulteeProfileId: string;
   userId: string;
@@ -89,8 +93,8 @@ interface ConsultationData {
  */
 interface SubscriptionData {
   planId: string;
-  slotStartTimeInUTC?: string;
-  slotEndTimeInUTC?: string;
+  startsAt?: string;
+  endsAt?: string;
   schedulingPeriodStartsAt?: string;
   schedulingPeriodEndsAt?: string;
   notes?: string;
@@ -128,8 +132,13 @@ interface EventData {
  */
 export async function handlePaymentSuccess(
   paymentIntentId: string,
-  metadata: Record<string, string>,
+  rawMetadata: Record<string, string>,
 ): Promise<void> {
+  // #679 transition dual-read (see normalizeLegacySlotKeys) — in-flight
+  // Razorpay orders created pre-rename replay webhooks with legacy slot
+  // keys; normalize ONCE here so validation AND the legacy create flow
+  // read the same new-key shape.
+  const metadata = normalizeLegacySlotKeys(rawMetadata);
   // C1 FIX: Split into two phases:
   //   Phase 1 (transaction): Critical payment + appointment processing
   //   Phase 2 (post-tx): Earnings, invoice, waitlist, notifications
@@ -273,7 +282,11 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
     }
 
     // Confirm appointment: set isTentative = false and update status to APPROVED
-    await confirmExistingAppointment(tx, appointment.id, payment.userId);
+    const confirmResult = await confirmExistingAppointment(
+      tx,
+      appointment.id,
+      payment.userId,
+    );
 
     console.log(
       `✅ Payment ${paymentIntentId} processed successfully. Appointment ID: ${appointment.id}`,
@@ -288,6 +301,9 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
       userName: payment.user.name,
       amount: payment.amount,
       currency: payment.currency,
+      // #855 — a capture that landed after the booking was cancelled; Phase 2
+      // auto-refunds it instead of treating it as a confirmed booking.
+      capturedAfterTerminal: confirmResult.capturedAfterTerminal,
     };
     },
     { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
@@ -296,6 +312,26 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
 
   // If transaction returned null, the payment was already processed or had a metadata error
   if (!txResult) return;
+
+  // #855 — the capture landed after the booking was cancelled. The payment is
+  // SUCCEEDED (gateway truth) but the booking is dead, so auto-refund and skip
+  // the rest of Phase 2 — no success email, earnings, invoice, or notifications
+  // for a cancelled booking. Idempotent against webhook replay (see refund.ts).
+  if (txResult.capturedAfterTerminal) {
+    try {
+      await refundPayment({
+        paymentId: txResult.paymentId,
+        reason: "capture after cancellation",
+        initiatedByUserId: null,
+      });
+    } catch (refundError) {
+      console.error(
+        "Failed to auto-refund capture-after-cancellation (Phase 2):",
+        refundError,
+      );
+    }
+    return;
+  }
 
   // Phase 2: Non-critical post-transaction work (earnings, invoice, waitlist, notifications)
   // Failures here are logged but do NOT roll back the payment.
@@ -784,8 +820,8 @@ async function createAppointmentFromWebhook(
     appointmentType,
     planId,
     eventId,
-    slotStartTimeInUTC,
-    slotEndTimeInUTC,
+    startsAt,
+    endsAt,
     schedulingPeriodStartsAt,
     schedulingPeriodEndsAt,
     notes,
@@ -804,8 +840,8 @@ async function createAppointmentFromWebhook(
     case AppointmentsType.CONSULTATION:
       appointment = await createConsultation(tx, {
         planId,
-        slotStartTimeInUTC,
-        slotEndTimeInUTC,
+        startsAt,
+        endsAt,
         notes,
         consulteeProfileId,
         userId,
@@ -826,8 +862,8 @@ async function createAppointmentFromWebhook(
       );
       appointment = await createSubscription(tx, {
         planId,
-        slotStartTimeInUTC,
-        slotEndTimeInUTC,
+        startsAt,
+        endsAt,
         schedulingPeriodStartsAt,
         schedulingPeriodEndsAt,
         notes,
@@ -858,13 +894,18 @@ async function createAppointmentFromWebhook(
 // ============================================================================
 
 async function createConsultation(tx: Tx, data: ConsultationData) {
+  // #440 — the include rides the create so the overlap-guard column comes
+  // back without a second query inside the webhook transaction.
   const consultation = await tx.consultation.create({
     data: {
       consultationPlanId: data.planId,
-      requestStatus: RequestStatus.PENDING,
+      status: AppointmentStatus.PENDING,
       requestedById: data.consulteeProfileId,
       requestNotes: data.notes,
       bookingSource: "DIRECT_CHECKOUT",
+    },
+    include: {
+      consultationPlan: { select: { consultantProfileId: true } },
     },
   });
 
@@ -874,9 +915,10 @@ async function createConsultation(tx: Tx, data: ConsultationData) {
       consultationId: consultation.id,
       slotsOfAppointment: {
         create: {
-          startsAt: new Date(data.slotStartTimeInUTC),
-          endsAt: new Date(data.slotEndTimeInUTC),
+          startsAt: new Date(data.startsAt),
+          endsAt: new Date(data.endsAt),
           isTentative: false,
+          consultantProfileId: consultation.consultationPlan.consultantProfileId,
           user: { connect: { id: data.userId } },
         },
       },
@@ -913,7 +955,7 @@ async function createSubscription(tx: Tx, data: SubscriptionData) {
   const subscription = await tx.subscription.create({
     data: {
       subscriptionPlanId: data.planId,
-      requestStatus: RequestStatus.PENDING,
+      status: AppointmentStatus.PENDING,
       requestedById: data.consulteeProfileId,
       requestNotes: data.notes,
       bookingSource: "DIRECT_CHECKOUT",
@@ -931,14 +973,17 @@ async function createSubscription(tx: Tx, data: SubscriptionData) {
   // Only add slots if NOT a scheduling period request
   if (
     !isSchedulingPeriodRequest &&
-    data.slotStartTimeInUTC &&
-    data.slotEndTimeInUTC
+    data.startsAt &&
+    data.endsAt
   ) {
     appointmentData.slotsOfAppointment = {
       create: {
-        startsAt: new Date(data.slotStartTimeInUTC),
-        endsAt: new Date(data.slotEndTimeInUTC),
+        startsAt: new Date(data.startsAt),
+        endsAt: new Date(data.endsAt),
         isTentative: false,
+        // #440 — same overlap-guard population as the consultation twin;
+        // a NULL here would bypass the exclusion constraint's scope.
+        consultantProfileId: plan.consultantProfileId,
         user: { connect: { id: data.userId } },
       },
     };
@@ -1031,7 +1076,10 @@ async function confirmApprovalStatus(
   tx: Tx,
   entityType: "consultation" | "subscription",
   entityId: string,
-): Promise<void> {
+): Promise<{ capturedAfterTerminal: boolean }> {
+  // #855 — signals Phase 2 to auto-refund a capture that landed after the
+  // booking was cancelled (money collected for a now-dead booking).
+  let capturedAfterTerminal = false;
   if (entityType === "consultation") {
     const consultation = await tx.consultation.findUnique({
       where: { id: entityId },
@@ -1049,11 +1097,11 @@ async function confirmApprovalStatus(
     const movedConsult = await tx.consultation.updateMany({
       where: {
         id: entityId,
-        requestStatus: {
-          in: [RequestStatus.PENDING, RequestStatus.APPROVED_PENDING_PAYMENT],
+        status: {
+          in: [AppointmentStatus.PENDING, AppointmentStatus.APPROVED_PENDING_PAYMENT],
         },
       },
-      data: { requestStatus: RequestStatus.APPROVED },
+      data: { status: AppointmentStatus.APPROVED },
     });
     if (movedConsult.count === 0) {
       // Re-read: the pre-read raced the very transition that made the CAS
@@ -1062,14 +1110,15 @@ async function confirmApprovalStatus(
       // APPROVED/SCHEDULED/COMPLETED) or money-for-nothing.
       const fresh = await tx.consultation.findUnique({
         where: { id: entityId },
-        select: { requestStatus: true },
+        select: { status: true },
       });
-      const freshStatus = fresh?.requestStatus ?? consultation.requestStatus;
+      const freshStatus = fresh?.status ?? consultation.status;
       if (
-        freshStatus !== RequestStatus.APPROVED &&
-        freshStatus !== RequestStatus.SCHEDULED &&
-        freshStatus !== RequestStatus.COMPLETED
+        freshStatus !== AppointmentStatus.APPROVED &&
+        freshStatus !== AppointmentStatus.SCHEDULED &&
+        freshStatus !== AppointmentStatus.COMPLETED
       ) {
+        capturedAfterTerminal = true; // #855 — Phase 2 auto-refunds
         void recordSystemError({
           organizationId: null,
           category: "PAYMENT",
@@ -1092,24 +1141,37 @@ async function confirmApprovalStatus(
     // Do NOT change PENDING → APPROVED here!
     // Subscription stays PENDING until consultant allocates slots via Requests tab
     // SlotAllocationService.allocate() will set status to APPROVED when slots are allocated
-    if (subscription.requestStatus === RequestStatus.APPROVED_PENDING_PAYMENT) {
+    if (subscription.status === AppointmentStatus.APPROVED_PENDING_PAYMENT) {
       // CAS — the pre-read can race a cancel; the guard decides (B2).
       await tx.subscription.updateMany({
         where: {
           id: entityId,
-          requestStatus: RequestStatus.APPROVED_PENDING_PAYMENT,
+          status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
         },
-        data: { requestStatus: RequestStatus.APPROVED },
+        data: { status: AppointmentStatus.APPROVED },
       });
       console.log(
         `✅ Subscription ${entityId} payment completed - moving from APPROVED_PENDING_PAYMENT to APPROVED`,
       );
+    } else if (subscription.status === AppointmentStatus.CANCELLED) {
+      // #855 — capture landed after the subscription was cancelled: money for a
+      // dead booking. PENDING here is normal (slots are allocated later), so
+      // only CANCELLED is the terminal-capture case.
+      capturedAfterTerminal = true;
+      void recordSystemError({
+        organizationId: null,
+        category: "PAYMENT",
+        summary: `Payment captured for subscription ${entityId} in terminal state CANCELLED — refund needed`,
+        err: new Error("CAPTURE_AFTER_TERMINAL_STATE"),
+        context: { entityType: "subscription", entityId },
+      }).catch(() => {});
     } else {
       console.log(
-        `ℹ️ Subscription ${entityId} payment received - keeping status as ${subscription.requestStatus} (consultant will allocate slots)`,
+        `ℹ️ Subscription ${entityId} payment received - keeping status as ${subscription.status} (consultant will allocate slots)`,
       );
     }
   }
+  return { capturedAfterTerminal };
 }
 
 /**
@@ -1127,7 +1189,7 @@ export async function confirmExistingAppointment(
   tx: Tx,
   appointmentId: string,
   userId?: string,
-) {
+): Promise<{ capturedAfterTerminal: boolean }> {
   // First fetch appointment to determine type
   const appointment = await tx.appointment.findUnique({
     where: { id: appointmentId },
@@ -1141,7 +1203,7 @@ export async function confirmExistingAppointment(
 
   if (!appointment) {
     console.warn(`Appointment ${appointmentId} not found for confirmation`);
-    return;
+    return { capturedAfterTerminal: false };
   }
 
   // #827 — first-confirmed-wins recheck for the EXCLUSIVE booking types.
@@ -1201,7 +1263,8 @@ export async function confirmExistingAppointment(
             slotId: slot.id,
           },
         }).catch(() => {});
-        return; // slots stay tentative; do not confirm over the winner
+        // slots stay tentative; do not confirm over the winner
+        return { capturedAfterTerminal: false };
       }
     }
   }
@@ -1255,20 +1318,23 @@ export async function confirmExistingAppointment(
   }
 
   // Update status for consultation and subscription
+  let capturedAfterTerminal = false;
   if (appointment.consultation) {
-    await confirmApprovalStatus(
+    const r = await confirmApprovalStatus(
       tx,
       "consultation",
       appointment.consultation.id,
     );
+    capturedAfterTerminal = capturedAfterTerminal || r.capturedAfterTerminal;
   }
 
   if (appointment.subscription) {
-    await confirmApprovalStatus(
+    const r = await confirmApprovalStatus(
       tx,
       "subscription",
       appointment.subscription.id,
     );
+    capturedAfterTerminal = capturedAfterTerminal || r.capturedAfterTerminal;
   }
 
   // Update webinar status
@@ -1286,6 +1352,8 @@ export async function confirmExistingAppointment(
       data: { status: "SCHEDULED" },
     });
   }
+
+  return { capturedAfterTerminal };
 }
 
 /**
@@ -1325,18 +1393,18 @@ async function cleanupFailedPaymentAppointment(tx: Tx, appointmentId: string) {
           await tx.consultation.updateMany({
             where: {
               id: appointment.consultation.id,
-              requestStatus: { in: REQUEST_ALLOWED_FROM.EXPIRED },
+              status: { in: REQUEST_ALLOWED_FROM.EXPIRED },
             },
-            data: { requestStatus: RequestStatus.EXPIRED },
+            data: { status: AppointmentStatus.EXPIRED },
           });
         }
         if (appointment.subscription) {
           await tx.subscription.updateMany({
             where: {
               id: appointment.subscription.id,
-              requestStatus: { in: REQUEST_ALLOWED_FROM.EXPIRED },
+              status: { in: REQUEST_ALLOWED_FROM.EXPIRED },
             },
-            data: { requestStatus: RequestStatus.EXPIRED },
+            data: { status: AppointmentStatus.EXPIRED },
           });
         }
       }

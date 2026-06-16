@@ -207,6 +207,8 @@ model BillingAccount {
 
 When real mandates land, the charge (a `WalletTopUp` + `Dr CASH / Cr WALLET` posting, exactly like a manual top-up in §3.2) slots into step 3 inside the claim's transaction — the idempotency gate is already there.
 
+> **Regulatory constraint for the future mandate work (RBI e-mandate framework, effective 21 April 2026).** When the auto-charge wave is built it must be designed inside RBI's recurring-payment rules, not bolted on after: a registered e-mandate with explicit customer consent and tokenized card credentials (merchants may not store raw card data), a pre-debit notification at least 24 hours before each charge, and **Additional Factor Authentication for any single recurring debit above ₹15,000** (the higher ₹1,00,000 carve-outs cover insurance, mutual funds, and credit-card bills — not wallet top-ups). The practical consequence: `autoTopUpAmountPaise` should be capped at ₹15,000 per charge to stay AFA-free, and a larger refill should be modelled as multiple mandate-sized charges or a notify-to-pay flow. Notify-only remains the legally trivial posture today because no recurring debit exists at all.
+
 > **Related — overage-as-expansion.** A low wallet is the *funding-side* nudge; the [program-overage](05-booking-to-earnings.md) preview is the *consumption-side* one (a member about to breach a program cap). Both steer an org toward topping up / expanding rather than hitting a hard `BLOCK`. They are independent surfaces — overage meters a `ProgramAssignment` cap, the floor watches the wallet pool — but share the "warn before refuse" philosophy.
 
 ---

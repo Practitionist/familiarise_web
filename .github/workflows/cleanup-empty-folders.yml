@@ -1,5 +1,12 @@
 name: Cleanup Empty Folders
 
+# Storage-only hygiene: removes empty appointment-document folders from
+# Supabase storage. No Prisma — the script talks to the storage API with the
+# service-role key, so this workflow carries only the two Supabase secrets
+# (the old base64 ENV_FILE blob materialized every secret in the runner for
+# no reason). Was silently red: package.json pointed at the script's
+# pre-move path and this was the one cron without a failure pager.
+
 on:
   schedule:
     # Runs daily at 9:00 AM IST (3:30 AM UTC)
@@ -9,6 +16,11 @@ on:
 jobs:
   cleanup:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
 
     steps:
       - name: Checkout code
@@ -23,8 +35,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Create .env file from secret
-        run: echo "${{ secrets.ENV_FILE }}" | base64 -d > .env
-
       - name: Run cleanup script
         run: npm run scripts:cleanup-empty-folders
+
+      - name: Notify on failure
+        if: failure()
+        env:
+          SLACK_OPS_WEBHOOK_URL: ${{ secrets.SLACK_OPS_WEBHOOK_URL }}
+        run: bash scripts/ci/notify-ops-failure.sh "cleanup-empty-folders"

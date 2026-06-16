@@ -2,8 +2,8 @@ name: Mark Expired Recordings
 
 on:
   schedule:
-    # Run daily at 3 AM UTC
-    - cron: "0 3 * * *"
+    # Daily 03:20 UTC. #709 — off the 03:00 pile-up.
+    - cron: "20 3 * * *"
   workflow_dispatch: # Allow manual triggering
 
 jobs:
@@ -39,5 +39,6 @@ jobs:
 
       - name: Notify on failure
         if: failure()
-        run: |
-          echo "Mark expired recordings job failed"
+        env:
+          SLACK_OPS_WEBHOOK_URL: ${{ secrets.SLACK_OPS_WEBHOOK_URL }}
+        run: bash scripts/ci/notify-ops-failure.sh "mark-expired-recordings"

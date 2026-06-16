@@ -480,7 +480,8 @@ function seedSinglePartyWalletPayment({
   orgShare = 1000,
   platformFeePaise = 1000,
   billingAccountId = "ba-1",
-  organizationId = "org-1",
+  organizationId = "org-1" as string | null,
+  ownerOrgId = "org-1",
   walletBalance = 50000,
   withOrgEarnings = true,
   orgEarningsStatus = "PENDING" as const,
@@ -491,7 +492,10 @@ function seedSinglePartyWalletPayment({
   orgShare: number;
   platformFeePaise: number;
   billingAccountId: string;
-  organizationId: string;
+  // null = B2C booking funded by an org wallet without an org tag on the
+  // Payment row — the #835 invisible path.
+  organizationId: string | null;
+  ownerOrgId: string;
   walletBalance: number;
   withOrgEarnings: boolean;
   orgEarningsStatus: "PENDING" | "PAID";
@@ -548,6 +552,7 @@ function seedSinglePartyWalletPayment({
     id: billingAccountId,
     walletBalance,
     currency: "INR",
+    ownerOrgId,
   });
 }
 
@@ -591,6 +596,56 @@ describe("refundPayment — full single-leg WALLET refund", () => {
     expect(oe?.status).toBe("REFUNDED");
     // Refund row flipped to SUCCEEDED.
     expect(state.refunds[0]?.status).toBe("SUCCEEDED");
+  });
+
+  it("#835 — emits a WALLET/WALLET_REFUND OrgAuditLog row on the wallet-leg branch", async () => {
+    seedSinglePartyWalletPayment({});
+
+    await refundPayment({
+      paymentId: "pay-1",
+      reason: "customer-request",
+      initiatedByUserId: "user-admin",
+    });
+
+    const walletRows = state.orgAuditLogs.filter(
+      (r) => r.category === "WALLET" && r.action === "WALLET_REFUND",
+    );
+    expect(walletRows).toHaveLength(1);
+    expect(walletRows[0].organizationId).toBe("org-1");
+    const details = walletRows[0].details as Record<string, unknown>;
+    expect(details.paymentId).toBe("pay-1");
+    expect(details.amountPaise).toBe(10000);
+    expect(details.balanceAfterPaise).toBe(60000);
+    expect(details.initiatedByUserId).toBe("user-admin");
+  });
+});
+
+describe("refundPayment — #835 org-wallet-funded B2C payment with NO org tag", () => {
+  // The original invisible path: Payment.organizationId is null but the
+  // wallet belongs to an org — the audit row must resolve the org via
+  // BillingAccount.ownerOrgId.
+  it("resolves the org from BillingAccount.ownerOrgId when payment.organizationId is null", async () => {
+    seedSinglePartyWalletPayment({
+      organizationId: null,
+      ownerOrgId: "org-wallet-owner",
+      withOrgEarnings: false,
+    });
+
+    await refundPayment({
+      paymentId: "pay-1",
+      reason: "customer-request",
+    });
+
+    const walletRows = state.orgAuditLogs.filter(
+      (r) => r.category === "WALLET" && r.action === "WALLET_REFUND",
+    );
+    expect(walletRows).toHaveLength(1);
+    expect(walletRows[0].organizationId).toBe("org-wallet-owner");
+    // No org tag on the payment ⇒ Step 8's INVOICE row must NOT fire; the
+    // WALLET row is the only org-audit artifact of this refund.
+    expect(
+      state.orgAuditLogs.filter((r) => r.category === "INVOICE"),
+    ).toHaveLength(0);
   });
 });
 
@@ -787,6 +842,7 @@ describe("refundPayment — multi-leg WALLET + REFERRAL_CREDIT", () => {
       id: "ba-2",
       walletBalance: 0,
       currency: "INR",
+      ownerOrgId: "org-1",
     });
 
     const result = await refundPayment({
@@ -802,6 +858,13 @@ describe("refundPayment — multi-leg WALLET + REFERRAL_CREDIT", () => {
     // for the remainder, which is the REFERRAL_CREDIT leg. So the
     // wallet credit is exactly floor(7001 * 10001 / 10001) = 7001.
     expect(state.billingAccounts.get("ba-2")?.walletBalance).toBe(7001);
+    // #835 — exactly one WALLET audit row: the REFERRAL_CREDIT leg must
+    // not produce one.
+    expect(
+      state.orgAuditLogs.filter(
+        (r) => r.category === "WALLET" && r.action === "WALLET_REFUND",
+      ),
+    ).toHaveLength(1);
   });
 });
 

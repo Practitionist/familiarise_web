@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma, { type Tx } from "@/lib/prisma";
-import { Prisma, PaymentStatus, RequestStatus } from "@prisma/client";
+import { Prisma, PaymentStatus, AppointmentStatus } from "@prisma/client";
 import {
   isDbHealthy,
   verifyHmacWebhookSignature,
@@ -277,14 +277,14 @@ async function confirmExistingAppointment(tx: Tx, appointmentId: string) {
   if (appointment?.consultation) {
     await tx.consultation.update({
       where: { id: appointment.consultation.id },
-      data: { requestStatus: RequestStatus.PENDING }, // Keep as PENDING for consultant approval
+      data: { status: AppointmentStatus.PENDING }, // Keep as PENDING for consultant approval
     });
   }
 
   if (appointment?.subscription) {
     await tx.subscription.update({
       where: { id: appointment.subscription.id },
-      data: { requestStatus: RequestStatus.PENDING }, // Keep as PENDING for consultant approval
+      data: { status: AppointmentStatus.PENDING }, // Keep as PENDING for consultant approval
     });
   }
 

@@ -3,7 +3,7 @@ name: Cleanup Abandoned Payments
 on:
   schedule:
     # Run every 15 minutes
-    - cron: "*/15 * * * *"
+    - cron: "6-59/15 * * * *"
   workflow_dispatch: # Allow manual triggering
   push:
     branches:
@@ -50,6 +50,6 @@ jobs:
 
       - name: Notify on failure
         if: failure()
-        run: |
-          echo "Abandoned payment cleanup failed"
-          # Add notification logic here (Slack, email, etc.)
+        env:
+          SLACK_OPS_WEBHOOK_URL: ${{ secrets.SLACK_OPS_WEBHOOK_URL }}
+        run: bash scripts/ci/notify-ops-failure.sh "cleanup-abandoned-payments"

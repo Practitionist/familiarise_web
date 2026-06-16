@@ -93,14 +93,14 @@ export async function GET(req: NextRequest) {
               consultationPlan: {
                 consultantProfileId: user.consultantProfileId,
               },
-              requestStatus: "APPROVED",
+              status: "APPROVED",
             },
           })
         : user.consulteeProfileId
           ? prisma.consultation.count({
               where: {
                 requestedById: user.consulteeProfileId,
-                requestStatus: "APPROVED",
+                status: "APPROVED",
               },
             })
           : 0,
@@ -110,14 +110,14 @@ export async function GET(req: NextRequest) {
               subscriptionPlan: {
                 consultantProfileId: user.consultantProfileId,
               },
-              requestStatus: "APPROVED",
+              status: "APPROVED",
             },
           })
         : user.consulteeProfileId
           ? prisma.subscription.count({
               where: {
                 requestedById: user.consulteeProfileId,
-                requestStatus: "APPROVED",
+                status: "APPROVED",
               },
             })
           : 0,

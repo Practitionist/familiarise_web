@@ -1,7 +1,7 @@
 "use client";
 
 import { use } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { PageSkeleton } from "@/components/dashboard/DashboardSkeletons";
 import { createConsultantQueries } from "@/lib/dashboard-queries";
@@ -47,15 +47,22 @@ export default function AppointmentsPage({
     else setScope({ kind: "org", orgId: next });
   };
 
-  // Use the centralized query configuration
+  // Use the centralized query configuration.
+  // keepPreviousData: org-scope filter changes show the previous list while
+  // the new one loads instead of a skeleton flash (the documents-page idiom,
+  // #346).
   const appointmentsQuery = createConsultantQueries(
     consultantId,
     orgScopeParam,
   ).appointments;
-  const { data: appointments, isLoading, error } = useQuery(appointmentsQuery);
+  const { data: appointments, isLoading, error } = useQuery({
+    ...appointmentsQuery,
+    placeholderData: keepPreviousData,
+  });
 
   // Fetch scheduled trials for this consultant
   const { data: trialsData, isLoading: trialsLoading } = useQuery({
+    placeholderData: keepPreviousData,
     queryKey: ["trials", consultantId, "SCHEDULED", orgScopeParam] as const,
     queryFn: async () => {
       const orgScopeQs = orgScopeQueryParam
@@ -72,13 +79,14 @@ export default function AppointmentsPage({
 
   // Fetch class events for this consultant (to show unscheduled classes in appointments page)
   const { data: classEventsData, isLoading: classesLoading } = useQuery({
+    placeholderData: keepPreviousData,
     queryKey: ["consultant-classes", consultantId, orgScopeParam] as const,
     queryFn: async () => {
       const orgScopeQs = orgScopeQueryParam
         ? `&orgScope=${encodeURIComponent(orgScopeQueryParam)}`
         : "";
       const res = await fetch(
-        `/api/events/classes?consultantProfileId=${consultantId}${orgScopeQs}`,
+        `/api/bookings/classes?consultantProfileId=${consultantId}${orgScopeQs}`,
       );
       if (!res.ok) throw new Error("Failed to fetch classes");
       const { data } = await res.json();
@@ -90,6 +98,7 @@ export default function AppointmentsPage({
 
   // Fetch webinar events for this consultant; filter to those with no appointment yet
   const { data: webinarEventsData, isLoading: webinarsLoading } = useQuery({
+    placeholderData: keepPreviousData,
     queryKey: [
       "consultant-webinars-unscheduled",
       consultantId,
@@ -100,7 +109,7 @@ export default function AppointmentsPage({
         ? `&orgScope=${encodeURIComponent(orgScopeQueryParam)}`
         : "";
       const res = await fetch(
-        `/api/events/webinars?consultantProfileId=${consultantId}${orgScopeQs}`,
+        `/api/bookings/webinars?consultantProfileId=${consultantId}${orgScopeQs}`,
       );
       if (!res.ok) throw new Error("Failed to fetch webinars");
       const { data } = await res.json();

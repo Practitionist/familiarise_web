@@ -181,7 +181,7 @@ sequenceDiagram
     WH->>WH: Idempotency check (WebhookEvent table)
 
     WH->>DB: Phase 1 — SERIALIZABLE transaction
-    Note over DB: Payment.status → SUCCEEDED<br/>SlotOfAppointment.isTentative → false<br/>Event.requestStatus → APPROVED
+    Note over DB: Payment.status → SUCCEEDED<br/>SlotOfAppointment.isTentative → false<br/>Event.status → APPROVED
 
     WH->>DB: Phase 2 — fire-and-forget
     Note over DB: Create ConsultantEarnings (80%)<br/>Create Invoice<br/>Trigger Novu notifications<br/>Create ActivityLog entry

@@ -139,11 +139,13 @@ Settings → Secrets and Variables → Actions → New repository secret
 
 Located in `.github/workflows/`:
 
-| Workflow         | File                      | Schedule (UTC)       | Schedule (IST) |
-| ---------------- | ------------------------- | -------------------- | -------------- |
-| Release Earnings | `release-earnings.yml`    | `0 * * * *` (hourly) | Every hour     |
-| Create Batch     | `create-payout-batch.yml` | `0 20 * * 0`         | Monday 1:30 AM |
-| Process Payouts  | `process-payouts.yml`     | `0 21 * * 0`         | Monday 2:30 AM |
+| Workflow         | File                      | Schedule (UTC)       | Schedule (IST)        |
+| ---------------- | ------------------------- | -------------------- | --------------------- |
+| Release Earnings | `release-earnings.yml`    | `0 * * * *` (hourly) | Every hour            |
+| Create Batch     | `create-payout-batch.yml` | `0 20 * * 1`         | Tuesday 1:30 AM (IST) |
+| Process Payouts  | `process-payouts.yml`     | `0 21 * * 1`         | Tuesday 2:30 AM (IST) |
+
+> IST is UTC+5:30. Monday 8 PM / 9 PM UTC = Tuesday 1:30 AM / 2:30 AM IST. Both jobs belong to the Monday payout cycle (the GH workflow is named after the cycle, not the calendar day it fires in IST).
 
 ### Modifying Schedules
 
@@ -152,7 +154,7 @@ Edit the cron expression in workflow files:
 ```yaml
 on:
   schedule:
-    - cron: "0 20 * * 0" # Sunday 8PM UTC = Monday 1:30 AM IST
+    - cron: "0 20 * * 1" # Monday 8PM UTC = Tuesday 1:30 AM IST
   workflow_dispatch: # Allow manual trigger
 ```
 
@@ -237,7 +239,7 @@ Added to `package.json`:
   "scripts": {
     "scripts:release-earnings": "npx tsx scripts/release-earnings.ts",
     "scripts:create-payout-batch": "npx tsx scripts/create-payout-batch.ts",
-    "scripts:process-payouts": "npx tsx scripts/process-payouts.ts"
+    "scripts:process-payouts": "npx tsx jobs/payouts/process-payouts.ts"
   }
 }
 ```
@@ -251,7 +253,8 @@ npm run scripts:release-earnings
 # Create weekly batch
 npm run scripts:create-payout-batch
 
-# Process approved payouts
+# Process approved payouts (drives lib/payments/payouts — the
+# standalone scripts/payouts copy was deleted in #850)
 npm run scripts:process-payouts
 ```
 

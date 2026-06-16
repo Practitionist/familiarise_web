@@ -53,8 +53,8 @@ export function WeeklyAvailability({ slotsByDay }: WeeklyAvailabilityProps) {
 
   // Get the date for booked slots in user timezone
   const getBookedSlotDate = (slot: ProcessedSlot) => {
-    if (!slot.slotStartTimeInUTC) return "";
-    const date = new Date(slot.slotStartTimeInUTC);
+    if (!slot.startsAt) return "";
+    const date = new Date(slot.startsAt);
     return date.toLocaleDateString(undefined, {
       month: "short",
       day: "numeric",

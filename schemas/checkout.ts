@@ -23,8 +23,8 @@ export const paymentGatewaySchema = z.enum([
 export const searchParamsSchema = z.object({
   slotOfAvailabilityWeeklyId: z.string().optional(),
   slotOfAvailabilityCustomId: z.string().optional(),
-  slotStartTimeInUTC: z.string().datetime().optional(),
-  slotEndTimeInUTC: z.string().datetime().optional(),
+  startsAt: z.string().datetime().optional(),
+  endsAt: z.string().datetime().optional(),
   discountCode: z.string().optional(),
   eventId: z.string().optional(),
   notes: z.string().optional(),
@@ -33,8 +33,8 @@ export const searchParamsSchema = z.object({
 // Consultation-specific validation
 export const consultationSearchParamsSchema = searchParamsSchema
   .extend({
-    slotStartTimeInUTC: z.string().datetime(),
-    slotEndTimeInUTC: z.string().datetime(),
+    startsAt: z.string().datetime(),
+    endsAt: z.string().datetime(),
   })
   .refine(
     (data) =>
@@ -48,10 +48,10 @@ export const consultationSearchParamsSchema = searchParamsSchema
   )
   .refine(
     (data) =>
-      new Date(data.slotStartTimeInUTC) < new Date(data.slotEndTimeInUTC),
+      new Date(data.startsAt) < new Date(data.endsAt),
     {
       message: "Start time must be before end time",
-      path: ["slotStartTimeInUTC"],
+      path: ["startsAt"],
     },
   );
 
@@ -77,8 +77,8 @@ export const checkoutSchema = z
     appointmentType: appointmentTypeSchema,
     planId: z.string(),
     eventId: z.string().optional(),
-    slotStartTimeInUTC: z.string().datetime().optional(),
-    slotEndTimeInUTC: z.string().datetime().optional(),
+    startsAt: z.string().datetime().optional(),
+    endsAt: z.string().datetime().optional(),
     slotOfAvailabilityWeeklyId: z.string().optional(),
     slotOfAvailabilityCustomId: z.string().optional(),
     schedulingPeriodStartsAt: z.string().datetime().optional(),
@@ -106,11 +106,11 @@ export const checkoutSchema = z
     // === CONSULTATION validation ===
     if (data.appointmentType === "CONSULTATION") {
       // Require slot timing
-      if (!data.slotStartTimeInUTC || !data.slotEndTimeInUTC) {
+      if (!data.startsAt || !data.endsAt) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message: "Consultation requires slot start and end times",
-          path: ["slotStartTimeInUTC"],
+          path: ["startsAt"],
         });
       }
 
@@ -129,7 +129,7 @@ export const checkoutSchema = z
 
     // === SUBSCRIPTION validation ===
     if (data.appointmentType === "SUBSCRIPTION") {
-      const hasSlotData = data.slotStartTimeInUTC && data.slotEndTimeInUTC;
+      const hasSlotData = data.startsAt && data.endsAt;
       const hasSchedulingPeriod =
         data.schedulingPeriodStartsAt && data.schedulingPeriodEndsAt;
 
@@ -139,7 +139,7 @@ export const checkoutSchema = z
           code: z.ZodIssueCode.custom,
           message:
             "Subscription requires either slot timing or scheduling period",
-          path: ["slotStartTimeInUTC"],
+          path: ["startsAt"],
         });
       }
 
@@ -180,27 +180,27 @@ export const checkoutSchema = z
     }
 
     // Validate slot timing order if both provided
-    if (data.slotStartTimeInUTC && data.slotEndTimeInUTC) {
-      const startTime = new Date(data.slotStartTimeInUTC);
-      const endTime = new Date(data.slotEndTimeInUTC);
+    if (data.startsAt && data.endsAt) {
+      const startTime = new Date(data.startsAt);
+      const endTime = new Date(data.endsAt);
       if (startTime >= endTime) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message: "Start time must be before end time",
-          path: ["slotEndTimeInUTC"],
+          path: ["endsAt"],
         });
       }
     }
 
     // Validate slot is not in the past or within minimum booking lead time
-    if (data.slotStartTimeInUTC) {
-      const slotStart = new Date(data.slotStartTimeInUTC);
+    if (data.startsAt) {
+      const slotStart = new Date(data.startsAt);
       const timingError = validateSlotTiming(slotStart);
       if (timingError) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message: timingError,
-          path: ["slotStartTimeInUTC"],
+          path: ["startsAt"],
         });
       }
     }
@@ -300,8 +300,8 @@ export const createCheckoutData = (params: {
   planId: string;
   paymentGateway: PaymentGateway;
   eventId?: string;
-  slotStartTimeInUTC?: string;
-  slotEndTimeInUTC?: string;
+  startsAt?: string;
+  endsAt?: string;
   slotOfAvailabilityWeeklyId?: string;
   slotOfAvailabilityCustomId?: string;
   schedulingPeriodStartsAt?: string;
@@ -318,8 +318,8 @@ export const createCheckoutData = (params: {
     planId: params.planId,
     paymentGateway: params.paymentGateway,
     eventId: params.eventId,
-    slotStartTimeInUTC: params.slotStartTimeInUTC,
-    slotEndTimeInUTC: params.slotEndTimeInUTC,
+    startsAt: params.startsAt,
+    endsAt: params.endsAt,
     slotOfAvailabilityWeeklyId: params.slotOfAvailabilityWeeklyId,
     slotOfAvailabilityCustomId: params.slotOfAvailabilityCustomId,
     schedulingPeriodStartsAt: params.schedulingPeriodStartsAt,

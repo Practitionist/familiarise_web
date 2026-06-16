@@ -2,7 +2,10 @@ import type { Tx } from "@/lib/prisma";
 import prisma from "../../../lib/prisma";
 import { postLedgerTxn } from "@/lib/payments/ledger/post";
 import { sumPaise } from "@/lib/payments/utils/money";
-import { isLegalDisputeTransition } from "@/lib/payments/dispute-status";
+import {
+  isLegalDisputeTransition,
+  mapDisputeStatus,
+} from "@/lib/payments/dispute-status";
 import { Prisma, PaymentGateway } from "@prisma/client";
 import crypto from "crypto";
 import { stripeClient } from "@/lib/payments/core/stripe";
@@ -33,6 +36,7 @@ import {
 } from "@/lib/payments/operations/refund";
 import { recordTdsReversal } from "@/lib/payments/tax/tds-service";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { recordSystemError } from "@/lib/enterprise/system-events";
 
 // Re-export payment handlers from lib (architectural fix)
 export {
@@ -698,18 +702,20 @@ export async function handleRefundCreated(
             idempotencyKey: `topup-refund:${providerPaymentId}`,
             kind: "TOPUP_REFUND",
             description: `Refund for top-up ${topUp.providerOrderId} (gateway refund ${refundId})`,
+            // #783 — ledger is INR-only; never key accounts by acct.currency.
+            // Must mirror the INR-keyed top-up posting (lib/api/organizations/
+            // wallet.ts) so the refund reversal nets against the same account.
             postings: [
               {
                 account: {
                   kind: "WALLET",
                   organizationId: acct.ownerOrgId,
-                  currency: acct.currency,
                 },
                 direction: "DEBIT",
                 amountPaise: refundAmt,
               },
               {
-                account: { kind: "CASH", currency: acct.currency },
+                account: { kind: "CASH" },
                 direction: "CREDIT",
                 amountPaise: refundAmt,
               },
@@ -951,6 +957,17 @@ export async function handleRefundCreated(
       return;
     }
 
+    // PM-13 — a `refund.failed` for a refund we never recorded (e.g. a refund
+    // initiated from the Razorpay dashboard, not our app) would otherwise mint
+    // an orphan FAILED Refund row attached to the B2C payment. No money moves
+    // either way on a failed refund, so there's nothing to record — skip it.
+    if (mapRefundStatus(status) === "FAILED" && !existingRefund) {
+      console.log(
+        `↩️ Ignoring refund.failed for unknown refund ${refundId} (no existing row, no money movement)`,
+      );
+      return;
+    }
+
     // Create new refund record
     const createdRefund = await tx.refund.create({
       data: {
@@ -1027,6 +1044,9 @@ export async function handleDisputeCreated(
     // Find payment by charge ID or payment intent
     // For Stripe, we need to get the payment intent from the charge
     let payment;
+    // #873 — page once per dispute-unlink incident: the Razorpay-lookup catch
+    // and the !payment branch below must not both fire for the same webhook.
+    let unlinkAlertRecorded = false;
     if (gateway === "STRIPE" && stripeClient) {
       try {
         const charge = await stripeClient.charges.retrieve(chargeId);
@@ -1059,12 +1079,36 @@ export async function handleDisputeCreated(
             `Failed to fetch Razorpay payment ${chargeId} to link dispute:`,
             error,
           );
+          // PM-4 — without the gateway lookup we can't link the dispute, so
+          // earnings won't be held. The 6h reconcile-disputes cron is the only
+          // backstop; page so it isn't silently dropped for 6h.
+          void recordSystemError({
+            category: "WEBHOOK",
+            summary: `CRITICAL_DISPUTE_UNLINKED: Razorpay payment lookup failed for dispute ${disputeId}`,
+            err: error,
+            context: { disputeId, chargeId, gateway },
+            correlationId: disputeId,
+          }).catch(() => {});
+          unlinkAlertRecorded = true;
         }
       }
     }
 
     if (!payment) {
       console.warn(`Payment not found for dispute: ${disputeId}`);
+      // PM-4 — dispute couldn't be linked to a payment (lookup miss, or the
+      // gateway fetch above threw). Dropping it silently means disputed
+      // earnings stay payable until the 6h reconcile-disputes cron — page on it,
+      // unless the lookup-failure catch above already paged for this incident.
+      if (!unlinkAlertRecorded) {
+        void recordSystemError({
+          category: "WEBHOOK",
+          summary: `CRITICAL_DISPUTE_UNLINKED: no payment matched dispute ${disputeId}`,
+          err: new Error("dispute payment not found"),
+          context: { disputeId, chargeId, gateway },
+          correlationId: disputeId,
+        }).catch(() => {});
+      }
       return;
     }
 
@@ -1078,13 +1122,21 @@ export async function handleDisputeCreated(
       return;
     }
 
-    // Create dispute record
+    // Create dispute record. An unmapped gateway status falls back to the
+    // protective NEEDS_RESPONSE hold — at creation the safe error is to
+    // treat the dispute as live and hold earnings, never to drop it.
+    const createdStatus = mapDisputeStatus(status);
+    if (createdStatus === null) {
+      console.warn(
+        `Unknown dispute status "${status}" for ${disputeId} — defaulting to NEEDS_RESPONSE`,
+      );
+    }
     await tx.dispute.create({
       data: {
         amountPaise: amount,
         currency: toCurrencyEnum(currency),
         reason,
-        status: mapDisputeStatus(status),
+        status: createdStatus ?? "NEEDS_RESPONSE",
         disputeId,
         paymentGateway: gateway,
         dueBy: dueBy ? new Date(dueBy * 1000) : null,
@@ -1115,7 +1167,7 @@ export async function handleDisputeCreated(
       amount,
       currency,
       reason,
-      status: mapDisputeStatus(status),
+      status: createdStatus ?? "NEEDS_RESPONSE",
       dashboardUrl: `${getAppUrl()}/dashboard`,
     });
   });
@@ -1153,6 +1205,16 @@ export async function handleDisputeUpdated(
       }
 
       const mappedStatus = mapDisputeStatus(status);
+      // An unmapped status on the UPDATE path is skipped, not coerced: a
+      // default-to-NEEDS_RESPONSE here could legally mis-advance a
+      // warning-cluster dispute into the live cluster on a status we never
+      // understood. The reconcile cron re-reads the gateway later.
+      if (mappedStatus === null) {
+        console.warn(
+          `Unknown dispute status "${status}" for ${disputeId} — skipping update`,
+        );
+        return;
+      }
 
       // #776 — skip a redelivered no-op so the resolution side effects below (earnings
       // flips, applyOrgChargeback) don't re-run on a webhook retry.
@@ -1181,8 +1243,15 @@ export async function handleDisputeUpdated(
 
       console.log(`✅ Dispute ${disputeId} updated to status ${mappedStatus}`);
 
-      // M1 FIX: Release or refund earnings based on dispute resolution
-      if (mappedStatus === "WON" || mappedStatus === "WARNING_CLOSED") {
+      // M1 FIX: Release or refund earnings based on dispute resolution.
+      // CLOSED releases too: anything still HELD wasn't consumed by a refund
+      // (the refund cascade flips those rows to REFUNDED first), so the
+      // updateMany is a no-op exactly when money already moved.
+      if (
+        mappedStatus === "WON" ||
+        mappedStatus === "WARNING_CLOSED" ||
+        mappedStatus === "CLOSED"
+      ) {
         // Dispute resolved in platform's favor — release held earnings back to READY
         const released = await tx.consultantEarnings.updateMany({
           where: { paymentId: dispute.paymentId, status: "HELD" },
@@ -1304,6 +1373,7 @@ export async function handleDisputeUpdated(
         "LOST",
         "CHARGE_REFUNDED",
         "WARNING_CLOSED",
+        "CLOSED",
       ];
       if (resolvedStatuses.includes(mappedStatus)) {
         const disputePayment = await tx.payment.findUnique({
@@ -1443,38 +1513,6 @@ async function applyOrgChargeback(
   });
 }
 
-function mapDisputeStatus(
-  status: string,
-):
-  | "WARNING_NEEDS_RESPONSE"
-  | "WARNING_UNDER_REVIEW"
-  | "WARNING_CLOSED"
-  | "NEEDS_RESPONSE"
-  | "UNDER_REVIEW"
-  | "CHARGE_REFUNDED"
-  | "WON"
-  | "LOST" {
-  switch (status.toLowerCase()) {
-    case "warning_needs_response":
-      return "WARNING_NEEDS_RESPONSE";
-    case "warning_under_review":
-      return "WARNING_UNDER_REVIEW";
-    case "warning_closed":
-      return "WARNING_CLOSED";
-    case "needs_response":
-      return "NEEDS_RESPONSE";
-    case "under_review":
-      return "UNDER_REVIEW";
-    case "charge_refunded":
-      return "CHARGE_REFUNDED";
-    case "won":
-      return "WON";
-    case "lost":
-      return "LOST";
-    default:
-      return "NEEDS_RESPONSE";
-  }
-}
 
 // ============================================================================
 // Webhook Event Logging
@@ -1735,6 +1773,9 @@ export async function handleRazorpayPayoutWebhook(
     payoutData.id,
     status,
     payoutData.failure_reason,
+    // UTR — forward the bank reference so a completing consultant payout
+    // persists it, mirroring the org branch above.
+    payoutData.utr,
   );
 
   console.log(

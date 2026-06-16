@@ -359,6 +359,10 @@ export async function applyRefundCascade(
   // Step 4: Reverse PaymentLegs proportionally with last-leg-absorbs-remainder.
   // -----------------------------------------------------------------------
   let legsReversed = 0;
+  // #835 follow-up — captured from walletCredit so Step 9's WALLET ledger
+  // posting attributes to the same org as the wallet balance and audit row
+  // (payment.organizationId is null on org-wallet-funded B2C payments).
+  let walletOwnerOrgId: string | null = null;
   // legAmounts holds only positive legs — LICENSE/zero-value legs are excluded
   // here so they never skew the proportional split.
   const legAmounts: Array<{
@@ -390,12 +394,37 @@ export async function applyRefundCascade(
             `Payment ${payment.id} has WALLET leg ${leg.id} but no billingAccountId; cannot credit refund`,
           );
         }
-        await walletCredit(tx, {
+        const credit = await walletCredit(tx, {
           billingAccountId: payment.billingAccountId,
           amountPaise: reverse,
           reason: "REFUND",
           paymentId: payment.id,
           notes: `Refund cascade: ${input.reason}`,
+        });
+        walletOwnerOrgId = credit.ownerOrgId;
+
+        // #835 — the org's wallet just lost money to a consumer refund;
+        // surface it on the org audit feed at the funding level. The
+        // billing account's owner org is the fallback because a B2C
+        // booking funded by an org wallet may carry no organizationId on
+        // the Payment row itself — that was the invisible path.
+        await tx.orgAuditLog.create({
+          data: {
+            organizationId: payment.organizationId ?? credit.ownerOrgId,
+            actorMembershipId: null,
+            category: "WALLET",
+            action: AUDIT_ACTIONS.WALLET.WALLET_REFUND,
+            description: `Refund ${input.refundId}: ${reverse} paise credited back to org wallet`,
+            details: {
+              paymentId: payment.id,
+              refundId: input.refundId,
+              legId: leg.id,
+              amountPaise: reverse,
+              balanceAfterPaise: credit.balanceAfter,
+              reason: input.reason,
+              initiatedByUserId: input.initiatedByUserId ?? null,
+            } as Prisma.InputJsonValue,
+          },
         });
         break;
       }
@@ -745,7 +774,12 @@ export async function applyRefundCascade(
           break;
         case "WALLET":
           kind = "WALLET";
-          organizationId = orgId;
+          // Same attribution as the wallet balance/audit row and the TOPUP
+          // posting (wallet.ts): the wallet's OWNER org, falling back from
+          // the payment tag. Keying off payment.organizationId alone posted
+          // org-wallet-funded B2C refunds to a null-org WALLET account —
+          // guaranteed WALLET_BALANCE_DRIFT at reconcile.
+          organizationId = orgId ?? walletOwnerOrgId;
           break;
         case "INVOICE_ACCRUAL":
         case "OVERAGE_INVOICE_ACCRUAL":

@@ -2,10 +2,10 @@ name: IRP IRN Uploader
 
 on:
   schedule:
-    # 02:30 UTC = 08:00 IST. Picked to sit between expire-contracts (03:00)
-    # and cleanup-abandoned-org-top-ups (02:00) without colliding. Daily
-    # cadence matches the CBIC 30-day retroactive IRN window.
-    - cron: "30 2 * * *"
+    # 02:50 UTC = 08:20 IST. #709 — moved off the 02:30 4-way pile-up
+    # (auto-renew / stale-invitations / overage-sweep) onto its own minute.
+    # Daily cadence matches the CBIC 30-day retroactive IRN window.
+    - cron: "50 2 * * *"
   workflow_dispatch: # Allow manual triggering
 
 jobs:
@@ -54,6 +54,6 @@ jobs:
 
       - name: Notify on failure
         if: failure()
-        run: |
-          echo "IRP IRN uploader cron failed"
-          # TODO: wire to #ops-alerts Slack channel.
+        env:
+          SLACK_OPS_WEBHOOK_URL: ${{ secrets.SLACK_OPS_WEBHOOK_URL }}
+        run: bash scripts/ci/notify-ops-failure.sh "irp-uploader"

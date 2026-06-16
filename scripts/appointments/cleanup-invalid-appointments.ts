@@ -19,7 +19,7 @@
  * Action: Marks invalid records as CANCELLED (preserves audit trail)
  */
 
-import { RequestStatus } from "@prisma/client";
+import { AppointmentStatus } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 
@@ -37,10 +37,10 @@ export interface CleanupResult {
 }
 
 // Statuses that should not be cleaned up (already terminal)
-const TERMINAL_STATUSES: RequestStatus[] = [
-  RequestStatus.CANCELLED,
-  RequestStatus.REJECTED,
-  RequestStatus.EXPIRED,
+const TERMINAL_STATUSES: AppointmentStatus[] = [
+  AppointmentStatus.CANCELLED,
+  AppointmentStatus.REJECTED,
+  AppointmentStatus.EXPIRED,
 ];
 
 /**
@@ -83,7 +83,7 @@ export async function cleanupDuplicateConsultations(): Promise<{
   try {
     // Fetch all non-terminal consultations with their slot data
     const consultations = await prisma.consultation.findMany({
-      where: { requestStatus: { notIn: TERMINAL_STATUSES } },
+      where: { status: { notIn: TERMINAL_STATUSES } },
       select: {
         id: true,
         requestedById: true,
@@ -179,7 +179,7 @@ export async function cleanupDuplicateConsultations(): Promise<{
       // Then cancel the consultations
       const result = await prisma.consultation.updateMany({
         where: { id: { in: duplicateIds } },
-        data: { requestStatus: RequestStatus.CANCELLED },
+        data: { status: AppointmentStatus.CANCELLED },
       });
       cancelledCount = result.count;
       console.log(`✅ Cancelled ${cancelledCount} duplicate consultations`);
@@ -219,7 +219,7 @@ export async function cleanupDuplicateSubscriptions(): Promise<{
   try {
     // Fetch all non-terminal subscriptions
     const subscriptions = await prisma.subscription.findMany({
-      where: { requestStatus: { notIn: TERMINAL_STATUSES } },
+      where: { status: { notIn: TERMINAL_STATUSES } },
       select: {
         id: true,
         requestedById: true,
@@ -295,7 +295,7 @@ export async function cleanupDuplicateSubscriptions(): Promise<{
       // Then cancel the subscriptions
       const result = await prisma.subscription.updateMany({
         where: { id: { in: duplicateIds } },
-        data: { requestStatus: RequestStatus.CANCELLED },
+        data: { status: AppointmentStatus.CANCELLED },
       });
       cancelledCount = result.count;
       console.log(`✅ Cancelled ${cancelledCount} duplicate subscriptions`);
@@ -331,7 +331,7 @@ export async function cleanupInvalidDurationConsultations(): Promise<{
   try {
     // Fetch consultations with their plan and slots
     const consultations = await prisma.consultation.findMany({
-      where: { requestStatus: { notIn: TERMINAL_STATUSES } },
+      where: { status: { notIn: TERMINAL_STATUSES } },
       include: {
         consultationPlan: { select: { durationInHours: true } },
         appointment: {
@@ -387,7 +387,7 @@ export async function cleanupInvalidDurationConsultations(): Promise<{
       // Then cancel the consultations
       const result = await prisma.consultation.updateMany({
         where: { id: { in: invalidIds } },
-        data: { requestStatus: RequestStatus.CANCELLED },
+        data: { status: AppointmentStatus.CANCELLED },
       });
       cancelledCount = result.count;
       console.log(
@@ -427,7 +427,7 @@ export async function cleanupInvalidDurationSubscriptions(): Promise<{
   try {
     // Fetch subscriptions with their plans
     const subscriptions = await prisma.subscription.findMany({
-      where: { requestStatus: { notIn: TERMINAL_STATUSES } },
+      where: { status: { notIn: TERMINAL_STATUSES } },
       include: {
         subscriptionPlan: { select: { durationInMonths: true } },
       },
@@ -473,7 +473,7 @@ export async function cleanupInvalidDurationSubscriptions(): Promise<{
       // Then cancel the subscriptions
       const result = await prisma.subscription.updateMany({
         where: { id: { in: invalidIds } },
-        data: { requestStatus: RequestStatus.CANCELLED },
+        data: { status: AppointmentStatus.CANCELLED },
       });
       cancelledCount = result.count;
       console.log(

@@ -11,7 +11,7 @@
 | **Scheduling period**    | None                      | Required [startDate, endDate]                            | None                      | Required [startDate, endDate]                               | None                             |
 | **Appointments created** | 1                         | 1 per call (many)                                        | 1                         | 1 per session (many)                                        | 1                                |
 | **Weekly limit**         | N/A                       | `callsPerWeek` (0-7)                                     | N/A                       | `meetingsPerWeek`                                           | N/A                              |
-| **Status field**         | `requestStatus`           | `requestStatus`                                          | `status`                  | `status`                                                    | `status` (TrialSessionStatus)    |
+| **Status field**         | `status`           | `status`                                          | `status`                  | `status`                                                    | `status` (TrialSessionStatus)    |
 | **Allocation modes**     | auto, manual, requested   | auto, manual, requested                                  | auto, manual              | auto, manual                                                | Consultant-scheduled             |
 | **Min duration**         | 0.5h                      | 0.5h per session                                         | 0.5h                      | 0.5h per session                                            | 0.5h (fixed)                     |
 | **Payment**              | Required                  | Required                                                 | Required                  | Required                                                    | Free                             |
@@ -58,7 +58,7 @@ Recurring sessions over a period of months. Most complex event type.
 **Rules**:
 
 - All slots within scheduling period [startDate, endDate]
-- Max 1 call per day (consecutive slots within that call)
+- Max 1 call per **local** day (consecutive slots within that call). The same-day check runs against the browser's local calendar day via `Date.toDateString()` (see `useSlotAllocation.ts`), so a session that straddles midnight UTC is still one local day for the user; it is not a UTC-day check.
 - Weekly limit: `callsPerWeek` calls per Sunday-Saturday week
 - Weekly distribution validation counts **calls** (complete session groups), not raw slots
 
@@ -76,8 +76,8 @@ flowchart TD
     E -->|Yes| F[Group by week]
     F --> G{Weekly limit respected?}
     G -->|No| X4[Error: too many calls/week]
-    G -->|Yes| H{Max 1 call per day?}
-    H -->|No| X5[Error: multiple calls same day]
+    G -->|Yes| H{Max 1 call per local day?}
+    H -->|No| X5[Error: multiple calls same local day]
     H -->|Yes| I[Valid]
 ```
 
@@ -244,7 +244,7 @@ Prisma enforces:
 
 - Foreign key relationships (appointment -> event, slot -> appointment)
 - NOT NULL constraints on required fields
-- Enum constraints (`AppointmentsType`, `RequestStatus`, `DayOfWeek`)
+- Enum constraints (`AppointmentsType`, `AppointmentStatus`, `DayOfWeek`)
 - All appointment creation runs inside a Prisma transaction with 60-second timeout
 
 ---

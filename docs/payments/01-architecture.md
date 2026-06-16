@@ -19,7 +19,7 @@
 
 ## Overview
 
-The payment system supports multiple payment gateways (Stripe, Razorpay) with planned support for Lemon Squeezy and XFlow. It handles four appointment types:
+The payment system uses **Razorpay** as the sole active payment gateway (Stripe, Lemon Squeezy, and XFlow removed — see [gateways/gateway-evaluation-mar-2026.md](./gateways/gateway-evaluation-mar-2026.md)). It handles four appointment types:
 
 | Type             | Description          | Slot Handling                      |
 | ---------------- | -------------------- | ---------------------------------- |
@@ -127,7 +127,7 @@ The payment system supports multiple payment gateways (Stripe, Razorpay) with pl
 +----------------------+       +----------------------+
 | id                   |       | id                   |
 | consultationPlanId   |       | subscriptionPlanId   |
-| requestStatus        |       | requestStatus        |
+| status (AppointmentStatus) |  | status (AppointmentStatus) |
 | requestedById        |       | requestedById        |
 | pendingPaymentUrl    |       | pendingPaymentUrl    |
 | bookingSource        |       | schedulingPeriod*    |
@@ -158,11 +158,12 @@ DisputeStatus:
   WON                      -> Dispute won
   LOST                     -> Dispute lost
 
-RequestStatus:
+AppointmentStatus:
   PENDING                  -> Awaiting approval
   APPROVED                 -> Approved by consultant
   APPROVED_PENDING_PAYMENT -> Approved, awaiting payment
   SCHEDULED                -> Fully booked
+  COMPLETED                -> Session completed
   REJECTED                 -> Request rejected
   CANCELLED                -> Cancelled
   EXPIRED                  -> Expired
@@ -234,7 +235,7 @@ RequestStatus:
 | `lib/payments/core/types.ts`                 | Payment type definitions        |
 | `lib/payments/core/stripe.ts`                | Stripe gateway implementation   |
 | `lib/payments/core/razorpay.ts`              | Razorpay gateway implementation |
-| `lib/payments/operations/appointmentlock.ts` | Distributed locking             |
+| `utils/appointmentlock.ts`                   | Distributed locking             |
 
 ### Admin Dashboard Pages
 
@@ -276,7 +277,7 @@ RequestStatus:
 |  CHECKOUT PAGE: /checkout/plans/[type]/[planId]                                   |
 |  ------------------------------------------------------------------------------   |
 |  URL Search Params:                                                               |
-|  - CONSULTATION: slotStartTimeInUTC, slotEndTimeInUTC, slotOfAvailability*Id      |
+|  - CONSULTATION: startsAt, endsAt, slotOfAvailability*Id                          |
 |  - SUBSCRIPTION: schedulingPeriodStartsAt, schedulingPeriodEndsAt                 |
 |  - WEBINAR/CLASS: eventId                                                         |
 |  - Optional: discountCode, notes                                                  |
@@ -352,7 +353,7 @@ RequestStatus:
 +-----------------------------------------------------------------------------------+
 |  STEP 2: ACQUIRE DISTRIBUTED LOCK                                                 |
 |  ------------------------------------------------------------------------------   |
-|  File: lib/payments/operations/appointmentlock.ts                                 |
+|  File: utils/appointmentlock.ts                                                   |
 |  - CONSULTATION/SUBSCRIPTION (direct): Lock on slot ID                            |
 |  - WEBINAR/CLASS: Lock on event ID                                                |
 |  - Prevents race conditions during concurrent checkouts                           |
@@ -602,9 +603,9 @@ RequestStatus:
 | **Stripe**   | `charge.dispute.created`        | `handleDisputeCreated()` |
 | **Stripe**   | `charge.dispute.updated`        | `handleDisputeUpdated()` |
 | **Stripe**   | `charge.dispute.closed`         | `handleDisputeUpdated()` |
-| **Razorpay** | `payment.captured`              | `handlePaymentSuccess()` |
-| **Razorpay** | `order.paid`                    | `handlePaymentSuccess()` |
-| **Razorpay** | `payment.failed`                | `handlePaymentFailure()` |
+| **Razorpay** | `payment.captured`              | `razorpay-dispatch.ts` → routes by `notes.type`: `credit_purchase`/`invoice_payment` → `handleOrgPaymentSuccess()`; `overage_member` → `handleOverageMemberSuccess()`; B2C → `handlePaymentSuccess()` |
+| **Razorpay** | `order.paid`                    | `razorpay-dispatch.ts` → same routing by `notes.type` as `payment.captured` |
+| **Razorpay** | `payment.failed`                | `razorpay-dispatch.ts` → routes by `notes.type`: org paths → `handleOrgPaymentFailure()`; B2C → `handlePaymentFailure()` |
 | **Razorpay** | `refund.created`                | `handleRefundCreated()`  |
 | **Razorpay** | `refund.processed`              | `handleRefundCreated()`  |
 | **Razorpay** | `refund.failed`                 | `handleRefundCreated()`  |
@@ -1130,10 +1131,10 @@ RequestStatus:
 |  ALSO: EXPIRED APPROVAL-PENDING CONSULTATIONS                                     |
 |  ------------------------------------------------------------------------------   |
 |  WHERE:                                                                           |
-|    requestStatus = APPROVED_PENDING_PAYMENT                                       |
+|    status = APPROVED_PENDING_PAYMENT                                              |
 |    updatedAt < (now - 48 hours)                                                   |
 |  ACTION:                                                                          |
-|    - Revert to requestStatus = PENDING                                            |
+|    - Revert to status = PENDING                                                   |
 |    - Clear pendingPaymentUrl                                                      |
 |    - Add note: "[System] Payment link expired..."                                 |
 |    - Mark payment as FAILED                                                       |
@@ -1430,20 +1431,22 @@ STRIPE_SECRET_KEY=
 STRIPE_WEBHOOK_SECRET=
 NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=
 
-# Razorpay
+# Razorpay (Payments)
 RAZORPAY_KEY_ID=
 RAZORPAY_SECRET=
 RAZORPAY_WEBHOOK_SECRET=
 NEXT_PUBLIC_RAZORPAY_KEY_ID=
 
+# RazorpayX (Payouts)
+RAZORPAYX_KEY_ID=
+RAZORPAYX_KEY_SECRET=
+RAZORPAYX_ACCOUNT_NUMBER=
+RAZORPAYX_WEBHOOK_SECRET=
+
 # Cron Jobs
 CRON_SECRET=
 # or
 VERCEL_CRON_SECRET=
-
-# Optional: Future Gateways
-LEMON_SQUEEZY_API_KEY=
-XFLOW_SECRET_KEY=
 ```
 
 ### Key API Endpoints

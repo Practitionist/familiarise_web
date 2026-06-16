@@ -34,6 +34,7 @@ import { CompanyLogo } from "@/components/ui/company-logo";
 import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import RazorpayCheckout from "../../../components/RazorpayCheckout";
 import StripeCheckout from "../../../components/StripeCheckout";
+import { createHandleApiError } from "../../utils";
 import { calculatePricing, formatPercentage } from "../../math";
 import { useCurrency } from "@/hooks/useCurrency";
 import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
@@ -233,51 +234,10 @@ export default function ConsultationCheckoutPage({
     }
   }, [resolvedSearchParams, toast]);
 
-  // Common error handling logic
-  const handleApiError = useCallback(
-    (errorData: { error?: string; errorType?: string }) => {
-      const errorMessage = errorData.error || "Operation failed";
-      const errorType = errorData.errorType || "UNKNOWN_ERROR";
-
-      const errorMessages = {
-        PAYMENT_CONFIG_ERROR: {
-          title: "Payment System Error",
-          description: "Payment system unavailable. Please contact support.",
-        },
-        PAYMENT_PROCESSING_ERROR: {
-          title: "Payment Error",
-          description: "Payment processing error. Please try again later.",
-        },
-        DATABASE_ERROR: {
-          title: "System Error",
-          description: "System error. Please try again.",
-        },
-        NOT_FOUND_ERROR: {
-          title: "Not Found",
-          description: errorMessage,
-        },
-        AVAILABILITY_ERROR: {
-          title: "Booking Unavailable",
-          description: errorMessage,
-        },
-        UNKNOWN_ERROR: {
-          title: "Operation Failed",
-          description: errorMessage,
-        },
-      };
-
-      const error =
-        errorMessages[errorType as keyof typeof errorMessages] ||
-        errorMessages.UNKNOWN_ERROR;
-
-      toast({
-        title: error.title,
-        description: error.description,
-        variant: "destructive",
-      });
-    },
-    [toast],
-  );
+  // Shared error map covers slot-conflict types (AVAILABILITY, LOCK_CONTENTION)
+  // so a slot taken mid-checkout shows a clear "pick another time" toast.
+  // Matches subscription/class/webinar pages (de-dupes the old inline map).
+  const handleApiError = useMemo(() => createHandleApiError(toast), [toast]);
 
   // Common API request logic
   const makeCheckoutRequest = useCallback(
@@ -338,8 +298,8 @@ export default function ConsultationCheckoutPage({
           appointmentType: "CONSULTATION",
           planId: resolvedParams.planId,
           paymentGateway: gateway as PaymentGateway,
-          slotStartTimeInUTC: validatedSearchParams.slotStartTimeInUTC,
-          slotEndTimeInUTC: validatedSearchParams.slotEndTimeInUTC,
+          startsAt: validatedSearchParams.startsAt,
+          endsAt: validatedSearchParams.endsAt,
           slotOfAvailabilityWeeklyId:
             validatedSearchParams.slotOfAvailabilityWeeklyId,
           slotOfAvailabilityCustomId:
@@ -446,7 +406,7 @@ export default function ConsultationCheckoutPage({
         }
 
         // Staleness check: verify the selected slot hasn't passed or is too soon
-        const slotStart = new Date(validatedSearchParams.slotStartTimeInUTC);
+        const slotStart = new Date(validatedSearchParams.startsAt);
         const now = new Date();
         if (
           slotStart.getTime() <
@@ -530,7 +490,7 @@ export default function ConsultationCheckoutPage({
     if (!validatedSearchParams) return;
 
     const checkStaleness = () => {
-      const slotStart = new Date(validatedSearchParams.slotStartTimeInUTC);
+      const slotStart = new Date(validatedSearchParams.startsAt);
       const now = new Date();
       const minutesUntilSlot =
         (slotStart.getTime() - now.getTime()) / (60 * 1000);
@@ -652,7 +612,7 @@ export default function ConsultationCheckoutPage({
               <div>
                 {validatedSearchParams
                   ? new Date(
-                      validatedSearchParams.slotStartTimeInUTC,
+                      validatedSearchParams.startsAt,
                     ).toLocaleDateString(undefined, {
                       weekday: "long",
                       year: "numeric",
@@ -667,9 +627,9 @@ export default function ConsultationCheckoutPage({
               <div>
                 {validatedSearchParams
                   ? `${new Date(
-                      validatedSearchParams.slotStartTimeInUTC,
+                      validatedSearchParams.startsAt,
                     ).toLocaleTimeString()} - ${new Date(
-                      validatedSearchParams.slotEndTimeInUTC,
+                      validatedSearchParams.endsAt,
                     ).toLocaleTimeString()} (${Intl.DateTimeFormat().resolvedOptions().timeZone})`
                   : "—"}
               </div>
@@ -909,10 +869,10 @@ export default function ConsultationCheckoutPage({
                             appointmentType: "CONSULTATION",
                             planId: resolvedParams.planId,
                             paymentGateway: "RAZORPAY",
-                            slotStartTimeInUTC:
-                              validatedSearchParams.slotStartTimeInUTC,
-                            slotEndTimeInUTC:
-                              validatedSearchParams.slotEndTimeInUTC,
+                            startsAt:
+                              validatedSearchParams.startsAt,
+                            endsAt:
+                              validatedSearchParams.endsAt,
                             slotOfAvailabilityWeeklyId:
                               validatedSearchParams.slotOfAvailabilityWeeklyId,
                             slotOfAvailabilityCustomId:
@@ -941,15 +901,15 @@ export default function ConsultationCheckoutPage({
                             code?: string;
                             reason?: string;
                             message?: string;
-                          }) => {
-                            toast({
-                              title: "Payment Failed",
-                              description:
-                                error.description ||
-                                "Something went wrong while processing your payment. Please try again.",
-                              variant: "destructive",
-                            });
-                          }}
+                          }) =>
+                            handleApiError({
+                              error:
+                                error.description ??
+                                error.message ??
+                                error.reason,
+                              errorType: error.code,
+                            })
+                          }
                         />
                       ) : validatedSearchParams &&
                         gateway.gateway === "STRIPE" ? (
@@ -958,10 +918,10 @@ export default function ConsultationCheckoutPage({
                             appointmentType: "CONSULTATION",
                             planId: resolvedParams.planId,
                             paymentGateway: "STRIPE",
-                            slotStartTimeInUTC:
-                              validatedSearchParams.slotStartTimeInUTC,
-                            slotEndTimeInUTC:
-                              validatedSearchParams.slotEndTimeInUTC,
+                            startsAt:
+                              validatedSearchParams.startsAt,
+                            endsAt:
+                              validatedSearchParams.endsAt,
                             slotOfAvailabilityWeeklyId:
                               validatedSearchParams.slotOfAvailabilityWeeklyId,
                             slotOfAvailabilityCustomId:
@@ -989,16 +949,13 @@ export default function ConsultationCheckoutPage({
                           onPaymentError={(error: {
                             message?: string;
                             description?: string;
-                          }) => {
-                            toast({
-                              title: "Payment Failed",
-                              description:
-                                error.message ||
-                                error.description ||
-                                "Something went wrong while processing your payment. Please try again.",
-                              variant: "destructive",
-                            });
-                          }}
+                            errorType?: string;
+                          }) =>
+                            handleApiError({
+                              error: error.message ?? error.description,
+                              errorType: error.errorType,
+                            })
+                          }
                         />
                       ) : null}
                       {/* Mock Payment Button - development only */}

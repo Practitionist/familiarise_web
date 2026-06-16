@@ -6,7 +6,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { AppointmentsType, RequestStatus } from "@prisma/client";
+import { AppointmentsType, AppointmentStatus } from "@prisma/client";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
@@ -19,7 +19,7 @@ interface ConsultationRequestItem {
   consultationPlan?: { title?: string };
   requestedBy: RequestUser;
   requestedAt: string;
-  requestStatus: string;
+  status: string;
 }
 
 interface SubscriptionRequestItem {
@@ -27,7 +27,7 @@ interface SubscriptionRequestItem {
   subscriptionPlan?: { title?: string };
   requestedBy: RequestUser;
   requestedAt: string;
-  requestStatus: string;
+  status: string;
 }
 
 interface Request {
@@ -36,7 +36,7 @@ interface Request {
   title: string;
   requestedBy: RequestUser;
   requestedAt: string;
-  status: RequestStatus;
+  status: AppointmentStatus;
 }
 
 export function RequestSlotAllocationTabMini() {
@@ -52,10 +52,10 @@ export function RequestSlotAllocationTabMini() {
         setLoading(true);
         const [consultationsRes, subscriptionsRes] = await Promise.all([
           fetch(
-            `/api/events/consultations?consultantProfileId=${consultantId}&status=PENDING`,
+            `/api/bookings/consultations?consultantProfileId=${consultantId}&status=PENDING`,
           ),
           fetch(
-            `/api/events/subscriptions?consultantProfileId=${consultantId}&status=PENDING`,
+            `/api/bookings/subscriptions?consultantProfileId=${consultantId}&status=PENDING`,
           ),
         ]);
 
@@ -69,7 +69,7 @@ export function RequestSlotAllocationTabMini() {
               title: c.consultationPlan?.title || "Untitled Plan",
               requestedBy: { user: { name: c.requestedBy.user.name } },
               requestedAt: c.requestedAt,
-              status: c.requestStatus,
+              status: c.status,
             })),
           );
         }
@@ -83,7 +83,7 @@ export function RequestSlotAllocationTabMini() {
               title: s.subscriptionPlan?.title || "Untitled Plan",
               requestedBy: { user: { name: s.requestedBy.user.name } },
               requestedAt: s.requestedAt,
-              status: s.requestStatus,
+              status: s.status,
             })),
           );
         }

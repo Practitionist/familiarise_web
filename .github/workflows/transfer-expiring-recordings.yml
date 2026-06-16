@@ -3,7 +3,7 @@ name: Transfer Expiring Recordings
 on:
   schedule:
     # Run every 6 hours
-    - cron: "0 */6 * * *"
+    - cron: "58 */6 * * *"
   workflow_dispatch: # Allow manual triggering
 
 jobs:
@@ -22,6 +22,8 @@ jobs:
       NEXT_PUBLIC_STREAM_API_KEY: ${{ secrets.NEXT_PUBLIC_STREAM_API_KEY }}
       NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      # #689 — STREAM_ONLY expiry-warning emails now fire from this cron via Novu.
+      NOVU_SECRET_KEY: ${{ secrets.NOVU_SECRET_KEY }}
 
     steps:
       - name: Checkout code
@@ -44,5 +46,6 @@ jobs:
 
       - name: Notify on failure
         if: failure()
-        run: |
-          echo "Transfer expiring recordings job failed"
+        env:
+          SLACK_OPS_WEBHOOK_URL: ${{ secrets.SLACK_OPS_WEBHOOK_URL }}
+        run: bash scripts/ci/notify-ops-failure.sh "transfer-expiring-recordings"

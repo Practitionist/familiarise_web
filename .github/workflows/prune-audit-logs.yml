@@ -27,5 +27,8 @@ jobs:
       - run: npm ci
       - run: npx prisma generate
       - run: npx tsx jobs/cleanup/prune-audit-logs.ts
-      - if: failure()
-        run: echo "Audit log retention sweep failed"
+      - name: Notify on failure
+        if: failure()
+        env:
+          SLACK_OPS_WEBHOOK_URL: ${{ secrets.SLACK_OPS_WEBHOOK_URL }}
+        run: bash scripts/ci/notify-ops-failure.sh "prune-audit-logs"

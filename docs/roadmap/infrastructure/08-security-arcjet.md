@@ -442,7 +442,7 @@ export async function POST(req: NextRequest) {
 | `/api/webhooks/*`           | 200/min    | Allow automated      | ✅     | High limit for providers |
 | `/api/checkout/*`           | 10/hour    | Block all            | ✅     | Per user ID              |
 | `/api/user/*`               | 60/min     | Allow search engines | ✅     | Standard API limit       |
-| `/api/events/*`             | 60/min     | Allow search engines | ✅     | Standard API limit       |
+| `/api/bookings/*`             | 60/min     | Allow search engines | ✅     | Standard API limit       |
 | `/api/admin/*`              | 200/min    | Block all            | ✅     | Higher for admin         |
 
 ### Implementation

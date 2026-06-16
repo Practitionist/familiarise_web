@@ -22,7 +22,7 @@ import prisma from "../../lib/prisma";
 import {
   WebinarStatus,
   ClassStatus,
-  RequestStatus,
+  AppointmentStatus,
   TrialSessionStatus,
 } from "@prisma/client";
 import { notifyAppointmentCompleted } from "../../lib/novu/service";
@@ -218,7 +218,7 @@ async function completeConsultations(): Promise<{
   // Find APPROVED or SCHEDULED consultations where all slots have ended
   const consultationsToComplete = await prisma.consultation.findMany({
     where: {
-      requestStatus: { in: [RequestStatus.APPROVED, RequestStatus.SCHEDULED] },
+      status: { in: [AppointmentStatus.APPROVED, AppointmentStatus.SCHEDULED] },
       appointment: {
         slotsOfAppointment: {
           some: {
@@ -262,7 +262,7 @@ async function completeConsultations(): Promise<{
       const lastSlot = consultation.appointment?.slotsOfAppointment[0];
       console.log(`\nCompleting consultation ${consultation.id}`);
       console.log(`   Title: ${consultation.consultationPlan.title}`);
-      console.log(`   Previous status: ${consultation.requestStatus}`);
+      console.log(`   Previous status: ${consultation.status}`);
       console.log(
         `   Last slot ended: ${lastSlot?.endsAt?.toISOString() || "Unknown"}`,
       );
@@ -272,9 +272,9 @@ async function completeConsultations(): Promise<{
       const moved = await prisma.consultation.updateMany({
         where: {
           id: consultation.id,
-          requestStatus: { in: REQUEST_ALLOWED_FROM.COMPLETED },
+          status: { in: REQUEST_ALLOWED_FROM.COMPLETED },
         },
-        data: { requestStatus: RequestStatus.COMPLETED },
+        data: { status: AppointmentStatus.COMPLETED },
       });
       if (moved.count === 0) {
         console.log(`   ⏭️ Skipped — status changed since sweep read`);
@@ -334,7 +334,7 @@ async function completeSubscriptions(): Promise<{
   // Find APPROVED or SCHEDULED subscriptions where all slots have ended
   const subscriptionsToComplete = await prisma.subscription.findMany({
     where: {
-      requestStatus: { in: [RequestStatus.APPROVED, RequestStatus.SCHEDULED] },
+      status: { in: [AppointmentStatus.APPROVED, AppointmentStatus.SCHEDULED] },
       appointments: {
         some: {
           slotsOfAppointment: {
@@ -392,7 +392,7 @@ async function completeSubscriptions(): Promise<{
 
       console.log(`\nCompleting subscription ${subscription.id}`);
       console.log(`   Title: ${subscription.subscriptionPlan.title}`);
-      console.log(`   Previous status: ${subscription.requestStatus}`);
+      console.log(`   Previous status: ${subscription.status}`);
       console.log(
         `   Last slot ended: ${latestEnd?.toISOString() || "Unknown"}`,
       );
@@ -402,9 +402,9 @@ async function completeSubscriptions(): Promise<{
       const moved = await prisma.subscription.updateMany({
         where: {
           id: subscription.id,
-          requestStatus: { in: REQUEST_ALLOWED_FROM.COMPLETED },
+          status: { in: REQUEST_ALLOWED_FROM.COMPLETED },
         },
-        data: { requestStatus: RequestStatus.COMPLETED },
+        data: { status: AppointmentStatus.COMPLETED },
       });
       if (moved.count === 0) {
         console.log(`   ⏭️ Skipped — status changed since sweep read`);

@@ -269,7 +269,7 @@ describe("getSlotStatus", () => {
           },
         ],
         consultation: {
-          requestStatus: "APPROVED",
+          status: "APPROVED",
           consultationPlan: { title: "Test" },
           requestedBy: { user: { name: "Alice" } },
         },
@@ -300,7 +300,7 @@ describe("getSlotStatus", () => {
           },
         ],
         consultation: {
-          requestStatus: "APPROVED",
+          status: "APPROVED",
         },
       },
     ];
@@ -326,7 +326,7 @@ describe("getSlotStatus", () => {
             endsAt: local(10, 0).toISOString(),
           },
         ],
-        consultation: { requestStatus: "APPROVED" },
+        consultation: { status: "APPROVED" },
       },
       {
         id: "apt-2",
@@ -337,7 +337,7 @@ describe("getSlotStatus", () => {
             endsAt: local(10, 0).toISOString(),
           },
         ],
-        subscription: { requestStatus: "APPROVED" },
+        subscription: { status: "APPROVED" },
       },
     ];
 
@@ -732,7 +732,7 @@ describe("getAppointmentTitle", () => {
       id: "1",
       appointmentType: AppointmentsType.CONSULTATION,
       consultation: {
-        requestStatus: "APPROVED",
+        status: "APPROVED",
         consultationPlan: { title: "Career Guidance" },
       },
     };
@@ -744,7 +744,7 @@ describe("getAppointmentTitle", () => {
       id: "1",
       appointmentType: AppointmentsType.SUBSCRIPTION,
       subscription: {
-        requestStatus: "APPROVED",
+        status: "APPROVED",
         subscriptionPlan: { title: "Weekly Mentoring" },
       },
     };
@@ -784,7 +784,7 @@ describe("getAppointmentUser", () => {
       id: "1",
       appointmentType: AppointmentsType.CONSULTATION,
       consultation: {
-        requestStatus: "APPROVED",
+        status: "APPROVED",
         requestedBy: { user: { name: "Alice" } },
       },
     };
@@ -796,7 +796,7 @@ describe("getAppointmentUser", () => {
       id: "1",
       appointmentType: AppointmentsType.SUBSCRIPTION,
       subscription: {
-        requestStatus: "APPROVED",
+        status: "APPROVED",
         requestedBy: { user: { name: "Bob" } },
       },
     };

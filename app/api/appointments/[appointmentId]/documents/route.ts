@@ -6,6 +6,8 @@ import {
   uploadAppointmentDocument,
   getManualBucketInstructions,
 } from "@/lib/supabase";
+import { applyRateLimit, documentUploadLimiter } from "@/lib/rate-limit";
+import { isBookingTerminal } from "@/lib/appointments/terminal-status";
 
 // GET - List documents for an appointment
 export async function GET(
@@ -149,6 +151,21 @@ export async function GET(
       );
     }
 
+    // DOC-1 (#694) — block listing once the parent booking is terminal
+    // (cancelled/refunded/rejected/expired); prior code only checked requester
+    // identity, leaving documents visible after a refund.
+    if (isBookingTerminal(appointment)) {
+      return NextResponse.json(
+        {
+          error: "Documents unavailable",
+          message:
+            "This appointment has been cancelled or closed, so its documents are no longer available.",
+          code: "APPOINTMENT_TERMINAL",
+        },
+        { status: 403 },
+      );
+    }
+
     // Get appointment details for better error context
     const appointmentTitle =
       appointment.consultation?.consultationPlan?.title ||
@@ -283,6 +300,13 @@ export async function POST(
         { status: 401 },
       );
     }
+
+    // DOC-2 (#694) — throttle uploads per user before any storage/DB work.
+    const rateLimited = await applyRateLimit(
+      documentUploadLimiter,
+      session.user.id,
+    );
+    if (rateLimited) return rateLimited;
 
     const { appointmentId } = await params;
 

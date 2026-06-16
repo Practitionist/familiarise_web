@@ -16,7 +16,7 @@
  * - Issue #10: Re-check payment status before cleanup to handle webhooks
  */
 
-import { PaymentStatus, PaymentGateway, RequestStatus } from "@prisma/client";
+import { PaymentStatus, PaymentGateway, AppointmentStatus } from "@prisma/client";
 import Stripe from "stripe";
 import { cancelRazorpayOrder } from "../../lib/payments/core/razorpay";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
@@ -409,7 +409,7 @@ async function cleanupExpiredApprovalPendingPaymentsUnlocked(): Promise<CleanupR
     // Find consultations stuck in APPROVED_PENDING_PAYMENT with expired payments
     const expiredConsultations = await prisma.consultation.findMany({
       where: {
-        requestStatus: RequestStatus.APPROVED_PENDING_PAYMENT,
+        status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
         appointment: {
           payment: {
             some: {
@@ -445,7 +445,7 @@ async function cleanupExpiredApprovalPendingPaymentsUnlocked(): Promise<CleanupR
           // Update consultation status to REJECTED
           await tx.consultation.update({
             where: { id: consultation.id },
-            data: { requestStatus: RequestStatus.REJECTED },
+            data: { status: AppointmentStatus.REJECTED },
           });
 
           // Delete tentative slots if appointment exists

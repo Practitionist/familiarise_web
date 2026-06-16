@@ -84,14 +84,14 @@ describe("#788 — mergeConsecutiveSlots never merges across availability rows",
   const rowA = {
     ...base,
     slotOfAvailabilityId: "row-A",
-    slotStartTimeInUTC: "2026-06-26T14:00:00.000Z",
-    slotEndTimeInUTC: "2026-06-26T15:00:00.000Z",
+    startsAt: "2026-06-26T14:00:00.000Z",
+    endsAt: "2026-06-26T15:00:00.000Z",
   };
   const rowB = {
     ...base,
     slotOfAvailabilityId: "row-B",
-    slotStartTimeInUTC: "2026-06-26T15:00:00.000Z",
-    slotEndTimeInUTC: "2026-06-26T16:00:00.000Z",
+    startsAt: "2026-06-26T15:00:00.000Z",
+    endsAt: "2026-06-26T16:00:00.000Z",
   };
 
   it("keeps adjacent slots from DIFFERENT rows separate (the #788 mis-bind)", () => {
@@ -107,7 +107,7 @@ describe("#788 — mergeConsecutiveSlots never merges across availability rows",
     const sameRowB = { ...rowB, slotOfAvailabilityId: "row-A" };
     const merged = mergeConsecutiveSlots([rowA, sameRowB] as never);
     expect(merged).toHaveLength(1);
-    expect(merged[0].slotEndTimeInUTC).toBe("2026-06-26T16:00:00.000Z");
+    expect(merged[0].endsAt).toBe("2026-06-26T16:00:00.000Z");
   });
 });
 
@@ -152,7 +152,7 @@ describe("#827 — confirmExistingAppointment first-confirmed-wins", () => {
           updateMany: jest.fn().mockResolvedValue({ count: 1 }),
           findUnique: jest
             .fn()
-            .mockResolvedValue({ id: "c1", requestStatus: "APPROVED_PENDING_PAYMENT" }),
+            .mockResolvedValue({ id: "c1", status: "APPROVED_PENDING_PAYMENT" }),
         },
       } as never,
     };
@@ -178,6 +178,65 @@ describe("#827 — confirmExistingAppointment first-confirmed-wins", () => {
     expect(m.slotUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({ data: { isTentative: false } }),
     );
+    expect(mockSystemError).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #855 — capture-after-cancel signals Phase 2 to auto-refund
+// ---------------------------------------------------------------------------
+describe("#855 — capturedAfterTerminal signal on a cancelled booking", () => {
+  function mockTx(consultationStatus: string, casCount: number) {
+    return {
+      appointment: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: "appt-1",
+          consultation: { id: "c1" },
+          subscription: null,
+          webinar: null,
+          class: null,
+        }),
+      },
+      slotOfAppointment: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: "slot-1",
+            startsAt: new Date("2026-06-26T15:00:00Z"),
+            endsAt: new Date("2026-06-26T16:00:00Z"),
+            user: [{ id: "booker" }, { id: "consultant" }],
+          },
+        ]),
+        findFirst: jest.fn().mockResolvedValue(null), // no #827 overlap
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      consultation: {
+        update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: casCount }),
+        findUnique: jest
+          .fn()
+          .mockResolvedValue({ id: "c1", status: consultationStatus }),
+      },
+    } as never;
+  }
+
+  it("flags capturedAfterTerminal + records refund-needed when the consultation is CANCELLED", async () => {
+    const tx = mockTx("CANCELLED", 0);
+    const result = await confirmExistingAppointment(tx, "appt-1", "booker");
+    expect(result.capturedAfterTerminal).toBe(true);
+    expect(mockSystemError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        category: "PAYMENT",
+        err: expect.objectContaining({
+          message: "CAPTURE_AFTER_TERMINAL_STATE",
+        }),
+      }),
+    );
+  });
+
+  it("does not flag a normal APPROVED_PENDING_PAYMENT → APPROVED confirmation", async () => {
+    const tx = mockTx("APPROVED_PENDING_PAYMENT", 1);
+    const result = await confirmExistingAppointment(tx, "appt-1", "booker");
+    expect(result.capturedAfterTerminal).toBe(false);
     expect(mockSystemError).not.toHaveBeenCalled();
   });
 });

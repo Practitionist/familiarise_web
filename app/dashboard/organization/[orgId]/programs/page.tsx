@@ -2,7 +2,15 @@
 
 import { use, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Briefcase, Loader2, Users, Pencil, Lock } from "lucide-react";
+import {
+  Plus,
+  Briefcase,
+  Loader2,
+  Users,
+  Pencil,
+  Lock,
+  Trash2,
+} from "lucide-react";
 import type {
   BillingCycle,
   FundingSource,
@@ -58,6 +66,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { formatCurrencyAmount } from "@/utils/formatting";
 
 // ---------------------------------------------------------------------------
@@ -115,7 +133,8 @@ function programUtilization(
     return {
       used: String(engagementsUsed),
       total: String(total),
-      pct: total > 0 ? Math.min(100, Math.round((engagementsUsed / total) * 100)) : null,
+      // ceil, not round (#752) — non-zero usage must never display as 0%.
+      pct: total > 0 ? Math.min(100, Math.ceil((engagementsUsed / total) * 100)) : null,
     };
   }
   if (p.type === "CREDIT_POOL") {
@@ -126,7 +145,7 @@ function programUtilization(
       total: budgetPaise > 0 ? formatCurrencyAmount(budgetPaise, "INR") : "∞",
       pct:
         budgetPaise > 0
-          ? Math.min(100, Math.round((consumedPaise / budgetPaise) * 100))
+          ? Math.min(100, Math.ceil((consumedPaise / budgetPaise) * 100))
           : null,
     };
   }
@@ -220,6 +239,7 @@ type CreateProgramBody =
         coveredEngagementsPerCycle: number | null;
         overageBehavior: OverageBehavior;
         overageSurchargeBps: number | null;
+        maxOveragePerCyclePaise: number | null;
       };
     }
   | {
@@ -232,6 +252,7 @@ type CreateProgramBody =
         creditBudgetPerCycle: number;
         overageBehavior: OverageBehavior;
         overageSurchargeBps: number | null;
+        maxOveragePerCyclePaise: number | null;
       };
     };
 
@@ -261,6 +282,7 @@ type PatchProgramBody = {
   creditBudgetPerCycle?: number;
   overageBehavior?: OverageBehavior;
   overageSurchargeBps?: number | null;
+  maxOveragePerCyclePaise?: number | null;
 };
 
 async function patchProgram(
@@ -280,6 +302,21 @@ async function patchProgram(
     );
   }
   return json;
+}
+
+// DELETE is only legal for never-used programs (#752) — the server re-checks
+// assignments + utilization under Serializable and 409s otherwise; the UI
+// gate is affordance, not authority.
+async function deleteProgram(orgId: string, programId: string) {
+  const res = await fetch(`/api/organizations/${orgId}/programs/${programId}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const json = await res.json().catch(() => ({}));
+    throw new Error(
+      (json as { error?: string }).error ?? "Failed to delete program",
+    );
+  }
 }
 
 // Single-program shape from GET .../programs/[programId] — carries the
@@ -423,6 +460,10 @@ function CreateProgramDialog({
   // program types (the selector + this field render for LICENSED_SEAT and
   // CREDIT_POOL alike).
   const [overageSurchargePct, setOverageSurchargePct] = useState("");
+  // #768 #14/#15 — per-cycle overage ceiling in rupees (user-facing).
+  // Server requires positive paise value whenever overageBehavior !== BLOCK;
+  // shared across both program types.
+  const [maxOveragePerCycleRupees, setMaxOveragePerCycleRupees] = useState("");
   // 1 credit = ₹1; per-cycle cap is the user-facing input, paise conversion
   // is implicit (credits map to rupees end-to-end).
   const [creditBudgetPerCycle, setCreditsPerCycle] = useState("1000");
@@ -469,6 +510,7 @@ function CreateProgramDialog({
     setCoveredEngagementsPerCycle("");
     setOverageBehavior("BLOCK");
     setOverageSurchargePct("");
+    setMaxOveragePerCycleRupees("");
     setCreditsPerCycle("1000");
     setCoveredPlanTypes(["CONSULTATION"]);
     setError(null);
@@ -519,6 +561,35 @@ function CreateProgramDialog({
       setError("Overage surcharge must be blank or a non-negative percentage.");
       return;
     }
+    // #768 #14/#15 — per-cycle ceiling. Required (>=1 paise) for CHARGE_*,
+    // ignored otherwise. Mirror the server's refineOverageCombo so the form
+    // can't submit a 400 the user would only see as "Invalid body".
+    //
+    // LICENSED_SEAT with unlimited cap (coveredEngagementsPerCycle blank/null)
+    // makes every overage knob dead config — the server's
+    // LicensedSeatConfigSchema.superRefine rejects overageBehavior != BLOCK
+    // (and any non-null circuit-breaker) in that case. Block it here too so
+    // the operator gets a single clear message instead of the opaque 400.
+    let maxOveragePerCyclePaise: number | null = null;
+    if (overageBehavior !== "BLOCK") {
+      if (
+        programType === "LICENSED_SEAT" &&
+        coveredEngagementsPerCycle.trim() === ""
+      ) {
+        setError(
+          "Overage settings have no effect when sessions per cycle is unlimited. Either enter a positive cap or switch overage behaviour to Block.",
+        );
+        return;
+      }
+      const parsed = rupeesToPaise(maxOveragePerCycleRupees);
+      if (parsed === null || parsed < 1) {
+        setError(
+          "Max overage per cycle is required when overage charges the org/member — enter a positive rupee ceiling.",
+        );
+        return;
+      }
+      maxOveragePerCyclePaise = parsed;
+    }
     if (programType === "LICENSED_SEAT") {
       const ratePaise = rupeesToPaise(ratePerSeatRupees);
       if (ratePaise === null) {
@@ -544,6 +615,7 @@ function CreateProgramDialog({
           coveredEngagementsPerCycle: cap,
           overageBehavior,
           overageSurchargeBps: surchargeBps,
+          maxOveragePerCyclePaise,
         },
       });
     } else {
@@ -562,6 +634,7 @@ function CreateProgramDialog({
           creditBudgetPerCycle: credits,
           overageBehavior,
           overageSurchargeBps: surchargeBps,
+          maxOveragePerCyclePaise,
         },
       });
     }
@@ -850,6 +923,29 @@ function CreateProgramDialog({
             </div>
           )}
 
+          {/* #768 #14/#15 — per-cycle overage ceiling (circuit breaker).
+              Server requires a positive value when overage charges. */}
+          {overageBehavior !== "BLOCK" && (
+            <div className="space-y-2">
+              <Label htmlFor="max-overage">Max overage per cycle (₹)</Label>
+              <Input
+                id="max-overage"
+                type="number"
+                min={1}
+                step="1"
+                value={maxOveragePerCycleRupees}
+                onChange={(e) => setMaxOveragePerCycleRupees(e.target.value)}
+                placeholder="e.g. 100000 = ₹1,00,000 ceiling"
+              />
+              <p className="text-xs text-zinc-500">
+                Hard cap on the total over-cap amount this cycle (circuit
+                breaker). Once reached, further over-cap bookings are blocked
+                even with {overageBehavior === "CHARGE_ORG" ? "Charge org" : "Charge member"} enabled.
+                Required by the platform — keeps runaway overage liability bounded.
+              </p>
+            </div>
+          )}
+
           {error && <p className="text-sm text-red-600">{error}</p>}
         </div>
 
@@ -923,6 +1019,8 @@ function EditProgramDialog({
   const [overageBehavior, setOverageBehavior] =
     useState<OverageBehavior>("BLOCK");
   const [overageSurchargePct, setOverageSurchargePct] = useState("");
+  // #768 #14/#15 — circuit-breaker ceiling, parity with CreateProgramDialog.
+  const [maxOveragePerCycleRupees, setMaxOveragePerCycleRupees] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   // Seed the form from the fetched program once it lands (and on re-open).
@@ -940,6 +1038,13 @@ function EditProgramDialog({
       program.creditPoolConfig?.overageSurchargeBps ??
       null;
     setOverageSurchargePct(bps === null ? "" : String(bps / 100));
+    const maxOverage =
+      program.licensedSeatConfig?.maxOveragePerCyclePaise ??
+      program.creditPoolConfig?.maxOveragePerCyclePaise ??
+      null;
+    setMaxOveragePerCycleRupees(
+      maxOverage === null ? "" : String(maxOverage / 100),
+    );
     if (program.licensedSeatConfig) {
       setRatePerSeatRupees(
         String(program.licensedSeatConfig.ratePerSeatPaise / 100),
@@ -997,6 +1102,38 @@ function EditProgramDialog({
       }
       body.overageBehavior = overageBehavior;
       body.overageSurchargeBps = surchargeBps;
+      // #768 #14/#15 — circuit-breaker ceiling. PATCH validation at
+      // [programId]/route.ts:225-239 merges with the existing config and
+      // requires the merged value to be positive when overage charges. We
+      // ALWAYS send the field (null when blank or overage=BLOCK) so the merge
+      // sees the user's intent and not a stale config row.
+      //
+      // LICENSED_SEAT with unlimited cap (coveredEngagementsPerCycle blank)
+      // makes every overage knob dead config — the server's
+      // LicensedSeatConfigSchema.superRefine rejects overageBehavior != BLOCK
+      // (and any non-null circuit-breaker) in that case. Block it here too so
+      // the operator gets a single clear message instead of the opaque 400.
+      let maxOveragePerCyclePaise: number | null = null;
+      if (overageBehavior !== "BLOCK") {
+        if (
+          program.type === "LICENSED_SEAT" &&
+          coveredEngagementsPerCycle.trim() === ""
+        ) {
+          setError(
+            "Overage settings have no effect when sessions per cycle is unlimited. Either enter a positive cap or switch overage behaviour to Block.",
+          );
+          return;
+        }
+        const parsed = rupeesToPaise(maxOveragePerCycleRupees);
+        if (parsed === null || parsed < 1) {
+          setError(
+            "Max overage per cycle is required when overage charges the org/member — enter a positive rupee ceiling.",
+          );
+          return;
+        }
+        maxOveragePerCyclePaise = parsed;
+      }
+      body.maxOveragePerCyclePaise = maxOveragePerCyclePaise;
       if (program.type === "LICENSED_SEAT") {
         const ratePaise = rupeesToPaise(ratePerSeatRupees);
         if (ratePaise === null) {
@@ -1221,6 +1358,34 @@ function EditProgramDialog({
               </div>
             )}
 
+            {/* #768 #14/#15 — per-cycle overage ceiling (circuit breaker).
+                Field is in LOCKED_PROGRAM_FIELDS (02-programs.md §4) — read-only
+                once the program has any assignments. */}
+            {overageBehavior !== "BLOCK" && (
+              <div className="space-y-2">
+                <Label htmlFor="edit-max-overage">
+                  Max overage per cycle (₹)
+                  {locked && <LockedHint />}
+                </Label>
+                <Input
+                  id="edit-max-overage"
+                  type="number"
+                  min={1}
+                  step="1"
+                  disabled={locked}
+                  value={maxOveragePerCycleRupees}
+                  onChange={(e) =>
+                    setMaxOveragePerCycleRupees(e.target.value)
+                  }
+                  placeholder="e.g. 100000 = ₹1,00,000 ceiling"
+                />
+                <p className="text-xs text-zinc-500">
+                  Hard cap on total over-cap spend this cycle. Required when
+                  overage charges — caps runaway liability at a known ceiling.
+                </p>
+              </div>
+            )}
+
             {error && <p className="text-sm text-red-600">{error}</p>}
           </div>
         )}
@@ -1301,6 +1466,21 @@ function ManageProgramDialog({
       setAssignError(null);
     },
     onError: (err: Error) => setAssignError(err.message),
+  });
+
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const deleteMutation = useMutation({
+    mutationFn: () => deleteProgram(orgId, program.id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["org-programs", orgId] });
+      setConfirmDelete(false);
+      onOpenChange(false);
+    },
+    onError: (err: Error) => {
+      setConfirmDelete(false);
+      setDeleteError(err.message);
+    },
   });
 
   const handleAssign = () => {
@@ -1502,6 +1682,66 @@ function ManageProgramDialog({
             </Table>
           )}
         </div>
+
+        {/* #752 — never-used programs (typo'd cap, wrong contract) are
+            deletable; anything with assignments stays terminate-only.
+            isSuccess (not !isLoading): a failed assignments read must not
+            expose the CTA on an unverified zero. */}
+        {assignments.isSuccess && assignmentList.length === 0 && (
+          <div className="space-y-2 rounded-md border border-red-200 p-4">
+            <h4 className="text-sm font-semibold text-red-700">
+              Delete program
+            </h4>
+            <p className="text-xs text-zinc-500">
+              This program has no assignments. If it was created by mistake,
+              delete it instead of leaving a terminated row behind. Programs
+              with assignments or booking history can only be paused or
+              cancelled.
+            </p>
+            {deleteError && <p className="text-sm text-red-600">{deleteError}</p>}
+            <Button
+              size="sm"
+              variant="outline"
+              className="border-red-300 text-red-700 hover:bg-red-50"
+              onClick={() => setConfirmDelete(true)}
+              disabled={deleteMutation.isPending}
+            >
+              {deleteMutation.isPending ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin mr-1" /> Deleting…
+                </>
+              ) : (
+                <>
+                  <Trash2 className="h-4 w-4 mr-1" /> Delete program
+                </>
+              )}
+            </Button>
+          </div>
+        )}
+
+        <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete program?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Permanently delete{" "}
+                <span className="font-medium">{program.name}</span>? This is
+                only possible because no members were ever assigned. The
+                deletion is recorded in the audit log.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-red-600 hover:bg-red-700 text-white"
+                onClick={() => deleteMutation.mutate()}
+                disabled={deleteMutation.isPending}
+              >
+                {deleteMutation.isPending ? "Deleting…" : "Delete"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </DialogContent>
     </Dialog>
   );

@@ -58,6 +58,12 @@ export interface PayoutResult {
   success: boolean;
   providerPayoutId?: string;
   error?: string;
+  /**
+   * #776 — true when another run's CAS claim won this payout
+   * (APPROVED → PROCESSING matched zero rows). The claiming run owns the
+   * outcome; callers must not count a skipped payout as processed or failed.
+   */
+  skipped?: boolean;
 }
 
 export interface BatchResult {
@@ -513,11 +519,21 @@ async function processSinglePayout(payout: {
   // (providerPayoutId set) from a pre-gateway failure (#785 task #24).
   let providerPayoutId: string | undefined;
   try {
-    // Mark as processing
-    await prisma.consultantPayout.update({
-      where: { id: payout.id },
+    // #776 — atomic CAS claim (ported from the deleted scripts/payouts copy
+    // in #850): only one runner — GH job, admin route, concurrent invocation
+    // with Redis down — may move APPROVED → PROCESSING. Zero rows means a
+    // concurrent run already claimed it; that run owns the outcome, so this
+    // one must not touch the gateway.
+    const claimed = await prisma.consultantPayout.updateMany({
+      where: { id: payout.id, status: PayoutStatus.APPROVED },
       data: { status: PayoutStatus.PROCESSING },
     });
+    if (claimed.count === 0) {
+      console.warn(
+        `[Payouts] Payout ${payout.id} already claimed by a concurrent run — skipping`,
+      );
+      return { payoutId: payout.id, success: false, skipped: true };
+    }
 
     const account = payout.consultantProfile.payoutAccounts[0];
     if (!account) {
@@ -663,7 +679,8 @@ async function processSinglePayout(payout: {
     // earnings here would re-batch them under a fresh idempotencyKey the gateway
     // won't dedupe → DOUBLE disbursement. Quarantine PROCESSING with earnings
     // LINKED instead; the reconcile/stuck-payout job settles it against the
-    // gateway. Mirrors the scripts/payouts/process-payouts.ts guard (task #24).
+    // gateway. (#850 — this is now the sole implementation; the scripts/payouts
+    // copy that pioneered the guard is deleted.)
     if (providerPayoutId) {
       try {
         await prisma.consultantPayout.update({
@@ -838,6 +855,10 @@ export async function handlePayoutWebhook(
   providerPayoutId: string,
   status: "PENDING" | "PROCESSING" | "COMPLETED" | "FAILED" | "CANCELLED",
   failureReason?: string,
+  // UTR — bank settlement reference the gateway returns on a completed payout
+  // (mirrors the OrganizationPayout branch). Optional + only persisted when
+  // present, so PROCESSING/FAILED deliveries and pre-UTR gateways leave it null.
+  gatewayUtr?: string,
 ): Promise<void> {
   const payout = await prisma.consultantPayout.findFirst({
     where: { providerPayoutId },
@@ -881,6 +902,12 @@ export async function handlePayoutWebhook(
         processedAt:
           payoutStatus === PayoutStatus.COMPLETED ? new Date() : undefined,
         failureReason: failureReason,
+        // UTR — persist only on a completing payout that carried one; absent
+        // value leaves the column untouched (idempotent re-drive safe).
+        gatewayUtr:
+          payoutStatus === PayoutStatus.COMPLETED && gatewayUtr
+            ? gatewayUtr
+            : undefined,
       },
     });
 

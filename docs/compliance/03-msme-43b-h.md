@@ -1,6 +1,6 @@
 # 03 — MSME Section 43B(h) — 15/45-day payment rule
 
-> **Status:** ✅ derivation live (`computeMsmePaymentDeadline`); ✅ alert cron live + GH Actions schedule wired (Round 2, daily 04:30 UTC); 🟡 counterparty data capture (`isMsme`, `udyamNumber`, `writtenAgreementWithFamiliarise`) needs UX flow.
+> **Status:** ✅ derivation live (`computeMsmePaymentDeadline`); ✅ alert cron live + GH Actions schedule wired (Round 2, daily 04:30 UTC); 🟡 counterparty data capture (`msmeStatus`, `udyamNumber`, `writtenAgreementWithFamiliarise`) needs UX flow.
 > **Audience:** payout pipeline + consultant onboarding code.
 > **Last reviewed:** 2026-06-05 (regulatory facts web-verified as of 2026-06-05; prior review 2026-05-02)
 > **Linked issues:** [#681](https://github.com/Practitionist/familiarise_web/issues/681) (compliance master), [#737 §1.5](https://github.com/Practitionist/familiarise_web/issues/737), [#738](https://github.com/Practitionist/familiarise_web/issues/738) (FF-5 confirmed live).
@@ -14,7 +14,7 @@ Section 43B(h) of the Income Tax Act (inserted by Finance Act 2023, effective AY
 | **MICRO** / **SMALL** | 15 days from acceptance/invoice date | 45 days (the MSMED §15 hard ceiling — an agreed credit period **cannot exceed 45 days**) |
 | **MEDIUM** / **NONE** | Buyer's default terms (60 days max recommended) | Buyer's default terms |
 
-**Scope (verified 2026-06-05):** 43B(h) applies **only to MICRO and SMALL** Udyam-registered suppliers — **MEDIUM enterprises are outside its scope**, and unregistered suppliers are not covered even if they'd qualify by size. If the buyer breaches the deadline, **the expense is disallowed in the current year's tax computation** until actually paid. Hard ceiling: 43B(h) days WIN over a longer `defaultTermsDays`. The provision **carries forward unchanged into the Income-tax Act, 2025** (in force 1-Apr-2026) under equivalent clause numbering — the 15/45-day mechanics are unaffected.
+**Scope (verified 2026-06-05):** 43B(h) applies **only to MICRO and SMALL** Udyam-registered suppliers — **MEDIUM enterprises are outside its scope**, and unregistered suppliers are not covered even if they'd qualify by size. If the buyer breaches the deadline, **the expense is disallowed in the current year's tax computation** until actually paid. Hard ceiling: 43B(h) days WIN over a longer `defaultTermsDays`. The provision **carries forward into the Income-tax Act, 2025** (in force 1-Apr-2026) with a renumbered citation: old §43B becomes **Section 37**, and the MSME limb §43B(h) becomes **Section 37(2)(g)** ("any sum payable to a micro or small enterprise beyond the time limit specified in section 15 of the MSMED Act, 2006"). The 15/45-day mechanics are unaffected — only the clause number moved, and filings covering payments on/after 1-Apr-2026 must cite §37(2)(g).
 
 **Revised Udyam classification thresholds (S.O. 1364(E), 21-Mar-2025, effective 1-Apr-2025 — verified 2026-06-05):** investment limits ×2.5 and turnover limits ×2 versus the 2020 framework. Composite criterion — *both* must be satisfied; breaching *either* bumps the enterprise up a category.
 
@@ -24,9 +24,9 @@ Section 43B(h) of the Income Tax Act (inserted by Finance Act 2023, effective AY
 | **SMALL** | ≤ ₹25 crore | ≤ ₹100 crore |
 | **MEDIUM** | ≤ ₹125 crore | ≤ ₹500 crore |
 
-These determine which `msmeType` a consultant self-declares; only MICRO/SMALL trigger the 15/45-day deadline. Existing Udyam certificates remain valid with automatic benefit extension under the new limits.
+These determine which `msmeStatus` a consultant self-declares; only MICRO/SMALL trigger the 15/45-day deadline. Existing Udyam certificates remain valid with automatic benefit extension under the new limits.
 
-Udyam registration number format: `UDYAM-XX-NN-NNNNNNN` (19 chars: `UDYAM` + 2-char state + 2-digit district + 7-digit serial). Code regex `lib/compliance/msme.ts:isValidUdyamNumber` is `/^UDYAM-[A-Z]{2}-[0-9]{2}-[0-9]{7}$/` ✅ matches. MSME status comes from a self-declaration + Udyam certificate; Familiarise stores `ConsultantProfile.isMsme` + `msmeRegistrationNumber` + `msmeType` (`MICRO` / `SMALL` / `MEDIUM` / `NONE`) + `writtenAgreementWithFamiliarise` (bool).
+Udyam registration number format: `UDYAM-XX-NN-NNNNNNN` (19 chars: `UDYAM` + 2-char state + 2-digit district + 7-digit serial). Code regex `lib/compliance/msme.ts:isValidUdyamNumber` is `/^UDYAM-[A-Z]{2}-[0-9]{2}-[0-9]{7}$/` ✅ matches. MSME status comes from a self-declaration + Udyam certificate; Familiarise stores `ConsultantProfile.msmeStatus` (`MsmeStatus`: `MICRO` / `SMALL` / `MEDIUM` / `NONE`) + `udyamNumber` + `writtenAgreementWithFamiliarise` (bool).
 
 ## When it applies
 
@@ -40,7 +40,7 @@ Udyam registration number format: `UDYAM-XX-NN-NNNNNNN` (19 chars: `UDYAM` + 2-c
 - **N/A on the consumer leg.** The consumer pays the platform; there's no buyer-supplier relationship between consumer and consultant under 43B(h).
 - **N/A on the platform-to-consultant payout leg either** — Familiarise pays from the consumer's payment within days, well inside any 15/45 window. The platform's books bear the disallowance risk, but it is mathematically not breached when payouts run weekly/monthly.
 
-So 43B(h) is effectively a **B2B-only** compliance — but the schema fields (`isMsme`, etc.) sit on `ConsultantProfile` regardless of rail because the same consultant may earn through both rails.
+So 43B(h) is effectively a **B2B-only** compliance — but the schema fields (`msmeStatus`, etc.) sit on `ConsultantProfile` regardless of rail because the same consultant may earn through both rails.
 
 ## Current code
 
@@ -49,16 +49,16 @@ So 43B(h) is effectively a **B2B-only** compliance — but the schema fields (`i
 | `lib/compliance/msme.ts:54–76` | `computeMsmePaymentDeadline` — MICRO/SMALL 15/45-day, MEDIUM/NONE default | ✅ live |
 | `lib/compliance/msme.ts:83` | `isValidUdyamNumber` — regex check | ✅ live |
 | `OrganizationPayout.mustPayByDate` (schema) | Stamped at payout creation from `computeMsmePaymentDeadline` | ✅ schema-final |
-| `ConsultantProfile.isMsme`, `msmeRegistrationNumber`, `msmeType`, `writtenAgreementWithFamiliarise` | Schema fields | ✅ |
+| `ConsultantProfile.msmeStatus`, `udyamNumber`, `writtenAgreementWithFamiliarise` | Schema fields | ✅ |
 | `jobs/compliance/msme-payment-alerts.ts` | Sweeps payouts within 5 days of `mustPayByDate`; emails finance via Resend | ✅ live |
 | `.github/workflows/msme-payment-alerts.yml` | Daily 04:30 UTC | ✅ wired (Round 2) |
-| Consultant onboarding form | Captures `isMsme` + Udyam number + written-agreement toggle | 🟡 status unknown — verify on next walkthrough |
+| Consultant onboarding form | Captures `msmeStatus` + Udyam number + written-agreement toggle | 🟡 status unknown — verify on next walkthrough |
 
 ## Gap
 
 | Gap | Severity |
 |---|---|
-| Consultant onboarding flow may not collect `isMsme` / `msmeRegistrationNumber` / `writtenAgreementWithFamiliarise` cleanly | 🟡 |
+| Consultant onboarding flow may not collect `msmeStatus` / `udyamNumber` / `writtenAgreementWithFamiliarise` cleanly | 🟡 |
 | No admin UI to verify Udyam registration against the live Udyam portal | 🟡 |
 | `mustPayByDate` is stamped at payout creation, but if the org's `defaultTermsDays` changes mid-cycle, in-flight payouts don't update | 🟢 (edge case) |
 | No back-office workflow if a 43B(h) breach happens — alert cron fires, then what? | 🟡 — needs runbook |

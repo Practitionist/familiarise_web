@@ -62,7 +62,7 @@ export async function GET(request: NextRequest) {
             ],
           },
           {
-            requestStatus: {
+            status: {
               in: [
                 "APPROVED",
                 "APPROVED_PENDING_PAYMENT",
@@ -167,7 +167,7 @@ export async function GET(request: NextRequest) {
             ],
           },
           {
-            requestStatus: {
+            status: {
               in: [
                 "APPROVED",
                 "APPROVED_PENDING_PAYMENT",

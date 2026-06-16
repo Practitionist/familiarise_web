@@ -4,6 +4,7 @@ import { uploadConsultantDocument } from "@/lib/supabase";
 import { Prisma } from "@prisma/client";
 
 import { getSession } from "@/lib/auth-server";
+import { applyRateLimit, documentUploadLimiter } from "@/lib/rate-limit";
 // Development mode check
 const isDevelopment = () =>
   process.env.NODE_ENV === "development" &&
@@ -29,6 +30,13 @@ export async function POST(
         { status: 401 },
       );
     }
+
+    // DOC-2 (#694) — throttle uploads per user before any storage/DB work.
+    const rateLimited = await applyRateLimit(
+      documentUploadLimiter,
+      session.user.id,
+    );
+    if (rateLimited) return rateLimited;
 
     const { appointmentId } = await params;
     const userId = session.user.id;
@@ -247,7 +255,7 @@ export async function POST(
         appointmentId,
         // Consultant uploads don't need review
         reviewStatus: "APPROVED",
-        reviewedBy: userId,
+        reviewedById: userId, // A8 — FK scalar (#676)
         reviewedAt: new Date(),
       },
     });

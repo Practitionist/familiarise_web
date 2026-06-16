@@ -3,7 +3,7 @@ name: Reconcile Slot Availability
 on:
   schedule:
     # Run hourly
-    - cron: "15 * * * *"
+    - cron: "32 * * * *"
   workflow_dispatch: # Allow manual triggering
 
 jobs:
@@ -40,6 +40,6 @@ jobs:
 
       - name: Notify on double bookings
         if: failure()
-        run: |
-          echo "CRITICAL: Double bookings detected or slot reconciliation failed!"
-          # Add notification logic here (Slack, email, PagerDuty, etc.)
+        env:
+          SLACK_OPS_WEBHOOK_URL: ${{ secrets.SLACK_OPS_WEBHOOK_URL }}
+        run: bash scripts/ci/notify-ops-failure.sh "reconcile-slot-availability"

@@ -148,7 +148,7 @@ export interface UseEventSlotAllocationOptions {
   planId?: string;
 
   /** Request status for filtering and validation */
-  requestStatus?: "PENDING" | "APPROVED" | "REJECTED";
+  status?: "PENDING" | "APPROVED" | "REJECTED";
 
   /** Allocation method preference */
   allocationType?: "AUTO" | "MANUAL" | "REQUESTED";
@@ -1977,8 +1977,8 @@ export function useEventSlotAllocation(
             ...(fullPeriodData.custom || []),
           ];
           slotsForAllocation = allRawSlots.map((slot: RawSlotData) => ({
-            startTime: new Date(slot.slotStartTimeInUTC),
-            endTime: new Date(slot.slotEndTimeInUTC),
+            startTime: new Date(slot.startsAt),
+            endTime: new Date(slot.endsAt),
             isAvailable:
               slot.bookingStatus === "available" ||
               slot.bookingStatus === "partially-booked",

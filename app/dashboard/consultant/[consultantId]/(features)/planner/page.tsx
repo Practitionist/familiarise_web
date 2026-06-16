@@ -1,7 +1,7 @@
 "use client";
 
 import { useParams } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { PlannerSkeleton } from "@/components/dashboard/DashboardSkeletons";
 import { createConsultantQueries } from "@/lib/dashboard-queries";
@@ -35,7 +35,12 @@ export default function PlannerPage() {
         : scope.orgId;
   const plannerQuery = createConsultantQueries(consultantId, orgScopeParam)
     .planner;
-  const { data: plannerData, isLoading, error } = useQuery(plannerQuery);
+  // keepPreviousData: scope-filter changes show the previous planner while
+  // the new one loads instead of a skeleton flash (documents-page idiom, #346).
+  const { data: plannerData, isLoading, error } = useQuery({
+    ...plannerQuery,
+    placeholderData: keepPreviousData,
+  });
 
   const filterValue: OrgContextFilterValue =
     scope.kind === "personal"

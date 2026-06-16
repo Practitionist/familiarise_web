@@ -71,7 +71,7 @@ const ratelimit = new Ratelimit({
 
 ```
 /api/user/consultants       → Complex queries with multiple joins
-/api/events/subscriptions   → Deep nested includes (100+ queries)
+/api/bookings/subscriptions   → Deep nested includes (100+ queries)
 /api/slots/appointments     → 7-level nested queries
 /api/slots/availability/*   → Timezone calculations per request
 ```

@@ -160,7 +160,7 @@ Queue ordering is determined by two fields: `priority` (descending) and `joinedA
 | Function                      | Purpose                                                                                                              |
 | ----------------------------- | -------------------------------------------------------------------------------------------------------------------- |
 | `calculatePosition`           | Count WAITING entries ahead of a given entry (priority DESC, joinedAt ASC). Returns 1-indexed position.              |
-| `getNextInQueue`              | Returns the highest-priority, earliest-joined WAITING entry for an event.                                            |
+| `getNextInQueue`              | Convenience wrapper: calls `getNextBatchInQueue(params, 1)` and returns the single winner (or null).                |
 | `updatePositions`             | Recalculates and persists positions for all WAITING entries after a queue change. Uses a Prisma transaction.         |
 | `processExpiredNotifications` | Finds all NOTIFIED entries past `expiresAt`, marks them EXPIRED, and updates positions for affected events.          |
 | `getWaitlistStats`            | Returns `totalWaiting`, `byWebinar`, `byClass` counts, and `averageWaitTimeDays` for a consultant's events.          |
@@ -194,17 +194,15 @@ sequenceDiagram
     participant UP as Position Updater
 
     Trigger->>SH: handleSlotOpening(eventType, eventId, slotsAvailable)
-    loop For each available slot (up to slotsAvailable)
-        SH->>QM: getNextInQueue(eventId)
-        QM->>DB: Find WAITING entry (priority DESC, joinedAt ASC)
-        DB-->>QM: Next entry (or null)
-        QM-->>SH: WaitlistEntry | null
-        alt Entry found
-            SH->>DB: Update status = NOTIFIED, set notifiedAt, expiresAt (now + 48h), clear position
-            SH->>Email: sendWaitlistSpotAvailableEmail(user, event, expiresAt, waitlistId)
-        else No more waiting users
-            Note over SH: Break loop
-        end
+    SH->>QM: getNextBatchInQueue(eventId, limit=slotsAvailable)
+    QM->>DB: Find top-N WAITING entries (priority DESC, joinedAt ASC)
+    DB-->>QM: candidates[]
+    QM->>DB: $transaction — per-id CAS claims<br/>(UPDATE ... WHERE status=WAITING for each candidate)
+    DB-->>QM: winners[] (those whose CAS succeeded)
+    QM-->>SH: winners[]
+    loop For each winner
+        SH->>DB: Set notifiedAt, expiresAt (now + 48h), clear position
+        SH->>Email: sendWaitlistSpotAvailableEmail(user, event, expiresAt, waitlistId)
     end
     SH->>UP: updatePositions(eventId)
     UP->>DB: Recalculate all WAITING positions (transaction)
@@ -256,6 +254,8 @@ When a user is notified of an available spot, they can respond in one of three w
 2. Marks each as `EXPIRED`, sets `respondedAt`
 3. Updates positions for all affected events
 4. Slot handler is called separately to notify the next person in queue
+
+The hourly sweep is idempotent by `expiresAt`: it acts only on entries that are still `NOTIFIED` and whose `expiresAt` has already passed, and marking an entry `EXPIRED` removes it from the next run's candidate set. Because the query is keyed on the deadline rather than on the current hour, a run that is skipped, delayed, or fired twice causes no double-processing or missed work. The next successful run simply picks up every entry whose `expiresAt` is now in the past, so any expirations that accumulated during the skipped hours are caught up in a single pass.
 
 ---
 

@@ -16,7 +16,7 @@ A dispute is the buyer's bank pulling money back without going through our refun
 
 ## 1. Our 8-state dispute machine
 
-`DisputeStatus` (`prisma/schema.prisma`) has eight values, shaped after the Stripe/Razorpay dispute lifecycles. The early-warning cluster (`WARNING_*`) models pre-dispute fraud alerts; the active cluster (`NEEDS_RESPONSE`, `UNDER_REVIEW`) models a live chargeback; and the terminal cluster (`WON`, `LOST`, `CHARGE_REFUNDED`) records the verdict. The allowed transitions are enforced by `isLegalDisputeTransition` in `lib/payments/dispute-status.ts`.
+`DisputeStatus` (`prisma/schema.prisma`) has nine values, shaped after the Stripe/Razorpay dispute lifecycles. The early-warning cluster (`WARNING_*`) models pre-dispute fraud alerts; the active cluster (`NEEDS_RESPONSE`, `UNDER_REVIEW`) models a live chargeback; and the terminal cluster (`WON`, `LOST`, `CHARGE_REFUNDED`, `CLOSED`) records the outcome — `CLOSED` is Razorpay's ended-without-verdict terminal, reached when the merchant supplied transaction details or refunded the customer. The allowed transitions are enforced by `isLegalDisputeTransition` in `lib/payments/dispute-status.ts`.
 
 ```mermaid
 stateDiagram-v2
@@ -32,15 +32,18 @@ stateDiagram-v2
     NEEDS_RESPONSE --> WON
     NEEDS_RESPONSE --> LOST
     NEEDS_RESPONSE --> CHARGE_REFUNDED
+    NEEDS_RESPONSE --> CLOSED
     UNDER_REVIEW --> WON
     UNDER_REVIEW --> LOST
     UNDER_REVIEW --> CHARGE_REFUNDED
+    UNDER_REVIEW --> CLOSED
     WON --> [*]
     LOST --> [*]
     CHARGE_REFUNDED --> [*]
+    CLOSED --> [*]
 ```
 
-The **early-warning cluster** (`WARNING_NEEDS_RESPONSE`, `WARNING_UNDER_REVIEW`, `WARNING_CLOSED`) represents a bank's early fraud signal that has not yet become a formal chargeback; a closed warning can still escalate into a real dispute, which is why `WARNING_CLOSED` is allowed to transition forward to `NEEDS_RESPONSE` and is **not** treated as terminal. The **active cluster** (`NEEDS_RESPONSE`, `UNDER_REVIEW`) is a live chargeback awaiting our evidence and then the bank's review. The **terminal cluster** (`WON`, `LOST`, `CHARGE_REFUNDED`) is final: `TERMINAL_DISPUTE_STATUSES` lists `WON`/`LOST`/`CHARGE_REFUNDED`, and `isLegalDisputeTransition` rejects any outgoing edge from them so a delayed or replayed webhook can never re-drive the lost-dispute side effects.
+The **early-warning cluster** (`WARNING_NEEDS_RESPONSE`, `WARNING_UNDER_REVIEW`, `WARNING_CLOSED`) represents a bank's early fraud signal that has not yet become a formal chargeback; a closed warning can still escalate into a real dispute, which is why `WARNING_CLOSED` is allowed to transition forward to `NEEDS_RESPONSE` and is **not** treated as terminal. The **active cluster** (`NEEDS_RESPONSE`, `UNDER_REVIEW`) is a live chargeback awaiting our evidence and then the bank's review. The **terminal cluster** (`WON`, `LOST`, `CHARGE_REFUNDED`, `CLOSED`) is final: `TERMINAL_DISPUTE_STATUSES` lists all four, and `isLegalDisputeTransition` rejects any outgoing edge from them so a delayed or replayed webhook can never re-drive the lost-dispute side effects.
 
 ---
 
@@ -55,11 +58,11 @@ The table below maps Razorpay's `status` to our `DisputeStatus`, with the webhoo
 | Razorpay `status` | Delivering webhook | Our enum (via `mapDisputeStatus`) | Correct? |
 | --- | --- | --- | --- |
 | `open` | `payment.dispute.created` | `NEEDS_RESPONSE` (default branch) | Works only by falling through to the default; no explicit `open` case. |
-| `under_review` | `payment.dispute.under_review` | `UNDER_REVIEW` | Mapper is correct, but the event is **never dispatched** (Gap 2). |
+| `under_review` | `payment.dispute.under_review` | `UNDER_REVIEW` | Correct — the event is dispatched alongside `action_required` (#789). |
 | `won` | `payment.dispute.won` | `WON` (dispatch forces `"won"`) | Correct. |
 | `lost` | `payment.dispute.lost` | `LOST` (dispatch forces `"lost"`) | Correct. |
-| `closed` | `payment.dispute.closed` | `NEEDS_RESPONSE` (default branch) | **Wrong** — a terminal dispute is recorded as still needing a response (Gap 1). |
-| (none) | `payment.dispute.action_required` | — | Event **unhandled** (Gap 3). |
+| `closed` | `payment.dispute.closed` | `CLOSED` (terminal) | Correct — proceedings ended without a verdict; still-`HELD` earnings release, refund-consumed ones are already `REFUNDED`. |
+| (entity status) | `payment.dispute.action_required` | `NEEDS_RESPONSE` | Correct in effect — the deadline-bearing signal lands back in the needs-response state and the hourly deadline alert cron picks up its `respond_by`. Razorpay allows roughly three business days to respond, so this event is the urgent one. |
 
 The three `WARNING_*` enum values have no Razorpay source at all — Razorpay folds its early `fraud`/`retrieval` phases into `open`/`under_review`, never a `warning_*` status — so those states only ever populate from the Stripe path.
 
@@ -73,21 +76,21 @@ Authoritative: this section is gateway behavior, not regulation; the consumer-pr
 
 A merchant resolves a Razorpay dispute by either **accepting** it (the customer is refunded and the dispute closes) or **contesting** it with evidence. Contrary to our older payments documentation, Razorpay now exposes both as APIs rather than dashboard-only actions: `POST /v1/disputes/:id/accept` and `PATCH /v1/disputes/:id/contest` (https://razorpay.com/docs/api/disputes/contest/, https://razorpay.com/docs/api/disputes/accept/). A contest is built by uploading supporting documents to obtain document ids, then submitting them under typed evidence fields (`shipping_proof`, `proof_of_service`, `customer_communication`, `explanation_letter`, `refund_confirmation`, and others) with `action: "draft"` to save or `action: "submit"` to send to the bank — at least one document id is required to submit. Submitting moves the dispute to `under_review`, and the bank's verdict arrives as `payment.dispute.won` or `payment.dispute.lost`.
 
-> 🟥 **Divergence:** the absorbed payments docs assert Razorpay has no dispute API — `docs/payments/refunds-disputes/03-dispute-flow.md` states "NO direct dispute API" and `01-architecture.md` labels the Razorpay box "(No dispute API)". The cron `scripts/disputes/reconcile-disputes.ts` carries the same stale comment ("Razorpay doesn't support dispute API") and routes every Razorpay dispute to `razorpayManualReviewCount` for manual dashboard review. As of June 2026 the contest/accept endpoints above exist; the assertion that it is impossible is outdated. (This flags the divergence; do not edit `docs/compliance` here.)
+> **Divergence resolved in docs; cron wiring still open.** The absorbed payments docs used to assert Razorpay has no dispute API; `docs/payments/refunds-disputes/03-dispute-flow.md` and `01-architecture.md` now reflect the contest/accept endpoints. The remaining gap is behavioral: `scripts/disputes/reconcile-disputes.ts` still routes every Razorpay dispute to `razorpayManualReviewCount` for manual dashboard review instead of reconciling through the API. Wiring the reconciler (and an evidence-upload surface) to the contest/accept endpoints is tracked in the launch-residuals register.
 
 ---
 
-## 4. Three handler bugs (verified against code)
+## 4. Three handler bugs — all resolved
 
-The dispute handler has three real defects, each verified against the dispatch switch in `app/api/webhooks/razorpay-dispatch.ts` and the mapper in `app/api/webhooks/utils.ts`. They are presented here as gaps because each silently drops or mis-records a dispute signal.
+An earlier revision of this section documented three real defects in the dispatch switch (`app/api/webhooks/razorpay-dispatch.ts`) and the mapper (`app/api/webhooks/utils.ts`). All three are now fixed; the history is kept here because the failure modes are instructive.
 
-> 🟡 **Gap 1 — `closed` mis-maps to `NEEDS_RESPONSE` (no issue filed yet).** `mapDisputeStatus` (`app/api/webhooks/utils.ts`, ~line 1297) has explicit cases for `won`, `lost`, `under_review`, `charge_refunded`, and the five `warning_*`/`needs_response` strings, but **no `case "closed"`** — so `closed` hits the `default` and returns `NEEDS_RESPONSE`. The `payment.dispute.closed` dispatch case passes the raw status string straight through to `handleDisputeUpdated`, so a *resolved* dispute is mapped to a state that says it still needs a response. In practice the downstream legal-transition guard then masks the symptom unpredictably: if the dispute was already terminal the transition is rejected, and if it was already `NEEDS_RESPONSE` the same-status check no-ops — but an `UNDER_REVIEW` dispute receiving `closed` is rejected as an illegal `UNDER_REVIEW → NEEDS_RESPONSE` backward transition and never reaches a terminal state. The fix is a `case "closed"` mapping to a terminal state (`CHARGE_REFUNDED` when a refund was issued, else a closed/terminal verdict).
+**Gap 1 (resolved in the #709/#752 triage PR) — `closed` used to mis-map to `NEEDS_RESPONSE`.** `mapDisputeStatus` had no `case "closed"`, so Razorpay's ended-without-verdict terminal fell to the `default` and a resolved dispute was recorded as still needing a response — or, when the dispute was already `UNDER_REVIEW`, the transition guard rejected the backward move and the dispute never reached a terminal state at all. The fix added a dedicated `CLOSED` value to the `DisputeStatus` enum, mapped `"closed"` to it, registered it as terminal in `lib/payments/dispute-status.ts`, and made `handleDisputeUpdated` release any still-`HELD` earnings on close (rows consumed by a refund are already `REFUNDED` by the refund cascade, so that release is a natural no-op when money moved).
 
-> 🟡 **Gap 2 — `payment.dispute.under_review` is never dispatched (no issue filed yet).** Razorpay fires this event after a contest is submitted for bank review, and `mapDisputeStatus("under_review")` would correctly return `UNDER_REVIEW` — but `razorpay-dispatch.ts` has **no `case` for `payment.dispute.under_review`**; the switch handles only `created`, `won`, `lost`, and `closed`. The event falls to the dispatcher's `default` (logged as "Unhandled Razorpay event type"), so a contested dispute never advances out of `NEEDS_RESPONSE` in our records even while the bank is actively reviewing it. The fix is to subscribe to the event and add a dispatch case calling `handleDisputeUpdated(id, "under_review", null)`.
+**Gap 2 (resolved under #789) — `payment.dispute.under_review` was never dispatched.** The dispatcher now routes it (together with `action_required`) through `handleDisputeUpdated`, so a contested dispute advances to `UNDER_REVIEW` while the bank reviews the evidence.
 
-> 🟡 **Gap 3 — `payment.dispute.action_required` is unhandled (no issue filed yet).** Razorpay fires this when it or the bank needs more documents from us; it is a deadline-bearing state. There is **no case for it anywhere** in `razorpay-dispatch.ts`, so it falls through to the dispatcher's `default` and is dropped. Because it carries its own `respond_by`, dropping it risks an auto-loss on a missed deadline that we never surfaced. The fix is to subscribe and dispatch it to a deadline-tracking state.
+**Gap 3 (resolved under #789) — `payment.dispute.action_required` was dropped.** It now dispatches through the same progress path and lands the dispute back in `NEEDS_RESPONSE`. This event is the urgent one: Razorpay's published guidance allows roughly **three business days** to respond before the right to contest lapses, and the hourly `alert-dispute-deadlines` cron surfaces the `respond_by` window (48-hour warning, 12-hour critical).
 
-A related but lower-severity observation: `open` is not explicitly mapped either — it works today only because the `default` branch happens to return `NEEDS_RESPONSE`. An explicit `case "open"` would make the mapping intentional and resilient to a future default change.
+A related but lower-severity observation still stands: `open` is not explicitly mapped — it works today only because the `default` branch happens to return `NEEDS_RESPONSE`. An explicit `case "open"` would make the mapping intentional and resilient to a future default change.
 
 ---
 

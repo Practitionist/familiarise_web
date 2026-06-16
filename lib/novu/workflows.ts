@@ -64,6 +64,9 @@ export const NOVU_WORKFLOWS = {
   // Recordings
   RECORDING_AVAILABLE: "recording-available",
   RECORDING_FAILED: "recording-failed",
+  // STR-3 — STREAM_ONLY recordings aren't auto-transferred; warn the host
+  // before their Stream S3 URL lapses so they can download/keep it.
+  RECORDING_EXPIRING: "recording-expiring",
 
   // Referrals
   REFERRAL_BONUS_EARNED: "referral-bonus-earned",
@@ -269,6 +272,15 @@ export type RecordingPayload = {
 export type RecordingFailedPayload = {
   streamCallId: string;
   errorMessage?: string;
+  dashboardUrl: string;
+};
+
+// STR-3 — one notification per consultant summarising how many of their
+// STREAM_ONLY recordings expire soon. `expiresAt` is the soonest expiry in the
+// batch so the copy can lead with the nearest deadline.
+export type RecordingExpiringPayload = {
+  recordingCount: number;
+  expiresAt: string;
   dashboardUrl: string;
 };
 

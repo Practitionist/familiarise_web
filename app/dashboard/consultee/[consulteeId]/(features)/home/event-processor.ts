@@ -134,7 +134,7 @@ function processConsultation(
       consultation.consultationPlan?.consultantProfile?.user?.image,
     startsAt: new Date(firstSlot.startsAt),
     endsAt: new Date(firstSlot.endsAt ?? firstSlot.startsAt),
-    status: consultation.requestStatus ?? "PENDING",
+    status: consultation.status ?? "PENDING",
     slots: slots.map((s) => ({
       startsAt: new Date(s.startsAt),
       endsAt: new Date(s.endsAt ?? s.startsAt),
@@ -216,7 +216,7 @@ function processSubscription(
       subscription.subscriptionPlan?.consultantProfile?.user?.image,
     startsAt: nextSlot.startsAt,
     endsAt: nextSlot.endsAt,
-    status: subscription.requestStatus ?? "PENDING",
+    status: subscription.status ?? "PENDING",
     slots: allSlots.map((s) => ({ startsAt: s.startsAt, endsAt: s.endsAt, appointmentId: s.appointmentId })),
     appointmentId: nextSlot.appointmentId,
     joinableAppointment,

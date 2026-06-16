@@ -71,14 +71,6 @@ export const consultantFetchers = {
       "Consultant details fetch failed",
     ),
 
-  requests: (consultantId: string, orgScope?: string | null) =>
-    fetchWithErrorHandling<TAppointment[]>(
-      orgScope && orgScope !== "personal"
-        ? `/api/dashboard/consultant/${consultantId}/requests?orgScope=${encodeURIComponent(orgScope)}`
-        : `/api/dashboard/consultant/${consultantId}/requests`,
-      "Requests fetch failed",
-    ),
-
   planner: (consultantId: string, orgScope?: string | null) =>
     fetchWithErrorHandling<PlannerData>(
       orgScope && orgScope !== "personal"
@@ -205,22 +197,17 @@ export function createConsultantQueries(
       retry: 2,
     },
 
-    // Pending requests
-    requests: {
-      queryKey: ["consultant-requests", consultantId, scopeKey] as const,
-      queryFn: () => consultantFetchers.requests(consultantId, orgScope),
-      staleTime: STALE_TIMES.SHORT,
-      gcTime: GC_TIME,
-      retry: 2,
-    },
-
     // Planner/calendar data
     planner: {
       queryKey: ["consultant-planner", consultantId, scopeKey] as const,
       queryFn: () => consultantFetchers.planner(consultantId, orgScope),
-      staleTime: STALE_TIMES.MEDIUM,
+      // Slot freshness without realtime: a booking/cancellation made in another
+      // tab, on another device, or by another user shows up when this view
+      // regains focus. Reconnect refetch is already global (ReactQueryProvider).
+      staleTime: STALE_TIMES.SHORT,
       gcTime: GC_TIME,
       retry: 2,
+      refetchOnWindowFocus: true,
     },
 
     // Documents for review
@@ -252,9 +239,12 @@ export function createConsulteeQueries(
     events: {
       queryKey: ["consultee-events", consulteeId, scopeKey] as const,
       queryFn: () => consulteeFetchers.events(consulteeId, orgScope),
-      staleTime: STALE_TIMES.MEDIUM,
+      // Slot freshness without realtime: a slot relinquished/rebooked elsewhere
+      // shows up when this view regains focus (reconnect refetch is global).
+      staleTime: STALE_TIMES.SHORT,
       gcTime: GC_TIME,
       retry: 2,
+      refetchOnWindowFocus: true,
     },
 
     // Consultee profile
