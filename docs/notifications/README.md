@@ -1,6 +1,6 @@
 # Notification System
 
-The notification system uses a dual-layer architecture: **Resend** for direct transactional email delivery and **Novu** for multi-channel notification orchestration (in-app, email, push). Both layers follow a fire-and-forget pattern -- notifications never block the main transaction flow.
+The notification system uses a dual-layer architecture: **Resend** for direct transactional email delivery and **Novu** for multi-channel notification orchestration (in-app, email, push). Neither layer blocks the main transaction flow — a notification call never causes the calling operation to roll back. As of #474, however, Resend sends are no longer pure fire-and-forget: when a transactional email send fails, the already-rendered message is persisted to the `FailedEmail` table and a retry worker re-sends it with backoff, so a transient Resend outage no longer silently drops the email. Novu triggers remain genuinely fire-and-forget.
 
 ```mermaid
 graph TD
@@ -29,7 +29,7 @@ graph TD
 
 ## Core Principles
 
-- **Fire-and-forget** -- notification calls are wrapped in try-catch; failures are logged but never block the calling operation
+- **Non-blocking** -- notification calls are wrapped in try-catch and never block the calling operation; Novu failures are logged, while as of #474 a failed Resend transactional send is also persisted to `FailedEmail` and replayed by a retry worker rather than merely logged
 - **Graceful degradation** -- if `NOVU_SECRET_KEY` or `RESEND_API_KEY` is missing, functions return `{success: false}` instead of throwing
 - **Singleton clients** -- both Resend and Novu use lazy-initialized singleton instances
 - **Subscriber = User** -- Novu `subscriberId` is the Prisma `User.id`

@@ -14,6 +14,7 @@
  * - searchLimiter:          60/min per IP    — GET /api/user/consultants, /api/consultants/search
  * - eligibilityLimiter:     20/min per IP    — GET /api/trials/check-eligibility
  * - availabilityLimiter:    30/min per IP    — GET /api/slots/availability/[consultantId]
+ * - documentUploadLimiter:  10/min per user  — POST /api/appointments/[id]/documents (+ /consultant)
  */
 
 import { Ratelimit } from "@upstash/ratelimit";
@@ -86,6 +87,15 @@ export const participantReadLimiter = makeLimiter(30, "1 m", "rl:participants");
 
 /** 10 per minute — event mutations: /api/bookings/* POST/PATCH + [id]/validate + [id]/allocate (#831) */
 export const eventMutationLimiter = makeLimiter(10, "1 m", "rl:event-mutation");
+
+/**
+ * 10 per minute per user — DOC-2 (#694): document upload POSTs
+ * (appointment documents + consultant response uploads). Each upload
+ * touches Supabase Storage and creates a DB row, so an unthrottled loop
+ * can both balloon storage cost and flood the reviewer; bursts of a few
+ * files at once stay under the limit.
+ */
+export const documentUploadLimiter = makeLimiter(10, "1 m", "rl:document-upload");
 
 // ============================================================================
 // Enterprise (arch-4) — per-org / per-IP buckets for org-specific surfaces.

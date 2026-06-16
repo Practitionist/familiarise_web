@@ -34,6 +34,35 @@ export interface StreamCallEndedEvent {
   ended_by_user_id?: string;
 }
 
+// STR-4 — per-participant join/leave. Stream's CallParticipantResponse nests
+// the Stream user id (== our app userId, see upsertUserToStream) under
+// `participant.user.id`. `user_session_id` is the per-tab/device session, used
+// only for logging — attendance is keyed on the app user, not the device.
+export interface StreamSessionParticipantJoinedEvent {
+  call_cid: string;
+  type: "call.session_participant_joined";
+  created_at: string;
+  session_id: string;
+  participant: {
+    user: { id: string };
+    user_session_id?: string;
+    role?: string;
+  };
+}
+
+export interface StreamSessionParticipantLeftEvent {
+  call_cid: string;
+  type: "call.session_participant_left";
+  created_at: string;
+  session_id: string;
+  duration_seconds?: number;
+  participant: {
+    user: { id: string };
+    user_session_id?: string;
+    role?: string;
+  };
+}
+
 /**
  * Handle call.session_ended event
  * Triggered when the call session naturally ends (last participant leaves + inactivity timeout)
@@ -222,6 +251,150 @@ export async function handleCallEnded(
   } catch (error) {
     streamLogger.error("Failed to handle call ended event", error, {
       streamCallId,
+    });
+    throw error;
+  }
+}
+
+/**
+ * Resolve the MeetingSession.id for a Stream call_cid (format "type:callId").
+ * Returns null (not throw) when no session matches — Stream emits participant
+ * events for ad-hoc calls that may never have been persisted; those are skipped.
+ */
+async function resolveMeetingSessionId(
+  streamCallId: string,
+): Promise<string | null> {
+  const meetingSession = await prisma.meetingSession.findUnique({
+    where: { streamCallId },
+    select: { id: true },
+  });
+  return meetingSession?.id ?? null;
+}
+
+/**
+ * STR-4 — Handle call.session_participant_joined.
+ * Upserts a MeetingAttendance row per (session, app user). First join stamps
+ * firstJoinedAt; a rejoin increments joinCount. Unblocks #471 (no-show) and
+ * #472 (overrun), which read first-join / last-leave to derive presence.
+ */
+export async function handleSessionParticipantJoined(
+  event: StreamSessionParticipantJoinedEvent,
+): Promise<void> {
+  const { call_cid, created_at, participant } = event;
+  const streamCallId = call_cid.split(":")[1] || call_cid;
+  const userId = participant?.user?.id;
+
+  if (!userId) {
+    streamLogger.warn("Participant joined event missing user id", {
+      streamCallId,
+    });
+    return;
+  }
+
+  try {
+    const meetingSessionId = await resolveMeetingSessionId(streamCallId);
+    if (!meetingSessionId) {
+      streamLogger.warn("Meeting session not found for participant joined", {
+        streamCallId,
+        userId,
+      });
+      return;
+    }
+
+    const joinedAt = new Date(created_at);
+
+    // Idempotent: a duplicate webhook for the same join must not inflate the
+    // count, so the unique [meetingSessionId, userId] row is the dedup key.
+    // First join → create with firstJoinedAt; rejoin → bump joinCount only
+    // (firstJoinedAt is immutable so #471 reads the genuine first arrival).
+    await prisma.meetingAttendance.upsert({
+      where: {
+        meetingSessionId_userId: { meetingSessionId, userId },
+      },
+      create: {
+        meetingSessionId,
+        userId,
+        firstJoinedAt: joinedAt,
+      },
+      update: {
+        joinCount: { increment: 1 },
+      },
+    });
+
+    streamLogger.info("Recorded participant join", {
+      streamCallId,
+      meetingSessionId,
+      userId,
+      userSessionId: participant.user_session_id,
+    });
+  } catch (error) {
+    streamLogger.error("Failed to handle participant joined event", error, {
+      streamCallId,
+      userId,
+    });
+    throw error;
+  }
+}
+
+/**
+ * STR-4 — Handle call.session_participant_left.
+ * Stamps lastLeftAt on the participant's attendance row. If the join was never
+ * recorded (missed/duplicate webhook ordering), create the row so the leave is
+ * not lost — firstJoinedAt falls back to the leave time.
+ */
+export async function handleSessionParticipantLeft(
+  event: StreamSessionParticipantLeftEvent,
+): Promise<void> {
+  const { call_cid, created_at, participant } = event;
+  const streamCallId = call_cid.split(":")[1] || call_cid;
+  const userId = participant?.user?.id;
+
+  if (!userId) {
+    streamLogger.warn("Participant left event missing user id", {
+      streamCallId,
+    });
+    return;
+  }
+
+  try {
+    const meetingSessionId = await resolveMeetingSessionId(streamCallId);
+    if (!meetingSessionId) {
+      streamLogger.warn("Meeting session not found for participant left", {
+        streamCallId,
+        userId,
+      });
+      return;
+    }
+
+    const leftAt = new Date(created_at);
+
+    // upsert (not update) — a left arriving before/without a recorded join still
+    // creates the row, with firstJoinedAt defensively set to the leave time.
+    await prisma.meetingAttendance.upsert({
+      where: {
+        meetingSessionId_userId: { meetingSessionId, userId },
+      },
+      create: {
+        meetingSessionId,
+        userId,
+        firstJoinedAt: leftAt,
+        lastLeftAt: leftAt,
+      },
+      update: {
+        lastLeftAt: leftAt,
+      },
+    });
+
+    streamLogger.info("Recorded participant leave", {
+      streamCallId,
+      meetingSessionId,
+      userId,
+      durationSeconds: event.duration_seconds,
+    });
+  } catch (error) {
+    streamLogger.error("Failed to handle participant left event", error, {
+      streamCallId,
+      userId,
     });
     throw error;
   }

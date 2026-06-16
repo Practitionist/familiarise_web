@@ -11,6 +11,7 @@ import {
   assertCollaboratorsAvailable,
   CollaboratorUnavailableError,
 } from "@/lib/collaborators/availability";
+import { isExclusionViolation } from "@/lib/db/pg-errors";
 
 import { getSession } from "@/lib/auth-server";
 // Schema for POST request body based on WebinarPlanSchema
@@ -247,6 +248,9 @@ export async function POST(request: NextRequest) {
                           startsAt: startTime, // Use calculated startTime
                           endsAt: endTime, // Use calculated endTime
                           isTentative: false,
+                          // #784 — owner denormalized so the slot overlap
+                          // exclusion guards the host on group events too.
+                          consultantProfileId,
                         },
                       },
                     },
@@ -306,6 +310,18 @@ export async function POST(request: NextRequest) {
       );
     }
     // --- End Zod Error Handling ---
+
+    // #784 — owner now denormalized onto group-event slots, so a scheduling
+    // overlap trips slot_no_confirmed_overlap (23P01): that's a conflict, not 500.
+    if (isExclusionViolation(error)) {
+      return NextResponse.json(
+        {
+          error:
+            "That time conflicts with another confirmed session on your calendar.",
+        },
+        { status: 409 },
+      );
+    }
 
     console.error("Error creating webinar with plan:", error);
 
@@ -729,6 +745,10 @@ export async function PATCH(request: NextRequest) {
                   data: {
                     startsAt: startTime,
                     endsAt: endTime,
+                    // #784 — denormalize the owner so slot_no_confirmed_overlap
+                    // guards the host against double-booking on group events too
+                    // (group slots were NULL here, leaving the owner unprotected).
+                    consultantProfileId: existingPlan.consultantProfileId,
                   },
                 });
               } else {
@@ -745,6 +765,8 @@ export async function PATCH(request: NextRequest) {
                     startsAt: startTime,
                     endsAt: endTime,
                     isTentative: false,
+                    // #784 — owner denormalized for the overlap exclusion guard.
+                    consultantProfileId: existingPlan.consultantProfileId,
                   },
                 });
               }
@@ -761,6 +783,8 @@ export async function PATCH(request: NextRequest) {
                       startsAt: startTime,
                       endsAt: endTime,
                       isTentative: false,
+                      // #784 — owner denormalized for the overlap exclusion guard.
+                      consultantProfileId: existingPlan.consultantProfileId,
                     },
                   },
                 },
@@ -870,6 +894,16 @@ export async function PATCH(request: NextRequest) {
     // AE-2 — co-host clash is a conflict, not a server error.
     if (error instanceof CollaboratorUnavailableError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
+    }
+    // #784 — owner overlap on the shared exclusion constraint → 409, not 500.
+    if (isExclusionViolation(error)) {
+      return NextResponse.json(
+        {
+          error:
+            "That time conflicts with another confirmed session on your calendar.",
+        },
+        { status: 409 },
+      );
     }
 
     console.error("Error updating webinar with plan:", error);

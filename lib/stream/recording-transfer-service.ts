@@ -7,6 +7,7 @@ import prisma from "@/lib/prisma";
 import { RecordingStatus } from "@prisma/client";
 import type { RecordingRow } from "./recording-types";
 import { streamLogger } from "@/lib/stream-logger";
+import { recordSystemError } from "@/lib/enterprise/system-events";
 import supabase, {
   ensureBucketExists,
   supabaseAdmin,
@@ -22,6 +23,12 @@ const storageClient = supabaseAdmin || supabase;
 // Maximum file size for direct transfer (500MB)
 // Files larger than this should use resumable uploads (future enhancement)
 const MAX_TRANSFER_SIZE = 500 * 1024 * 1024; // 500MB
+
+// STR-2/3 — page engineering once a recording has burned through this many
+// transfer attempts. Below the threshold, retries are normal (transient S3 /
+// Supabase blips); at/above it the recording is likely stuck and at risk of
+// silently expiring, so it warrants a system_events alert.
+const TRANSFER_FAILURE_ALERT_THRESHOLD = 3;
 
 // Allowed video MIME types
 const ALLOWED_VIDEO_TYPES = [
@@ -96,6 +103,64 @@ export class RecordingTransferService {
   }
 
   /**
+   * STR-2/3 — record a failed transfer attempt on the Recording row and, once
+   * attempts cross the threshold, page engineering exactly once.
+   *
+   * Reverts status to READY (the existing retry contract — see
+   * transferRecordingToSupabase docstring), bumps transferAttempts, stamps
+   * lastTransferError. When the post-increment count >= the threshold and we
+   * have not alerted before (transferFailureAlertedAt null), fires a
+   * recordSystemError and stamps transferFailureAlertedAt to dedupe the page.
+   */
+  private static async recordTransferFailure(
+    recordingId: string,
+    errorMessage: string,
+  ): Promise<void> {
+    try {
+      const updated = await prisma.recording.update({
+        where: { id: recordingId },
+        data: {
+          status: RecordingStatus.READY,
+          transferAttempts: { increment: 1 },
+          lastTransferError: errorMessage,
+        },
+        select: {
+          organizationId: true,
+          transferAttempts: true,
+          transferFailureAlertedAt: true,
+        },
+      });
+
+      if (
+        updated.transferAttempts >= TRANSFER_FAILURE_ALERT_THRESHOLD &&
+        !updated.transferFailureAlertedAt
+      ) {
+        await recordSystemError({
+          organizationId: updated.organizationId ?? null,
+          category: "RECORDING_TRANSFER",
+          summary: `Recording transfer stuck after ${updated.transferAttempts} attempts`,
+          err: new Error(errorMessage),
+          context: { recordingId, transferAttempts: updated.transferAttempts },
+          correlationId: recordingId,
+        });
+
+        // Stamp the dedupe marker only after the page is recorded, so a crash
+        // mid-alert re-pages next failure rather than silently swallowing it.
+        await prisma.recording.update({
+          where: { id: recordingId },
+          data: { transferFailureAlertedAt: new Date() },
+        });
+      }
+    } catch (err) {
+      // Best-effort: failing to record the failure must not mask the original
+      // transfer error the caller is about to return.
+      streamLogger.error("Failed to record transfer failure", err, {
+        recordingId,
+      });
+    }
+  }
+
+  /**
    * Transfer a recording from Stream S3 to Supabase
    * @param recordingId The recording ID to transfer
    *
@@ -144,14 +209,9 @@ export class RecordingTransferService {
         fileSizeLimit: 524288000, // 500MB
       });
       if (!bucketReady) {
-        await prisma.recording.update({
-          where: { id: recordingId },
-          data: { status: "READY" as RecordingStatus },
-        });
-        return {
-          success: false,
-          error: `Recordings bucket not found. Please create a '${RECORDINGS_BUCKET}' bucket in Supabase.`,
-        };
+        const error = `Recordings bucket not found. Please create a '${RECORDINGS_BUCKET}' bucket in Supabase.`;
+        await this.recordTransferFailure(recordingId, error);
+        return { success: false, error };
       }
 
       // Download the recording from Stream S3
@@ -164,14 +224,9 @@ export class RecordingTransferService {
 
       if (!response.ok) {
         // Revert to READY so cron and manual retries can re-attempt
-        await prisma.recording.update({
-          where: { id: recordingId },
-          data: { status: "READY" as RecordingStatus },
-        });
-        return {
-          success: false,
-          error: `Failed to download recording: ${response.status} ${response.statusText}`,
-        };
+        const error = `Failed to download recording: ${response.status} ${response.statusText}`;
+        await this.recordTransferFailure(recordingId, error);
+        return { success: false, error };
       }
 
       // Get file data
@@ -182,19 +237,14 @@ export class RecordingTransferService {
 
       // Check file size before attempting transfer to prevent OOM
       if (fileSizeNumber && fileSizeNumber > MAX_TRANSFER_SIZE) {
-        await prisma.recording.update({
-          where: { id: recordingId },
-          data: { status: "READY" as RecordingStatus }, // Revert to READY
-        });
         streamLogger.warn("Recording too large for direct transfer", {
           recordingId,
           fileSize: fileSizeNumber,
           maxSize: MAX_TRANSFER_SIZE,
         });
-        return {
-          success: false,
-          error: `Recording is too large for direct transfer (${Math.round(fileSizeNumber / 1024 / 1024)}MB). Maximum size is 500MB. Large recordings will need to be transferred manually or via a background job.`,
-        };
+        const error = `Recording is too large for direct transfer (${Math.round(fileSizeNumber / 1024 / 1024)}MB). Maximum size is 500MB. Large recordings will need to be transferred manually or via a background job.`;
+        await this.recordTransferFailure(recordingId, error);
+        return { success: false, error };
       }
 
       // Validate content type
@@ -234,18 +284,16 @@ export class RecordingTransferService {
 
       if (uploadError) {
         // Revert to READY so cron and manual retries can re-attempt
-        await prisma.recording.update({
-          where: { id: recordingId },
-          data: { status: "READY" as RecordingStatus },
-        });
         streamLogger.error("Failed to upload to Supabase", uploadError, {
           recordingId,
           storagePath,
         });
+        await this.recordTransferFailure(recordingId, uploadError.message);
         return { success: false, error: uploadError.message };
       }
 
-      // Store the path (NOT a public URL) — presigned URLs are generated on access
+      // Store the path (NOT a public URL) — presigned URLs are generated on access.
+      // Clear the failure trail so a recovered recording stops looking stuck.
       await prisma.recording.update({
         where: { id: recordingId },
         data: {
@@ -254,6 +302,8 @@ export class RecordingTransferService {
           status: "AVAILABLE" as RecordingStatus,
           transferredAt: new Date(),
           fileSize: fileSize,
+          lastTransferError: null,
+          transferFailureAlertedAt: null,
         },
       });
 
@@ -264,14 +314,6 @@ export class RecordingTransferService {
 
       return { success: true };
     } catch (error) {
-      // Revert to READY so cron and manual retries can re-attempt
-      if (recording) {
-        await prisma.recording.update({
-          where: { id: recordingId },
-          data: { status: "READY" as RecordingStatus },
-        });
-      }
-
       const errorMessage =
         error instanceof Error
           ? error.message
@@ -279,6 +321,11 @@ export class RecordingTransferService {
       streamLogger.error("Failed to transfer recording", error, {
         recordingId,
       });
+      // Revert to READY + track the attempt so cron/manual retries can re-attempt
+      // (only when the recording row was actually loaded — otherwise nothing to bump).
+      if (recording) {
+        await this.recordTransferFailure(recordingId, errorMessage);
+      }
       return { success: false, error: errorMessage };
     }
   }

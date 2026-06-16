@@ -17,6 +17,13 @@ jest.mock("@stream-io/node-sdk", () => ({
   StreamClient: mockStreamClientConstructor,
 }));
 
+// #473 — stream-client now imports withCircuitBreaker from lib/redis. Mock it
+// (the real module pulls in the un-transformed @upstash/redis ESM) with a
+// pass-through so closed-breaker behaviour is exercised: operation runs as-is.
+jest.mock("../../lib/redis", () => ({
+  withCircuitBreaker: jest.fn((op: () => unknown) => op()),
+}));
+
 describe("Stream Client Module", () => {
   const originalEnv = process.env;
   const mockApiKey = "test-api-key";
