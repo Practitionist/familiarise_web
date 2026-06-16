@@ -235,12 +235,13 @@ describe("handleRazorpayPayoutWebhook — OrganizationPayout reconciliation", ()
     expect(mockedMarkCompleted).not.toHaveBeenCalled();
     expect(mockedMarkFailed).not.toHaveBeenCalled();
     expect(mockedMarkReversed).not.toHaveBeenCalled();
-    // Consultant fallback was attempted (with mapped status).
+    // Consultant fallback was attempted (with mapped status + forwarded UTR).
     expect(mockedHandlePayoutWebhook).toHaveBeenCalledWith(
       "RAZORPAY",
       "pout_orphan",
       "COMPLETED",
       undefined,
+      "X",
     );
   });
 

@@ -233,7 +233,7 @@ export async function PATCH(
         ...(reviewStatus && { reviewStatus }),
         ...(reviewNotes && { reviewNotes }),
         ...(reviewStatus && { reviewedAt: new Date() }),
-        ...(reviewStatus && { reviewedBy: session.user.id }),
+        ...(reviewStatus && { reviewedById: session.user.id }), // A8 — FK scalar (#676)
       },
     });
 

@@ -16,6 +16,7 @@ import { buildOccupiedAppointmentFilter } from "@/utils/slotAllocation/occupancy
 import { REQUEST_ALLOWED_FROM } from "@/lib/booking/transitions";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { recordSystemError } from "@/lib/enterprise/system-events";
+import { refundPayment } from "@/lib/payments/operations/refund";
 import {
   normalizeLegacySlotKeys,
   validateWebhookMetadata,
@@ -281,7 +282,11 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
     }
 
     // Confirm appointment: set isTentative = false and update status to APPROVED
-    await confirmExistingAppointment(tx, appointment.id, payment.userId);
+    const confirmResult = await confirmExistingAppointment(
+      tx,
+      appointment.id,
+      payment.userId,
+    );
 
     console.log(
       `✅ Payment ${paymentIntentId} processed successfully. Appointment ID: ${appointment.id}`,
@@ -296,6 +301,9 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
       userName: payment.user.name,
       amount: payment.amount,
       currency: payment.currency,
+      // #855 — a capture that landed after the booking was cancelled; Phase 2
+      // auto-refunds it instead of treating it as a confirmed booking.
+      capturedAfterTerminal: confirmResult.capturedAfterTerminal,
     };
     },
     { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
@@ -304,6 +312,26 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
 
   // If transaction returned null, the payment was already processed or had a metadata error
   if (!txResult) return;
+
+  // #855 — the capture landed after the booking was cancelled. The payment is
+  // SUCCEEDED (gateway truth) but the booking is dead, so auto-refund and skip
+  // the rest of Phase 2 — no success email, earnings, invoice, or notifications
+  // for a cancelled booking. Idempotent against webhook replay (see refund.ts).
+  if (txResult.capturedAfterTerminal) {
+    try {
+      await refundPayment({
+        paymentId: txResult.paymentId,
+        reason: "capture after cancellation",
+        initiatedByUserId: null,
+      });
+    } catch (refundError) {
+      console.error(
+        "Failed to auto-refund capture-after-cancellation (Phase 2):",
+        refundError,
+      );
+    }
+    return;
+  }
 
   // Phase 2: Non-critical post-transaction work (earnings, invoice, waitlist, notifications)
   // Failures here are logged but do NOT roll back the payment.
@@ -1048,7 +1076,10 @@ async function confirmApprovalStatus(
   tx: Tx,
   entityType: "consultation" | "subscription",
   entityId: string,
-): Promise<void> {
+): Promise<{ capturedAfterTerminal: boolean }> {
+  // #855 — signals Phase 2 to auto-refund a capture that landed after the
+  // booking was cancelled (money collected for a now-dead booking).
+  let capturedAfterTerminal = false;
   if (entityType === "consultation") {
     const consultation = await tx.consultation.findUnique({
       where: { id: entityId },
@@ -1087,6 +1118,7 @@ async function confirmApprovalStatus(
         freshStatus !== AppointmentStatus.SCHEDULED &&
         freshStatus !== AppointmentStatus.COMPLETED
       ) {
+        capturedAfterTerminal = true; // #855 — Phase 2 auto-refunds
         void recordSystemError({
           organizationId: null,
           category: "PAYMENT",
@@ -1121,12 +1153,25 @@ async function confirmApprovalStatus(
       console.log(
         `✅ Subscription ${entityId} payment completed - moving from APPROVED_PENDING_PAYMENT to APPROVED`,
       );
+    } else if (subscription.status === AppointmentStatus.CANCELLED) {
+      // #855 — capture landed after the subscription was cancelled: money for a
+      // dead booking. PENDING here is normal (slots are allocated later), so
+      // only CANCELLED is the terminal-capture case.
+      capturedAfterTerminal = true;
+      void recordSystemError({
+        organizationId: null,
+        category: "PAYMENT",
+        summary: `Payment captured for subscription ${entityId} in terminal state CANCELLED — refund needed`,
+        err: new Error("CAPTURE_AFTER_TERMINAL_STATE"),
+        context: { entityType: "subscription", entityId },
+      }).catch(() => {});
     } else {
       console.log(
         `ℹ️ Subscription ${entityId} payment received - keeping status as ${subscription.status} (consultant will allocate slots)`,
       );
     }
   }
+  return { capturedAfterTerminal };
 }
 
 /**
@@ -1144,7 +1189,7 @@ export async function confirmExistingAppointment(
   tx: Tx,
   appointmentId: string,
   userId?: string,
-) {
+): Promise<{ capturedAfterTerminal: boolean }> {
   // First fetch appointment to determine type
   const appointment = await tx.appointment.findUnique({
     where: { id: appointmentId },
@@ -1158,7 +1203,7 @@ export async function confirmExistingAppointment(
 
   if (!appointment) {
     console.warn(`Appointment ${appointmentId} not found for confirmation`);
-    return;
+    return { capturedAfterTerminal: false };
   }
 
   // #827 — first-confirmed-wins recheck for the EXCLUSIVE booking types.
@@ -1218,7 +1263,8 @@ export async function confirmExistingAppointment(
             slotId: slot.id,
           },
         }).catch(() => {});
-        return; // slots stay tentative; do not confirm over the winner
+        // slots stay tentative; do not confirm over the winner
+        return { capturedAfterTerminal: false };
       }
     }
   }
@@ -1272,20 +1318,23 @@ export async function confirmExistingAppointment(
   }
 
   // Update status for consultation and subscription
+  let capturedAfterTerminal = false;
   if (appointment.consultation) {
-    await confirmApprovalStatus(
+    const r = await confirmApprovalStatus(
       tx,
       "consultation",
       appointment.consultation.id,
     );
+    capturedAfterTerminal = capturedAfterTerminal || r.capturedAfterTerminal;
   }
 
   if (appointment.subscription) {
-    await confirmApprovalStatus(
+    const r = await confirmApprovalStatus(
       tx,
       "subscription",
       appointment.subscription.id,
     );
+    capturedAfterTerminal = capturedAfterTerminal || r.capturedAfterTerminal;
   }
 
   // Update webinar status
@@ -1303,6 +1352,8 @@ export async function confirmExistingAppointment(
       data: { status: "SCHEDULED" },
     });
   }
+
+  return { capturedAfterTerminal };
 }
 
 /**

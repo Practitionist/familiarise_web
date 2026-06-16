@@ -57,6 +57,9 @@ describe("applyReversal — CLASS_MULTI", () => {
             amount: p.amount,
             currency: "INR",
             paymentGateway: "RAZORPAY",
+            // #781 §C — the reversal must copy these onto each child refund.
+            displayCurrencyAtCheckout: "USD",
+            exchangeRateAtCheckout: 83,
           })),
         ),
       },
@@ -89,6 +92,15 @@ describe("applyReversal — CLASS_MULTI", () => {
     // Each child got its own Refund row created + marked SUCCEEDED.
     expect(tx.refund.create).toHaveBeenCalledTimes(2);
     expect(tx.refund.update).toHaveBeenCalledTimes(2);
+    // #781 §C — each child refund carries the parent payment's FX snapshot.
+    expect(tx.refund.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          displayCurrency: "USD",
+          exchangeRateAtRefund: 83,
+        }),
+      }),
+    );
   });
 
   it("never lets a child's share exceed its own amount (remainder distribution)", async () => {

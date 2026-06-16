@@ -184,8 +184,8 @@ async function calculateAmount(params: CreateApprovalPaymentParams): Promise<{
       throw new Error("Consultation plan not found");
     }
 
-    // Use plan currency instead of deriving from gateway
-    const currency = plan.priceCurrency || "INR";
+    // #781 §A — priceCurrency is the non-null Currency enum; no gateway fallback.
+    const currency = plan.priceCurrency;
 
     return {
       amount: plan.price,
@@ -207,8 +207,8 @@ async function calculateAmount(params: CreateApprovalPaymentParams): Promise<{
       throw new Error("Subscription plan not found");
     }
 
-    // Use plan currency instead of deriving from gateway
-    const currency = plan.priceCurrency || "INR";
+    // #781 §A — priceCurrency is the non-null Currency enum; no gateway fallback.
+    const currency = plan.priceCurrency;
 
     return {
       amount: plan.price,

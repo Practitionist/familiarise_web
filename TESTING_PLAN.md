@@ -26,10 +26,14 @@ npx tsx -e "import p from '@/lib/prisma'; p.user.count().then(c => { console.log
 ### 1.2 Full reset + reseed (only if needed / agreed with the team)
 
 ```bash
-npm run db:push          # sync schema (Prisma 7 db-push workflow)
+npm run db:push          # sync schema + auto-apply ledger triggers and CHECK constraints (#847)
 npm run db:seed:medium   # or db:seed / db:seed:small / db:seed:large
-npm run db:constraints   # raw-SQL CHECK constraints + ledger triggers (#847)
 ```
+
+`npm run db:push` now chains the sidecars (`db:triggers` then `db:constraints`)
+after the schema push, so the raw-SQL CHECK constraints and ledger triggers are
+applied automatically. Running `npm run db:constraints` separately afterwards is
+redundant, though harmless.
 
 ### 1.3 Credentials
 
@@ -270,11 +274,11 @@ Chaos category 07 now includes `test-cancel-pending-vs-webhook` (#849) and
 single free webinar seat).
 
 DB-level backstop (#440): the `slot_no_confirmed_overlap` exclusion
-constraint (applied via `npm run db:constraints`) rejects two CONFIRMED
-overlapping slots for one consultant at the database. Verify after any
-reset: a direct duplicate-window insert with `isTentative=false` and a set
-`consultantProfileId` must fail with an exclusion violation; tentative and
-back-to-back inserts must succeed.
+constraint (applied automatically by `npm run db:push`, which now chains
+`db:constraints`) rejects two CONFIRMED overlapping slots for one consultant at
+the database. Verify after any reset: a direct duplicate-window insert with
+`isTentative=false` and a set `consultantProfileId` must fail with an exclusion
+violation; tentative and back-to-back inserts must succeed.
 
 ## 6. Reporting
 

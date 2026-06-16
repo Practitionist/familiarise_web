@@ -58,7 +58,7 @@ Recurring sessions over a period of months. Most complex event type.
 **Rules**:
 
 - All slots within scheduling period [startDate, endDate]
-- Max 1 call per day (consecutive slots within that call)
+- Max 1 call per **local** day (consecutive slots within that call). The same-day check runs against the browser's local calendar day via `Date.toDateString()` (see `useSlotAllocation.ts`), so a session that straddles midnight UTC is still one local day for the user; it is not a UTC-day check.
 - Weekly limit: `callsPerWeek` calls per Sunday-Saturday week
 - Weekly distribution validation counts **calls** (complete session groups), not raw slots
 
@@ -76,8 +76,8 @@ flowchart TD
     E -->|Yes| F[Group by week]
     F --> G{Weekly limit respected?}
     G -->|No| X4[Error: too many calls/week]
-    G -->|Yes| H{Max 1 call per day?}
-    H -->|No| X5[Error: multiple calls same day]
+    G -->|Yes| H{Max 1 call per local day?}
+    H -->|No| X5[Error: multiple calls same local day]
     H -->|Yes| I[Valid]
 ```
 

@@ -855,6 +855,10 @@ export async function handlePayoutWebhook(
   providerPayoutId: string,
   status: "PENDING" | "PROCESSING" | "COMPLETED" | "FAILED" | "CANCELLED",
   failureReason?: string,
+  // UTR — bank settlement reference the gateway returns on a completed payout
+  // (mirrors the OrganizationPayout branch). Optional + only persisted when
+  // present, so PROCESSING/FAILED deliveries and pre-UTR gateways leave it null.
+  gatewayUtr?: string,
 ): Promise<void> {
   const payout = await prisma.consultantPayout.findFirst({
     where: { providerPayoutId },
@@ -898,6 +902,12 @@ export async function handlePayoutWebhook(
         processedAt:
           payoutStatus === PayoutStatus.COMPLETED ? new Date() : undefined,
         failureReason: failureReason,
+        // UTR — persist only on a completing payout that carried one; absent
+        // value leaves the column untouched (idempotent re-drive safe).
+        gatewayUtr:
+          payoutStatus === PayoutStatus.COMPLETED && gatewayUtr
+            ? gatewayUtr
+            : undefined,
       },
     });
 

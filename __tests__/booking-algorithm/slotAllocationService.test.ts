@@ -37,9 +37,12 @@ jest.mock("../../utils/appointmentlock", () => ({
   unlockAutoAllocate: jest.fn().mockResolvedValue(undefined),
 }));
 
-// Mock SlotValidationService to isolate unit under test
+// Mock SlotValidationService to isolate unit under test.
+// RV-2 — keep the real isOccupiedByLiveAppointment export; the allocator imports
+// it from this module and findAvailableSlots calls it to drop expired holds.
 const mockValidateFn = jest.fn();
 jest.mock("../../utils/slotAllocation/SlotValidationService", () => ({
+  ...jest.requireActual("../../utils/slotAllocation/SlotValidationService"),
   SlotValidationService: jest.fn().mockImplementation(() => ({
     validate: mockValidateFn,
   })),
@@ -88,7 +91,7 @@ function makeMockTx() {
       }),
       delete: jest.fn(),
     },
-    slotOfAppointment: { updateMany: jest.fn() },
+    slotOfAppointment: { updateMany: jest.fn(), deleteMany: jest.fn() },
   };
 }
 
@@ -847,6 +850,104 @@ describe("Auto allocation", () => {
     expect(result.error).toContain("consecutive slots available");
   });
 
+  // ── RV-2: allocator agrees with validator on expired pending-payment holds ──
+  it("RV-2: does not treat an expired pending-payment hold as booked", async () => {
+    // Consultant has a single 1-hour Monday block; only Mon 09:00-10:00 is
+    // allocatable each week.
+    mockTx.consultation.findUnique.mockResolvedValue(
+      makeConsultationEvent({
+        consultationPlan: {
+          durationInHours: 1,
+          consultantProfile: makeConsultantProfile({
+            slotsOfAvailabilityWeekly: [
+              makeWeeklyAvailabilitySlot(DayOfWeek.MONDAY, 9, 10),
+            ],
+          }),
+        },
+      }),
+    );
+
+    // Every Monday 09:00 across the 8-week search window is "occupied" — but by
+    // an APPROVED_PENDING_PAYMENT consultation whose payment has expired. The
+    // validator already skips these (orphaned-payment fix); pre-RV-2 the
+    // allocator did not, so the two disagreed and auto-allocate failed.
+    const blockedSlots: any[] = [];
+    for (let week = 0; week < 8; week++) {
+      const d = new Date("2025-01-06T09:00:00Z");
+      d.setUTCDate(d.getUTCDate() + week * 7);
+      blockedSlots.push({ startsAt: new Date(d) });
+    }
+
+    mockTx.appointment.findMany
+      .mockResolvedValueOnce([]) // reschedule check
+      .mockResolvedValueOnce([
+        {
+          id: "expired-hold",
+          slotsOfAppointment: blockedSlots,
+          consultation: { status: AppointmentStatus.APPROVED_PENDING_PAYMENT },
+          subscription: null,
+          payment: [{ expiresAt: new Date("2024-01-01T00:00:00Z") }], // expired
+        },
+      ])
+      .mockResolvedValue([]); // delete
+
+    const result = await SlotAllocationService.allocate({
+      eventType: "consultation",
+      eventId: "consult-1",
+      mode: "auto",
+    });
+
+    // The expired hold is not a live blocker → the slot is free → allocation
+    // succeeds, matching what /validate would accept for the same slot.
+    expect(result.success).toBe(true);
+    expect(mockTx.appointment.create).toHaveBeenCalled();
+  });
+
+  it("RV-2: still treats a non-expired pending-payment hold as booked", async () => {
+    mockTx.consultation.findUnique.mockResolvedValue(
+      makeConsultationEvent({
+        consultationPlan: {
+          durationInHours: 1,
+          consultantProfile: makeConsultantProfile({
+            slotsOfAvailabilityWeekly: [
+              makeWeeklyAvailabilitySlot(DayOfWeek.MONDAY, 9, 10),
+            ],
+          }),
+        },
+      }),
+    );
+
+    const blockedSlots: any[] = [];
+    for (let week = 0; week < 8; week++) {
+      const d = new Date("2025-01-06T09:00:00Z");
+      d.setUTCDate(d.getUTCDate() + week * 7);
+      blockedSlots.push({ startsAt: new Date(d) });
+    }
+
+    mockTx.appointment.findMany
+      .mockResolvedValueOnce([]) // reschedule check
+      .mockResolvedValueOnce([
+        {
+          id: "live-hold",
+          slotsOfAppointment: blockedSlots,
+          consultation: { status: AppointmentStatus.APPROVED_PENDING_PAYMENT },
+          subscription: null,
+          payment: [{ expiresAt: new Date("2026-12-31T00:00:00Z") }], // not expired
+        },
+      ])
+      .mockResolvedValue([]); // delete
+
+    const result = await SlotAllocationService.allocate({
+      eventType: "consultation",
+      eventId: "consult-1",
+      mode: "auto",
+    });
+
+    // A live hold blocks every Monday → no slot free → allocation fails.
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("consecutive slots available");
+  });
+
   it("should validate found slots before creating appointments", async () => {
     mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
     mockValidateFn.mockResolvedValue({
@@ -1045,6 +1146,7 @@ describe("fetchEventData - config extraction", () => {
         schedulingPeriodEndsAt: expect.any(Date),
       }),
       expect.any(Array), // appointmentIdsToExclude
+      "consultee-1", // #676 AE-1 — consulteeUserId threaded for the conflict scan
     );
   });
 
@@ -1065,6 +1167,7 @@ describe("fetchEventData - config extraction", () => {
       expect.objectContaining({ userId: "consultant-1" }),
       expect.objectContaining({ durationInHours: 1 }),
       expect.any(Array), // appointmentIdsToExclude
+      undefined, // #676 AE-1 — group event, no single consultee
     );
   });
 
@@ -1108,6 +1211,7 @@ describe("fetchEventData - config extraction", () => {
         sessionDurationInHours: 1.5,
       }),
       expect.any(Array), // appointmentIdsToExclude
+      undefined, // #676 AE-1 — group event, no single consultee
     );
   });
 });
@@ -1362,6 +1466,55 @@ describe("deleteExistingAppointments", () => {
     });
 
     expect(mockTx.appointment.delete).not.toHaveBeenCalled();
+  });
+
+  // ── AE-4: partial reschedule returns the freed appointment ids ─────────────
+  it("AE-4: returns deletedAppointmentIds whose tentative slots were freed", async () => {
+    mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
+
+    const tentativeAppointment = {
+      id: "rescheduled-apt",
+      slotsOfAppointment: [
+        { id: "s1", isTentative: true },
+        { id: "s2", isTentative: true },
+      ],
+      _count: { payment: 0 },
+    };
+
+    // Call #1 — reschedule detection (tentative slots present → isReschedule).
+    mockTx.appointment.findMany.mockResolvedValueOnce([tentativeAppointment]);
+    // Call #2 — deleteExistingAppointments(onlyTentative) re-fetch.
+    mockTx.appointment.findMany.mockResolvedValueOnce([tentativeAppointment]);
+
+    const result = await SlotAllocationService.allocate({
+      eventType: "consultation",
+      eventId: "consult-1",
+      mode: "manual",
+      slots: ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"],
+    });
+
+    expect(result.success).toBe(true);
+    // The freed ids must be threaded up to the AllocationResult.
+    expect(result.deletedAppointmentIds).toEqual(["rescheduled-apt"]);
+    // And only tentative slots were removed (partial reschedule path).
+    expect(mockTx.slotOfAppointment.deleteMany).toHaveBeenCalledWith({
+      where: { appointmentId: "rescheduled-apt", isTentative: true },
+    });
+  });
+
+  it("AE-4: returns an empty deletedAppointmentIds on a non-reschedule allocation", async () => {
+    mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
+    mockTx.appointment.findMany.mockResolvedValue([]);
+
+    const result = await SlotAllocationService.allocate({
+      eventType: "consultation",
+      eventId: "consult-1",
+      mode: "manual",
+      slots: ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"],
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.deletedAppointmentIds).toEqual([]);
   });
 });
 

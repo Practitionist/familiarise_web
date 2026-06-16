@@ -22,7 +22,7 @@ export interface IDocument {
     | "NEEDS_REVISION";
   reviewNotes: string | null;
   reviewedAt: Date | null;
-  reviewedBy?: string | null;
+  reviewedById?: string | null;
   uploadedAt: Date;
   // Upload role - who uploaded this document
   uploadedByRole: DocumentUploadRole;

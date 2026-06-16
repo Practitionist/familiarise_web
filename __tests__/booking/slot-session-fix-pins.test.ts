@@ -183,6 +183,65 @@ describe("#827 — confirmExistingAppointment first-confirmed-wins", () => {
 });
 
 // ---------------------------------------------------------------------------
+// #855 — capture-after-cancel signals Phase 2 to auto-refund
+// ---------------------------------------------------------------------------
+describe("#855 — capturedAfterTerminal signal on a cancelled booking", () => {
+  function mockTx(consultationStatus: string, casCount: number) {
+    return {
+      appointment: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: "appt-1",
+          consultation: { id: "c1" },
+          subscription: null,
+          webinar: null,
+          class: null,
+        }),
+      },
+      slotOfAppointment: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: "slot-1",
+            startsAt: new Date("2026-06-26T15:00:00Z"),
+            endsAt: new Date("2026-06-26T16:00:00Z"),
+            user: [{ id: "booker" }, { id: "consultant" }],
+          },
+        ]),
+        findFirst: jest.fn().mockResolvedValue(null), // no #827 overlap
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      consultation: {
+        update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: casCount }),
+        findUnique: jest
+          .fn()
+          .mockResolvedValue({ id: "c1", status: consultationStatus }),
+      },
+    } as never;
+  }
+
+  it("flags capturedAfterTerminal + records refund-needed when the consultation is CANCELLED", async () => {
+    const tx = mockTx("CANCELLED", 0);
+    const result = await confirmExistingAppointment(tx, "appt-1", "booker");
+    expect(result.capturedAfterTerminal).toBe(true);
+    expect(mockSystemError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        category: "PAYMENT",
+        err: expect.objectContaining({
+          message: "CAPTURE_AFTER_TERMINAL_STATE",
+        }),
+      }),
+    );
+  });
+
+  it("does not flag a normal APPROVED_PENDING_PAYMENT → APPROVED confirmation", async () => {
+    const tx = mockTx("APPROVED_PENDING_PAYMENT", 1);
+    const result = await confirmExistingAppointment(tx, "appt-1", "booker");
+    expect(result.capturedAfterTerminal).toBe(false);
+    expect(mockSystemError).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // #828 — idempotent checkout replay
 // ---------------------------------------------------------------------------
 describe("#828 — replayByIdempotencyKey returns the original attempt", () => {
