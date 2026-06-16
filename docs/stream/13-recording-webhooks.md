@@ -116,7 +116,7 @@ stateDiagram-v2
 
     READY --> TRANSFERRING: Transfer Initiated
     TRANSFERRING --> AVAILABLE: Transfer Success
-    TRANSFERRING --> FAILED: Transfer Error
+    TRANSFERRING --> READY: Transfer Error (revert + record attempt)
     TRANSFERRING --> READY: Transfer Cancelled
 
     READY --> EXPIRED: URL Expired (14 days)
@@ -136,7 +136,9 @@ stateDiagram-v2
 | `TRANSFERRING` | Being transferred to Supabase       | STREAM_S3    | Yes           |
 | `AVAILABLE`    | Permanently stored in Supabase      | SUPABASE     | Yes           |
 | `EXPIRED`      | Stream URL expired, not transferred | STREAM_S3    | No            |
-| `FAILED`       | Recording or transfer failed        | N/A          | No            |
+| `FAILED`       | Recording capture failed            | N/A          | No            |
+
+As of #689 (STR-2/3), a failed *transfer* no longer lands in `FAILED`. Every transfer failure path reverts the recording to `READY` so that both the cron job and the manual `/transfer` route can retry it, since a `FAILED` status would permanently dead-end the recording (the manual route only accepts `READY` recordings). `FAILED` is now reached only by a capture/processing failure, not by a transfer error.
 
 ### Storage Type Transitions
 
@@ -166,6 +168,11 @@ model Recording {
   streamUrlExpiresAt  DateTime?       // When Stream URL expires
   transferredAt       DateTime?       // When transferred to Supabase
   fileSize            BigInt?         // File size in bytes
+
+  // #689 (STR-2/3) — transfer reliability tracking
+  transferAttempts         Int       @default(0) // Failed-transfer counter; reset to a clean trail on success
+  lastTransferError        String?   // Message from the most recent failed transfer
+  transferFailureAlertedAt DateTime? // Set when engineering has been paged for this recording (dedupe)
 
   meetingSessionId    String
   meetingSession      MeetingSession  @relation(...)
@@ -322,14 +329,20 @@ sequenceDiagram
 
 ### Handled Event Types
 
-| Event Type               | Description                          | Handler                    |
-| ------------------------ | ------------------------------------ | -------------------------- |
-| `call.recording_started` | Recording has begun                  | `handleRecordingStarted()` |
-| `call.recording_stopped` | Recording has stopped                | `handleRecordingStopped()` |
-| `call.recording_ready`   | Recording is processed and available | `handleRecordingReady()`   |
-| `call.recording_failed`  | Recording failed                     | `handleRecordingFailed()`  |
-| `call.session_ended`     | A participant's session ended        | `handleSessionEnded()`     |
-| `call.ended`             | The entire call has ended            | `handleCallEnded()`        |
+| Event Type                         | Description                          | Handler                            |
+| ---------------------------------- | ------------------------------------ | ---------------------------------- |
+| `call.recording_started`           | Recording has begun                  | `handleRecordingStarted()`         |
+| `call.recording_stopped`           | Recording has stopped                | `handleRecordingStopped()`         |
+| `call.recording_ready`             | Recording is processed and available | `handleRecordingReady()`           |
+| `call.recording_failed`            | Recording failed                     | `handleRecordingFailed()`          |
+| `call.session_ended`               | A participant's session ended        | `handleSessionEnded()`             |
+| `call.ended`                       | The entire call has ended            | `handleCallEnded()`                |
+| `call.session_participant_joined`  | A participant joined the call        | `handleSessionParticipantJoined()` |
+| `call.session_participant_left`    | A participant left the call          | `handleSessionParticipantLeft()`   |
+
+### Per-Attendee Attendance Capture
+
+As of #689 (STR-4), the platform records per-attendee presence rather than only call-level lifecycle. The two `call.session_participant_*` handlers above maintain a `MeetingAttendance` row keyed on the unique pair of meeting session and app user. The first join for a user creates the row and stamps `firstJoinedAt`; a rejoin only increments `joinCount`, leaving `firstJoinedAt` immutable so it always reflects the genuine first arrival. A participant-left event stamps `lastLeftAt`, and because a leave can arrive before or without a recorded join, the left handler upserts as well (defensively seeding `firstJoinedAt` from the leave time) so the event is never lost. The handlers are idempotent on the session-and-user key, so a duplicate webhook does not inflate the count. This attendance data is what unblocks no-show detection (#471) and overrun detection (#472), which previously had no underlying per-attendee record to read from.
 
 ### Event Payload Structures
 
@@ -561,6 +574,16 @@ class RecordingTransferService {
 }
 ```
 
+### Transfer Failure Handling and Paging
+
+As of #689 (STR-2/3), transfer reliability is tracked on the recording itself rather than left to logs. Every failure path inside `transferRecordingToSupabase` — a missing bucket, a failed download, a file over the 500MB limit, an upload error, or any unexpected exception — routes through a single `recordTransferFailure` helper. That helper reverts the recording to `READY`, increments `transferAttempts`, and stamps `lastTransferError` with the failure message. A successful transfer clears this trail by nulling `lastTransferError` and `transferFailureAlertedAt`, so a recording that recovers stops looking stuck.
+
+Once a recording crosses three failed attempts, the helper pages engineering exactly once by calling `recordSystemError` with the `RECORDING_TRANSFER` category, and stamps `transferFailureAlertedAt` so the same stuck recording does not re-page on every subsequent sweep. The stamp is written only after the page is recorded, so a crash mid-alert re-pages on the next failure rather than silently swallowing it.
+
+### STREAM_ONLY Expiry Warning
+
+For recordings on a `STREAM_ONLY` plan there is nothing to auto-transfer — the URL simply expires after fourteen days. As of #689, the previously-TODO expiry-warning email to the consultant is now actually sent. `getExpiringStreamOnlyRecordings` collects the consultant-owned `STREAM_ONLY` recordings whose Stream URL expires soon but has not yet lapsed, and the expiry-warning job dispatches a notification to each owning consultant through Novu so they can save the recording before it is lost.
+
 ---
 
 ## API Routes Reference
@@ -717,7 +740,7 @@ Receives webhook events from Stream.
 | **Consultee**  |  No   |  No  |  Yes\*   |    No    |    No    |   No   |
 | **Admin**      |  No   |  No  |   Yes    |   Yes    |    No    |   No   |
 
-\*Consultees can only view recordings for webinars/classes they have paid enrollment for.
+\*Consultees can only view recordings for webinars/classes they have a live paid enrollment for. As of #689 (STR-1), a successful payment alone is no longer sufficient — the entitlement nets any refunds, so a fully-refunded buyer loses access while a partially-refunded buyer keeps it.
 
 ### Access Verification Logic
 
@@ -728,8 +751,12 @@ const isOwner = getMeetingSessionOwnershipInfo(
   user.consultantProfileId,
 ).isOwner;
 
-// Consultee access check
-const hasPaidEnrollment = await prisma.payment.findFirst({
+// Consultee access check (#689, STR-1)
+// `PaymentStatus` has no REFUNDED value — a refunded payment stays SUCCEEDED
+// and the money movement lives only in `Refund` rows. A `SUCCEEDED` filter
+// alone therefore still matches a fully-refunded buyer, so the check loads
+// the payment's refunds and nets them via the shared isPaymentEntitled() helper.
+const payment = await prisma.payment.findFirst({
   where: {
     userId: user.id,
     paymentStatus: "SUCCEEDED",
@@ -737,13 +764,21 @@ const hasPaidEnrollment = await prisma.payment.findFirst({
       // ... matches recording's appointment
     },
   },
+  include: { refunds: true },
 });
+
+// A full refund (refunded paise >= amount) revokes access; a partial refund
+// keeps it. The same isPaymentEntitled() helper guards all four entitlement
+// paths: the single-recording route, getPaidPlanIds, syncRecordingsForConsultee,
+// and the meetings recording-info endpoint.
+const hasPaidEnrollment =
+  payment != null && isPaymentEntitled(payment); // lib/payments/utils/refund-balance.ts
 ```
 
 ### Recording Visibility Rules
 
 1. **Consultants** see all their own recordings (webinars + classes)
-2. **Consultees** see recordings only for paid enrollments
+2. **Consultees** see recordings only for paid enrollments that have not been fully refunded (as of #689, access nets refunds — a full refund revokes it, a partial refund retains it)
 3. **Admins** can view all recordings for oversight
 4. **Recording must not be FAILED or EXPIRED** to be visible
 

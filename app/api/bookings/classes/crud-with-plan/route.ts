@@ -266,6 +266,10 @@ export async function POST(request: NextRequest) {
                           startsAt: slotStart,
                           endsAt: slotEnd,
                           isTentative: true, // Mark as tentative until confirmed
+                          // #784 — owner denormalized so the overlap exclusion
+                          // guards the host once the session is confirmed
+                          // (constraint applies WHERE NOT isTentative).
+                          consultantProfileId,
                         },
                       },
                     };

@@ -3251,6 +3251,11 @@ model AppointmentDocument {
   appointment   Appointment @relation(fields: [appointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   appointmentId String
 
+  // DOC-3 (#694) — reconcile flags rows whose storage object is gone so the UI
+  // can badge them and they're held out of review until re-uploaded.
+  isStorageMissing  Boolean   @default(false)
+  missingDetectedAt DateTime? @db.Timestamptz
+
   // Metadata
   uploadedAt DateTime @default(now())
   updatedAt  DateTime @updatedAt
@@ -3260,6 +3265,7 @@ model AppointmentDocument {
   @@index([uploadedByRole])
   @@index([responseToDocumentId])
   @@index([reviewedById])
+  @@index([isStorageMissing])
 }
 
 enum DocumentReviewStatus {
@@ -3386,7 +3392,8 @@ model MeetingSession {
   endedAt     DateTime? // When session actually ended
   endedReason String? // "call_ended", "session_timeout", "error"
 
-  recordings Recording[]
+  recordings  Recording[]
+  attendances MeetingAttendance[] // STR-4 (#689) — per-participant join/leave audit
 
   slotOfAppointment   SlotOfAppointment @relation(fields: [slotOfAppointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   slotOfAppointmentId String            @unique
@@ -3407,6 +3414,29 @@ model MeetingSession {
 
   @@index([isRecording])
   @@index([organizationId, createdAt])
+}
+
+/// STR-4 (#689) — one row per (session, participant). Stream's
+/// call.session_participant_joined/left webhooks upsert here: firstJoinedAt is
+/// set on the first join, lastLeftAt advances on each leave, joinCount tracks
+/// rejoins. Drives #471 (no-show = no row) and #472 (overrun = lastLeftAt/
+/// endedAt past the slot end). userId is the Stream user_id, which equals our
+/// User.id — stored plain like MeetingSession.recordingStartedBy, no FK.
+model MeetingAttendance {
+  id               String         @id @default(cuid())
+  meetingSession   MeetingSession @relation(fields: [meetingSessionId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  meetingSessionId String
+  userId           String
+  firstJoinedAt    DateTime       @db.Timestamptz
+  lastLeftAt       DateTime?      @db.Timestamptz
+  joinCount        Int            @default(1)
+
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
+
+  @@unique([meetingSessionId, userId])
+  @@index([meetingSessionId])
+  @@index([userId])
 }
 
 // Recording storage types
@@ -3469,6 +3499,14 @@ model Recording {
   // Expiration tracking
   streamUrlExpiresAt DateTime? // When Stream S3 URL expires
   transferredAt      DateTime? // When transferred to Supabase
+
+  // STR-2/3 (#689) — transfer-to-Supabase health. A failed transfer reverts
+  // status to READY and re-attempts next cron; these track repeated failures so
+  // the job can alert (transferFailureAlertedAt dedupes the page) before a
+  // STREAM_ONLY recording lapses at streamUrlExpiresAt.
+  transferAttempts         Int       @default(0)
+  lastTransferError        String?
+  transferFailureAlertedAt DateTime? @db.Timestamptz
 
   meetingSession   MeetingSession @relation(fields: [meetingSessionId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   meetingSessionId String
@@ -4880,6 +4918,43 @@ enum DeliveryStatus {
   /// All retry attempts exhausted — terminal, operator-replayable via the
   /// redeliver route. FAILED stays for receiver-rejected (permanent 4xx /
   /// endpoint paused) deliveries.
+  DEAD_LETTER
+}
+
+/// #474 — transactional-email dead-letter. lib/email.ts persists the already
+/// RENDERED message here when a Resend send fails (instead of swallowing it).
+/// Storing the rendered fields (not the sender args) keeps retry a verbatim
+/// re-send — no Json payload, no re-render dispatcher: the worker
+/// (jobs/email/retry-failed-emails.ts) polls (status, nextRetryAt), re-sends the
+/// stored html/text, walks the backoff schedule, marks DEAD_LETTER once
+/// exhausted (operator-replayable). `emailType` is a plain tag for metrics only.
+model FailedEmail {
+  id          String              @id @default(cuid())
+  recipient   String
+  fromAddress String?
+  replyTo     String?
+  subject     String
+  htmlBody    String              @db.Text
+  textBody    String?             @db.Text
+  emailType   String
+  status      EmailDeliveryStatus @default(PENDING)
+  attempts    Int                 @default(0)
+  nextRetryAt DateTime?           @db.Timestamptz
+  lastError   String?             @db.Text
+  sentAt      DateTime?           @db.Timestamptz
+
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
+
+  @@index([status, nextRetryAt])
+  @@index([status, updatedAt])
+}
+
+enum EmailDeliveryStatus {
+  PENDING
+  RETRY
+  SENT
+  /// All retries exhausted — terminal, operator-replayable.
   DEAD_LETTER
 }
 

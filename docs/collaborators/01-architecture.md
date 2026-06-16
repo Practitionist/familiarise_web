@@ -275,7 +275,9 @@ The scheduling calendar shows a color-coded overlay:
 - **Yellow**: The co-host has no availability defined for that time → they may be flexible (their schedule just hasn't been set)
 - **Red**: The co-host has an existing booking during that time → they're unavailable
 
-The overlay is purely informational. Since scheduling is host-only, the host makes the final call. If a co-host isn't available, the host can either pick a different time or proceed anyway (the collaborator can always adjust their own schedule).
+The overlay guides the host's choice of time, but as of #784 (AE-2) the host can no longer simply proceed over a genuine conflict. Scheduling is still host-only, yet the platform now enforces co-host availability rather than treating the overlay as advisory.
+
+There are two layers to this enforcement. First, the plan owner's `consultantProfileId` is now denormalized onto the webinar and class group-event slots, just as it already was for one-to-one consultation slots. Group-event slots previously left that column NULL, so the `slot_no_confirmed_overlap` exclusion constraint never guarded the host on those slots; with the column populated the constraint now protects the host across every event type, and a clash surfaces as a Postgres `23P01` exclusion violation that the API translates into an HTTP `409`. Second, because co-hosts are not slot participants — only the plan owner is denormalized onto `SlotOfAppointment` — neither the constraint nor the owner-scoped availability checks ever saw them, which previously let a co-host be silently double-booked. The webinar `crud-with-plan` PATCH route now calls `assertCollaboratorsAvailable()` (`lib/collaborators/availability.ts`), which rejects scheduling a webinar onto a time an accepted co-host is already committed to elsewhere, again returning HTTP `409`. The check is a no-op when the plan has no accepted collaborators and runs inside the scheduling transaction so the read stays consistent with the slot write that follows.
 
 ---
 
