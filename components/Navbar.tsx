@@ -314,10 +314,16 @@ function DesktopNavItem({
 
 // ─── Main Navbar ─────────────────────────────────────────────────────────────
 
-const Navbar = () => {
+type NavbarSession = ReturnType<typeof useSession>["data"];
+
+const Navbar = ({ initialSession }: { initialSession?: NavbarSession }) => {
   const router = useRouter();
   const pathname = usePathname();
-  const { data: session } = useSession();
+  const { data, isPending } = useSession();
+  // Seed from the server-fetched session so the first paint shows the correct
+  // auth state instead of flashing the signed-out CTA until the client-side
+  // /get-session resolves. useSession takes over once it loads.
+  const session = isPending ? (data ?? initialSession ?? null) : data;
   const [isOpen, setIsOpen] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
   const { currency, symbol, setCurrency } = useCurrency();
