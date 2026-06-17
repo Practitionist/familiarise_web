@@ -72,8 +72,14 @@ export default async function RootLayout({
 }>) {
   // Resolve the session on the server so the Navbar renders the correct auth
   // state on first paint (no signed-out flash). Cheap via the 5-min cookie
-  // cache; useSession() takes over client-side for live updates.
-  const initialSession = await getSession();
+  // cache; useSession() takes over client-side for live updates. Fail open: a
+  // transient auth/DB error must not 500 the whole app, including public pages.
+  let initialSession: Awaited<ReturnType<typeof getSession>> = null;
+  try {
+    initialSession = await getSession();
+  } catch {
+    initialSession = null;
+  }
 
   return (
     <html lang="en" className={sora.variable} suppressHydrationWarning>

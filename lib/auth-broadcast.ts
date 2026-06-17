@@ -16,6 +16,31 @@ export const AUTH_SYNC_CHANNEL = "familiarise.auth";
 
 export type AuthSyncMessage = { type: "login" | "logout" };
 
+// Last observed authed state, shared across tabs via localStorage. Lets a tab
+// tell a genuine login (null/false -> true, including the OAuth/SSO full-page
+// redirect) apart from a reload of an already-authed user, so a plain refresh
+// no longer fires a synthetic broadcast that spams peer-tab refetches.
+const AUTHED_FLAG_KEY = "familiarise.auth_authed";
+
+export function readAuthedFlag(): boolean | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const value = localStorage.getItem(AUTHED_FLAG_KEY);
+    return value === null ? null : value === "true";
+  } catch {
+    return null;
+  }
+}
+
+export function writeAuthedFlag(authed: boolean): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(AUTHED_FLAG_KEY, authed ? "true" : "false");
+  } catch {
+    // best-effort — ignore
+  }
+}
+
 export function postAuthSync(message: AuthSyncMessage): void {
   if (typeof window === "undefined") return;
   try {
