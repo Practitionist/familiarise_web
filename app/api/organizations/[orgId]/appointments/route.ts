@@ -12,7 +12,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { requireOrgAccess } from "@/lib/auth-helpers";
-import { listAppointmentsScoped } from "@/lib/api/scope/list-appointments";
+import { getOrgAppointments } from "@/lib/data/org-appointments";
 import { parsePagination } from "@/lib/enterprise/validators";
 
 const QuerySchema = z.object({
@@ -41,9 +41,7 @@ export async function GET(
   }
   const pagination = parsePagination(url);
 
-  const result = await listAppointmentsScoped({
-    scope: { kind: "org", orgId },
-    userId: access.session.user.id,
+  const result = await getOrgAppointments(orgId, {
     appointmentType: filters.data.appointmentType,
     page: pagination.page,
     perPage: pagination.pageSize,
