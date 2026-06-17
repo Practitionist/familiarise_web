@@ -37,7 +37,6 @@ import {
   Server,
   Gift,
   Wrench,
-  Building2,
 } from "lucide-react";
 
 // Icon mapping for dynamic icon rendering
@@ -122,7 +121,6 @@ export function DashboardSidebar({
   isLoading = false,
   bottomNavItems: _bottomNavItems = [],
   hideBottomActions: _hideBottomActions = false,
-  orgMemberships = [],
 }: DashboardSidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
@@ -286,45 +284,8 @@ export function DashboardSidebar({
         )}
       </nav>
 
-      {/* Teams & Orgs — shows the user's org memberships so they can switch
-          directly from within their personal dashboard sidebar. Capped at 3
-          visible orgs to keep the sidebar from growing unwieldy. */}
-      {orgMemberships.length > 0 && (
-        <div className="border-t border-zinc-800/50 pt-2 pb-1 px-3 mt-2">
-          <h3 className="py-2 text-xs font-semibold text-zinc-500 uppercase tracking-wider">
-            Teams &amp; Orgs
-          </h3>
-          <ul className="space-y-1">
-            {orgMemberships.slice(0, 3).map((m) => (
-              <li key={m.organizationId}>
-                <a
-                  href={`/dashboard/organization/${m.organizationId}/home`}
-                  className="group flex items-center gap-2.5 rounded-lg px-2 py-2 text-sm font-medium text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-100 transition-all duration-150"
-                >
-                  <div className="w-6 h-6 rounded-md bg-zinc-800 flex items-center justify-center overflow-hidden shrink-0">
-                    {m.organizationLogo ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={m.organizationLogo}
-                        alt={m.organizationName}
-                        className="w-full h-full object-cover"
-                      />
-                    ) : (
-                      <Building2 className="w-3.5 h-3.5 text-zinc-500" />
-                    )}
-                  </div>
-                  <span className="flex-1 truncate text-xs">
-                    {m.organizationName}
-                  </span>
-                </a>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
       {/* User identity — boxed, at the bottom-left (mirrors the org sidebar).
-          Org creation lives in the org context switcher, not here. */}
+          Org switching/creation lives in the org context switcher, not here. */}
       <div className="border-t border-zinc-800/50 p-3">
         {isLoading ? (
           <div className="flex items-center gap-3 rounded-lg border border-zinc-800 bg-zinc-900/60 p-3">
