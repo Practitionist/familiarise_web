@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useSession } from "@/lib/auth-client";
 import {
   postAuthSync,
@@ -23,6 +23,10 @@ import {
  */
 export default function AuthSyncProvider() {
   const { data: session, isPending, refetch } = useSession();
+  // In-memory fallback for the previous authed state, used when the cross-tab
+  // localStorage flag is unavailable (private mode / blocked storage) so
+  // BroadcastChannel sync still works there. Resets per page load.
+  const previousAuthedRef = useRef<boolean | undefined>(undefined);
 
   useEffect(() => {
     return subscribeAuthSync(() => {
@@ -35,15 +39,17 @@ export default function AuthSyncProvider() {
     if (isPending) return;
 
     const authed = !!session?.user;
-    // Compare against the cross-tab flag, not just this tab's previous render:
-    // a reload of an already-authed user matches the flag and stays silent,
-    // while a genuine login (incl. the OAuth/SSO redirect, which has no client
-    // fetch hook) flips it and pings peers. Skip when the flag is unset (first
-    // ever load) so we never broadcast without a real before-state.
-    const previous = readAuthedFlag();
-    if (previous !== null && previous !== authed) {
+    // Prefer the cross-tab flag (a reload of an already-authed user matches it
+    // and stays silent; a genuine login — incl. the OAuth/SSO redirect, which
+    // has no client fetch hook — flips it and pings peers). Fall back to the
+    // in-memory ref when the flag is unavailable, so broadcasting isn't gated
+    // off entirely when localStorage is blocked. Undefined previous = first
+    // observed state this load, so we never ping without a real before-state.
+    const previous = readAuthedFlag() ?? previousAuthedRef.current;
+    if (previous !== undefined && previous !== authed) {
       postAuthSync({ type: authed ? "login" : "logout" });
     }
+    previousAuthedRef.current = authed;
     writeAuthedFlag(authed);
   }, [isPending, session]);
 
