@@ -13,7 +13,7 @@ export default function VerifyEmail() {
   return (
     <Suspense
       fallback={
-        <div className="min-h-screen flex items-center justify-center bg-gray-900">
+        <div className="min-h-screen flex items-center justify-center bg-neutral-950">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white" />
         </div>
       }
@@ -92,10 +92,10 @@ function VerifyEmailContent() {
 
   if (isPending || session?.user) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-900">
+      <div className="min-h-screen flex items-center justify-center bg-neutral-950">
         <div className="text-center text-white">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white mx-auto mb-4" />
-          <p className="text-sm text-gray-300">
+          <p className="text-sm text-zinc-400">
             {session?.user ? "Email verified — redirecting…" : "Loading…"}
           </p>
         </div>
@@ -104,12 +104,12 @@ function VerifyEmailContent() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-900 p-6">
+    <div className="min-h-screen flex items-center justify-center bg-neutral-950 p-6">
       <div className="w-full max-w-md text-white">
-        <h1 className="text-2xl md:text-3xl font-semibold mb-3">
+        <h1 className="mb-3 text-fluid-3xl font-semibold tracking-tight">
           {error ? "Link expired or invalid" : "Verify your email"}
         </h1>
-        <p className="text-sm md:text-base text-gray-300 mb-6">
+        <p className="text-sm md:text-base text-zinc-400 mb-6">
           {error ??
             "Check your inbox for the verification link we sent. It expires in 1 hour. Enter your email below to send a new one."}
         </p>
@@ -130,18 +130,18 @@ function VerifyEmailContent() {
         </div>
         <Button
           type="button"
-          className="w-full mt-4 bg-gray-800 hover:bg-gray-700"
+          className="w-full mt-4 bg-zinc-800 hover:bg-zinc-700"
           onClick={handleResend}
           disabled={resending}
         >
           {resending ? "Sending…" : "Resend verification email"}
         </Button>
 
-        <p className="text-xs text-gray-400 mt-6">
+        <p className="mt-6 text-xs text-zinc-400">
           Already verified?{" "}
           <Link
             href="/auth/signin"
-            className="font-medium text-blue-400 hover:underline"
+            className="font-medium text-zinc-300 underline-offset-4 hover:text-white hover:underline"
           >
             Sign in
           </Link>

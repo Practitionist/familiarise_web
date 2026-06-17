@@ -47,6 +47,10 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  ResponsiveTable,
+  type ResponsiveColumn,
+} from "@/components/ui/responsive-table";
 
 type ScimToken = {
   id: string;
@@ -73,6 +77,44 @@ const MAPPABLE_ROLES = [
   "LEARNER",
   "SUPPORT",
 ] as const;
+
+const tokenColumns: ResponsiveColumn<ScimToken>[] = [
+  {
+    key: "label",
+    header: "Label",
+    primary: true,
+    className: "text-sm",
+    cell: (t) => t.label,
+  },
+  {
+    key: "status",
+    header: "Status",
+    cell: (t) => (
+      <Badge
+        className={
+          t.status === "ACTIVE"
+            ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
+            : "bg-muted text-muted-foreground"
+        }
+      >
+        {t.status}
+      </Badge>
+    ),
+  },
+  {
+    key: "created",
+    header: "Created",
+    className: "text-xs text-muted-foreground",
+    cell: (t) => new Date(t.createdAt).toLocaleDateString(),
+  },
+  {
+    key: "lastUsed",
+    header: "Last used",
+    className: "text-xs text-muted-foreground",
+    cell: (t) =>
+      t.lastUsedAt ? new Date(t.lastUsedAt).toLocaleString() : "never",
+  },
+];
 
 type PageProps = { params: Promise<{ orgId: string }> };
 
@@ -182,8 +224,8 @@ export default function ScimPage({ params }: Readonly<PageProps>) {
           </CardHeader>
           <CardContent className="space-y-4">
             {isOwner && (
-              <div className="flex items-end gap-2">
-                <div className="flex-1 space-y-2">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+                <div className="flex-1 space-y-2 min-w-0">
                   <Label htmlFor="token-label">Token label</Label>
                   <Input
                     id="token-label"
@@ -207,53 +249,25 @@ export default function ScimPage({ params }: Readonly<PageProps>) {
                   Token minted. Copy now — you won&apos;t see this value
                   again.
                 </p>
-                <code className="mt-2 block break-all rounded bg-white px-2 py-1 text-xs">
+                <code className="mt-2 block break-all rounded bg-card px-2 py-1 text-xs">
                   {revealedToken}
                 </code>
               </div>
             )}
 
             {tokens.isLoading ? (
-              <p className="text-sm text-zinc-500">Loading tokens...</p>
-            ) : !tokens.data || tokens.data.length === 0 ? (
-              <p className="text-sm text-zinc-500">No SCIM tokens yet.</p>
+              <p className="text-sm text-muted-foreground">Loading tokens...</p>
             ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Label</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Created</TableHead>
-                    <TableHead>Last used</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {tokens.data.map((t) => (
-                    <TableRow key={t.id}>
-                      <TableCell className="text-sm">{t.label}</TableCell>
-                      <TableCell>
-                        <Badge
-                          className={
-                            t.status === "ACTIVE"
-                              ? "bg-emerald-50 text-emerald-700"
-                              : "bg-zinc-200 text-zinc-700"
-                          }
-                        >
-                          {t.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-xs text-zinc-500">
-                        {new Date(t.createdAt).toLocaleDateString()}
-                      </TableCell>
-                      <TableCell className="text-xs text-zinc-500">
-                        {t.lastUsedAt
-                          ? new Date(t.lastUsedAt).toLocaleString()
-                          : "never"}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+              <ResponsiveTable<ScimToken>
+                columns={tokenColumns}
+                rows={tokens.data ?? []}
+                getRowId={(t) => t.id}
+                empty={
+                  <p className="text-sm text-muted-foreground">
+                    No SCIM tokens yet.
+                  </p>
+                }
+              />
             )}
           </CardContent>
         </Card>
@@ -269,8 +283,8 @@ export default function ScimPage({ params }: Readonly<PageProps>) {
           </CardHeader>
           <CardContent className="space-y-4">
             {isOwner && (
-              <div className="flex items-end gap-2">
-                <div className="flex-1 space-y-2">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+                <div className="flex-1 space-y-2 min-w-0">
                   <Label htmlFor="group-name">SCIM group name</Label>
                   <Input
                     id="group-name"
@@ -279,7 +293,7 @@ export default function ScimPage({ params }: Readonly<PageProps>) {
                     placeholder="IT-Admins / Finance-Leads / ..."
                   />
                 </div>
-                <div className="w-44 space-y-2">
+                <div className="w-full space-y-2 sm:w-44">
                   <Label htmlFor="group-role">Role</Label>
                   <Select
                     value={groupRole}
@@ -314,36 +328,41 @@ export default function ScimPage({ params }: Readonly<PageProps>) {
             )}
 
             {mappings.isLoading ? (
-              <p className="text-sm text-zinc-500">Loading mappings...</p>
+              <p className="text-sm text-muted-foreground">Loading mappings...</p>
             ) : !mappings.data || mappings.data.length === 0 ? (
-              <p className="text-sm text-zinc-500">No group mappings yet.</p>
+              <p className="text-sm text-muted-foreground">
+                No group mappings yet.
+              </p>
             ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>SCIM group</TableHead>
-                    <TableHead>Maps to role</TableHead>
-                    <TableHead>Created</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {mappings.data.map((m) => (
-                    <TableRow key={m.id}>
-                      <TableCell>
-                        <code className="text-xs">{m.scimGroupName}</code>
-                      </TableCell>
-                      <TableCell>
-                        <Badge className="bg-indigo-50 text-indigo-700">
-                          {m.role}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-xs text-zinc-500">
-                        {new Date(m.createdAt).toLocaleDateString()}
-                      </TableCell>
+              // Narrow 3-column config table — fits a phone, so it keeps the
+              // plain table behind a horizontal scroll rather than the
+              // card-stack treatment used for the wider data tables.
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>SCIM group</TableHead>
+                      <TableHead>Maps to role</TableHead>
+                      <TableHead>Created</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {mappings.data.map((m) => (
+                      <TableRow key={m.id}>
+                        <TableCell>
+                          <code className="text-xs">{m.scimGroupName}</code>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="secondary">{m.role}</Badge>
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground">
+                          {new Date(m.createdAt).toLocaleDateString()}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
             )}
           </CardContent>
         </Card>

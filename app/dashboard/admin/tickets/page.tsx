@@ -15,21 +15,18 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+  ResponsiveTable,
+  type ResponsiveColumn,
+} from "@/components/ui/responsive-table";
+import { PageHeader } from "@/components/ui/page-header";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+  ResponsiveModal,
+  ResponsiveModalContent,
+  ResponsiveModalDescription,
+  ResponsiveModalFooter,
+  ResponsiveModalHeader,
+  ResponsiveModalTitle,
+} from "@/components/ui/responsive-modal";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
@@ -59,17 +56,17 @@ import type { Ticket, TicketCounts } from "@/types/tickets";
 const getStatusColor = (status: string) => {
   switch (status.toUpperCase()) {
     case "OPEN":
-      return "bg-blue-100 text-blue-700 border-blue-200";
+      return "bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-950 dark:text-blue-300 dark:border-blue-800";
     case "IN_PROGRESS":
-      return "bg-amber-100 text-amber-700 border-amber-200";
+      return "bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800";
     case "ON_HOLD":
-      return "bg-orange-100 text-orange-700 border-orange-200";
+      return "bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-950 dark:text-orange-300 dark:border-orange-800";
     case "RESOLVED":
-      return "bg-green-100 text-green-700 border-green-200";
+      return "bg-green-100 text-green-700 border-green-200 dark:bg-green-950 dark:text-green-300 dark:border-green-800";
     case "CLOSED":
-      return "bg-zinc-100 text-zinc-600 border-zinc-200";
+      return "bg-muted text-muted-foreground border-border";
     default:
-      return "bg-zinc-100 text-zinc-600 border-zinc-200";
+      return "bg-muted text-muted-foreground border-border";
   }
 };
 
@@ -77,13 +74,13 @@ const getPriorityColor = (priority: string) => {
   switch (priority.toUpperCase()) {
     case "URGENT":
     case "HIGH":
-      return "bg-red-100 text-red-700 border-red-200";
+      return "bg-red-100 text-red-700 border-red-200 dark:bg-red-950 dark:text-red-300 dark:border-red-800";
     case "MEDIUM":
-      return "bg-amber-100 text-amber-700 border-amber-200";
+      return "bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800";
     case "LOW":
-      return "bg-zinc-100 text-zinc-600 border-zinc-200";
+      return "bg-muted text-muted-foreground border-border";
     default:
-      return "bg-zinc-100 text-zinc-600 border-zinc-200";
+      return "bg-muted text-muted-foreground border-border";
   }
 };
 
@@ -98,9 +95,9 @@ const getStatusIcon = (status: string) => {
     case "RESOLVED":
       return <CheckCircle2 className="h-4 w-4 text-green-500" />;
     case "CLOSED":
-      return <XCircle className="h-4 w-4 text-zinc-500" />;
+      return <XCircle className="h-4 w-4 text-muted-foreground" />;
     default:
-      return <AlertCircle className="h-4 w-4 text-zinc-500" />;
+      return <AlertCircle className="h-4 w-4 text-muted-foreground" />;
   }
 };
 
@@ -323,51 +320,161 @@ export default function AdminSupportTicketsPage() {
     }
   };
 
+  const columns: ResponsiveColumn<Ticket>[] = [
+    {
+      key: "ticketId",
+      header: "Ticket ID",
+      className: "font-mono text-xs text-muted-foreground",
+      cell: (ticket) => ticket.id.slice(0, 8).toUpperCase(),
+    },
+    {
+      key: "subject",
+      header: "Subject",
+      primary: true,
+      cell: (ticket) => (
+        <div className="flex items-center gap-2">
+          {getStatusIcon(ticket.status)}
+          <span className="font-medium truncate max-w-[200px]">
+            {ticket.title}
+          </span>
+          {ticket.responses && ticket.responses.length > 0 && (
+            <Badge variant="secondary" className="text-xs">
+              <MessageSquare className="h-3 w-3 mr-1" />
+              {ticket.responses.length}
+            </Badge>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: "user",
+      header: "User",
+      cell: (ticket) => (
+        <div className="flex items-center gap-2">
+          <Avatar className="h-7 w-7">
+            <AvatarImage src={ticket.user?.image || ""} />
+            <AvatarFallback className="text-xs">
+              {ticket.user?.name?.charAt(0) || "U"}
+            </AvatarFallback>
+          </Avatar>
+          <span className="text-sm">{ticket.user?.name || "Unknown"}</span>
+        </div>
+      ),
+    },
+    {
+      key: "status",
+      header: "Status",
+      cell: (ticket) => (
+        <Badge variant="outline" className={getStatusColor(ticket.status)}>
+          {ticket.status.replace("_", " ")}
+        </Badge>
+      ),
+    },
+    {
+      key: "priority",
+      header: "Priority",
+      cell: (ticket) => (
+        <Badge variant="outline" className={getPriorityColor(ticket.priority)}>
+          {ticket.priority}
+        </Badge>
+      ),
+    },
+    {
+      key: "issueType",
+      header: "Issue Type",
+      className: "text-sm text-muted-foreground",
+      cell: (ticket) => formatIssueType(ticket.issueType),
+    },
+    {
+      key: "updated",
+      header: "Updated",
+      className: "text-sm text-muted-foreground",
+      cell: (ticket) => formatDate(ticket.updatedAt),
+    },
+  ];
+
+  const renderRowActions = (ticket: Ticket) => (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="icon" className="h-8 w-8">
+          <MoreHorizontal className="h-4 w-4" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem
+          onClick={(e) => {
+            e.stopPropagation();
+            handleSelectTicket(ticket);
+          }}
+        >
+          View Details
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          onClick={(e) => handleQuickAction(ticket.id, "resolve", e)}
+        >
+          Mark Resolved
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          onClick={(e) => handleQuickAction(ticket.id, "close", e)}
+        >
+          Close Ticket
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+
+  const emptyState = (
+    <div className="text-center py-12">
+      <MessageSquare className="h-12 w-12 text-muted-foreground/40 mx-auto mb-4" />
+      <p className="text-muted-foreground">No tickets found</p>
+    </div>
+  );
+
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">
-            Support Tickets
-          </h1>
-          <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-1">
-            Manage all customer support tickets
-          </p>
-        </div>
-        <Button onClick={fetchTickets} variant="outline" size="sm">
-          <RefreshCw
-            className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`}
-          />
-          Refresh
-        </Button>
-      </div>
+      <PageHeader
+        title="Support Tickets"
+        description="Manage all customer support tickets"
+        actions={
+          <Button onClick={fetchTickets} variant="outline" size="sm">
+            <RefreshCw
+              className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`}
+            />
+            Refresh
+          </Button>
+        }
+      />
 
       {/* Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-6">
         {[
-          { label: "Open", value: counts.open, color: "text-blue-600" },
+          { label: "Open", value: counts.open, color: "text-foreground" },
           {
             label: "In Progress",
             value: counts.inProgress,
-            color: "text-amber-600",
+            color: "text-amber-600 dark:text-amber-400",
           },
-          { label: "On Hold", value: counts.onHold, color: "text-orange-600" },
+          {
+            label: "On Hold",
+            value: counts.onHold,
+            color: "text-orange-600 dark:text-orange-400",
+          },
           {
             label: "Resolved",
             value: counts.resolved,
-            color: "text-green-600",
+            color: "text-green-600 dark:text-green-400",
           },
-          { label: "Closed", value: counts.closed, color: "text-zinc-500" },
+          { label: "Closed", value: counts.closed, color: "text-muted-foreground" },
           {
             label: "Total",
             value: counts.total,
-            color: "text-zinc-900 dark:text-zinc-100",
+            color: "text-foreground",
           },
         ].map((stat) => (
           <Card key={stat.label} className="border-0 shadow-sm">
             <CardContent className="p-4">
-              <p className="text-xs text-zinc-500 uppercase tracking-wide">
+              <p className="text-xs text-muted-foreground uppercase tracking-wide">
                 {stat.label}
               </p>
               <p className={`text-2xl font-bold ${stat.color}`}>{stat.value}</p>
@@ -380,8 +487,8 @@ export default function AdminSupportTicketsPage() {
       <Card className="border-0 shadow-sm">
         <CardContent className="p-4">
           <div className="flex flex-col sm:flex-row gap-4">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
+            <div className="relative min-w-0 flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground/70" />
               <Input
                 placeholder="Search tickets..."
                 value={localSearchValue}
@@ -420,134 +527,20 @@ export default function AdminSupportTicketsPage() {
 
       {/* Tickets Table */}
       <Card className="border-0 shadow-sm">
-        <CardContent className="p-0">
+        <CardContent className="p-4">
           {loading ? (
             <div className="flex items-center justify-center py-12">
-              <Loader2 className="h-8 w-8 animate-spin text-zinc-400" />
-            </div>
-          ) : tickets.length === 0 ? (
-            <div className="text-center py-12">
-              <MessageSquare className="h-12 w-12 text-zinc-300 mx-auto mb-4" />
-              <p className="text-zinc-500">No tickets found</p>
+              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground/70" />
             </div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-24">Ticket ID</TableHead>
-                  <TableHead>Subject</TableHead>
-                  <TableHead>User</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Priority</TableHead>
-                  <TableHead>Issue Type</TableHead>
-                  <TableHead>Updated</TableHead>
-                  <TableHead className="w-12"></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {tickets.map((ticket) => (
-                  <TableRow
-                    key={ticket.id}
-                    className="cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-800/50"
-                    onClick={() => handleSelectTicket(ticket)}
-                  >
-                    <TableCell className="font-mono text-xs text-zinc-500">
-                      {ticket.id.slice(0, 8).toUpperCase()}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        {getStatusIcon(ticket.status)}
-                        <span className="font-medium truncate max-w-[200px]">
-                          {ticket.title}
-                        </span>
-                        {ticket.responses && ticket.responses.length > 0 && (
-                          <Badge variant="secondary" className="text-xs">
-                            <MessageSquare className="h-3 w-3 mr-1" />
-                            {ticket.responses.length}
-                          </Badge>
-                        )}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <Avatar className="h-7 w-7">
-                          <AvatarImage src={ticket.user?.image || ""} />
-                          <AvatarFallback className="text-xs">
-                            {ticket.user?.name?.charAt(0) || "U"}
-                          </AvatarFallback>
-                        </Avatar>
-                        <span className="text-sm">
-                          {ticket.user?.name || "Unknown"}
-                        </span>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <Badge
-                        variant="outline"
-                        className={getStatusColor(ticket.status)}
-                      >
-                        {ticket.status.replace("_", " ")}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Badge
-                        variant="outline"
-                        className={getPriorityColor(ticket.priority)}
-                      >
-                        {ticket.priority}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-sm text-zinc-500">
-                      {formatIssueType(ticket.issueType)}
-                    </TableCell>
-                    <TableCell className="text-sm text-zinc-500">
-                      {formatDate(ticket.updatedAt)}
-                    </TableCell>
-                    <TableCell>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger
-                          asChild
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8"
-                          >
-                            <MoreHorizontal className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleSelectTicket(ticket);
-                            }}
-                          >
-                            View Details
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem
-                            onClick={(e) =>
-                              handleQuickAction(ticket.id, "resolve", e)
-                            }
-                          >
-                            Mark Resolved
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            onClick={(e) =>
-                              handleQuickAction(ticket.id, "close", e)
-                            }
-                          >
-                            Close Ticket
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <ResponsiveTable<Ticket>
+              columns={columns}
+              rows={tickets}
+              getRowId={(t) => t.id}
+              onRowClick={handleSelectTicket}
+              rowActions={renderRowActions}
+              empty={emptyState}
+            />
           )}
         </CardContent>
       </Card>
@@ -563,7 +556,7 @@ export default function AdminSupportTicketsPage() {
           >
             Previous
           </Button>
-          <span className="text-sm text-zinc-500">
+          <span className="text-sm text-muted-foreground">
             Page {page} of {totalPages}
           </span>
           <Button
@@ -578,7 +571,7 @@ export default function AdminSupportTicketsPage() {
       )}
 
       {/* Ticket Detail Dialog */}
-      <Dialog
+      <ResponsiveModal
         open={!!selectedTicket}
         onOpenChange={(open) => {
           if (!open) {
@@ -588,31 +581,31 @@ export default function AdminSupportTicketsPage() {
           }
         }}
       >
-        <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
+        <ResponsiveModalContent className="sm:max-w-2xl max-h-[85vh] flex flex-col">
           {loadingDetail ? (
             <div className="flex items-center justify-center py-12">
-              <Loader2 className="h-8 w-8 animate-spin text-zinc-400" />
+              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground/70" />
             </div>
           ) : (
             ticketDetail && (
               <>
-                <DialogHeader>
-                  <DialogTitle className="flex items-center gap-2">
+                <ResponsiveModalHeader>
+                  <ResponsiveModalTitle className="flex items-center gap-2">
                     {getStatusIcon(ticketDetail.status)}
                     {ticketDetail.title}
-                  </DialogTitle>
-                  <DialogDescription>
+                  </ResponsiveModalTitle>
+                  <ResponsiveModalDescription>
                     {ticketDetail.id.slice(0, 8).toUpperCase()} • Created{" "}
                     {formatDate(ticketDetail.createdAt)}
                     {ticketDetail.issueType && (
                       <> • {formatIssueType(ticketDetail.issueType)}</>
                     )}
-                  </DialogDescription>
-                </DialogHeader>
+                  </ResponsiveModalDescription>
+                </ResponsiveModalHeader>
 
                 <div className="flex-1 overflow-y-auto max-h-[60vh] space-y-4 pb-4">
                   {/* User Info */}
-                  <div className="flex items-center gap-3 p-3 rounded-lg bg-zinc-50 dark:bg-zinc-900">
+                  <div className="flex items-center gap-3 p-3 rounded-lg bg-muted">
                     <Avatar>
                       <AvatarImage src={ticketDetail.user?.image || ""} />
                       <AvatarFallback>
@@ -623,7 +616,7 @@ export default function AdminSupportTicketsPage() {
                       <p className="font-medium">
                         {ticketDetail.user?.name || "Unknown"}
                       </p>
-                      <p className="text-sm text-zinc-500">
+                      <p className="text-sm text-muted-foreground">
                         {ticketDetail.user?.email}
                       </p>
                     </div>
@@ -631,10 +624,10 @@ export default function AdminSupportTicketsPage() {
 
                   {/* Description */}
                   <div>
-                    <p className="text-xs text-zinc-500 uppercase tracking-wide mb-1">
+                    <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">
                       Description
                     </p>
-                    <p className="text-sm text-zinc-700 dark:text-zinc-300 whitespace-pre-wrap">
+                    <p className="text-sm text-foreground whitespace-pre-wrap">
                       {ticketDetail.description}
                     </p>
                   </div>
@@ -642,13 +635,13 @@ export default function AdminSupportTicketsPage() {
                   {/* Linked Entities */}
                   {(ticketDetail.linkedConsultation ||
                     ticketDetail.linkedPayment) && (
-                    <div className="p-3 rounded-lg border border-zinc-200 dark:border-zinc-700">
-                      <p className="text-xs text-zinc-500 uppercase tracking-wide mb-2">
+                    <div className="p-3 rounded-lg border border-border">
+                      <p className="text-xs text-muted-foreground uppercase tracking-wide mb-2">
                         Linked Information
                       </p>
                       {ticketDetail.linkedPayment && (
                         <div className="flex items-center gap-2 text-sm">
-                          <CreditCard className="h-4 w-4 text-zinc-400" />
+                          <CreditCard className="h-4 w-4 text-muted-foreground/70" />
                           <span>
                             Payment:{" "}
                             {formatCurrency(
@@ -666,7 +659,7 @@ export default function AdminSupportTicketsPage() {
 
                   {/* Status Update */}
                   <div>
-                    <Label className="text-xs text-zinc-500 uppercase tracking-wide">
+                    <Label className="text-xs text-muted-foreground uppercase tracking-wide">
                       Update Status
                     </Label>
                     <Select
@@ -691,14 +684,14 @@ export default function AdminSupportTicketsPage() {
 
                   {/* Responses */}
                   <div>
-                    <p className="text-xs text-zinc-500 uppercase tracking-wide mb-2">
+                    <p className="text-xs text-muted-foreground uppercase tracking-wide mb-2">
                       Conversation
                     </p>
                     <div className="space-y-3">
                       {ticketDetail.responses?.map((response) => (
                         <div
                           key={response.id}
-                          className={`p-3 rounded-lg ${response.isInternal ? "bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800" : "bg-zinc-50 dark:bg-zinc-800"}`}
+                          className={`p-3 rounded-lg ${response.isInternal ? "bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800" : "bg-muted"}`}
                         >
                           <div className="flex items-center gap-2 mb-1">
                             <span className="text-xs font-medium">
@@ -707,23 +700,23 @@ export default function AdminSupportTicketsPage() {
                             {response.isInternal && (
                               <Badge
                                 variant="outline"
-                                className="text-xs bg-amber-100 text-amber-700 border-amber-300"
+                                className="text-xs bg-amber-100 text-amber-700 border-amber-300 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800"
                               >
                                 Internal
                               </Badge>
                             )}
-                            <span className="text-xs text-zinc-400">
+                            <span className="text-xs text-muted-foreground/70">
                               {formatDate(response.createdAt)}
                             </span>
                           </div>
-                          <p className="text-sm text-zinc-700 dark:text-zinc-300">
+                          <p className="text-sm text-foreground">
                             {response.message}
                           </p>
                         </div>
                       ))}
                       {(!ticketDetail.responses ||
                         ticketDetail.responses.length === 0) && (
-                        <p className="text-sm text-zinc-400 text-center py-4">
+                        <p className="text-sm text-muted-foreground/70 text-center py-4">
                           No responses yet
                         </p>
                       )}
@@ -756,7 +749,7 @@ export default function AdminSupportTicketsPage() {
                   </div>
                 </div>
 
-                <DialogFooter className="mt-4">
+                <ResponsiveModalFooter className="mt-4">
                   <Button
                     variant="outline"
                     onClick={() => {
@@ -778,12 +771,12 @@ export default function AdminSupportTicketsPage() {
                     )}
                     {isInternalNote ? "Add Note" : "Send Reply"}
                   </Button>
-                </DialogFooter>
+                </ResponsiveModalFooter>
               </>
             )
           )}
-        </DialogContent>
-      </Dialog>
+        </ResponsiveModalContent>
+      </ResponsiveModal>
     </div>
   );
 }

@@ -250,13 +250,13 @@ export function ExpertProfileClient({
   }, [currentDate, selectedDate]);
 
   return (
-    <main className="bg-zinc-50">
+    <main className="bg-muted">
       {/* Back Navigation */}
-      <div className="bg-white border-b border-zinc-200">
+      <div className="bg-card border-b border-border">
         <div className="w-full px-4 md:px-8 lg:px-12 py-4">
           <Link
             href="/explore/experts"
-            className="inline-flex items-center gap-2 text-sm text-zinc-500 hover:text-zinc-900 transition-colors"
+            className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
           >
             <ArrowLeft className="w-4 h-4" />
             Back to Experts

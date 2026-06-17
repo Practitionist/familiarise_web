@@ -142,7 +142,7 @@ function ExpertMiniCard({
   return (
     <Link
       href={`/explore/experts/${expert.id}`}
-      className="flex items-center gap-3 p-4 bg-white rounded-xl border border-zinc-200 hover:border-zinc-300 hover:shadow-md transition-all group"
+      className="flex items-center gap-3 p-4 bg-card rounded-xl border border-border hover:border-border hover:shadow-md transition-all group"
     >
       <div className="relative w-12 h-12 flex-shrink-0">
         <Image
@@ -154,7 +154,7 @@ function ExpertMiniCard({
       </div>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1">
-          <p className="font-semibold text-sm text-zinc-900 group-hover:text-zinc-700 truncate">
+          <p className="font-semibold text-sm text-foreground group-hover:text-muted-foreground truncate">
             {expert.user.name}
           </p>
           {expert.isVerified && (
@@ -162,17 +162,17 @@ function ExpertMiniCard({
           )}
         </div>
         {expert.headline && (
-          <p className="text-xs text-zinc-500 truncate">{expert.headline}</p>
+          <p className="text-xs text-muted-foreground truncate">{expert.headline}</p>
         )}
         <div className="flex items-center gap-2 mt-0.5">
           <div className="flex items-center gap-0.5">
             <Star className="w-3 h-3 text-amber-400 fill-amber-400" />
-            <span className="text-xs font-medium text-zinc-700">
+            <span className="text-xs font-medium text-muted-foreground">
               {expert.rating.toFixed(1)}
             </span>
           </div>
           {expert.domain && (
-            <span className="text-xs text-zinc-400">{expert.domain.name}</span>
+            <span className="text-xs text-muted-foreground/70">{expert.domain.name}</span>
           )}
         </div>
       </div>
@@ -191,18 +191,19 @@ export default async function OrgProfilePage({
   if (!org) notFound();
 
   const capabilityLabel = org.canSponsor && org.canHost ? "Hybrid" : "Host Agency";
+  // Binary categorical badge, no dark: variants — monochrome (filled vs muted).
   const capabilityClass =
     org.canSponsor && org.canHost
-      ? "bg-purple-100 text-purple-700 border-purple-200"
-      : "bg-blue-100 text-blue-700 border-blue-200";
+      ? "bg-primary text-primary-foreground border-transparent"
+      : "bg-muted text-muted-foreground border-border";
 
   const exclusiveExperts = org.memberships
     .map((m) => m.consultantProfile)
     .filter(Boolean) as NonNullable<OrgData["memberships"][number]["consultantProfile"]>[];
 
   return (
-    <main className="min-h-screen bg-zinc-50">
-      {/* Banner */}
+    <main className="min-h-screen bg-muted">
+      {/* Banner — decorative dark cover header */}
       <div className="relative h-48 md:h-64 bg-gradient-to-br from-zinc-800 to-zinc-900 overflow-hidden">
         {org.bannerImage && (
           <Image
@@ -220,7 +221,7 @@ export default async function OrgProfilePage({
         <div className="py-4">
           <Link
             href="/explore/enterprise/organisations"
-            className="inline-flex items-center gap-1.5 text-sm text-zinc-500 hover:text-zinc-800 transition-colors"
+            className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
           >
             <ArrowLeft className="w-4 h-4" />
             All Organisations
@@ -228,10 +229,10 @@ export default async function OrgProfilePage({
         </div>
 
         {/* Org header card */}
-        <div className="bg-white rounded-2xl border border-zinc-200 p-6 md:p-8 mb-8 -mt-16 relative shadow-sm">
+        <div className="bg-card rounded-2xl border border-border p-6 md:p-8 mb-8 -mt-16 relative shadow-sm">
           <div className="flex flex-col sm:flex-row gap-5 items-start">
             {/* Logo */}
-            <div className="w-20 h-20 rounded-2xl bg-zinc-100 border-2 border-white shadow-md flex items-center justify-center overflow-hidden flex-shrink-0">
+            <div className="w-20 h-20 rounded-2xl bg-muted border-2 border-card shadow-md flex items-center justify-center overflow-hidden flex-shrink-0">
               {org.logo ? (
                 <Image
                   src={org.logo}
@@ -241,14 +242,14 @@ export default async function OrgProfilePage({
                   className="object-contain"
                 />
               ) : (
-                <Building2 className="w-10 h-10 text-zinc-400" />
+                <Building2 className="w-10 h-10 text-muted-foreground/70" />
               )}
             </div>
 
             {/* Details */}
             <div className="flex-1 min-w-0">
               <div className="flex flex-wrap items-center gap-2 mb-2">
-                <h1 className="text-2xl md:text-3xl font-bold text-zinc-900">
+                <h1 className="text-fluid-3xl font-bold text-foreground tracking-tight">
                   {org.name}
                 </h1>
                 <Badge
@@ -260,18 +261,18 @@ export default async function OrgProfilePage({
               </div>
 
               {org.industry && (
-                <p className="text-zinc-500 text-sm mb-3">{org.industry}</p>
+                <p className="text-muted-foreground text-sm mb-3">{org.industry}</p>
               )}
 
               {org.description && (
-                <p className="text-zinc-600 leading-relaxed mb-4 max-w-2xl">
+                <p className="text-muted-foreground leading-relaxed mb-4 max-w-2xl">
                   {org.description}
                 </p>
               )}
 
               <div className="flex flex-wrap items-center gap-4">
-                <div className="flex items-center gap-1.5 text-sm text-zinc-600">
-                  <Users className="w-4 h-4 text-zinc-400" />
+                <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                  <Users className="w-4 h-4 text-muted-foreground/70" />
                   <span>
                     <strong>{exclusiveExperts.length}</strong> exclusive expert
                     {exclusiveExperts.length !== 1 ? "s" : ""}
@@ -282,7 +283,7 @@ export default async function OrgProfilePage({
                     href={org.website}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="flex items-center gap-1.5 text-sm text-blue-600 hover:text-blue-800 transition-colors"
+                    className="flex items-center gap-1.5 text-sm text-foreground hover:text-muted-foreground transition-colors"
                   >
                     <Globe className="w-4 h-4" />
                     Website
@@ -299,7 +300,7 @@ export default async function OrgProfilePage({
           <div className="lg:col-span-2 space-y-6">
             {exclusiveExperts.length > 0 ? (
               <>
-                <h2 className="text-xl font-bold text-zinc-900">
+                <h2 className="text-xl font-bold text-foreground tracking-tight">
                   Exclusive Experts
                 </h2>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -309,9 +310,9 @@ export default async function OrgProfilePage({
                 </div>
               </>
             ) : (
-              <div className="flex flex-col items-center justify-center py-16 text-center bg-white rounded-2xl border border-zinc-200">
-                <Users className="w-10 h-10 text-zinc-300 mb-3" />
-                <p className="text-zinc-500">No exclusive experts listed yet</p>
+              <div className="flex flex-col items-center justify-center py-16 text-center bg-card rounded-2xl border border-border">
+                <Users className="w-10 h-10 text-muted-foreground/70 mb-3" />
+                <p className="text-muted-foreground">No exclusive experts listed yet</p>
               </div>
             )}
           </div>
@@ -319,8 +320,8 @@ export default async function OrgProfilePage({
           {/* Sidebar: Org plans */}
           <div className="space-y-6">
             {org.organizationPlans.length > 0 && (
-              <div className="bg-white rounded-2xl border border-zinc-200 p-5">
-                <h2 className="text-base font-bold text-zinc-900 mb-4">
+              <div className="bg-card rounded-2xl border border-border p-5">
+                <h2 className="text-base font-bold text-foreground mb-4 tracking-tight">
                   Available Programs
                 </h2>
                 <div className="space-y-3">
@@ -328,13 +329,13 @@ export default async function OrgProfilePage({
                     <Link
                       key={plan.id}
                       href={`/checkout/plans/${CHECKOUT_FAMILY[plan.planType]}/${plan.id}`}
-                      className="block p-3 rounded-xl bg-zinc-50 border border-zinc-100 hover:border-zinc-300 hover:bg-white hover:shadow-sm transition-all group"
+                      className="block p-3 rounded-xl bg-muted border border-border hover:border-border hover:bg-card hover:shadow-sm transition-all group"
                     >
-                      <p className="text-sm font-semibold text-zinc-900 mb-0.5">
+                      <p className="text-sm font-semibold text-foreground mb-0.5">
                         {plan.title}
                       </p>
                       {plan.description && (
-                        <p className="text-xs text-zinc-500 line-clamp-2">
+                        <p className="text-xs text-muted-foreground line-clamp-2">
                           {plan.description}
                         </p>
                       )}
@@ -346,12 +347,12 @@ export default async function OrgProfilePage({
                           {plan.planType.toLowerCase()}
                         </Badge>
                         {plan.price > 0 && (
-                          <span className="text-xs font-semibold text-zinc-700">
+                          <span className="text-xs font-semibold text-muted-foreground">
                             ₹{(plan.price / 100).toLocaleString("en-IN")}
                           </span>
                         )}
                       </div>
-                      <span className="mt-2 inline-flex items-center gap-1 text-[11px] font-medium text-blue-600 group-hover:text-blue-800">
+                      <span className="mt-2 inline-flex items-center gap-1 text-[11px] font-medium text-foreground group-hover:text-muted-foreground">
                         Book
                         <ArrowRight className="w-3 h-3" />
                       </span>
@@ -361,18 +362,18 @@ export default async function OrgProfilePage({
               </div>
             )}
 
-            {/* CTA */}
-            <div className="bg-zinc-900 rounded-2xl p-5 text-center">
-              <Building2 className="w-8 h-8 text-zinc-400 mx-auto mb-3" />
-              <p className="text-white font-semibold text-sm mb-1">
+            {/* CTA — intentional dark surface */}
+            <div className="bg-primary rounded-2xl p-5 text-center">
+              <Building2 className="w-8 h-8 text-primary-foreground/70 mx-auto mb-3" />
+              <p className="text-primary-foreground font-semibold text-sm mb-1">
                 Work with {org.name}
               </p>
-              <p className="text-zinc-400 text-xs mb-4">
+              <p className="text-primary-foreground/70 text-xs mb-4">
                 Browse their experts and book a session directly.
               </p>
               <Button
                 asChild
-                className="w-full bg-white text-zinc-900 hover:bg-zinc-100 font-medium rounded-xl"
+                className="w-full bg-card text-foreground hover:bg-muted font-medium rounded-xl"
               >
                 <Link href={`/explore/enterprise/organisations/${org.slug}#experts`}>
                   Browse Experts

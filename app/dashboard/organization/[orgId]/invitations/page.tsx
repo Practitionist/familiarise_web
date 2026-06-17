@@ -67,13 +67,9 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+  ResponsiveTable,
+  type ResponsiveColumn,
+} from "@/components/ui/responsive-table";
 import {
   Select,
   SelectContent,
@@ -82,13 +78,13 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+  ResponsiveModal,
+  ResponsiveModalContent,
+  ResponsiveModalDescription,
+  ResponsiveModalFooter,
+  ResponsiveModalHeader,
+  ResponsiveModalTitle,
+} from "@/components/ui/responsive-modal";
 import {
   Tooltip,
   TooltipContent,
@@ -220,6 +216,62 @@ export default function OrgInvitationsPage({
     navigator.clipboard.writeText(url);
   };
 
+  const columns: ResponsiveColumn<InvitationRow>[] = [
+    {
+      key: "email",
+      header: "Email",
+      primary: true,
+      cell: (inv) => inv.email,
+    },
+    {
+      key: "role",
+      header: "Role",
+      cell: (inv) => (
+        <Badge variant="secondary">
+          {MEMBER_ROLE_LABEL[inv.role as MemberRole] ?? inv.role}
+        </Badge>
+      ),
+    },
+    {
+      key: "status",
+      header: "Status",
+      cell: (inv) => (
+        <Badge variant={inv.status === "pending" ? "default" : "outline"}>
+          {INVITATION_STATUS_LABEL[inv.status] ?? inv.status}
+        </Badge>
+      ),
+    },
+    {
+      key: "expires",
+      header: "Expires",
+      className: "text-xs text-muted-foreground",
+      cell: (inv) => new Date(inv.expiresAt).toLocaleDateString(),
+    },
+  ];
+
+  const renderRowActions = (inv: InvitationRow) => (
+    <div className="flex items-center gap-1">
+      <Button
+        variant="ghost"
+        size="icon"
+        aria-label="Copy invite link"
+        onClick={() => copyInviteLink(inv.id)}
+      >
+        <Copy className="h-4 w-4" />
+      </Button>
+      {inv.status === "pending" && (
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label="Revoke invitation"
+          onClick={() => setInvToRevoke(inv)}
+        >
+          <Trash2 className="h-4 w-4 text-red-500" />
+        </Button>
+      )}
+    </div>
+  );
+
   return (
     <>
       <DashboardHeader
@@ -262,90 +314,33 @@ export default function OrgInvitationsPage({
           </CardHeader>
           <CardContent>
             {isLoading ? (
-              <p className="text-sm text-zinc-500">Loading…</p>
+              <p className="text-sm text-muted-foreground">Loading…</p>
             ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Email</TableHead>
-                    <TableHead>Role</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Expires</TableHead>
-                    <TableHead className="w-24">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {data?.invitations.map((inv) => (
-                    <TableRow key={inv.id}>
-                      <TableCell>{inv.email}</TableCell>
-                      <TableCell>
-                        <Badge variant="secondary">
-                          {MEMBER_ROLE_LABEL[inv.role as MemberRole] ??
-                            inv.role}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <Badge
-                          variant={
-                            inv.status === "pending" ? "default" : "outline"
-                          }
-                        >
-                          {INVITATION_STATUS_LABEL[inv.status] ?? inv.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-xs text-zinc-500">
-                        {new Date(inv.expiresAt).toLocaleDateString()}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-1">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            aria-label="Copy invite link"
-                            onClick={() => copyInviteLink(inv.id)}
-                          >
-                            <Copy className="h-4 w-4" />
-                          </Button>
-                          {inv.status === "pending" && (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              aria-label="Revoke invitation"
-                              onClick={() => setInvToRevoke(inv)}
-                            >
-                              <Trash2 className="h-4 w-4 text-red-500" />
-                            </Button>
-                          )}
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                  {data && data.invitations.length === 0 && (
-                    <TableRow>
-                      <TableCell
-                        colSpan={5}
-                        className="text-center text-sm text-zinc-500 py-6"
-                      >
-                        No pending invitations.
-                      </TableCell>
-                    </TableRow>
-                  )}
-                </TableBody>
-              </Table>
+              <ResponsiveTable<InvitationRow>
+                columns={columns}
+                rows={data?.invitations ?? []}
+                getRowId={(inv) => inv.id}
+                rowActions={renderRowActions}
+                empty={
+                  <p className="text-center text-sm text-muted-foreground py-6">
+                    No pending invitations.
+                  </p>
+                }
+              />
             )}
           </CardContent>
         </Card>
       </DashboardContent>
 
-      <Dialog open={showCreate} onOpenChange={setShowCreate}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Send invitation</DialogTitle>
-            <DialogDescription>
+      <ResponsiveModal open={showCreate} onOpenChange={setShowCreate}>
+        <ResponsiveModalContent>
+          <ResponsiveModalHeader>
+            <ResponsiveModalTitle>Send invitation</ResponsiveModalTitle>
+            <ResponsiveModalDescription>
               The recipient does not need an account yet — they will create
               one when accepting the invite.
-            </DialogDescription>
-          </DialogHeader>
+            </ResponsiveModalDescription>
+          </ResponsiveModalHeader>
 
           <div className="space-y-4">
             <div className="space-y-2">
@@ -379,7 +374,7 @@ export default function OrgInvitationsPage({
             {error && <p className="text-sm text-red-600">{error}</p>}
           </div>
 
-          <DialogFooter>
+          <ResponsiveModalFooter>
             <Button variant="outline" onClick={() => setShowCreate(false)}>
               Cancel
             </Button>
@@ -389,23 +384,23 @@ export default function OrgInvitationsPage({
             >
               {createMutation.isPending ? "Sending…" : "Send invitation"}
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </ResponsiveModalFooter>
+        </ResponsiveModalContent>
+      </ResponsiveModal>
 
-      <Dialog
+      <ResponsiveModal
         open={!!invToRevoke}
         onOpenChange={(open) => !open && setInvToRevoke(null)}
       >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Revoke invitation?</DialogTitle>
-            <DialogDescription>
+        <ResponsiveModalContent>
+          <ResponsiveModalHeader>
+            <ResponsiveModalTitle>Revoke invitation?</ResponsiveModalTitle>
+            <ResponsiveModalDescription>
               {invToRevoke?.email} will no longer be able to use their invite
               link. You can send a fresh invitation at any time.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
+            </ResponsiveModalDescription>
+          </ResponsiveModalHeader>
+          <ResponsiveModalFooter>
             <Button
               variant="outline"
               onClick={() => setInvToRevoke(null)}
@@ -422,9 +417,9 @@ export default function OrgInvitationsPage({
             >
               {revokeMutation.isPending ? "Revoking…" : "Revoke invitation"}
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </ResponsiveModalFooter>
+        </ResponsiveModalContent>
+      </ResponsiveModal>
     </>
   );
 }

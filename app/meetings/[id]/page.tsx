@@ -96,7 +96,7 @@ const MeetingPage = () => {
   // Loading states
   if (isSessionPending || isValidatingAccess || isCallLoading) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen">
+      <div className="flex flex-col items-center justify-center min-h-screen p-4 text-center">
         <Loader2 className="h-12 w-12 animate-spin text-primary" />
         <p className="mt-4 text-lg">
           {isSessionPending
@@ -117,22 +117,22 @@ const MeetingPage = () => {
   // Access denied
   if (accessValidation && !accessValidation.hasAccess) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-zinc-50">
-        <div className="bg-white p-8 rounded-2xl shadow-xl border border-zinc-200 max-w-md text-center">
+      <div className="flex flex-col items-center justify-center min-h-screen bg-muted p-4">
+        <div className="w-full max-w-md bg-card p-8 rounded-2xl shadow-xl border border-border text-center">
           <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-red-100 flex items-center justify-center">
             <ShieldAlert className="w-8 h-8 text-red-600" />
           </div>
-          <h2 className="text-xl font-bold text-zinc-900 mb-2">
+          <h2 className="text-xl font-bold text-foreground mb-2">
             Access Denied
           </h2>
-          <p className="text-zinc-600 mb-4">{accessValidation.message}</p>
-          <p className="text-sm text-zinc-500">
+          <p className="text-muted-foreground mb-4">{accessValidation.message}</p>
+          <p className="text-sm text-muted-foreground/70">
             If you believe this is an error, please contact support or the
             meeting host.
           </p>
           <button
             onClick={() => window.history.back()}
-            className="mt-6 px-6 py-2.5 bg-zinc-900 text-white rounded-lg font-medium hover:bg-zinc-800 transition-colors"
+            className="mt-6 px-6 py-2.5 bg-foreground text-background rounded-lg font-medium hover:bg-foreground/90 transition-colors"
           >
             Go Back
           </button>

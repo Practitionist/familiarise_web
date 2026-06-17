@@ -19,7 +19,7 @@ function ExpertMiniCardImpl({ expert, badge }: ExpertMiniCardProps) {
       href={`/explore/experts/${expert.id}`}
       className="group flex-shrink-0 w-[260px] block"
     >
-      <div className="bg-white rounded-2xl p-5 border border-zinc-200 hover:border-zinc-300 hover:shadow-lg transition-all duration-300 h-full flex flex-col">
+      <div className="bg-card rounded-2xl p-5 border border-border hover:border-border hover:shadow-lg transition-all duration-300 h-full flex flex-col">
         {/* Badge */}
         {badge && (
           <div className="mb-3">
@@ -42,19 +42,19 @@ function ExpertMiniCardImpl({ expert, badge }: ExpertMiniCardProps) {
 
         {/* Avatar + Name */}
         <div className="flex items-center gap-3 mb-3">
-          <Avatar className="h-12 w-12 ring-2 ring-zinc-100 group-hover:ring-zinc-200 transition-all">
+          <Avatar className="h-12 w-12 ring-2 ring-muted group-hover:ring-border transition-all">
             <AvatarImage
               src={expert.user.image || "/placeholder-user.jpg"}
               alt={expert.user.name || "Expert"}
               className="object-cover"
             />
-            <AvatarFallback className="bg-zinc-900 text-white">
+            <AvatarFallback className="bg-primary text-primary-foreground">
               <User className="h-6 w-6" />
             </AvatarFallback>
           </Avatar>
           <div className="min-w-0">
             <div className="flex items-center gap-1">
-              <h3 className="text-sm font-semibold text-zinc-900 line-clamp-1 group-hover:text-zinc-700 transition-colors">
+              <h3 className="text-sm font-semibold text-foreground line-clamp-1 group-hover:text-muted-foreground transition-colors">
                 {expert.user.name}
               </h3>
               {expert.isVerified && (
@@ -65,7 +65,7 @@ function ExpertMiniCardImpl({ expert, badge }: ExpertMiniCardProps) {
             </div>
             <div className="flex items-center gap-1">
               <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
-              <span className="text-xs font-medium text-zinc-600">
+              <span className="text-xs font-medium text-muted-foreground">
                 {expert.rating.toFixed(1)}
               </span>
             </div>
@@ -84,7 +84,7 @@ function ExpertMiniCardImpl({ expert, badge }: ExpertMiniCardProps) {
                     companyName={exp.company}
                     companyDomain={exp.companyDomain ?? undefined}
                     size={24}
-                    className="border-zinc-200"
+                    className="border-border"
                   />
                 ))}
               </div>
@@ -93,15 +93,15 @@ function ExpertMiniCardImpl({ expert, badge }: ExpertMiniCardProps) {
           {/* Languages */}
           {expert.languages && expert.languages.length > 0 && (
             <div className="flex items-center gap-1 mb-2">
-              <Globe className="w-3 h-3 text-zinc-400 flex-shrink-0" />
-              <p className="text-[10px] text-zinc-500 line-clamp-1">
+              <Globe className="w-3 h-3 text-muted-foreground/70 flex-shrink-0" />
+              <p className="text-[10px] text-muted-foreground line-clamp-1">
                 {expert.languages.slice(0, 2).join(", ")}
               </p>
             </div>
           )}
 
           {/* Domain badge */}
-          <Badge className="text-[10px] px-2 py-0.5 bg-zinc-100 text-zinc-600 hover:bg-zinc-100 border-0 w-fit mb-2">
+          <Badge className="text-[10px] px-2 py-0.5 bg-muted text-muted-foreground hover:bg-muted border-0 w-fit mb-2">
             {expert.domain?.name || "General"}
           </Badge>
 
@@ -111,7 +111,7 @@ function ExpertMiniCardImpl({ expert, badge }: ExpertMiniCardProps) {
               {expert.tags.slice(0, 2).map((tag) => (
                 <span
                   key={tag.id}
-                  className="text-[10px] px-2 py-0.5 bg-zinc-50 text-zinc-500 rounded-full"
+                  className="text-[10px] px-2 py-0.5 bg-muted text-muted-foreground rounded-full"
                 >
                   {tag.name}
                 </span>
@@ -120,7 +120,7 @@ function ExpertMiniCardImpl({ expert, badge }: ExpertMiniCardProps) {
           )}
 
           {/* View Profile */}
-          <div className="flex items-center gap-1 text-xs font-medium text-zinc-500 group-hover:text-zinc-900 transition-colors">
+          <div className="flex items-center gap-1 text-xs font-medium text-muted-foreground group-hover:text-foreground transition-colors">
             <span>View Profile</span>
             <ArrowRight className="w-3 h-3 group-hover:translate-x-1 transition-transform" />
           </div>

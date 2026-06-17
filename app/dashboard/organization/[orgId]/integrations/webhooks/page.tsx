@@ -34,13 +34,9 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+  ResponsiveTable,
+  type ResponsiveColumn,
+} from "@/components/ui/responsive-table";
 
 type WebhookRow = {
   id: string;
@@ -65,10 +61,54 @@ const ALL_EVENTS = [
 ] as const;
 
 const STATUS_TONE: Record<WebhookRow["status"], string> = {
-  ACTIVE: "bg-emerald-50 text-emerald-700",
-  PAUSED: "bg-amber-50 text-amber-700",
-  DISABLED: "bg-zinc-200 text-zinc-700",
+  ACTIVE: "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300",
+  PAUSED: "bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300",
+  DISABLED: "bg-muted text-muted-foreground",
 };
+
+const webhookColumns: ResponsiveColumn<WebhookRow>[] = [
+  {
+    key: "url",
+    header: "URL",
+    primary: true,
+    className: "max-w-xs truncate",
+    cell: (row) => <code className="text-xs">{row.url}</code>,
+  },
+  {
+    key: "status",
+    header: "Status",
+    cell: (row) => (
+      <Badge className={STATUS_TONE[row.status]}>{row.status}</Badge>
+    ),
+  },
+  {
+    key: "events",
+    header: "Events",
+    cell: (row) => (
+      <span className="text-xs text-muted-foreground">
+        {row.eventSubscriptions.join(", ")}
+      </span>
+    ),
+  },
+  {
+    key: "failures",
+    header: "Failures",
+    className: "text-right",
+    headClassName: "text-right",
+    cell: (row) => row.failureCount,
+  },
+  {
+    key: "lastDelivery",
+    header: "Last delivery",
+    className: "text-xs text-muted-foreground",
+    cell: (row) =>
+      row.lastSuccessAt
+        ? new Date(row.lastSuccessAt).toLocaleString()
+        : row.lastFailureAt
+          ? `failed ${new Date(row.lastFailureAt).toLocaleString()}`
+          : "—",
+  },
+];
 
 type PageProps = { params: Promise<{ orgId: string }> };
 
@@ -180,7 +220,7 @@ export default function WebhooksPage({ params }: Readonly<PageProps>) {
                   Endpoint created. Copy the secret now — it won&apos;t be
                   shown again.
                 </p>
-                <code className="mt-2 block break-all rounded bg-white px-2 py-1 text-xs">
+                <code className="mt-2 block break-all rounded bg-card px-2 py-1 text-xs">
                   {createdSecret}
                 </code>
               </div>
@@ -209,53 +249,19 @@ export default function WebhooksPage({ params }: Readonly<PageProps>) {
           </CardHeader>
           <CardContent>
             {list.isLoading ? (
-              <p className="text-sm text-zinc-500">Loading...</p>
-            ) : !list.data || list.data.length === 0 ? (
-              <p className="text-sm text-zinc-500">
-                No webhook endpoints yet. Create one above to subscribe an
-                external system to org lifecycle events.
-              </p>
+              <p className="text-sm text-muted-foreground">Loading...</p>
             ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>URL</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Events</TableHead>
-                    <TableHead className="text-right">Failures</TableHead>
-                    <TableHead>Last delivery</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {list.data.map((row) => (
-                    <TableRow key={row.id}>
-                      <TableCell className="max-w-xs truncate">
-                        <code className="text-xs">{row.url}</code>
-                      </TableCell>
-                      <TableCell>
-                        <Badge className={STATUS_TONE[row.status]}>
-                          {row.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <span className="text-xs text-zinc-600">
-                          {row.eventSubscriptions.join(", ")}
-                        </span>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {row.failureCount}
-                      </TableCell>
-                      <TableCell className="text-xs text-zinc-500">
-                        {row.lastSuccessAt
-                          ? new Date(row.lastSuccessAt).toLocaleString()
-                          : row.lastFailureAt
-                            ? `failed ${new Date(row.lastFailureAt).toLocaleString()}`
-                            : "—"}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+              <ResponsiveTable<WebhookRow>
+                columns={webhookColumns}
+                rows={list.data ?? []}
+                getRowId={(row) => row.id}
+                empty={
+                  <p className="text-sm text-muted-foreground">
+                    No webhook endpoints yet. Create one above to subscribe an
+                    external system to org lifecycle events.
+                  </p>
+                }
+              />
             )}
           </CardContent>
         </Card>

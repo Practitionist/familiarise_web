@@ -26,6 +26,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { PageHeading } from "@/components/ui/page-header";
 import { NotificationPreferencesPanel } from "@/components/notifications";
 import {
   CookiePreference,
@@ -273,7 +274,7 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
   }
   if (error) {
     return (
-      <div className="flex justify-center items-center min-h-screen text-red-500">
+      <div className="flex justify-center items-center min-h-screen text-red-600 dark:text-red-400">
         Error: {error}
       </div>
     );
@@ -303,11 +304,9 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
               .join("") ?? "ST"}
           </AvatarFallback>
         </Avatar>
-        <div>
-          <h1 className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">
-            Settings
-          </h1>
-          <p className="text-zinc-500 dark:text-zinc-400">
+        <div className="min-w-0 space-y-1">
+          <PageHeading>Settings</PageHeading>
+          <p className="text-fluid-sm text-muted-foreground">
             Manage profile and account settings for{" "}
             {staffData.user.name ?? `Staff ID: ${staffId}`}.
           </p>

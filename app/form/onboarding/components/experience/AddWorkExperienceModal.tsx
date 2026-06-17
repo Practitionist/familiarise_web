@@ -171,7 +171,7 @@ export function AddWorkExperienceModal({
                 />
               </div>
               {autoDetectedDomain && !manualDomainMode && (
-                <p className="text-xs text-emerald-600">
+                <p className="text-xs text-muted-foreground">
                   Logo detected automatically
                 </p>
               )}
@@ -215,7 +215,7 @@ export function AddWorkExperienceModal({
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="startDate">Start Date *</Label>
                 <Input

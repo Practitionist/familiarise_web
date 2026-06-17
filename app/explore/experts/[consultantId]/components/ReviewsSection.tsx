@@ -15,20 +15,20 @@ export function ReviewsSection({ reviews }: ReviewsSectionProps) {
       : 0;
 
   return (
-    <div className="bg-white rounded-2xl border border-zinc-200 p-6 md:p-8">
+    <div className="bg-card rounded-2xl border border-border p-6 md:p-8">
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-zinc-100 flex items-center justify-center">
-            <MessageSquare className="w-5 h-5 text-zinc-600" />
+          <div className="w-10 h-10 rounded-xl bg-muted flex items-center justify-center">
+            <MessageSquare className="w-5 h-5 text-muted-foreground" />
           </div>
           <div>
-            <h3 className="text-lg font-semibold text-zinc-900">
+            <h3 className="text-lg font-semibold text-foreground">
               Reviews ({reviews?.length || 0})
             </h3>
             {reviews.length > 0 && (
               <div className="flex items-center gap-1 mt-0.5">
                 <Star className="w-4 h-4 fill-amber-400 text-amber-400" />
-                <span className="text-sm font-medium text-zinc-700">
+                <span className="text-sm font-medium text-muted-foreground">
                   {averageRating.toFixed(1)} average rating
                 </span>
               </div>
@@ -42,11 +42,11 @@ export function ReviewsSection({ reviews }: ReviewsSectionProps) {
           reviews.map((review) => <Review key={review.id} {...review} />)
         ) : (
           <div className="text-center py-12">
-            <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-zinc-100 flex items-center justify-center">
-              <MessageSquare className="w-8 h-8 text-zinc-400" />
+            <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-muted flex items-center justify-center">
+              <MessageSquare className="w-8 h-8 text-muted-foreground/70" />
             </div>
-            <p className="text-zinc-500">No reviews yet</p>
-            <p className="text-sm text-zinc-400 mt-1">
+            <p className="text-muted-foreground">No reviews yet</p>
+            <p className="text-sm text-muted-foreground/70 mt-1">
               Be the first to leave a review!
             </p>
           </div>

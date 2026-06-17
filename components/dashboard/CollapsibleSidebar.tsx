@@ -172,7 +172,7 @@ export function CollapsibleSidebar({
   return (
     <aside
       className={cn(
-        "flex h-full flex-col border-r border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 transition-all duration-300",
+        "flex h-full flex-col border-r border-border bg-card transition-all duration-300",
         collapsed ? "w-16" : "w-64",
         className,
       )}
@@ -180,7 +180,7 @@ export function CollapsibleSidebar({
       {/* Header: single-row layout, fixed h-14 to pixel-match the
           OrgContextBar's h-14 so the sidebar / top-bar border intersection
           lines up cleanly at the crossroad. */}
-      <div className="border-b border-zinc-200 dark:border-zinc-800">
+      <div className="border-b border-border">
         <div
           className={cn(
             "flex items-center gap-1 h-14 px-2",
@@ -193,14 +193,14 @@ export function CollapsibleSidebar({
               <DropdownMenuTrigger asChild>
                 <button
                   className={cn(
-                    "flex items-center gap-3 flex-1 min-w-0 px-2 py-1.5 rounded-md text-left hover:bg-zinc-100 dark:hover:bg-zinc-800/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-300 transition-colors",
+                    "flex items-center gap-3 flex-1 min-w-0 px-2 py-1.5 rounded-md text-left hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring transition-colors",
                     collapsed && "w-full justify-center px-0",
                   )}
                   aria-label="Switch context"
                 >
                   <Avatar className="h-9 w-9 flex-shrink-0">
                     <AvatarImage src={userImage || ""} alt={userName || ""} />
-                    <AvatarFallback className="bg-blue-600 text-white font-semibold text-xs">
+                    <AvatarFallback className="bg-primary text-primary-foreground font-semibold text-xs">
                       {fallbackChar}
                     </AvatarFallback>
                   </Avatar>
@@ -269,7 +269,7 @@ export function CollapsibleSidebar({
             >
               <Avatar className="h-9 w-9 flex-shrink-0">
                 <AvatarImage src={userImage || ""} alt={userName || ""} />
-                <AvatarFallback className="bg-blue-600 text-white font-semibold text-xs">
+                <AvatarFallback className="bg-primary text-primary-foreground font-semibold text-xs">
                   {fallbackChar}
                 </AvatarFallback>
               </Avatar>
@@ -564,9 +564,9 @@ export function CollapsibleSidebar({
  */
 export function CollapsibleSidebarSkeleton() {
   return (
-    <div className="flex h-screen-maintenance bg-zinc-50 dark:bg-zinc-950">
+    <div className="flex h-screen-maintenance bg-muted">
       {/* Sidebar skeleton — mirrors the expanded w-64 layout */}
-      <aside className="w-64 border-r border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4">
+      <aside className="w-64 border-r border-border bg-card p-4">
         <Skeleton className="h-8 w-32 mb-6" />
         <div className="space-y-2">
           {[1, 2, 3, 4, 5, 6].map((i) => (

@@ -40,13 +40,9 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+  ResponsiveTable,
+  type ResponsiveColumn,
+} from "@/components/ui/responsive-table";
 import {
   Select,
   SelectContent,
@@ -55,13 +51,13 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+  ResponsiveModal,
+  ResponsiveModalContent,
+  ResponsiveModalDescription,
+  ResponsiveModalFooter,
+  ResponsiveModalHeader,
+  ResponsiveModalTitle,
+} from "@/components/ui/responsive-modal";
 
 // `MemberRow` (and the response shape) live in `@/schemas/organizations`
 // so the dashboard and any other consumer (e.g. operator tools) share the
@@ -337,7 +333,94 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
     onError: (err: Error) => setEditError(err.message),
   });
 
-  if (!allowed) return null;
+  const canManage = isAtLeast("MAINTAINER");
+
+  const columns: ResponsiveColumn<MemberRow>[] = [
+    {
+      key: "member",
+      header: "Member",
+      primary: true,
+      cell: (m) => (
+        <div className="flex flex-col">
+          <span className="font-medium text-foreground">
+            {m.user.name ?? "—"}
+          </span>
+          <span className="text-xs text-muted-foreground">{m.user.email}</span>
+        </div>
+      ),
+    },
+    {
+      key: "role",
+      header: "Role",
+      cell: (m) => (
+        <Badge variant="secondary">
+          {MEMBER_ROLE_LABEL[m.role as MemberRole] ?? m.role}
+        </Badge>
+      ),
+    },
+    {
+      key: "status",
+      header: "Status",
+      cell: (m) => (
+        <Badge variant={m.status === "ACTIVE" ? "default" : "outline"}>
+          {MEMBER_STATUS_LABEL[m.status as MemberStatus] ?? m.status}
+        </Badge>
+      ),
+    },
+  ];
+
+  const renderRowActions = (m: MemberRow) => (
+    <div className="flex items-center gap-1">
+      <Button
+        variant="ghost"
+        size="icon"
+        aria-label="Edit member"
+        onClick={() => openEdit(m)}
+      >
+        <Pencil className="h-4 w-4 text-muted-foreground" />
+      </Button>
+      {/* Trash is disabled in two cases:
+           1. Self-delete — a MAINTAINER clicking their
+              own trash would self-fire and need another
+              OWNER to restore them. "Leave org" belongs
+              to a dedicated confirmation flow.
+           2. Non-OWNER removing an OWNER — same gate as
+              PATCH role-change, since deletion is
+              functionally identical to revoking the
+              OWNER role.
+           Both rules are also enforced server-side as
+           defense-in-depth. The wrapping <span> exists
+           to surface the `title` tooltip — browsers
+           don't fire mouseover events on disabled
+           <button> elements, so a title on the button
+           itself is silently dropped. The span owns
+           the title and receives hover regardless. */}
+      <span
+        title={
+          isOwnRow(m)
+            ? "You cannot remove yourself"
+            : m.role === "OWNER" && !isAtLeast("OWNER")
+              ? "Only an OWNER can remove an OWNER"
+              : undefined
+        }
+        className="inline-flex"
+      >
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label="Remove member"
+          onClick={() => setMemberToRemove(m)}
+          disabled={
+            removeMutation.isPending ||
+            isOwnRow(m) ||
+            (m.role === "OWNER" && !isAtLeast("OWNER"))
+          }
+        >
+          <Trash2 className="h-4 w-4 text-red-500" />
+        </Button>
+      </span>
+    </div>
+  );
 
   return (
     <>
@@ -359,7 +442,7 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
               {isLoading ? "Loading…" : `${total} members`}
             </CardTitle>
             <div className="relative w-full max-w-xs">
-              <Search className="h-4 w-4 absolute left-3 top-2.5 text-zinc-400" />
+              <Search className="h-4 w-4 absolute left-3 top-2.5 text-muted-foreground/70" />
               <Input
                 placeholder="Search name or email…"
                 value={search}
@@ -371,123 +454,27 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
           </CardHeader>
           <CardContent>
             {isLoading ? (
-              <p className="text-sm text-zinc-500">Loading…</p>
+              <p className="text-sm text-muted-foreground">Loading…</p>
             ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Member</TableHead>
-                    <TableHead>Role</TableHead>
-                    <TableHead>Status</TableHead>
-                    {isAtLeast("MAINTAINER") && (
-                      <TableHead className="w-24">Actions</TableHead>
-                    )}
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {data?.members.map((m) => (
-                    <TableRow key={m.id}>
-                      <TableCell>
-                        <div className="flex flex-col">
-                          <span className="font-medium text-zinc-900">
-                            {m.user.name ?? "—"}
-                          </span>
-                          <span className="text-xs text-zinc-500">
-                            {m.user.email}
-                          </span>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="secondary">
-                          {MEMBER_ROLE_LABEL[m.role as MemberRole] ?? m.role}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <Badge
-                          variant={
-                            m.status === "ACTIVE" ? "default" : "outline"
-                          }
-                        >
-                          {MEMBER_STATUS_LABEL[m.status as MemberStatus] ??
-                            m.status}
-                        </Badge>
-                      </TableCell>
-                      {isAtLeast("MAINTAINER") && (
-                        <TableCell>
-                          <div className="flex items-center gap-1">
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              aria-label="Edit member"
-                              onClick={() => openEdit(m)}
-                            >
-                              <Pencil className="h-4 w-4 text-zinc-500" />
-                            </Button>
-                            {/* Trash is disabled in two cases:
-                                 1. Self-delete — a MAINTAINER clicking their
-                                    own trash would self-fire and need another
-                                    OWNER to restore them. "Leave org" belongs
-                                    to a dedicated confirmation flow.
-                                 2. Non-OWNER removing an OWNER — same gate as
-                                    PATCH role-change, since deletion is
-                                    functionally identical to revoking the
-                                    OWNER role.
-                                 Both rules are also enforced server-side as
-                                 defense-in-depth. The wrapping <span> exists
-                                 to surface the `title` tooltip — browsers
-                                 don't fire mouseover events on disabled
-                                 <button> elements, so a title on the button
-                                 itself is silently dropped. The span owns
-                                 the title and receives hover regardless. */}
-                            <span
-                              title={
-                                isOwnRow(m)
-                                  ? "You cannot remove yourself"
-                                  : m.role === "OWNER" && !isAtLeast("OWNER")
-                                    ? "Only an OWNER can remove an OWNER"
-                                    : undefined
-                              }
-                              className="inline-flex"
-                            >
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                aria-label="Remove member"
-                                onClick={() => setMemberToRemove(m)}
-                                disabled={
-                                  removeMutation.isPending ||
-                                  isOwnRow(m) ||
-                                  (m.role === "OWNER" && !isAtLeast("OWNER"))
-                                }
-                              >
-                                <Trash2 className="h-4 w-4 text-red-500" />
-                              </Button>
-                            </span>
-                          </div>
-                        </TableCell>
-                      )}
-                    </TableRow>
-                  ))}
-                  {data && data.members.length === 0 && (
-                    <TableRow>
-                      <TableCell
-                        colSpan={4}
-                        className="text-center text-sm text-zinc-500 py-6"
-                      >
-                        {debouncedSearch
-                          ? "No members match your search."
-                          : "No members yet."}
-                      </TableCell>
-                    </TableRow>
-                  )}
-                </TableBody>
-              </Table>
+              <ResponsiveTable<MemberRow>
+                columns={columns}
+                rows={data?.members ?? []}
+                getRowId={(m) => m.id}
+                rowActions={canManage ? renderRowActions : undefined}
+                empty={
+                  <p className="text-center text-sm text-muted-foreground py-6">
+                    {debouncedSearch
+                      ? "No members match your search."
+                      : "No members yet."}
+                  </p>
+                }
+              />
             )}
 
             {/* Server pagination — meta.total drives the page count. Hidden
                 when everything fits on one page. */}
             {!isLoading && pageCount > 1 && (
-              <div className="flex items-center justify-between pt-4 text-sm text-zinc-500">
+              <div className="flex items-center justify-between pt-4 text-sm text-muted-foreground">
                 <span>
                   Page {page} of {pageCount}
                 </span>
@@ -515,15 +502,15 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
         </Card>
       </DashboardContent>
 
-      <Dialog open={showInvite} onOpenChange={setShowInvite}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Add member</DialogTitle>
-            <DialogDescription>
+      <ResponsiveModal open={showInvite} onOpenChange={setShowInvite}>
+        <ResponsiveModalContent>
+          <ResponsiveModalHeader>
+            <ResponsiveModalTitle>Add member</ResponsiveModalTitle>
+            <ResponsiveModalDescription>
               The user must already have a Familiarise account. To invite a
               brand-new email, use the Invitations page.
-            </DialogDescription>
-          </DialogHeader>
+            </ResponsiveModalDescription>
+          </ResponsiveModalHeader>
 
           <div className="space-y-4">
             <div className="space-y-2">
@@ -557,7 +544,7 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
             {error && <p className="text-sm text-red-600">{error}</p>}
           </div>
 
-          <DialogFooter>
+          <ResponsiveModalFooter>
             <Button
               variant="outline"
               onClick={() => setShowInvite(false)}
@@ -570,16 +557,16 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
             >
               {addMutation.isPending ? "Adding…" : "Add"}
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </ResponsiveModalFooter>
+        </ResponsiveModalContent>
+      </ResponsiveModal>
 
       {/* Edit member dialog */}
-      <Dialog open={!!editMember} onOpenChange={(open) => !open && setEditMember(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Edit member</DialogTitle>
-            <DialogDescription>
+      <ResponsiveModal open={!!editMember} onOpenChange={(open) => !open && setEditMember(null)}>
+        <ResponsiveModalContent>
+          <ResponsiveModalHeader>
+            <ResponsiveModalTitle>Edit member</ResponsiveModalTitle>
+            <ResponsiveModalDescription>
               {editMember?.user.name ?? editMember?.user.email}
               {editMember?.role === "LEARNER" && editRole !== "LEARNER" && (
                 <span className="block mt-1 text-amber-600 text-xs">
@@ -591,8 +578,8 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
                   Changing to Learner will consume a seat.
                 </span>
               )}
-            </DialogDescription>
-          </DialogHeader>
+            </ResponsiveModalDescription>
+          </ResponsiveModalHeader>
           <div className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="edit-role">Role</Label>
@@ -623,7 +610,7 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
                 </SelectContent>
               </Select>
               {editMember !== null && isOwnRow(editMember) && (
-                <p className="text-xs text-zinc-500">
+                <p className="text-xs text-muted-foreground">
                   You cannot change your own role. Ask another operator
                   to do it for you.
                 </p>
@@ -688,7 +675,7 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
               )}
             {editError && <p className="text-sm text-red-600">{editError}</p>}
           </div>
-          <DialogFooter>
+          <ResponsiveModalFooter>
             <Button variant="outline" onClick={() => setEditMember(null)}>
               Cancel
             </Button>
@@ -704,14 +691,14 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
             >
               {editMutation.isPending ? "Saving…" : "Save changes"}
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </ResponsiveModalFooter>
+        </ResponsiveModalContent>
+      </ResponsiveModal>
 
       {/* Remove-member confirm dialog. Styled to match the rest of the
           dashboard instead of using window.confirm() so the user sees
           which row they're about to destroy. */}
-      <Dialog
+      <ResponsiveModal
         open={!!memberToRemove}
         onOpenChange={(open) => {
           if (!open) {
@@ -720,20 +707,20 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
           }
         }}
       >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Remove member?</DialogTitle>
-            <DialogDescription>
+        <ResponsiveModalContent>
+          <ResponsiveModalHeader>
+            <ResponsiveModalTitle>Remove member?</ResponsiveModalTitle>
+            <ResponsiveModalDescription>
               {memberToRemove?.user.name ?? memberToRemove?.user.email}
               {" "}
               will lose access to this organization immediately. You can
               re-invite them later.
-            </DialogDescription>
-          </DialogHeader>
+            </ResponsiveModalDescription>
+          </ResponsiveModalHeader>
           {removeError && (
             <p className="text-sm text-red-600">{removeError}</p>
           )}
-          <DialogFooter>
+          <ResponsiveModalFooter>
             <Button
               variant="outline"
               onClick={() => setMemberToRemove(null)}
@@ -750,9 +737,9 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
             >
               {removeMutation.isPending ? "Removing…" : "Remove member"}
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </ResponsiveModalFooter>
+        </ResponsiveModalContent>
+      </ResponsiveModal>
     </>
   );
 }
