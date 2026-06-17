@@ -23,6 +23,7 @@ import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { buildConsentArtifact, withdrawConsent } from "@/lib/compliance/dpdp";
+import { normalizePurposeCode } from "@/lib/compliance/purpose-codes";
 
 // Schedule VIII of the Indian Constitution enumerates 22 languages.
 // Plus English as the lingua franca for enterprise UIs. Accept ISO 639-1
@@ -105,6 +106,14 @@ export async function POST(
   }
   const body = parsed.data;
 
+  // Normalise any legacy kebab-case codes to the single canonical taxonomy
+  // (lib/compliance/purpose-codes.ts) before they hit storage, so the
+  // fail-closed runtime gate and the dashboard never diverge again. Unknown
+  // free-form codes pass through unchanged (still accepted by the schema).
+  const purposeCodes = Array.from(
+    new Set(body.purposeCodes.map(normalizePurposeCode)),
+  );
+
   // Cross-org check: caller must be recording consent for an actual
   // member of this org.
   const member = await prisma.membership.findUnique({
@@ -123,7 +132,7 @@ export async function POST(
   const draft = buildConsentArtifact({
     userId: body.userId,
     dataFiduciary: `org:${orgId}`,
-    purposeCodes: body.purposeCodes,
+    purposeCodes,
     language: body.language,
     consentManager: body.consentManager ?? null,
     version: body.version,
@@ -148,7 +157,7 @@ export async function POST(
         description: `Consent granted for member ${member.id}`,
         details: {
           membershipId: member.id,
-          purposeCodes: body.purposeCodes,
+          purposeCodes,
           language: body.language,
           version: body.version,
           hash: draft.hash,
@@ -202,7 +211,13 @@ export async function DELETE(
       { status: 400 },
     );
   }
-  const { userId, purposeCode } = parsed.data;
+  const { userId } = parsed.data;
+  // Normalise a legacy kebab-case scope to canonical so a withdrawal targets
+  // the same code the gate/storage uses (e.g. third-party-sharing-with-stream
+  // → STREAM_DATA_PROCESSING).
+  const purposeCode = parsed.data.purposeCode
+    ? normalizePurposeCode(parsed.data.purposeCode)
+    : undefined;
 
   // Cross-org guard: same logic as POST — only members of this org can
   // have their consent withdrawn through this endpoint.

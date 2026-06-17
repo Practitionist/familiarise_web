@@ -32,4 +32,5 @@ export * from "./msme";
 export * from "./gst";
 export * from "./irp";
 export * from "./dpdp";
+export * from "./purpose-codes";
 export * from "./form15";

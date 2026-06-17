@@ -11,6 +11,7 @@ import {
 import { streamLogger } from "@/lib/stream-logger";
 import { markUserSynced, isUserSynced } from "@/lib/stream-cache";
 import { checkConsent, ConsentRequiredError } from "@/lib/compliance/dpdp";
+import { PURPOSE_CODES } from "@/lib/compliance/purpose-codes";
 
 // Input validation schemas
 const userIdSchema = z.string().min(1, "User ID is required");
@@ -63,14 +64,14 @@ export const upsertUserToStream = async (userId: string) => {
     // is re-established by an org admin via that consent route (#701).
     const hasStreamConsent = await checkConsent({
       userId: user.id,
-      purposeCode: "STREAM_DATA_PROCESSING",
+      purposeCode: PURPOSE_CODES.STREAM_DATA_PROCESSING,
     });
     if (!hasStreamConsent) {
       streamLogger.warn("Refusing Stream upsert — STREAM_DATA_PROCESSING consent absent", {
         userId: user.id,
       });
       throw new ConsentRequiredError(
-        "STREAM_DATA_PROCESSING",
+        PURPOSE_CODES.STREAM_DATA_PROCESSING,
         "Video and chat are unavailable because data-processing consent for messaging has not been granted (or was withdrawn). Consent is established at signup and managed by your organization administrator.",
       );
     }
@@ -164,7 +165,7 @@ export const upsertUsersToStream = async (userIds: string[]) => {
         user: u,
         hasConsent: await checkConsent({
           userId: u.id,
-          purposeCode: "STREAM_DATA_PROCESSING",
+          purposeCode: PURPOSE_CODES.STREAM_DATA_PROCESSING,
         }),
       })),
     );

@@ -17,6 +17,7 @@ import { syncSubscriber } from "@/lib/novu/subscriber";
 import { shouldRejectSession, lookupEnforcedOrg } from "@/lib/sso/enforce-session";
 import { applyMembershipRoleEffects } from "@/lib/api/organizations/membership-transitions";
 import { buildConsentArtifact } from "@/lib/compliance/dpdp";
+import { PURPOSE_CODES } from "@/lib/compliance/purpose-codes";
 
 export const auth = betterAuth({
   secret: process.env.BETTER_AUTH_SECRET,
@@ -239,15 +240,15 @@ export const auth = betterAuth({
             // DPDP Act 2023: stamp a ConsentArtifact for the essential
             // purposes covered by the signup action (account creation
             // requires data processing for service delivery + video/chat
-            // handoff to Stream.io). MARKETING_COMMS / analytics consent
+            // handoff to Stream.io). MARKETING_COMMS / ANALYTICS consent
             // is not stamped here — those require an explicit checkbox
             // on the signup form (P1 follow-up; see #701). When a user
             // hits the in-app withdrawal flow (/api/.../consent), this
             // artifact is superseded and `checkConsent` fails closed.
             try {
               for (const purposeCode of [
-                "PRIMARY_PROCESSING",
-                "STREAM_DATA_PROCESSING",
+                PURPOSE_CODES.PRIMARY_PROCESSING,
+                PURPOSE_CODES.STREAM_DATA_PROCESSING,
               ] as const) {
                 const draft = buildConsentArtifact({
                   userId: user.id,

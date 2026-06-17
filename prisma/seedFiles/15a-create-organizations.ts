@@ -52,6 +52,7 @@ import {
 } from "@prisma/client";
 import prisma from "../../lib/prisma";
 import { buildConsentArtifact } from "../../lib/compliance/dpdp";
+import { PURPOSE_CODES } from "../../lib/compliance/purpose-codes";
 import { postLedgerTxn } from "../../lib/payments/ledger/post";
 import type { UserWithProfiles } from "./1a-create-users";
 
@@ -761,18 +762,20 @@ async function seedSoloConsultant(user: UserWithProfiles) {
 // ---------------------------------------------------------------------------
 
 async function seedConsentArtifacts(users: UserWithProfiles[]) {
-  // Stamp the CANONICAL runtime purpose codes that `checkConsent` (fail-closed)
+  // Stamp the canonical runtime purpose codes that `checkConsent` (fail-closed)
   // gates on — mirror the signup hook (lib/auth.ts) so seeded users behave like
   // real signups. STREAM_DATA_PROCESSING is what actions/stream/chat/user.action.ts
   // checks before handing PII to Stream; without it every seeded user fails the
-  // Stream upsert on dashboard load. The kebab-case codes the org consent
-  // dashboard offers (session-booking/marketing/analytics/...) are a SEPARATE
-  // taxonomy not consulted at runtime, so they are not seeded here.
+  // Stream upsert on dashboard load. Codes come from the single canonical
+  // taxonomy (lib/compliance/purpose-codes.ts) the whole app now shares.
   for (const u of users) {
     const draft = buildConsentArtifact({
       userId: u.id,
       dataFiduciary: "Familiarise Pvt Ltd",
-      purposeCodes: ["PRIMARY_PROCESSING", "STREAM_DATA_PROCESSING"],
+      purposeCodes: [
+        PURPOSE_CODES.PRIMARY_PROCESSING,
+        PURPOSE_CODES.STREAM_DATA_PROCESSING,
+      ],
       language: "en",
       version: 1,
     });
