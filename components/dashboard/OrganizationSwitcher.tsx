@@ -61,6 +61,12 @@ export function OrganizationSwitcher() {
     ? memberships.find((m) => m.organizationId === activeOrgId)
     : undefined;
   const isPersonalActive = !activeOrgId;
+  // Only frame the trigger as "Personal" on a non-org route where the user
+  // actually has a personal dashboard. Otherwise fall back to the org
+  // framing — covers org-only users (no personalHref) and org routes that
+  // aren't in memberships (e.g. /dashboard/organization/create, or an
+  // admin/staff viewing an org they don't belong to).
+  const showPersonal = isPersonalActive && !!personalHref;
 
   return (
     <DropdownMenu>
@@ -70,13 +76,17 @@ export function OrganizationSwitcher() {
           size="sm"
           className="h-9 gap-2 text-zinc-700 hover:text-zinc-900"
         >
-          {activeOrg ? (
-            <Building2 className="h-4 w-4" />
-          ) : (
+          {showPersonal ? (
             <User className="h-4 w-4" />
+          ) : (
+            <Building2 className="h-4 w-4" />
           )}
           <span className="hidden max-w-[12rem] truncate sm:inline">
-            {activeOrg ? activeOrg.organizationName : "Personal"}
+            {activeOrg
+              ? activeOrg.organizationName
+              : showPersonal
+                ? "Personal"
+                : "Organizations"}
           </span>
           <ChevronDown className="h-3 w-3 opacity-60" />
         </Button>
@@ -110,6 +120,11 @@ export function OrganizationSwitcher() {
           </>
         )}
 
+        {memberships.length > 0 && (
+          <DropdownMenuLabel className="text-xs font-normal text-zinc-500">
+            Organizations
+          </DropdownMenuLabel>
+        )}
         {memberships.map((m) => {
           const capability = deriveCapabilityKind(m.canSponsor, m.canHost);
           const isActive = m.organizationId === activeOrgId;
