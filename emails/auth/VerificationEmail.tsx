@@ -27,7 +27,7 @@ export const VerificationEmail = ({
         <Container style={container}>
           <Section>
             <Img
-              src={`../public/avif/static/assets/logos/images/logos/Familiarise-logos_transparent.avif`}
+              src={`${getAppUrl()}/avif/static/assets/logos/images/logos/Familiarise-logos_transparent.avif`}
               width="130"
               height="50"
               alt="Familiarise"
@@ -58,7 +58,7 @@ export const VerificationEmail = ({
           </Section>
           <Section style={footer}>
             <Text style={footerText}>
-              © 2023 Familiarise, All Rights Reserved
+              © {new Date().getFullYear()} Familiarise, All Rights Reserved
             </Text>
             <Text style={footerText}>
               Our mailing address:

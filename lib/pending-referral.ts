@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 /**
  * Deferred referral code (client-only).
  *
@@ -12,22 +14,40 @@
  */
 const KEY = "familiarise.pendingReferral";
 
+// Value validation for the code itself: trim, require non-empty, and bound the
+// length so we never persist whitespace or junk that would later cause an
+// avoidable /api/referrals/apply 400. (The `typeof window` checks below are SSR
+// guards — localStorage doesn't exist on the server — not value validation, so
+// they stay outside the schema.) The server remains the source of truth for
+// code validity; this is just a cheap client-side normalize.
+const referralCodeSchema = z.string().trim().min(1).max(64);
+
 export function setPendingReferral(code: string): void {
-  if (typeof window === "undefined" || !code) return;
+  if (typeof window === "undefined") return;
+  const parsed = referralCodeSchema.safeParse(code);
+  if (!parsed.success) return;
   try {
-    localStorage.setItem(KEY, code);
+    localStorage.setItem(KEY, parsed.data);
   } catch {
     // ignore — referral attribution is non-critical
   }
 }
 
-export function takePendingReferral(): string | null {
+export function getPendingReferral(): string | null {
   if (typeof window === "undefined") return null;
   try {
-    const code = localStorage.getItem(KEY);
-    if (code) localStorage.removeItem(KEY);
-    return code;
+    const parsed = referralCodeSchema.safeParse(localStorage.getItem(KEY));
+    return parsed.success ? parsed.data : null;
   } catch {
     return null;
+  }
+}
+
+export function clearPendingReferral(): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.removeItem(KEY);
+  } catch {
+    // ignore
   }
 }

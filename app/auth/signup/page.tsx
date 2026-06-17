@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { signUp, useSession, sendVerificationEmail } from "@/lib/auth-client";
-import { setPendingReferral } from "@/lib/pending-referral";
+import { setPendingReferral, clearPendingReferral } from "@/lib/pending-referral";
 import { ssoSigninWithGuard } from "@/lib/sso/signin-with-toast";
 import { GlobeIcon } from "@/components/auth/auth-icons";
 import { SocialLoginButtons } from "@/components/auth/social-login-buttons";
@@ -54,6 +54,13 @@ function SignUpContent() {
     ? `/form/onboarding?callbackUrl=${encodeURIComponent(callbackUrl)}`
     : "/form/onboarding";
 
+  // Thread the original (relative-only) callbackUrl through the verification
+  // link so an invite/deep-link destination survives email verification.
+  const verificationCallbackUrl =
+    callbackUrl && callbackUrl.startsWith("/") && !callbackUrl.startsWith("//")
+      ? `/auth/verify-email?callbackUrl=${encodeURIComponent(callbackUrl)}`
+      : "/auth/verify-email";
+
   // Redirect authenticated users based on onboarding status
   useEffect(() => {
     if (!isPending && session?.user) {
@@ -75,6 +82,7 @@ function SignUpContent() {
   // onboarding landing. #880
   useEffect(() => {
     if (refCode) setPendingReferral(refCode);
+    else clearPendingReferral();
   }, [refCode]);
 
   // Show loading while checking session status (fallback for when middleware doesn't catch)
@@ -101,7 +109,7 @@ function SignUpContent() {
   const handleResendVerification = async () => {
     setResending(true);
     try {
-      await sendVerificationEmail({ email, callbackURL: "/auth/verify-email" });
+      await sendVerificationEmail({ email, callbackURL: verificationCallbackUrl });
       toast({
         title: "Verification email sent",
         description: `Check ${email} for the link.`,
@@ -226,7 +234,7 @@ function SignUpContent() {
         name,
         email,
         password,
-        callbackURL: "/auth/verify-email",
+        callbackURL: verificationCallbackUrl,
       });
 
       if (error) {

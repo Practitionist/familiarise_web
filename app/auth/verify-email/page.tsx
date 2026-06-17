@@ -40,6 +40,17 @@ function VerifyEmailContent() {
   const searchParams = useSearchParams();
   const { data: session, isPending } = useSession();
   const error = errorMessage(searchParams.get("error"));
+  // Preserve an upstream invite/deep-link destination through verification.
+  const rawCallbackUrl = searchParams.get("callbackUrl");
+  const safeCallbackUrl =
+    rawCallbackUrl &&
+    rawCallbackUrl.startsWith("/") &&
+    !rawCallbackUrl.startsWith("//")
+      ? rawCallbackUrl
+      : null;
+  const onboardingUrl = safeCallbackUrl
+    ? `/form/onboarding?callbackUrl=${encodeURIComponent(safeCallbackUrl)}`
+    : "/form/onboarding";
   const [email, setEmail] = useState("");
   const [resending, setResending] = useState(false);
 
@@ -49,10 +60,12 @@ function VerifyEmailContent() {
   useEffect(() => {
     if (!isPending && session?.user) {
       router.replace(
-        session.user.onboardingCompleted ? "/dashboard" : "/form/onboarding",
+        session.user.onboardingCompleted
+          ? safeCallbackUrl || "/dashboard"
+          : onboardingUrl,
       );
     }
-  }, [isPending, session, router]);
+  }, [isPending, session, router, safeCallbackUrl, onboardingUrl]);
 
   const handleResend = async () => {
     if (!email || !email.includes("@")) {

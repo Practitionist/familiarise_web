@@ -223,7 +223,12 @@ function SignInContent() {
     }
     setResending(true);
     try {
-      await sendVerificationEmail({ email, callbackURL: "/auth/verify-email" });
+      // Preserve the validated callbackUrl so the original destination survives
+      // verification (callbackUrl state is only set for relative paths).
+      const verificationCallbackUrl = callbackUrl
+        ? `/auth/verify-email?callbackUrl=${encodeURIComponent(callbackUrl)}`
+        : "/auth/verify-email";
+      await sendVerificationEmail({ email, callbackURL: verificationCallbackUrl });
       toast({
         title: "Verification email sent",
         description: `Check ${email} for the link.`,
@@ -241,6 +246,8 @@ function SignInContent() {
 
   const handleEmailSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
+    // Clear any stale "verify your email" banner from a previous attempt.
+    setNeedsVerification(false);
     setIsLoading(true);
     toast({ title: "Signing in..." });
 
