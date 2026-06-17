@@ -14,13 +14,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+  ResponsiveTable,
+  type ResponsiveColumn,
+} from "@/components/ui/responsive-table";
+import { PageHeader } from "@/components/ui/page-header";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   Search,
@@ -175,23 +172,111 @@ export function DisputesPage({
     router.push(`${basePath}/disputes/${disputeId}`);
   };
 
+  const renderRowActions = (dispute: Dispute) => (
+    <Button
+      variant="ghost"
+      size="icon"
+      className="h-8 w-8"
+      onClick={(e) => {
+        e.stopPropagation();
+        handleViewDispute(dispute.id);
+      }}
+    >
+      <Eye className="h-4 w-4" />
+    </Button>
+  );
+
+  const columns: ResponsiveColumn<Dispute>[] = [
+    {
+      key: "disputeId",
+      header: "Dispute ID",
+      primary: true,
+      cell: (dispute) => (
+        <div>
+          <p className="font-mono text-sm">
+            {dispute.disputeId?.slice(-12) || dispute.id.slice(-8).toUpperCase()}
+          </p>
+          {dispute.payment && (
+            <p className="text-xs text-muted-foreground/70">
+              Payment: {dispute.payment.paymentIntent.slice(-12)}
+            </p>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: "amount",
+      header: "Amount",
+      className: "font-medium",
+      cell: (dispute) => formatCurrency(dispute.amount, dispute.currency),
+    },
+    {
+      key: "gateway",
+      header: "Gateway",
+      className: "text-sm text-muted-foreground",
+      cell: (dispute) => dispute.paymentGateway,
+    },
+    {
+      key: "status",
+      header: "Status",
+      cell: (dispute) => (
+        <Badge
+          className={`${getStatusColor(dispute.status)} gap-1`}
+          variant="secondary"
+        >
+          {getStatusIcon(dispute.status)}
+          {dispute.status.toLowerCase().replace(/_/g, " ")}
+        </Badge>
+      ),
+    },
+    {
+      key: "dueBy",
+      header: "Due By",
+      cell: (dispute) => {
+        const daysUntilDue = getDaysUntilDue(dispute.dueBy);
+        const isUrgent =
+          daysUntilDue !== null && daysUntilDue <= 3 && daysUntilDue >= 0;
+        return dispute.dueBy ? (
+          <div
+            className={
+              isUrgent ? "text-red-600 font-medium" : "text-muted-foreground"
+            }
+          >
+            {formatDate(dispute.dueBy)}
+            {daysUntilDue !== null && daysUntilDue >= 0 && (
+              <p className="text-xs">
+                {daysUntilDue === 0 ? "Due today!" : `${daysUntilDue} days left`}
+              </p>
+            )}
+          </div>
+        ) : (
+          "-"
+        );
+      },
+    },
+    {
+      key: "created",
+      header: "Created",
+      className: "text-sm text-muted-foreground",
+      cell: (dispute) => formatDate(dispute.createdAt),
+    },
+  ];
+
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">
-            {title}
-          </h1>
-          <p className="text-zinc-500 dark:text-zinc-400">{description}</p>
-        </div>
-        <Button variant="outline" onClick={fetchDisputes} disabled={loading}>
-          <RefreshCw
-            className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`}
-          />
-          Refresh
-        </Button>
-      </div>
+      <PageHeader
+        title={title}
+        description={description}
+        actions={
+          <Button variant="outline" onClick={fetchDisputes} disabled={loading}>
+            <RefreshCw
+              className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`}
+            />
+            Refresh
+          </Button>
+        }
+      />
 
       {/* Urgent Disputes Alert */}
       {urgentCount > 0 && (
@@ -207,15 +292,15 @@ export function DisputesPage({
       )}
 
       {/* Stats */}
-      <div className="grid gap-4 md:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardContent className="p-4 flex items-center gap-4">
-            <div className="p-2 rounded-lg bg-blue-50 dark:bg-blue-950">
-              <AlertTriangle className="h-5 w-5 text-blue-600" />
+            <div className="p-2 rounded-lg bg-muted">
+              <AlertTriangle className="h-5 w-5 text-foreground" />
             </div>
             <div>
               <p className="text-2xl font-bold">{total}</p>
-              <p className="text-sm text-zinc-500">Total Disputes</p>
+              <p className="text-sm text-muted-foreground">Total Disputes</p>
             </div>
           </CardContent>
         </Card>
@@ -230,7 +315,9 @@ export function DisputesPage({
             </div>
             <div>
               <p className="text-2xl font-bold text-red-600">{urgentCount}</p>
-              <p className="text-sm text-zinc-500">Urgent (Due in 3 days)</p>
+              <p className="text-sm text-muted-foreground">
+                Urgent (Due in 3 days)
+              </p>
             </div>
           </CardContent>
         </Card>
@@ -243,7 +330,7 @@ export function DisputesPage({
               <p className="text-2xl font-bold">
                 {disputes.filter((d) => d.status === "UNDER_REVIEW").length}
               </p>
-              <p className="text-sm text-zinc-500">Under Review</p>
+              <p className="text-sm text-muted-foreground">Under Review</p>
             </div>
           </CardContent>
         </Card>
@@ -256,7 +343,7 @@ export function DisputesPage({
               <p className="text-2xl font-bold">
                 {disputes.filter((d) => d.status === "WON").length}
               </p>
-              <p className="text-sm text-zinc-500">Won</p>
+              <p className="text-sm text-muted-foreground">Won</p>
             </div>
           </CardContent>
         </Card>
@@ -266,8 +353,8 @@ export function DisputesPage({
       <Card>
         <CardContent className="p-4">
           <div className="flex flex-col sm:flex-row gap-4">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
+            <div className="relative min-w-0 flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground/70" />
               <Input
                 placeholder="Search by dispute ID..."
                 className="pl-9"
@@ -326,115 +413,25 @@ export function DisputesPage({
             Disputes ({total})
           </CardTitle>
         </CardHeader>
-        <CardContent className="p-0">
+        <CardContent className="p-0 sm:p-6 sm:pt-0">
           {loading ? (
             <div className="flex items-center justify-center h-64">
-              <Loader2 className="h-8 w-8 animate-spin text-zinc-400" />
-            </div>
-          ) : disputes.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-64 text-zinc-500">
-              <AlertTriangle className="h-12 w-12 mb-4 text-zinc-300" />
-              <p>No disputes found</p>
+              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground/70" />
             </div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Dispute ID</TableHead>
-                  <TableHead>Amount</TableHead>
-                  <TableHead>Gateway</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Due By</TableHead>
-                  <TableHead>Created</TableHead>
-                  <TableHead className="w-12"></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {disputes.map((dispute) => {
-                  const daysUntilDue = getDaysUntilDue(dispute.dueBy);
-                  const isUrgent =
-                    daysUntilDue !== null &&
-                    daysUntilDue <= 3 &&
-                    daysUntilDue >= 0;
-
-                  return (
-                    <TableRow
-                      key={dispute.id}
-                      className={`cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-900 ${isUrgent ? "bg-red-50 dark:bg-red-950/20" : ""}`}
-                      onClick={() => handleViewDispute(dispute.id)}
-                    >
-                      <TableCell>
-                        <div>
-                          <p className="font-mono text-sm">
-                            {dispute.disputeId?.slice(-12) ||
-                              dispute.id.slice(-8).toUpperCase()}
-                          </p>
-                          {dispute.payment && (
-                            <p className="text-xs text-zinc-400">
-                              Payment:{" "}
-                              {dispute.payment.paymentIntent.slice(-12)}
-                            </p>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell className="font-medium">
-                        {formatCurrency(dispute.amount, dispute.currency)}
-                      </TableCell>
-                      <TableCell className="text-sm text-zinc-600 dark:text-zinc-400">
-                        {dispute.paymentGateway}
-                      </TableCell>
-                      <TableCell>
-                        <Badge
-                          className={`${getStatusColor(dispute.status)} gap-1`}
-                          variant="secondary"
-                        >
-                          {getStatusIcon(dispute.status)}
-                          {dispute.status.toLowerCase().replace(/_/g, " ")}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        {dispute.dueBy ? (
-                          <div
-                            className={
-                              isUrgent
-                                ? "text-red-600 font-medium"
-                                : "text-zinc-500"
-                            }
-                          >
-                            {formatDate(dispute.dueBy)}
-                            {daysUntilDue !== null && daysUntilDue >= 0 && (
-                              <p className="text-xs">
-                                {daysUntilDue === 0
-                                  ? "Due today!"
-                                  : `${daysUntilDue} days left`}
-                              </p>
-                            )}
-                          </div>
-                        ) : (
-                          "-"
-                        )}
-                      </TableCell>
-                      <TableCell className="text-sm text-zinc-500">
-                        {formatDate(dispute.createdAt)}
-                      </TableCell>
-                      <TableCell>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleViewDispute(dispute.id);
-                          }}
-                        >
-                          <Eye className="h-4 w-4" />
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
+            <ResponsiveTable<Dispute>
+              columns={columns}
+              rows={disputes}
+              getRowId={(d) => d.id}
+              onRowClick={(d) => handleViewDispute(d.id)}
+              rowActions={renderRowActions}
+              empty={
+                <div className="flex flex-col items-center justify-center h-64 text-muted-foreground">
+                  <AlertTriangle className="h-12 w-12 mb-4 text-muted-foreground/40" />
+                  <p>No disputes found</p>
+                </div>
+              }
+            />
           )}
         </CardContent>
       </Card>
@@ -449,7 +446,7 @@ export function DisputesPage({
           >
             Previous
           </Button>
-          <span className="flex items-center px-4 text-sm text-zinc-500">
+          <span className="flex items-center px-4 text-sm text-muted-foreground">
             Page {page} of {totalPages}
           </span>
           <Button

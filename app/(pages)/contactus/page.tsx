@@ -26,16 +26,16 @@ import {
 export default function ContactUsPage() {
   return (
     <section className="w-full">
-      <div className="container mx-auto px-4 md:px-6 py-8">
+      <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Hero Section */}
         <div className="text-center mb-12">
           <div className="flex justify-center mb-4">
-            <MessageSquare className="h-16 w-16 text-blue-600" />
+            <MessageSquare className="h-16 w-16 text-foreground" />
           </div>
-          <h1 className="text-4xl md:text-5xl font-bold mb-4">
+          <h1 className="text-fluid-4xl md:text-fluid-5xl font-bold tracking-tight mb-4">
             {PAGE_META.contact.title}
           </h1>
-          <p className="text-xl text-muted-foreground max-w-3xl mx-auto">
+          <p className="text-fluid-lg text-muted-foreground max-w-3xl mx-auto">
             {PAGE_META.contact.description}
           </p>
         </div>
@@ -43,9 +43,9 @@ export default function ContactUsPage() {
         <div className="max-w-6xl mx-auto grid md:grid-cols-2 gap-8">
           {/* Contact Information */}
           <div className="space-y-6">
-            <Card>
+            <Card className="shadow-elevation-1">
               <CardHeader>
-                <CardTitle className="text-2xl">Get in Touch</CardTitle>
+                <CardTitle className="text-fluid-2xl">Get in Touch</CardTitle>
                 <CardDescription>
                   Our team is available to assist you with any inquiries
                 </CardDescription>
@@ -53,8 +53,8 @@ export default function ContactUsPage() {
               <CardContent className="space-y-6">
                 {/* Company Address */}
                 <div className="flex items-start gap-4">
-                  <div className="flex-shrink-0 w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-950 flex items-center justify-center">
-                    <MapPin className="h-5 w-5 text-blue-600" />
+                  <div className="flex-shrink-0 w-10 h-10 rounded-full bg-muted flex items-center justify-center">
+                    <MapPin className="h-5 w-5 text-foreground" />
                   </div>
                   <div>
                     <h3 className="font-semibold mb-1">Address</h3>
@@ -70,8 +70,8 @@ export default function ContactUsPage() {
 
                 {/* Email */}
                 <div className="flex items-start gap-4">
-                  <div className="flex-shrink-0 w-10 h-10 rounded-full bg-green-100 dark:bg-green-950 flex items-center justify-center">
-                    <Mail className="h-5 w-5 text-green-600" />
+                  <div className="flex-shrink-0 w-10 h-10 rounded-full bg-muted flex items-center justify-center">
+                    <Mail className="h-5 w-5 text-foreground" />
                   </div>
                   <div>
                     <h3 className="font-semibold mb-1">Email</h3>
@@ -79,7 +79,7 @@ export default function ContactUsPage() {
                       General Inquiries:{" "}
                       <a
                         href={getMailtoLink()}
-                        className="text-blue-600 hover:underline"
+                        className="font-medium text-foreground underline underline-offset-4 hover:no-underline"
                       >
                         {COMPANY_INFO.email}
                       </a>
@@ -88,7 +88,7 @@ export default function ContactUsPage() {
                       Support:{" "}
                       <a
                         href={getMailtoLink(COMPANY_INFO.supportEmail)}
-                        className="text-blue-600 hover:underline"
+                        className="font-medium text-foreground underline underline-offset-4 hover:no-underline"
                       >
                         {COMPANY_INFO.supportEmail}
                       </a>
@@ -100,15 +100,15 @@ export default function ContactUsPage() {
 
                 {/* Phone */}
                 <div className="flex items-start gap-4">
-                  <div className="flex-shrink-0 w-10 h-10 rounded-full bg-purple-100 dark:bg-purple-950 flex items-center justify-center">
-                    <Phone className="h-5 w-5 text-purple-600" />
+                  <div className="flex-shrink-0 w-10 h-10 rounded-full bg-muted flex items-center justify-center">
+                    <Phone className="h-5 w-5 text-foreground" />
                   </div>
                   <div>
                     <h3 className="font-semibold mb-1">Phone</h3>
                     <p className="text-sm text-muted-foreground">
                       <a
                         href={getTelLink()}
-                        className="text-blue-600 hover:underline"
+                        className="font-medium text-foreground underline underline-offset-4 hover:no-underline"
                       >
                         {COMPANY_INFO.phone}
                       </a>
@@ -123,8 +123,8 @@ export default function ContactUsPage() {
 
                 {/* Business Hours */}
                 <div className="flex items-start gap-4">
-                  <div className="flex-shrink-0 w-10 h-10 rounded-full bg-orange-100 dark:bg-orange-950 flex items-center justify-center">
-                    <Clock className="h-5 w-5 text-orange-600" />
+                  <div className="flex-shrink-0 w-10 h-10 rounded-full bg-muted flex items-center justify-center">
+                    <Clock className="h-5 w-5 text-foreground" />
                   </div>
                   <div>
                     <h3 className="font-semibold mb-1">Business Hours</h3>
@@ -141,7 +141,7 @@ export default function ContactUsPage() {
             </Card>
 
             {/* Support Information */}
-            <Card>
+            <Card className="shadow-elevation-1">
               <CardHeader>
                 <CardTitle>Support Resources</CardTitle>
               </CardHeader>
@@ -155,7 +155,7 @@ export default function ContactUsPage() {
                     <li key={link.href} className="text-sm">
                       <a
                         href={link.href}
-                        className="text-blue-600 hover:underline"
+                        className="font-medium text-foreground underline underline-offset-4 hover:no-underline"
                       >
                         • {link.label}
                       </a>
@@ -167,9 +167,9 @@ export default function ContactUsPage() {
           </div>
 
           {/* Contact Form */}
-          <Card>
+          <Card className="shadow-elevation-1">
             <CardHeader>
-              <CardTitle className="text-2xl">Send us a Message</CardTitle>
+              <CardTitle className="text-fluid-2xl">Send us a Message</CardTitle>
               <CardDescription>
                 Fill out the form below and we'll get back to you as soon as
                 possible
@@ -177,7 +177,7 @@ export default function ContactUsPage() {
             </CardHeader>
             <CardContent>
               <form className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label htmlFor="first-name">
                       First name <span className="text-red-500">*</span>
@@ -248,7 +248,7 @@ export default function ContactUsPage() {
                   <Label htmlFor="category">Inquiry Type</Label>
                   <select
                     id="category"
-                    className="w-full px-3 py-2 border rounded-md bg-background"
+                    className="w-full px-3 py-2 border border-border rounded-md bg-background"
                   >
                     {INQUIRY_CATEGORIES.map((category) => (
                       <option key={category.value} value={category.value}>
@@ -272,7 +272,7 @@ export default function ContactUsPage() {
 
         {/* Additional Information */}
         <div className="max-w-6xl mx-auto mt-8">
-          <Card>
+          <Card className="shadow-elevation-1">
             <CardContent className="p-6">
               <div className="grid md:grid-cols-3 gap-6 text-center">
                 <div>

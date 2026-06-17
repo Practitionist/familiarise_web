@@ -117,7 +117,7 @@ export default function ExpertsInteractiveContent({
             viewport={{ once: true }}
             transition={{ duration: 0.5, delay: 0.05 }}
           >
-            <div className="inline-flex items-center gap-1 p-1 bg-zinc-100 rounded-xl border border-zinc-200">
+            <div className="inline-flex items-center gap-1 p-1 bg-muted rounded-xl border border-border">
               {AFFILIATION_TABS.map(({ value, label, icon: Icon }) => {
                 const isActive = filters.affiliationType === value;
                 return (
@@ -126,8 +126,8 @@ export default function ExpertsInteractiveContent({
                     onClick={() => updateFilters({ affiliationType: value })}
                     className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
                       isActive
-                        ? "bg-white text-zinc-900 shadow-sm border border-zinc-200"
-                        : "text-zinc-500 hover:text-zinc-700"
+                        ? "bg-card text-foreground shadow-sm border border-border"
+                        : "text-muted-foreground hover:text-foreground"
                     }`}
                   >
                     <Icon className="w-4 h-4" />

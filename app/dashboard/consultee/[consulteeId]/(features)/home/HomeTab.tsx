@@ -171,7 +171,7 @@ function UpcomingSessionCard({
               title={collab.name}
             >
               <AvatarImage src={collab.image ?? undefined} alt={collab.name} />
-              <AvatarFallback className="bg-purple-900/50 text-purple-300 text-[9px] font-semibold">
+              <AvatarFallback className="bg-zinc-700 text-zinc-300 text-[9px] font-semibold">
                 {collab.name
                   .split(" ")
                   .map((n) => n[0])
@@ -225,7 +225,7 @@ function UpcomingSessionCard({
       {sponsoringOrgName && (
         <div className="flex items-center mt-1.5 h-5 shrink-0">
           <span
-            className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 bg-indigo-500/15 text-indigo-300 rounded-md max-w-full"
+            className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 bg-zinc-700 text-zinc-300 rounded-md max-w-full"
             title={`Sponsored by ${sponsoringOrgName}`}
           >
             <Building2 className="h-3 w-3 shrink-0" />
@@ -324,18 +324,18 @@ function MonthlyEventItem({
   const statusStyle = getStatusStyle(event.status, "light");
 
   return (
-    <div className="border-b border-zinc-100 last:border-0">
+    <div className="border-b border-border last:border-0">
       <div
         onClick={onToggle}
-        className="flex items-center gap-4 p-4 cursor-pointer hover:bg-zinc-50/50 transition-colors"
+        className="flex items-center gap-4 p-4 cursor-pointer hover:bg-muted/50 transition-colors"
       >
         <div className="flex items-center -space-x-1.5 flex-shrink-0">
-          <Avatar className="h-10 w-10 ring-2 ring-white z-10">
+          <Avatar className="h-10 w-10 ring-2 ring-card z-10">
             <AvatarImage
               src={event.consultantImage ?? undefined}
               alt={event.consultantName}
             />
-            <AvatarFallback className="bg-zinc-100 text-zinc-600 text-xs font-medium">
+            <AvatarFallback className="bg-muted text-muted-foreground text-xs font-medium">
               {event.consultantName
                 .split(" ")
                 .map((n) => n[0])
@@ -345,11 +345,11 @@ function MonthlyEventItem({
           {event.collaborators?.slice(0, 1).map((collab, idx) => (
             <Avatar
               key={idx}
-              className="h-7 w-7 ring-2 ring-white z-0"
+              className="h-7 w-7 ring-2 ring-card z-0"
               title={collab.name}
             >
               <AvatarImage src={collab.image ?? undefined} alt={collab.name} />
-              <AvatarFallback className="bg-purple-100 text-purple-700 text-[9px] font-medium">
+              <AvatarFallback className="bg-muted text-muted-foreground text-[9px] font-medium">
                 {collab.name
                   .split(" ")
                   .map((n) => n[0])
@@ -359,7 +359,7 @@ function MonthlyEventItem({
             </Avatar>
           ))}
           {(event.collaborators?.length ?? 0) > 1 && (
-            <div className="h-7 w-7 rounded-full bg-zinc-100 ring-2 ring-white flex items-center justify-center text-[9px] font-medium text-zinc-600 z-0">
+            <div className="h-7 w-7 rounded-full bg-muted ring-2 ring-card flex items-center justify-center text-[9px] font-medium text-muted-foreground z-0">
               +{(event.collaborators?.length ?? 0) - 1}
             </div>
           )}
@@ -368,10 +368,10 @@ function MonthlyEventItem({
           {/* Desktop: single row layout */}
           <div className="hidden lg:flex items-center justify-between gap-3">
             <div className="min-w-0 flex-1">
-              <h4 className="font-medium text-zinc-900 text-sm truncate">
+              <h4 className="font-medium text-foreground text-sm truncate">
                 {event.title}
               </h4>
-              <p className="text-xs text-zinc-500 truncate">
+              <p className="text-xs text-muted-foreground truncate">
                 {event.collaborators && event.collaborators.length > 0
                   ? event.collaborators.length === 1
                     ? `${event.consultantName} & ${event.collaborators[0].name}`
@@ -382,7 +382,7 @@ function MonthlyEventItem({
             <div className="flex items-center gap-2 flex-shrink-0">
               {sponsoringOrgName && (
                 <Badge
-                  className="text-[10px] font-semibold px-2 py-0.5 bg-indigo-50 text-indigo-700 border-0 rounded-md inline-flex items-center gap-1 max-w-[200px]"
+                  className="text-[10px] font-semibold px-2 py-0.5 bg-muted text-muted-foreground border-0 rounded-md inline-flex items-center gap-1 max-w-[200px]"
                   title={`Sponsored by ${sponsoringOrgName}`}
                 >
                   <Building2 className="h-3 w-3 shrink-0" />
@@ -391,7 +391,7 @@ function MonthlyEventItem({
                   </span>
                 </Badge>
               )}
-              <Badge className="text-[10px] font-medium bg-transparent border border-zinc-300 text-zinc-600 rounded-md">
+              <Badge className="text-[10px] font-medium bg-transparent border border-border text-muted-foreground rounded-md">
                 {typeLabel}
               </Badge>
               {/* Show booking status badge for webinars and classes */}
@@ -421,7 +421,7 @@ function MonthlyEventItem({
               )}
               <ChevronRight
                 className={cn(
-                  "h-4 w-4 text-zinc-400 transition-transform duration-200",
+                  "h-4 w-4 text-muted-foreground/70 transition-transform duration-200",
                   isExpanded && "rotate-90",
                 )}
               />
@@ -431,10 +431,10 @@ function MonthlyEventItem({
           <div className="lg:hidden">
             <div className="flex items-start justify-between gap-2 mb-1">
               <div className="min-w-0 flex-1">
-                <h4 className="font-medium text-zinc-900 text-sm truncate">
+                <h4 className="font-medium text-foreground text-sm truncate">
                   {event.title}
                 </h4>
-                <p className="text-xs text-zinc-500 truncate">
+                <p className="text-xs text-muted-foreground truncate">
                   {event.collaborators && event.collaborators.length > 0
                     ? event.collaborators.length === 1
                       ? `${event.consultantName} & ${event.collaborators[0].name}`
@@ -444,7 +444,7 @@ function MonthlyEventItem({
               </div>
               <ChevronRight
                 className={cn(
-                  "h-4 w-4 text-zinc-400 transition-transform duration-200 flex-shrink-0 mt-0.5",
+                  "h-4 w-4 text-muted-foreground/70 transition-transform duration-200 flex-shrink-0 mt-0.5",
                   isExpanded && "rotate-90",
                 )}
               />
@@ -452,7 +452,7 @@ function MonthlyEventItem({
             <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
               {sponsoringOrgName && (
                 <Badge
-                  className="text-[10px] font-semibold px-2 py-0.5 bg-indigo-50 text-indigo-700 border-0 rounded-md inline-flex items-center gap-1 max-w-[200px]"
+                  className="text-[10px] font-semibold px-2 py-0.5 bg-muted text-muted-foreground border-0 rounded-md inline-flex items-center gap-1 max-w-[200px]"
                   title={`Sponsored by ${sponsoringOrgName}`}
                 >
                   <Building2 className="h-3 w-3 shrink-0" />
@@ -461,7 +461,7 @@ function MonthlyEventItem({
                   </span>
                 </Badge>
               )}
-              <Badge className="text-[10px] font-medium bg-transparent border border-zinc-300 text-zinc-600 rounded-md">
+              <Badge className="text-[10px] font-medium bg-transparent border border-border text-muted-foreground rounded-md">
                 {typeLabel}
               </Badge>
               {/* Show booking status badge for webinars and classes (mobile) */}
@@ -504,24 +504,24 @@ function MonthlyEventItem({
             exit={{ height: 0, opacity: 0 }}
             className="pl-16 pr-4 pb-4"
           >
-            <div className="space-y-2 bg-zinc-50 rounded-lg p-3">
+            <div className="space-y-2 bg-muted rounded-lg p-3">
               {sessions.slice(0, 10).map((session) => (
                 <div
                   key={session.appointmentId}
-                  className="flex items-center gap-4 text-sm text-zinc-600"
+                  className="flex items-center gap-4 text-sm text-muted-foreground"
                 >
                   <span
                     className={cn(
                       "h-2 w-2 rounded-full flex-shrink-0",
                       session.status === "completed"
-                        ? "bg-zinc-300"
-                        : "bg-emerald-500",
+                        ? "bg-muted-foreground/30"
+                        : "bg-emerald-500 dark:bg-emerald-400",
                     )}
                   />
-                  <span className="w-24 font-medium text-zinc-700">
+                  <span className="w-24 font-medium text-foreground">
                     {format(session.startTime, "EEE d MMM")}
                   </span>
-                  <span className="text-zinc-500">
+                  <span className="text-muted-foreground">
                     {format(session.startTime, "h:mm a")} -{" "}
                     {format(session.endTime, "h:mm a")}
                   </span>
@@ -529,8 +529,8 @@ function MonthlyEventItem({
                     className={cn(
                       "text-xs ml-auto capitalize",
                       session.status === "completed"
-                        ? "text-zinc-400"
-                        : "text-emerald-600",
+                        ? "text-muted-foreground/70"
+                        : "text-emerald-600 dark:text-emerald-300",
                     )}
                   >
                     {session.status}
@@ -538,7 +538,7 @@ function MonthlyEventItem({
                 </div>
               ))}
               {sessions.length > 10 && (
-                <p className="text-xs text-zinc-400 pt-1">
+                <p className="text-xs text-muted-foreground/70 pt-1">
                   +{sessions.length - 10} more sessions
                 </p>
               )}
@@ -596,34 +596,36 @@ function LearningStatsPanel({ events }: { events: ProcessedEvent[] }) {
       icon: CheckCircle2,
       label: "Sessions Completed",
       value: stats.completedSessions,
-      color: "text-emerald-600 bg-emerald-50",
+      color:
+        "text-emerald-600 bg-emerald-50 dark:text-emerald-300 dark:bg-emerald-900/30",
     },
     {
       icon: Clock,
       label: "Hours Learned",
       value: stats.hoursLearned,
-      color: "text-blue-600 bg-blue-50",
+      color: "text-foreground bg-muted",
     },
     {
       icon: BookOpen,
       label: "Active Programs",
       value: stats.activePrograms,
-      color: "text-violet-600 bg-violet-50",
+      color: "text-foreground bg-muted",
     },
     {
       icon: Users,
       label: "Experts Consulted",
       value: stats.experts,
-      color: "text-amber-600 bg-amber-50",
+      color:
+        "text-amber-600 bg-amber-50 dark:text-amber-300 dark:bg-amber-900/30",
     },
   ];
 
   return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
       {rows.map((row) => (
         <div
           key={row.label}
-          className="bg-white rounded-xl border border-zinc-200 shadow-sm p-4 flex flex-col gap-3"
+          className="bg-card rounded-xl border border-border shadow-sm p-4 flex flex-col gap-3"
         >
           <div className="flex items-center gap-2.5">
             <div
@@ -634,11 +636,11 @@ function LearningStatsPanel({ events }: { events: ProcessedEvent[] }) {
             >
               <row.icon className="h-4.5 w-4.5" />
             </div>
-            <span className="text-sm text-zinc-500 font-medium">
+            <span className="text-sm text-muted-foreground font-medium">
               {row.label}
             </span>
           </div>
-          <p className="text-2xl font-bold text-zinc-900 tabular-nums">
+          <p className="text-2xl font-bold text-foreground tabular-nums">
             {row.label === "Hours Learned" ? `${row.value}h` : row.value}
           </p>
         </div>
@@ -751,8 +753,8 @@ export default function HomeTab({
     >
       {/* Refreshing indicator */}
       {isRefreshing && (
-        <div className="fixed top-20 right-4 bg-zinc-900 text-white px-4 py-2 rounded-lg text-sm z-50 shadow-lg flex items-center gap-2">
-          <div className="h-3 w-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+        <div className="fixed top-20 right-4 bg-foreground text-background px-4 py-2 rounded-lg text-sm z-50 shadow-lg flex items-center gap-2">
+          <div className="h-3 w-3 border-2 border-background/30 border-t-background rounded-full animate-spin" />
           Refreshing...
         </div>
       )}
@@ -760,10 +762,10 @@ export default function HomeTab({
       {/* Welcome + Learning Stats */}
       <motion.div variants={fadeInUp} className="space-y-5">
         <div>
-          <h1 className="text-2xl font-bold text-zinc-900">
+          <h1 className="text-fluid-2xl font-semibold tracking-tight text-foreground">
             Welcome back, {userDetails.name?.split(" ")[0]}
           </h1>
-          <p className="text-sm text-zinc-500 mt-1">
+          <p className="text-sm text-muted-foreground mt-1">
             Here&apos;s an overview of your learning journey
           </p>
         </div>
@@ -772,9 +774,9 @@ export default function HomeTab({
 
       {/* Upcoming Sessions - Dark cards with horizontal scroll */}
       <motion.div variants={fadeInUp}>
-        <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden shadow-sm">
-          <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-100">
-            <h2 className="font-semibold text-zinc-900 text-lg">
+        <div className="bg-card rounded-2xl border border-border overflow-hidden shadow-sm">
+          <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+            <h2 className="font-semibold text-foreground text-lg">
               Upcoming Sessions
             </h2>
             {upcomingEvents.length > 3 && (
@@ -799,7 +801,7 @@ export default function HomeTab({
             )}
           </div>
 
-          <div className="p-5 bg-gradient-to-b from-zinc-50/50 to-white">
+          <div className="p-5 bg-gradient-to-b from-muted/50 to-card">
             {upcomingEvents.length > 0 ? (
               <div
                 ref={scrollContainerRef}
@@ -817,19 +819,16 @@ export default function HomeTab({
               </div>
             ) : (
               <div className="text-center py-16">
-                <div className="mx-auto h-16 w-16 rounded-2xl bg-zinc-100 flex items-center justify-center mb-4">
-                  <Calendar className="h-8 w-8 text-zinc-400" />
+                <div className="mx-auto h-16 w-16 rounded-2xl bg-muted flex items-center justify-center mb-4">
+                  <Calendar className="h-8 w-8 text-muted-foreground/70" />
                 </div>
-                <h4 className="font-semibold text-zinc-900 text-lg">
+                <h4 className="font-semibold text-foreground text-lg">
                   No upcoming sessions
                 </h4>
-                <p className="text-sm text-zinc-500 mt-1 mb-5">
+                <p className="text-sm text-muted-foreground mt-1 mb-5">
                   Book a session with an expert to get started
                 </p>
-                <Button
-                  className="bg-zinc-900 hover:bg-zinc-800 text-white"
-                  onClick={() => router.push("/explore/experts")}
-                >
+                <Button onClick={() => router.push("/explore/experts")}>
                   <Users className="h-4 w-4 mr-2" />
                   Find Experts
                 </Button>
@@ -846,9 +845,9 @@ export default function HomeTab({
       >
         {/* Monthly Schedule */}
         <div className="lg:col-span-2">
-          <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden shadow-sm">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-100">
-              <h2 className="font-semibold text-zinc-900 text-lg">
+          <div className="bg-card rounded-2xl border border-border overflow-hidden shadow-sm">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+              <h2 className="font-semibold text-foreground text-lg">
                 {format(currentMonth, "MMMM yyyy")}
               </h2>
               <div className="flex items-center gap-1">
@@ -899,8 +898,8 @@ export default function HomeTab({
                 ))
               ) : (
                 <div className="text-center py-16">
-                  <Calendar className="h-10 w-10 text-zinc-300 mx-auto mb-3" />
-                  <p className="text-zinc-500">
+                  <Calendar className="h-10 w-10 text-muted-foreground/70 mx-auto mb-3" />
+                  <p className="text-muted-foreground">
                     No sessions scheduled for this month
                   </p>
                 </div>

@@ -66,19 +66,21 @@ export default function FeedbackSupportTab({
     handleResponseSubmit,
   } = useFeedbackSupport();
 
+  // Semantic status colors kept (amber=in progress, green=resolved); the
+  // off-brand blue OPEN/PENDING accent collapses to neutral monochrome.
   const getStatusColor = (status: FeedbackStatus | SupportTicketStatus) => {
     switch (status) {
       case "PENDING":
       case "OPEN":
-        return "bg-blue-50 text-blue-700 border-blue-200";
+        return "bg-muted text-foreground border-border";
       case "IN_PROGRESS":
-        return "bg-amber-50 text-amber-700 border-amber-200";
+        return "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-800";
       case "RESOLVED":
-        return "bg-green-50 text-green-700 border-green-200";
+        return "bg-green-50 text-green-700 border-green-200 dark:bg-green-900/30 dark:text-green-300 dark:border-green-800";
       case "CLOSED":
-        return "bg-zinc-100 text-zinc-600 border-zinc-200";
+        return "bg-muted text-muted-foreground border-border";
       default:
-        return "bg-zinc-100 text-zinc-600 border-zinc-200";
+        return "bg-muted text-muted-foreground border-border";
     }
   };
 
@@ -97,18 +99,19 @@ export default function FeedbackSupportTab({
     }
   };
 
+  // Priority is semantic severity coding (green → red), kept with dark: variants.
   const getPriorityColor = (priority: SupportPriority) => {
     switch (priority) {
       case "LOW":
-        return "bg-green-50 text-green-700 border-green-200";
+        return "bg-green-50 text-green-700 border-green-200 dark:bg-green-900/30 dark:text-green-300 dark:border-green-800";
       case "MEDIUM":
-        return "bg-amber-50 text-amber-700 border-amber-200";
+        return "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-800";
       case "HIGH":
-        return "bg-orange-50 text-orange-700 border-orange-200";
+        return "bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-900/30 dark:text-orange-300 dark:border-orange-800";
       case "URGENT":
-        return "bg-red-50 text-red-700 border-red-200";
+        return "bg-red-50 text-red-700 border-red-200 dark:bg-red-900/30 dark:text-red-300 dark:border-red-800";
       default:
-        return "bg-zinc-100 text-zinc-600 border-zinc-200";
+        return "bg-muted text-muted-foreground border-border";
     }
   };
 
@@ -127,7 +130,7 @@ export default function FeedbackSupportTab({
             <div className="p-2 rounded-lg bg-white/10">
               <Sparkles className="h-5 w-5 text-white" />
             </div>
-            <h2 className="text-2xl font-semibold text-white">
+            <h2 className="text-fluid-2xl font-semibold tracking-tight text-white">
               Feedback & Support
             </h2>
           </div>
@@ -139,13 +142,13 @@ export default function FeedbackSupportTab({
       </div>
 
       {/* Tab Navigation */}
-      <div className="flex gap-2 p-1 rounded-xl bg-zinc-100 dark:bg-zinc-800 w-fit">
+      <div className="flex w-full gap-2 p-1 rounded-xl bg-muted dark:bg-zinc-800 sm:w-fit">
         <button
           onClick={() => setActiveTab("feedback")}
-          className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium transition-all ${
+          className={`flex flex-1 items-center justify-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium transition-all sm:flex-none sm:justify-start ${
             activeTab === "feedback"
-              ? "bg-white dark:bg-zinc-700 text-zinc-900 dark:text-white shadow-sm"
-              : "text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white"
+              ? "bg-card dark:bg-zinc-700 text-foreground dark:text-white shadow-sm"
+              : "text-muted-foreground dark:text-zinc-400 hover:text-foreground dark:hover:text-white"
           }`}
         >
           <MessageSquare className="h-4 w-4" />
@@ -153,10 +156,10 @@ export default function FeedbackSupportTab({
         </button>
         <button
           onClick={() => setActiveTab("support")}
-          className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium transition-all ${
+          className={`flex flex-1 items-center justify-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium transition-all sm:flex-none sm:justify-start ${
             activeTab === "support"
-              ? "bg-white dark:bg-zinc-700 text-zinc-900 dark:text-white shadow-sm"
-              : "text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white"
+              ? "bg-card dark:bg-zinc-700 text-foreground dark:text-white shadow-sm"
+              : "text-muted-foreground dark:text-zinc-400 hover:text-foreground dark:hover:text-white"
           }`}
         >
           <HelpCircle className="h-4 w-4" />
@@ -167,13 +170,13 @@ export default function FeedbackSupportTab({
       {activeTab === "feedback" ? (
         <div className="grid gap-8 lg:grid-cols-5">
           {/* Feedback Form */}
-          <Card className="lg:col-span-2 border-0 shadow-sm bg-white dark:bg-zinc-900">
+          <Card className="lg:col-span-2 border-0 shadow-sm bg-card dark:bg-zinc-900">
             <CardContent className="p-6">
               <div className="flex items-center gap-2 mb-6">
-                <div className="p-1.5 rounded-md bg-violet-100 dark:bg-violet-900/30">
-                  <Star className="h-4 w-4 text-violet-600 dark:text-violet-400" />
+                <div className="p-1.5 rounded-md bg-muted">
+                  <Star className="h-4 w-4 text-muted-foreground" />
                 </div>
-                <h3 className="font-semibold text-zinc-900 dark:text-white">
+                <h3 className="font-semibold text-foreground dark:text-white">
                   Submit Feedback
                 </h3>
               </div>
@@ -182,7 +185,7 @@ export default function FeedbackSupportTab({
                 <div className="space-y-2">
                   <Label
                     htmlFor="feedback-title"
-                    className="text-sm font-medium text-zinc-700 dark:text-zinc-300"
+                    className="text-sm font-medium text-muted-foreground dark:text-zinc-300"
                   >
                     Title <span className="text-red-500">*</span>
                   </Label>
@@ -196,14 +199,14 @@ export default function FeedbackSupportTab({
                       }))
                     }
                     placeholder="Brief summary of your feedback"
-                    className="h-11 border-zinc-200 dark:border-zinc-700 focus:ring-2 focus:ring-violet-500/20"
+                    className="h-11 border-border dark:border-zinc-700"
                   />
                 </div>
 
                 <div className="space-y-2">
                   <Label
                     htmlFor="feedback-description"
-                    className="text-sm font-medium text-zinc-700 dark:text-zinc-300"
+                    className="text-sm font-medium text-muted-foreground dark:text-zinc-300"
                   >
                     Description <span className="text-red-500">*</span>
                   </Label>
@@ -217,14 +220,14 @@ export default function FeedbackSupportTab({
                       }))
                     }
                     placeholder="Tell us more about your experience..."
-                    className="min-h-[120px] border-zinc-200 dark:border-zinc-700 focus:ring-2 focus:ring-violet-500/20 resize-none"
+                    className="min-h-[120px] border-border dark:border-zinc-700 resize-none"
                   />
                 </div>
 
                 <div className="space-y-2">
                   <Label
                     htmlFor="feedback-rating"
-                    className="text-sm font-medium text-zinc-700 dark:text-zinc-300"
+                    className="text-sm font-medium text-muted-foreground dark:text-zinc-300"
                   >
                     Rating (Optional)
                   </Label>
@@ -241,7 +244,7 @@ export default function FeedbackSupportTab({
                         className={`p-2 rounded-lg transition-all cursor-pointer ${
                           feedbackForm.rating && feedbackForm.rating >= rating
                             ? "text-amber-500"
-                            : "text-zinc-300 dark:text-zinc-600 hover:text-amber-400"
+                            : "text-muted-foreground/70 dark:text-zinc-600 hover:text-amber-400"
                         }`}
                       >
                         <Star
@@ -259,7 +262,7 @@ export default function FeedbackSupportTab({
                     !feedbackForm.title ||
                     !feedbackForm.description
                   }
-                  className="w-full h-11 bg-violet-600 hover:bg-violet-700 text-white"
+                  className="w-full h-11"
                 >
                   {isLoading ? (
                     <>
@@ -278,9 +281,9 @@ export default function FeedbackSupportTab({
           </Card>
 
           {/* Feedback History */}
-          <Card className="lg:col-span-3 border-0 shadow-sm bg-white dark:bg-zinc-900">
+          <Card className="lg:col-span-3 border-0 shadow-sm bg-card dark:bg-zinc-900">
             <CardContent className="p-6">
-              <h3 className="font-semibold text-zinc-900 dark:text-white mb-4">
+              <h3 className="font-semibold text-foreground dark:text-white mb-4">
                 Your Feedback History
               </h3>
 
@@ -288,10 +291,10 @@ export default function FeedbackSupportTab({
                 {feedbacks.map((feedback) => (
                   <div
                     key={feedback.id}
-                    className="p-4 rounded-xl bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-100 dark:border-zinc-800 transition-all hover:shadow-sm"
+                    className="p-4 rounded-xl bg-muted dark:bg-zinc-800/50 border border-border dark:border-zinc-800 transition-all hover:shadow-sm"
                   >
                     <div className="flex justify-between items-start gap-4 mb-2">
-                      <h4 className="font-medium text-zinc-900 dark:text-white">
+                      <h4 className="font-medium text-foreground dark:text-white">
                         {feedback.title}
                       </h4>
                       <Badge
@@ -302,7 +305,7 @@ export default function FeedbackSupportTab({
                         {feedback.status}
                       </Badge>
                     </div>
-                    <p className="text-sm text-zinc-600 dark:text-zinc-400 line-clamp-2">
+                    <p className="text-sm text-muted-foreground dark:text-zinc-400 line-clamp-2">
                       {feedback.description}
                     </p>
                     {feedback.rating && (
@@ -310,7 +313,7 @@ export default function FeedbackSupportTab({
                         {Array.from({ length: 5 }).map((_, i) => (
                           <Star
                             key={i}
-                            className={`h-3.5 w-3.5 ${i < feedback.rating! ? "text-amber-500 fill-amber-500" : "text-zinc-300"}`}
+                            className={`h-3.5 w-3.5 ${i < feedback.rating! ? "text-amber-500 fill-amber-500" : "text-muted-foreground/70"}`}
                           />
                         ))}
                       </div>
@@ -319,13 +322,13 @@ export default function FeedbackSupportTab({
                 ))}
                 {feedbacks.length === 0 && (
                   <div className="text-center py-12">
-                    <div className="mx-auto w-12 h-12 rounded-full bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center mb-3">
-                      <MessageSquare className="h-6 w-6 text-zinc-400" />
+                    <div className="mx-auto w-12 h-12 rounded-full bg-muted dark:bg-zinc-800 flex items-center justify-center mb-3">
+                      <MessageSquare className="h-6 w-6 text-muted-foreground/70" />
                     </div>
-                    <p className="text-zinc-500 dark:text-zinc-400">
+                    <p className="text-muted-foreground dark:text-zinc-400">
                       No feedback submitted yet
                     </p>
-                    <p className="text-sm text-zinc-400 dark:text-zinc-500 mt-1">
+                    <p className="text-sm text-muted-foreground/70 dark:text-zinc-500 mt-1">
                       Share your thoughts with us!
                     </p>
                   </div>
@@ -337,13 +340,13 @@ export default function FeedbackSupportTab({
       ) : (
         <div className="grid gap-8 lg:grid-cols-5">
           {/* Support Ticket Form */}
-          <Card className="lg:col-span-2 border-0 shadow-sm bg-white dark:bg-zinc-900">
+          <Card className="lg:col-span-2 border-0 shadow-sm bg-card dark:bg-zinc-900">
             <CardContent className="p-6">
               <div className="flex items-center gap-2 mb-6">
-                <div className="p-1.5 rounded-md bg-blue-100 dark:bg-blue-900/30">
-                  <HelpCircle className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+                <div className="p-1.5 rounded-md bg-muted">
+                  <HelpCircle className="h-4 w-4 text-muted-foreground" />
                 </div>
-                <h3 className="font-semibold text-zinc-900 dark:text-white">
+                <h3 className="font-semibold text-foreground dark:text-white">
                   Create Support Ticket
                 </h3>
               </div>
@@ -352,7 +355,7 @@ export default function FeedbackSupportTab({
                 <div className="space-y-2">
                   <Label
                     htmlFor="ticket-issueType"
-                    className="text-sm font-medium text-zinc-700 dark:text-zinc-300"
+                    className="text-sm font-medium text-muted-foreground dark:text-zinc-300"
                   >
                     What&apos;s this about?{" "}
                     <span className="text-red-500">*</span>
@@ -366,7 +369,7 @@ export default function FeedbackSupportTab({
                       }))
                     }
                   >
-                    <SelectTrigger className="h-11 border-zinc-200 dark:border-zinc-700">
+                    <SelectTrigger className="h-11 border-border dark:border-zinc-700">
                       <SelectValue placeholder="Select issue type" />
                     </SelectTrigger>
                     <SelectContent>
@@ -374,7 +377,7 @@ export default function FeedbackSupportTab({
                         ([category, types], idx) => (
                           <React.Fragment key={category}>
                             {idx > 0 && <div className="my-1" />}
-                            <div className="py-1 px-2 text-xs font-medium text-zinc-500 uppercase tracking-wide">
+                            <div className="py-1 px-2 text-xs font-medium text-muted-foreground uppercase tracking-wide">
                               {category}
                             </div>
                             {types.map((issueType) => (
@@ -392,7 +395,7 @@ export default function FeedbackSupportTab({
                 <div className="space-y-2">
                   <Label
                     htmlFor="ticket-title"
-                    className="text-sm font-medium text-zinc-700 dark:text-zinc-300"
+                    className="text-sm font-medium text-muted-foreground dark:text-zinc-300"
                   >
                     Subject <span className="text-red-500">*</span>
                   </Label>
@@ -406,14 +409,14 @@ export default function FeedbackSupportTab({
                       }))
                     }
                     placeholder="Brief summary of your issue"
-                    className="h-11 border-zinc-200 dark:border-zinc-700 focus:ring-2 focus:ring-blue-500/20"
+                    className="h-11 border-border dark:border-zinc-700"
                   />
                 </div>
 
                 <div className="space-y-2">
                   <Label
                     htmlFor="ticket-description"
-                    className="text-sm font-medium text-zinc-700 dark:text-zinc-300"
+                    className="text-sm font-medium text-muted-foreground dark:text-zinc-300"
                   >
                     Description <span className="text-red-500">*</span>
                   </Label>
@@ -427,14 +430,14 @@ export default function FeedbackSupportTab({
                       }))
                     }
                     placeholder="Please provide as much detail as possible..."
-                    className="min-h-[120px] border-zinc-200 dark:border-zinc-700 focus:ring-2 focus:ring-blue-500/20 resize-none"
+                    className="min-h-[120px] border-border dark:border-zinc-700 resize-none"
                   />
                 </div>
 
                 <div className="space-y-2">
                   <Label
                     htmlFor="ticket-priority"
-                    className="text-sm font-medium text-zinc-700 dark:text-zinc-300"
+                    className="text-sm font-medium text-muted-foreground dark:text-zinc-300"
                   >
                     Priority
                   </Label>
@@ -447,7 +450,7 @@ export default function FeedbackSupportTab({
                       }))
                     }
                   >
-                    <SelectTrigger className="h-11 border-zinc-200 dark:border-zinc-700">
+                    <SelectTrigger className="h-11 border-border dark:border-zinc-700">
                       <SelectValue placeholder="Select priority" />
                     </SelectTrigger>
                     <SelectContent>
@@ -468,7 +471,7 @@ export default function FeedbackSupportTab({
                     !ticketForm.description ||
                     !ticketForm.issueType
                   }
-                  className="w-full h-11 bg-blue-600 hover:bg-blue-700 text-white"
+                  className="w-full h-11"
                 >
                   {isLoading ? (
                     <>
@@ -487,9 +490,9 @@ export default function FeedbackSupportTab({
           </Card>
 
           {/* Support Ticket List */}
-          <Card className="lg:col-span-3 border-0 shadow-sm bg-white dark:bg-zinc-900">
+          <Card className="lg:col-span-3 border-0 shadow-sm bg-card dark:bg-zinc-900">
             <CardContent className="p-6">
-              <h3 className="font-semibold text-zinc-900 dark:text-white mb-4">
+              <h3 className="font-semibold text-foreground dark:text-white mb-4">
                 Your Support Tickets
               </h3>
 
@@ -497,16 +500,16 @@ export default function FeedbackSupportTab({
                 {tickets.map((ticket) => (
                   <div
                     key={ticket.id}
-                    className="p-4 rounded-xl bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-100 dark:border-zinc-800 transition-all hover:shadow-sm"
+                    className="p-4 rounded-xl bg-muted dark:bg-zinc-800/50 border border-border dark:border-zinc-800 transition-all hover:shadow-sm"
                   >
                     <div className="flex justify-between items-start gap-4 mb-2">
                       <div className="flex-1 min-w-0">
-                        <h4 className="font-medium text-zinc-900 dark:text-white truncate">
+                        <h4 className="font-medium text-foreground dark:text-white truncate">
                           {ticket.title}
                         </h4>
                         <div className="flex items-center gap-2 flex-wrap">
                           {ticket.issueType && (
-                            <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                            <span className="text-xs text-muted-foreground dark:text-zinc-400">
                               {formatIssueType(ticket.issueType)}
                             </span>
                           )}
@@ -514,7 +517,7 @@ export default function FeedbackSupportTab({
                           {(ticket.consultationId ||
                             ticket.subscriptionId ||
                             ticket.paymentId) && (
-                            <span className="inline-flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400">
+                            <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
                               <Link2 className="h-3 w-3" />
                               {ticket.paymentId &&
                               !ticket.consultationId &&
@@ -541,32 +544,32 @@ export default function FeedbackSupportTab({
                         </Badge>
                       </div>
                     </div>
-                    <p className="text-sm text-zinc-600 dark:text-zinc-400 line-clamp-2 mb-3">
+                    <p className="text-sm text-muted-foreground dark:text-zinc-400 line-clamp-2 mb-3">
                       {ticket.description}
                     </p>
 
                     {/* Responses */}
                     {ticket.responses && ticket.responses.length > 0 && (
-                      <div className="mt-3 pt-3 border-t border-zinc-200 dark:border-zinc-700 space-y-2">
-                        <p className="text-xs font-medium text-zinc-500 uppercase tracking-wide">
+                      <div className="mt-3 pt-3 border-t border-border dark:border-zinc-700 space-y-2">
+                        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
                           Responses
                         </p>
                         {ticket.responses.map((response: SupportTicketWithResponses["responses"][number]) => (
                           <div
                             key={response.id}
-                            className="p-3 rounded-lg bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700"
+                            className="p-3 rounded-lg bg-card dark:bg-zinc-800 border border-border dark:border-zinc-700"
                           >
                             <div className="flex items-center gap-2 mb-1">
-                              <span className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                              <span className="text-xs font-medium text-muted-foreground dark:text-zinc-300">
                                 {response.user?.name || "Support Team"}
                               </span>
-                              <span className="text-xs text-zinc-400">
+                              <span className="text-xs text-muted-foreground/70">
                                 {new Date(
                                   response.createdAt,
                                 ).toLocaleDateString()}
                               </span>
                             </div>
-                            <p className="text-sm text-zinc-600 dark:text-zinc-400">
+                            <p className="text-sm text-muted-foreground dark:text-zinc-400">
                               {response.message}
                             </p>
                           </div>
@@ -576,14 +579,14 @@ export default function FeedbackSupportTab({
 
                     {/* Response Form */}
                     {selectedTicket === ticket.id ? (
-                      <div className="mt-3 pt-3 border-t border-zinc-200 dark:border-zinc-700 space-y-3">
+                      <div className="mt-3 pt-3 border-t border-border dark:border-zinc-700 space-y-3">
                         <Textarea
                           value={responseForm.message}
                           onChange={(e) =>
                             setResponseForm({ message: e.target.value })
                           }
                           placeholder="Type your reply..."
-                          className="min-h-[80px] border-zinc-200 dark:border-zinc-700 resize-none"
+                          className="min-h-[80px] border-border dark:border-zinc-700 resize-none"
                         />
                         <div className="flex justify-end gap-2">
                           <Button
@@ -597,7 +600,6 @@ export default function FeedbackSupportTab({
                             size="sm"
                             onClick={() => handleResponseSubmit(ticket.id)}
                             disabled={isLoading || !responseForm.message}
-                            className="bg-blue-600 hover:bg-blue-700 text-white"
                           >
                             {isLoading ? (
                               <Loader2 className="h-3 w-3 animate-spin" />
@@ -612,7 +614,7 @@ export default function FeedbackSupportTab({
                         variant="ghost"
                         size="sm"
                         onClick={() => setSelectedTicket(ticket.id)}
-                        className="mt-2 text-blue-600 hover:text-blue-700 hover:bg-blue-50 dark:hover:bg-blue-900/20 p-0 h-auto"
+                        className="mt-2 text-muted-foreground hover:text-foreground hover:bg-muted p-0 h-auto"
                       >
                         Reply to this ticket
                         <ChevronRight className="h-4 w-4 ml-1" />
@@ -622,13 +624,13 @@ export default function FeedbackSupportTab({
                 ))}
                 {tickets.length === 0 && (
                   <div className="text-center py-12">
-                    <div className="mx-auto w-12 h-12 rounded-full bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center mb-3">
-                      <HelpCircle className="h-6 w-6 text-zinc-400" />
+                    <div className="mx-auto w-12 h-12 rounded-full bg-muted dark:bg-zinc-800 flex items-center justify-center mb-3">
+                      <HelpCircle className="h-6 w-6 text-muted-foreground/70" />
                     </div>
-                    <p className="text-zinc-500 dark:text-zinc-400">
+                    <p className="text-muted-foreground dark:text-zinc-400">
                       No support tickets yet
                     </p>
-                    <p className="text-sm text-zinc-400 dark:text-zinc-500 mt-1">
+                    <p className="text-sm text-muted-foreground/70 dark:text-zinc-500 mt-1">
                       Create one if you need assistance
                     </p>
                   </div>

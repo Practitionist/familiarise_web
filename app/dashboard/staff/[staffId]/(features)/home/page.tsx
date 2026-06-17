@@ -11,6 +11,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { PageHeader } from "@/components/ui/page-header";
 import {
   Ticket,
   Users,
@@ -62,7 +63,7 @@ const announcements = [
 const getStatusColor = (status: string) => {
   switch (status) {
     case "open":
-      return "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300";
+      return "bg-muted text-foreground";
     case "in_progress":
       return "bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300";
     case "pending":
@@ -70,7 +71,7 @@ const getStatusColor = (status: string) => {
     case "resolved":
       return "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300";
     default:
-      return "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300";
+      return "bg-muted text-muted-foreground";
   }
 };
 
@@ -82,9 +83,9 @@ const getPriorityColor = (priority: string) => {
     case "medium":
       return "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300";
     case "low":
-      return "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400";
+      return "bg-muted text-muted-foreground";
     default:
-      return "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400";
+      return "bg-muted text-muted-foreground";
   }
 };
 
@@ -140,70 +141,60 @@ export default function StaffHomePage() {
       value: stats?.openTickets ?? 0,
       change: "Needs attention",
       icon: Ticket,
-      color: "text-blue-600",
-      bgColor: "bg-blue-50 dark:bg-blue-950",
     },
     {
       title: "Users Assisted",
       value: stats?.usersAssisted ?? 0,
       change: "This week",
       icon: Users,
-      color: "text-emerald-600",
-      bgColor: "bg-emerald-50 dark:bg-emerald-950",
     },
     {
       title: "Pending Reviews",
       value: stats?.pendingReviews ?? 0,
       change: "Consultant reviews",
       icon: AlertTriangle,
-      color: "text-amber-600",
-      bgColor: "bg-amber-50 dark:bg-amber-950",
     },
     {
       title: "Resolved Today",
       value: stats?.resolvedToday ?? 0,
       change: "Keep it up!",
       icon: CheckCircle2,
-      color: "text-green-600",
-      bgColor: "bg-green-50 dark:bg-green-950",
     },
   ];
 
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">
-            Dashboard
-          </h1>
-          <p className="text-zinc-500 dark:text-zinc-400">
-            Welcome back! Here&apos;s what&apos;s happening today.
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={() => {
-              setLoading(true);
-              fetchStats();
-            }}
-            disabled={loading}
-          >
-            <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
-          </Button>
-          <Button variant="outline" className="gap-2">
-            <Bell className="h-4 w-4" />
-            Notifications
-            {stats && stats.openTickets > 0 && (
-              <Badge variant="destructive" className="ml-1">
-                {stats.openTickets}
-              </Badge>
-            )}
-          </Button>
-        </div>
-      </div>
+      <PageHeader
+        title="Dashboard"
+        description="Welcome back! Here's what's happening today."
+        actions={
+          <>
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={() => {
+                setLoading(true);
+                fetchStats();
+              }}
+              disabled={loading}
+            >
+              <RefreshCw
+                className={`h-4 w-4 ${loading ? "animate-spin" : ""}`}
+              />
+            </Button>
+            <Button variant="outline" className="gap-2">
+              <Bell className="h-4 w-4" />
+              Notifications
+              {stats && stats.openTickets > 0 && (
+                <Badge variant="destructive" className="ml-1">
+                  {stats.openTickets}
+                </Badge>
+              )}
+            </Button>
+          </>
+        }
+      />
 
       {/* Stats Grid */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
@@ -212,7 +203,7 @@ export default function StaffHomePage() {
               <Card key={i}>
                 <CardContent className="p-6">
                   <div className="flex items-center justify-center h-24">
-                    <Loader2 className="h-6 w-6 animate-spin text-zinc-400" />
+                    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
                   </div>
                 </CardContent>
               </Card>
@@ -221,19 +212,19 @@ export default function StaffHomePage() {
               <Card key={stat.title}>
                 <CardContent className="p-6">
                   <div className="flex items-center justify-between">
-                    <div className={`p-2 rounded-lg ${stat.bgColor}`}>
-                      <stat.icon className={`h-5 w-5 ${stat.color}`} />
+                    <div className="p-2 rounded-lg bg-muted">
+                      <stat.icon className="h-5 w-5 text-foreground" />
                     </div>
-                    <TrendingUp className="h-4 w-4 text-zinc-400" />
+                    <TrendingUp className="h-4 w-4 text-muted-foreground/70" />
                   </div>
                   <div className="mt-4">
-                    <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">
+                    <p className="text-2xl font-bold text-foreground">
                       {stat.value}
                     </p>
-                    <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                    <p className="text-sm text-muted-foreground">
                       {stat.title}
                     </p>
-                    <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-1">
+                    <p className="text-xs text-muted-foreground/70 mt-1">
                       {stat.change}
                     </p>
                   </div>
@@ -262,11 +253,11 @@ export default function StaffHomePage() {
           <CardContent>
             {loading ? (
               <div className="flex items-center justify-center h-48">
-                <Loader2 className="h-8 w-8 animate-spin text-zinc-400" />
+                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
               </div>
             ) : !stats?.recentTickets || stats.recentTickets.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-48 text-zinc-500">
-                <Ticket className="h-12 w-12 mb-4 text-zinc-300" />
+              <div className="flex flex-col items-center justify-center h-48 text-muted-foreground">
+                <Ticket className="h-12 w-12 mb-4 text-muted-foreground/40" />
                 <p>No recent tickets</p>
               </div>
             ) : (
@@ -274,7 +265,7 @@ export default function StaffHomePage() {
                 {stats.recentTickets.map((ticket) => (
                   <div
                     key={ticket.id}
-                    className="flex items-center justify-between p-3 rounded-lg border border-zinc-200 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-900 transition-colors"
+                    className="flex items-center justify-between p-3 rounded-lg border border-border hover:bg-muted transition-colors"
                   >
                     <div className="flex items-center gap-3">
                       <Avatar className="h-9 w-9">
@@ -287,10 +278,10 @@ export default function StaffHomePage() {
                         </AvatarFallback>
                       </Avatar>
                       <div>
-                        <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
+                        <p className="text-sm font-medium text-foreground">
                           {ticket.subject}
                         </p>
-                        <p className="text-xs text-zinc-500">
+                        <p className="text-xs text-muted-foreground">
                           {ticket.id.slice(-8).toUpperCase()} • {ticket.user}
                         </p>
                       </div>
@@ -308,7 +299,7 @@ export default function StaffHomePage() {
                       >
                         {ticket.status.replace("_", " ")}
                       </Badge>
-                      <span className="text-xs text-zinc-400 ml-2 hidden sm:inline">
+                      <span className="text-xs text-muted-foreground/70 ml-2 hidden sm:inline">
                         {formatTimeAgo(ticket.createdAt)}
                       </span>
                     </div>
@@ -333,22 +324,22 @@ export default function StaffHomePage() {
               {announcements.map((announcement, index) => (
                 <div
                   key={index}
-                  className="p-3 rounded-lg border border-zinc-200 dark:border-zinc-800"
+                  className="p-3 rounded-lg border border-border"
                 >
                   <div className="flex items-start gap-2">
                     {announcement.type === "warning" ? (
                       <AlertTriangle className="h-4 w-4 text-amber-500 mt-0.5" />
                     ) : (
-                      <Bell className="h-4 w-4 text-blue-500 mt-0.5" />
+                      <Bell className="h-4 w-4 text-muted-foreground mt-0.5" />
                     )}
                     <div>
-                      <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
+                      <p className="text-sm font-medium text-foreground">
                         {announcement.title}
                       </p>
-                      <p className="text-xs text-zinc-500 mt-1">
+                      <p className="text-xs text-muted-foreground mt-1">
                         {announcement.description}
                       </p>
-                      <p className="text-xs text-zinc-400 mt-2">
+                      <p className="text-xs text-muted-foreground/70 mt-2">
                         {announcement.date}
                       </p>
                     </div>

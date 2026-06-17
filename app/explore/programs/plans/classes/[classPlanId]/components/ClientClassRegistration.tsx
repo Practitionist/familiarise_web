@@ -91,7 +91,7 @@ export function ClientClassRegistration({
           <CardTitle>Class Registration</CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="text-gray-600 mb-4">
+          <p className="text-muted-foreground mb-4">
             {startDate
               ? `Class starts on ${formatInTimeZone(new Date(startDate), userTimeZone, "MMMM d, yyyy 'at' h:mm a zzz")}`
               : "Start date to be announced"}
@@ -106,13 +106,13 @@ export function ClientClassRegistration({
             </Badge>
           )}
           {!isFull && (
-            <p className="text-gray-600 mb-4">
+            <p className="text-muted-foreground mb-4">
               Please sign in to register for this class.
             </p>
           )}
           <Button
             onClick={handleRegistration}
-            className="w-full bg-black hover:bg-gray-800"
+            className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
             disabled={signInButtonDisabled}
           >
             {signInButtonText}
@@ -136,12 +136,12 @@ export function ClientClassRegistration({
               Already Enrolled
             </Badge>
           </div>
-          <p className="text-sm text-gray-600 mb-4">
+          <p className="text-sm text-muted-foreground mb-4">
             {startDate
               ? `Class starts on ${formatInTimeZone(new Date(startDate), userTimeZone, "MMMM d, yyyy 'at' h:mm a zzz")}`
               : "Start date to be announced"}
           </p>
-          <p className="text-sm text-gray-600">
+          <p className="text-sm text-muted-foreground">
             You are enrolled in this class. Check your dashboard for session
             details.
           </p>
@@ -161,7 +161,7 @@ export function ClientClassRegistration({
           <CardTitle>Class Registration</CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="text-sm text-gray-600 mb-4">
+          <p className="text-sm text-muted-foreground mb-4">
             {startDate
               ? `Class starts on ${formatInTimeZone(new Date(startDate), userTimeZone, "MMMM d, yyyy 'at' h:mm a zzz")}`
               : "Start date to be announced"}
@@ -181,7 +181,7 @@ export function ClientClassRegistration({
                 position={userWaitlistEntry?.position ?? null}
                 variant="extended"
               />
-              <p className="text-xs text-gray-500 mt-2">
+              <p className="text-xs text-muted-foreground mt-2">
                 We'll notify you when a spot opens up
               </p>
             </div>
@@ -192,7 +192,7 @@ export function ClientClassRegistration({
               className="w-full"
             />
           ) : (
-            <p className="text-sm text-gray-500 text-center">
+            <p className="text-sm text-muted-foreground text-center">
               No class instance available for waitlist
             </p>
           )}
@@ -207,7 +207,7 @@ export function ClientClassRegistration({
         <CardTitle>Class Registration</CardTitle>
       </CardHeader>
       <CardContent>
-        <p className="text-sm text-gray-600 mb-4">
+        <p className="text-sm text-muted-foreground mb-4">
           {startDate
             ? `Class starts on ${formatInTimeZone(new Date(startDate), userTimeZone, "MMMM d, yyyy 'at' h:mm a zzz")}`
             : "Start date to be announced"}
@@ -216,7 +216,7 @@ export function ClientClassRegistration({
       <CardFooter>
         <Button
           onClick={handleRegistration}
-          className="w-full bg-black hover:bg-gray-800"
+          className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
         >
           Pay {formatPrice(price)} & Register Now
         </Button>

@@ -16,13 +16,9 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+  ResponsiveTable,
+  type ResponsiveColumn,
+} from "@/components/ui/responsive-table";
 
 interface Learner {
   id: string;
@@ -66,6 +62,40 @@ export default function OrgLearnersPage({
 
   if (!allowed) return null;
 
+  const columns: ResponsiveColumn<Learner>[] = [
+    {
+      key: "learner",
+      header: "Learner",
+      primary: true,
+      cell: (l) => (
+        <div className="flex flex-col">
+          <span className="font-medium text-foreground">
+            {l.user.name ?? "—"}
+          </span>
+          <span className="text-xs text-muted-foreground">{l.user.email}</span>
+        </div>
+      ),
+    },
+    {
+      key: "status",
+      header: "Status",
+      cell: (l) => (
+        <Badge variant={l.status === "ACTIVE" ? "default" : "outline"}>
+          {l.status}
+        </Badge>
+      ),
+    },
+    {
+      key: "since",
+      header: "Member since",
+      cell: (l) => (
+        <span className="text-xs text-muted-foreground">
+          {new Date(l.createdAt).toLocaleDateString()}
+        </span>
+      ),
+    },
+  ];
+
   return (
     <>
       <DashboardHeader
@@ -81,55 +111,18 @@ export default function OrgLearnersPage({
           </CardHeader>
           <CardContent>
             {isLoading ? (
-              <p className="text-sm text-zinc-500">Loading…</p>
+              <p className="text-sm text-muted-foreground">Loading…</p>
             ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Learner</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Member since</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {data?.learners.map((l) => (
-                    <TableRow key={l.id}>
-                      <TableCell>
-                        <div className="flex flex-col">
-                          <span className="font-medium text-zinc-900">
-                            {l.user.name ?? "—"}
-                          </span>
-                          <span className="text-xs text-zinc-500">
-                            {l.user.email}
-                          </span>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge
-                          variant={
-                            l.status === "ACTIVE" ? "default" : "outline"
-                          }
-                        >
-                          {l.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-xs text-zinc-500">
-                        {new Date(l.createdAt).toLocaleDateString()}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                  {data && data.learners.length === 0 && (
-                    <TableRow>
-                      <TableCell
-                        colSpan={3}
-                        className="text-center text-sm text-zinc-500 py-6"
-                      >
-                        No learners yet. Invite some via the Invitations page.
-                      </TableCell>
-                    </TableRow>
-                  )}
-                </TableBody>
-              </Table>
+              <ResponsiveTable<Learner>
+                columns={columns}
+                rows={data?.learners ?? []}
+                getRowId={(l) => l.id}
+                empty={
+                  <p className="text-center text-sm text-muted-foreground py-6">
+                    No learners yet. Invite some via the Invitations page.
+                  </p>
+                }
+              />
             )}
           </CardContent>
         </Card>

@@ -1,11 +1,7 @@
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+  ResponsiveTable,
+  type ResponsiveColumn,
+} from "@/components/ui/responsive-table";
 import { AppointmentsType, AppointmentStatus } from "@prisma/client";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -110,7 +106,7 @@ export function RequestSlotAllocationTabMini() {
   }
 
   if (error) {
-    return <div className="p-4 text-red-600">{error}</div>;
+    return <div className="p-4 text-destructive">{error}</div>;
   }
 
   if (requests.length === 0) {
@@ -121,30 +117,40 @@ export function RequestSlotAllocationTabMini() {
     );
   }
 
+  const columns: ResponsiveColumn<Request>[] = [
+    {
+      key: "type",
+      header: "Type",
+      headClassName: "w-[100px]",
+      className: "font-medium",
+      cell: (request) => request.type,
+    },
+    {
+      key: "title",
+      header: "Title",
+      primary: true,
+      headClassName: "max-w-[200px]",
+      className: "truncate",
+      cell: (request) => request.title,
+    },
+    {
+      key: "requestedBy",
+      header: "Requested By",
+      cell: (request) => request.requestedBy.user.name,
+    },
+    {
+      key: "requestedAt",
+      header: "Requested At",
+      headClassName: "w-[140px]",
+      cell: (request) => new Date(request.requestedAt).toLocaleDateString(),
+    },
+  ];
+
   return (
-    <div className="overflow-x-auto">
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead className="w-[100px]">Type</TableHead>
-            <TableHead className="max-w-[200px]">Title</TableHead>
-            <TableHead>Requested By</TableHead>
-            <TableHead className="w-[140px]">Requested At</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {requests.map((request) => (
-            <TableRow key={request.id}>
-              <TableCell className="font-medium">{request.type}</TableCell>
-              <TableCell className="truncate">{request.title}</TableCell>
-              <TableCell>{request.requestedBy.user.name}</TableCell>
-              <TableCell>
-                {new Date(request.requestedAt).toLocaleDateString()}
-              </TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
-    </div>
+    <ResponsiveTable<Request>
+      columns={columns}
+      rows={requests}
+      getRowId={(r) => r.id}
+    />
   );
 }

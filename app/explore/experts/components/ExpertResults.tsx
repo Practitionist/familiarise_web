@@ -29,13 +29,13 @@ function EmptyState() {
       animate={{ opacity: 1, scale: 1 }}
       transition={{ duration: 0.3 }}
     >
-      <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-zinc-100 flex items-center justify-center">
-        <Search className="w-10 h-10 text-zinc-400" />
+      <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-muted flex items-center justify-center">
+        <Search className="w-10 h-10 text-muted-foreground/70" />
       </div>
-      <h3 className="text-xl font-semibold text-zinc-900 mb-2">
+      <h3 className="text-xl font-semibold text-foreground mb-2">
         No experts found
       </h3>
-      <p className="text-zinc-500 max-w-md mx-auto">
+      <p className="text-muted-foreground max-w-md mx-auto">
         Try adjusting your filters or search terms to discover more amazing
         mentors
       </p>
@@ -65,10 +65,10 @@ function ExpertResultsImpl({
     <div className="mt-8 min-h-[400px] relative">
       {/* Loading overlay — sits on top of stale results to preserve scroll. */}
       {(isLoading || isRefetching) && (
-        <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/80 backdrop-blur-sm rounded-2xl">
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/80 backdrop-blur-sm rounded-2xl">
           <div className="flex flex-col items-center gap-4">
-            <div className="w-12 h-12 border-4 border-zinc-200 border-t-zinc-900 rounded-full animate-spin" />
-            <p className="text-zinc-500 text-sm">Finding experts...</p>
+            <div className="w-12 h-12 border-4 border-muted border-t-foreground rounded-full animate-spin" />
+            <p className="text-muted-foreground text-sm">Finding experts...</p>
           </div>
         </div>
       )}
@@ -89,11 +89,11 @@ function ExpertResultsImpl({
                 transition={{ duration: 0.5 }}
               >
                 <div className="flex items-center gap-3 mb-6">
-                  <div className="w-1 h-8 bg-gradient-to-b from-zinc-900 to-zinc-400 rounded-full" />
-                  <h3 className="text-2xl font-bold text-zinc-900">
+                  <div className="w-1 h-8 bg-gradient-to-b from-foreground to-muted-foreground/70 rounded-full" />
+                  <h3 className="text-2xl font-bold text-foreground">
                     {domain.name}
                   </h3>
-                  <span className="px-3 py-1 bg-zinc-100 rounded-full text-sm text-zinc-600">
+                  <span className="px-3 py-1 bg-muted rounded-full text-sm text-muted-foreground">
                     {domainConsultants.length} expert
                     {domainConsultants.length !== 1 ? "s" : ""}
                   </span>
@@ -138,8 +138,8 @@ function ExpertResultsImpl({
       {isLoadingMore && (
         <div className="flex justify-center py-8">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 border-3 border-zinc-200 border-t-zinc-900 rounded-full animate-spin" />
-            <span className="text-zinc-500 text-sm">Loading more...</span>
+            <div className="w-8 h-8 border-3 border-muted border-t-foreground rounded-full animate-spin" />
+            <span className="text-muted-foreground text-sm">Loading more...</span>
           </div>
         </div>
       )}

@@ -68,7 +68,7 @@ export default function AppointmentsPage({ params }: Readonly<PageProps>) {
     return (
       <DashboardErrorBoundary>
         <div className="flex items-center justify-center min-h-[400px]">
-          <div className="p-4 bg-red-50 text-red-600 rounded-lg max-w-md text-center">
+          <div className="p-4 bg-red-50 text-red-600 dark:bg-red-900/30 dark:text-red-300 rounded-lg max-w-md text-center">
             <h3 className="font-semibold mb-2">Error Loading Appointments</h3>
             <p className="text-sm">
               {error.message ||
@@ -106,9 +106,9 @@ export default function AppointmentsPage({ params }: Readonly<PageProps>) {
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="flex flex-col items-center justify-center min-h-[400px] p-8 bg-white rounded-xl shadow-sm"
+          className="flex flex-col items-center justify-center min-h-[400px] p-8 bg-card rounded-xl shadow-sm"
         >
-          <div className="w-16 h-16 mb-4 text-gray-400">
+          <div className="w-16 h-16 mb-4 text-muted-foreground/70">
             <svg
               xmlns="http://www.w3.org/2000/svg"
               fill="none"
@@ -123,10 +123,10 @@ export default function AppointmentsPage({ params }: Readonly<PageProps>) {
               />
             </svg>
           </div>
-          <h3 className="text-xl font-semibold text-gray-900 mb-2">
+          <h3 className="text-fluid-2xl font-semibold tracking-tight text-foreground mb-2">
             No Appointments Found
           </h3>
-          <p className="text-gray-500 text-center">
+          <p className="text-muted-foreground text-center">
             You don't have any appointments scheduled yet. Book your first
             session to get started!
           </p>

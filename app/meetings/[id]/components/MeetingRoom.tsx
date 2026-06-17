@@ -202,7 +202,7 @@ const MeetingRoom = () => {
           {/* Participants Sidebar */}
           <div
             className={cn(
-              "fixed right-0 top-0 h-full w-80 bg-zinc-900/95 backdrop-blur-xl border-l border-zinc-800 transform transition-transform duration-300 ease-in-out z-40",
+              "fixed right-0 top-0 h-full w-full sm:w-80 bg-zinc-900/95 backdrop-blur-xl border-l border-zinc-800 transform transition-transform duration-300 ease-in-out z-40",
               showParticipants ? "translate-x-0" : "translate-x-full",
             )}
           >
@@ -240,7 +240,7 @@ const MeetingRoom = () => {
         {/* Bottom Control Bar */}
         <div className="fixed bottom-0 left-0 right-0 z-50">
           <div className="flex items-center justify-center px-4 py-4">
-            <div className="flex items-center gap-2 px-4 py-3 bg-zinc-900/90 backdrop-blur-xl rounded-2xl border border-zinc-800 shadow-2xl">
+            <div className="flex flex-wrap items-center justify-center gap-2 px-4 py-3 bg-zinc-900/90 backdrop-blur-xl rounded-2xl border border-zinc-800 shadow-2xl max-w-[calc(100vw-2rem)]">
               {/* Custom Call Controls - Replaces default CallControls */}
               {/* Audio Toggle */}
               <ToggleAudioPublishingButton />
@@ -310,7 +310,7 @@ const MeetingRoom = () => {
                         {option.label}
                       </span>
                       {layout === option.value && (
-                        <div className="ml-auto w-2 h-2 rounded-full bg-emerald-500" />
+                        <div className="ml-auto w-2 h-2 rounded-full bg-white" />
                       )}
                     </DropdownMenuItem>
                   ))}
@@ -326,13 +326,13 @@ const MeetingRoom = () => {
                 className={cn(
                   "p-3 rounded-xl transition-colors relative",
                   showParticipants
-                    ? "bg-emerald-500 text-white"
+                    ? "bg-white text-zinc-900"
                     : "bg-zinc-800 hover:bg-zinc-700 text-white",
                 )}
               >
                 <Users className="w-5 h-5" />
                 {participantCount > 1 && (
-                  <span className="absolute -top-1 -right-1 w-5 h-5 bg-emerald-500 rounded-full text-xs font-medium flex items-center justify-center">
+                  <span className="absolute -top-1 -right-1 w-5 h-5 bg-white text-zinc-900 rounded-full text-xs font-medium flex items-center justify-center">
                     {participantCount}
                   </span>
                 )}
@@ -370,13 +370,13 @@ const MeetingRoom = () => {
         </div>
 
         {/* Meeting Info Badge */}
-        <div className="fixed top-4 left-4 z-40">
+        <div className="fixed top-4 left-4 z-40 max-w-[calc(100vw-2rem)]">
           <div className="flex items-center gap-2 px-3 py-2 bg-zinc-900/80 backdrop-blur-sm rounded-lg border border-zinc-800">
-            <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
-            <span className="text-sm font-medium text-white">
+            <div className="w-2 h-2 shrink-0 bg-white rounded-full animate-pulse" />
+            <span className="min-w-0 truncate text-sm font-medium text-white">
               {call?.state.custom?.title || "Meeting"}
             </span>
-            <span className="text-xs text-zinc-500">
+            <span className="shrink-0 text-xs text-zinc-500">
               • {participantCount} participant
               {participantCount !== 1 ? "s" : ""}
             </span>

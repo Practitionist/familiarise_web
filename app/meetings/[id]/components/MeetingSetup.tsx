@@ -84,7 +84,7 @@ const DeviceSelector = () => {
     <div className="space-y-4">
       {/* Camera */}
       <div className="space-y-2">
-        <div className="flex items-center gap-2 text-zinc-700">
+        <div className="flex items-center gap-2 text-muted-foreground">
           <Video className="w-4 h-4" />
           <Label className="text-sm font-medium">Camera</Label>
         </div>
@@ -95,7 +95,7 @@ const DeviceSelector = () => {
             await camState.camera.select(val);
           }}
         >
-          <SelectTrigger className="bg-white border-zinc-200">
+          <SelectTrigger className="bg-card border-border">
             <SelectValue placeholder="Select Camera" />
           </SelectTrigger>
           <SelectContent>
@@ -110,7 +110,7 @@ const DeviceSelector = () => {
 
       {/* Microphone */}
       <div className="space-y-2">
-        <div className="flex items-center gap-2 text-zinc-700">
+        <div className="flex items-center gap-2 text-muted-foreground">
           <Mic className="w-4 h-4" />
           <Label className="text-sm font-medium">Microphone</Label>
         </div>
@@ -121,7 +121,7 @@ const DeviceSelector = () => {
             await micState.microphone.select(val);
           }}
         >
-          <SelectTrigger className="bg-white border-zinc-200">
+          <SelectTrigger className="bg-card border-border">
             <SelectValue placeholder="Select Microphone" />
           </SelectTrigger>
           <SelectContent>
@@ -137,7 +137,7 @@ const DeviceSelector = () => {
       {/* Speakers */}
       {speakerState?.devices && speakerState.devices.length > 0 && (
         <div className="space-y-2">
-          <div className="flex items-center gap-2 text-zinc-700">
+          <div className="flex items-center gap-2 text-muted-foreground">
             <Volume2 className="w-4 h-4" />
             <Label className="text-sm font-medium">Speakers</Label>
           </div>
@@ -148,7 +148,7 @@ const DeviceSelector = () => {
               await speakerState.speaker.select(val);
             }}
           >
-            <SelectTrigger className="bg-white border-zinc-200">
+            <SelectTrigger className="bg-card border-border">
               <SelectValue placeholder="Select Speakers" />
             </SelectTrigger>
             <SelectContent>
@@ -349,13 +349,13 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
 
       <div className="relative z-10 w-full max-w-lg">
         {/* Card */}
-        <div className="bg-white/95 backdrop-blur-xl rounded-2xl shadow-2xl border border-zinc-200/50 overflow-hidden">
+        <div className="bg-card/95 backdrop-blur-xl rounded-2xl shadow-2xl border border-border/50 overflow-hidden">
           {/* Header */}
-          <div className="px-8 pt-8 pb-4">
-            <h1 className="text-2xl font-bold text-zinc-900 text-center">
+          <div className="px-6 pt-8 pb-4 sm:px-8">
+            <h1 className="text-fluid-2xl font-bold tracking-tight text-foreground text-center">
               {call?.state.custom?.title || "Join Meeting"}
             </h1>
-            <p className="text-zinc-500 text-sm text-center mt-1">
+            <p className="text-muted-foreground text-sm text-center mt-1">
               Configure your audio and video before joining
             </p>
           </div>
@@ -421,16 +421,16 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
           {isMicOn && (
             <div className="px-6 pb-4">
               <div className="flex items-center gap-3">
-                <Mic className="w-4 h-4 text-zinc-400" />
-                <div className="flex-1">
-                  <div className="h-1.5 bg-zinc-200 rounded-full overflow-hidden">
+                <Mic className="w-4 h-4 text-muted-foreground/70" />
+                <div className="min-w-0 flex-1">
+                  <div className="h-1.5 bg-muted rounded-full overflow-hidden">
                     <div
-                      className="h-full bg-gradient-to-r from-green-400 to-emerald-500 transition-all duration-75"
+                      className="h-full bg-foreground transition-all duration-75"
                       style={{ width: `${Math.max(micLevel * 100, 2)}%` }}
                     />
                   </div>
                 </div>
-                <span className="text-xs text-zinc-500 w-20 text-right">
+                <span className="text-xs text-muted-foreground w-20 text-right">
                   {micLevel < 0.05 ? "Waiting..." : "Speaking"}
                 </span>
               </div>
@@ -446,7 +446,7 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
                 className={cn(
                   "w-14 h-14 rounded-full flex items-center justify-center transition-all duration-200",
                   isMicOn
-                    ? "bg-zinc-900 text-white hover:bg-zinc-800"
+                    ? "bg-foreground text-background hover:bg-foreground/90"
                     : "bg-red-500 text-white hover:bg-red-600",
                 )}
               >
@@ -463,7 +463,7 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
                 className={cn(
                   "w-14 h-14 rounded-full flex items-center justify-center transition-all duration-200",
                   isCameraOn
-                    ? "bg-zinc-900 text-white hover:bg-zinc-800"
+                    ? "bg-foreground text-background hover:bg-foreground/90"
                     : "bg-red-500 text-white hover:bg-red-600",
                 )}
               >
@@ -480,8 +480,8 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
                 className={cn(
                   "w-14 h-14 rounded-full flex items-center justify-center transition-all duration-200",
                   showSettings
-                    ? "bg-zinc-900 text-white"
-                    : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200",
+                    ? "bg-foreground text-background"
+                    : "bg-muted text-muted-foreground hover:bg-muted/80",
                 )}
               >
                 <Settings className="w-5 h-5" />
@@ -490,8 +490,8 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
 
             {/* Device Settings */}
             {showSettings && (
-              <div className="mt-4 p-4 bg-zinc-50 rounded-xl border border-zinc-200">
-                <p className="text-sm font-medium text-zinc-700 mb-3">
+              <div className="mt-4 p-4 bg-muted rounded-xl border border-border">
+                <p className="text-sm font-medium text-muted-foreground mb-3">
                   Audio & Video Settings
                 </p>
                 <DeviceSelector />
@@ -504,7 +504,7 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
             <Button
               onClick={handleJoinMeeting}
               disabled={isJoining}
-              className="w-full h-12 bg-gradient-to-r from-emerald-500 to-green-500 hover:from-emerald-600 hover:to-green-600 text-white font-semibold rounded-xl shadow-lg shadow-green-500/25 transition-all duration-200 disabled:opacity-70"
+              className="w-full h-12 bg-primary hover:bg-primary/90 text-primary-foreground font-semibold rounded-xl shadow-lg transition-all duration-200 disabled:opacity-70"
             >
               {isJoining ? (
                 <>
@@ -519,7 +519,7 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
         </div>
 
         {/* Footer tip */}
-        <p className="text-center text-zinc-500 text-xs mt-4">
+        <p className="text-center text-muted-foreground text-xs mt-4">
           Tip: Test your mic and camera before joining
         </p>
       </div>

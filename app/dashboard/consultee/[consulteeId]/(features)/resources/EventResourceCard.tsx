@@ -86,27 +86,27 @@ export function EventResourceCard({ event }: { event: EventResource }) {
   const [expanded, setExpanded] = useState(totalItems > 0);
 
   return (
-    <div className="bg-white rounded-xl border border-zinc-200 shadow-sm overflow-hidden">
+    <div className="bg-card rounded-xl border border-border shadow-sm overflow-hidden">
       {/* Header */}
       <button
         onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center gap-4 p-4 hover:bg-zinc-50 transition-colors text-left"
+        className="w-full flex items-center gap-4 p-4 hover:bg-muted transition-colors text-left"
       >
         <Avatar className="h-10 w-10 shrink-0">
           <AvatarImage
             src={event.consultantImage || undefined}
             alt={event.consultantName || "Consultant"}
           />
-          <AvatarFallback className="bg-zinc-100 text-zinc-600 text-sm">
+          <AvatarFallback className="bg-muted text-muted-foreground text-sm">
             {event.consultantName?.charAt(0) || "?"}
           </AvatarFallback>
         </Avatar>
 
         <div className="flex-1 min-w-0">
-          <h3 className="font-semibold text-zinc-900 truncate">
+          <h3 className="font-semibold text-foreground truncate">
             {event.planTitle}
           </h3>
-          <p className="text-sm text-zinc-500">
+          <p className="text-sm text-muted-foreground">
             {event.consultantName || "Unknown"} &middot;{" "}
             {formatDate(event.date)}
           </p>
@@ -125,7 +125,7 @@ export function EventResourceCard({ event }: { event: EventResource }) {
             {formatStatusLabel(event.status)}
           </span>
           {totalItems > 0 && (
-            <div className="flex items-center gap-2 text-xs text-zinc-500">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
               {event.materials.length > 0 && (
                 <span className="flex items-center gap-1">
                   <FileText className="w-3.5 h-3.5" />
@@ -141,18 +141,18 @@ export function EventResourceCard({ event }: { event: EventResource }) {
             </div>
           )}
           {expanded ? (
-            <ChevronUp className="w-4 h-4 text-zinc-400" />
+            <ChevronUp className="w-4 h-4 text-muted-foreground/70" />
           ) : (
-            <ChevronDown className="w-4 h-4 text-zinc-400" />
+            <ChevronDown className="w-4 h-4 text-muted-foreground/70" />
           )}
         </div>
       </button>
 
       {/* Content */}
       {expanded && (
-        <div className="border-t border-zinc-100 p-4 space-y-4">
+        <div className="border-t border-border p-4 space-y-4">
           {totalItems === 0 && (
-            <p className="text-sm text-zinc-400 text-center py-3">
+            <p className="text-sm text-muted-foreground/70 text-center py-3">
               {getEmptyStateMessage(event.status)}
             </p>
           )}
@@ -160,23 +160,23 @@ export function EventResourceCard({ event }: { event: EventResource }) {
           {/* Materials */}
           {event.materials.length > 0 && (
             <div>
-              <h4 className="text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-2">
+              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
                 Materials ({event.materials.length})
               </h4>
               <div className="space-y-2">
                 {event.materials.map((mat) => (
                   <div
                     key={mat.id}
-                    className="flex items-center gap-3 p-2.5 rounded-lg bg-zinc-50 hover:bg-zinc-100 transition-colors group"
+                    className="flex items-center gap-3 p-2.5 rounded-lg bg-muted hover:bg-muted/70 transition-colors group"
                   >
-                    <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-50 text-blue-600 shrink-0">
+                    <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-card text-muted-foreground border border-border shrink-0">
                       <FileText className="w-4 h-4" />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-zinc-900 truncate">
+                      <p className="text-sm font-medium text-foreground truncate">
                         {mat.originalName || mat.fileName}
                       </p>
-                      <p className="text-xs text-zinc-500">
+                      <p className="text-xs text-muted-foreground">
                         {formatFileSize(mat.fileSize)}
                         {mat.description && ` \u00B7 ${mat.description}`}
                       </p>
@@ -205,30 +205,30 @@ export function EventResourceCard({ event }: { event: EventResource }) {
           {/* Recordings */}
           {event.recordings.length > 0 && (
             <div>
-              <h4 className="text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-2">
+              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
                 Recordings ({event.recordings.length})
               </h4>
               <div className="space-y-2">
                 {event.recordings.map((rec) => (
                   <div
                     key={rec.id}
-                    className="flex items-center gap-3 p-2.5 rounded-lg bg-zinc-50 hover:bg-zinc-100 transition-colors group"
+                    className="flex items-center gap-3 p-2.5 rounded-lg bg-muted hover:bg-muted/70 transition-colors group"
                   >
                     <div
                       className={cn(
                         "flex h-9 w-9 items-center justify-center rounded-lg shrink-0",
                         rec.playbackUrl
-                          ? "bg-emerald-50 text-emerald-600"
-                          : "bg-zinc-100 text-zinc-400",
+                          ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-300"
+                          : "bg-card text-muted-foreground/70 border border-border",
                       )}
                     >
                       <Video className="w-4 h-4" />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-zinc-900 truncate">
+                      <p className="text-sm font-medium text-foreground truncate">
                         {rec.title}
                       </p>
-                      <p className="text-xs text-zinc-500">
+                      <p className="text-xs text-muted-foreground">
                         {formatDuration(rec.durationInMinutes)} &middot;{" "}
                         {formatDate(rec.recordedAt)}
                       </p>
@@ -243,14 +243,14 @@ export function EventResourceCard({ event }: { event: EventResource }) {
                         <Button
                           variant="ghost"
                           size="sm"
-                          className="opacity-0 group-hover:opacity-100 transition-opacity text-emerald-600"
+                          className="opacity-0 group-hover:opacity-100 transition-opacity text-emerald-600 dark:text-emerald-300"
                         >
                           <Play className="w-4 h-4 mr-1" />
                           Watch
                         </Button>
                       </a>
                     ) : (
-                      <span className="text-xs text-zinc-400 px-2">
+                      <span className="text-xs text-muted-foreground/70 px-2">
                         Processing
                       </span>
                     )}

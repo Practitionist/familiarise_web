@@ -29,9 +29,9 @@ export function CardHeader({
     <div className="flex items-start gap-3">
       {/* Avatar stack */}
       <div className="flex items-center -space-x-2 shrink-0">
-        <Avatar className="h-11 w-11 ring-2 ring-white z-10">
+        <Avatar className="h-11 w-11 ring-2 ring-card z-10">
           <AvatarImage alt={consultant} src={image || undefined} />
-          <AvatarFallback className="bg-gradient-to-br from-zinc-100 to-zinc-200 text-zinc-600 text-sm font-semibold">
+          <AvatarFallback className="bg-gradient-to-br from-muted to-muted text-muted-foreground text-sm font-semibold">
             {getInitials(consultant)}
           </AvatarFallback>
         </Avatar>
@@ -39,19 +39,19 @@ export function CardHeader({
           <Avatar
             key={idx}
             className={cn(
-              "h-8 w-8 ring-2 ring-white",
+              "h-8 w-8 ring-2 ring-card",
               idx === 0 ? "z-[5]" : "z-0",
             )}
             title={`${collab.name} (${collab.role})`}
           >
             <AvatarImage alt={collab.name} src={collab.image || undefined} />
-            <AvatarFallback className="bg-purple-100 text-purple-700 text-[10px] font-semibold">
+            <AvatarFallback className="bg-muted text-muted-foreground text-[10px] font-semibold">
               {getInitials(collab.name)}
             </AvatarFallback>
           </Avatar>
         ))}
         {collaborators.length > 2 && (
-          <div className="h-8 w-8 rounded-full bg-zinc-100 ring-2 ring-white flex items-center justify-center text-[10px] font-semibold text-zinc-600 z-0">
+          <div className="h-8 w-8 rounded-full bg-muted ring-2 ring-card flex items-center justify-center text-[10px] font-semibold text-muted-foreground z-0">
             +{collaborators.length - 2}
           </div>
         )}
@@ -60,12 +60,15 @@ export function CardHeader({
       {/* Text */}
       <div className="flex-1 min-w-0">
         <h3
-          className="font-semibold text-zinc-900 text-sm leading-tight line-clamp-2 mb-0.5"
+          className="font-semibold text-foreground text-sm leading-tight line-clamp-2 mb-0.5"
           title={title}
         >
           {title}
         </h3>
-        <p className="text-xs text-zinc-500 line-clamp-1" title={consultant}>
+        <p
+          className="text-xs text-muted-foreground line-clamp-1"
+          title={consultant}
+        >
           {collaborators.length === 0
             ? consultant
             : collaborators.length === 1
@@ -73,7 +76,9 @@ export function CardHeader({
               : `${consultant} + ${collaborators.length} others`}
         </p>
         {metaLine && (
-          <p className="text-[10px] text-zinc-400 mt-0.5">{metaLine}</p>
+          <p className="text-[10px] text-muted-foreground/70 mt-0.5">
+            {metaLine}
+          </p>
         )}
       </div>
     </div>

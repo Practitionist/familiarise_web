@@ -136,19 +136,19 @@ export function PendingPaymentsWidget({
   // Empty state
   if (pendingPayments.length === 0) {
     return (
-      <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden h-full flex flex-col">
-        <div className="px-5 py-4 border-b border-zinc-100 shrink-0">
-          <h3 className="flex items-center gap-2 font-semibold text-zinc-900 text-sm">
-            <CreditCard className="h-4 w-4 text-zinc-400" />
+      <div className="bg-card rounded-2xl border border-border shadow-sm overflow-hidden h-full flex flex-col">
+        <div className="px-5 py-4 border-b border-border shrink-0">
+          <h3 className="flex items-center gap-2 font-semibold text-foreground text-sm">
+            <CreditCard className="h-4 w-4 text-muted-foreground/70" />
             Pending Payments
           </h3>
         </div>
         <div className="px-5 py-8 text-center flex-1 flex flex-col items-center justify-center">
-          <div className="mx-auto h-10 w-10 rounded-full bg-emerald-50 flex items-center justify-center mb-2">
-            <CreditCard className="h-5 w-5 text-emerald-500" />
+          <div className="mx-auto h-10 w-10 rounded-full bg-emerald-50 dark:bg-emerald-900/30 flex items-center justify-center mb-2">
+            <CreditCard className="h-5 w-5 text-emerald-500 dark:text-emerald-300" />
           </div>
-          <p className="text-sm text-zinc-500">No pending payments</p>
-          <p className="text-xs text-zinc-400 mt-0.5">
+          <p className="text-sm text-muted-foreground">No pending payments</p>
+          <p className="text-xs text-muted-foreground/70 mt-0.5">
             You&apos;re all caught up!
           </p>
         </div>
@@ -164,8 +164,8 @@ export function PendingPaymentsWidget({
       className={cn(
         "rounded-2xl border shadow-sm overflow-hidden h-full flex flex-col",
         hasExpiring
-          ? "bg-amber-50 border-amber-300"
-          : "bg-white border-amber-200",
+          ? "bg-amber-50 border-amber-300 dark:bg-amber-900/20 dark:border-amber-800"
+          : "bg-card border-amber-200 dark:border-amber-900",
       )}
     >
       <div
@@ -193,19 +193,19 @@ export function PendingPaymentsWidget({
             <div key={payment.id} className="px-5 py-3.5">
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium text-zinc-900 truncate">
+                  <p className="text-sm font-medium text-foreground truncate">
                     {payment.title}
                   </p>
-                  <p className="text-xs text-zinc-500 mt-0.5 truncate">
+                  <p className="text-xs text-muted-foreground mt-0.5 truncate">
                     with {payment.consultantName}
                   </p>
                 </div>
-                <span className="text-sm font-semibold text-zinc-900 tabular-nums shrink-0">
+                <span className="text-sm font-semibold text-foreground tabular-nums shrink-0">
                   {formatPrice(payment.amount)}
                 </span>
               </div>
               <div className="flex items-center justify-between mt-2.5">
-                <div className="flex items-center gap-1 text-xs text-zinc-500">
+                <div className="flex items-center gap-1 text-xs text-muted-foreground">
                   <Clock className="h-3 w-3" />
                   {payment.isExpiringSoon ? (
                     <span className="text-red-600 font-medium">
@@ -240,7 +240,7 @@ export function PendingPaymentsWidget({
                       size="sm"
                       variant="ghost"
                       disabled={cancellingId === payment.id}
-                      className="h-7 px-2 text-xs text-zinc-500 hover:text-red-600 hover:bg-red-50 font-semibold"
+                      className="h-7 px-2 text-xs text-muted-foreground hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 font-semibold"
                       onClick={() => handleCancelPending(payment.id)}
                     >
                       {cancellingId === payment.id ? (

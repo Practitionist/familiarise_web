@@ -72,18 +72,20 @@ function OrgCard({
   org: Awaited<ReturnType<typeof fetchPublicOrgs>>[number];
 }) {
   const capabilityLabel = org.canSponsor && org.canHost ? "Hybrid" : "Host";
+  // Capability is a binary categorical badge with no dark: variants — render it
+  // monochrome (filled = Hybrid, muted = Host) rather than off-brand purple/blue.
   const capabilityClass =
     org.canSponsor && org.canHost
-      ? "bg-purple-100 text-purple-700 border-purple-200"
-      : "bg-blue-100 text-blue-700 border-blue-200";
+      ? "bg-primary text-primary-foreground border-transparent"
+      : "bg-muted text-muted-foreground border-border";
 
   return (
     <Link
       href={`/explore/enterprise/organisations/${org.slug}`}
-      className="group flex flex-col bg-white rounded-2xl border border-zinc-200 hover:border-zinc-300 hover:shadow-lg transition-all duration-300 overflow-hidden"
+      className="group flex flex-col bg-card rounded-2xl border border-border hover:border-border hover:shadow-lg transition-all duration-300 overflow-hidden"
     >
       {/* Banner / header area */}
-      <div className="relative h-24 bg-gradient-to-br from-zinc-100 to-zinc-200 overflow-hidden">
+      <div className="relative h-24 bg-gradient-to-br from-muted to-muted overflow-hidden">
         {org.bannerImage && (
           <Image
             src={org.bannerImage}
@@ -98,7 +100,7 @@ function OrgCard({
       <div className="p-5 flex flex-col gap-3 flex-1">
         {/* Logo + name row */}
         <div className="flex items-center gap-3 -mt-10 relative">
-          <div className="w-14 h-14 rounded-xl bg-white border-2 border-white shadow-md flex items-center justify-center overflow-hidden flex-shrink-0">
+          <div className="w-14 h-14 rounded-xl bg-card border-2 border-card shadow-md flex items-center justify-center overflow-hidden flex-shrink-0">
             {org.logo ? (
               <Image
                 src={org.logo}
@@ -108,22 +110,22 @@ function OrgCard({
                 className="object-contain"
               />
             ) : (
-              <Building2 className="w-7 h-7 text-zinc-400" />
+              <Building2 className="w-7 h-7 text-muted-foreground/70" />
             )}
           </div>
           <div className="pt-8 min-w-0">
-            <h3 className="font-bold text-zinc-900 group-hover:text-zinc-700 transition-colors truncate">
+            <h3 className="font-bold text-foreground group-hover:text-muted-foreground transition-colors truncate">
               {org.name}
             </h3>
             {org.industry && (
-              <p className="text-xs text-zinc-500 truncate">{org.industry}</p>
+              <p className="text-xs text-muted-foreground truncate">{org.industry}</p>
             )}
           </div>
         </div>
 
         {/* Description */}
         {org.description && (
-          <p className="text-sm text-zinc-600 line-clamp-2 leading-relaxed">
+          <p className="text-sm text-muted-foreground line-clamp-2 leading-relaxed">
             {org.description}
           </p>
         )}
@@ -138,7 +140,7 @@ function OrgCard({
               {capabilityLabel}
             </Badge>
           </div>
-          <div className="flex items-center gap-1 text-xs text-zinc-500">
+          <div className="flex items-center gap-1 text-xs text-muted-foreground">
             <Users className="w-3.5 h-3.5" />
             <span>{org._count.memberships} expert{org._count.memberships !== 1 ? "s" : ""}</span>
           </div>
@@ -150,21 +152,21 @@ function OrgCard({
 
 function OrgCardSkeleton() {
   return (
-    <div className="flex flex-col bg-white rounded-2xl border border-zinc-200 overflow-hidden animate-pulse">
-      <div className="h-24 bg-zinc-100" />
+    <div className="flex flex-col bg-card rounded-2xl border border-border overflow-hidden animate-pulse">
+      <div className="h-24 bg-muted" />
       <div className="p-5 flex flex-col gap-3">
         <div className="flex items-center gap-3 -mt-10">
-          <div className="w-14 h-14 rounded-xl bg-zinc-200" />
+          <div className="w-14 h-14 rounded-xl bg-muted" />
           <div className="pt-8 flex flex-col gap-1">
-            <div className="h-4 w-28 bg-zinc-200 rounded" />
-            <div className="h-3 w-20 bg-zinc-100 rounded" />
+            <div className="h-4 w-28 bg-muted rounded" />
+            <div className="h-3 w-20 bg-muted rounded" />
           </div>
         </div>
-        <div className="h-3 bg-zinc-100 rounded w-full" />
-        <div className="h-3 bg-zinc-100 rounded w-3/4" />
+        <div className="h-3 bg-muted rounded w-full" />
+        <div className="h-3 bg-muted rounded w-3/4" />
         <div className="flex justify-between pt-2">
-          <div className="h-5 w-14 bg-zinc-100 rounded-full" />
-          <div className="h-4 w-16 bg-zinc-100 rounded" />
+          <div className="h-5 w-14 bg-muted rounded-full" />
+          <div className="h-4 w-16 bg-muted rounded" />
         </div>
       </div>
     </div>
@@ -177,13 +179,13 @@ async function OrgsGrid({ industry }: { industry?: string }) {
   if (orgs.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-24 text-center">
-        <Building2 className="w-12 h-12 text-zinc-300 mb-4" />
-        <p className="text-zinc-500 text-lg font-medium">
+        <Building2 className="w-12 h-12 text-muted-foreground/70 mb-4" />
+        <p className="text-muted-foreground text-lg font-medium">
           {industry ? `No agencies in ${industry} yet` : "No agencies listed yet"}
         </p>
-        <p className="text-zinc-400 text-sm mt-1">
+        <p className="text-muted-foreground/70 text-sm mt-1">
           {industry ? (
-            <Link href="/explore/enterprise/organisations" className="underline hover:text-zinc-600">
+            <Link href="/explore/enterprise/organisations" className="underline hover:text-foreground">
               View all industries
             </Link>
           ) : (
@@ -212,7 +214,7 @@ export default async function ExploreOrganisationsPage({
   const industries = await fetchIndustryList();
 
   return (
-    <main className="min-h-screen bg-white">
+    <main className="min-h-screen bg-background">
       {/* Hero */}
       <section className="relative pt-32 pb-16 bg-zinc-950 overflow-hidden">
         <div className="absolute inset-0">
@@ -229,10 +231,10 @@ export default async function ExploreOrganisationsPage({
                 Expert Networks & Agencies
               </span>
             </div>
-            <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold text-white mb-6">
+            <h1 className="text-fluid-4xl font-bold text-white mb-6 tracking-tight">
               Explore <span className="silver-text">Organisations</span>
             </h1>
-            <p className="text-lg text-zinc-400 max-w-xl mx-auto">
+            <p className="text-lg text-zinc-300 max-w-xl mx-auto">
               Discover expert networks, consulting agencies, and learning institutions
               on Familiarise. Book their curated experts directly.
             </p>
@@ -250,8 +252,8 @@ export default async function ExploreOrganisationsPage({
                 href="/explore/enterprise/organisations"
                 className={`inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-full transition-colors ${
                   !industry
-                    ? "bg-zinc-900 text-white"
-                    : "bg-zinc-100 text-zinc-700 border border-zinc-200 hover:bg-zinc-200"
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-muted text-muted-foreground border border-border hover:bg-muted/80"
                 }`}
               >
                 <Globe className="w-3.5 h-3.5" />
@@ -263,8 +265,8 @@ export default async function ExploreOrganisationsPage({
                   href={`/explore/enterprise/organisations?industry=${encodeURIComponent(ind)}`}
                   className={`inline-flex items-center px-4 py-2 text-sm font-medium rounded-full transition-colors ${
                     industry?.toLowerCase() === ind.toLowerCase()
-                      ? "bg-zinc-900 text-white"
-                      : "bg-zinc-100 text-zinc-700 border border-zinc-200 hover:bg-zinc-200"
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-muted text-muted-foreground border border-border hover:bg-muted/80"
                   }`}
                 >
                   {ind}

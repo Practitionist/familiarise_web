@@ -3,16 +3,13 @@
 import React from "react";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+  ResponsiveTable,
+  type ResponsiveColumn,
+} from "@/components/ui/responsive-table";
+import { PageHeader } from "@/components/ui/page-header";
 import { ClassEvent } from "../../../types/event";
 import { useParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -25,6 +22,18 @@ import type { WaitlistParticipant } from "@/types/participants";
 interface ClassParticipantsData {
   classEvent: ClassEvent;
   waitlist: WaitlistParticipant[];
+}
+
+// Registered-participant rows are flattened from the class event's slot users.
+type RegisteredParticipant = { id: string; name?: string; email?: string };
+
+// Waitlist status pill colors — semantic, kept with dark: variants.
+function getWaitlistStatusColor(status: string): string {
+  if (status === "NOTIFIED")
+    return "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300";
+  if (status === "EXPIRED")
+    return "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300";
+  return "bg-muted text-muted-foreground";
 }
 
 // Fetcher function for class participants
@@ -116,6 +125,93 @@ export default function ClassParticipantsPage() {
     ).values(),
   );
 
+  const registeredColumns: ResponsiveColumn<RegisteredParticipant>[] = [
+    {
+      key: "name",
+      header: "Name",
+      primary: true,
+      cell: (participant) => participant.name,
+    },
+    {
+      key: "email",
+      header: "Email",
+      cell: (participant) => participant.email,
+    },
+    {
+      key: "status",
+      header: "Status",
+      cell: () => (
+        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300">
+          Registered
+        </span>
+      ),
+    },
+  ];
+
+  const renderRegisteredActions = (participant: RegisteredParticipant) => (
+    <Button
+      variant="outline"
+      size="sm"
+      onClick={() => handleRemoveParticipant(participant.id)}
+      disabled={removeParticipantMutation.isPending}
+    >
+      {removeParticipantMutation.isPending ? "Removing..." : "Remove"}
+    </Button>
+  );
+
+  const waitlistColumns: ResponsiveColumn<WaitlistParticipant>[] = [
+    {
+      key: "position",
+      header: "Position",
+      cell: (entry) => (
+        <Badge variant="outline" className="font-mono">
+          #{entry.position ?? "-"}
+        </Badge>
+      ),
+    },
+    {
+      key: "name",
+      header: "Name",
+      primary: true,
+      cell: (entry) => entry.user.name,
+    },
+    {
+      key: "email",
+      header: "Email",
+      cell: (entry) => entry.user.email,
+    },
+    {
+      key: "joined",
+      header: "Joined",
+      cell: (entry) => format(new Date(entry.joinedAt), "MMM d, yyyy h:mm a"),
+    },
+    {
+      key: "status",
+      header: "Status",
+      cell: (entry) => (
+        <span
+          className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getWaitlistStatusColor(
+            entry.status,
+          )}`}
+        >
+          {entry.status}
+        </span>
+      ),
+    },
+  ];
+
+  const registeredEmpty = (
+    <div className="py-8 text-center text-muted-foreground">
+      No registered participants yet.
+    </div>
+  );
+
+  const waitlistEmpty = (
+    <div className="py-8 text-center text-muted-foreground">
+      Waitlist is empty.
+    </div>
+  );
+
   return (
     <div className="container mx-auto py-8">
       <Card>
@@ -129,19 +225,20 @@ export default function ClassParticipantsPage() {
               <ArrowLeft className="mr-2 h-4 w-4" /> Back to Appointments
             </Button>
           </Link>
-          <div>
-            <CardTitle className="text-2xl font-bold">
-              {classEvent.classPlan.title} - Participants
-            </CardTitle>
-            <div className="flex gap-4 text-sm text-gray-500 mt-1">
-              <span>
-                {participants.length}/{classEvent.classPlan.maxParticipants}{" "}
-                participants
+          <PageHeader
+            headingAs="h1"
+            title={`${classEvent.classPlan.title} - Participants`}
+            description={
+              <span className="flex gap-4">
+                <span>
+                  {participants.length}/{classEvent.classPlan.maxParticipants}{" "}
+                  participants
+                </span>
+                <span>•</span>
+                <span>{waitlist.length} on waitlist</span>
               </span>
-              <span>•</span>
-              <span>{waitlist.length} on waitlist</span>
-            </div>
-          </div>
+            }
+          />
         </CardHeader>
         <CardContent>
           <Tabs defaultValue="registered" className="w-full">
@@ -161,105 +258,22 @@ export default function ClassParticipantsPage() {
             </TabsList>
 
             <TabsContent value="registered">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Name</TableHead>
-                    <TableHead>Email</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {participants.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={4} className="text-center h-24">
-                        No registered participants yet.
-                      </TableCell>
-                    </TableRow>
-                  ) : (
-                    participants.map((participant) => (
-                      <TableRow key={participant.id}>
-                        <TableCell>{participant.name}</TableCell>
-                        <TableCell>{participant.email}</TableCell>
-                        <TableCell>
-                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                            Registered
-                          </span>
-                        </TableCell>
-                        <TableCell>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() =>
-                              handleRemoveParticipant(participant.id)
-                            }
-                            disabled={removeParticipantMutation.isPending}
-                          >
-                            {removeParticipantMutation.isPending
-                              ? "Removing..."
-                              : "Remove"}
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
+              <ResponsiveTable<RegisteredParticipant>
+                columns={registeredColumns}
+                rows={participants}
+                getRowId={(p) => p.id}
+                rowActions={renderRegisteredActions}
+                empty={registeredEmpty}
+              />
             </TabsContent>
 
             <TabsContent value="waitlist">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Position</TableHead>
-                    <TableHead>Name</TableHead>
-                    <TableHead>Email</TableHead>
-                    <TableHead>Joined</TableHead>
-                    <TableHead>Status</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {waitlist.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={5} className="text-center h-24">
-                        Waitlist is empty.
-                      </TableCell>
-                    </TableRow>
-                  ) : (
-                    waitlist.map((entry) => (
-                      <TableRow key={entry.id}>
-                        <TableCell>
-                          <Badge variant="outline" className="font-mono">
-                            #{entry.position ?? "-"}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>{entry.user.name}</TableCell>
-                        <TableCell>{entry.user.email}</TableCell>
-                        <TableCell>
-                          {format(
-                            new Date(entry.joinedAt),
-                            "MMM d, yyyy h:mm a",
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          <span
-                            className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                              entry.status === "NOTIFIED"
-                                ? "bg-amber-100 text-amber-800"
-                                : entry.status === "EXPIRED"
-                                  ? "bg-red-100 text-red-800"
-                                  : "bg-gray-100 text-gray-800"
-                            }`}
-                          >
-                            {entry.status}
-                          </span>
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
+              <ResponsiveTable<WaitlistParticipant>
+                columns={waitlistColumns}
+                rows={waitlist}
+                getRowId={(e) => e.id}
+                empty={waitlistEmpty}
+              />
             </TabsContent>
           </Tabs>
         </CardContent>
