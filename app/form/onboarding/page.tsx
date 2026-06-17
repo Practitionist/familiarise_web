@@ -14,8 +14,9 @@ import { Check, LogOut } from "lucide-react";
 import { cn } from "@/utils/tailwind";
 import { useToast } from "@/hooks/use-toast";
 import { signOut, useSession } from "@/lib/auth-client";
+import { getPendingReferral, clearPendingReferral } from "@/lib/pending-referral";
 import { useRouter } from "next/navigation";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { FormProvider, useForm } from "react-hook-form";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import ConsultantPreferredScheduleForm from "./components/ConsultantPreferredScheduleForm";
@@ -60,6 +61,29 @@ const MultiStepForm: React.FC = () => {
   const [formData, setFormData] = useState<Partial<OnboardingFormData>>({});
   const router = useRouter();
   const { toast } = useToast();
+
+  // Apply a referral code captured at first touch (signup / r/[code]) now that
+  // the user is authenticated — covers OAuth and verified-email signups, which
+  // no longer apply it at signup. Idempotent server-side (referredUserId is
+  // unique), best-effort. #880
+  useEffect(() => {
+    if (!session?.user?.id) return;
+    const code = getPendingReferral();
+    if (!code) return;
+    // Keep the code until a definitive outcome: clear on success or a terminal
+    // 400 (invalid / already-referred / self-referral), but retain it on
+    // transient failures (network / 429 / 5xx) so a later authenticated render
+    // can retry rather than permanently losing attribution. #880
+    fetch("/api/referrals/apply", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code }),
+    })
+      .then((res) => {
+        if (res.ok || res.status === 400) clearPendingReferral();
+      })
+      .catch(() => {});
+  }, [session?.user?.id]);
 
   const methods = useForm<OnboardingFormData>({
     mode: "onChange",
