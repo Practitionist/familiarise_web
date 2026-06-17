@@ -9,8 +9,8 @@ import {
   FaInstagram,
   FaYoutube,
   FaLinkedin,
-  FaTwitter,
-} from "react-icons/fa";
+  FaXTwitter,
+} from "react-icons/fa6";
 import { ArrowUpRight, MessageSquare } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -60,9 +60,9 @@ const FOOTER_LINKS: Record<string, FooterLink[]> = {
 
 const SOCIAL_LINKS = [
   {
-    icon: FaTwitter,
+    icon: FaXTwitter,
     href: "https://twitter.com/familiarise",
-    label: "Twitter",
+    label: "X",
   },
   {
     icon: FaLinkedin,
