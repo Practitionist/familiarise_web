@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { signIn, signUp, useSession } from "@/lib/auth-client";
+import { signUp, useSession, sendVerificationEmail } from "@/lib/auth-client";
 import { ssoSigninWithGuard } from "@/lib/sso/signin-with-toast";
 import { GlobeIcon } from "@/components/auth/auth-icons";
 import { SocialLoginButtons } from "@/components/auth/social-login-buttons";
@@ -45,6 +45,8 @@ function SignUpContent() {
     ssoBody: { providerId: string; domain: string; callbackURL: string };
   } | null>(null);
   const [ssoChecking, setSsoChecking] = useState(false);
+  const [verificationSent, setVerificationSent] = useState(false);
+  const [resending, setResending] = useState(false);
 
   // Build onboarding URL with optional callbackUrl passthrough (for org invite flow)
   const onboardingUrl = callbackUrl
@@ -84,6 +86,60 @@ function SignUpContent() {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-900">
         <p className="text-white">Redirecting to {destination}...</p>
+      </div>
+    );
+  }
+
+  const handleResendVerification = async () => {
+    setResending(true);
+    try {
+      await sendVerificationEmail({ email, callbackURL: "/auth/verify-email" });
+      toast({
+        title: "Verification email sent",
+        description: `Check ${email} for the link.`,
+      });
+    } catch {
+      toast({
+        title: "Couldn't resend the email",
+        description: "Please try again in a moment.",
+        variant: "destructive",
+      });
+    } finally {
+      setResending(false);
+    }
+  };
+
+  // After a verification-required signup there is no session yet — show a
+  // check-your-email panel with a resend instead of the form.
+  if (verificationSent) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-900 p-6">
+        <div className="w-full max-w-md text-center text-white">
+          <h2 className="text-2xl md:text-3xl font-semibold mb-3">
+            Check your email
+          </h2>
+          <p className="text-sm md:text-base text-gray-300 mb-6">
+            We sent a verification link to{" "}
+            <span className="font-medium">{email}</span>. Click it to activate
+            your account. The link expires in 1 hour.
+          </p>
+          <Button
+            onClick={handleResendVerification}
+            disabled={resending}
+            className="w-full bg-gray-800 hover:bg-gray-700"
+          >
+            {resending ? "Resending…" : "Resend verification email"}
+          </Button>
+          <p className="text-xs text-gray-400 mt-4">
+            Already verified?{" "}
+            <Link
+              href="/auth/signin"
+              className="font-medium text-blue-400 hover:underline"
+            >
+              Sign in
+            </Link>
+          </p>
+        </div>
       </div>
     );
   }
@@ -162,6 +218,7 @@ function SignUpContent() {
         name,
         email,
         password,
+        callbackURL: "/auth/verify-email",
       });
 
       if (error) {
@@ -170,8 +227,16 @@ function SignUpContent() {
           description: friendlyAuthError(error.message),
           variant: "destructive",
         });
+      } else if (data && !data.token) {
+        // requireEmailVerification: the account is created but no session is
+        // issued until the email is verified. Show the check-your-email panel.
+        setVerificationSent(true);
+        toast({
+          title: "Check your email",
+          description: `We sent a verification link to ${email}.`,
+        });
       } else if (data) {
-        // Apply referral code if present
+        // Session created (verification-disabled fallback): apply referral now.
         if (refCode) {
           try {
             await fetch("/api/referrals/apply", {

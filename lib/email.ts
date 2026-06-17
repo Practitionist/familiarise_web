@@ -1,6 +1,7 @@
 import { Resend } from "resend";
 import { WelcomeEmail } from "@/emails/auth/WelcomeEmail";
 import { PasswordResetEmail } from "@/emails/auth/PasswordResetEmail";
+import { VerificationEmail } from "@/emails/auth/VerificationEmail";
 import { AccountLinkedEmail } from "@/emails/auth/AccountLinkedEmail";
 import { PaymentLinkEmail } from "@/emails/payments/PaymentLinkEmail";
 import { PaymentSuccessEmail } from "@/emails/payments/PaymentSuccessEmail";
@@ -200,6 +201,71 @@ export async function sendPasswordResetEmail({
     console.error("Failed to send password reset email:", error);
     // #474 — dead-letter the rendered message so the worker can replay it.
     if (sentMessage) await recordFailedEmail(sentMessage, "PASSWORD_RESET", error);
+    return { success: false, error };
+  }
+}
+
+/**
+ * Send email-address verification link.
+ *
+ * `verificationUrl` is the ready-to-use link BetterAuth hands the
+ * `emailVerification.sendVerificationEmail` hook (it already carries the token
+ * + callbackURL), so we pass it through verbatim rather than rebuilding it.
+ *
+ * @param params User email, name, and the BetterAuth verification URL
+ * @returns Response from Resend
+ */
+export async function sendVerificationEmail({
+  email,
+  name,
+  verificationUrl,
+}: {
+  email: string;
+  name: string;
+  verificationUrl: string;
+}) {
+  // Dev affordance: when RESEND_API_KEY is unset the email can't send, so log
+  // the link to the server console so local verification flows are testable.
+  if (!process.env.RESEND_API_KEY) {
+    console.log(`[verify-email] ${email} -> ${verificationUrl}`);
+  }
+
+  let sentMessage: RenderedEmail | undefined;
+  try {
+    const resend = getResendClient();
+
+    if (!resend) {
+      console.error(
+        "RESEND_API_KEY is not configured. Cannot send verification email.",
+      );
+      return {
+        success: false,
+        error: "Email service not configured",
+      };
+    }
+
+    const html = await render(
+      VerificationEmail({ name, verificationLink: verificationUrl }),
+    );
+
+    sentMessage = {
+      from: "Familiarise <onboarding@familiarise.com>",
+      to: email,
+      subject: "Verify your Familiarise email address",
+      html,
+    };
+
+    const data = await resend.emails.send(sentMessage);
+    // #474 — Resend resolves (does not throw) on API-level errors, returning a
+    // non-null `error`. Throw so the catch below dead-letters the message
+    // instead of reporting a false success.
+    if (data.error) throw new Error(data.error.message || "Resend API error");
+
+    return { success: true, data };
+  } catch (error) {
+    console.error("Failed to send verification email:", error);
+    // #474 — dead-letter the rendered message so the worker can replay it.
+    if (sentMessage) await recordFailedEmail(sentMessage, "EMAIL_VERIFICATION", error);
     return { success: false, error };
   }
 }

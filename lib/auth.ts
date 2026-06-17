@@ -11,6 +11,7 @@ import {
   sendWelcomeEmail,
   sendAccountLinkedEmail,
   sendPasswordResetEmail,
+  sendVerificationEmail,
 } from "@/lib/email";
 import { syncSubscriber } from "@/lib/novu/subscriber";
 import { shouldRejectSession, lookupEnforcedOrg } from "@/lib/sso/enforce-session";
@@ -64,6 +65,12 @@ export const auth = betterAuth({
     enabled: true,
     minPasswordLength: 8,
     maxPasswordLength: 128,
+    // #673 — a credential signup must prove email ownership before it can hold
+    // a session. Without this an attacker can pre-register a victim's address; a
+    // later trusted-provider OAuth login (see accountLinking below) would then
+    // auto-link the real user into the attacker-seeded account (pre-hijacking).
+    // OAuth/SSO are unaffected — the IdP already asserts a verified email.
+    requireEmailVerification: true,
     password: {
       hash: async (password) => {
         return bcrypt.hash(password, 12);
@@ -83,6 +90,26 @@ export const auth = betterAuth({
       });
     },
     resetPasswordTokenExpiresIn: 1800, // 30 minutes
+  },
+
+  emailVerification: {
+    // Send the link on signup. An unverified sign-in attempt is still rejected
+    // (EMAIL_NOT_VERIFIED); the signin UI offers an explicit resend that lands
+    // on /auth/verify-email — sendOnSignIn is left off so we don't also fire a
+    // second link whose callbackURL would be "/".
+    sendOnSignUp: true,
+    // After clicking the link, drop the user straight into an authenticated
+    // session so they land on the callbackURL (our verify-email page) — no
+    // second login.
+    autoSignInAfterVerification: true,
+    expiresIn: 60 * 60, // 1 hour
+    sendVerificationEmail: async ({ user, url }) => {
+      await sendVerificationEmail({
+        email: user.email,
+        name: user.name || "User",
+        verificationUrl: url,
+      });
+    },
   },
 
   socialProviders: {

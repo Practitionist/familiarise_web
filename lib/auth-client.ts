@@ -14,4 +14,5 @@ export const authClient = createAuthClient({
   plugins: [customSessionClient<typeof auth>(), ssoClient()],
 });
 
-export const { signIn, signUp, signOut, useSession, getSession } = authClient;
+export const { signIn, signUp, signOut, useSession, getSession, sendVerificationEmail } =
+  authClient;
