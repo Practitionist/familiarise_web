@@ -156,6 +156,15 @@ export const ChatSidebar = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const initialSelectionDoneRef = useRef(false);
+  // #248 dedupe: guard against overlapping/duplicate channel fetches. The
+  // sidebar effect used to re-run (and refetch) on every channel selection and
+  // on useCallback identity churn, firing the queryChannels storm. This ref
+  // collapses concurrent fetches into one in-flight request.
+  const isFetchingRef = useRef(false);
+  // Tracks the client+scope we've already done the initial fetch for, so the
+  // initial-fetch effect is a no-op on unrelated re-renders. Refetch still
+  // happens on a genuine client or org-scope change.
+  const fetchedKeyRef = useRef<string | null>(null);
 
   // Pagination state
   const [hasMoreTeamChannels, setHasMoreTeamChannels] = useState(true);
@@ -169,6 +178,12 @@ export const ChatSidebar = () => {
       // Don't set loading to false here, wait for client
       return;
     }
+
+    // #248 dedupe: skip if a fetch is already in flight.
+    if (isFetchingRef.current) {
+      return;
+    }
+    isFetchingRef.current = true;
 
     setIsLoading(true);
     setError(null);
@@ -286,6 +301,7 @@ export const ChatSidebar = () => {
       setError("Failed to load channels. Please try refreshing.");
     } finally {
       setIsLoading(false);
+      isFetchingRef.current = false; // #248: release in-flight guard
     }
     // Why `scope` is in deps: when the operator toggles the org-context
     // dropdown (or navigates into /dashboard/organization/<orgId>/...),
@@ -359,6 +375,7 @@ export const ChatSidebar = () => {
       hasMoreTeamChannels,
       hasMoreDMChannels,
       isLoadingMore,
+      scope,
     ],
   );
 
@@ -477,11 +494,38 @@ export const ChatSidebar = () => {
     fetchChannels();
   };
 
-  // Initial fetch and setup listeners
+  // #248: Initial fetch — runs once per (client + org-scope), NOT on every
+  // channel selection. Previously this lived in the same effect as the event
+  // listener, whose deps included `activeChannelId`; selecting a channel
+  // re-ran the effect and refired the full queryChannels pair, producing the
+  // home/chat call-storm. The key guard makes unrelated re-renders a no-op
+  // while still refetching on a real client or scope change.
+  useEffect(() => {
+    if (!client?.userID) {
+      setIsLoading(true);
+      setTeamChannels([]);
+      setDirectMessages([]);
+      fetchedKeyRef.current = null;
+      return;
+    }
+
+    const scopeKey =
+      scope.kind === "org" ? `org:${scope.orgId}` : scope.kind;
+    const fetchKey = `${client.userID}::${scopeKey}`;
+    if (fetchedKeyRef.current === fetchKey) {
+      return; // already fetched for this client+scope
+    }
+    fetchedKeyRef.current = fetchKey;
+    // Reset auto-selection so a scope switch can pick a fresh default channel.
+    initialSelectionDoneRef.current = false;
+    fetchChannels();
+  }, [client, scope, fetchChannels]);
+
+  // #248: Event listener — attached once per client (not per channel click).
+  // Kept separate from the initial fetch so selecting a channel no longer tears
+  // down/re-attaches the listener or refires queryChannels.
   useEffect(() => {
     if (client) {
-      fetchChannels();
-
       // Listener for events that might require a channel list update
       const handleEvent = (event: Event) => {
         console.log("Stream event received:", event.type, event);
@@ -558,19 +602,11 @@ export const ChatSidebar = () => {
         console.log("Removing Stream event listener");
         client.off("*.**", handleEvent);
       };
-    } else {
-      setIsLoading(true);
-      setTeamChannels([]);
-      setDirectMessages([]);
     }
-  }, [
-    client,
-    fetchChannels,
-    activeChannelId,
-    setActiveChannel,
-    handleChannelDeleted,
-    handleUserRemovedFromChannel,
-  ]); // Add dependencies
+    // #248: deps intentionally exclude `fetchChannels` and `activeChannelId` so
+    // the listener is not re-attached on every channel selection. It re-attaches
+    // only when the client or the channel-mutation handlers genuinely change.
+  }, [client, handleChannelDeleted, handleUserRemovedFromChannel]);
 
   const handleChannelSelect = useCallback(
     (channel: Channel) => {

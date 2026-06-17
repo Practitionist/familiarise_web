@@ -1,7 +1,11 @@
 "use client";
 
 import React, { useState } from "react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  QueryClient,
+  QueryClientProvider,
+  defaultShouldDehydrateQuery,
+} from "@tanstack/react-query";
 
 // Factory so every server request gets its OWN client. A module-scope
 // singleton on the server is shared across concurrent requests, so one
@@ -22,6 +26,16 @@ function makeQueryClient() {
         refetchOnWindowFocus: false,
         refetchOnMount: false,
         refetchOnReconnect: "always",
+      },
+      // Never auto-retry mutations — payment/booking writes must not silently re-fire.
+      mutations: {
+        retry: 0,
+      },
+      // Also dehydrate in-flight queries so RSC-prefetched data hydrates the client.
+      dehydrate: {
+        shouldDehydrateQuery: (query) =>
+          defaultShouldDehydrateQuery(query) ||
+          query.state.status === "pending",
       },
     },
   });

@@ -22,9 +22,12 @@ import { cn } from "@/utils/tailwind";
 import { PendingPaymentsWidget } from "./PendingPaymentsWidget";
 import { format, differenceInHours, differenceInDays } from "date-fns";
 import { useState, useMemo, useRef } from "react";
-import { useStreamVideoClient } from "@stream-io/video-react-sdk";
+// #248: do NOT statically import the Stream SDK (useStreamVideoClient) or
+// lib/meeting (which imports the SDK) here — that would pull the heavy SDK into
+// the dashboard-HOME bundle / critical path. The video client + meeting helper
+// are acquired lazily inside the Join handler (only when a user clicks Join).
+import { getGlobalVideoClient } from "@/lib/stream/disconnect";
 import { useToast } from "@/hooks/use-toast";
-import { getOrCreateAppointmentMeeting } from "@/lib/meeting";
 import type { TConsulteeEventsResponse } from "@/types/consultee-events";
 import {
   type ProcessedEvent,
@@ -660,7 +663,6 @@ export default function HomeTab({
   const [expandedEvents, setExpandedEvents] = useState<Set<string>>(new Set());
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [joiningEventId, setJoiningEventId] = useState<string | null>(null);
-  const client = useStreamVideoClient();
   const { toast } = useToast();
 
   // Handle joining a meeting
@@ -674,6 +676,10 @@ export default function HomeTab({
       return;
     }
 
+    // #248: read the already-connected video client singleton at click time
+    // (same instance <StreamVideo> uses) instead of via useStreamVideoClient,
+    // so the SDK stays off the home bundle.
+    const client = getGlobalVideoClient();
     if (!client) {
       toast({
         title: "Not signed in",
@@ -685,6 +691,8 @@ export default function HomeTab({
 
     setJoiningEventId(event.id);
     try {
+      // #248: lazy-import the meeting helper (it imports the SDK) on demand.
+      const { getOrCreateAppointmentMeeting } = await import("@/lib/meeting");
       const meetingId = await getOrCreateAppointmentMeeting(
         client,
         event.joinableAppointment,
