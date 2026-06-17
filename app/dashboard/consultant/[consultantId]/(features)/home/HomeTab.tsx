@@ -5,8 +5,11 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
-import { getOrCreateAppointmentMeeting } from "@/lib/meeting";
-import { useStreamVideoClient } from "@stream-io/video-react-sdk";
+// #248: do NOT statically import the Stream SDK (useStreamVideoClient) or
+// lib/meeting (which imports the SDK) here — that would pull the heavy SDK into
+// the dashboard-HOME bundle / critical path. The video client + meeting helper
+// are acquired lazily inside the Join handler (only when a user clicks Join).
+import { getGlobalVideoClient } from "@/lib/stream/disconnect";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
@@ -69,6 +72,26 @@ interface HomeTabProps {
   financialSummary?: TFinancialSummary;
 }
 
+// #248: the video connect is deferred to requestIdleCallback, so the global
+// client may not exist yet at the instant a user clicks Join. Poll briefly for
+// it (the StreamProvider mounted on this route is already connecting) rather
+// than erroring out on the first null read. Resolves null if it never appears
+// within the window so the caller can show a soft "try again" message.
+async function waitForGlobalVideoClient(
+  timeoutMs = 4000,
+  intervalMs = 150,
+): Promise<ReturnType<typeof getGlobalVideoClient>> {
+  const existing = getGlobalVideoClient();
+  if (existing) return existing;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    const client = getGlobalVideoClient();
+    if (client) return client;
+  }
+  return getGlobalVideoClient();
+}
+
 const staggerChildren = {
   hidden: { opacity: 0 },
   visible: {
@@ -91,7 +114,6 @@ export function HomeTab({
   financialSummary,
 }: Readonly<HomeTabProps>) {
   const router = useRouter();
-  const client = useStreamVideoClient();
   const { toast } = useToast();
   const { data: session } = useSession();
   // Sponsoring-org lookup for the indigo "Sponsored · <Org>" badge —
@@ -112,8 +134,17 @@ export function HomeTab({
     appointment: TAppointment,
     joinableSlot?: TAppointment["slotsOfAppointment"][number],
   ) => {
+    // #248: read the already-connected video client singleton at click time
+    // (same instance <StreamVideo> uses) instead of via useStreamVideoClient,
+    // so the SDK stays off the home bundle. The video connect is now deferred
+    // to requestIdleCallback, so a fast Join click can land before the client
+    // exists — briefly wait for it instead of immediately erroring.
+    const client = await waitForGlobalVideoClient();
     if (!client) {
-      toast({ title: "Error", description: "Meeting client not ready." });
+      toast({
+        title: "Connecting…",
+        description: "Setting up your meeting client. Please try Join again.",
+      });
       return;
     }
     const relevantSlot =
@@ -127,6 +158,8 @@ export function HomeTab({
     }
 
     try {
+      // #248: lazy-import the meeting helper (it imports the SDK) on demand.
+      const { getOrCreateAppointmentMeeting } = await import("@/lib/meeting");
       const meetingId = await getOrCreateAppointmentMeeting(
         client,
         appointment,

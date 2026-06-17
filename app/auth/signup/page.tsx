@@ -4,7 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { signUp, useSession } from "@/lib/auth-client";
+import { signUp, useSession, sendVerificationEmail } from "@/lib/auth-client";
+import { setPendingReferral, clearPendingReferral } from "@/lib/pending-referral";
 import { ssoSigninWithGuard } from "@/lib/sso/signin-with-toast";
 import { GlobeIcon } from "@/components/auth/auth-icons";
 import { SocialLoginButtons } from "@/components/auth/social-login-buttons";
@@ -45,27 +46,45 @@ function SignUpContent() {
     ssoBody: { providerId: string; domain: string; callbackURL: string };
   } | null>(null);
   const [ssoChecking, setSsoChecking] = useState(false);
+  const [verificationSent, setVerificationSent] = useState(false);
+  const [resending, setResending] = useState(false);
+
+  // Validate the callbackUrl once (relative paths only — prevents open-redirect)
+  // and reuse the safe value across onboarding, verification, and social login.
+  const safeCallbackUrl =
+    callbackUrl && callbackUrl.startsWith("/") && !callbackUrl.startsWith("//")
+      ? callbackUrl
+      : null;
 
   // Build onboarding URL with optional callbackUrl passthrough (for org invite flow)
-  const onboardingUrl = callbackUrl
-    ? `/form/onboarding?callbackUrl=${encodeURIComponent(callbackUrl)}`
+  const onboardingUrl = safeCallbackUrl
+    ? `/form/onboarding?callbackUrl=${encodeURIComponent(safeCallbackUrl)}`
     : "/form/onboarding";
+
+  // Thread the validated callbackUrl through the verification link so an
+  // invite/deep-link destination survives email verification.
+  const verificationCallbackUrl = safeCallbackUrl
+    ? `/auth/verify-email?callbackUrl=${encodeURIComponent(safeCallbackUrl)}`
+    : "/auth/verify-email";
 
   // Redirect authenticated users based on onboarding status
   useEffect(() => {
     if (!isPending && session?.user) {
       if (session.user.onboardingCompleted) {
-        // If there's a callbackUrl (e.g., from an invite link), honor it
-        if (callbackUrl?.startsWith("/") && !callbackUrl.startsWith("//")) {
-          router.push(callbackUrl);
-        } else {
-          router.push("/dashboard");
-        }
+        router.push(safeCallbackUrl || "/dashboard");
       } else {
         router.push(onboardingUrl);
       }
     }
-  }, [session, isPending, router, callbackUrl, onboardingUrl]);
+  }, [session, isPending, router, safeCallbackUrl, onboardingUrl]);
+
+  // Persist the referral code at first touch so it survives the OAuth redirect
+  // and the email-verification gap; it is applied after authentication on the
+  // onboarding landing. #880
+  useEffect(() => {
+    if (refCode) setPendingReferral(refCode);
+    else clearPendingReferral();
+  }, [refCode]);
 
   // Show loading while checking session status (fallback for when middleware doesn't catch)
   if (isPending) {
@@ -84,6 +103,60 @@ function SignUpContent() {
     return (
       <div className="min-h-screen flex items-center justify-center bg-neutral-950">
         <p className="text-white">Redirecting to {destination}...</p>
+      </div>
+    );
+  }
+
+  const handleResendVerification = async () => {
+    setResending(true);
+    try {
+      await sendVerificationEmail({ email, callbackURL: verificationCallbackUrl });
+      toast({
+        title: "Verification email sent",
+        description: `Check ${email} for the link.`,
+      });
+    } catch {
+      toast({
+        title: "Couldn't resend the email",
+        description: "Please try again in a moment.",
+        variant: "destructive",
+      });
+    } finally {
+      setResending(false);
+    }
+  };
+
+  // After a verification-required signup there is no session yet — show a
+  // check-your-email panel with a resend instead of the form.
+  if (verificationSent) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-neutral-950 p-6">
+        <div className="w-full max-w-md text-center text-white">
+          <h2 className="mb-3 text-fluid-3xl font-semibold tracking-tight">
+            Check your email
+          </h2>
+          <p className="mb-6 text-sm text-zinc-400 md:text-base">
+            We sent a verification link to{" "}
+            <span className="font-medium text-white">{email}</span>. Click it to
+            activate your account. The link expires in 1 hour.
+          </p>
+          <Button
+            onClick={handleResendVerification}
+            disabled={resending}
+            className="w-full bg-zinc-800 hover:bg-zinc-700"
+          >
+            {resending ? "Resending…" : "Resend verification email"}
+          </Button>
+          <p className="mt-4 text-xs text-zinc-400">
+            Already verified?{" "}
+            <Link
+              href="/auth/signin"
+              className="font-medium text-zinc-300 underline-offset-4 hover:text-white hover:underline"
+            >
+              Sign in
+            </Link>
+          </p>
+        </div>
       </div>
     );
   }
@@ -162,6 +235,7 @@ function SignUpContent() {
         name,
         email,
         password,
+        callbackURL: verificationCallbackUrl,
       });
 
       if (error) {
@@ -170,19 +244,18 @@ function SignUpContent() {
           description: friendlyAuthError(error.message),
           variant: "destructive",
         });
+      } else if (data && !data.token) {
+        // requireEmailVerification: the account is created but no session is
+        // issued until the email is verified. Show the check-your-email panel.
+        setVerificationSent(true);
+        toast({
+          title: "Check your email",
+          description: `We sent a verification link to ${email}.`,
+        });
       } else if (data) {
-        // Apply referral code if present
-        if (refCode) {
-          try {
-            await fetch("/api/referrals/apply", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ code: refCode }),
-            });
-          } catch {
-            // Non-blocking: referral application failure shouldn't block signup
-          }
-        }
+        // Session created (verification-disabled fallback). The referral code
+        // was persisted at first touch and is applied on the onboarding landing
+        // (covers OAuth + verified-email paths uniformly). #880
         toast({
           title: "Account Created Successfully!",
           description: "Redirecting to onboarding...",
@@ -358,7 +431,7 @@ function SignUpContent() {
               </div>
 
               <SocialLoginButtons
-                callbackURL={callbackUrl || "/dashboard"}
+                callbackURL={safeCallbackUrl || "/dashboard"}
                 newUserCallbackURL={onboardingUrl}
                 isLoading={isLoading}
                 ssoEnforced={false}

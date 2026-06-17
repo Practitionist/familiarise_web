@@ -115,6 +115,14 @@ export async function GET(
           ? { organizationId: scope.orgId }
           : undefined;
 
+    // TTFB bound: cap each booking query to recent-or-future rows. The
+    // consultee Home calendar lets users page backward month-by-month, so
+    // the lower bound is 1 year (not 90 days) to keep that browse window
+    // intact while a multi-year veteran no longer pulls full history.
+    const since = new Date();
+    since.setFullYear(since.getFullYear() - 1);
+    const EVENTS_TAKE = 200;
+
     // PERFORMANCE FIX: Use direct Prisma queries instead of internal HTTP fetches
     // This avoids network overhead and reduces response time from 11+ seconds to <1 second
     const [consultations, subscriptions, webinars, classes, trials] =
@@ -122,6 +130,10 @@ export async function GET(
         prisma.consultation.findMany({
           where: {
             requestedById: consulteeId,
+            // Org scope only — NO slot requirement. The Appointments → Upcoming
+            // view renders slot-less PENDING bookings (pending-payment CTA), so
+            // requiring an in-window slot would hide them. take:EVENTS_TAKE bounds
+            // the row count instead. #887
             ...(oneApptOrgWhere && { appointment: { is: oneApptOrgWhere } }),
           },
           include: {
@@ -156,13 +168,15 @@ export async function GET(
             },
           },
           orderBy: { requestedAt: "desc" },
+          take: EVENTS_TAKE,
         }),
         prisma.subscription.findMany({
           where: {
             requestedById: consulteeId,
-            ...(manyApptOrgWhere && {
-              appointments: { some: manyApptOrgWhere },
-            }),
+            // Org scope only — NO slot requirement (see consultation above);
+            // take:EVENTS_TAKE bounds the row count without hiding slot-less
+            // PENDING subscriptions. #887
+            ...(manyApptOrgWhere && { appointments: { some: manyApptOrgWhere } }),
           },
           include: {
             subscriptionPlan: {
@@ -196,6 +210,7 @@ export async function GET(
             },
           },
           orderBy: { requestedAt: "desc" },
+          take: EVENTS_TAKE,
         }),
         // Webinars: User registered via appointment slots OR waitlisted
         prisma.webinar.findMany({
@@ -204,12 +219,19 @@ export async function GET(
               {
                 appointment: {
                   slotsOfAppointment: {
-                    some: { user: { some: { id: userId } } },
+                    // TTFB bound: the registered-via-slot branch only —
+                    // the user must own a slot AND it must be in-window.
+                    some: {
+                      user: { some: { id: userId } },
+                      startsAt: { gte: since },
+                    },
                   },
                   ...(oneApptOrgWhere ?? {}),
                 },
               },
               {
+                // Waitlist branch left unbounded by date — a waitlisted
+                // entry may have no scheduled slot yet.
                 waitlist: {
                   some: {
                     userId,
@@ -270,6 +292,7 @@ export async function GET(
             },
           },
           orderBy: { createdAt: "desc" },
+          take: EVENTS_TAKE,
         }),
         // Classes: User registered via appointment slots OR waitlisted
         prisma.class.findMany({
@@ -279,13 +302,20 @@ export async function GET(
                 appointments: {
                   some: {
                     slotsOfAppointment: {
-                      some: { user: { some: { id: userId } } },
+                      // TTFB bound: registered-via-slot branch only — the
+                      // user must own a slot AND it must be in-window.
+                      some: {
+                        user: { some: { id: userId } },
+                        startsAt: { gte: since },
+                      },
                     },
                     ...(manyApptOrgWhere ?? {}),
                   },
                 },
               },
               {
+                // Waitlist branch left unbounded by date — a waitlisted
+                // entry may have no scheduled slot yet.
                 waitlist: {
                   some: {
                     userId,
@@ -346,12 +376,17 @@ export async function GET(
             },
           },
           orderBy: { createdAt: "desc" },
+          take: EVENTS_TAKE,
         }),
         // Trial sessions: Free trials requested by the consultee
         prisma.trialSession.findMany({
           where: {
             consulteeProfileId: consulteeId,
             ...(trialOrgWhere ?? {}),
+            // TTFB bound: trials may be PENDING with no appointment/slot
+            // yet, so bound by requestedAt (the orderBy field) rather than
+            // slot start to avoid dropping recent slot-less trials.
+            requestedAt: { gte: since },
           },
           include: {
             subscriptionPlan: {
@@ -392,6 +427,7 @@ export async function GET(
             },
           },
           orderBy: { requestedAt: "desc" },
+          take: EVENTS_TAKE,
         }),
       ]);
 

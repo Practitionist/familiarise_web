@@ -346,6 +346,10 @@ export async function GET(
       // Fetch approved appointments for consultations, subscriptions, webinars, and classes
       prisma.appointment.findMany({
         where: {
+          // TTFB bound: Home only renders today/upcoming widgets, so cap
+          // to appointments with a recent-or-future slot. Full history lives
+          // on the dedicated /appointments page (separate endpoint).
+          slotsOfAppointment: { some: { startsAt: { gte: ninetyDaysAgo } } },
           OR: [
             {
               consultation: {
@@ -402,6 +406,11 @@ export async function GET(
           ],
         },
         include: appointmentInclude,
+        // No top-level start field on Appointment (slots carry startsAt),
+        // so order by createdAt to make `take` deterministic; the JS
+        // sortedAppointments step re-sorts by slot startsAt afterwards.
+        orderBy: { createdAt: "desc" },
+        take: 200,
       }),
       // Fetch pending consultations
       prisma.consultation.findMany({
@@ -412,11 +421,15 @@ export async function GET(
             },
           },
           status: "PENDING",
+          // TTFB bound: approvals widget surfaces actionable recent requests;
+          // a 90-day-old PENDING request is stale.
+          requestedAt: { gte: ninetyDaysAgo },
         },
         include: consultationInclude,
         orderBy: {
           requestedAt: "desc",
         },
+        take: 200,
       }),
       // Fetch pending subscriptions
       prisma.subscription.findMany({
@@ -425,11 +438,15 @@ export async function GET(
             consultantProfileId,
           },
           status: "PENDING",
+          // TTFB bound: approvals widget surfaces actionable recent requests;
+          // a 90-day-old PENDING request is stale.
+          requestedAt: { gte: ninetyDaysAgo },
         },
         include: subscriptionInclude,
         orderBy: {
           requestedAt: "desc",
         },
+        take: 200,
       }),
       // Fetch recent activities
       prisma.activityLog.findMany({
