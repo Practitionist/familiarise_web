@@ -187,7 +187,9 @@ export async function createOrganizations(
   }
 
   // -------------------------------------------------------- CONSENT ARTIFACTS
-  await seedConsentArtifacts(users.slice(0, 10));
+  // ALL seeded users, not just the first 10 — every user the runtime touches
+  // (Stream upsert on dashboard load) needs the gate to pass.
+  await seedConsentArtifacts(users);
 
   // ---------------------------------------------------- TOUR OWNER (#723)
   // Dedicated ORG_WORKSPACE account with deterministic credentials so tour
@@ -759,11 +761,18 @@ async function seedSoloConsultant(user: UserWithProfiles) {
 // ---------------------------------------------------------------------------
 
 async function seedConsentArtifacts(users: UserWithProfiles[]) {
+  // Stamp the CANONICAL runtime purpose codes that `checkConsent` (fail-closed)
+  // gates on — mirror the signup hook (lib/auth.ts) so seeded users behave like
+  // real signups. STREAM_DATA_PROCESSING is what actions/stream/chat/user.action.ts
+  // checks before handing PII to Stream; without it every seeded user fails the
+  // Stream upsert on dashboard load. The kebab-case codes the org consent
+  // dashboard offers (session-booking/marketing/analytics/...) are a SEPARATE
+  // taxonomy not consulted at runtime, so they are not seeded here.
   for (const u of users) {
     const draft = buildConsentArtifact({
       userId: u.id,
       dataFiduciary: "Familiarise Pvt Ltd",
-      purposeCodes: ["account-management", "session-booking", "analytics"],
+      purposeCodes: ["PRIMARY_PROCESSING", "STREAM_DATA_PROCESSING"],
       language: "en",
       version: 1,
     });

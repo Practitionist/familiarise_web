@@ -66,6 +66,22 @@
 import { createHash } from "node:crypto";
 import prisma from "@/lib/prisma";
 
+/**
+ * Thrown when a purpose-scoped action is blocked because the user has not
+ * granted (or has withdrawn) the required consent. Typed so callers can
+ * distinguish a deliberate DPDP gate from an infra failure and degrade
+ * gracefully (skip the processing) instead of erroring the whole path —
+ * without weakening the gate itself.
+ */
+export class ConsentRequiredError extends Error {
+  readonly purposeCode: string;
+  constructor(purposeCode: string, message: string) {
+    super(message);
+    this.name = "ConsentRequiredError";
+    this.purposeCode = purposeCode;
+  }
+}
+
 export interface ConsentGrantInput {
   userId: string;
   dataFiduciary: string;
