@@ -74,7 +74,10 @@ function VerifyEmailContent() {
     }
     setResending(true);
     try {
-      await sendVerificationEmail({ email, callbackURL: "/auth/verify-email" });
+      const verificationCallbackUrl = safeCallbackUrl
+        ? `/auth/verify-email?callbackUrl=${encodeURIComponent(safeCallbackUrl)}`
+        : "/auth/verify-email";
+      await sendVerificationEmail({ email, callbackURL: verificationCallbackUrl });
       toast({
         title: "Verification email sent",
         description: `Check ${email} for the link. It expires in 1 hour.`,

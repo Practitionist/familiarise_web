@@ -49,33 +49,34 @@ function SignUpContent() {
   const [verificationSent, setVerificationSent] = useState(false);
   const [resending, setResending] = useState(false);
 
+  // Validate the callbackUrl once (relative paths only — prevents open-redirect)
+  // and reuse the safe value across onboarding, verification, and social login.
+  const safeCallbackUrl =
+    callbackUrl && callbackUrl.startsWith("/") && !callbackUrl.startsWith("//")
+      ? callbackUrl
+      : null;
+
   // Build onboarding URL with optional callbackUrl passthrough (for org invite flow)
-  const onboardingUrl = callbackUrl
-    ? `/form/onboarding?callbackUrl=${encodeURIComponent(callbackUrl)}`
+  const onboardingUrl = safeCallbackUrl
+    ? `/form/onboarding?callbackUrl=${encodeURIComponent(safeCallbackUrl)}`
     : "/form/onboarding";
 
-  // Thread the original (relative-only) callbackUrl through the verification
-  // link so an invite/deep-link destination survives email verification.
-  const verificationCallbackUrl =
-    callbackUrl && callbackUrl.startsWith("/") && !callbackUrl.startsWith("//")
-      ? `/auth/verify-email?callbackUrl=${encodeURIComponent(callbackUrl)}`
-      : "/auth/verify-email";
+  // Thread the validated callbackUrl through the verification link so an
+  // invite/deep-link destination survives email verification.
+  const verificationCallbackUrl = safeCallbackUrl
+    ? `/auth/verify-email?callbackUrl=${encodeURIComponent(safeCallbackUrl)}`
+    : "/auth/verify-email";
 
   // Redirect authenticated users based on onboarding status
   useEffect(() => {
     if (!isPending && session?.user) {
       if (session.user.onboardingCompleted) {
-        // If there's a callbackUrl (e.g., from an invite link), honor it
-        if (callbackUrl?.startsWith("/") && !callbackUrl.startsWith("//")) {
-          router.push(callbackUrl);
-        } else {
-          router.push("/dashboard");
-        }
+        router.push(safeCallbackUrl || "/dashboard");
       } else {
         router.push(onboardingUrl);
       }
     }
-  }, [session, isPending, router, callbackUrl, onboardingUrl]);
+  }, [session, isPending, router, safeCallbackUrl, onboardingUrl]);
 
   // Persist the referral code at first touch so it survives the OAuth redirect
   // and the email-verification gap; it is applied after authentication on the
@@ -430,7 +431,7 @@ function SignUpContent() {
               </div>
 
               <SocialLoginButtons
-                callbackURL={callbackUrl || "/dashboard"}
+                callbackURL={safeCallbackUrl || "/dashboard"}
                 newUserCallbackURL={onboardingUrl}
                 isLoading={isLoading}
                 ssoEnforced={false}
