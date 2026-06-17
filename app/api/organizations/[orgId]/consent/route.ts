@@ -106,12 +106,25 @@ export async function POST(
   }
   const body = parsed.data;
 
-  // Normalise any legacy kebab-case codes to the single canonical taxonomy
-  // (lib/compliance/purpose-codes.ts) before they hit storage, so the
-  // fail-closed runtime gate and the dashboard never diverge again. Unknown
-  // free-form codes pass through unchanged (still accepted by the schema).
+  // Normalise to the single canonical taxonomy (lib/compliance/purpose-codes.ts)
+  // before storage, so the fail-closed runtime gate and the dashboard never
+  // diverge again. `normalizePurposeCode` returns undefined for codes that are
+  // neither a legacy alias nor already canonical — reject the whole request
+  // rather than silently storing/dropping them, so non-canonical strings can
+  // never re-enter the taxonomy.
+  const normalized = body.purposeCodes.map((c) => ({
+    raw: c,
+    code: normalizePurposeCode(c),
+  }));
+  const unknown = normalized.filter((n) => n.code === undefined).map((n) => n.raw);
+  if (unknown.length > 0) {
+    return NextResponse.json(
+      { error: "Unknown purpose code(s)", detail: { unknown } },
+      { status: 400 },
+    );
+  }
   const purposeCodes = Array.from(
-    new Set(body.purposeCodes.map(normalizePurposeCode)),
+    new Set(normalized.map((n) => n.code as string)),
   );
 
   // Cross-org check: caller must be recording consent for an actual
@@ -214,10 +227,19 @@ export async function DELETE(
   const { userId } = parsed.data;
   // Normalise a legacy kebab-case scope to canonical so a withdrawal targets
   // the same code the gate/storage uses (e.g. third-party-sharing-with-stream
-  // → STREAM_DATA_PROCESSING).
-  const purposeCode = parsed.data.purposeCode
-    ? normalizePurposeCode(parsed.data.purposeCode)
-    : undefined;
+  // → STREAM_DATA_PROCESSING). An unknown code must 400 — NOT fall back to
+  // undefined, which `withdrawConsent` reads as "withdraw ALL consents" and
+  // would silently escalate a scoped request into a full opt-out.
+  let purposeCode: string | undefined;
+  if (parsed.data.purposeCode) {
+    purposeCode = normalizePurposeCode(parsed.data.purposeCode);
+    if (purposeCode === undefined) {
+      return NextResponse.json(
+        { error: "Unknown purpose code", detail: { purposeCode: parsed.data.purposeCode } },
+        { status: 400 },
+      );
+    }
+  }
 
   // Cross-org guard: same logic as POST — only members of this org can
   // have their consent withdrawn through this endpoint.

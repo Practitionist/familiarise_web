@@ -86,7 +86,19 @@ export const LEGACY_PURPOSE_CODE_MAP: Record<string, PurposeCode> = {
   "account-management": PURPOSE_CODES.PRIMARY_PROCESSING,
 };
 
-/** Normalise a possibly-legacy purpose code to its canonical form. */
-export function normalizePurposeCode(code: string): string {
-  return LEGACY_PURPOSE_CODE_MAP[code] ?? code;
+/** Canonical-code membership set, for O(1) "is this already canonical?" checks. */
+const CANONICAL_PURPOSE_CODE_SET = new Set<PurposeCode>(ALL_PURPOSE_CODES);
+
+/**
+ * Normalise a possibly-legacy purpose code to its canonical form. Returns
+ * `undefined` for codes that are neither a known legacy alias nor already
+ * canonical — callers MUST drop/reject those rather than storing them, so
+ * non-canonical strings can never re-enter the taxonomy and recreate drift.
+ */
+export function normalizePurposeCode(code: string): PurposeCode | undefined {
+  const mapped = LEGACY_PURPOSE_CODE_MAP[code];
+  if (mapped) return mapped;
+  return CANONICAL_PURPOSE_CODE_SET.has(code as PurposeCode)
+    ? (code as PurposeCode)
+    : undefined;
 }

@@ -768,18 +768,24 @@ async function seedConsentArtifacts(users: UserWithProfiles[]) {
   // checks before handing PII to Stream; without it every seeded user fails the
   // Stream upsert on dashboard load. Codes come from the single canonical
   // taxonomy (lib/compliance/purpose-codes.ts) the whole app now shares.
+  // One artifact PER purpose code (mirror the signup hook in lib/auth.ts).
+  // A single artifact bundling both codes would let a scoped withdrawal of
+  // one code revoke the other, since withdrawConsent stamps the whole artifact
+  // matching the target code. language "en-IN" for consistency with signup.
   for (const u of users) {
-    const draft = buildConsentArtifact({
-      userId: u.id,
-      dataFiduciary: "Familiarise Pvt Ltd",
-      purposeCodes: [
-        PURPOSE_CODES.PRIMARY_PROCESSING,
-        PURPOSE_CODES.STREAM_DATA_PROCESSING,
-      ],
-      language: "en",
-      version: 1,
-    });
-    await prisma.consentArtifact.create({ data: draft });
+    for (const purposeCode of [
+      PURPOSE_CODES.PRIMARY_PROCESSING,
+      PURPOSE_CODES.STREAM_DATA_PROCESSING,
+    ] as const) {
+      const draft = buildConsentArtifact({
+        userId: u.id,
+        dataFiduciary: "Familiarise Pvt Ltd",
+        purposeCodes: [purposeCode],
+        language: "en-IN",
+        version: 1,
+      });
+      await prisma.consentArtifact.create({ data: draft });
+    }
   }
   console.log(`[15a]   ✓ ConsentArtifact seeded for ${users.length} users`);
 }

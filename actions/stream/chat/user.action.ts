@@ -107,6 +107,12 @@ export const upsertUserToStream = async (userId: string) => {
 
     return streamUser;
   } catch (error) {
+    // A consent gate is a deliberate refusal (already warn-logged above), not
+    // an infra failure — rethrow without an error-level log so it doesn't
+    // pollute error-monitoring dashboards with false positives.
+    if (error instanceof ConsentRequiredError) {
+      throw error;
+    }
     streamLogger.error("Failed to upsert user to Stream", error, {
       userId: validatedUserId,
     });

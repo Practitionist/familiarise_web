@@ -67,6 +67,7 @@
 
 import { createHash } from "node:crypto";
 import prisma from "@/lib/prisma";
+import type { PurposeCode } from "./purpose-codes";
 
 /**
  * Thrown when a purpose-scoped action is blocked because the user has not
@@ -76,8 +77,8 @@ import prisma from "@/lib/prisma";
  * without weakening the gate itself.
  */
 export class ConsentRequiredError extends Error {
-  readonly purposeCode: string;
-  constructor(purposeCode: string, message: string) {
+  readonly purposeCode: PurposeCode;
+  constructor(purposeCode: PurposeCode, message: string) {
     super(message);
     this.name = "ConsentRequiredError";
     this.purposeCode = purposeCode;
