@@ -13,6 +13,10 @@
  */
 
 import type { MemberRole, MemberStatus } from "@prisma/client";
+import {
+  getOrgAnalytics,
+  type OrgAnalyticsPayload,
+} from "@/lib/data/org-analytics";
 
 export interface MemberRow {
   id: string;
@@ -27,13 +31,14 @@ export interface MemberRow {
   };
 }
 
-export async function prefetchOrgAnalytics(_orgId: string): Promise<null> {
-  // Analytics is fetched client-side via /api/organizations/[id]/analytics.
-  // Returning null short-circuits the SSR cache; the client hook re-reads
-  // on mount. A real SSR implementation would call the same Prisma
-  // aggregates the route does, but the route is cheap enough that the
-  // cache-miss cost isn't worth the duplication.
-  return null;
+export async function prefetchOrgAnalytics(
+  orgId: string,
+): Promise<OrgAnalyticsPayload | null> {
+  // queryKey ["org-analytics", orgId] — same key + same payload the analytics
+  // AND home clients read via GET /api/organizations/[orgId]/analytics. Both
+  // go through getOrgAnalytics so SSR and CSR can't drift. `null` (org gone)
+  // short-circuits hydration; the client hook re-reads on mount.
+  return getOrgAnalytics(orgId);
 }
 
 export async function prefetchOrgBilling(_orgId: string): Promise<null> {
@@ -69,8 +74,15 @@ export async function prefetchOrgMembers(
   };
 }
 
-export async function prefetchOrgDetails(_orgId: string): Promise<null> {
-  return null;
+export async function prefetchOrgDetails(
+  orgId: string,
+): Promise<OrgAnalyticsPayload | null> {
+  // The org HOME client's primary read is the analytics aggregate under
+  // queryKey ["org-analytics", orgId] (GET /api/organizations/[orgId]/
+  // analytics) — same key + payload the analytics page uses. Mirror it so the
+  // home page hydrates without a fetch waterfall. The home page's secondary
+  // ["org-activity", orgId] read stays client-only.
+  return getOrgAnalytics(orgId);
 }
 
 export async function prefetchOrgInvitations(_orgId: string): Promise<null> {
