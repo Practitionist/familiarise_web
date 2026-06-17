@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { signIn, useSession } from "@/lib/auth-client";
+import { signIn, useSession, sendVerificationEmail } from "@/lib/auth-client";
 import { ssoSigninWithGuard } from "@/lib/sso/signin-with-toast";
 import { GlobeIcon } from "@/components/auth/auth-icons";
 import { SocialLoginButtons } from "@/components/auth/social-login-buttons";
@@ -41,6 +41,8 @@ function SignInContent() {
     ssoBody: { providerId: string; domain: string; callbackURL: string };
   } | null>(null);
   const [ssoChecking, setSsoChecking] = useState(false);
+  const [needsVerification, setNeedsVerification] = useState(false);
+  const [resending, setResending] = useState(false);
 
   useEffect(() => {
     const url = searchParams.get("callbackUrl");
@@ -214,8 +216,38 @@ function SignInContent() {
     return raw.replace(/\[body\.\w+\]\s*/g, "").trim() || "Invalid email or password.";
   };
 
+  const handleResendVerification = async () => {
+    if (!email || !email.includes("@")) {
+      toast({ title: "Enter your email address first", variant: "destructive" });
+      return;
+    }
+    setResending(true);
+    try {
+      // Preserve the validated callbackUrl so the original destination survives
+      // verification (callbackUrl state is only set for relative paths).
+      const verificationCallbackUrl = callbackUrl
+        ? `/auth/verify-email?callbackUrl=${encodeURIComponent(callbackUrl)}`
+        : "/auth/verify-email";
+      await sendVerificationEmail({ email, callbackURL: verificationCallbackUrl });
+      toast({
+        title: "Verification email sent",
+        description: `Check ${email} for the link.`,
+      });
+    } catch {
+      toast({
+        title: "Couldn't resend the email",
+        description: "Please try again in a moment.",
+        variant: "destructive",
+      });
+    } finally {
+      setResending(false);
+    }
+  };
+
   const handleEmailSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
+    // Clear any stale "verify your email" banner from a previous attempt.
+    setNeedsVerification(false);
     setIsLoading(true);
     toast({ title: "Signing in..." });
 
@@ -226,11 +258,20 @@ function SignInContent() {
       });
 
       if (error) {
-        toast({
-          title: "Sign In Failed",
-          description: friendlyAuthError(error.message),
-          variant: "destructive",
-        });
+        const code = (error as { code?: string }).code;
+        if (code === "EMAIL_NOT_VERIFIED" || /verif/i.test(error.message ?? "")) {
+          setNeedsVerification(true);
+          toast({
+            title: "Verify your email",
+            description: "Your email isn't verified yet — resend the link below.",
+          });
+        } else {
+          toast({
+            title: "Sign In Failed",
+            description: friendlyAuthError(error.message),
+            variant: "destructive",
+          });
+        }
       } else if (data) {
         toast({
           title: "Sign In Successful",
@@ -289,6 +330,22 @@ function SignInContent() {
               <p className="text-sm text-yellow-300">
                 Your organization requires SSO sign-in.
               </p>
+            </div>
+          )}
+          {needsVerification && (
+            <div className="mb-4 rounded-md border border-yellow-600 bg-yellow-900/40 p-3">
+              <p className="mb-2 text-sm text-yellow-300">
+                Your email isn&apos;t verified yet. Check your inbox, or resend
+                the link.
+              </p>
+              <Button
+                type="button"
+                onClick={handleResendVerification}
+                disabled={resending}
+                className="bg-zinc-800 hover:bg-zinc-700"
+              >
+                {resending ? "Resending…" : "Resend verification email"}
+              </Button>
             </div>
           )}
           <p className="mb-6 text-sm text-zinc-400 md:text-base">
