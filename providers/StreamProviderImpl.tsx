@@ -424,7 +424,7 @@ const StreamProviderImpl = ({
               error: err,
             });
           })
-          .then(() => {
+          .finally(() => {
             connectServices();
           });
       } else {
