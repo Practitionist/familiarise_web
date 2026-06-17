@@ -54,6 +54,14 @@ import {
   ResponsiveModalTitle,
 } from "@/components/ui/responsive-modal";
 import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
   Select,
   SelectContent,
   SelectItem,
