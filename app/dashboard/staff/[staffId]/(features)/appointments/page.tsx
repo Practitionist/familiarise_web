@@ -14,15 +14,16 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+  ResponsiveModal,
+  ResponsiveModalContent,
+  ResponsiveModalDescription,
+  ResponsiveModalFooter,
+  ResponsiveModalHeader,
+  ResponsiveModalTitle,
+} from "@/components/ui/responsive-modal";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { PageHeader } from "@/components/ui/page-header";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Search,
@@ -124,14 +125,14 @@ const getTypeColor = (type: string) => {
     case "class":
       return "bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300";
     default:
-      return "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300";
+      return "bg-muted text-muted-foreground";
   }
 };
 
 const getStatusColor = (status: string) => {
   switch (status.toLowerCase()) {
     case "scheduled":
-      return "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300";
+      return "bg-muted text-foreground";
     case "in_progress":
       return "bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300";
     case "completed":
@@ -139,7 +140,7 @@ const getStatusColor = (status: string) => {
     case "cancelled":
       return "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300";
     default:
-      return "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300";
+      return "bg-muted text-muted-foreground";
   }
 };
 
@@ -236,70 +237,66 @@ export default function AppointmentsPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">
-            Appointments Management
-          </h1>
-          <p className="text-zinc-500 dark:text-zinc-400">
-            Monitor and manage all scheduled appointments
-          </p>
-        </div>
-        <Button
-          variant="outline"
-          onClick={fetchAppointments}
-          disabled={loading}
-        >
-          <RefreshCw
-            className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`}
-          />
-          Refresh
-        </Button>
-      </div>
+      <PageHeader
+        title="Appointments Management"
+        description="Monitor and manage all scheduled appointments"
+        actions={
+          <Button
+            variant="outline"
+            onClick={fetchAppointments}
+            disabled={loading}
+          >
+            <RefreshCw
+              className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`}
+            />
+            Refresh
+          </Button>
+        }
+      />
 
       {/* Stats */}
-      <div className="grid gap-4 md:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardContent className="p-4 flex items-center gap-4">
-            <div className="p-2 rounded-lg bg-blue-50 dark:bg-blue-950">
-              <Calendar className="h-5 w-5 text-blue-600" />
+            <div className="p-2 rounded-lg bg-muted">
+              <Calendar className="h-5 w-5 text-foreground" />
             </div>
             <div>
               <p className="text-2xl font-bold">{counts.all}</p>
-              <p className="text-sm text-zinc-500">Total Appointments</p>
+              <p className="text-sm text-muted-foreground">Total Appointments</p>
             </div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="p-4 flex items-center gap-4">
-            <div className="p-2 rounded-lg bg-amber-50 dark:bg-amber-950">
-              <AlertTriangle className="h-5 w-5 text-amber-600" />
+            <div className="p-2 rounded-lg bg-muted">
+              <AlertTriangle className="h-5 w-5 text-foreground" />
             </div>
             <div>
               <p className="text-2xl font-bold">{counts.issues}</p>
-              <p className="text-sm text-zinc-500">Issues (page)</p>
+              <p className="text-sm text-muted-foreground">Issues (page)</p>
             </div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="p-4 flex items-center gap-4">
-            <div className="p-2 rounded-lg bg-purple-50 dark:bg-purple-950">
-              <Clock className="h-5 w-5 text-purple-600" />
+            <div className="p-2 rounded-lg bg-muted">
+              <Clock className="h-5 w-5 text-foreground" />
             </div>
             <div>
               <p className="text-2xl font-bold">{counts.scheduled}</p>
-              <p className="text-sm text-zinc-500">Scheduled (page)</p>
+              <p className="text-sm text-muted-foreground">Scheduled (page)</p>
             </div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="p-4 flex items-center gap-4">
-            <div className="p-2 rounded-lg bg-green-50 dark:bg-green-950">
-              <CheckCircle2 className="h-5 w-5 text-green-600" />
+            <div className="p-2 rounded-lg bg-muted">
+              <CheckCircle2 className="h-5 w-5 text-foreground" />
             </div>
             <div>
               <p className="text-2xl font-bold">{counts.completed}</p>
-              <p className="text-sm text-zinc-500">Completed (page)</p>
+              <p className="text-sm text-muted-foreground">Completed (page)</p>
             </div>
           </CardContent>
         </Card>
@@ -330,8 +327,8 @@ export default function AppointmentsPage() {
             </TabsList>
 
             <div className="flex gap-2">
-              <div className="relative flex-1 min-w-[200px]">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
+              <div className="relative flex-1 min-w-0">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
                   placeholder="Search..."
                   className="pl-9"
@@ -346,7 +343,7 @@ export default function AppointmentsPage() {
                   setPage(1);
                 }}
               >
-                <SelectTrigger className="w-40">
+                <SelectTrigger className="w-full max-w-[10rem] sm:w-40">
                   <SelectValue placeholder="Type" />
                 </SelectTrigger>
                 <SelectContent>
@@ -364,12 +361,12 @@ export default function AppointmentsPage() {
           <TabsContent value={activeTab} className="mt-4">
             {loading ? (
               <div className="flex items-center justify-center h-64">
-                <Loader2 className="h-8 w-8 animate-spin text-zinc-400" />
+                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
               </div>
             ) : appointments.length === 0 ? (
               <Card>
-                <CardContent className="flex flex-col items-center justify-center h-64 text-zinc-500">
-                  <Calendar className="h-12 w-12 mb-4 text-zinc-300" />
+                <CardContent className="flex flex-col items-center justify-center h-64 text-muted-foreground">
+                  <Calendar className="h-12 w-12 mb-4 text-muted-foreground/40" />
                   <p>No appointments found</p>
                 </CardContent>
               </Card>
@@ -421,7 +418,7 @@ export default function AppointmentsPage() {
                               </div>
                               <div className="flex items-center gap-4 mt-2">
                                 {appointment.consultant && (
-                                  <div className="flex items-center gap-2 text-sm text-zinc-500">
+                                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
                                     <Avatar className="h-5 w-5">
                                       <AvatarImage
                                         src={
@@ -445,8 +442,10 @@ export default function AppointmentsPage() {
                                 )}
                                 {appointment.consultee && (
                                   <>
-                                    <span className="text-zinc-400">→</span>
-                                    <div className="flex items-center gap-2 text-sm text-zinc-500">
+                                    <span className="text-muted-foreground/70">
+                                      →
+                                    </span>
+                                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
                                       <Avatar className="h-5 w-5">
                                         <AvatarImage
                                           src={
@@ -471,7 +470,7 @@ export default function AppointmentsPage() {
                                   </>
                                 )}
                               </div>
-                              <div className="flex items-center gap-4 mt-2 text-xs text-zinc-400">
+                              <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground/70">
                                 <span className="flex items-center gap-1">
                                   <Calendar className="h-3 w-3" />
                                   {formatDate(appointment.scheduledAt)}
@@ -544,7 +543,7 @@ export default function AppointmentsPage() {
             >
               Previous
             </Button>
-            <span className="flex items-center px-4 text-sm text-zinc-500">
+            <span className="flex items-center px-4 text-sm text-muted-foreground">
               Page {page} of {totalPages}
             </span>
             <Button
@@ -559,26 +558,26 @@ export default function AppointmentsPage() {
       </div>
 
       {/* Appointment Detail Dialog */}
-      <Dialog
+      <ResponsiveModal
         open={!!selectedAppointment}
         onOpenChange={() => setSelectedAppointment(null)}
       >
-        <DialogContent className="max-w-2xl">
+        <ResponsiveModalContent className="max-w-2xl">
           {selectedAppointment && (
             <>
-              <DialogHeader>
-                <DialogTitle className="flex items-center gap-2">
+              <ResponsiveModalHeader>
+                <ResponsiveModalTitle className="flex items-center gap-2">
                   {(() => {
                     const TypeIcon = getTypeIcon(selectedAppointment.type);
                     return <TypeIcon className="h-5 w-5" />;
                   })()}
                   {selectedAppointment.title}
-                </DialogTitle>
-                <DialogDescription>
+                </ResponsiveModalTitle>
+                <ResponsiveModalDescription>
                   {selectedAppointment.id.slice(-8).toUpperCase()} •{" "}
                   {selectedAppointment.type}
-                </DialogDescription>
-              </DialogHeader>
+                </ResponsiveModalDescription>
+              </ResponsiveModalHeader>
               <div className="space-y-4">
                 {/* Status */}
                 <div className="flex items-center gap-2">
@@ -605,8 +604,8 @@ export default function AppointmentsPage() {
                 {/* Participants */}
                 <div className="grid gap-4 sm:grid-cols-2">
                   {selectedAppointment.consultant && (
-                    <div className="p-3 rounded-lg bg-zinc-50 dark:bg-zinc-900">
-                      <Label className="text-xs text-zinc-500">
+                    <div className="p-3 rounded-lg bg-muted">
+                      <Label className="text-xs text-muted-foreground">
                         Consultant
                       </Label>
                       <div className="flex items-center gap-2 mt-2">
@@ -628,7 +627,7 @@ export default function AppointmentsPage() {
                           <p className="font-medium">
                             {selectedAppointment.consultant.name || "Unknown"}
                           </p>
-                          <p className="text-xs text-zinc-500">
+                          <p className="text-xs text-muted-foreground">
                             {selectedAppointment.consultant.email}
                           </p>
                         </div>
@@ -636,8 +635,10 @@ export default function AppointmentsPage() {
                     </div>
                   )}
                   {selectedAppointment.consultee && (
-                    <div className="p-3 rounded-lg bg-zinc-50 dark:bg-zinc-900">
-                      <Label className="text-xs text-zinc-500">Consultee</Label>
+                    <div className="p-3 rounded-lg bg-muted">
+                      <Label className="text-xs text-muted-foreground">
+                        Consultee
+                      </Label>
                       <div className="flex items-center gap-2 mt-2">
                         <Avatar>
                           <AvatarImage
@@ -657,7 +658,7 @@ export default function AppointmentsPage() {
                           <p className="font-medium">
                             {selectedAppointment.consultee.name || "Unknown"}
                           </p>
-                          <p className="text-xs text-zinc-500">
+                          <p className="text-xs text-muted-foreground">
                             {selectedAppointment.consultee.email}
                           </p>
                         </div>
@@ -669,14 +670,16 @@ export default function AppointmentsPage() {
                 {/* Schedule */}
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div>
-                    <Label className="text-xs text-zinc-500">
+                    <Label className="text-xs text-muted-foreground">
                       Scheduled At
                     </Label>
                     <p>{formatFullDate(selectedAppointment.scheduledAt)}</p>
                   </div>
                   {selectedAppointment.duration > 0 && (
                     <div>
-                      <Label className="text-xs text-zinc-500">Duration</Label>
+                      <Label className="text-xs text-muted-foreground">
+                        Duration
+                      </Label>
                       <p>{selectedAppointment.duration} minutes</p>
                     </div>
                   )}
@@ -684,8 +687,8 @@ export default function AppointmentsPage() {
 
                 {/* Payment */}
                 {selectedAppointment.payment && (
-                  <div className="p-3 rounded-lg bg-zinc-50 dark:bg-zinc-900">
-                    <Label className="text-xs text-zinc-500">
+                  <div className="p-3 rounded-lg bg-muted">
+                    <Label className="text-xs text-muted-foreground">
                       Payment Details
                     </Label>
                     <div className="grid gap-3 sm:grid-cols-3 mt-2">
@@ -698,13 +701,13 @@ export default function AppointmentsPage() {
                         </p>
                       </div>
                       <div>
-                        <p className="text-xs text-zinc-500">Status</p>
+                        <p className="text-xs text-muted-foreground">Status</p>
                         <p className="capitalize">
                           {selectedAppointment.payment.status.toLowerCase()}
                         </p>
                       </div>
                       <div>
-                        <p className="text-xs text-zinc-500">Gateway</p>
+                        <p className="text-xs text-muted-foreground">Gateway</p>
                         <p>{selectedAppointment.payment.gateway}</p>
                       </div>
                     </div>
@@ -721,7 +724,7 @@ export default function AppointmentsPage() {
                   />
                 </div>
               </div>
-              <DialogFooter>
+              <ResponsiveModalFooter>
                 <Button
                   variant="outline"
                   onClick={() => setSelectedAppointment(null)}
@@ -732,11 +735,11 @@ export default function AppointmentsPage() {
                   <ArrowUpRight className="h-4 w-4 mr-2" />
                   Escalate to Admin
                 </Button>
-              </DialogFooter>
+              </ResponsiveModalFooter>
             </>
           )}
-        </DialogContent>
-      </Dialog>
+        </ResponsiveModalContent>
+      </ResponsiveModal>
     </div>
   );
 }

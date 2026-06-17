@@ -227,17 +227,17 @@ export function Overview({
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        className="flex flex-col items-center justify-center min-h-[400px] p-8 bg-white rounded-xl shadow-sm"
+        className="flex flex-col items-center justify-center min-h-[400px] p-8 bg-card rounded-xl shadow-sm"
       >
-        <div className="w-16 h-16 mb-4 text-gray-400">
+        <div className="w-16 h-16 mb-4 text-muted-foreground/70">
           <Calendar className="w-full h-full" />
         </div>
-        <h3 className="text-xl font-semibold text-gray-900 mb-2">
+        <h3 className="text-fluid-2xl font-semibold tracking-tight text-foreground mb-2">
           {mode === "upcoming"
             ? "No Upcoming Events"
             : "No Past Events"}
         </h3>
-        <p className="text-gray-500 text-center">
+        <p className="text-muted-foreground text-center">
           {mode === "upcoming"
             ? "No upcoming events — Book a session to get started!"
             : "No past events — Completed or cancelled events will appear here."}
@@ -547,34 +547,36 @@ function DashboardCard({
 
   const SCROLL_AMOUNT = 320;
 
+  // Section icon chips are monochrome — the accentColor prop is kept so callers
+  // need no change, but every variant resolves to the same neutral token set.
   const accentStyles: Record<
     string,
     { bg: string; text: string; border: string }
   > = {
     blue: {
-      bg: "bg-blue-50",
-      text: "text-blue-600",
-      border: "border-blue-100",
+      bg: "bg-muted",
+      text: "text-muted-foreground",
+      border: "border-border",
     },
     violet: {
-      bg: "bg-violet-50",
-      text: "text-violet-600",
-      border: "border-violet-100",
+      bg: "bg-muted",
+      text: "text-muted-foreground",
+      border: "border-border",
     },
     amber: {
-      bg: "bg-amber-50",
-      text: "text-amber-600",
-      border: "border-amber-100",
+      bg: "bg-muted",
+      text: "text-muted-foreground",
+      border: "border-border",
     },
     emerald: {
-      bg: "bg-emerald-50",
-      text: "text-emerald-600",
-      border: "border-emerald-100",
+      bg: "bg-muted",
+      text: "text-muted-foreground",
+      border: "border-border",
     },
     rose: {
-      bg: "bg-rose-50",
-      text: "text-rose-600",
-      border: "border-rose-100",
+      bg: "bg-muted",
+      text: "text-muted-foreground",
+      border: "border-border",
     },
   };
 
@@ -643,24 +645,24 @@ function DashboardCard({
 
   if (!itemCount) {
     return (
-      <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden">
-        <div className="flex items-center gap-3 px-6 py-4 border-b border-zinc-100">
+      <div className="bg-card rounded-2xl border border-border shadow-sm overflow-hidden">
+        <div className="flex items-center gap-3 px-6 py-4 border-b border-border">
           <div
             className={`h-9 w-9 rounded-xl ${accent.bg} flex items-center justify-center`}
           >
             <Icon className={`h-5 w-5 ${accent.text}`} />
           </div>
-          <h2 className="font-semibold text-zinc-900 text-lg">{title}</h2>
+          <h2 className="font-semibold text-foreground text-lg">{title}</h2>
         </div>
         <div className="flex items-center justify-center py-16">
           <div className="text-center">
-            <div className="h-12 w-12 rounded-xl bg-zinc-100 flex items-center justify-center mx-auto mb-4">
-              <Icon className="h-6 w-6 text-zinc-400" />
+            <div className="h-12 w-12 rounded-xl bg-muted flex items-center justify-center mx-auto mb-4">
+              <Icon className="h-6 w-6 text-muted-foreground/70" />
             </div>
-            <p className="text-zinc-600 font-medium mb-1">
+            <p className="text-muted-foreground font-medium mb-1">
               No {title.toLowerCase()} found
             </p>
-            <p className="text-sm text-zinc-400">
+            <p className="text-sm text-muted-foreground/70">
               {emptySubtext ??
                 `Your ${title.toLowerCase()} will appear here once scheduled`}
             </p>
@@ -671,17 +673,17 @@ function DashboardCard({
   }
 
   return (
-    <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden">
+    <div className="bg-card rounded-2xl border border-border shadow-sm overflow-hidden">
       {/* Header */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-100">
+      <div className="flex items-center justify-between px-6 py-4 border-b border-border">
         <div className="flex items-center gap-3">
           <div
             className={`h-9 w-9 rounded-xl ${accent.bg} flex items-center justify-center`}
           >
             <Icon className={`h-5 w-5 ${accent.text}`} />
           </div>
-          <h2 className="font-semibold text-zinc-900 text-lg">{title}</h2>
-          <span className="text-sm text-zinc-400 font-medium">
+          <h2 className="font-semibold text-foreground text-lg">{title}</h2>
+          <span className="text-sm text-muted-foreground/70 font-medium">
             {itemCount} {itemCount === 1 ? "item" : "items"}
           </span>
         </div>
@@ -694,7 +696,7 @@ function DashboardCard({
               size="icon"
               onClick={() => handleScroll("left")}
               disabled={!canScrollLeft}
-              className="h-8 w-8 rounded-lg border-zinc-200 disabled:opacity-30"
+              className="h-8 w-8 rounded-lg border-border disabled:opacity-30"
               aria-label="Scroll left"
             >
               <ChevronLeft className="h-4 w-4" />
@@ -704,7 +706,7 @@ function DashboardCard({
               size="icon"
               onClick={() => handleScroll("right")}
               disabled={!canScrollRight}
-              className="h-8 w-8 rounded-lg border-zinc-200 disabled:opacity-30"
+              className="h-8 w-8 rounded-lg border-border disabled:opacity-30"
               aria-label="Scroll right"
             >
               <ChevronRight className="h-4 w-4" />

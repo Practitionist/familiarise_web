@@ -46,8 +46,8 @@ export function JoinButton({
       className={cn(
         "w-full h-9 font-medium text-sm",
         isJoinable && !isJoining
-          ? "bg-zinc-900 hover:bg-zinc-800 text-white"
-          : "bg-zinc-100 text-zinc-400 cursor-not-allowed",
+          ? "bg-primary hover:bg-primary/90 text-primary-foreground"
+          : "bg-muted text-muted-foreground/70 cursor-not-allowed",
       )}
     >
       {isJoining ? (

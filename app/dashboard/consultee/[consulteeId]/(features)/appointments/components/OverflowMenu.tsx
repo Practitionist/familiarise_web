@@ -48,7 +48,7 @@ export function OverflowMenu({
         <Button
           variant="outline"
           size="icon"
-          className="h-8 w-8 shrink-0 border-zinc-200"
+          className="h-8 w-8 shrink-0 border-border"
         >
           <MoreHorizontal className="h-4 w-4" />
         </Button>
@@ -73,7 +73,7 @@ export function OverflowMenu({
             <DropdownMenuItem
               onClick={onCancel}
               disabled={isLoading}
-              className="text-red-600 focus:text-red-600"
+              className="text-red-600 focus:text-red-600 dark:text-red-400 dark:focus:text-red-400"
             >
               <X className="h-4 w-4 mr-2" />
               Cancel
@@ -85,7 +85,7 @@ export function OverflowMenu({
             <DropdownMenuSeparator />
             <DropdownMenuItem
               onClick={onDevJoin}
-              className="text-amber-600 focus:text-amber-600"
+              className="text-amber-600 focus:text-amber-600 dark:text-amber-400 dark:focus:text-amber-400"
             >
               <Video className="h-4 w-4 mr-2" />
               Force Join (dev)

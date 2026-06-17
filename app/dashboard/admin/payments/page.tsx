@@ -11,6 +11,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  ResponsiveTable,
+  type ResponsiveColumn,
+} from "@/components/ui/responsive-table";
+import { PageHeader } from "@/components/ui/page-header";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { useState } from "react";
@@ -75,15 +80,106 @@ export default function AdminPaymentsPage() {
     setPage(1); // Reset to first page when filters change
   };
 
+  const columns: ResponsiveColumn<Payment>[] = [
+    {
+      key: "paymentId",
+      header: "Payment ID",
+      primary: true,
+      cell: (payment) => (
+        <span className="font-mono text-sm text-foreground">
+          {payment.paymentIntent?.substring(0, 20)}...
+        </span>
+      ),
+    },
+    {
+      key: "amount",
+      header: "Amount",
+      cell: (payment) => (
+        <span className="text-sm text-foreground">
+          {formatCurrencyAmount(payment.amount, payment.currency)}
+        </span>
+      ),
+    },
+    {
+      key: "status",
+      header: "Status",
+      cell: (payment) => (
+        <span
+          className={`px-2 py-1 rounded text-xs font-medium ${
+            payment.paymentStatus === "SUCCEEDED"
+              ? "bg-green-100 text-green-800 dark:bg-green-950/40 dark:text-green-400"
+              : payment.paymentStatus === "PENDING"
+                ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-950/40 dark:text-yellow-400"
+                : payment.paymentStatus === "EXPIRED"
+                  ? "bg-muted text-muted-foreground"
+                  : "bg-red-100 text-red-800 dark:bg-red-950/40 dark:text-red-400"
+          }`}
+        >
+          {payment.paymentStatus}
+        </span>
+      ),
+    },
+    {
+      key: "gateway",
+      header: "Gateway",
+      cell: (payment) => (
+        <span className="text-sm text-foreground">
+          {payment.paymentGateway}
+        </span>
+      ),
+    },
+    {
+      key: "type",
+      header: "Type",
+      cell: (payment) => (
+        <span className="text-sm text-foreground">
+          {payment.appointment?.appointmentType || "N/A"}
+        </span>
+      ),
+    },
+    {
+      key: "mock",
+      header: "Mock",
+      cell: (payment) =>
+        payment.isMockPayment ? (
+          <span className="px-2 py-1 rounded text-xs font-medium bg-muted text-foreground">
+            MOCK
+          </span>
+        ) : (
+          <span className="text-muted-foreground/70">—</span>
+        ),
+    },
+    {
+      key: "date",
+      header: "Date",
+      cell: (payment) => (
+        <span className="text-sm text-muted-foreground">
+          {new Date(payment.createdAt).toLocaleDateString()}
+        </span>
+      ),
+    },
+  ];
+
+  const renderRowActions = (payment: Payment) => (
+    <Link
+      href={`/dashboard/admin/payments/${payment.id}`}
+      className="font-medium text-foreground hover:text-muted-foreground"
+    >
+      View
+    </Link>
+  );
+
   if (error) {
     return (
       <div className="flex items-center justify-center h-full">
         <Card className="w-full max-w-md">
           <CardHeader>
-            <CardTitle className="text-red-600">Error</CardTitle>
+            <CardTitle className="text-red-600 dark:text-red-400">
+              Error
+            </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-gray-700">
+            <p className="text-muted-foreground">
               {error instanceof Error
                 ? error.message
                 : "Failed to load payments"}
@@ -96,12 +192,10 @@ export default function AdminPaymentsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold text-gray-900">Payments</h1>
-        <p className="text-gray-600 mt-1">
-          Manage and view all platform payments
-        </p>
-      </div>
+      <PageHeader
+        title="Payments"
+        description="Manage and view all platform payments"
+      />
 
       {/* Filters */}
       <Card>
@@ -112,6 +206,7 @@ export default function AdminPaymentsPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
             <Input
               placeholder="Search payment ID..."
+              className="min-w-0"
               value={search}
               onChange={(e) => {
                 setSearch(e.target.value);
@@ -212,126 +307,47 @@ export default function AdminPaymentsPage() {
                 <Skeleton key={i} className="h-16 w-full" />
               ))}
             </div>
-          ) : data?.payments?.length > 0 ? (
+          ) : (
             <div className="space-y-2">
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead className="bg-gray-50 border-b">
-                    <tr>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Payment ID
-                      </th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Amount
-                      </th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Status
-                      </th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Gateway
-                      </th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Type
-                      </th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Mock
-                      </th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Date
-                      </th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Actions
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="bg-white divide-y divide-gray-200">
-                    {data.payments.map((payment: Payment) => (
-                      <tr key={payment.id} className="hover:bg-gray-50">
-                        <td className="px-4 py-3 text-sm font-mono text-gray-900">
-                          {payment.paymentIntent?.substring(0, 20)}...
-                        </td>
-                        <td className="px-4 py-3 text-sm text-gray-900">
-                          {formatCurrencyAmount(
-                            payment.amount,
-                            payment.currency,
-                          )}
-                        </td>
-                        <td className="px-4 py-3 text-sm">
-                          <span
-                            className={`px-2 py-1 rounded text-xs font-medium ${
-                              payment.paymentStatus === "SUCCEEDED"
-                                ? "bg-green-100 text-green-800"
-                                : payment.paymentStatus === "PENDING"
-                                  ? "bg-yellow-100 text-yellow-800"
-                                  : payment.paymentStatus === "EXPIRED"
-                                    ? "bg-zinc-100 text-zinc-500"
-                                    : "bg-red-100 text-red-800"
-                            }`}
-                          >
-                            {payment.paymentStatus}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-sm text-gray-900">
-                          {payment.paymentGateway}
-                        </td>
-                        <td className="px-4 py-3 text-sm text-gray-900">
-                          {payment.appointment?.appointmentType || "N/A"}
-                        </td>
-                        <td className="px-4 py-3 text-sm">
-                          {payment.isMockPayment ? (
-                            <span className="px-2 py-1 rounded text-xs font-medium bg-purple-100 text-purple-800">
-                              MOCK
-                            </span>
-                          ) : (
-                            <span className="text-gray-400">—</span>
-                          )}
-                        </td>
-                        <td className="px-4 py-3 text-sm text-gray-500">
-                          {new Date(payment.createdAt).toLocaleDateString()}
-                        </td>
-                        <td className="px-4 py-3 text-sm">
-                          <Link
-                            href={`/dashboard/admin/payments/${payment.id}`}
-                            className="text-blue-600 hover:text-blue-700 font-medium"
-                          >
-                            View
-                          </Link>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <ResponsiveTable<Payment>
+                columns={columns}
+                rows={data.payments}
+                getRowId={(p) => p.id}
+                rowActions={renderRowActions}
+                empty={
+                  <div className="text-center py-12">
+                    <p className="text-muted-foreground">No payments found</p>
+                  </div>
+                }
+              />
 
               {/* Pagination */}
-              <div className="flex items-center justify-between pt-4">
-                <div className="text-sm text-gray-500">
-                  Showing {(page - 1) * limit + 1} to{" "}
-                  {Math.min(page * limit, data.total)} of {data.total} payments
+              {data.payments.length > 0 && (
+                <div className="flex flex-col gap-3 pt-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="text-sm text-muted-foreground">
+                    Showing {(page - 1) * limit + 1} to{" "}
+                    {Math.min(page * limit, data.total)} of {data.total} payments
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setPage((p) => Math.max(1, p - 1))}
+                      disabled={page === 1}
+                    >
+                      Previous
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setPage((p) => p + 1)}
+                      disabled={page * limit >= data.total}
+                    >
+                      Next
+                    </Button>
+                  </div>
                 </div>
-                <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setPage((p) => Math.max(1, p - 1))}
-                    disabled={page === 1}
-                  >
-                    Previous
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setPage((p) => p + 1)}
-                    disabled={page * limit >= data.total}
-                  >
-                    Next
-                  </Button>
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="text-center py-12">
-              <p className="text-gray-500">No payments found</p>
+              )}
             </div>
           )}
         </CardContent>

@@ -113,7 +113,7 @@ export default function AdminHomePage() {
                 value={stats?.totalRefunds || 0}
                 subtitle={`${stats?.totalRefundsValue || "₹0"} refunded`}
                 icon={RefreshCw}
-                variant="info"
+                variant="default"
               />
               <StatCard
                 title="Active Disputes"
@@ -140,20 +140,20 @@ export default function AdminHomePage() {
                       <Link
                         key={payment.id}
                         href={`/dashboard/admin/payments/${payment.id}`}
-                        className="group flex items-center justify-between p-3 rounded-xl border border-zinc-100 hover:border-zinc-200 hover:bg-zinc-50 transition-all"
+                        className="group flex items-center justify-between p-3 rounded-xl border border-border hover:border-border hover:bg-muted transition-all"
                       >
                         <div className="flex items-center gap-3">
-                          <div className="h-10 w-10 rounded-lg bg-zinc-100 flex items-center justify-center">
-                            <CreditCard className="h-5 w-5 text-zinc-600" />
+                          <div className="h-10 w-10 rounded-lg bg-muted flex items-center justify-center">
+                            <CreditCard className="h-5 w-5 text-foreground" />
                           </div>
                           <div>
-                            <p className="font-medium text-zinc-900">
+                            <p className="font-medium text-foreground">
                               {formatCurrencyAmount(
                                 payment.amount,
                                 payment.currency,
                               )}
                             </p>
-                            <p className="text-sm text-zinc-500">
+                            <p className="text-sm text-muted-foreground">
                               {payment.paymentGateway} •{" "}
                               {payment.appointment?.appointmentType ?? "N/A"}
                             </p>
@@ -164,15 +164,15 @@ export default function AdminHomePage() {
                             className={cn(
                               "text-xs px-2.5 py-1 rounded-full font-medium",
                               payment.paymentStatus === "SUCCEEDED"
-                                ? "bg-emerald-50 text-emerald-700"
+                                ? "bg-green-50 text-green-700 dark:bg-green-950/40 dark:text-green-400"
                                 : payment.paymentStatus === "PENDING"
-                                  ? "bg-amber-50 text-amber-700"
-                                  : "bg-red-50 text-red-700",
+                                  ? "bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400"
+                                  : "bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-400",
                             )}
                           >
                             {payment.paymentStatus}
                           </span>
-                          <ChevronRight className="h-4 w-4 text-zinc-300 group-hover:text-zinc-500 transition-colors" />
+                          <ChevronRight className="h-4 w-4 text-muted-foreground/70 group-hover:text-muted-foreground transition-colors" />
                         </div>
                       </Link>
                     ))}
@@ -200,20 +200,20 @@ export default function AdminHomePage() {
                       <Link
                         key={refund.id}
                         href={`/dashboard/admin/refunds/${refund.id}`}
-                        className="group flex items-center justify-between p-3 rounded-xl border border-zinc-100 hover:border-zinc-200 hover:bg-zinc-50 transition-all"
+                        className="group flex items-center justify-between p-3 rounded-xl border border-border hover:border-border hover:bg-muted transition-all"
                       >
                         <div className="flex items-center gap-3">
-                          <div className="h-10 w-10 rounded-lg bg-blue-50 flex items-center justify-center">
-                            <RefreshCw className="h-5 w-5 text-blue-600" />
+                          <div className="h-10 w-10 rounded-lg bg-muted flex items-center justify-center">
+                            <RefreshCw className="h-5 w-5 text-foreground" />
                           </div>
                           <div>
-                            <p className="font-medium text-zinc-900">
+                            <p className="font-medium text-foreground">
                               {formatCurrencyAmount(
                                 refund.amount,
                                 refund.currency,
                               )}
                             </p>
-                            <p className="text-sm text-zinc-500">
+                            <p className="text-sm text-muted-foreground">
                               {refund.paymentGateway}
                             </p>
                           </div>
@@ -223,15 +223,15 @@ export default function AdminHomePage() {
                             className={cn(
                               "text-xs px-2.5 py-1 rounded-full font-medium",
                               refund.status === "SUCCEEDED"
-                                ? "bg-emerald-50 text-emerald-700"
+                                ? "bg-green-50 text-green-700 dark:bg-green-950/40 dark:text-green-400"
                                 : refund.status === "PENDING"
-                                  ? "bg-amber-50 text-amber-700"
-                                  : "bg-red-50 text-red-700",
+                                  ? "bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400"
+                                  : "bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-400",
                             )}
                           >
                             {refund.status}
                           </span>
-                          <ChevronRight className="h-4 w-4 text-zinc-300 group-hover:text-zinc-500 transition-colors" />
+                          <ChevronRight className="h-4 w-4 text-muted-foreground/70 group-hover:text-muted-foreground transition-colors" />
                         </div>
                       </Link>
                     ))}
@@ -260,23 +260,27 @@ export default function AdminHomePage() {
                     return (
                       <div
                         key={gateway}
-                        className="p-4 rounded-xl border border-zinc-100 hover:border-zinc-200 transition-all"
+                        className="p-4 rounded-xl border border-border hover:border-border transition-all"
                       >
                         <div className="flex items-center justify-between mb-3">
-                          <span className="font-medium text-zinc-900">
+                          <span className="font-medium text-foreground">
                             {gateway}
                           </span>
                           <div className="flex items-center gap-2">
                             <div
                               className={cn(
                                 "h-2.5 w-2.5 rounded-full",
-                                isActive ? "bg-emerald-500" : "bg-zinc-300",
+                                isActive
+                                  ? "bg-green-500 dark:bg-green-400"
+                                  : "bg-muted-foreground/30",
                               )}
                             />
                             <span
                               className={cn(
                                 "text-xs font-medium",
-                                isActive ? "text-emerald-600" : "text-zinc-400",
+                                isActive
+                                  ? "text-green-600 dark:text-green-400"
+                                  : "text-muted-foreground/70",
                               )}
                             >
                               {isActive ? "Active" : "Inactive"}
@@ -284,10 +288,10 @@ export default function AdminHomePage() {
                           </div>
                         </div>
                         <div className="space-y-1">
-                          <p className="text-2xl font-bold text-zinc-900">
+                          <p className="text-2xl font-bold text-foreground">
                             {count}
                           </p>
-                          <p className="text-sm text-zinc-500">
+                          <p className="text-sm text-muted-foreground">
                             payment{count !== 1 ? "s" : ""} processed
                           </p>
                         </div>

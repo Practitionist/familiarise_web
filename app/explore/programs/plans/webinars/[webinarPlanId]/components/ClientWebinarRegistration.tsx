@@ -156,17 +156,17 @@ export function ClientWebinarRegistration({
           <CardTitle>Webinar Registration</CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="text-gray-600 mb-4">
+          <p className="text-muted-foreground mb-4">
             {sessionInfoText} {/* Show current session status info */}
           </p>
           {!signInButtonDisabled && (
-            <p className="text-gray-600 mb-4">
+            <p className="text-muted-foreground mb-4">
               Please sign in to register for this webinar.
             </p>
           )}
           <Button
             onClick={handleRegistration} // This redirects to sign-in
-            className="w-full bg-black hover:bg-gray-800"
+            className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
             disabled={signInButtonDisabled}
           >
             {signInButtonText}
@@ -190,8 +190,8 @@ export function ClientWebinarRegistration({
               Already Registered
             </Badge>
           </div>
-          <p className="text-sm text-gray-600 mb-4">{sessionInfoText}</p>
-          <p className="text-sm text-gray-600">
+          <p className="text-sm text-muted-foreground mb-4">{sessionInfoText}</p>
+          <p className="text-sm text-muted-foreground">
             Check your email for webinar details and join link.
           </p>
         </CardContent>
@@ -207,7 +207,7 @@ export function ClientWebinarRegistration({
           <CardTitle>Webinar Registration</CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="text-sm text-gray-600 mb-4">{sessionInfoText}</p>
+          <p className="text-sm text-muted-foreground mb-4">{sessionInfoText}</p>
           <Badge
             variant="secondary"
             className="mb-4 bg-amber-100 text-amber-800"
@@ -222,7 +222,7 @@ export function ClientWebinarRegistration({
                 position={userWaitlistEntry?.position ?? null}
                 variant="extended"
               />
-              <p className="text-xs text-gray-500 mt-2">
+              <p className="text-xs text-muted-foreground mt-2">
                 We'll notify you when a spot opens up
               </p>
             </div>
@@ -233,7 +233,7 @@ export function ClientWebinarRegistration({
               className="w-full"
             />
           ) : (
-            <p className="text-sm text-gray-500 text-center">
+            <p className="text-sm text-muted-foreground text-center">
               No session available for waitlist
             </p>
           )}
@@ -248,12 +248,12 @@ export function ClientWebinarRegistration({
         <CardTitle>Webinar Registration</CardTitle>
       </CardHeader>
       <CardContent>
-        <p className="text-sm text-gray-600 mb-4">{sessionInfoText}</p>
+        <p className="text-sm text-muted-foreground mb-4">{sessionInfoText}</p>
       </CardContent>
       <CardFooter>
         <Button
           onClick={handleRegistration}
-          className="w-full bg-black hover:bg-gray-800"
+          className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
           disabled={buttonDisabled}
         >
           {buttonText}

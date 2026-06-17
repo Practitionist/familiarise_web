@@ -12,15 +12,16 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
 
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+  ResponsiveModal,
+  ResponsiveModalContent,
+  ResponsiveModalDescription,
+  ResponsiveModalFooter,
+  ResponsiveModalHeader,
+  ResponsiveModalTitle,
+} from "@/components/ui/responsive-modal";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { PageHeader } from "@/components/ui/page-header";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Search,
@@ -58,9 +59,9 @@ const getStatusColor = (status: string) => {
     case "dismissed":
       return "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300";
     case "in_progress":
-      return "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300";
+      return "bg-muted text-foreground";
     default:
-      return "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300";
+      return "bg-muted text-muted-foreground";
   }
 };
 
@@ -338,99 +339,95 @@ export default function ContentModerationPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">
-            Content Moderation
-          </h1>
-          <p className="text-zinc-500 dark:text-zinc-400">
-            Review and moderate platform content
-          </p>
-        </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => {
-            fetchStats();
-            fetchReports();
-            fetchProfiles();
-            fetchReviews();
-          }}
-          disabled={loadingStats}
-        >
-          <RefreshCw
-            className={`h-4 w-4 ${loadingStats ? "animate-spin" : ""}`}
-          />
-        </Button>
-      </div>
+      <PageHeader
+        title="Content Moderation"
+        description="Review and moderate platform content"
+        actions={
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              fetchStats();
+              fetchReports();
+              fetchProfiles();
+              fetchReviews();
+            }}
+            disabled={loadingStats}
+          >
+            <RefreshCw
+              className={`h-4 w-4 ${loadingStats ? "animate-spin" : ""}`}
+            />
+          </Button>
+        }
+      />
 
       {/* Stats */}
-      <div className="grid gap-4 md:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardContent className="p-4 flex items-center gap-4">
-            <div className="p-2 rounded-lg bg-red-50 dark:bg-red-950">
-              <Flag className="h-5 w-5 text-red-600" />
+            <div className="p-2 rounded-lg bg-muted">
+              <Flag className="h-5 w-5 text-foreground" />
             </div>
             <div>
               {loadingStats ? (
-                <Loader2 className="h-5 w-5 animate-spin text-zinc-400" />
+                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
               ) : (
                 <p className="text-2xl font-bold">
                   {stats?.pendingReports ?? 0}
                 </p>
               )}
-              <p className="text-sm text-zinc-500">Pending Reports</p>
+              <p className="text-sm text-muted-foreground">Pending Reports</p>
             </div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="p-4 flex items-center gap-4">
-            <div className="p-2 rounded-lg bg-amber-50 dark:bg-amber-950">
-              <User className="h-5 w-5 text-amber-600" />
+            <div className="p-2 rounded-lg bg-muted">
+              <User className="h-5 w-5 text-foreground" />
             </div>
             <div>
               {loadingStats ? (
-                <Loader2 className="h-5 w-5 animate-spin text-zinc-400" />
+                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
               ) : (
                 <p className="text-2xl font-bold">
                   {stats?.pendingProfiles ?? 0}
                 </p>
               )}
-              <p className="text-sm text-zinc-500">Profiles to Verify</p>
+              <p className="text-sm text-muted-foreground">Profiles to Verify</p>
             </div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="p-4 flex items-center gap-4">
-            <div className="p-2 rounded-lg bg-blue-50 dark:bg-blue-950">
-              <Star className="h-5 w-5 text-blue-600" />
+            <div className="p-2 rounded-lg bg-muted">
+              <Star className="h-5 w-5 text-foreground" />
             </div>
             <div>
               {loadingStats ? (
-                <Loader2 className="h-5 w-5 animate-spin text-zinc-400" />
+                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
               ) : (
                 <p className="text-2xl font-bold">
                   {stats?.pendingReviews ?? 0}
                 </p>
               )}
-              <p className="text-sm text-zinc-500">Reviews to Check</p>
+              <p className="text-sm text-muted-foreground">Reviews to Check</p>
             </div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="p-4 flex items-center gap-4">
-            <div className="p-2 rounded-lg bg-green-50 dark:bg-green-950">
-              <CheckCircle2 className="h-5 w-5 text-green-600" />
+            <div className="p-2 rounded-lg bg-muted">
+              <CheckCircle2 className="h-5 w-5 text-foreground" />
             </div>
             <div>
               {loadingStats ? (
-                <Loader2 className="h-5 w-5 animate-spin text-zinc-400" />
+                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
               ) : (
                 <p className="text-2xl font-bold">
                   {stats?.resolvedToday ?? 0}
                 </p>
               )}
-              <p className="text-sm text-zinc-500">Resolved Today</p>
+              <p className="text-sm text-muted-foreground">Resolved Today</p>
             </div>
           </CardContent>
         </Card>
@@ -467,7 +464,7 @@ export default function ContentModerationPage() {
           <Card>
             <CardContent className="p-4">
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
                   placeholder="Search reports..."
                   className="pl-9"
@@ -480,10 +477,12 @@ export default function ContentModerationPage() {
 
           {loadingReports ? (
             <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-6 w-6 animate-spin text-zinc-400" />
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
             </div>
           ) : filteredReports.length === 0 ? (
-            <p className="text-center text-zinc-500 py-8">No pending reports</p>
+            <p className="text-center text-muted-foreground py-8">
+              No pending reports
+            </p>
           ) : (
             <div className="space-y-3">
               {filteredReports.map((report) => (
@@ -495,7 +494,7 @@ export default function ContentModerationPage() {
                   <CardContent className="p-4">
                     <div className="flex items-start justify-between">
                       <div className="flex items-start gap-3">
-                        <div className="p-2 rounded-lg bg-red-50 dark:bg-red-950">
+                        <div className="p-2 rounded-lg bg-muted text-foreground">
                           {getTypeIcon(report.type)}
                         </div>
                         <div>
@@ -513,10 +512,10 @@ export default function ContentModerationPage() {
                               {report.status}
                             </Badge>
                           </div>
-                          <p className="text-sm text-zinc-600 dark:text-zinc-400 mt-1 line-clamp-2">
+                          <p className="text-sm text-muted-foreground mt-1 line-clamp-2">
                             {report.description || report.reason}
                           </p>
-                          <div className="flex items-center gap-4 mt-2 text-xs text-zinc-500">
+                          <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
                             <span>
                               Reported by: {report.reporter.name || "Anonymous"}
                             </span>
@@ -529,7 +528,7 @@ export default function ContentModerationPage() {
                           </div>
                         </div>
                       </div>
-                      <span className="text-xs text-zinc-400">
+                      <span className="text-xs text-muted-foreground/70">
                         {formatDate(report.createdAt)}
                       </span>
                     </div>
@@ -544,10 +543,10 @@ export default function ContentModerationPage() {
         <TabsContent value="profiles" className="space-y-4">
           {loadingProfiles ? (
             <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-6 w-6 animate-spin text-zinc-400" />
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
             </div>
           ) : profiles.length === 0 ? (
-            <p className="text-center text-zinc-500 py-8">
+            <p className="text-center text-muted-foreground py-8">
               No pending profile verifications
             </p>
           ) : (
@@ -574,17 +573,17 @@ export default function ContentModerationPage() {
                           <p className="font-medium">
                             {profile.consultant.name || "Unnamed"}
                           </p>
-                          <p className="text-sm text-zinc-500">
+                          <p className="text-sm text-muted-foreground">
                             {profile.consultant.email}
                           </p>
                           <div className="flex items-center gap-2 mt-1">
                             {profile.consultant.headline && (
-                              <span className="text-sm text-zinc-600 dark:text-zinc-400">
+                              <span className="text-sm text-muted-foreground">
                                 {profile.consultant.headline}
                               </span>
                             )}
                             {profile.consultant.experience && (
-                              <span className="text-xs text-zinc-500">
+                              <span className="text-xs text-muted-foreground">
                                 • {profile.consultant.experience} years
                                 experience
                               </span>
@@ -595,7 +594,7 @@ export default function ContentModerationPage() {
                               href={profile.consultant.linkedinUrl}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="text-xs text-blue-600 hover:underline flex items-center gap-1 mt-1"
+                              className="text-xs text-foreground underline-offset-2 hover:underline flex items-center gap-1 mt-1"
                               onClick={(e) => e.stopPropagation()}
                             >
                               <ExternalLink className="h-3 w-3" />
@@ -605,20 +604,20 @@ export default function ContentModerationPage() {
                         </div>
                       </div>
                       <div className="text-right">
-                        <Badge className="bg-amber-100 text-amber-700">
+                        <Badge className="bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300">
                           Pending Review
                         </Badge>
-                        <p className="text-xs text-zinc-400 mt-1">
+                        <p className="text-xs text-muted-foreground/70 mt-1">
                           {formatDate(profile.submittedAt)}
                         </p>
-                        <p className="text-xs text-zinc-500 mt-1">
+                        <p className="text-xs text-muted-foreground mt-1">
                           {profile.consultant.domain}
                         </p>
                       </div>
                     </div>
                     <div className="mt-3 flex items-center gap-2">
-                      <FileText className="h-4 w-4 text-zinc-400" />
-                      <span className="text-sm text-zinc-500">
+                      <FileText className="h-4 w-4 text-muted-foreground/70" />
+                      <span className="text-sm text-muted-foreground">
                         {profile.documents.length} document
                         {profile.documents.length !== 1 ? "s" : ""} attached
                       </span>
@@ -634,10 +633,10 @@ export default function ContentModerationPage() {
         <TabsContent value="reviews" className="space-y-4">
           {loadingReviews ? (
             <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-6 w-6 animate-spin text-zinc-400" />
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
             </div>
           ) : reviews.length === 0 ? (
-            <p className="text-center text-zinc-500 py-8">
+            <p className="text-center text-muted-foreground py-8">
               No reviews to check
             </p>
           ) : (
@@ -665,8 +664,8 @@ export default function ContentModerationPage() {
                           <div>
                             <div className="flex items-center gap-2">
                               <p className="font-medium">{consulteeName}</p>
-                              <span className="text-zinc-400">→</span>
-                              <p className="text-zinc-600 dark:text-zinc-400">
+                              <span className="text-muted-foreground/70">→</span>
+                              <p className="text-muted-foreground">
                                 {consultantName}
                               </p>
                             </div>
@@ -677,19 +676,19 @@ export default function ContentModerationPage() {
                                   className={`h-4 w-4 ${
                                     i < review.rating
                                       ? "text-yellow-400 fill-yellow-400"
-                                      : "text-zinc-300"
+                                      : "text-muted-foreground/30"
                                   }`}
                                 />
                               ))}
                             </div>
                             {review.comment && (
-                              <p className="text-sm text-zinc-600 dark:text-zinc-400 mt-2">
+                              <p className="text-sm text-muted-foreground mt-2">
                                 {review.comment}
                               </p>
                             )}
                           </div>
                         </div>
-                        <span className="text-xs text-zinc-400">
+                        <span className="text-xs text-muted-foreground/70">
                           {formatDate(review.createdAt)}
                         </span>
                       </div>
@@ -718,24 +717,24 @@ export default function ContentModerationPage() {
       </Tabs>
 
       {/* Report Detail Dialog */}
-      <Dialog
+      <ResponsiveModal
         open={!!selectedReport}
         onOpenChange={() => setSelectedReport(null)}
       >
-        <DialogContent className="max-w-2xl">
+        <ResponsiveModalContent className="max-w-2xl">
           {selectedReport && (
             <>
-              <DialogHeader>
-                <DialogTitle className="flex items-center gap-2">
+              <ResponsiveModalHeader>
+                <ResponsiveModalTitle className="flex items-center gap-2">
                   <Flag className="h-5 w-5 text-red-500" />
                   Report {selectedReport.id.slice(0, 8)}...
-                </DialogTitle>
-                <DialogDescription>
+                </ResponsiveModalTitle>
+                <ResponsiveModalDescription>
                   Review and take action on this report
-                </DialogDescription>
-              </DialogHeader>
+                </ResponsiveModalDescription>
+              </ResponsiveModalHeader>
               <div className="space-y-4">
-                <div className="p-4 rounded-lg bg-zinc-50 dark:bg-zinc-900">
+                <div className="p-4 rounded-lg bg-muted">
                   <Label className="text-sm font-medium">
                     Reported Content
                   </Label>
@@ -746,27 +745,27 @@ export default function ContentModerationPage() {
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div>
                     <Label className="text-sm font-medium">Reported By</Label>
-                    <p className="text-sm text-zinc-600">
+                    <p className="text-sm text-muted-foreground">
                       {selectedReport.reporter.name || "Anonymous"}
                     </p>
-                    <p className="text-xs text-zinc-400">
+                    <p className="text-xs text-muted-foreground/70">
                       {selectedReport.reporter.email}
                     </p>
                   </div>
                   <div>
                     <Label className="text-sm font-medium">Target User</Label>
-                    <p className="text-sm text-zinc-600">
+                    <p className="text-sm text-muted-foreground">
                       {selectedReport.reportedUser.name ||
                         selectedReport.reportedUser.email}
                     </p>
-                    <p className="text-xs text-zinc-400">
+                    <p className="text-xs text-muted-foreground/70">
                       {selectedReport.reportedUser.role}
                     </p>
                   </div>
                 </div>
                 <div>
                   <Label className="text-sm font-medium">Reason</Label>
-                  <p className="text-sm text-zinc-600">
+                  <p className="text-sm text-muted-foreground">
                     {selectedReport.reason}
                   </p>
                 </div>
@@ -781,7 +780,7 @@ export default function ContentModerationPage() {
                   />
                 </div>
               </div>
-              <DialogFooter className="gap-2">
+              <ResponsiveModalFooter className="gap-2">
                 <Button
                   variant="outline"
                   onClick={() => setSelectedReport(null)}
@@ -791,7 +790,7 @@ export default function ContentModerationPage() {
                 </Button>
                 <Button
                   variant="outline"
-                  className="text-green-600"
+                  className="text-green-600 dark:text-green-400"
                   onClick={() =>
                     handleReportAction(selectedReport.id, "DISMISS")
                   }
@@ -816,28 +815,30 @@ export default function ContentModerationPage() {
                   )}
                   Take Action
                 </Button>
-              </DialogFooter>
+              </ResponsiveModalFooter>
             </>
           )}
-        </DialogContent>
-      </Dialog>
+        </ResponsiveModalContent>
+      </ResponsiveModal>
 
       {/* Profile Verification Dialog */}
-      <Dialog
+      <ResponsiveModal
         open={!!selectedProfile}
         onOpenChange={() => setSelectedProfile(null)}
       >
-        <DialogContent className="max-w-2xl">
+        <ResponsiveModalContent className="max-w-2xl">
           {selectedProfile && (
             <>
-              <DialogHeader>
-                <DialogTitle>Profile Verification</DialogTitle>
-                <DialogDescription>
+              <ResponsiveModalHeader>
+                <ResponsiveModalTitle>
+                  Profile Verification
+                </ResponsiveModalTitle>
+                <ResponsiveModalDescription>
                   Review consultant profile and documents
-                </DialogDescription>
-              </DialogHeader>
+                </ResponsiveModalDescription>
+              </ResponsiveModalHeader>
               <div className="space-y-4">
-                <div className="flex items-center gap-4 p-4 rounded-lg bg-zinc-50 dark:bg-zinc-900">
+                <div className="flex items-center gap-4 p-4 rounded-lg bg-muted">
                   <Avatar className="h-16 w-16">
                     <AvatarImage src={selectedProfile.consultant.image || ""} />
                     <AvatarFallback className="text-lg">
@@ -851,7 +852,7 @@ export default function ContentModerationPage() {
                     <h3 className="text-lg font-semibold">
                       {selectedProfile.consultant.name || "Unnamed"}
                     </h3>
-                    <p className="text-sm text-zinc-500">
+                    <p className="text-sm text-muted-foreground">
                       {selectedProfile.consultant.email}
                     </p>
                     {selectedProfile.consultant.linkedinUrl && (
@@ -859,7 +860,7 @@ export default function ContentModerationPage() {
                         href={selectedProfile.consultant.linkedinUrl}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-sm text-blue-600 hover:underline flex items-center gap-1 mt-1"
+                        className="text-sm text-foreground underline-offset-2 hover:underline flex items-center gap-1 mt-1"
                       >
                         <ExternalLink className="h-3 w-3" />
                         View LinkedIn Profile
@@ -870,13 +871,13 @@ export default function ContentModerationPage() {
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div>
                     <Label className="text-sm font-medium">Headline</Label>
-                    <p className="text-sm text-zinc-600">
+                    <p className="text-sm text-muted-foreground">
                       {selectedProfile.consultant.headline || "Not specified"}
                     </p>
                   </div>
                   <div>
                     <Label className="text-sm font-medium">Experience</Label>
-                    <p className="text-sm text-zinc-600">
+                    <p className="text-sm text-muted-foreground">
                       {selectedProfile.consultant.experience
                         ? `${selectedProfile.consultant.experience} years`
                         : "Not specified"}
@@ -884,7 +885,7 @@ export default function ContentModerationPage() {
                   </div>
                   <div>
                     <Label className="text-sm font-medium">Domain</Label>
-                    <p className="text-sm text-zinc-600">
+                    <p className="text-sm text-muted-foreground">
                       {selectedProfile.consultant.domain}
                     </p>
                   </div>
@@ -892,7 +893,7 @@ export default function ContentModerationPage() {
                     <Label className="text-sm font-medium">
                       Current Status
                     </Label>
-                    <p className="text-sm text-zinc-600">
+                    <p className="text-sm text-muted-foreground">
                       {selectedProfile.consultant.verificationStatus}
                     </p>
                   </div>
@@ -902,7 +903,7 @@ export default function ContentModerationPage() {
                     <Label className="text-sm font-medium">
                       Applicant Notes
                     </Label>
-                    <p className="text-sm text-zinc-600 bg-zinc-100 dark:bg-zinc-800 p-2 rounded">
+                    <p className="text-sm text-muted-foreground bg-muted p-2 rounded">
                       {selectedProfile.notes}
                     </p>
                   </div>
@@ -913,7 +914,7 @@ export default function ContentModerationPage() {
                   </Label>
                   <div className="flex flex-wrap gap-2 mt-1">
                     {selectedProfile.documents.length === 0 ? (
-                      <p className="text-sm text-zinc-500">
+                      <p className="text-sm text-muted-foreground">
                         No documents uploaded
                       </p>
                     ) : (
@@ -942,7 +943,7 @@ export default function ContentModerationPage() {
                 <div>
                   <Label htmlFor="verifyNote">
                     Verification Note{" "}
-                    <span className="text-xs text-zinc-500 font-normal">
+                    <span className="text-xs text-muted-foreground font-normal">
                       (required for Request Info or Reject)
                     </span>
                   </Label>
@@ -955,7 +956,7 @@ export default function ContentModerationPage() {
                   />
                 </div>
               </div>
-              <DialogFooter className="gap-2">
+              <ResponsiveModalFooter className="gap-2">
                 <Button
                   variant="outline"
                   onClick={() => setSelectedProfile(null)}
@@ -965,7 +966,7 @@ export default function ContentModerationPage() {
                 </Button>
                 <Button
                   variant="outline"
-                  className="text-red-600"
+                  className="text-red-600 dark:text-red-400"
                   onClick={() =>
                     handleProfileVerification(selectedProfile.id, "REJECTED")
                   }
@@ -980,7 +981,7 @@ export default function ContentModerationPage() {
                 </Button>
                 <Button
                   variant="outline"
-                  className="text-amber-600 border-amber-300 hover:bg-amber-50"
+                  className="text-amber-600 border-amber-300 hover:bg-amber-50 dark:text-amber-400 dark:border-amber-800 dark:hover:bg-amber-950"
                   onClick={() =>
                     handleProfileVerification(selectedProfile.id, "NEEDS_INFO")
                   }
@@ -1012,11 +1013,11 @@ export default function ContentModerationPage() {
                   )}
                   Approve Profile
                 </Button>
-              </DialogFooter>
+              </ResponsiveModalFooter>
             </>
           )}
-        </DialogContent>
-      </Dialog>
+        </ResponsiveModalContent>
+      </ResponsiveModal>
     </div>
   );
 }

@@ -10,6 +10,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PageHeader } from "@/components/ui/page-header";
+import {
+  ResponsiveTable,
+  type ResponsiveColumn,
+} from "@/components/ui/responsive-table";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import {
@@ -87,34 +92,34 @@ export default function StaffPayoutsPage() {
       { bg: string; text: string; icon: React.ReactNode }
     > = {
       PENDING: {
-        bg: "bg-yellow-100",
-        text: "text-yellow-800",
+        bg: "bg-yellow-100 dark:bg-yellow-900",
+        text: "text-yellow-800 dark:text-yellow-300",
         icon: <ClipboardCheck className="w-3 h-3" />,
       },
       APPROVED: {
-        bg: "bg-blue-100",
-        text: "text-blue-800",
+        bg: "bg-muted",
+        text: "text-foreground",
         icon: <CheckCircle className="w-3 h-3" />,
       },
       PROCESSING: {
-        bg: "bg-indigo-100",
-        text: "text-indigo-800",
+        bg: "bg-muted",
+        text: "text-foreground",
         icon: <Loader className="w-3 h-3 animate-spin" />,
       },
       COMPLETED: {
-        bg: "bg-green-100",
-        text: "text-green-800",
+        bg: "bg-green-100 dark:bg-green-900",
+        text: "text-green-800 dark:text-green-300",
         icon: <CheckCircle className="w-3 h-3" />,
       },
       FAILED: {
-        bg: "bg-red-100",
-        text: "text-red-800",
+        bg: "bg-red-100 dark:bg-red-900",
+        text: "text-red-800 dark:text-red-300",
         icon: <XCircle className="w-3 h-3" />,
       },
     };
     const badge = badges[status] || {
-      bg: "bg-gray-100",
-      text: "text-gray-800",
+      bg: "bg-muted",
+      text: "text-muted-foreground",
       icon: null,
     };
     return (
@@ -127,15 +132,68 @@ export default function StaffPayoutsPage() {
     );
   };
 
+  const payoutColumns: ResponsiveColumn<Payout>[] = [
+    {
+      key: "consultant",
+      header: "Consultant",
+      primary: true,
+      cell: (payout) => (
+        <div>
+          <p className="text-sm font-medium text-foreground">
+            {payout.consultantName}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            {payout.consultantEmail}
+          </p>
+        </div>
+      ),
+    },
+    {
+      key: "amount",
+      header: "Amount",
+      className: "text-sm font-semibold text-foreground",
+      cell: (payout) =>
+        (payout.amount / 100).toLocaleString("en-IN", {
+          style: "currency",
+          currency: payout.currency,
+        }),
+    },
+    {
+      key: "method",
+      header: "Method",
+      className: "text-sm text-muted-foreground",
+      cell: (payout) => payout.method,
+    },
+    {
+      key: "status",
+      header: "Status",
+      cell: (payout) => getStatusBadge(payout.status),
+    },
+    {
+      key: "date",
+      header: "Date",
+      className: "text-sm text-muted-foreground",
+      cell: (payout) => new Date(payout.createdAt).toLocaleDateString(),
+    },
+  ];
+
+  const payoutsEmpty = (
+    <div className="text-center py-12">
+      <p className="text-muted-foreground">No payouts found</p>
+    </div>
+  );
+
   if (error) {
     return (
       <div className="flex items-center justify-center h-full">
         <Card className="w-full max-w-md">
           <CardHeader>
-            <CardTitle className="text-red-600">Error</CardTitle>
+            <CardTitle className="text-red-600 dark:text-red-400">
+              Error
+            </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-gray-700">
+            <p className="text-muted-foreground">
               {error instanceof Error
                 ? error.message
                 : "Failed to load payouts"}
@@ -148,15 +206,13 @@ export default function StaffPayoutsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold text-gray-900">Payouts</h1>
-        <p className="text-gray-600 mt-1">
-          View consultant payout status and history
-        </p>
-      </div>
+      <PageHeader
+        title="Payouts"
+        description="View consultant payout status and history"
+      />
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {isLoading ? (
           <>
             {[1, 2, 3, 4].map((i) => (
@@ -169,12 +225,14 @@ export default function StaffPayoutsPage() {
               <CardContent className="pt-4">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm text-gray-500">Pending</p>
-                    <p className="text-2xl font-bold text-yellow-700">
+                    <p className="text-sm text-muted-foreground">Pending</p>
+                    <p className="text-2xl font-bold text-foreground">
                       {stats.pending?.count || 0}
                     </p>
                   </div>
-                  <ClipboardCheck className="w-8 h-8 text-yellow-500" />
+                  <div className="p-2 rounded-lg bg-muted">
+                    <ClipboardCheck className="w-5 h-5 text-foreground" />
+                  </div>
                 </div>
               </CardContent>
             </Card>
@@ -183,12 +241,14 @@ export default function StaffPayoutsPage() {
               <CardContent className="pt-4">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm text-gray-500">Processing</p>
-                    <p className="text-2xl font-bold text-indigo-700">
+                    <p className="text-sm text-muted-foreground">Processing</p>
+                    <p className="text-2xl font-bold text-foreground">
                       {stats.processing?.count || 0}
                     </p>
                   </div>
-                  <Loader className="w-8 h-8 text-indigo-500" />
+                  <div className="p-2 rounded-lg bg-muted">
+                    <Loader className="w-5 h-5 text-foreground" />
+                  </div>
                 </div>
               </CardContent>
             </Card>
@@ -197,26 +257,32 @@ export default function StaffPayoutsPage() {
               <CardContent className="pt-4">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm text-gray-500">Completed</p>
-                    <p className="text-2xl font-bold text-green-700">
+                    <p className="text-sm text-muted-foreground">Completed</p>
+                    <p className="text-2xl font-bold text-foreground">
                       {stats.completed?.count || 0}
                     </p>
                   </div>
-                  <CheckCircle className="w-8 h-8 text-green-500" />
+                  <div className="p-2 rounded-lg bg-muted">
+                    <CheckCircle className="w-5 h-5 text-foreground" />
+                  </div>
                 </div>
               </CardContent>
             </Card>
 
-            <Card className="bg-gradient-to-r from-purple-50 to-indigo-50">
+            <Card>
               <CardContent className="pt-4">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm text-purple-600">Total Payouts</p>
-                    <p className="text-2xl font-bold text-purple-700">
+                    <p className="text-sm text-muted-foreground">
+                      Total Payouts
+                    </p>
+                    <p className="text-2xl font-bold text-foreground">
                       {data?.pagination?.total || 0}
                     </p>
                   </div>
-                  <Wallet className="w-8 h-8 text-purple-500" />
+                  <div className="p-2 rounded-lg bg-muted">
+                    <Wallet className="w-5 h-5 text-foreground" />
+                  </div>
                 </div>
               </CardContent>
             </Card>
@@ -234,7 +300,7 @@ export default function StaffPayoutsPage() {
               setPage(1);
             }}
           >
-            <SelectTrigger className="w-40">
+            <SelectTrigger className="w-full sm:w-40">
               <SelectValue placeholder="Filter by status" />
             </SelectTrigger>
             <SelectContent>
@@ -253,7 +319,7 @@ export default function StaffPayoutsPage() {
       <Card>
         <CardHeader>
           <CardTitle className="text-lg flex items-center gap-2">
-            <Wallet className="w-5 h-5 text-purple-600" />
+            <Wallet className="w-5 h-5 text-muted-foreground" />
             Payouts ({data?.pagination?.total || 0})
           </CardTitle>
         </CardHeader>
@@ -264,67 +330,19 @@ export default function StaffPayoutsPage() {
                 <Skeleton key={i} className="h-16 w-full" />
               ))}
             </div>
-          ) : data?.payouts?.length > 0 ? (
+          ) : (
             <>
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead className="bg-gray-50 border-b">
-                    <tr>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Consultant
-                      </th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Amount
-                      </th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Method
-                      </th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Status
-                      </th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Date
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="bg-white divide-y divide-gray-200">
-                    {data.payouts.map((payout: Payout) => (
-                      <tr key={payout.id} className="hover:bg-gray-50">
-                        <td className="px-4 py-3">
-                          <div>
-                            <p className="text-sm font-medium text-gray-900">
-                              {payout.consultantName}
-                            </p>
-                            <p className="text-xs text-gray-500">
-                              {payout.consultantEmail}
-                            </p>
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 text-sm font-semibold text-gray-900">
-                          {(payout.amount / 100).toLocaleString("en-IN", {
-                            style: "currency",
-                            currency: payout.currency,
-                          })}
-                        </td>
-                        <td className="px-4 py-3 text-sm text-gray-700">
-                          {payout.method}
-                        </td>
-                        <td className="px-4 py-3">
-                          {getStatusBadge(payout.status)}
-                        </td>
-                        <td className="px-4 py-3 text-sm text-gray-500">
-                          {new Date(payout.createdAt).toLocaleDateString()}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <ResponsiveTable<Payout>
+                columns={payoutColumns}
+                rows={data.payouts}
+                getRowId={(p) => p.id}
+                empty={payoutsEmpty}
+              />
 
               {/* Pagination */}
-              {data?.pagination && (
-                <div className="flex items-center justify-between pt-4">
-                  <div className="text-sm text-gray-500">
+              {data.payouts.length > 0 && data?.pagination && (
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pt-4">
+                  <div className="text-sm text-muted-foreground">
                     Showing {(page - 1) * limit + 1} to{" "}
                     {Math.min(page * limit, data.pagination.total)} of{" "}
                     {data.pagination.total} payouts
@@ -350,10 +368,6 @@ export default function StaffPayoutsPage() {
                 </div>
               )}
             </>
-          ) : (
-            <div className="text-center py-12">
-              <p className="text-gray-500">No payouts found</p>
-            </div>
           )}
         </CardContent>
       </Card>

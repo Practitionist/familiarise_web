@@ -8,6 +8,7 @@ import {
   TabsTrigger,
 } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PageHeader } from "@/components/ui/page-header";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useMemo } from "react";
@@ -137,12 +138,10 @@ export default function AdminPayoutsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold text-gray-900">Payouts</h1>
-        <p className="text-gray-600 mt-1">
-          Manage consultant payouts and earnings
-        </p>
-      </div>
+      <PageHeader
+        title="Payouts"
+        description="Manage consultant payouts and earnings"
+      />
 
       {/* Payout trend chart */}
       <Card>
@@ -189,14 +188,14 @@ export default function AdminPayoutsPage() {
                   />
                   <Bar
                     dataKey="total"
-                    fill="#6366f1"
+                    fill="#71717a"
                     radius={[4, 4, 0, 0]}
                   />
                 </BarChart>
               </ResponsiveContainer>
             </div>
           ) : (
-            <div className="flex h-[200px] items-center justify-center text-sm text-gray-500">
+            <div className="flex h-[200px] items-center justify-center text-sm text-muted-foreground">
               Analytics coming soon
             </div>
           )}

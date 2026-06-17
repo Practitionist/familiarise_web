@@ -175,7 +175,7 @@ export default function ProgramsInteractiveContent({
   const uniqueLevels = useMemo(() => getUniqueLevels(programs), [programs]);
 
   return (
-    <main className="min-h-screen bg-white">
+    <main className="min-h-screen bg-background">
       {/* Hero Section */}
       <section className="relative pt-32 pb-20 bg-zinc-950 overflow-hidden">
         <div className="absolute inset-0">

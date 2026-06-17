@@ -126,42 +126,42 @@ const getStatusBadge = (status: WaitlistStatus, compact = false) => {
   switch (status) {
     case "WAITING":
       return (
-        <Badge className="bg-amber-100 text-amber-800 border-amber-200">
+        <Badge className="bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-900">
           <Clock className={iconClass} />
           {!compact && "Waiting"}
         </Badge>
       );
     case "NOTIFIED":
       return (
-        <Badge className="bg-blue-100 text-blue-800 border-blue-200">
+        <Badge variant="secondary">
           <Bell className={iconClass} />
           {!compact && "Notified"}
         </Badge>
       );
     case "BOOKED":
       return (
-        <Badge className="bg-green-100 text-green-800 border-green-200">
+        <Badge className="bg-green-100 text-green-800 border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-900">
           <CheckCircle className={iconClass} />
           {!compact && "Booked"}
         </Badge>
       );
     case "EXPIRED":
       return (
-        <Badge className="bg-gray-100 text-gray-600 border-gray-200">
+        <Badge className="bg-muted text-muted-foreground border-border">
           <XCircle className={iconClass} />
           {!compact && "Expired"}
         </Badge>
       );
     case "CANCELLED":
       return (
-        <Badge className="bg-red-100 text-red-800 border-red-200">
+        <Badge className="bg-red-100 text-red-800 border-red-200 dark:bg-red-950/40 dark:text-red-400 dark:border-red-900">
           <XCircle className={iconClass} />
           {!compact && "Cancelled"}
         </Badge>
       );
     case "SKIPPED":
       return (
-        <Badge className="bg-purple-100 text-purple-800 border-purple-200">
+        <Badge variant="secondary">
           <SkipForward className={iconClass} />
           {!compact && "Skipped"}
         </Badge>
@@ -196,7 +196,7 @@ const userCell = (entry: WaitlistEntry) => (
 
 const positionCell = (entry: WaitlistEntry) =>
   entry.position ? (
-    <span className="font-semibold text-amber-700">#{entry.position}</span>
+    <span className="font-semibold text-foreground">#{entry.position}</span>
   ) : (
     <span className="text-muted-foreground/70">-</span>
   );
@@ -209,7 +209,7 @@ const expiresCell = (entry: WaitlistEntry) =>
     <span
       className={
         new Date(entry.expiresAt) < new Date()
-          ? "text-red-600"
+          ? "text-red-600 dark:text-red-400"
           : "text-muted-foreground"
       }
     >
@@ -348,13 +348,13 @@ function EventGroupCard({
               </div>
               <div className="flex items-center gap-3">
                 {notifiedCount > 0 && (
-                  <Badge className="bg-blue-100 text-blue-800">
+                  <Badge variant="secondary">
                     <Bell className="h-3 w-3 mr-1" />
                     {notifiedCount} notified
                   </Badge>
                 )}
                 {waitingCount > 0 && (
-                  <Badge className="bg-amber-100 text-amber-800">
+                  <Badge className="bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-400">
                     <Clock className="h-3 w-3 mr-1" />
                     {waitingCount} waiting
                   </Badge>
@@ -429,7 +429,7 @@ export function WaitlistManagement() {
         <PageHeader title="Waitlist Management" />
         <Card>
           <CardContent className="py-8">
-            <p className="text-center text-red-500">
+            <p className="text-center text-red-500 dark:text-red-400">
               Failed to load waitlists. Please try again later.
             </p>
           </CardContent>
@@ -448,19 +448,19 @@ export function WaitlistManagement() {
       {/* Key Stats */}
       {data?.stats && (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <Card className="border-l-4 border-l-amber-500">
+          <Card className="border-l-4 border-l-foreground">
             <CardContent className="p-4">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-muted-foreground">
                     Active Waitlists
                   </p>
-                  <p className="text-3xl font-bold text-amber-600">
+                  <p className="text-3xl font-bold text-foreground">
                     {data.stats.active}
                   </p>
                 </div>
-                <div className="p-3 bg-amber-100 rounded-full">
-                  <AlertCircle className="h-6 w-6 text-amber-600" />
+                <div className="p-3 bg-muted rounded-full">
+                  <AlertCircle className="h-6 w-6 text-foreground" />
                 </div>
               </div>
               <p className="text-xs text-muted-foreground mt-2">
@@ -486,12 +486,12 @@ export function WaitlistManagement() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-muted-foreground">Booked</p>
-                  <p className="text-3xl font-bold text-green-600">
+                  <p className="text-3xl font-bold text-green-600 dark:text-green-400">
                     {data.stats.booked}
                   </p>
                 </div>
-                <div className="p-3 bg-green-100 rounded-full">
-                  <CheckCircle className="h-6 w-6 text-green-600" />
+                <div className="p-3 bg-muted rounded-full">
+                  <CheckCircle className="h-6 w-6 text-foreground" />
                 </div>
               </div>
             </CardContent>

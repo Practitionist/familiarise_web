@@ -51,30 +51,30 @@ export default function UseCasePageLayout({ data }: { data: UseCasePageData }) {
 
   return (
     <div className="w-full">
-      {/* Hero */}
+      {/* Hero — intentional dark landing section */}
       <section className="bg-zinc-950 text-white py-20 md:py-28">
         <div className="container mx-auto px-4 md:px-6 text-center max-w-3xl">
-          <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold tracking-tight mb-6">
+          <h1 className="text-fluid-5xl font-bold tracking-tight mb-6">
             {data.title}
           </h1>
-          <p className="text-lg md:text-xl text-zinc-400 mb-8 leading-relaxed">
+          <p className="text-fluid-lg md:text-fluid-xl text-zinc-400 mb-8 leading-relaxed">
             {data.subtitle}
           </p>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-            <Link href={ctaHref}>
+            <Link href={ctaHref} className="w-full sm:w-auto">
               <Button
                 size="lg"
-                className="bg-white text-zinc-900 hover:bg-zinc-200 px-8 h-12 text-base"
+                className="w-full sm:w-auto bg-white text-zinc-900 hover:bg-zinc-200 px-8 h-12 text-base"
               >
                 {ctaLabel}
                 <ArrowRight className="w-4 h-4 ml-2" />
               </Button>
             </Link>
-            <Link href="/explore/experts">
+            <Link href="/explore/experts" className="w-full sm:w-auto">
               <Button
                 variant="outline"
                 size="lg"
-                className="bg-transparent border-zinc-600 text-white hover:bg-zinc-800 px-8 h-12 text-base"
+                className="w-full sm:w-auto bg-transparent border-zinc-600 text-white hover:bg-zinc-800 px-8 h-12 text-base"
               >
                 Browse Experts
               </Button>
@@ -84,28 +84,28 @@ export default function UseCasePageLayout({ data }: { data: UseCasePageData }) {
       </section>
 
       {/* Pain Points */}
-      <section className="py-16 md:py-24 bg-white">
+      <section className="py-16 md:py-24 bg-card">
         <div className="container mx-auto px-4 md:px-6 max-w-5xl">
-          <h2 className="text-3xl md:text-4xl font-bold text-center mb-4">
+          <h2 className="text-fluid-3xl md:text-fluid-4xl font-bold tracking-tight text-center mb-4">
             The Challenge
           </h2>
-          <p className="text-zinc-500 text-center mb-12 max-w-2xl mx-auto">
+          <p className="text-muted-foreground text-center mb-12 max-w-2xl mx-auto">
             Common problems that hold you back — and why generic solutions
             don&apos;t cut it.
           </p>
-          <div className="grid md:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {data.painPoints.map((point, i) => (
               <div
                 key={i}
-                className="p-6 rounded-2xl border border-zinc-200 bg-zinc-50"
+                className="p-6 rounded-2xl border border-border bg-muted"
               >
-                <div className="w-10 h-10 rounded-xl bg-red-50 text-red-500 flex items-center justify-center font-bold text-lg mb-4">
+                <div className="w-10 h-10 rounded-xl bg-error/10 text-error flex items-center justify-center font-bold text-lg mb-4">
                   {i + 1}
                 </div>
-                <h3 className="text-lg font-semibold text-zinc-900 mb-2">
+                <h3 className="text-lg font-semibold text-foreground mb-2">
                   {point.title}
                 </h3>
-                <p className="text-sm text-zinc-600 leading-relaxed">
+                <p className="text-sm text-muted-foreground leading-relaxed">
                   {point.description}
                 </p>
               </div>
@@ -115,28 +115,28 @@ export default function UseCasePageLayout({ data }: { data: UseCasePageData }) {
       </section>
 
       {/* Solutions */}
-      <section className="py-16 md:py-24 bg-zinc-50">
+      <section className="py-16 md:py-24 bg-muted">
         <div className="container mx-auto px-4 md:px-6 max-w-5xl">
-          <h2 className="text-3xl md:text-4xl font-bold text-center mb-4">
+          <h2 className="text-fluid-3xl md:text-fluid-4xl font-bold tracking-tight text-center mb-4">
             How Familiarise Helps
           </h2>
-          <p className="text-zinc-500 text-center mb-12 max-w-2xl mx-auto">
+          <p className="text-muted-foreground text-center mb-12 max-w-2xl mx-auto">
             Real guidance from real experts — not AI-generated advice or
             pre-recorded videos.
           </p>
-          <div className="grid md:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {data.solutions.map((solution, i) => (
               <div
                 key={i}
-                className="p-6 rounded-2xl border border-zinc-200 bg-white"
+                className="p-6 rounded-2xl border border-border bg-card"
               >
-                <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold text-lg mb-4">
+                <div className="w-10 h-10 rounded-xl bg-foreground text-card flex items-center justify-center font-bold text-lg mb-4">
                   {i + 1}
                 </div>
-                <h3 className="text-lg font-semibold text-zinc-900 mb-2">
+                <h3 className="text-lg font-semibold text-foreground mb-2">
                   {solution.title}
                 </h3>
-                <p className="text-sm text-zinc-600 leading-relaxed">
+                <p className="text-sm text-muted-foreground leading-relaxed">
                   {solution.description}
                 </p>
               </div>
@@ -147,12 +147,12 @@ export default function UseCasePageLayout({ data }: { data: UseCasePageData }) {
 
       {/* Featured Categories */}
       {data.categories.length > 0 && (
-        <section className="py-16 md:py-24 bg-white">
+        <section className="py-16 md:py-24 bg-card">
           <div className="container mx-auto px-4 md:px-6 max-w-4xl text-center">
-            <h2 className="text-3xl md:text-4xl font-bold mb-4">
+            <h2 className="text-fluid-3xl md:text-fluid-4xl font-bold tracking-tight mb-4">
               Explore Experts by Domain
             </h2>
-            <p className="text-zinc-500 mb-10 max-w-2xl mx-auto">
+            <p className="text-muted-foreground mb-10 max-w-2xl mx-auto">
               Find verified consultants in the fields that matter to you.
             </p>
             <div className="flex flex-wrap justify-center gap-3">
@@ -160,7 +160,7 @@ export default function UseCasePageLayout({ data }: { data: UseCasePageData }) {
                 <Link
                   key={cat.href}
                   href={cat.href}
-                  className="px-5 py-2.5 rounded-full border border-zinc-200 text-sm font-medium text-zinc-700 hover:bg-zinc-900 hover:text-white hover:border-zinc-900 transition-colors"
+                  className="px-5 py-2.5 rounded-full border border-border text-sm font-medium text-muted-foreground hover:bg-foreground hover:text-card hover:border-foreground transition-colors"
                 >
                   {cat.label}
                 </Link>
@@ -170,19 +170,19 @@ export default function UseCasePageLayout({ data }: { data: UseCasePageData }) {
         </section>
       )}
 
-      {/* Bottom CTA */}
+      {/* Bottom CTA — intentional dark landing section */}
       <section className="py-20 md:py-28 bg-zinc-950 text-white">
         <div className="container mx-auto px-4 md:px-6 text-center max-w-2xl">
-          <h2 className="text-3xl md:text-4xl font-bold mb-4">
+          <h2 className="text-fluid-3xl md:text-fluid-4xl font-bold tracking-tight mb-4">
             {data.bottomCtaTitle}
           </h2>
           <p className="text-zinc-400 mb-8 leading-relaxed">
             {data.bottomCtaDescription}
           </p>
-          <Link href={ctaHref}>
+          <Link href={ctaHref} className="inline-block w-full sm:w-auto">
             <Button
               size="lg"
-              className="bg-white text-zinc-900 hover:bg-zinc-200 px-8 h-12 text-base"
+              className="w-full sm:w-auto bg-white text-zinc-900 hover:bg-zinc-200 px-8 h-12 text-base"
             >
               {ctaLabel}
               <ArrowRight className="w-4 h-4 ml-2" />

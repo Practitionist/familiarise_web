@@ -11,14 +11,14 @@ const Loader = () => {
       <div className="relative z-10 flex flex-col items-center">
         {/* Icon with glow */}
         <div className="relative mb-6">
-          <div className="absolute inset-0 bg-emerald-500/20 blur-xl rounded-full" />
+          <div className="absolute inset-0 bg-white/10 blur-xl rounded-full" />
           <div className="relative w-20 h-20 bg-zinc-800 rounded-2xl flex items-center justify-center border border-zinc-700">
-            <Video className="w-8 h-8 text-emerald-500" />
+            <Video className="w-8 h-8 text-white" />
           </div>
         </div>
 
         {/* Spinner */}
-        <Loader2 className="h-8 w-8 animate-spin text-emerald-500 mb-4" />
+        <Loader2 className="h-8 w-8 animate-spin text-white mb-4" />
 
         {/* Text */}
         <p className="text-lg font-medium text-white mb-1">
