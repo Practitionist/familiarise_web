@@ -58,7 +58,6 @@
   },
   "dependencies": {
     "@better-auth/sso": "^1.6.3",
-    "@faker-js/faker": "^10.2.0",
     "@hookform/resolvers": "^5.2.2",
     "@novu/api": "^3.13.0",
     "@novu/nextjs": "^3.13.0",
@@ -142,6 +141,7 @@
     "zod": "^3.25.67"
   },
   "devDependencies": {
+    "@faker-js/faker": "^10.2.0",
     "@eslint/js": "^9.39.2",
     "@next/bundle-analyzer": "^16.1.5",
     "fast-check": "^3.23.2",

@@ -81,6 +81,17 @@ const nextConfig = {
   // Reduce Webpack memory usage during builds (Next.js 15+, low-risk experimental)
   experimental: {
     webpackMemoryOptimizations: true,
+    optimizePackageImports: [
+      "lucide-react",
+      "framer-motion",
+      "@stream-io/video-react-sdk",
+      "stream-chat-react",
+      "recharts",
+      "date-fns",
+      "@radix-ui/react-icons",
+    ],
+    // Next 15 defaults page segments to 0, which refetches RSC on every nav; this lets the client router cache hold payloads ~30s between navs.
+    staleTimes: { dynamic: 30, static: 180 },
   },
 
   // This tells Next.js to explicitly process these packages during the build, which should resolve the module format conflict.
