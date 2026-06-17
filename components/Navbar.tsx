@@ -19,7 +19,9 @@ import {
   Presentation,
 } from "lucide-react";
 import { signOut, useSession } from "@/lib/auth-client";
-import { disconnectStreamClients } from "@/providers/StreamProvider";
+// Import the logout helper from the SDK-free module (not @/providers/StreamProvider)
+// so the root navbar no longer statically links the Stream video/chat SDK. #248
+import { disconnectStreamClients } from "@/lib/stream/disconnect";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";

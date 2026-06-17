@@ -49,8 +49,18 @@ const adapter = new PrismaPg({
     : {}),
 });
 
+// Slow-query threshold (ms). A query exceeding this is logged via the
+// query-event hook below so hot-path regressions surface in any environment.
+const PARSED_SLOW_QUERY_MS = Number(process.env.PRISMA_SLOW_QUERY_MS);
+const SLOW_QUERY_MS =
+  Number.isFinite(PARSED_SLOW_QUERY_MS) && PARSED_SLOW_QUERY_MS > 0
+    ? PARSED_SLOW_QUERY_MS
+    : 500;
+
 function makeClient() {
-  return new PrismaClient({
+  // Emit the `query` event everywhere so the slow-query hook fires in prod too;
+  // keep the verbose error/warn → stdout fan-out gated to development.
+  const base = new PrismaClient({
     adapter,
     log:
       process.env.NODE_ENV === "development"
@@ -59,8 +69,22 @@ function makeClient() {
             { level: "error", emit: "stdout" },
             { level: "warn", emit: "stdout" },
           ]
-        : ["error"],
-  }).$extends({
+        : [{ level: "query", emit: "event" }, "error"],
+  });
+
+  // #696 / nav-perf Phase 3 — warn on queries over the threshold so missing
+  // indexes and N+1s are visible without full query logging. console.warn
+  // matches the lib/ convention (lib/redis.ts, lib/maintenance-cron.ts).
+  base.$on("query", (e) => {
+    if (e.duration > SLOW_QUERY_MS) {
+      console.warn(
+        `[Prisma:SLOW_QUERY] ${e.duration}ms (threshold ${SLOW_QUERY_MS}ms): ${e.query}`,
+        process.env.NODE_ENV === "development" ? { params: e.params } : "",
+      );
+    }
+  });
+
+  return base.$extends({
     result: {
       billingAccount: {
         walletBalance: fn("walletBalance"),

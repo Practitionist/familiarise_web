@@ -3,7 +3,7 @@
 import { cn } from "@/utils/tailwind";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Skeleton } from "@/components/ui/skeleton";
-import Link from "next/link";
+import { NavLink } from "@/components/ui/NavLink";
 import { usePathname, useRouter } from "next/navigation";
 import {
   Home,
@@ -188,7 +188,7 @@ export function DashboardSidebar({
 
                     return (
                       <li key={item.path}>
-                        <Link
+                        <NavLink
                           href={`${basePath}/${item.path}`}
                           className={cn(
                             "group flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-150",
@@ -223,7 +223,7 @@ export function DashboardSidebar({
                                 : "opacity-0 group-hover:opacity-50",
                             )}
                           />
-                        </Link>
+                        </NavLink>
                       </li>
                     );
                   })}
@@ -241,7 +241,7 @@ export function DashboardSidebar({
 
               return (
                 <li key={item.path}>
-                  <Link
+                  <NavLink
                     href={`${basePath}/${item.path}`}
                     className={cn(
                       "group flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-150",
@@ -276,7 +276,7 @@ export function DashboardSidebar({
                           : "opacity-0 group-hover:opacity-50",
                       )}
                     />
-                  </Link>
+                  </NavLink>
                 </li>
               );
             })}

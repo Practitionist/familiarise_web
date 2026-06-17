@@ -2302,6 +2302,11 @@ model ConsultantReview {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  // #696 — explore "trending" sort orders ConsultantProfile by
+  // reviews._count; without this the per-profile aggregate seq-scans the
+  // whole review table. Also serves the FK join + rating>=4 social-proof reads.
+  @@index([consultantProfileId])
 }
 
 model ConsulteeProfile {
@@ -3137,6 +3142,7 @@ model Waitlist {
   @@unique([userId, webinarId])
   @@unique([userId, classId])
   @@index([userId])
+  @@index([userId, status])
   @@index([webinarId])
   @@index([classId])
   @@index([status])
@@ -3636,6 +3642,8 @@ model Payment {
   @@index([appointmentId])
   @@index([paymentStatus, createdAt])
   @@index([organizationId])
+  // Dashboard hot path: a user's payments scoped to an org, newest first.
+  @@index([userId, organizationId, createdAt])
   @@index([billableToOrgInvoiceId])
   @@index([parentPaymentId])
   @@index([discountCodeId])
