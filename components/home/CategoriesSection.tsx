@@ -26,18 +26,22 @@ function CategoryCard({
       viewport={{ once: true }}
     >
       <Link href={`/explore/experts?category=${category.name.toLowerCase()}`}>
-        <Card className="group cursor-pointer border border-zinc-200 bg-white hover:border-zinc-400 transition-all duration-300 hover:-translate-y-1 hover:shadow-lg">
+        <Card className="group cursor-pointer border border-border bg-card hover:border-foreground/40 transition-all duration-300 hover:-translate-y-1 hover:shadow-elevation-2">
           <CardContent className="p-6 flex items-center gap-4">
             <div
               className={`w-12 h-12 rounded-xl ${category.color} flex items-center justify-center group-hover:scale-110 transition-transform`}
             >
               <Icon className="w-6 h-6 text-white" />
             </div>
-            <div>
-              <h4 className="font-semibold text-zinc-900">{category.name}</h4>
-              <p className="text-sm text-zinc-500">{category.count}</p>
+            <div className="min-w-0">
+              <h4 className="font-semibold text-foreground truncate">
+                {category.name}
+              </h4>
+              <p className="text-sm text-muted-foreground truncate">
+                {category.count}
+              </p>
             </div>
-            <ChevronRight className="w-5 h-5 text-zinc-400 ml-auto group-hover:translate-x-1 transition-transform" />
+            <ChevronRight className="w-5 h-5 text-muted-foreground ml-auto group-hover:translate-x-1 transition-transform shrink-0" />
           </CardContent>
         </Card>
       </Link>
@@ -60,14 +64,14 @@ export function CategoriesSection() {
         >
           <Badge
             variant="secondary"
-            className="mb-4 bg-zinc-100 text-zinc-700 hover:bg-zinc-100 border-0"
+            className="mb-4 bg-secondary text-secondary-foreground hover:bg-secondary border-0"
           >
             Categories
           </Badge>
-          <h2 className="text-3xl md:text-4xl lg:text-5xl font-bold text-zinc-900 mb-4">
-            Browse by <span className="text-zinc-500">expertise</span>
+          <h2 className="text-fluid-4xl font-bold text-foreground mb-4 tracking-tight">
+            Browse by <span className="text-muted-foreground">expertise</span>
           </h2>
-          <p className="text-lg text-zinc-600 max-w-2xl mx-auto">
+          <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
             Find experts in your field and start learning from the best
           </p>
         </motion.div>
@@ -93,7 +97,7 @@ export function CategoriesSection() {
             <Button
               variant="outline"
               size="lg"
-              className="border-zinc-300 hover:bg-zinc-100"
+              className="border-border hover:bg-muted"
             >
               View All Categories
               <ChevronRight className="ml-2 w-4 h-4" />

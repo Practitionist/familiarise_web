@@ -44,21 +44,15 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+
+
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+  ResponsiveModal,
+  ResponsiveModalContent,
+  ResponsiveModalFooter,
+  ResponsiveModalHeader,
+  ResponsiveModalTitle,
+} from "@/components/ui/responsive-modal";
 import {
   Select,
   SelectContent,
@@ -641,17 +635,17 @@ function CreateProgramDialog({
   };
 
   return (
-    <Dialog
+    <ResponsiveModal
       open={open}
       onOpenChange={(v) => {
         if (!v) reset();
         onOpenChange(v);
       }}
     >
-      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>Create Program</DialogTitle>
-        </DialogHeader>
+      <ResponsiveModalContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
+        <ResponsiveModalHeader>
+          <ResponsiveModalTitle>Create Program</ResponsiveModalTitle>
+        </ResponsiveModalHeader>
 
         <div className="space-y-5">
           {/* Program type */}
@@ -949,7 +943,7 @@ function CreateProgramDialog({
           {error && <p className="text-sm text-red-600">{error}</p>}
         </div>
 
-        <DialogFooter>
+        <ResponsiveModalFooter>
           <Button
             variant="outline"
             onClick={() => {
@@ -968,9 +962,9 @@ function CreateProgramDialog({
               "Create"
             )}
           </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </ResponsiveModalFooter>
+      </ResponsiveModalContent>
+    </ResponsiveModal>
   );
 }
 
@@ -1169,14 +1163,14 @@ function EditProgramDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>Edit Program</DialogTitle>
-        </DialogHeader>
+    <ResponsiveModal open={open} onOpenChange={onOpenChange}>
+      <ResponsiveModalContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
+        <ResponsiveModalHeader>
+          <ResponsiveModalTitle>Edit Program</ResponsiveModalTitle>
+        </ResponsiveModalHeader>
 
         {detail.isLoading || !program ? (
-          <div className="flex items-center gap-2 py-8 text-sm text-zinc-500">
+          <div className="flex items-center gap-2 py-8 text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" /> Loading…
           </div>
         ) : (
@@ -1390,7 +1384,7 @@ function EditProgramDialog({
           </div>
         )}
 
-        <DialogFooter>
+        <ResponsiveModalFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
@@ -1406,9 +1400,9 @@ function EditProgramDialog({
               "Save"
             )}
           </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </ResponsiveModalFooter>
+      </ResponsiveModalContent>
+    </ResponsiveModal>
   );
 }
 
@@ -1509,11 +1503,11 @@ function ManageProgramDialog({
   );
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        <DialogHeader>
-          <DialogTitle>Manage Program — {program.name}</DialogTitle>
-        </DialogHeader>
+    <ResponsiveModal open={open} onOpenChange={onOpenChange}>
+      <ResponsiveModalContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <ResponsiveModalHeader>
+          <ResponsiveModalTitle>Manage Program — {program.name}</ResponsiveModalTitle>
+        </ResponsiveModalHeader>
 
         {/* Program info summary */}
         <div className="rounded-md border p-3 space-y-1 text-sm">
@@ -1742,8 +1736,8 @@ function ManageProgramDialog({
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
-      </DialogContent>
-    </Dialog>
+      </ResponsiveModalContent>
+    </ResponsiveModal>
   );
 }
 

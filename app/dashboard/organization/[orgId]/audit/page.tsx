@@ -28,13 +28,9 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+  ResponsiveTable,
+  type ResponsiveColumn,
+} from "@/components/ui/responsive-table";
 
 /**
  * /dashboard/organization/[orgId]/audit — org audit-log browser.
@@ -72,18 +68,21 @@ const CATEGORIES: OrgAuditCategory[] = [
   "WEBHOOK",
 ];
 
+// Categories are a neutral taxonomy, not statuses, so they read as monochrome
+// muted chips (#9 — off-brand accents → mono) with the genuinely semantic
+// money/compliance categories keeping a restrained colour cue + dark variants.
 const CATEGORY_TONE: Record<OrgAuditCategory, string> = {
-  MEMBER: "bg-blue-50 text-blue-700",
-  CONTRACT: "bg-purple-50 text-purple-700",
-  PROGRAM: "bg-indigo-50 text-indigo-700",
-  WALLET: "bg-emerald-50 text-emerald-700",
-  INVOICE: "bg-amber-50 text-amber-700",
-  PAYOUT: "bg-teal-50 text-teal-700",
-  SETTINGS: "bg-zinc-100 text-zinc-700",
-  CONSENT: "bg-rose-50 text-rose-700",
-  CATALOG: "bg-cyan-50 text-cyan-700",
-  SYSTEM: "bg-zinc-200 text-zinc-800",
-  WEBHOOK: "bg-sky-50 text-sky-700",
+  MEMBER: "bg-muted text-muted-foreground",
+  CONTRACT: "bg-muted text-muted-foreground",
+  PROGRAM: "bg-muted text-muted-foreground",
+  WALLET: "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300",
+  INVOICE: "bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300",
+  PAYOUT: "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300",
+  SETTINGS: "bg-muted text-muted-foreground",
+  CONSENT: "bg-rose-50 text-rose-700 dark:bg-rose-950 dark:text-rose-300",
+  CATALOG: "bg-muted text-muted-foreground",
+  SYSTEM: "bg-muted text-foreground",
+  WEBHOOK: "bg-muted text-muted-foreground",
 };
 
 type AuditRow = {
@@ -154,7 +153,7 @@ export default function AuditLogPage({ params }: Readonly<PageProps>) {
   if (isGateLoading) {
     return (
       <DashboardContent>
-        <p className="text-sm text-zinc-500">Loading…</p>
+        <p className="text-sm text-muted-foreground">Loading…</p>
       </DashboardContent>
     );
   }
@@ -167,7 +166,7 @@ export default function AuditLogPage({ params }: Readonly<PageProps>) {
       <DashboardContent>
         <Card>
           <CardContent className="p-6">
-            <p className="text-sm text-zinc-700">
+            <p className="text-sm text-foreground">
               Audit-log access requires MAINTAINER role or higher (or
               SUPPORT for read-only investigation).
             </p>
@@ -199,6 +198,51 @@ export default function AuditLogPage({ params }: Readonly<PageProps>) {
   const canGoPrev = cursorStack.length > 0;
   const canGoNext = !!data?.nextCursor;
 
+  const columns: ResponsiveColumn<AuditRow>[] = [
+    {
+      key: "time",
+      header: "Time",
+      primary: true,
+      className: "font-mono text-xs whitespace-nowrap",
+      cell: (row) => new Date(row.createdAt).toLocaleString(),
+    },
+    {
+      key: "category",
+      header: "Category",
+      cell: (row) => (
+        <Badge className={CATEGORY_TONE[row.category]} variant="secondary">
+          {row.category}
+        </Badge>
+      ),
+    },
+    {
+      key: "action",
+      header: "Action",
+      className: "font-mono text-xs",
+      cell: (row) => row.action,
+    },
+    {
+      key: "actor",
+      header: "Actor",
+      className: "text-xs",
+      cell: (row) =>
+        row.actor ? (
+          <>
+            <div className="font-medium">{row.actor.user.name}</div>
+            <div className="text-muted-foreground">{row.actor.user.email}</div>
+          </>
+        ) : (
+          <span className="text-muted-foreground/70">System</span>
+        ),
+    },
+    {
+      key: "description",
+      header: "Description",
+      className: "text-sm",
+      cell: (row) => row.description,
+    },
+  ];
+
   return (
     <>
       <DashboardHeader
@@ -213,10 +257,10 @@ export default function AuditLogPage({ params }: Readonly<PageProps>) {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="flex flex-col sm:flex-row gap-3">
-              <div className="flex-1">
+            <div className="flex flex-col sm:flex-row sm:flex-wrap gap-3">
+              <div className="min-w-0 flex-1">
                 <div className="relative">
-                  <Search className="h-4 w-4 absolute left-3 top-2.5 text-zinc-400" />
+                  <Search className="h-4 w-4 absolute left-3 top-2.5 text-muted-foreground/70" />
                   <Input
                     placeholder="Search description…"
                     value={search}
@@ -235,7 +279,7 @@ export default function AuditLogPage({ params }: Readonly<PageProps>) {
                   setCursorStack([]);
                 }}
               >
-                <SelectTrigger className="sm:w-48">
+                <SelectTrigger className="w-full sm:w-48">
                   <SelectValue placeholder="Category" />
                 </SelectTrigger>
                 <SelectContent>
@@ -254,7 +298,7 @@ export default function AuditLogPage({ params }: Readonly<PageProps>) {
                   setFrom(e.target.value);
                   setCursorStack([]);
                 }}
-                className="sm:w-40"
+                className="w-full sm:w-40"
                 aria-label="From date"
               />
               <Input
@@ -264,7 +308,7 @@ export default function AuditLogPage({ params }: Readonly<PageProps>) {
                   setTo(e.target.value);
                   setCursorStack([]);
                 }}
-                className="sm:w-40"
+                className="w-full sm:w-40"
                 aria-label="To date"
               />
               <Button variant="outline" onClick={resetFilters}>
@@ -283,71 +327,27 @@ export default function AuditLogPage({ params }: Readonly<PageProps>) {
         </Card>
 
         <Card>
-          <CardContent className="p-0">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Time</TableHead>
-                  <TableHead>Category</TableHead>
-                  <TableHead>Action</TableHead>
-                  <TableHead>Actor</TableHead>
-                  <TableHead>Description</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {isLoading ? (
-                  <TableRow>
-                    <TableCell colSpan={5} className="py-8 text-center text-zinc-500">
-                      Loading…
-                    </TableCell>
-                  </TableRow>
-                ) : rows.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={5} className="py-8 text-center text-zinc-500">
-                      No audit rows match the current filters.
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  rows.map((row) => (
-                    <TableRow key={row.id}>
-                      <TableCell className="font-mono text-xs whitespace-nowrap">
-                        {new Date(row.createdAt).toLocaleString()}
-                      </TableCell>
-                      <TableCell>
-                        <Badge
-                          className={CATEGORY_TONE[row.category]}
-                          variant="secondary"
-                        >
-                          {row.category}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="font-mono text-xs">
-                        {row.action}
-                      </TableCell>
-                      <TableCell className="text-xs">
-                        {row.actor ? (
-                          <>
-                            <div className="font-medium">
-                              {row.actor.user.name}
-                            </div>
-                            <div className="text-zinc-500">{row.actor.user.email}</div>
-                          </>
-                        ) : (
-                          <span className="text-zinc-400">System</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-sm">
-                        {row.description}
-                      </TableCell>
-                    </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
+          <CardContent className="p-0 sm:p-4">
+            {isLoading ? (
+              <p className="py-8 text-center text-sm text-muted-foreground">
+                Loading…
+              </p>
+            ) : (
+              <ResponsiveTable<AuditRow>
+                columns={columns}
+                rows={rows}
+                getRowId={(row) => row.id}
+                empty={
+                  <p className="py-8 text-center text-sm text-muted-foreground">
+                    No audit rows match the current filters.
+                  </p>
+                }
+              />
+            )}
           </CardContent>
         </Card>
 
-        <div className="flex justify-between items-center mt-3 text-sm text-zinc-500">
+        <div className="flex justify-between items-center mt-3 text-sm text-muted-foreground">
           <span>
             {rows.length} row{rows.length === 1 ? "" : "s"}
             {isFetching && " · refreshing…"}

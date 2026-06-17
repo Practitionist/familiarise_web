@@ -37,21 +37,11 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+  ResponsiveTable,
+  type ResponsiveColumn,
+} from "@/components/ui/responsive-table";
+
+
 import {
   Select,
   SelectContent,
@@ -63,6 +53,47 @@ import {
 // SsoResponse shape is imported from `@/schemas/organizations` so the
 // same definitions back the UI, the payload validators, and any future
 // operator/admin tooling.
+
+type SsoProvider = SsoSettingsResponse["providers"][number];
+
+const providerColumns: ResponsiveColumn<SsoProvider>[] = [
+  {
+    key: "providerId",
+    header: "Provider ID",
+    primary: true,
+    cell: (p) => <Badge variant="secondary">{p.providerId}</Badge>,
+  },
+  {
+    key: "type",
+    header: "Type",
+    className: "text-xs uppercase text-muted-foreground",
+    cell: (p) => p.providerType ?? "—",
+  },
+  {
+    key: "domain",
+    header: "Domain",
+    cell: (p) => p.domain,
+  },
+  {
+    key: "idpUrls",
+    header: "IdP setup URLs",
+    className: "space-y-1.5 py-3",
+    cell: (p) => (
+      <div className="space-y-1.5">
+        <CopyableUrl
+          label={p.providerType === "oidc" ? "Redirect URI" : "ACS URL"}
+          value={deriveAcsUrl(p.providerId, p.providerType)}
+        />
+        {p.providerType === "saml" && (
+          <CopyableUrl
+            label="SP Metadata URL"
+            value={deriveMetadataUrl(p.providerId)}
+          />
+        )}
+      </div>
+    ),
+  },
+];
 
 function CopyableUrl({ label, value }: { label: string; value: string }) {
   const { toast } = useToast();
@@ -386,66 +417,26 @@ export default function OrgSsoPage({
             </Button>
           </CardHeader>
           <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Provider ID</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Domain</TableHead>
-                  <TableHead>IdP setup URLs</TableHead>
-                  <TableHead className="w-12"></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {data?.providers.map((p) => (
-                  <TableRow key={p.id}>
-                    <TableCell>
-                      <Badge variant="secondary">{p.providerId}</Badge>
-                    </TableCell>
-                    <TableCell className="text-xs uppercase text-zinc-500">
-                      {p.providerType ?? "—"}
-                    </TableCell>
-                    <TableCell>{p.domain}</TableCell>
-                    <TableCell className="space-y-1.5 py-3">
-                      <CopyableUrl
-                        label={
-                          p.providerType === "oidc"
-                            ? "Redirect URI"
-                            : "ACS URL"
-                        }
-                        value={deriveAcsUrl(p.providerId, p.providerType)}
-                      />
-                      {p.providerType === "saml" && (
-                        <CopyableUrl
-                          label="SP Metadata URL"
-                          value={deriveMetadataUrl(p.providerId)}
-                        />
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        aria-label="Delete provider"
-                        onClick={() => deleteProviderMutation.mutate(p.id)}
-                      >
-                        <Trash2 className="h-4 w-4 text-red-500" />
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-                {data?.providers && data.providers.length === 0 && (
-                  <TableRow>
-                    <TableCell
-                      colSpan={5}
-                      className="text-center text-sm text-zinc-500 py-6"
-                    >
-                      No providers configured yet.
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
+            <ResponsiveTable<SsoProvider>
+              columns={providerColumns}
+              rows={data?.providers ?? []}
+              getRowId={(p) => p.id}
+              rowActions={(p) => (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label="Delete provider"
+                  onClick={() => deleteProviderMutation.mutate(p.id)}
+                >
+                  <Trash2 className="h-4 w-4 text-red-500" />
+                </Button>
+              )}
+              empty={
+                <p className="text-center text-sm text-muted-foreground py-6">
+                  No providers configured yet.
+                </p>
+              }
+            />
           </CardContent>
         </Card>
       </DashboardContent>

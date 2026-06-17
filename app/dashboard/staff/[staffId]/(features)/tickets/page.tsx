@@ -14,21 +14,18 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+  ResponsiveTable,
+  type ResponsiveColumn,
+} from "@/components/ui/responsive-table";
+import { PageHeader } from "@/components/ui/page-header";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+  ResponsiveModal,
+  ResponsiveModalContent,
+  ResponsiveModalDescription,
+  ResponsiveModalFooter,
+  ResponsiveModalHeader,
+  ResponsiveModalTitle,
+} from "@/components/ui/responsive-modal";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
@@ -76,9 +73,9 @@ const getStatusColor = (status: string) => {
     case "RESOLVED":
       return "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300";
     case "CLOSED":
-      return "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400";
+      return "bg-muted text-muted-foreground";
     default:
-      return "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300";
+      return "bg-muted text-muted-foreground";
   }
 };
 
@@ -91,9 +88,9 @@ const getPriorityColor = (priority: string) => {
     case "MEDIUM":
       return "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300";
     case "LOW":
-      return "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400";
+      return "bg-muted text-muted-foreground";
     default:
-      return "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400";
+      return "bg-muted text-muted-foreground";
   }
 };
 
@@ -108,9 +105,9 @@ const getStatusIcon = (status: string) => {
     case "RESOLVED":
       return <CheckCircle2 className="h-4 w-4 text-green-500" />;
     case "CLOSED":
-      return <XCircle className="h-4 w-4 text-zinc-500" />;
+      return <XCircle className="h-4 w-4 text-muted-foreground" />;
     default:
-      return <AlertCircle className="h-4 w-4 text-zinc-500" />;
+      return <AlertCircle className="h-4 w-4 text-muted-foreground" />;
   }
 };
 
@@ -332,51 +329,167 @@ export default function SupportTicketsPage() {
     }
   };
 
+  const columns: ResponsiveColumn<Ticket>[] = [
+    {
+      key: "ticketId",
+      header: "Ticket ID",
+      className: "font-mono text-xs",
+      cell: (ticket) => ticket.id.slice(-8).toUpperCase(),
+    },
+    {
+      key: "subject",
+      header: "Subject",
+      primary: true,
+      cell: (ticket) => (
+        <div className="flex items-center gap-2">
+          {getStatusIcon(ticket.status)}
+          <span className="font-medium truncate max-w-[200px]">
+            {ticket.title}
+          </span>
+          {(ticket.responseCount ?? 0) > 0 && (
+            <Badge variant="outline" className="text-xs gap-1">
+              <MessageSquare className="h-3 w-3" />
+              {ticket.responseCount}
+            </Badge>
+          )}
+          {(ticket.attachmentCount ?? 0) > 0 && (
+            <Badge variant="outline" className="text-xs gap-1">
+              <Paperclip className="h-3 w-3" />
+              {ticket.attachmentCount}
+            </Badge>
+          )}
+          {ticket.paymentId && (
+            <Badge variant="outline" className="text-xs gap-1">
+              <CreditCard className="h-3 w-3" />
+            </Badge>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: "user",
+      header: "User",
+      cell: (ticket) => (
+        <div className="flex items-center gap-2">
+          <Avatar className="h-6 w-6">
+            <AvatarImage src={ticket.user.image || ""} />
+            <AvatarFallback className="text-xs">
+              {ticket.user.name
+                ?.split(" ")
+                .map((n) => n[0])
+                .join("") || "?"}
+            </AvatarFallback>
+          </Avatar>
+          <span className="text-sm">{ticket.user.name || "Unknown"}</span>
+        </div>
+      ),
+    },
+    {
+      key: "status",
+      header: "Status",
+      cell: (ticket) => (
+        <Badge className={getStatusColor(ticket.status)} variant="secondary">
+          {ticket.status.replace("_", " ")}
+        </Badge>
+      ),
+    },
+    {
+      key: "priority",
+      header: "Priority",
+      cell: (ticket) => (
+        <Badge className={getPriorityColor(ticket.priority)} variant="secondary">
+          {ticket.priority}
+        </Badge>
+      ),
+    },
+    {
+      key: "issueType",
+      header: "Issue Type",
+      className: "text-sm text-muted-foreground",
+      cell: (ticket) =>
+        ticket.issueType?.replace(/_/g, " ") || ticket.category || "-",
+    },
+    {
+      key: "updated",
+      header: "Updated",
+      className: "text-sm text-muted-foreground",
+      cell: (ticket) => formatDate(ticket.updatedAt),
+    },
+  ];
+
+  const renderRowActions = (ticket: Ticket) => (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="icon" className="h-8 w-8">
+          <MoreHorizontal className="h-4 w-4" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem
+          onClick={(e) => handleQuickAction(ticket.id, "resolve", e)}
+        >
+          <CheckCircle2 className="h-4 w-4 mr-2" />
+          Mark Resolved
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          className="text-red-600 dark:text-red-400"
+          onClick={(e) => handleQuickAction(ticket.id, "close", e)}
+        >
+          <XCircle className="h-4 w-4 mr-2" />
+          Close Ticket
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+
+  const emptyState = (
+    <div className="flex flex-col items-center justify-center h-64 text-muted-foreground">
+      <MessageSquare className="h-12 w-12 mb-4 text-muted-foreground/40" />
+      <p>No support tickets found</p>
+    </div>
+  );
+
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">
-            Support Tickets
-          </h1>
-          <p className="text-zinc-500 dark:text-zinc-400">
-            Manage and respond to user support requests
-          </p>
-        </div>
-        <Button variant="outline" onClick={fetchTickets} disabled={loading}>
-          <RefreshCw
-            className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`}
-          />
-          Refresh
-        </Button>
-      </div>
+      <PageHeader
+        title="Support Tickets"
+        description="Manage and respond to user support requests"
+        actions={
+          <Button variant="outline" onClick={fetchTickets} disabled={loading}>
+            <RefreshCw
+              className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`}
+            />
+            Refresh
+          </Button>
+        }
+      />
 
       {/* Stats */}
-      <div className="grid gap-4 md:grid-cols-5">
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-5">
         {[
-          { label: "All", value: counts.total, color: "text-zinc-600" },
-          { label: "Open", value: counts.open, color: "text-blue-600" },
+          { label: "All", value: counts.total, color: "text-foreground" },
+          { label: "Open", value: counts.open, color: "text-foreground" },
           {
             label: "In Progress",
             value: counts.inProgress,
-            color: "text-yellow-600",
+            color: "text-yellow-600 dark:text-yellow-400",
           },
           {
             label: "On Hold",
             value: counts.onHold,
-            color: "text-orange-600",
+            color: "text-orange-600 dark:text-orange-400",
           },
           {
             label: "Resolved",
             value: counts.resolved,
-            color: "text-green-600",
+            color: "text-green-600 dark:text-green-400",
           },
         ].map((stat) => (
           <Card key={stat.label}>
             <CardContent className="p-4">
               <p className={`text-2xl font-bold ${stat.color}`}>{stat.value}</p>
-              <p className="text-sm text-zinc-500">{stat.label}</p>
+              <p className="text-sm text-muted-foreground">{stat.label}</p>
             </CardContent>
           </Card>
         ))}
@@ -386,8 +499,8 @@ export default function SupportTicketsPage() {
       <Card>
         <CardContent className="p-4">
           <div className="flex flex-col sm:flex-row gap-4">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
+            <div className="relative min-w-0 flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground/70" />
               <Input
                 placeholder="Search tickets by ID, subject, or user..."
                 className="pl-9"
@@ -441,145 +554,20 @@ export default function SupportTicketsPage() {
 
       {/* Tickets Table */}
       <Card>
-        <CardContent className="p-0">
+        <CardContent className="p-4">
           {loading ? (
             <div className="flex items-center justify-center h-64">
-              <Loader2 className="h-8 w-8 animate-spin text-zinc-400" />
-            </div>
-          ) : tickets.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-64 text-zinc-500">
-              <MessageSquare className="h-12 w-12 mb-4" />
-              <p>No support tickets found</p>
+              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground/70" />
             </div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-32">Ticket ID</TableHead>
-                  <TableHead>Subject</TableHead>
-                  <TableHead>User</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Priority</TableHead>
-                  <TableHead>Issue Type</TableHead>
-                  <TableHead>Updated</TableHead>
-                  <TableHead className="w-12"></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {tickets.map((ticket) => (
-                  <TableRow
-                    key={ticket.id}
-                    className="cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-900"
-                    onClick={() => handleSelectTicket(ticket)}
-                  >
-                    <TableCell className="font-mono text-xs">
-                      {ticket.id.slice(-8).toUpperCase()}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        {getStatusIcon(ticket.status)}
-                        <span className="font-medium truncate max-w-[200px]">
-                          {ticket.title}
-                        </span>
-                        {(ticket.responseCount ?? 0) > 0 && (
-                          <Badge variant="outline" className="text-xs gap-1">
-                            <MessageSquare className="h-3 w-3" />
-                            {ticket.responseCount}
-                          </Badge>
-                        )}
-                        {(ticket.attachmentCount ?? 0) > 0 && (
-                          <Badge variant="outline" className="text-xs gap-1">
-                            <Paperclip className="h-3 w-3" />
-                            {ticket.attachmentCount}
-                          </Badge>
-                        )}
-                        {ticket.paymentId && (
-                          <Badge variant="outline" className="text-xs gap-1">
-                            <CreditCard className="h-3 w-3" />
-                          </Badge>
-                        )}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <Avatar className="h-6 w-6">
-                          <AvatarImage src={ticket.user.image || ""} />
-                          <AvatarFallback className="text-xs">
-                            {ticket.user.name
-                              ?.split(" ")
-                              .map((n) => n[0])
-                              .join("") || "?"}
-                          </AvatarFallback>
-                        </Avatar>
-                        <span className="text-sm">
-                          {ticket.user.name || "Unknown"}
-                        </span>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <Badge
-                        className={getStatusColor(ticket.status)}
-                        variant="secondary"
-                      >
-                        {ticket.status.replace("_", " ")}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Badge
-                        className={getPriorityColor(ticket.priority)}
-                        variant="secondary"
-                      >
-                        {ticket.priority}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-sm text-zinc-600 dark:text-zinc-400">
-                      {ticket.issueType?.replace(/_/g, " ") ||
-                        ticket.category ||
-                        "-"}
-                    </TableCell>
-                    <TableCell className="text-sm text-zinc-500">
-                      {formatDate(ticket.updatedAt)}
-                    </TableCell>
-                    <TableCell>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger
-                          asChild
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8"
-                          >
-                            <MoreHorizontal className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem
-                            onClick={(e) =>
-                              handleQuickAction(ticket.id, "resolve", e)
-                            }
-                          >
-                            <CheckCircle2 className="h-4 w-4 mr-2" />
-                            Mark Resolved
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem
-                            className="text-red-600"
-                            onClick={(e) =>
-                              handleQuickAction(ticket.id, "close", e)
-                            }
-                          >
-                            <XCircle className="h-4 w-4 mr-2" />
-                            Close Ticket
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <ResponsiveTable<Ticket>
+              columns={columns}
+              rows={tickets}
+              getRowId={(t) => t.id}
+              onRowClick={handleSelectTicket}
+              rowActions={renderRowActions}
+              empty={emptyState}
+            />
           )}
         </CardContent>
       </Card>
@@ -594,7 +582,7 @@ export default function SupportTicketsPage() {
           >
             Previous
           </Button>
-          <span className="flex items-center px-4 text-sm text-zinc-500">
+          <span className="flex items-center px-4 text-sm text-muted-foreground">
             Page {page} of {totalPages}
           </span>
           <Button
@@ -608,7 +596,7 @@ export default function SupportTicketsPage() {
       )}
 
       {/* Ticket Detail Dialog */}
-      <Dialog
+      <ResponsiveModal
         open={!!selectedTicket}
         onOpenChange={() => {
           setSelectedTicket(null);
@@ -616,21 +604,21 @@ export default function SupportTicketsPage() {
           setReplyText("");
         }}
       >
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-hidden flex flex-col">
+        <ResponsiveModalContent className="sm:max-w-3xl max-h-[90vh] overflow-hidden flex flex-col">
           {loadingDetail ? (
             <div className="flex items-center justify-center h-64">
-              <Loader2 className="h-8 w-8 animate-spin text-zinc-400" />
+              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground/70" />
             </div>
           ) : ticketDetail ? (
             <>
-              <DialogHeader>
+              <ResponsiveModalHeader>
                 <div className="flex items-center justify-between">
-                  <DialogTitle className="flex items-center gap-2">
+                  <ResponsiveModalTitle className="flex items-center gap-2">
                     {getStatusIcon(ticketDetail.status)}
                     <span className="truncate max-w-[400px]">
                       {ticketDetail.title}
                     </span>
-                  </DialogTitle>
+                  </ResponsiveModalTitle>
                   <div className="flex gap-2">
                     <Badge
                       className={getPriorityColor(ticketDetail.priority)}
@@ -646,19 +634,19 @@ export default function SupportTicketsPage() {
                     </Badge>
                   </div>
                 </div>
-                <DialogDescription>
+                <ResponsiveModalDescription>
                   {ticketDetail.id.slice(-8).toUpperCase()} • Created{" "}
                   {formatDate(ticketDetail.createdAt)}
                   {ticketDetail.issueType && (
                     <> • {ticketDetail.issueType.replace(/_/g, " ")}</>
                   )}
-                </DialogDescription>
-              </DialogHeader>
+                </ResponsiveModalDescription>
+              </ResponsiveModalHeader>
 
               <div className="flex-1 -mx-6 px-6 overflow-y-auto max-h-[60vh]">
                 <div className="space-y-4 pb-4">
                   {/* User Info */}
-                  <div className="flex items-center gap-3 p-3 rounded-lg bg-zinc-50 dark:bg-zinc-900">
+                  <div className="flex items-center gap-3 p-3 rounded-lg bg-muted">
                     <Avatar>
                       <AvatarImage src={ticketDetail.user.image || ""} />
                       <AvatarFallback>
@@ -672,7 +660,7 @@ export default function SupportTicketsPage() {
                       <p className="font-medium">
                         {ticketDetail.user.name || "Unknown"}
                       </p>
-                      <p className="text-sm text-zinc-500">
+                      <p className="text-sm text-muted-foreground">
                         {ticketDetail.user.email}
                         {ticketDetail.user.phone &&
                           ` • ${ticketDetail.user.phone}`}
@@ -682,10 +670,10 @@ export default function SupportTicketsPage() {
 
                   {/* Linked Booking Context */}
                   {ticketDetail.linkedConsultation && (
-                    <div className="p-3 rounded-lg border border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-950">
+                    <div className="p-3 rounded-lg border border-border bg-muted">
                       <div className="flex items-center gap-2 mb-2">
-                        <Calendar className="h-4 w-4 text-blue-600" />
-                        <span className="font-medium text-blue-900 dark:text-blue-100">
+                        <Calendar className="h-4 w-4 text-muted-foreground" />
+                        <span className="font-medium text-foreground">
                           Linked Booking
                         </span>
                       </div>
@@ -805,7 +793,7 @@ export default function SupportTicketsPage() {
                   {/* Description */}
                   <div>
                     <Label className="text-sm font-medium">Description</Label>
-                    <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400 whitespace-pre-wrap">
+                    <p className="mt-1 text-sm text-muted-foreground whitespace-pre-wrap">
                       {ticketDetail.description}
                     </p>
                   </div>
@@ -824,16 +812,16 @@ export default function SupportTicketsPage() {
                               href={attachment.fileUrl}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="flex items-center gap-2 p-2 border rounded hover:bg-zinc-50 dark:hover:bg-zinc-900"
+                              className="flex items-center gap-2 p-2 border border-border rounded hover:bg-muted"
                             >
-                              <FileText className="h-4 w-4 text-zinc-500" />
+                              <FileText className="h-4 w-4 text-muted-foreground" />
                               <span className="flex-1 text-sm truncate">
                                 {attachment.originalName}
                               </span>
-                              <span className="text-xs text-zinc-400">
+                              <span className="text-xs text-muted-foreground/70">
                                 {formatFileSize(attachment.fileSize)}
                               </span>
-                              <ExternalLink className="h-3 w-3 text-zinc-400" />
+                              <ExternalLink className="h-3 w-3 text-muted-foreground/70" />
                             </a>
                           ))}
                         </div>
@@ -883,8 +871,8 @@ export default function SupportTicketsPage() {
                                 response.user?.role === "ADMIN"
                                   ? response.isInternal
                                     ? "bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800"
-                                    : "bg-blue-50 dark:bg-blue-950"
-                                  : "bg-zinc-100 dark:bg-zinc-800"
+                                    : "bg-secondary"
+                                  : "bg-muted"
                               }`}
                             >
                               <div className="flex items-center gap-2 mb-1">
@@ -907,12 +895,12 @@ export default function SupportTicketsPage() {
                                 {response.isInternal && (
                                   <Badge
                                     variant="outline"
-                                    className="text-xs text-amber-600"
+                                    className="text-xs text-amber-600 dark:text-amber-400"
                                   >
                                     Internal
                                   </Badge>
                                 )}
-                                <span className="text-xs text-zinc-400 ml-auto">
+                                <span className="text-xs text-muted-foreground/70 ml-auto">
                                   {formatDate(response.createdAt)}
                                 </span>
                               </div>
@@ -954,7 +942,7 @@ export default function SupportTicketsPage() {
                 </div>
               </div>
 
-              <DialogFooter className="mt-4">
+              <ResponsiveModalFooter className="mt-4">
                 <Button
                   variant="outline"
                   onClick={() => {
@@ -976,11 +964,11 @@ export default function SupportTicketsPage() {
                   )}
                   {isInternalNote ? "Add Note" : "Send Reply"}
                 </Button>
-              </DialogFooter>
+              </ResponsiveModalFooter>
             </>
           ) : null}
-        </DialogContent>
-      </Dialog>
+        </ResponsiveModalContent>
+      </ResponsiveModal>
     </div>
   );
 }

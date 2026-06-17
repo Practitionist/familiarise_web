@@ -22,20 +22,16 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+  ResponsiveTable,
+  type ResponsiveColumn,
+} from "@/components/ui/responsive-table";
 import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+  ResponsiveModal,
+  ResponsiveModalContent,
+  ResponsiveModalFooter,
+  ResponsiveModalHeader,
+  ResponsiveModalTitle,
+} from "@/components/ui/responsive-modal";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -207,10 +203,13 @@ function fmtDate(iso: string) {
 }
 
 const STATUS_BADGE: Record<ContractStatus, string> = {
-  DRAFT: "bg-zinc-100 text-zinc-700 border-zinc-300",
-  ACTIVE: "bg-green-50 text-green-800 border-green-300",
-  EXPIRED: "bg-amber-50 text-amber-800 border-amber-300",
-  TERMINATED: "bg-red-50 text-red-700 border-red-300",
+  DRAFT: "bg-muted text-muted-foreground border-border",
+  ACTIVE:
+    "bg-green-50 text-green-800 border-green-300 dark:bg-green-950 dark:text-green-300 dark:border-green-800",
+  EXPIRED:
+    "bg-amber-50 text-amber-800 border-amber-300 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800",
+  TERMINATED:
+    "bg-red-50 text-red-700 border-red-300 dark:bg-red-950 dark:text-red-300 dark:border-red-800",
 };
 
 // ---------------------------------------------------------------------------
@@ -311,17 +310,17 @@ function CreateContractDialog({
   };
 
   return (
-    <Dialog
+    <ResponsiveModal
       open={open}
       onOpenChange={(v) => {
         if (!v) reset();
         onOpenChange(v);
       }}
     >
-      <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto [&::-webkit-scrollbar]:hidden [scrollbar-width:none]">
-        <DialogHeader>
-          <DialogTitle>New Contract</DialogTitle>
-        </DialogHeader>
+      <ResponsiveModalContent className="sm:max-w-md max-h-[90vh] overflow-y-auto [&::-webkit-scrollbar]:hidden [scrollbar-width:none]">
+        <ResponsiveModalHeader>
+          <ResponsiveModalTitle>New Contract</ResponsiveModalTitle>
+        </ResponsiveModalHeader>
 
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
@@ -343,7 +342,7 @@ function CreateContractDialog({
                 onChange={(e) => setEffectiveTo(e.target.value)}
                 placeholder="Open-ended"
               />
-              <p className="text-xs text-zinc-500">Leave blank for open-ended</p>
+              <p className="text-xs text-muted-foreground">Leave blank for open-ended</p>
             </div>
           </div>
 
@@ -358,7 +357,7 @@ function CreateContractDialog({
                 value={paymentTermsDays}
                 onChange={(e) => setPaymentTermsDays(e.target.value)}
               />
-              <p className="text-xs text-zinc-500">
+              <p className="text-xs text-muted-foreground">
                 NET-{paymentTermsDays || "?"} — how many days after invoice date the org must pay.
               </p>
             </div>
@@ -377,7 +376,7 @@ function CreateContractDialog({
                   value={licenseFeeINR}
                   onChange={(e) => setLicenseFeeINR(e.target.value)}
                 />
-                <p className="text-xs text-zinc-500">
+                <p className="text-xs text-muted-foreground">
                   Optional. Recording the fee enables annual renewal billing
                   and dashboard display. Skipping is reversible only by
                   terminating this contract and creating a new one.
@@ -387,7 +386,7 @@ function CreateContractDialog({
                 <Label htmlFor="license-cycle">Billing cycle</Label>
                 <select
                   id="license-cycle"
-                  className="flex h-10 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
+                  className="flex h-10 w-full rounded-md border border-border bg-card px-3 py-2 text-sm"
                   value={licenseCycle}
                   onChange={(e) =>
                     setLicenseCycle(
@@ -413,15 +412,15 @@ function CreateContractDialog({
                   onClick={() => setStatus(s)}
                   className={`flex-1 rounded-md border px-3 py-2 text-sm font-medium transition-colors ${
                     status === s
-                      ? "border-zinc-900 bg-zinc-900 text-white"
-                      : "border-zinc-200 hover:border-zinc-400"
+                      ? "border-foreground bg-foreground text-background"
+                      : "border-border hover:border-foreground/40"
                   }`}
                 >
                   {s}
                 </button>
               ))}
             </div>
-            <p className="text-xs text-zinc-500">
+            <p className="text-xs text-muted-foreground">
               ACTIVE contracts can immediately attach Programs. DRAFT contracts need to be activated first.
             </p>
           </div>
@@ -437,7 +436,7 @@ function CreateContractDialog({
           {error && <p className="text-sm text-red-600">{error}</p>}
         </div>
 
-        <DialogFooter>
+        <ResponsiveModalFooter>
           <Button
             variant="outline"
             onClick={() => {
@@ -456,9 +455,9 @@ function CreateContractDialog({
               "Create"
             )}
           </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </ResponsiveModalFooter>
+      </ResponsiveModalContent>
+    </ResponsiveModal>
   );
 }
 
@@ -478,8 +477,8 @@ function fmtPaymentTerms(c: Pick<ContractItem, "paymentTermsDays" | "billingAcco
 function DetailRow({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="flex justify-between gap-4 py-1.5 text-sm">
-      <span className="text-zinc-500">{label}</span>
-      <span className="text-right font-medium text-zinc-800">{children}</span>
+      <span className="text-muted-foreground">{label}</span>
+      <span className="text-right font-medium text-foreground">{children}</span>
     </div>
   );
 }
@@ -503,14 +502,14 @@ function ContractDetailDialog({
   const c = detail.data?.contract;
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md max-h-[85vh] overflow-y-auto [&::-webkit-scrollbar]:hidden [scrollbar-width:none]">
-        <DialogHeader>
-          <DialogTitle>Contract detail</DialogTitle>
-        </DialogHeader>
+    <ResponsiveModal open={open} onOpenChange={onOpenChange}>
+      <ResponsiveModalContent className="sm:max-w-md max-h-[85vh] overflow-y-auto [&::-webkit-scrollbar]:hidden [scrollbar-width:none]">
+        <ResponsiveModalHeader>
+          <ResponsiveModalTitle>Contract detail</ResponsiveModalTitle>
+        </ResponsiveModalHeader>
 
         {detail.isLoading || !c ? (
-          <div className="flex items-center gap-2 py-8 text-sm text-zinc-500">
+          <div className="flex items-center gap-2 py-8 text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" /> Loading…
           </div>
         ) : (
@@ -547,7 +546,7 @@ function ContractDetailDialog({
                 Programs ({c.programs.length})
               </h4>
               {c.programs.length === 0 ? (
-                <p className="text-sm text-zinc-500">
+                <p className="text-sm text-muted-foreground">
                   No programs attached to this contract.
                 </p>
               ) : (
@@ -569,13 +568,13 @@ function ContractDetailDialog({
           </div>
         )}
 
-        <DialogFooter>
+        <ResponsiveModalFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Close
           </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </ResponsiveModalFooter>
+      </ResponsiveModalContent>
+    </ResponsiveModal>
   );
 }
 
@@ -682,14 +681,14 @@ function EditContractDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md max-h-[85vh] overflow-y-auto [&::-webkit-scrollbar]:hidden [scrollbar-width:none]">
-        <DialogHeader>
-          <DialogTitle>Edit contract</DialogTitle>
-        </DialogHeader>
+    <ResponsiveModal open={open} onOpenChange={onOpenChange}>
+      <ResponsiveModalContent className="sm:max-w-md max-h-[85vh] overflow-y-auto [&::-webkit-scrollbar]:hidden [scrollbar-width:none]">
+        <ResponsiveModalHeader>
+          <ResponsiveModalTitle>Edit contract</ResponsiveModalTitle>
+        </ResponsiveModalHeader>
 
         {detail.isLoading || !c ? (
-          <div className="flex items-center gap-2 py-8 text-sm text-zinc-500">
+          <div className="flex items-center gap-2 py-8 text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" /> Loading…
           </div>
         ) : (
@@ -764,7 +763,7 @@ function EditContractDialog({
           </div>
         )}
 
-        <DialogFooter>
+        <ResponsiveModalFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
@@ -780,9 +779,9 @@ function EditContractDialog({
               "Save"
             )}
           </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </ResponsiveModalFooter>
+      </ResponsiveModalContent>
+    </ResponsiveModal>
   );
 }
 
@@ -858,6 +857,128 @@ export default function OrgContractsPage({
   const contractList = contracts.data?.data ?? [];
   const billingAccountId = billingAccount.data?.billingAccount?.id ?? "";
   const canCreate = isAtLeast("OWNER") && !!billingAccountId;
+  const canManage = isAtLeast("OWNER");
+
+  const columns: ResponsiveColumn<ContractItem>[] = [
+    {
+      key: "status",
+      header: "Status",
+      primary: true,
+      cell: (c) => (
+        <Badge variant="outline" className={STATUS_BADGE[c.status]}>
+          {c.status}
+        </Badge>
+      ),
+    },
+    {
+      key: "funding",
+      header: "Funding",
+      className: "text-sm text-muted-foreground",
+      cell: (c) => c.billingAccount?.fundingSource ?? "—",
+    },
+    {
+      key: "period",
+      header: "Period",
+      className: "text-sm text-muted-foreground whitespace-nowrap",
+      cell: (c) => (
+        <>
+          {fmtDate(c.effectiveFrom)} →{" "}
+          {c.effectiveTo ? fmtDate(c.effectiveTo) : "open-ended"}
+        </>
+      ),
+    },
+    {
+      key: "terms",
+      header: "Terms",
+      className: "text-sm text-muted-foreground",
+      cell: (c) => (
+        <>
+          {c.billingAccount?.fundingSource === "LICENSE"
+            ? c.subscription?.flatFeePaise != null
+              ? `₹${(c.subscription.flatFeePaise / 100).toLocaleString("en-IN")} / ${c.subscription.cycle.toLowerCase()}`
+              : "—"
+            : `NET-${c.paymentTermsDays}`}
+          {c.autoRenew && (
+            <span className="ml-1 text-xs text-muted-foreground/70">(auto-renew)</span>
+          )}
+        </>
+      ),
+    },
+    {
+      key: "programs",
+      header: "Programs",
+      className: "text-sm",
+      cell: (c) =>
+        c._count.programs > 0 ? (
+          <span className="text-foreground">{c._count.programs}</span>
+        ) : (
+          <span className="text-muted-foreground/70">—</span>
+        ),
+    },
+  ];
+
+  const renderRowActions = (c: ContractItem) => (
+    <div className="flex items-center justify-end gap-1">
+      <Button
+        size="sm"
+        variant="ghost"
+        onClick={() => setDetailTarget(c)}
+        title="View detail"
+      >
+        <Eye className="h-3.5 w-3.5 mr-1" /> View
+      </Button>
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={() => {
+          setActionError(null);
+          setEditTarget(c);
+        }}
+      >
+        <Pencil className="h-3.5 w-3.5 mr-1" /> Edit
+      </Button>
+      {c.status === "DRAFT" && (
+        <>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              setActionError(null);
+              setActivateTarget(c);
+            }}
+          >
+            <Check className="h-3.5 w-3.5 mr-1" /> Activate
+          </Button>
+          {c._count.programs === 0 && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950"
+              onClick={() => {
+                setActionError(null);
+                setDeleteTarget(c);
+              }}
+            >
+              <X className="h-3.5 w-3.5 mr-1" /> Delete
+            </Button>
+          )}
+        </>
+      )}
+      {c.status === "ACTIVE" && (
+        <Button
+          size="sm"
+          variant="ghost"
+          className="text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950"
+          onClick={() => {
+            setActionError(null);
+            setTerminateTarget(c);
+          }}
+        >
+          Terminate
+        </Button>
+      )}
+    </div>
+  );
 
   return (
     <>
@@ -889,12 +1010,12 @@ export default function OrgContractsPage({
           </CardHeader>
           <CardContent>
             {contracts.isLoading ? (
-              <div className="flex items-center gap-2 text-sm text-zinc-500">
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <Loader2 className="h-4 w-4 animate-spin" /> Loading…
               </div>
             ) : contractList.length === 0 ? (
-              <div className="text-center py-12 text-zinc-500">
-                <FileText className="h-10 w-10 mx-auto mb-3 text-zinc-300" />
+              <div className="text-center py-12 text-muted-foreground">
+                <FileText className="h-10 w-10 mx-auto mb-3 text-muted-foreground/40" />
                 <p className="text-sm">No contracts yet.</p>
                 {canCreate && (
                   <p className="text-xs mt-2">
@@ -904,122 +1025,12 @@ export default function OrgContractsPage({
                 )}
               </div>
             ) : (
-              <div className="overflow-x-auto [&::-webkit-scrollbar]:hidden [scrollbar-width:none]">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Funding</TableHead>
-                    <TableHead>Period</TableHead>
-                    <TableHead>Terms</TableHead>
-                    <TableHead>Programs</TableHead>
-                    {isAtLeast("OWNER") && <TableHead className="text-right">Actions</TableHead>}
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {contractList.map((c) => (
-                    <TableRow key={c.id}>
-                      <TableCell>
-                        <Badge
-                          variant="outline"
-                          className={STATUS_BADGE[c.status]}
-                        >
-                          {c.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-sm text-zinc-600">
-                        {c.billingAccount?.fundingSource ?? "—"}
-                      </TableCell>
-                      <TableCell className="text-sm text-zinc-600 whitespace-nowrap">
-                        {fmtDate(c.effectiveFrom)} →{" "}
-                        {c.effectiveTo ? fmtDate(c.effectiveTo) : "open-ended"}
-                      </TableCell>
-                      <TableCell className="text-sm text-zinc-600">
-                        {c.billingAccount?.fundingSource === "LICENSE"
-                          ? c.subscription?.flatFeePaise != null
-                            ? `₹${(c.subscription.flatFeePaise / 100).toLocaleString("en-IN")} / ${c.subscription.cycle.toLowerCase()}`
-                            : "—"
-                          : `NET-${c.paymentTermsDays}`}
-                        {c.autoRenew && (
-                          <span className="ml-1 text-xs text-zinc-400">(auto-renew)</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-sm">
-                        {c._count.programs > 0 ? (
-                          <span className="text-zinc-700">{c._count.programs}</span>
-                        ) : (
-                          <span className="text-zinc-400">—</span>
-                        )}
-                      </TableCell>
-                      {isAtLeast("OWNER") && (
-                        <TableCell className="text-right">
-                          <div className="flex items-center justify-end gap-1">
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => setDetailTarget(c)}
-                              title="View detail"
-                            >
-                              <Eye className="h-3.5 w-3.5 mr-1" /> View
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => {
-                                setActionError(null);
-                                setEditTarget(c);
-                              }}
-                            >
-                              <Pencil className="h-3.5 w-3.5 mr-1" /> Edit
-                            </Button>
-                            {c.status === "DRAFT" && (
-                              <>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => {
-                                    setActionError(null);
-                                    setActivateTarget(c);
-                                  }}
-                                >
-                                  <Check className="h-3.5 w-3.5 mr-1" /> Activate
-                                </Button>
-                                {c._count.programs === 0 && (
-                                  <Button
-                                    size="sm"
-                                    variant="ghost"
-                                    className="text-red-600 hover:text-red-700 hover:bg-red-50"
-                                    onClick={() => {
-                                      setActionError(null);
-                                      setDeleteTarget(c);
-                                    }}
-                                  >
-                                    <X className="h-3.5 w-3.5 mr-1" /> Delete
-                                  </Button>
-                                )}
-                              </>
-                            )}
-                            {c.status === "ACTIVE" && (
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                className="text-red-600 hover:text-red-700 hover:bg-red-50"
-                                onClick={() => {
-                                  setActionError(null);
-                                  setTerminateTarget(c);
-                                }}
-                              >
-                                Terminate
-                              </Button>
-                            )}
-                          </div>
-                        </TableCell>
-                      )}
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-              </div>
+              <ResponsiveTable<ContractItem>
+                columns={columns}
+                rows={contractList}
+                getRowId={(c) => c.id}
+                rowActions={canManage ? renderRowActions : undefined}
+              />
             )}
             {actionError && (
               <p className="mt-3 text-sm text-red-600">{actionError}</p>

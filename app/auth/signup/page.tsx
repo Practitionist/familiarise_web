@@ -16,7 +16,7 @@ export default function SignUp() {
   return (
     <Suspense
       fallback={
-        <div className="min-h-screen flex items-center justify-center bg-gray-900">
+        <div className="min-h-screen flex items-center justify-center bg-neutral-950">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white" />
         </div>
       }
@@ -70,7 +70,7 @@ function SignUpContent() {
   // Show loading while checking session status (fallback for when middleware doesn't catch)
   if (isPending) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-900">
+      <div className="min-h-screen flex items-center justify-center bg-neutral-950">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white" />
       </div>
     );
@@ -82,7 +82,7 @@ function SignUpContent() {
       ? "dashboard"
       : "onboarding";
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-900">
+      <div className="min-h-screen flex items-center justify-center bg-neutral-950">
         <p className="text-white">Redirecting to {destination}...</p>
       </div>
     );
@@ -206,38 +206,37 @@ function SignUpContent() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col md:flex-row h-full">
-      {/* Left Panel */}
-      <div className="flex-1 md:w-1/2 bg-white text-black p-6 md:p-12 flex flex-col justify-between">
+    <div className="flex min-h-screen flex-col md:flex-row">
+      <div className="hidden flex-col justify-between bg-pearl p-6 text-black md:flex md:w-1/2 md:p-12">
         <Link href="/">
           <div className="flex items-center justify-start space-x-2">
-            <GlobeIcon className="text-black w-5 md:w-6 h-5 md:h-6" />
-            <h1 className="text-2xl md:text-4xl font-semibold">Familiarise</h1>
+            <GlobeIcon className="h-5 w-5 text-black md:h-6 md:w-6" />
+            <h1 className="text-2xl font-semibold tracking-tight md:text-4xl">
+              Familiarise
+            </h1>
           </div>
         </Link>
         <div className="my-8 md:my-0">
-          <blockquote className="text-sm md:text-base">
-            "Joining Familiarise was the best decision for my startup. Access to
-            top-tier mentors gave us the clarity and direction we desperately
-            needed."
+          <blockquote className="text-fluid-lg leading-relaxed text-neutral-700">
+            &ldquo;Joining Familiarise was the best decision for my startup.
+            Access to top-tier mentors gave us the clarity and direction we
+            desperately needed.&rdquo;
           </blockquote>
-          <p className="mt-4 text-sm md:text-base">
+          <p className="mt-4 text-sm font-medium md:text-base">
             Priya Sharma, Founder @ TechNova
           </p>
         </div>
-        <div className="text-xs md:text-sm">
+        <div className="text-xs text-neutral-600 md:text-sm">
           Start your journey with Familiarise today. Sign up to unlock a world
           of expert mentorship.
         </div>
       </div>
-
-      {/* Right Panel (Sign Up Form) */}
-      <div className="flex-1 md:w-1/2 bg-gray-900 text-white p-6 md:p-12 flex flex-col justify-center mt-auto md:mt-0">
-        <div className="flex flex-col p-4 md:p-20">
-          <h2 className="text-2xl md:text-3xl font-semibold mb-4 md:mb-6">
+      <div className="flex flex-1 flex-col justify-center bg-neutral-950 p-6 text-white md:w-1/2 md:p-12">
+        <div className="mx-auto flex w-full max-w-md flex-col">
+          <h2 className="mb-2 text-fluid-3xl font-semibold tracking-tight">
             Create your account
           </h2>
-          <p className="text-sm md:text-base mb-4 md:mb-6">
+          <p className="mb-6 text-sm text-zinc-400 md:text-base">
             Enter your details below to get started.
           </p>
           <form onSubmit={handleSignUp}>
@@ -322,7 +321,7 @@ function SignUpContent() {
             {!ssoCheck?.enforceSSO && (
               <Button
                 type="submit"
-                className="w-full mt-4 bg-gray-800 hover:bg-gray-700"
+                className="mt-4 w-full bg-white text-black hover:bg-white/90"
                 disabled={isLoading}
               >
                 {isLoading ? "Creating Account..." : "Create Account"}
@@ -331,13 +330,13 @@ function SignUpContent() {
           </form>
 
           {ssoCheck?.enforceSSO && (
-            <div className="mt-4 p-4 rounded-md bg-blue-900/30 border border-blue-700">
-              <p className="text-sm text-blue-300 mb-3">
+            <div className="mt-4 rounded-md border border-white/15 bg-white/5 p-4">
+              <p className="mb-3 text-sm text-zinc-400">
                 Your organization requires SSO sign-in. Use the button below to authenticate.
               </p>
               <Button
                 type="button"
-                className="w-full bg-blue-600 hover:bg-blue-500"
+                className="w-full bg-white text-black hover:bg-white/90"
                 onClick={handleSSOSignIn}
               >
                 Sign in with {ssoCheck.organizationName} SSO &rarr;
@@ -347,12 +346,12 @@ function SignUpContent() {
 
           {!ssoCheck?.enforceSSO && (
             <>
-              <div className="relative my-4 md:my-6">
+              <div className="relative my-6">
                 <div className="absolute inset-0 flex items-center">
-                  <div className="w-full border-t border-gray-600" />
+                  <div className="w-full border-t border-white/15" />
                 </div>
                 <div className="relative flex justify-center text-sm">
-                  <span className="px-2 bg-gray-900 text-gray-400">
+                  <span className="bg-neutral-950 px-2 text-zinc-400">
                     OR CONTINUE WITH
                   </span>
                 </div>
@@ -367,20 +366,21 @@ function SignUpContent() {
             </>
           )}
 
-          <p className="text-xs text-gray-400 mt-4 md:mt-6">
+          <p className="mt-6 text-xs text-zinc-400">
             Already have an account?{" "}
             <Link
               href="/auth/signin"
-              className="font-medium text-blue-400 hover:underline"
+              className="font-medium text-white underline-offset-4 hover:underline"
             >
               Sign in
             </Link>
           </p>
-          <p className="text-xs text-gray-400 mt-2">
+          <p className="mt-2 text-xs text-zinc-400">
             By clicking Create Account, you agree to our Terms of Service and
             Privacy Policy.
           </p>
         </div>
+        <div />
       </div>
     </div>
   );

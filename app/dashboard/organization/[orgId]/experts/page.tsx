@@ -15,13 +15,9 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+  ResponsiveTable,
+  type ResponsiveColumn,
+} from "@/components/ui/responsive-table";
 import { useRequireOrgAccess } from "../useOrgRole";
 import type { MemberStatus } from "@prisma/client";
 
@@ -86,6 +82,59 @@ export default function OrgExpertsPage({
 
   const activeRows = active.data?.data ?? [];
 
+  const columns: ResponsiveColumn<ExpertRow>[] = [
+    {
+      key: "expert",
+      header: "Expert",
+      primary: true,
+      cell: (row) => (
+        <div className="flex flex-col">
+          <span className="font-medium text-foreground">
+            {row.user.name ?? "—"}
+          </span>
+          <span className="text-xs text-muted-foreground">
+            {row.user.email}
+          </span>
+        </div>
+      ),
+    },
+    {
+      key: "headline",
+      header: "Headline",
+      className: "text-sm text-muted-foreground max-w-xs truncate",
+      cell: (row) => row.consultantProfile?.headline ?? "—",
+    },
+    {
+      key: "rating",
+      header: "Rating",
+      cell: (row) => row.consultantProfile?.rating?.toFixed(1) ?? "—",
+    },
+    {
+      key: "payout",
+      header: "Payout",
+      cell: (row) => (
+        <Badge
+          variant={
+            row.payoutRecipient === "ORGANIZATION" ? "secondary" : "outline"
+          }
+        >
+          {row.payoutRecipient === "ORGANIZATION" ? "Org (internal)" : "Self"}
+        </Badge>
+      ),
+    },
+    {
+      key: "verified",
+      header: "Verified",
+      cell: (row) => (
+        <Badge
+          variant={row.consultantProfile?.isVerified ? "default" : "outline"}
+        >
+          {row.consultantProfile?.isVerified ? "Yes" : "No"}
+        </Badge>
+      ),
+    },
+  ];
+
   return (
     <>
       <DashboardHeader
@@ -103,75 +152,18 @@ export default function OrgExpertsPage({
           </CardHeader>
           <CardContent>
             {active.isLoading ? (
-              <p className="text-sm text-zinc-500">Loading…</p>
+              <p className="text-sm text-muted-foreground">Loading…</p>
             ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Expert</TableHead>
-                    <TableHead>Headline</TableHead>
-                    <TableHead>Rating</TableHead>
-                    <TableHead>Payout</TableHead>
-                    <TableHead>Verified</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {activeRows.map((row) => (
-                    <TableRow key={row.id}>
-                      <TableCell>
-                        <div className="flex flex-col">
-                          <span className="font-medium text-zinc-900">
-                            {row.user.name ?? "—"}
-                          </span>
-                          <span className="text-xs text-zinc-500">
-                            {row.user.email}
-                          </span>
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-sm text-zinc-600 max-w-xs truncate">
-                        {row.consultantProfile?.headline ?? "—"}
-                      </TableCell>
-                      <TableCell>
-                        {row.consultantProfile?.rating?.toFixed(1) ?? "—"}
-                      </TableCell>
-                      <TableCell>
-                        <Badge
-                          variant={
-                            row.payoutRecipient === "ORGANIZATION"
-                              ? "secondary"
-                              : "outline"
-                          }
-                        >
-                          {row.payoutRecipient === "ORGANIZATION"
-                            ? "Org (internal)"
-                            : "Self"}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <Badge
-                          variant={
-                            row.consultantProfile?.isVerified
-                              ? "default"
-                              : "outline"
-                          }
-                        >
-                          {row.consultantProfile?.isVerified ? "Yes" : "No"}
-                        </Badge>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                  {activeRows.length === 0 && (
-                    <TableRow>
-                      <TableCell
-                        colSpan={5}
-                        className="text-center text-sm text-zinc-500 py-6"
-                      >
-                        No experts yet. Invite an expert to get started.
-                      </TableCell>
-                    </TableRow>
-                  )}
-                </TableBody>
-              </Table>
+              <ResponsiveTable<ExpertRow>
+                columns={columns}
+                rows={activeRows}
+                getRowId={(row) => row.id}
+                empty={
+                  <p className="text-center text-sm text-muted-foreground py-6">
+                    No experts yet. Invite an expert to get started.
+                  </p>
+                }
+              />
             )}
           </CardContent>
         </Card>
