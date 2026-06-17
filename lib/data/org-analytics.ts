@@ -2,10 +2,10 @@
  * Shared analytics aggregate read for an organization.
  *
  * Extracted from GET /api/organizations/[orgId]/analytics so the route and
- * the server prefetch (lib/server/org-prefetch.ts) read through one code path
- * — the SSR cache and the CSR fetch can't drift. Auth stays at the call site:
- * the route enforces requireOrgAccess; the prefetch runs under the dashboard
- * layout's gate.
+ * the org home + analytics server pages' SSR prefetch read through one code
+ * path — the SSR cache and the CSR fetch can't drift. Auth stays at the call
+ * site: the route enforces requireOrgAccess; the prefetch runs under the
+ * dashboard layout's gate.
  *
  * Returns a fully plain/JSON-safe object (no Date, no bigint — money fields
  * pass through sumPaise) so it crosses the RSC→client boundary and React Query

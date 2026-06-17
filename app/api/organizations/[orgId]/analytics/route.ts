@@ -13,8 +13,8 @@
  *   reimbursements{ last30dCount, last30dPaise }               (PERSONAL only — #714)
  *   earnings      { pending, ready, paid, refunded }           (canHost only)
  *
- * The read itself lives in lib/data/org-analytics.ts so the server prefetch
- * (lib/server/org-prefetch.ts) and this route stay in lock-step. All
+ * The read itself lives in lib/data/org-analytics.ts so the org home +
+ * analytics server pages' SSR prefetch and this route stay in lock-step. All
  * aggregates are `count` / `_sum` queries — no per-row enumeration — so the
  * response stays cheap even for orgs with tens of thousands of rows.
  */

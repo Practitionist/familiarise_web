@@ -1,6 +1,6 @@
 import { HydrationBoundary, QueryClient, dehydrate } from "@tanstack/react-query";
 import { MembersPageClient } from "./MembersPageClient";
-import { prefetchOrgMembers } from "@/lib/server/org-prefetch";
+import { getOrgMembers } from "@/lib/data/org-members";
 
 export default async function OrgMembersPage({
   params,
@@ -13,7 +13,7 @@ export default async function OrgMembersPage({
   await Promise.allSettled([
     queryClient.prefetchQuery({
       queryKey: ["org-members", orgId],
-      queryFn: () => prefetchOrgMembers(orgId),
+      queryFn: () => getOrgMembers(orgId),
     }),
   ]);
 

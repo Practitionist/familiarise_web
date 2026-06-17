@@ -9,7 +9,7 @@ import { resolveOrgScope, type Scope } from "@/lib/api/scope/parse";
 import {
   readConsulteeEvents,
   ConsulteeProfileNotFoundError,
-} from "@/lib/server/consultee-events-read";
+} from "@/lib/data/consultee-events-read";
 
 /**
  * Personal "all my bookings" widget endpoint. Returns the union of 5
@@ -95,8 +95,8 @@ export async function GET(
     }
     const scope: Scope = scopeResolution.scope;
 
-    // #890 — shared read; same fn the SSR prefetch
-    // (lib/server/consultee-prefetch.ts) calls so hydration matches.
+    // #890 — shared read; same fn the consultee home server page calls so
+    // SSR hydration matches.
     const data = await readConsulteeEvents(consulteeId, scope);
 
     return NextResponse.json({

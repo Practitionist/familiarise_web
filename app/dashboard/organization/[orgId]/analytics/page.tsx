@@ -1,6 +1,6 @@
 import { HydrationBoundary, QueryClient, dehydrate } from "@tanstack/react-query";
 import { AnalyticsPageClient } from "./AnalyticsPageClient";
-import { prefetchOrgAnalytics } from "@/lib/server/org-prefetch";
+import { getOrgAnalytics } from "@/lib/data/org-analytics";
 
 export default async function OrgAnalyticsPage({
   params,
@@ -15,7 +15,7 @@ export default async function OrgAnalyticsPage({
   await Promise.allSettled([
     queryClient.prefetchQuery({
       queryKey: ["org-analytics", orgId],
-      queryFn: () => prefetchOrgAnalytics(orgId),
+      queryFn: () => getOrgAnalytics(orgId),
     }),
   ]);
 

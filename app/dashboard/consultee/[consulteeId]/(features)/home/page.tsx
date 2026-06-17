@@ -4,10 +4,7 @@ import {
   dehydrate,
 } from "@tanstack/react-query";
 import HomePageClient from "./HomePageClient";
-import {
-  prefetchConsulteeEvents,
-  DEFAULT_CONSULTEE_EVENTS_SCOPE_KEY,
-} from "@/lib/server/consultee-prefetch";
+import { readConsulteeEvents } from "@/lib/data/consultee-events-read";
 
 type PageProps = {
   params: Promise<{ consulteeId: string }>;
@@ -21,16 +18,14 @@ export default async function HomePage({ params }: Readonly<PageProps>) {
   // #890 — SSR prefetch the default (personal) scope so the client
   // useQuery hydrates without a fetch waterfall. Key base MUST match
   // createConsulteeQueries(...).events: ["consultee-events", id, scope].
+  // The route's default (no ?orgScope=) is `personal`, so the scope
+  // segment is the literal "personal" and the read runs with that scope.
   // allSettled so a read failure degrades to a client-side fetch rather
   // than crashing the route.
   await Promise.allSettled([
     queryClient.prefetchQuery({
-      queryKey: [
-        "consultee-events",
-        consulteeId,
-        DEFAULT_CONSULTEE_EVENTS_SCOPE_KEY,
-      ],
-      queryFn: () => prefetchConsulteeEvents(consulteeId),
+      queryKey: ["consultee-events", consulteeId, "personal"],
+      queryFn: () => readConsulteeEvents(consulteeId, { kind: "personal" }),
     }),
   ]);
 

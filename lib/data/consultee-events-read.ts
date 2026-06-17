@@ -3,11 +3,11 @@
  *
  * Single source of truth for the 5-booking-type union the consultee
  * dashboard Home + Appointments views render. Both the API route
- * (`/api/dashboard/consultee/[consulteeId]/events`) and the server
- * prefetch (`lib/server/consultee-prefetch.ts`) import this so SSR
- * hydration and the client `useQuery` resolve byte-identical payloads —
- * the route wraps it in `{ data, success }`, the prefetch returns it
- * raw (matching `fetchWithErrorHandling`'s `json.data` unwrap).
+ * (`/api/dashboard/consultee/[consulteeId]/events`) and the consultee
+ * home server page call this directly so SSR hydration and the client
+ * `useQuery` resolve byte-identical payloads — the route wraps it in
+ * `{ data, success }`, the prefetch returns it raw (matching
+ * `fetchWithErrorHandling`'s `json.data` unwrap).
  *
  * Auth + `?orgScope=` resolution stay in the route; this function takes
  * an already-resolved `Scope` so it carries no request/session coupling
@@ -17,6 +17,7 @@
 import prisma from "@/lib/prisma";
 import { WaitlistStatus, type Prisma } from "@prisma/client";
 import type { Scope } from "@/lib/api/scope/parse";
+import { toPlain } from "@/lib/data/serialize";
 import type { TConsulteeEventsResponse } from "@/types/consultee-events";
 
 /** Thrown when the consulteeId has no profile — route maps to 404. */
@@ -386,11 +387,16 @@ export async function readConsulteeEvents(
       }),
     ]);
 
-  return {
+  // toPlain — the booking rows include money-extended plan/payment
+  // relations (#780/#781 result extensions) that carry Prisma's inspect
+  // symbol; they must be plainified before crossing the RSC→Client
+  // HydrationBoundary. The route path (NextResponse.json) drops symbols
+  // anyway, so this only matters for the SSR prefetch. Preserves Dates.
+  return toPlain({
     consultations,
     subscriptions,
     webinars,
     classes,
     trials,
-  } as unknown as TConsulteeEventsResponse;
+  }) as unknown as TConsulteeEventsResponse;
 }
