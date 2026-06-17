@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { signUp, useSession, sendVerificationEmail } from "@/lib/auth-client";
+import { setPendingReferral } from "@/lib/pending-referral";
 import { ssoSigninWithGuard } from "@/lib/sso/signin-with-toast";
 import { GlobeIcon } from "@/components/auth/auth-icons";
 import { SocialLoginButtons } from "@/components/auth/social-login-buttons";
@@ -68,6 +69,13 @@ function SignUpContent() {
       }
     }
   }, [session, isPending, router, callbackUrl, onboardingUrl]);
+
+  // Persist the referral code at first touch so it survives the OAuth redirect
+  // and the email-verification gap; it is applied after authentication on the
+  // onboarding landing. #880
+  useEffect(() => {
+    if (refCode) setPendingReferral(refCode);
+  }, [refCode]);
 
   // Show loading while checking session status (fallback for when middleware doesn't catch)
   if (isPending) {
@@ -236,18 +244,9 @@ function SignUpContent() {
           description: `We sent a verification link to ${email}.`,
         });
       } else if (data) {
-        // Session created (verification-disabled fallback): apply referral now.
-        if (refCode) {
-          try {
-            await fetch("/api/referrals/apply", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ code: refCode }),
-            });
-          } catch {
-            // Non-blocking: referral application failure shouldn't block signup
-          }
-        }
+        // Session created (verification-disabled fallback). The referral code
+        // was persisted at first touch and is applied on the onboarding landing
+        // (covers OAuth + verified-email paths uniformly). #880
         toast({
           title: "Account Created Successfully!",
           description: "Redirecting to onboarding...",

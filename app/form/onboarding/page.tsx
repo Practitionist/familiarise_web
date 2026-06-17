@@ -14,8 +14,9 @@ import { Check, LogOut } from "lucide-react";
 import { cn } from "@/utils/tailwind";
 import { useToast } from "@/hooks/use-toast";
 import { signOut, useSession } from "@/lib/auth-client";
+import { takePendingReferral } from "@/lib/pending-referral";
 import { useRouter } from "next/navigation";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { FormProvider, useForm } from "react-hook-form";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import ConsultantPreferredScheduleForm from "./components/ConsultantPreferredScheduleForm";
@@ -60,6 +61,21 @@ const MultiStepForm: React.FC = () => {
   const [formData, setFormData] = useState<Partial<OnboardingFormData>>({});
   const router = useRouter();
   const { toast } = useToast();
+
+  // Apply a referral code captured at first touch (signup / r/[code]) now that
+  // the user is authenticated — covers OAuth and verified-email signups, which
+  // no longer apply it at signup. Idempotent server-side (referredUserId is
+  // unique), best-effort. #880
+  useEffect(() => {
+    if (!session?.user) return;
+    const code = takePendingReferral();
+    if (!code) return;
+    fetch("/api/referrals/apply", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code }),
+    }).catch(() => {});
+  }, [session?.user]);
 
   const methods = useForm<OnboardingFormData>({
     mode: "onChange",
