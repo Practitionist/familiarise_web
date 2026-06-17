@@ -2919,6 +2919,14 @@ If you're working on a specific project that uses Prisma, check for these additi
 - **Prisma version upgrade records** -- Documents issues encountered during major version upgrades (e.g., Prisma 6 to 7) and their solutions.
 - **Production migration runbooks** -- Project-specific procedures for running migrations safely, including maintenance mode, cron job coordination, and deployment checklists.
 
+#### Familiarise: additive composite indexes (PR #887)
+
+The navigation-performance work added three composite indexes to the Familiarise database. Because adding an index is a non-destructive operation (see [Section 5.7](#57-index-and-constraint-changes)), these were applied additively with `CREATE INDEX CONCURRENTLY` so that the indexes built without locking the underlying tables, rather than through a destructive reset migration. The three indexes are `Payment(userId, organizationId, createdAt)`, `Waitlist(userId, status)`, and `ConsultantReview(consultantProfileId)`; the last of these resolves the full-table scan behind the explore page's trending sort (#696). Two further candidates were considered and skipped as redundant: a `Consultation`/`Subscription` index on `(planId, status)` was unnecessary because a superset index on `(planId, status, requestedAt)` already exists and a prefix of that index serves the same lookups.
+
+Each index was created with the name that Prisma generates by convention (for example, `Payment_userId_organizationId_createdAt_idx`), so the schema declaration and the live database agree and no schema drift is introduced. As described in [Section 11](#11-schema-drift), a manually applied index that does not match the name Prisma would generate shows up as drift on the next diff; following the convention avoids that.
+
+The same PR added Prisma slow-query logging in `lib/prisma.ts`. A `query` event hook compares each query's duration against the `PRISMA_SLOW_QUERY_MS` environment variable (default `500` milliseconds) and emits a `[Prisma:SLOW_QUERY]` warning for anything slower, which makes missing indexes and N+1 patterns visible in any environment without turning on full query logging.
+
 ### Official Prisma Documentation
 
 - [Prisma Migrate Overview](https://www.prisma.io/docs/orm/prisma-migrate) -- Official migrate documentation
