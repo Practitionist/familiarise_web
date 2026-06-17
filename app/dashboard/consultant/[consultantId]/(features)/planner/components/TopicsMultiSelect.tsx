@@ -75,14 +75,14 @@ export function TopicsMultiSelect({
     };
   }, []);
 
-  // Update parent component when topics change - but avoid the loop
+  // Notify the parent only when the topic VALUES change. topicsKey is the
+  // serialized topics; depending on onTopicsChange/topics (identity changes
+  // every render — callers pass an inline arrow) re-fired this effect on every
+  // render and looped through react-hook-form's onChange.
   useEffect(() => {
-    const handler = setTimeout(() => {
-      onTopicsChange?.(topics);
-    }, 0);
-
-    return () => clearTimeout(handler);
-  }, [topicsKey, onTopicsChange, topics]);
+    onTopicsChange?.(topics);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [topicsKey]);
 
   // Update suggestions when input changes
   useEffect(() => {
