@@ -18,7 +18,7 @@ function PendingIndicator({ className }: { className?: string }) {
 
   return (
     <Loader2
-      aria-hidden={!pending}
+      aria-hidden
       className={cn(
         "h-3.5 w-3.5 shrink-0 animate-spin transition-opacity duration-150 [transition-delay:120ms] motion-reduce:animate-none",
         pending ? "opacity-100" : "opacity-0",

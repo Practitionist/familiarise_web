@@ -410,7 +410,7 @@ export async function GET(
         // so order by createdAt to make `take` deterministic; the JS
         // sortedAppointments step re-sorts by slot startsAt afterwards.
         orderBy: { createdAt: "desc" },
-        take: 50,
+        take: 200,
       }),
       // Fetch pending consultations
       prisma.consultation.findMany({
@@ -429,7 +429,7 @@ export async function GET(
         orderBy: {
           requestedAt: "desc",
         },
-        take: 50,
+        take: 200,
       }),
       // Fetch pending subscriptions
       prisma.subscription.findMany({
@@ -446,7 +446,7 @@ export async function GET(
         orderBy: {
           requestedAt: "desc",
         },
-        take: 50,
+        take: 200,
       }),
       // Fetch recent activities
       prisma.activityLog.findMany({

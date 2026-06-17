@@ -52,6 +52,26 @@ interface HomeTabProps {
   consulteeId: string;
 }
 
+// #248: the video connect is deferred to requestIdleCallback, so the global
+// client may not exist yet at the instant a user clicks Join. Poll briefly for
+// it (the StreamProvider mounted on this route is already connecting) rather
+// than erroring out on the first null read. Resolves null if it never appears
+// within the window so the caller can show a soft "try again" message.
+async function waitForGlobalVideoClient(
+  timeoutMs = 4000,
+  intervalMs = 150,
+): Promise<ReturnType<typeof getGlobalVideoClient>> {
+  const existing = getGlobalVideoClient();
+  if (existing) return existing;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    const client = getGlobalVideoClient();
+    if (client) return client;
+  }
+  return getGlobalVideoClient();
+}
+
 const staggerChildren = {
   hidden: { opacity: 0 },
   visible: {
@@ -678,18 +698,23 @@ export default function HomeTab({
 
     // #248: read the already-connected video client singleton at click time
     // (same instance <StreamVideo> uses) instead of via useStreamVideoClient,
-    // so the SDK stays off the home bundle.
-    const client = getGlobalVideoClient();
+    // so the SDK stays off the home bundle. The video connect is now deferred
+    // to requestIdleCallback, so a fast Join click can land before the client
+    // exists — show the joining spinner and briefly wait for it instead of
+    // immediately erroring.
+    setJoiningEventId(event.id);
+    const client = await waitForGlobalVideoClient();
     if (!client) {
+      setJoiningEventId(null);
       toast({
-        title: "Not signed in",
-        description: "Video client not initialized. Please sign in to join.",
+        title: "Connecting…",
+        description:
+          "Setting up your meeting client. Please try Join again in a moment.",
         variant: "warning",
       });
       return;
     }
 
-    setJoiningEventId(event.id);
     try {
       // #248: lazy-import the meeting helper (it imports the SDK) on demand.
       const { getOrCreateAppointmentMeeting } = await import("@/lib/meeting");

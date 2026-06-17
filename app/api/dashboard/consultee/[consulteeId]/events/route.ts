@@ -121,7 +121,7 @@ export async function GET(
     // intact while a multi-year veteran no longer pulls full history.
     const since = new Date();
     since.setFullYear(since.getFullYear() - 1);
-    const EVENTS_TAKE = 50;
+    const EVENTS_TAKE = 200;
 
     // PERFORMANCE FIX: Use direct Prisma queries instead of internal HTTP fetches
     // This avoids network overhead and reduces response time from 11+ seconds to <1 second
@@ -130,15 +130,11 @@ export async function GET(
         prisma.consultation.findMany({
           where: {
             requestedById: consulteeId,
-            // TTFB bound merged into the 1:1 appointment filter alongside
-            // any org scope. Home only renders events with slots, so a
-            // recent-slot lower bound is consumer-aligned.
-            appointment: {
-              is: {
-                ...(oneApptOrgWhere ?? {}),
-                slotsOfAppointment: { some: { startsAt: { gte: since } } },
-              },
-            },
+            // Org scope only — NO slot requirement. The Appointments → Upcoming
+            // view renders slot-less PENDING bookings (pending-payment CTA), so
+            // requiring an in-window slot would hide them. take:EVENTS_TAKE bounds
+            // the row count instead. #887
+            ...(oneApptOrgWhere && { appointment: { is: oneApptOrgWhere } }),
           },
           include: {
             consultationPlan: {
@@ -177,16 +173,10 @@ export async function GET(
         prisma.subscription.findMany({
           where: {
             requestedById: consulteeId,
-            // TTFB bound: surface subscriptions with ANY recent-or-future
-            // appointment slot, merged with the org scope (if any). The
-            // 1:many `some` matches the parent if a single child appointment
-            // has a slot in-window.
-            appointments: {
-              some: {
-                ...(manyApptOrgWhere ?? {}),
-                slotsOfAppointment: { some: { startsAt: { gte: since } } },
-              },
-            },
+            // Org scope only — NO slot requirement (see consultation above);
+            // take:EVENTS_TAKE bounds the row count without hiding slot-less
+            // PENDING subscriptions. #887
+            ...(manyApptOrgWhere && { appointments: { some: manyApptOrgWhere } }),
           },
           include: {
             subscriptionPlan: {

@@ -43,6 +43,7 @@ import {
   setGlobalVideoClient,
   getCurrentStreamUserId,
   setCurrentStreamUserId,
+  disconnectStreamClients,
 } from "@/lib/stream/disconnect";
 
 // Stream CSS co-located with the heavy impl so the ~2 stylesheets ship only
@@ -317,47 +318,6 @@ const StreamProviderImpl = ({
     }
   }, [enableVideo, userDetails, getCachedToken]);
 
-  // Full disconnect - only call when user changes or app unmounts
-  const disconnect = useCallback(
-    async (clearGlobal = false) => {
-      const promises = [];
-
-      if (chatClient) {
-        promises.push(
-          chatClient.disconnectUser().then(() => {
-            streamLogger.debug("Chat client disconnected");
-            setChatClient(null);
-            setChatConnected(false);
-            if (clearGlobal) {
-              setGlobalChatClient(null);
-            }
-          }),
-        );
-      }
-
-      if (videoClient) {
-        promises.push(
-          videoClient.disconnectUser().then(() => {
-            streamLogger.debug("Video client disconnected");
-            setVideoClient(null);
-            setVideoConnected(false);
-            if (clearGlobal) {
-              setGlobalVideoClient(null);
-            }
-          }),
-        );
-      }
-
-      await Promise.all(promises);
-      if (clearGlobal) {
-        setCurrentStreamUserId(null);
-        tokenCacheRef.current = {}; // Clear token cache
-        connectionAttemptsRef.current = 0; // Reset attempts
-      }
-    },
-    [chatClient, videoClient],
-  );
-
   // Stable connectServices function using ref pattern for retry logic
   const connectServices = useCallback(async () => {
     if (isLoading || !userDetails) return;
@@ -419,8 +379,8 @@ const StreamProviderImpl = ({
   }, [connectServices]);
 
   // Initialize connections.
-  // connectServices/disconnect are in deps and may cause re-fires when their
-  // useCallback identities change, but this is safe because:
+  // connectServices is in deps and may cause re-fires when its useCallback
+  // identity changes, but this is safe because:
   // - connectChat guards with globalChatClient + currentUserId check (no-op if already connected)
   // - syncUserEventChannels is guarded by sessionStorage (no-op after first sync)
   //
@@ -438,7 +398,12 @@ const StreamProviderImpl = ({
     let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
 
     const run = () => {
-      // Check if user changed - if so, disconnect old user first
+      // Check if user changed - if so, disconnect old user first.
+      // Use disconnectStreamClients (global refs) rather than the local
+      // disconnect() here: on a fresh remount for a different user, local
+      // chatClient/videoClient state is null while the GLOBAL clients still
+      // point at the PREVIOUS user. local disconnect() would no-op and leak
+      // the prior user's connection, which the new connect would then adopt.
       if (
         getCurrentStreamUserId() &&
         getCurrentStreamUserId() !== userDetails.id
@@ -447,9 +412,21 @@ const StreamProviderImpl = ({
           from: getCurrentStreamUserId(),
           to: userDetails.id,
         });
-        disconnect(true).then(() => {
-          connectServices();
-        });
+        // Reset local token cache + attempt counter so the new user connects
+        // with fresh tokens (disconnectStreamClients owns the global teardown).
+        tokenCacheRef.current = {};
+        connectionAttemptsRef.current = 0;
+        disconnectStreamClients()
+          .catch((err) => {
+            // Never block the new user's connect on a prior-user disconnect
+            // failure; disconnectStreamClients already clears global refs.
+            streamLogger.warn("Prior-user disconnect failed, connecting anyway", {
+              error: err,
+            });
+          })
+          .then(() => {
+            connectServices();
+          });
       } else {
         connectServices();
       }
@@ -494,7 +471,7 @@ const StreamProviderImpl = ({
       // Global clients are reused across component remounts
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userDetails?.id, isLoading, connectServices, disconnect]);
+  }, [userDetails?.id, isLoading, connectServices]);
 
   // Connection state for context
   const connectionState: StreamConnectionState = {

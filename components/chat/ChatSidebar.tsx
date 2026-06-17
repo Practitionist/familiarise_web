@@ -153,23 +153,42 @@ export const ChatSidebar = () => {
   const [teamChannels, setTeamChannels] = useState<Channel[]>([]);
   const [directMessages, setDirectMessages] = useState<Channel[]>([]);
   const [activeChannelId, setActiveChannelId] = useState<string | null>(null);
+  // #248: mirror activeChannelId into a ref so handleChannelDeleted can read the
+  // current selection WITHOUT depending on the state. Without this, every
+  // channel selection changed handleChannelDeleted's identity, which re-ran the
+  // event-listener effect and detached/re-attached the Stream listener on each
+  // click. The listener effect now depends only on `client`.
+  const activeChannelIdRef = useRef<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const initialSelectionDoneRef = useRef(false);
   // #248 dedupe: guard against overlapping/duplicate channel fetches. The
   // sidebar effect used to re-run (and refetch) on every channel selection and
-  // on useCallback identity churn, firing the queryChannels storm. This ref
-  // collapses concurrent fetches into one in-flight request.
-  const isFetchingRef = useRef(false);
-  // Tracks the client+scope we've already done the initial fetch for, so the
-  // initial-fetch effect is a no-op on unrelated re-renders. Refetch still
-  // happens on a genuine client or org-scope change.
+  // on useCallback identity churn, firing the queryChannels storm. We track the
+  // *key* (client+scope) currently in flight, not just a boolean: skipping only
+  // the SAME key means an org-scope switch DURING an in-flight fetch is not
+  // silently dropped (the prior bug left the new scope marked "fetched" while
+  // showing the old scope's data).
+  const inFlightFetchKeyRef = useRef<string | null>(null);
+  // Tracks the client+scope we've SUCCESSFULLY fetched for, so the initial-fetch
+  // effect is a no-op on unrelated re-renders. Recorded only after a request
+  // succeeds (not when a fetch is skipped) so a skipped/failed fetch never
+  // marks a scope as done. Refetch still happens on a genuine client/scope change.
   const fetchedKeyRef = useRef<string | null>(null);
 
   // Pagination state
   const [hasMoreTeamChannels, setHasMoreTeamChannels] = useState(true);
   const [hasMoreDMChannels, setHasMoreDMChannels] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
+
+  // Stable key for the current (client + org-scope) pair. Both the in-flight
+  // guard and the "already fetched" record key off this so a scope switch is a
+  // genuinely different key (and thus never skipped against an unrelated fetch).
+  const computeFetchKey = useCallback((): string | null => {
+    if (!client?.userID) return null;
+    const scopeKey = scope.kind === "org" ? `org:${scope.orgId}` : scope.kind;
+    return `${client.userID}::${scopeKey}`;
+  }, [client, scope]);
 
   // Function to fetch channels initially and on significant changes
   const fetchChannels = useCallback(async () => {
@@ -179,11 +198,15 @@ export const ChatSidebar = () => {
       return;
     }
 
-    // #248 dedupe: skip if a fetch is already in flight.
-    if (isFetchingRef.current) {
+    const fetchKey = computeFetchKey();
+
+    // #248 dedupe: skip only if the SAME key is already in flight. A different
+    // key (e.g. an org-scope switch mid-fetch) must proceed so the new scope
+    // actually loads instead of inheriting the in-flight scope's result.
+    if (inFlightFetchKeyRef.current === fetchKey) {
       return;
     }
-    isFetchingRef.current = true;
+    inFlightFetchKeyRef.current = fetchKey;
 
     setIsLoading(true);
     setError(null);
@@ -260,12 +283,23 @@ export const ChatSidebar = () => {
         })),
       );
 
+      // Staleness guard: if a newer-keyed fetch (e.g. a scope switch) started
+      // while this request was in flight, drop this late response instead of
+      // overwriting the current scope's channels with the old scope's data.
+      if (inFlightFetchKeyRef.current !== fetchKey) {
+        return;
+      }
+
       setTeamChannels(teamResponse);
       setDirectMessages(dmResponse);
 
       // Update pagination state
       setHasMoreTeamChannels(teamResponse.length === options.limit);
       setHasMoreDMChannels(dmResponse.length === options.limit);
+
+      // Record success: only NOW is this scope's data actually loaded. Marking
+      // it earlier (or on skip) is what let a switched scope show stale data.
+      fetchedKeyRef.current = fetchKey;
 
       // Auto-select the most recent channel on initial load
       if (!initialSelectionDoneRef.current) {
@@ -301,14 +335,19 @@ export const ChatSidebar = () => {
       setError("Failed to load channels. Please try refreshing.");
     } finally {
       setIsLoading(false);
-      isFetchingRef.current = false; // #248: release in-flight guard
+      // #248: release the in-flight guard only if WE are still the in-flight
+      // fetch. If a newer-keyed fetch started after us, leave its key in place
+      // so it isn't wrongly treated as not-in-flight.
+      if (inFlightFetchKeyRef.current === fetchKey) {
+        inFlightFetchKeyRef.current = null;
+      }
     }
     // Why `scope` is in deps: when the operator toggles the org-context
     // dropdown (or navigates into /dashboard/organization/<orgId>/...),
     // useOrgScope's `scope` shifts and we must refetch the channel list
     // through the new filter. Without this, the inbox keeps showing the
     // previous tenant's threads until a hard reload.
-  }, [client, setActiveChannel, scope]);
+  }, [client, setActiveChannel, scope, computeFetchKey]);
 
   // Function to load more channels (pagination)
   const loadMoreChannels = useCallback(
@@ -406,13 +445,15 @@ export const ChatSidebar = () => {
         return filtered;
       });
 
-      // Clear active channel if it was the deleted one
-      if (activeChannelId === deletedChannelId) {
+      // Clear active channel if it was the deleted one. Read the ref (not the
+      // state) so this handler's identity stays stable across selections and the
+      // event-listener effect below isn't re-run on every channel click.
+      if (activeChannelIdRef.current === deletedChannelId) {
         setActiveChannel(undefined);
         setActiveChannelId(null);
       }
     },
-    [activeChannelId, setActiveChannel],
+    [setActiveChannel],
   );
 
   // Handle user being removed from channel
@@ -506,20 +547,21 @@ export const ChatSidebar = () => {
       setTeamChannels([]);
       setDirectMessages([]);
       fetchedKeyRef.current = null;
+      inFlightFetchKeyRef.current = null;
       return;
     }
 
-    const scopeKey =
-      scope.kind === "org" ? `org:${scope.orgId}` : scope.kind;
-    const fetchKey = `${client.userID}::${scopeKey}`;
+    const fetchKey = computeFetchKey();
     if (fetchedKeyRef.current === fetchKey) {
-      return; // already fetched for this client+scope
+      return; // already SUCCESSFULLY fetched for this client+scope
     }
-    fetchedKeyRef.current = fetchKey;
+    // Do NOT pre-mark fetchedKeyRef here — fetchChannels records it only after
+    // its request succeeds, so a skipped (in-flight) or failed fetch can't leave
+    // a scope marked done with another scope's data.
     // Reset auto-selection so a scope switch can pick a fresh default channel.
     initialSelectionDoneRef.current = false;
     fetchChannels();
-  }, [client, scope, fetchChannels]);
+  }, [client, scope, fetchChannels, computeFetchKey]);
 
   // #248: Event listener — attached once per client (not per channel click).
   // Kept separate from the initial fetch so selecting a channel no longer tears
@@ -627,6 +669,12 @@ export const ChatSidebar = () => {
     },
     [setActiveChannel],
   );
+
+  // #248: keep activeChannelIdRef in lockstep with the state so the stable
+  // handleChannelDeleted handler can read the current selection from the ref.
+  useEffect(() => {
+    activeChannelIdRef.current = activeChannelId;
+  }, [activeChannelId]);
 
   return (
     <div className="w-80 bg-blue-600 text-white flex flex-col h-full">

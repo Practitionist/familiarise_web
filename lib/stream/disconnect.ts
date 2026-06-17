@@ -64,10 +64,21 @@ export async function disconnectStreamClients(): Promise<void> {
     );
   }
 
-  await Promise.all(promises);
+  // allSettled (not all): a rejected disconnectUser() must NOT skip the global
+  // state teardown below — leaving stale client refs after a failed logout
+  // would let the next login adopt the prior user's connection.
+  const results = await Promise.allSettled(promises);
+  for (const result of results) {
+    if (result.status === "rejected") {
+      streamLogger.warn("Stream disconnect rejected on logout", {
+        error: result.reason,
+      });
+    }
+  }
 
-  // Nullify references only after disconnect completes to avoid
-  // another code path creating a new client while still disconnecting
+  // Always clear global state regardless of disconnect outcome. Nulling after
+  // (attempted) disconnect avoids another code path adopting a still-connecting
+  // client; doing it unconditionally avoids leaking refs when disconnect fails.
   globalChatClient = null;
   globalVideoClient = null;
   currentUserId = null;
