@@ -4,8 +4,8 @@
 |---|---|
 | Status | Stable |
 | Audience | All engineers |
-| Last reviewed | 2026-04-26 |
-| Source files | `lib/auth.ts` (lines 83–530), `lib/auth-server.ts`, `lib/auth-guard.ts` |
+| Last reviewed | 2026-06-17 |
+| Source files | `lib/auth.ts` (lines 83–530), `lib/auth-server.ts`, `lib/auth-guard.ts`, `lib/auth-client.ts`, `lib/auth-broadcast.ts`, `providers/AuthSyncProvider.tsx`, `app/layout.tsx`, `components/Navbar.tsx` |
 
 ## 1. Background
 
@@ -107,6 +107,16 @@ Defense-in-depth: mirrors the `session.create.before` logic to set `ssoEnforceme
 | **Error style** | `redirect()` — never returns | `NextResponse.json({ error }, { status })` |
 | **Functions** | `requireAuth`, `requireOnboarded`, `requireUserRole`, `requireNotOnboarded` | `requireApiAuth`, `requireAdminAuth`, `requireOrgAccess`, etc. |
 | **Session read** | `getSession()` or `getSession(true)` | `getSession(true)` always |
+
+### 2.5 Client Rendering and Cross-Tab Sync
+
+The client reads auth state through BetterAuth's `useSession()` hook, which fetches `/get-session` from the browser only after the page has hydrated. If a component renders the signed-out state while that fetch is in flight, the user sees a flash of the logged-out UI that then swaps to the logged-in UI a moment later. The shared `Navbar` previously did exactly this, which read as broken session persistence even though the cookie was present the whole time.
+
+Two pieces work together to make the rendered auth state correct and consistent across tabs:
+
+1. **Server seeding.** The root layout (`app/layout.tsx`) resolves the session on the server with `getSession()` and passes it to the `Navbar` as `initialSession`. The Navbar renders that server value while `useSession()` is still pending, so the first paint already shows the right state and there is no flash. Because this reads the session on every render of the root layout, it relies on the five-minute cookie cache to stay cheap, and it opts the layout into dynamic rendering.
+
+2. **Cross-tab propagation.** BetterAuth's client only broadcasts a session change to other tabs on sign-out and user-update, never on sign-in, and OAuth or SSO logins complete through a full-page redirect with no client fetch hook at all. As a result an already-open tab would not reflect a login elsewhere until it next regained focus (BetterAuth's built-in `visibilitychange` refetch). `AuthSyncProvider` (mounted once in the root layout) closes that gap: it detects this tab's logged-out to logged-in transition and pings peer tabs over a `BroadcastChannel`, and on receiving a ping it calls the `useSession` `refetch` so every consumer re-renders. The helper in `lib/auth-broadcast.ts` falls back to a `storage` event for browsers without `BroadcastChannel`. The provider renders nothing and shares the existing session atom, so it adds no extra `/get-session` request.
 
 ## 3. Operational Concerns
 
