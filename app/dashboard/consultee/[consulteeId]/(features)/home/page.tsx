@@ -82,7 +82,7 @@ export default function HomePage({ params }: Readonly<PageProps>) {
     <DashboardErrorBoundary>
       {/* Show subtle loading indicator when refreshing */}
       {isLoading && eventsData && (
-        <div className="fixed top-4 right-4 bg-blue-500 text-white px-3 py-1 rounded-md text-sm z-50">
+        <div className="fixed top-4 right-4 bg-foreground text-background px-3 py-1 rounded-md text-sm z-50">
           Refreshing...
         </div>
       )}

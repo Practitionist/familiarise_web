@@ -140,7 +140,7 @@ export function WeeklyAvailability({ slotsByDay }: WeeklyAvailabilityProps) {
                       );
                     })
                   ) : (
-                    <div className="h-16 flex items-center justify-center text-xs text-gray-400 bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl border border-gray-200 shadow-sm">
+                    <div className="h-16 flex items-center justify-center text-xs text-muted-foreground/70 bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl border border-border shadow-sm">
                       No slots
                     </div>
                   )}

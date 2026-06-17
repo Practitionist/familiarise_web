@@ -11,13 +11,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+  ResponsiveTable,
+  type ResponsiveColumn,
+} from "@/components/ui/responsive-table";
+import { PageHeader } from "@/components/ui/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -129,42 +126,42 @@ const getStatusBadge = (status: WaitlistStatus, compact = false) => {
   switch (status) {
     case "WAITING":
       return (
-        <Badge className="bg-amber-100 text-amber-800 border-amber-200">
+        <Badge className="bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-900">
           <Clock className={iconClass} />
           {!compact && "Waiting"}
         </Badge>
       );
     case "NOTIFIED":
       return (
-        <Badge className="bg-blue-100 text-blue-800 border-blue-200">
+        <Badge variant="secondary">
           <Bell className={iconClass} />
           {!compact && "Notified"}
         </Badge>
       );
     case "BOOKED":
       return (
-        <Badge className="bg-green-100 text-green-800 border-green-200">
+        <Badge className="bg-green-100 text-green-800 border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-900">
           <CheckCircle className={iconClass} />
           {!compact && "Booked"}
         </Badge>
       );
     case "EXPIRED":
       return (
-        <Badge className="bg-gray-100 text-gray-600 border-gray-200">
+        <Badge className="bg-muted text-muted-foreground border-border">
           <XCircle className={iconClass} />
           {!compact && "Expired"}
         </Badge>
       );
     case "CANCELLED":
       return (
-        <Badge className="bg-red-100 text-red-800 border-red-200">
+        <Badge className="bg-red-100 text-red-800 border-red-200 dark:bg-red-950/40 dark:text-red-400 dark:border-red-900">
           <XCircle className={iconClass} />
           {!compact && "Cancelled"}
         </Badge>
       );
     case "SKIPPED":
       return (
-        <Badge className="bg-purple-100 text-purple-800 border-purple-200">
+        <Badge variant="secondary">
           <SkipForward className={iconClass} />
           {!compact && "Skipped"}
         </Badge>
@@ -174,63 +171,119 @@ const getStatusBadge = (status: WaitlistStatus, compact = false) => {
   }
 };
 
-function WaitlistTableRow({ entry }: { entry: WaitlistEntry }) {
-  return (
-    <TableRow>
-      <TableCell>
-        <div className="flex items-center gap-3">
-          <Avatar className="h-8 w-8">
-            <AvatarImage
-              src={entry.user.image || undefined}
-              alt={entry.user.name || "User"}
-            />
-            <AvatarFallback className="bg-zinc-100 text-zinc-600 text-xs">
-              {entry.user.name
-                ?.split(" ")
-                .map((n) => n[0])
-                .join("")
-                .slice(0, 2) || "??"}
-            </AvatarFallback>
-          </Avatar>
-          <div>
-            <p className="font-medium text-sm">
-              {entry.user.name || "No name"}
-            </p>
-            <p className="text-xs text-gray-500">{entry.user.email}</p>
-          </div>
-        </div>
-      </TableCell>
-      <TableCell>{getStatusBadge(entry.status)}</TableCell>
-      <TableCell>
-        {entry.position ? (
-          <span className="font-semibold text-amber-700">
-            #{entry.position}
-          </span>
-        ) : (
-          <span className="text-gray-400">-</span>
-        )}
-      </TableCell>
-      <TableCell className="text-sm text-gray-600">
-        {format(new Date(entry.joinedAt), "MMM d, yyyy")}
-      </TableCell>
-      <TableCell className="text-sm">
-        {entry.expiresAt ? (
-          <span
-            className={
-              new Date(entry.expiresAt) < new Date()
-                ? "text-red-600"
-                : "text-gray-600"
-            }
-          >
-            {format(new Date(entry.expiresAt), "MMM d, h:mm a")}
-          </span>
-        ) : (
-          "-"
-        )}
-      </TableCell>
-    </TableRow>
+// Shared cell renderers so the grouped and list tables stay consistent.
+const userCell = (entry: WaitlistEntry) => (
+  <div className="flex items-center gap-3">
+    <Avatar className="h-8 w-8">
+      <AvatarImage
+        src={entry.user.image || undefined}
+        alt={entry.user.name || "User"}
+      />
+      <AvatarFallback className="bg-muted text-muted-foreground text-xs">
+        {entry.user.name
+          ?.split(" ")
+          .map((n) => n[0])
+          .join("")
+          .slice(0, 2) || "??"}
+      </AvatarFallback>
+    </Avatar>
+    <div>
+      <p className="font-medium text-sm">{entry.user.name || "No name"}</p>
+      <p className="text-xs text-muted-foreground">{entry.user.email}</p>
+    </div>
+  </div>
+);
+
+const positionCell = (entry: WaitlistEntry) =>
+  entry.position ? (
+    <span className="font-semibold text-foreground">#{entry.position}</span>
+  ) : (
+    <span className="text-muted-foreground/70">-</span>
   );
-}
+
+const joinedCell = (entry: WaitlistEntry) =>
+  format(new Date(entry.joinedAt), "MMM d, yyyy");
+
+const expiresCell = (entry: WaitlistEntry) =>
+  entry.expiresAt ? (
+    <span
+      className={
+        new Date(entry.expiresAt) < new Date()
+          ? "text-red-600 dark:text-red-400"
+          : "text-muted-foreground"
+      }
+    >
+      {format(new Date(entry.expiresAt), "MMM d, h:mm a")}
+    </span>
+  ) : (
+    "-"
+  );
+
+const groupedColumns: ResponsiveColumn<WaitlistEntry>[] = [
+  { key: "user", header: "User", primary: true, cell: userCell },
+  { key: "status", header: "Status", cell: (e) => getStatusBadge(e.status) },
+  { key: "position", header: "Position", cell: positionCell },
+  {
+    key: "joined",
+    header: "Joined",
+    className: "text-sm text-muted-foreground",
+    cell: joinedCell,
+  },
+  {
+    key: "expires",
+    header: "Expires",
+    className: "text-sm",
+    cell: expiresCell,
+  },
+];
+
+const listColumns: ResponsiveColumn<WaitlistEntry>[] = [
+  { key: "user", header: "User", primary: true, cell: userCell },
+  {
+    key: "event",
+    header: "Event",
+    cell: (entry) => (
+      <Link
+        href={`/explore/programs/plans/${entry.eventType === "class" ? "classes" : "webinars"}/${entry.planId}`}
+        className="text-foreground underline-offset-4 hover:underline text-sm"
+      >
+        {entry.eventTitle}
+      </Link>
+    ),
+  },
+  {
+    key: "type",
+    header: "Type",
+    cell: (entry) => (
+      <Badge variant="outline" className="capitalize text-xs">
+        {entry.eventType}
+      </Badge>
+    ),
+  },
+  { key: "status", header: "Status", cell: (e) => getStatusBadge(e.status) },
+  { key: "position", header: "Position", cell: positionCell },
+  {
+    key: "scheduled",
+    header: "Scheduled",
+    className: "text-sm text-muted-foreground",
+    cell: (entry) =>
+      entry.scheduledDate
+        ? format(new Date(entry.scheduledDate), "MMM d, yyyy")
+        : "-",
+  },
+  {
+    key: "joined",
+    header: "Joined",
+    className: "text-sm text-muted-foreground",
+    cell: joinedCell,
+  },
+  {
+    key: "expires",
+    header: "Expires",
+    className: "text-sm",
+    cell: expiresCell,
+  },
+];
 
 function EventGroupCard({
   eventTitle,
@@ -252,13 +305,13 @@ function EventGroupCard({
     <Collapsible open={isOpen} onOpenChange={setIsOpen}>
       <Card className="mb-4">
         <CollapsibleTrigger asChild>
-          <CardHeader className="cursor-pointer hover:bg-gray-50 transition-colors">
+          <CardHeader className="cursor-pointer hover:bg-muted transition-colors">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-4">
                 {isOpen ? (
-                  <ChevronDown className="h-5 w-5 text-gray-500" />
+                  <ChevronDown className="h-5 w-5 text-muted-foreground" />
                 ) : (
-                  <ChevronRight className="h-5 w-5 text-gray-500" />
+                  <ChevronRight className="h-5 w-5 text-muted-foreground" />
                 )}
                 <div>
                   <div className="flex items-center gap-3">
@@ -267,7 +320,7 @@ function EventGroupCard({
                       {firstEntry?.eventType}
                     </Badge>
                   </div>
-                  <div className="flex items-center gap-4 mt-1 text-sm text-gray-500">
+                  <div className="flex items-center gap-4 mt-1 text-sm text-muted-foreground">
                     {firstEntry?.consultant && (
                       <span className="flex items-center gap-1">
                         <Avatar className="h-4 w-4">
@@ -295,13 +348,13 @@ function EventGroupCard({
               </div>
               <div className="flex items-center gap-3">
                 {notifiedCount > 0 && (
-                  <Badge className="bg-blue-100 text-blue-800">
+                  <Badge variant="secondary">
                     <Bell className="h-3 w-3 mr-1" />
                     {notifiedCount} notified
                   </Badge>
                 )}
                 {waitingCount > 0 && (
-                  <Badge className="bg-amber-100 text-amber-800">
+                  <Badge className="bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-400">
                     <Clock className="h-3 w-3 mr-1" />
                     {waitingCount} waiting
                   </Badge>
@@ -313,26 +366,15 @@ function EventGroupCard({
         </CollapsibleTrigger>
         <CollapsibleContent>
           <CardContent className="pt-0">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>User</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Position</TableHead>
-                  <TableHead>Joined</TableHead>
-                  <TableHead>Expires</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {entries.map((entry) => (
-                  <WaitlistTableRow key={entry.id} entry={entry} />
-                ))}
-              </TableBody>
-            </Table>
+            <ResponsiveTable<WaitlistEntry>
+              columns={groupedColumns}
+              rows={entries}
+              getRowId={(e) => e.id}
+            />
             <div className="mt-3 pt-3 border-t">
               <Link
                 href={`/explore/programs/plans/${firstEntry?.eventType === "class" ? "classes" : "webinars"}/${firstEntry?.planId}`}
-                className="text-sm text-blue-600 hover:underline"
+                className="text-sm text-foreground underline-offset-4 hover:underline"
               >
                 View Event Page →
               </Link>
@@ -384,12 +426,10 @@ export function WaitlistManagement() {
   if (error) {
     return (
       <div className="space-y-6">
-        <h1 className="text-3xl font-bold text-gray-900">
-          Waitlist Management
-        </h1>
+        <PageHeader title="Waitlist Management" />
         <Card>
           <CardContent className="py-8">
-            <p className="text-center text-red-500">
+            <p className="text-center text-red-500 dark:text-red-400">
               Failed to load waitlists. Please try again later.
             </p>
           </CardContent>
@@ -400,32 +440,30 @@ export function WaitlistManagement() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold text-gray-900">
-          Waitlist Management
-        </h1>
-        <p className="text-gray-600 mt-1">
-          View and manage all waitlist entries across webinars and classes
-        </p>
-      </div>
+      <PageHeader
+        title="Waitlist Management"
+        description="View and manage all waitlist entries across webinars and classes"
+      />
 
       {/* Key Stats */}
       {data?.stats && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <Card className="border-l-4 border-l-amber-500">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <Card className="border-l-4 border-l-foreground">
             <CardContent className="p-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-gray-500">Active Waitlists</p>
-                  <p className="text-3xl font-bold text-amber-600">
+                  <p className="text-sm text-muted-foreground">
+                    Active Waitlists
+                  </p>
+                  <p className="text-3xl font-bold text-foreground">
                     {data.stats.active}
                   </p>
                 </div>
-                <div className="p-3 bg-amber-100 rounded-full">
-                  <AlertCircle className="h-6 w-6 text-amber-600" />
+                <div className="p-3 bg-muted rounded-full">
+                  <AlertCircle className="h-6 w-6 text-foreground" />
                 </div>
               </div>
-              <p className="text-xs text-gray-500 mt-2">
+              <p className="text-xs text-muted-foreground mt-2">
                 {data.stats.waiting} waiting, {data.stats.notified} notified
               </p>
             </CardContent>
@@ -434,11 +472,11 @@ export function WaitlistManagement() {
             <CardContent className="p-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-gray-500">Total Entries</p>
+                  <p className="text-sm text-muted-foreground">Total Entries</p>
                   <p className="text-3xl font-bold">{data.stats.total}</p>
                 </div>
-                <div className="p-3 bg-gray-100 rounded-full">
-                  <Users className="h-6 w-6 text-gray-600" />
+                <div className="p-3 bg-muted rounded-full">
+                  <Users className="h-6 w-6 text-muted-foreground" />
                 </div>
               </div>
             </CardContent>
@@ -447,13 +485,13 @@ export function WaitlistManagement() {
             <CardContent className="p-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-gray-500">Booked</p>
-                  <p className="text-3xl font-bold text-green-600">
+                  <p className="text-sm text-muted-foreground">Booked</p>
+                  <p className="text-3xl font-bold text-green-600 dark:text-green-400">
                     {data.stats.booked}
                   </p>
                 </div>
-                <div className="p-3 bg-green-100 rounded-full">
-                  <CheckCircle className="h-6 w-6 text-green-600" />
+                <div className="p-3 bg-muted rounded-full">
+                  <CheckCircle className="h-6 w-6 text-foreground" />
                 </div>
               </div>
             </CardContent>
@@ -462,13 +500,13 @@ export function WaitlistManagement() {
             <CardContent className="p-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-gray-500">Expired</p>
-                  <p className="text-3xl font-bold text-gray-500">
+                  <p className="text-sm text-muted-foreground">Expired</p>
+                  <p className="text-3xl font-bold text-muted-foreground">
                     {data.stats.expired}
                   </p>
                 </div>
-                <div className="p-3 bg-gray-100 rounded-full">
-                  <XCircle className="h-6 w-6 text-gray-500" />
+                <div className="p-3 bg-muted rounded-full">
+                  <XCircle className="h-6 w-6 text-muted-foreground" />
                 </div>
               </div>
             </CardContent>
@@ -480,7 +518,7 @@ export function WaitlistManagement() {
       <Card>
         <CardContent className="p-4">
           <div className="flex flex-wrap items-center gap-4">
-            <div className="flex-1 min-w-[200px] max-w-xs">
+            <div className="w-full min-w-0 flex-1 sm:max-w-xs">
               <Input
                 placeholder="Search by name or email..."
                 value={searchTerm}
@@ -497,7 +535,7 @@ export function WaitlistManagement() {
                 setCurrentPage(1);
               }}
             >
-              <SelectTrigger className="w-[140px]">
+              <SelectTrigger className="w-full sm:w-[140px]">
                 <SelectValue placeholder="Status" />
               </SelectTrigger>
               <SelectContent>
@@ -521,7 +559,7 @@ export function WaitlistManagement() {
                 setCurrentPage(1);
               }}
             >
-              <SelectTrigger className="w-[130px]">
+              <SelectTrigger className="w-full sm:w-[130px]">
                 <SelectValue placeholder="Event Type" />
               </SelectTrigger>
               <SelectContent>
@@ -537,7 +575,7 @@ export function WaitlistManagement() {
                 setCurrentPage(1);
               }}
             >
-              <SelectTrigger className="w-[130px]">
+              <SelectTrigger className="w-full sm:w-[130px]">
                 <SelectValue placeholder="Timeline" />
               </SelectTrigger>
               <SelectContent>
@@ -599,13 +637,13 @@ export function WaitlistManagement() {
           ) : (
             <Card>
               <CardContent className="py-16 text-center">
-                <div className="mx-auto h-16 w-16 rounded-2xl bg-gray-100 flex items-center justify-center mb-4">
-                  <Users className="h-8 w-8 text-gray-400" />
+                <div className="mx-auto h-16 w-16 rounded-2xl bg-muted flex items-center justify-center mb-4">
+                  <Users className="h-8 w-8 text-muted-foreground/70" />
                 </div>
-                <h3 className="font-semibold text-gray-900 text-lg">
+                <h3 className="font-semibold text-foreground text-lg">
                   No Waitlist Entries
                 </h3>
-                <p className="text-sm text-gray-500 mt-1">
+                <p className="text-sm text-muted-foreground mt-1">
                   {searchTerm ||
                   statusFilter !== "all" ||
                   eventTypeFilter !== "all"
@@ -625,151 +663,56 @@ export function WaitlistManagement() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            {data?.waitlists && data.waitlists.length > 0 ? (
-              <>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>User</TableHead>
-                      <TableHead>Event</TableHead>
-                      <TableHead>Type</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Position</TableHead>
-                      <TableHead>Scheduled</TableHead>
-                      <TableHead>Joined</TableHead>
-                      <TableHead>Expires</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {data.waitlists.map((entry) => (
-                      <TableRow key={entry.id}>
-                        <TableCell>
-                          <div className="flex items-center gap-3">
-                            <Avatar className="h-8 w-8">
-                              <AvatarImage
-                                src={entry.user.image || undefined}
-                                alt={entry.user.name || "User"}
-                              />
-                              <AvatarFallback className="bg-zinc-100 text-zinc-600 text-xs">
-                                {entry.user.name
-                                  ?.split(" ")
-                                  .map((n) => n[0])
-                                  .join("")
-                                  .slice(0, 2) || "??"}
-                              </AvatarFallback>
-                            </Avatar>
-                            <div>
-                              <p className="font-medium text-sm">
-                                {entry.user.name || "No name"}
-                              </p>
-                              <p className="text-xs text-gray-500">
-                                {entry.user.email}
-                              </p>
-                            </div>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <Link
-                            href={`/explore/programs/plans/${entry.eventType === "class" ? "classes" : "webinars"}/${entry.planId}`}
-                            className="text-blue-600 hover:underline text-sm"
-                          >
-                            {entry.eventTitle}
-                          </Link>
-                        </TableCell>
-                        <TableCell>
-                          <Badge
-                            variant="outline"
-                            className="capitalize text-xs"
-                          >
-                            {entry.eventType}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>{getStatusBadge(entry.status)}</TableCell>
-                        <TableCell>
-                          {entry.position ? (
-                            <span className="font-semibold text-amber-700">
-                              #{entry.position}
-                            </span>
-                          ) : (
-                            <span className="text-gray-400">-</span>
-                          )}
-                        </TableCell>
-                        <TableCell className="text-sm text-gray-600">
-                          {entry.scheduledDate
-                            ? format(
-                                new Date(entry.scheduledDate),
-                                "MMM d, yyyy",
-                              )
-                            : "-"}
-                        </TableCell>
-                        <TableCell className="text-sm text-gray-600">
-                          {format(new Date(entry.joinedAt), "MMM d, yyyy")}
-                        </TableCell>
-                        <TableCell className="text-sm">
-                          {entry.expiresAt ? (
-                            <span
-                              className={
-                                new Date(entry.expiresAt) < new Date()
-                                  ? "text-red-600"
-                                  : "text-gray-600"
-                              }
-                            >
-                              {format(
-                                new Date(entry.expiresAt),
-                                "MMM d, h:mm a",
-                              )}
-                            </span>
-                          ) : (
-                            "-"
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-
-                {/* Pagination */}
-                {data?.totalPages && data.totalPages > 1 && (
-                  <div className="flex justify-center gap-2 mt-4">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={currentPage === 1}
-                      onClick={() => setCurrentPage((p) => p - 1)}
-                    >
-                      Previous
-                    </Button>
-                    <span className="py-2 px-3 text-sm text-gray-600">
-                      Page {currentPage} of {data.totalPages}
-                    </span>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={currentPage >= data.totalPages}
-                      onClick={() => setCurrentPage((p) => p + 1)}
-                    >
-                      Next
-                    </Button>
+            <ResponsiveTable<WaitlistEntry>
+              columns={listColumns}
+              rows={data?.waitlists ?? []}
+              getRowId={(e) => e.id}
+              empty={
+                <div className="py-16 text-center">
+                  <div className="mx-auto h-16 w-16 rounded-2xl bg-muted flex items-center justify-center mb-4">
+                    <Users className="h-8 w-8 text-muted-foreground/70" />
                   </div>
-                )}
-              </>
-            ) : (
-              <div className="py-16 text-center">
-                <div className="mx-auto h-16 w-16 rounded-2xl bg-gray-100 flex items-center justify-center mb-4">
-                  <Users className="h-8 w-8 text-gray-400" />
+                  <h3 className="font-semibold text-foreground text-lg">
+                    No Waitlist Entries
+                  </h3>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    {searchTerm ||
+                    statusFilter !== "all" ||
+                    eventTypeFilter !== "all"
+                      ? "No entries match your filters"
+                      : "No one is currently on any waitlists"}
+                  </p>
                 </div>
-                <h3 className="font-semibold text-gray-900 text-lg">
-                  No Waitlist Entries
-                </h3>
-                <p className="text-sm text-gray-500 mt-1">
-                  {searchTerm ||
-                  statusFilter !== "all" ||
-                  eventTypeFilter !== "all"
-                    ? "No entries match your filters"
-                    : "No one is currently on any waitlists"}
-                </p>
-              </div>
-            )}
+              }
+            />
+
+            {/* Pagination */}
+            {data?.waitlists &&
+              data.waitlists.length > 0 &&
+              data?.totalPages &&
+              data.totalPages > 1 && (
+                <div className="flex justify-center gap-2 mt-4">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={currentPage === 1}
+                    onClick={() => setCurrentPage((p) => p - 1)}
+                  >
+                    Previous
+                  </Button>
+                  <span className="py-2 px-3 text-sm text-muted-foreground">
+                    Page {currentPage} of {data.totalPages}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={currentPage >= data.totalPages}
+                    onClick={() => setCurrentPage((p) => p + 1)}
+                  >
+                    Next
+                  </Button>
+                </div>
+              )}
           </CardContent>
         </Card>
       )}

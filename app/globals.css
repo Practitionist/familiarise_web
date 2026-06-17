@@ -26,6 +26,8 @@
     --info-foreground: 210 90% 10%;
     --error: 0 90% 50%;
     --error-foreground: 0 90% 10%;
+    --success: 142 71% 45%;
+    --success-foreground: 0 0% 100%;
     --border: 0 0% 90%;
     --input: 0 0% 90%;
     --ring: 0 0% 9%;
@@ -53,6 +55,21 @@
     --ash: 0 0% 92%;
     --steel: 0 0% 55%;
     --graphite: 0 0% 25%;
+
+    /* Fluid type scale — viewport-responsive sizes, opted into via text-fluid-*.
+       Sizes only, so no .dark override is needed. */
+    --fs-xs: clamp(0.75rem, 0.72rem + 0.15vw, 0.8125rem);
+    --fs-sm: clamp(0.8125rem, 0.78rem + 0.18vw, 0.875rem);
+    --fs-base: clamp(0.9375rem, 0.9rem + 0.22vw, 1rem);
+    --fs-lg: clamp(1.0625rem, 1rem + 0.35vw, 1.125rem);
+    --fs-xl: clamp(1.1875rem, 1.05rem + 0.6vw, 1.375rem);
+    --fs-2xl: clamp(1.375rem, 1.15rem + 1.1vw, 1.75rem);
+    --fs-3xl: clamp(1.625rem, 1.25rem + 1.9vw, 2.25rem);
+    --fs-4xl: clamp(2rem, 1.4rem + 3vw, 3rem);
+    --fs-5xl: clamp(2.5rem, 1.6rem + 4.5vw, 3.75rem);
+
+    /* Elevation shadow color — themed below so dark-mode shadows stay visible */
+    --shadow-color: 0 0% 0%;
 
     /* Maintenance banner height — set dynamically by MaintenanceBanner.tsx */
     --maintenance-banner-height: 0px;
@@ -102,6 +119,8 @@
     --info-foreground: 210 90% 10%;
     --error: 0 90% 50%;
     --error-foreground: 0 90% 10%;
+    --success: 142 65% 45%;
+    --success-foreground: 0 0% 100%;
     --border: 0 0% 18%;
     --input: 0 0% 18%;
     --ring: 0 0% 85%;
@@ -128,6 +147,9 @@
     --ash: 0 0% 15%;
     --steel: 0 0% 45%;
     --graphite: 0 0% 20%;
+
+    /* Darker base so elevation shadows read against the near-black surfaces */
+    --shadow-color: 0 0% 0%;
   }
 }
 
@@ -292,9 +314,9 @@
   background: rgba(0, 0, 0, 0.3);
 }
 
-/* Focus styles for better accessibility */
+/* Focus styles for better accessibility — neutral brand ring, dark-mode aware */
 .focus-ring {
-  @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2;
+  @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background;
 }
 
 /* Improved hover and focus states for cards */
@@ -302,9 +324,9 @@
   @apply transition-all duration-200 hover:shadow-lg hover:-translate-y-1 focus-within:shadow-lg focus-within:-translate-y-1;
 }
 
-/* Better button focus states */
+/* Better button focus states — neutral brand ring, dark-mode aware */
 .btn-focus {
-  @apply transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2;
+  @apply transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background;
 }
 
 /* ======== stream css overrides ======== */

@@ -432,22 +432,22 @@ export default function SubscriptionCheckoutPage({
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-screen bg-zinc-50">
-        <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-zinc-900"></div>
+      <div className="flex items-center justify-center h-screen bg-muted">
+        <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-foreground"></div>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="col-span-full flex items-center justify-center min-h-screen bg-zinc-50">
+      <div className="col-span-full flex items-center justify-center min-h-screen bg-muted">
         <div
-          className="bg-zinc-900 border border-zinc-800 text-white p-8 max-w-md w-full mx-4 text-center rounded-xl shadow-xl"
+          className="bg-foreground border border-border text-background p-8 max-w-md w-full mx-4 text-center rounded-xl shadow-xl"
           role="alert"
         >
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-zinc-800">
+          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-background/10">
             <svg
-              className="h-6 w-6 text-zinc-400"
+              className="h-6 w-6 text-background/70"
               fill="none"
               viewBox="0 0 24 24"
               strokeWidth={1.5}
@@ -461,10 +461,10 @@ export default function SubscriptionCheckoutPage({
             </svg>
           </div>
           <p className="font-semibold text-lg mb-2">Unable to load checkout</p>
-          <p className="text-zinc-400 text-sm">{error}</p>
+          <p className="text-background/70 text-sm">{error}</p>
           <button
             onClick={() => window.history.back()}
-            className="mt-5 inline-flex items-center rounded-lg bg-white px-4 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-100 transition-colors"
+            className="mt-5 inline-flex items-center rounded-lg bg-background px-4 py-2 text-sm font-medium text-foreground hover:bg-muted transition-colors"
           >
             Go back
           </button>
@@ -478,10 +478,10 @@ export default function SubscriptionCheckoutPage({
 
   return (
     <>
-      <div className="flex flex-col gap-6 border-r border-zinc-300 bg-gradient-to-br from-zinc-200 via-zinc-100 to-gray-200 p-8">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <Avatar className="w-12 h-12 border">
+      <div className="flex flex-col gap-6 border-r border-border bg-gradient-to-br from-muted via-background to-muted p-6 sm:p-8">
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-4 min-w-0">
+            <Avatar className="w-12 h-12 border shrink-0">
               <AvatarImage
                 src={userDetails?.image || "/placeholder-user.jpg"}
                 alt={userDetails?.name || "Consultant"}
@@ -490,11 +490,11 @@ export default function SubscriptionCheckoutPage({
                 {userDetails?.name ? userDetails.name.charAt(0) : "C"}
               </AvatarFallback>
             </Avatar>
-            <div>
-              <div className="font-semibold">
+            <div className="min-w-0">
+              <div className="font-semibold truncate">
                 {userDetails?.name || "Consultant Name"}
               </div>
-              <div className="text-sm text-muted-foreground">
+              <div className="text-sm text-muted-foreground truncate">
                 {consultantDetails?.headline || "Consultant"}
               </div>
               {userDetails?.workExperiences &&
@@ -506,21 +506,21 @@ export default function SubscriptionCheckoutPage({
                         companyName={exp.company}
                         companyDomain={exp.companyDomain ?? undefined}
                         size={20}
-                        className="border-zinc-200"
+                        className="border-border"
                       />
                     ))}
                   </div>
                 )}
             </div>
           </div>
-          <div className="text-right">
+          <div className="text-right min-w-0">
             <div className="font-semibold">Subscription</div>
-            <div className="text-sm text-muted-foreground">
+            <div className="text-sm text-muted-foreground truncate">
               {planData?.data?.title || "Monthly Plan"}
             </div>
           </div>
         </div>
-        <Separator className="bg-zinc-200" />
+        <Separator className="bg-border" />
         <div className="grid gap-2">
           <div className="font-semibold">Subscription Details</div>
           <div className="grid gap-2">
@@ -544,7 +544,7 @@ export default function SubscriptionCheckoutPage({
                       ).toLocaleDateString()}
                     </div>
                   </div>
-                  <Separator className="bg-zinc-200" />
+                  <Separator className="bg-border" />
                 </>
               )}
             <div className="flex items-center justify-between">
@@ -602,7 +602,7 @@ export default function SubscriptionCheckoutPage({
             </div>
           </div>
         </div>
-        <Separator className="bg-zinc-200" />
+        <Separator className="bg-border" />
         <OrgPayerSelector
           selectedOrganizationId={selectedOrganizationId}
           planType="SUBSCRIPTION"
@@ -612,7 +612,7 @@ export default function SubscriptionCheckoutPage({
             if (id) setUseReferralCredits(false);
           }}
         />
-        <Separator className="bg-zinc-200" />
+        <Separator className="bg-border" />
         <div className="grid gap-4">
           <div className="font-semibold">Discount Codes</div>
           <div className="flex items-center gap-2">
@@ -636,9 +636,9 @@ export default function SubscriptionCheckoutPage({
             <div className="text-sm text-red-500">{discountError}</div>
           )}
           {appliedDiscount && (
-            <div className="flex items-center justify-between bg-green-50 p-3 rounded-md">
-              <div>
-                <div className="font-medium text-green-700">
+            <div className="flex items-center justify-between gap-3 bg-green-50 p-3 rounded-md">
+              <div className="min-w-0">
+                <div className="font-medium text-green-700 truncate">
                   {appliedDiscount.code}
                 </div>
                 <div className="text-sm text-green-600">
@@ -650,6 +650,7 @@ export default function SubscriptionCheckoutPage({
               <Button
                 variant="ghost"
                 size="sm"
+                className="shrink-0"
                 onClick={() => {
                   setAppliedDiscount(null);
                   setDiscountError(null);
@@ -660,14 +661,14 @@ export default function SubscriptionCheckoutPage({
             </div>
           )}
           <div className="grid gap-2">
-            <div className="flex items-center justify-between">
-              <div>
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
                 <div className="font-medium">SUB20</div>
                 <div className="text-sm text-muted-foreground">
                   Get 20% off your subscription
                 </div>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 shrink-0">
                 <div className="text-muted-foreground">20% off</div>
                 <Button
                   variant="outline"
@@ -681,7 +682,7 @@ export default function SubscriptionCheckoutPage({
             </div>
           </div>
         </div>
-        <Separator className="bg-zinc-200" />
+        <Separator className="bg-border" />
         <div className="grid gap-4">
           <div className="font-semibold">Referral Credits</div>
           {isLoadingCredits ? (
@@ -689,12 +690,12 @@ export default function SubscriptionCheckoutPage({
               Loading credits...
             </div>
           ) : availableCredits > 0 ? (
-            <div className="flex items-center justify-between bg-blue-50 p-3 rounded-lg border border-blue-200">
-              <div>
-                <div className="font-medium text-blue-700">
+            <div className="flex items-center justify-between gap-3 bg-muted p-3 rounded-lg border border-border">
+              <div className="min-w-0">
+                <div className="font-medium text-foreground">
                   {formatPrice(availableCredits)} available
                 </div>
-                <div className="text-sm text-blue-600">
+                <div className="text-sm text-muted-foreground">
                   Apply to this purchase
                 </div>
               </div>
@@ -710,10 +711,10 @@ export default function SubscriptionCheckoutPage({
           )}
         </div>
       </div>
-      <div className="flex flex-col gap-8 p-8 bg-white">
-        <Card className="border-zinc-200 shadow-sm">
+      <div className="flex flex-col gap-8 p-6 sm:p-8 bg-card">
+        <Card className="border-border shadow-sm">
           <CardHeader>
-            <CardTitle className="text-zinc-900">
+            <CardTitle className="text-foreground">
               Subscription Pricing
             </CardTitle>
           </CardHeader>
@@ -755,7 +756,7 @@ export default function SubscriptionCheckoutPage({
                 </div>
               </div>
             </div>
-            <Separator className="bg-zinc-200" />
+            <Separator className="bg-border" />
             <div className="grid gap-2">
               <div className="flex items-center justify-between">
                 <div>Subtotal</div>
@@ -776,12 +777,12 @@ export default function SubscriptionCheckoutPage({
                 </div>
               )}
               {pricing.creditsApplied > 0 && (
-                <div className="flex items-center justify-between text-blue-600">
+                <div className="flex items-center justify-between text-foreground">
                   <div>Referral Credits</div>
                   <div>-{formatPrice(pricing.creditsApplied)}</div>
                 </div>
               )}
-              <Separator className="bg-zinc-200" />
+              <Separator className="bg-border" />
               <div className="flex items-center justify-between font-semibold">
                 <div>Total</div>
                 <div>{formatPrice(pricing.total)}</div>
@@ -810,19 +811,19 @@ export default function SubscriptionCheckoutPage({
               isActive: true,
             },
           ].map((gateway) => (
-            <Card key={gateway.gateway} className="border-zinc-200">
+            <Card key={gateway.gateway} className="border-border">
               <CardHeader>
-                <CardTitle className="text-zinc-900">{gateway.name}</CardTitle>
+                <CardTitle className="text-foreground">{gateway.name}</CardTitle>
               </CardHeader>
               <CardContent className="grid gap-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-4">
-                    <CreditCardIcon className="w-8 h-8 text-zinc-600" />
-                    <div>
-                      <div className="font-semibold text-zinc-900">
+                <div className="flex flex-wrap items-center justify-between gap-4">
+                  <div className="flex items-center gap-4 min-w-0">
+                    <CreditCardIcon className="w-8 h-8 text-muted-foreground shrink-0" />
+                    <div className="min-w-0">
+                      <div className="font-semibold text-foreground">
                         Credit/Debit Card
                       </div>
-                      <div className="text-sm text-zinc-500">
+                      <div className="text-sm text-muted-foreground/70">
                         {gateway.description}
                       </div>
                     </div>

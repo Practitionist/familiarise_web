@@ -16,21 +16,18 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+  ResponsiveTable,
+  type ResponsiveColumn,
+} from "@/components/ui/responsive-table";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+  ResponsiveModal,
+  ResponsiveModalContent,
+  ResponsiveModalDescription,
+  ResponsiveModalFooter,
+  ResponsiveModalHeader,
+  ResponsiveModalTitle,
+} from "@/components/ui/responsive-modal";
+import { PageHeader } from "@/components/ui/page-header";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -169,78 +166,167 @@ export default function PaymentsAssistancePage() {
     failedPayments: payments.filter((p) => p.paymentStatus === "FAILED").length,
   };
 
-  return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
+  const renderPaymentActions = (payment: Payment) => (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+        <Button variant="ghost" size="icon" className="h-8 w-8">
+          <MoreHorizontal className="h-4 w-4" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem>
+          <Receipt className="h-4 w-4 mr-2" />
+          View Receipt
+        </DropdownMenuItem>
+        <DropdownMenuItem>
+          <FileText className="h-4 w-4 mr-2" />
+          Download Invoice
+        </DropdownMenuItem>
+        {payment.paymentStatus === "FAILED" && (
+          <DropdownMenuItem>
+            <RefreshCw className="h-4 w-4 mr-2" />
+            Retry Payment
+          </DropdownMenuItem>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+
+  const paymentColumns: ResponsiveColumn<Payment>[] = [
+    {
+      key: "id",
+      header: "Payment ID",
+      primary: true,
+      cell: (payment) => (
         <div>
-          <h1 className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">
-            Payments Assistance
-          </h1>
-          <p className="text-zinc-500 dark:text-zinc-400">
-            View payment issues and process refund requests
+          <p className="font-mono text-sm">
+            {payment.id.slice(-8).toUpperCase()}
+          </p>
+          <p className="text-xs text-muted-foreground/70">
+            {payment.paymentIntent.slice(-12)}
           </p>
         </div>
-        <Button
-          variant="outline"
-          onClick={() => {
-            refetchPayments();
-            if (activeTab === "refunds") refetchRefunds();
-          }}
-          disabled={loadingPayments || loadingRefunds}
+      ),
+    },
+    {
+      key: "amount",
+      header: "Amount",
+      className: "font-medium",
+      cell: (payment) =>
+        formatCurrencyFromMajorUnit(payment.amount, payment.currency),
+    },
+    {
+      key: "type",
+      header: "Type",
+      cell: (payment) => (
+        <Badge
+          className={getTypeColor(payment.appointment?.appointmentType || "")}
+          variant="secondary"
         >
-          <RefreshCw
-            className={`h-4 w-4 mr-2 ${loadingPayments || loadingRefunds ? "animate-spin" : ""}`}
-          />
-          Refresh
-        </Button>
-      </div>
+          {payment.appointment?.appointmentType?.toLowerCase() || "N/A"}
+        </Badge>
+      ),
+    },
+    {
+      key: "gateway",
+      header: "Gateway",
+      className: "text-sm text-muted-foreground",
+      cell: (payment) => payment.paymentGateway,
+    },
+    {
+      key: "status",
+      header: "Status",
+      cell: (payment) => (
+        <Badge
+          className={getStatusColor(payment.paymentStatus)}
+          variant="secondary"
+        >
+          {payment.paymentStatus.toLowerCase()}
+        </Badge>
+      ),
+    },
+    {
+      key: "date",
+      header: "Date",
+      className: "text-sm text-muted-foreground",
+      cell: (payment) => formatDate(payment.createdAt),
+    },
+  ];
+
+  const paymentsEmpty = (
+    <div className="flex flex-col items-center justify-center h-64 text-muted-foreground">
+      <CreditCard className="h-12 w-12 mb-4 text-muted-foreground/40" />
+      <p>No payments found</p>
+    </div>
+  );
+
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        title="Payments Assistance"
+        description="View payment issues and process refund requests"
+        actions={
+          <Button
+            variant="outline"
+            onClick={() => {
+              refetchPayments();
+              if (activeTab === "refunds") refetchRefunds();
+            }}
+            disabled={loadingPayments || loadingRefunds}
+          >
+            <RefreshCw
+              className={`h-4 w-4 mr-2 ${loadingPayments || loadingRefunds ? "animate-spin" : ""}`}
+            />
+            Refresh
+          </Button>
+        }
+      />
 
       {/* Stats */}
       <div className="grid gap-4 md:grid-cols-4">
         <Card>
           <CardContent className="p-4 flex items-center gap-4">
-            <div className="p-2 rounded-lg bg-blue-50 dark:bg-blue-950">
-              <CreditCard className="h-5 w-5 text-blue-600" />
+            <div className="p-2 rounded-lg bg-muted">
+              <CreditCard className="h-5 w-5 text-foreground" />
             </div>
             <div>
               <p className="text-2xl font-bold">{stats.totalTransactions}</p>
-              <p className="text-sm text-zinc-500">Transactions (page)</p>
+              <p className="text-sm text-muted-foreground">Transactions (page)</p>
             </div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="p-4 flex items-center gap-4">
-            <div className="p-2 rounded-lg bg-emerald-50 dark:bg-emerald-950">
-              <IndianRupee className="h-5 w-5 text-emerald-600" />
+            <div className="p-2 rounded-lg bg-muted">
+              <IndianRupee className="h-5 w-5 text-foreground" />
             </div>
             <div>
               <p className="text-2xl font-bold">
                 {formatCurrencyFromMajorUnit(stats.totalAmount, "INR")}
               </p>
-              <p className="text-sm text-zinc-500">Processed (page)</p>
+              <p className="text-sm text-muted-foreground">Processed (page)</p>
             </div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="p-4 flex items-center gap-4">
-            <div className="p-2 rounded-lg bg-purple-50 dark:bg-purple-950">
-              <RefreshCw className="h-5 w-5 text-purple-600" />
+            <div className="p-2 rounded-lg bg-muted">
+              <RefreshCw className="h-5 w-5 text-foreground" />
             </div>
             <div>
               <p className="text-2xl font-bold">{stats.pendingRefunds}</p>
-              <p className="text-sm text-zinc-500">Pending Refunds</p>
+              <p className="text-sm text-muted-foreground">Pending Refunds</p>
             </div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="p-4 flex items-center gap-4">
-            <div className="p-2 rounded-lg bg-red-50 dark:bg-red-950">
-              <XCircle className="h-5 w-5 text-red-600" />
+            <div className="p-2 rounded-lg bg-muted">
+              <XCircle className="h-5 w-5 text-foreground" />
             </div>
             <div>
               <p className="text-2xl font-bold">{stats.failedPayments}</p>
-              <p className="text-sm text-zinc-500">Failed (page)</p>
+              <p className="text-sm text-muted-foreground">Failed (page)</p>
             </div>
           </CardContent>
         </Card>
@@ -266,7 +352,7 @@ export default function PaymentsAssistancePage() {
             <CardContent className="p-4">
               <div className="flex flex-col sm:flex-row gap-4">
                 <div className="relative flex-1">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                   <Input
                     placeholder="Search by payment ID..."
                     className="pl-9"
@@ -299,110 +385,17 @@ export default function PaymentsAssistancePage() {
             <CardContent className="p-0">
               {loadingPayments ? (
                 <div className="flex items-center justify-center h-64">
-                  <Loader2 className="h-8 w-8 animate-spin text-zinc-400" />
-                </div>
-              ) : payments.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-64 text-zinc-500">
-                  <CreditCard className="h-12 w-12 mb-4 text-zinc-300" />
-                  <p>No payments found</p>
+                  <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
                 </div>
               ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Payment ID</TableHead>
-                      <TableHead>Amount</TableHead>
-                      <TableHead>Type</TableHead>
-                      <TableHead>Gateway</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Date</TableHead>
-                      <TableHead className="w-12"></TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {payments.map((payment) => (
-                      <TableRow
-                        key={payment.id}
-                        className="cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-900"
-                        onClick={() => setSelectedPayment(payment)}
-                      >
-                        <TableCell>
-                          <div>
-                            <p className="font-mono text-sm">
-                              {payment.id.slice(-8).toUpperCase()}
-                            </p>
-                            <p className="text-xs text-zinc-400">
-                              {payment.paymentIntent.slice(-12)}
-                            </p>
-                          </div>
-                        </TableCell>
-                        <TableCell className="font-medium">
-                          {formatCurrencyFromMajorUnit(
-                            payment.amount,
-                            payment.currency,
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          <Badge
-                            className={getTypeColor(
-                              payment.appointment?.appointmentType || "",
-                            )}
-                            variant="secondary"
-                          >
-                            {payment.appointment?.appointmentType?.toLowerCase() ||
-                              "N/A"}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-sm text-zinc-600 dark:text-zinc-400">
-                          {payment.paymentGateway}
-                        </TableCell>
-                        <TableCell>
-                          <Badge
-                            className={getStatusColor(payment.paymentStatus)}
-                            variant="secondary"
-                          >
-                            {payment.paymentStatus.toLowerCase()}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-sm text-zinc-500">
-                          {formatDate(payment.createdAt)}
-                        </TableCell>
-                        <TableCell>
-                          <DropdownMenu>
-                            <DropdownMenuTrigger
-                              asChild
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8"
-                              >
-                                <MoreHorizontal className="h-4 w-4" />
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                              <DropdownMenuItem>
-                                <Receipt className="h-4 w-4 mr-2" />
-                                View Receipt
-                              </DropdownMenuItem>
-                              <DropdownMenuItem>
-                                <FileText className="h-4 w-4 mr-2" />
-                                Download Invoice
-                              </DropdownMenuItem>
-                              {payment.paymentStatus === "FAILED" && (
-                                <DropdownMenuItem>
-                                  <RefreshCw className="h-4 w-4 mr-2" />
-                                  Retry Payment
-                                </DropdownMenuItem>
-                              )}
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                <ResponsiveTable<Payment>
+                  columns={paymentColumns}
+                  rows={payments}
+                  getRowId={(p) => p.id}
+                  onRowClick={setSelectedPayment}
+                  rowActions={renderPaymentActions}
+                  empty={paymentsEmpty}
+                />
               )}
             </CardContent>
           </Card>
@@ -417,7 +410,7 @@ export default function PaymentsAssistancePage() {
               >
                 Previous
               </Button>
-              <span className="flex items-center px-4 text-sm text-zinc-500">
+              <span className="flex items-center px-4 text-sm text-muted-foreground">
                 Page {page} of {totalPages}
               </span>
               <Button
@@ -435,12 +428,12 @@ export default function PaymentsAssistancePage() {
         <TabsContent value="refunds" className="space-y-4">
           {loadingRefunds ? (
             <div className="flex items-center justify-center h-64">
-              <Loader2 className="h-8 w-8 animate-spin text-zinc-400" />
+              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
             </div>
           ) : refunds.length === 0 ? (
             <Card>
-              <CardContent className="flex flex-col items-center justify-center h-64 text-zinc-500">
-                <RefreshCw className="h-12 w-12 mb-4 text-zinc-300" />
+              <CardContent className="flex flex-col items-center justify-center h-64 text-muted-foreground">
+                <RefreshCw className="h-12 w-12 mb-4 text-muted-foreground/40" />
                 <p>No pending refund requests</p>
               </CardContent>
             </Card>
@@ -469,7 +462,7 @@ export default function PaymentsAssistancePage() {
                               {refund.status.toLowerCase()}
                             </Badge>
                           </div>
-                          <div className="flex items-center gap-4 mt-2 text-xs text-zinc-500">
+                          <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
                             <span>
                               Payment:{" "}
                               {refund.payment?.paymentIntent.slice(-12)}
@@ -484,7 +477,7 @@ export default function PaymentsAssistancePage() {
                           </div>
                         </div>
                       </div>
-                      <span className="text-xs text-zinc-400">
+                      <span className="text-xs text-muted-foreground">
                         {formatDate(refund.createdAt)}
                       </span>
                     </div>
@@ -516,27 +509,27 @@ export default function PaymentsAssistancePage() {
       </Tabs>
 
       {/* Payment Detail Dialog */}
-      <Dialog
+      <ResponsiveModal
         open={!!selectedPayment}
         onOpenChange={() => setSelectedPayment(null)}
       >
-        <DialogContent className="max-w-lg">
+        <ResponsiveModalContent className="max-w-lg">
           {selectedPayment && (
             <>
-              <DialogHeader>
-                <DialogTitle className="flex items-center gap-2">
+              <ResponsiveModalHeader>
+                <ResponsiveModalTitle className="flex items-center gap-2">
                   <CreditCard className="h-5 w-5" />
                   Payment Details
-                </DialogTitle>
-                <DialogDescription>
+                </ResponsiveModalTitle>
+                <ResponsiveModalDescription>
                   {selectedPayment.id.slice(-8).toUpperCase()} •{" "}
                   {selectedPayment.paymentIntent.slice(-12)}
-                </DialogDescription>
-              </DialogHeader>
+                </ResponsiveModalDescription>
+              </ResponsiveModalHeader>
               <div className="space-y-4">
-                <div className="flex items-center justify-between p-4 rounded-lg bg-zinc-50 dark:bg-zinc-900">
+                <div className="flex items-center justify-between p-4 rounded-lg bg-muted">
                   <div>
-                    <p className="text-sm text-zinc-500">Amount</p>
+                    <p className="text-sm text-muted-foreground">Amount</p>
                     <p className="text-2xl font-bold">
                       {formatCurrencyFromMajorUnit(
                         selectedPayment.amount,
@@ -553,24 +546,24 @@ export default function PaymentsAssistancePage() {
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div>
-                    <Label className="text-xs text-zinc-500">Type</Label>
+                    <Label className="text-xs text-muted-foreground">Type</Label>
                     <p className="capitalize">
                       {selectedPayment.appointment?.appointmentType?.toLowerCase() ||
                         "N/A"}
                     </p>
                   </div>
                   <div>
-                    <Label className="text-xs text-zinc-500">
+                    <Label className="text-xs text-muted-foreground">
                       Payment Gateway
                     </Label>
                     <p>{selectedPayment.paymentGateway}</p>
                   </div>
                   <div>
-                    <Label className="text-xs text-zinc-500">Date</Label>
+                    <Label className="text-xs text-muted-foreground">Date</Label>
                     <p>{formatDate(selectedPayment.createdAt)}</p>
                   </div>
                   <div>
-                    <Label className="text-xs text-zinc-500">
+                    <Label className="text-xs text-muted-foreground">
                       Payment Method
                     </Label>
                     <p>{selectedPayment.paymentMethod || "N/A"}</p>
@@ -578,7 +571,7 @@ export default function PaymentsAssistancePage() {
                 </div>
                 {selectedPayment.description && (
                   <div>
-                    <Label className="text-xs text-zinc-500">Description</Label>
+                    <Label className="text-xs text-muted-foreground">Description</Label>
                     <p className="text-sm">{selectedPayment.description}</p>
                   </div>
                 )}
@@ -591,7 +584,7 @@ export default function PaymentsAssistancePage() {
                   />
                 </div>
               </div>
-              <DialogFooter>
+              <ResponsiveModalFooter>
                 <Button
                   variant="outline"
                   onClick={() => setSelectedPayment(null)}
@@ -602,11 +595,11 @@ export default function PaymentsAssistancePage() {
                   <ArrowUpRight className="h-4 w-4 mr-2" />
                   Escalate to Admin
                 </Button>
-              </DialogFooter>
+              </ResponsiveModalFooter>
             </>
           )}
-        </DialogContent>
-      </Dialog>
+        </ResponsiveModalContent>
+      </ResponsiveModal>
     </div>
   );
 }

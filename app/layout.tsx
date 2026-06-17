@@ -7,8 +7,10 @@ import Navbar from "@/components/Navbar";
 import NavigationProgress from "@/components/NavigationProgress";
 import { Toaster } from "@/components/ui/toaster";
 import { AnnouncementBarProvider } from "@/providers/AnnouncementBarProvider";
+import AuthSyncProvider from "@/providers/AuthSyncProvider";
 import { MaintenanceProvider } from "@/providers/MaintenanceProvider";
 import ReactQueryProvider from "@/providers/ReactQueryProvider";
+import { getSession } from "@/lib/auth-server";
 import type { Metadata, Viewport } from "next";
 import { Sora } from "next/font/google";
 
@@ -68,6 +70,17 @@ export default async function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // Resolve the session on the server so the Navbar renders the correct auth
+  // state on first paint (no signed-out flash). Cheap via the 5-min cookie
+  // cache; useSession() takes over client-side for live updates. Fail open: a
+  // transient auth/DB error must not 500 the whole app, including public pages.
+  let initialSession: Awaited<ReturnType<typeof getSession>> = null;
+  try {
+    initialSession = await getSession();
+  } catch {
+    initialSession = null;
+  }
+
   return (
     <html lang="en" className={sora.variable} suppressHydrationWarning>
       <body
@@ -75,13 +88,14 @@ export default async function RootLayout({
         suppressHydrationWarning
       >
         <ReactQueryProvider>
+          <AuthSyncProvider />
           <MaintenanceProvider>
             <AnnouncementBarProvider>
               <NavigationProgress />
               <Toaster />
               <MaintenanceBanner />
               <AnnouncementBar />
-              <Navbar />
+              <Navbar initialSession={initialSession} />
               <HeaderSpacer />
               <div className="flex-1 w-full">{children}</div>
               <Footer />

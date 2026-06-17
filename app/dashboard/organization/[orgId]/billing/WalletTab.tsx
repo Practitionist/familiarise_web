@@ -25,20 +25,16 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+  ResponsiveTable,
+  type ResponsiveColumn,
+} from "@/components/ui/responsive-table";
 import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+  ResponsiveModal,
+  ResponsiveModalContent,
+  ResponsiveModalFooter,
+  ResponsiveModalHeader,
+  ResponsiveModalTitle,
+} from "@/components/ui/responsive-modal";
 import { formatCurrencyAmount } from "@/utils/formatting";
 
 const walletResponseSchema = z.object({
@@ -352,6 +348,57 @@ export function WalletTab({
     },
   });
 
+  // Ledger currency is read off the loaded account; the table below only
+  // renders when walletResponse is present, so the "INR" fallback is inert.
+  const ledgerCurrency = walletResponse?.billingAccount.currency ?? "INR";
+  const ledgerColumns: ResponsiveColumn<WalletResponse["ledger"][number]>[] = [
+    {
+      key: "when",
+      header: "When",
+      primary: true,
+      className: "text-xs text-muted-foreground",
+      cell: (row) => new Date(row.createdAt).toLocaleString(),
+    },
+    {
+      key: "reason",
+      header: "Reason",
+      className: "text-sm",
+      cell: (row) => (
+        <>
+          {row.reason}
+          {row.notes && (
+            <span className="text-xs text-muted-foreground/70 block">
+              {row.notes}
+            </span>
+          )}
+        </>
+      ),
+    },
+    {
+      key: "delta",
+      header: "Δ",
+      headClassName: "text-right",
+      cell: (row) => (
+        <span
+          className={`font-mono ${
+            row.deltaPaise >= 0 ? "text-emerald-600" : "text-red-600"
+          }`}
+        >
+          {row.deltaPaise >= 0 ? "+" : ""}
+          {formatCurrencyAmount(row.deltaPaise, ledgerCurrency)}
+        </span>
+      ),
+      className: "text-right",
+    },
+    {
+      key: "balance",
+      header: "Balance",
+      headClassName: "text-right",
+      className: "text-right font-mono text-sm",
+      cell: (row) => formatCurrencyAmount(row.balanceAfter, ledgerCurrency),
+    },
+  ];
+
   return (
     <>
       {walletError ? (
@@ -371,11 +418,11 @@ export function WalletTab({
           </CardHeader>
         </Card>
       ) : isLoading || !walletResponse ? (
-        <p className="text-sm text-zinc-500">Loading…</p>
+        <p className="text-sm text-muted-foreground">Loading…</p>
       ) : (
         <>
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-medium text-zinc-700">Wallet balance</h3>
+            <h3 className="text-sm font-medium text-foreground">Wallet balance</h3>
             {isAtLeast("OWNER") && (
               <div className="flex flex-col items-end gap-1">
                 <Button
@@ -417,62 +464,16 @@ export function WalletTab({
               <CardTitle className="text-base">Recent activity</CardTitle>
             </CardHeader>
             <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>When</TableHead>
-                    <TableHead>Reason</TableHead>
-                    <TableHead className="text-right">Δ</TableHead>
-                    <TableHead className="text-right">Balance</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {walletResponse.ledger.map((row) => (
-                    <TableRow key={row.id}>
-                      <TableCell className="text-xs text-zinc-500">
-                        {new Date(row.createdAt).toLocaleString()}
-                      </TableCell>
-                      <TableCell className="text-sm">
-                        {row.reason}
-                        {row.notes && (
-                          <span className="text-xs text-zinc-400 block">
-                            {row.notes}
-                          </span>
-                        )}
-                      </TableCell>
-                      <TableCell
-                        className={`text-right font-mono ${
-                          row.deltaPaise >= 0
-                            ? "text-emerald-600"
-                            : "text-red-600"
-                        }`}
-                      >
-                        {row.deltaPaise >= 0 ? "+" : ""}
-                        {formatCurrencyAmount(
-                          row.deltaPaise,
-                          walletResponse.billingAccount.currency,
-                        )}
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-sm">
-                        {formatCurrencyAmount(
-                          row.balanceAfter,
-                          walletResponse.billingAccount.currency,
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                  {walletResponse.ledger.length === 0 && (
-                    <TableRow>
-                      <TableCell
-                        colSpan={4}
-                        className="text-center text-sm text-zinc-500 py-6"
-                      >
-                        No activity yet.
-                      </TableCell>
-                    </TableRow>
-                  )}
-                </TableBody>
-              </Table>
+              <ResponsiveTable<WalletResponse["ledger"][number]>
+                columns={ledgerColumns}
+                rows={walletResponse.ledger}
+                getRowId={(row) => row.id}
+                empty={
+                  <p className="text-center text-sm text-muted-foreground py-6">
+                    No activity yet.
+                  </p>
+                }
+              />
             </CardContent>
           </Card>
 
@@ -527,11 +528,11 @@ export function WalletTab({
         </>
       )}
 
-      <Dialog open={showBuy} onOpenChange={setShowBuy}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Top up wallet</DialogTitle>
-          </DialogHeader>
+      <ResponsiveModal open={showBuy} onOpenChange={setShowBuy}>
+        <ResponsiveModalContent>
+          <ResponsiveModalHeader>
+            <ResponsiveModalTitle>Top up wallet</ResponsiveModalTitle>
+          </ResponsiveModalHeader>
           <div className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="credit-amount">Amount (₹)</Label>
@@ -543,7 +544,7 @@ export function WalletTab({
                 value={amountMajor}
                 onChange={(e) => setAmountMajor(e.target.value)}
               />
-              <p className="text-xs text-zinc-500">
+              <p className="text-xs text-muted-foreground">
                 Minimum ₹100. Razorpay checkout will open in a popup; your
                 wallet credit is added once payment is captured.
               </p>
@@ -556,7 +557,7 @@ export function WalletTab({
               </p>
             )}
           </div>
-          <DialogFooter>
+          <ResponsiveModalFooter>
             <Button variant="outline" onClick={() => setShowBuy(false)}>
               Cancel
             </Button>
@@ -566,9 +567,9 @@ export function WalletTab({
             >
               {topUpMutation.isPending ? "Initiating…" : "Continue"}
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </ResponsiveModalFooter>
+        </ResponsiveModalContent>
+      </ResponsiveModal>
     </>
   );
 }

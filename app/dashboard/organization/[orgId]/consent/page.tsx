@@ -45,13 +45,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+  ResponsiveTable,
+  type ResponsiveColumn,
+} from "@/components/ui/responsive-table";
 
 type ConsentArtifact = {
   id: string;
@@ -220,6 +216,130 @@ export default function ConsentPage({ params }: Readonly<PageProps>) {
   const canGrant =
     grantUserId !== "" && grantPurposes.size > 0 && !grant.isPending;
 
+  const memberCell = (row: ConsentArtifact) =>
+    memberLabel.get(row.userId) ?? (
+      <span className="font-mono text-xs text-muted-foreground">
+        {row.userId}
+      </span>
+    );
+
+  const activeColumns: ResponsiveColumn<ConsentArtifact>[] = [
+    {
+      key: "member",
+      header: "Member",
+      primary: true,
+      className: "text-sm",
+      cell: memberCell,
+    },
+    {
+      key: "purposes",
+      header: "Purposes",
+      cell: (row) => (
+        <div className="flex flex-wrap items-center gap-1">
+          {row.purposeCodes.map((p) => (
+            <Badge
+              key={p}
+              variant="secondary"
+              className="bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
+            >
+              {p}
+              <button
+                type="button"
+                title={`Withdraw "${p}"`}
+                className="ml-1 text-emerald-700/70 hover:text-emerald-900 dark:text-emerald-300/70 dark:hover:text-emerald-200"
+                disabled={withdraw.isPending}
+                onClick={() =>
+                  withdraw.mutate({
+                    userId: row.userId,
+                    purposeCode: p,
+                  })
+                }
+              >
+                ×
+              </button>
+            </Badge>
+          ))}
+        </div>
+      ),
+    },
+    {
+      key: "language",
+      header: "Language",
+      className: "text-xs uppercase text-muted-foreground",
+      cell: (row) => row.language,
+    },
+    {
+      key: "granted",
+      header: "Granted",
+      className: "text-xs text-muted-foreground",
+      cell: (row) => <LocalDateTime value={row.grantedAt} />,
+    },
+    {
+      key: "withdraw",
+      header: "Withdraw",
+      headClassName: "text-right",
+      className: "text-right",
+      cell: (row) => (
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={withdraw.isPending}
+          onClick={() => withdraw.mutate({ userId: row.userId })}
+        >
+          Withdraw all
+        </Button>
+      ),
+    },
+  ];
+
+  const historyColumns: ResponsiveColumn<ConsentArtifact>[] = [
+    {
+      key: "member",
+      header: "Member",
+      primary: true,
+      className: "text-sm",
+      cell: memberCell,
+    },
+    {
+      key: "purposes",
+      header: "Purposes",
+      cell: (row) => (
+        <div className="flex flex-wrap gap-1">
+          {row.purposeCodes.map((p) => (
+            <Badge
+              key={p}
+              variant="secondary"
+              className="bg-muted text-muted-foreground"
+            >
+              {p}
+            </Badge>
+          ))}
+        </div>
+      ),
+    },
+    {
+      key: "granted",
+      header: "Granted",
+      className: "text-xs text-muted-foreground",
+      cell: (row) => <LocalDateTime value={row.grantedAt} />,
+    },
+    {
+      key: "withdrawn",
+      header: "Withdrawn",
+      className: "text-xs text-muted-foreground",
+      cell: (row) => <LocalDateTime value={row.withdrawnAt} />,
+    },
+    {
+      key: "status",
+      header: "Status",
+      cell: () => (
+        <Badge className="bg-rose-50 text-rose-700 dark:bg-rose-950 dark:text-rose-300">
+          Withdrawn
+        </Badge>
+      ),
+    },
+  ];
+
   return (
     <>
       <DashboardHeader
@@ -278,7 +398,7 @@ export default function ConsentPage({ params }: Readonly<PageProps>) {
                         className={
                           on
                             ? "rounded-full border border-primary bg-primary/10 px-3 py-1 text-xs font-medium text-primary"
-                            : "rounded-full border border-input px-3 py-1 text-xs text-zinc-600 hover:bg-zinc-50"
+                            : "rounded-full border border-input px-3 py-1 text-xs text-muted-foreground hover:bg-muted"
                         }
                         aria-pressed={on}
                       >
@@ -326,96 +446,23 @@ export default function ConsentPage({ params }: Readonly<PageProps>) {
               downstream processing.
             </CardDescription>
           </CardHeader>
-          <CardContent className="p-0">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Member</TableHead>
-                  <TableHead>Purposes</TableHead>
-                  <TableHead>Language</TableHead>
-                  <TableHead>Granted</TableHead>
-                  <TableHead className="text-right">Withdraw</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {consents.isLoading ? (
-                  <TableRow>
-                    <TableCell
-                      colSpan={5}
-                      className="py-8 text-center text-zinc-500"
-                    >
-                      Loading…
-                    </TableCell>
-                  </TableRow>
-                ) : active.length === 0 ? (
-                  <TableRow>
-                    <TableCell
-                      colSpan={5}
-                      className="py-8 text-center text-zinc-500"
-                    >
-                      No active consent artifacts yet.
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  active.map((row) => (
-                    <TableRow key={row.id}>
-                      <TableCell className="text-sm">
-                        {memberLabel.get(row.userId) ?? (
-                          <span className="font-mono text-xs text-zinc-500">
-                            {row.userId}
-                          </span>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex flex-wrap items-center gap-1">
-                          {row.purposeCodes.map((p) => (
-                            <Badge
-                              key={p}
-                              variant="secondary"
-                              className="bg-emerald-50 text-emerald-700"
-                            >
-                              {p}
-                              <button
-                                type="button"
-                                title={`Withdraw "${p}"`}
-                                className="ml-1 text-emerald-700/70 hover:text-emerald-900"
-                                disabled={withdraw.isPending}
-                                onClick={() =>
-                                  withdraw.mutate({
-                                    userId: row.userId,
-                                    purposeCode: p,
-                                  })
-                                }
-                              >
-                                ×
-                              </button>
-                            </Badge>
-                          ))}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-xs uppercase text-zinc-600">
-                        {row.language}
-                      </TableCell>
-                      <TableCell className="text-xs text-zinc-600">
-                        <LocalDateTime value={row.grantedAt} />
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={withdraw.isPending}
-                          onClick={() =>
-                            withdraw.mutate({ userId: row.userId })
-                          }
-                        >
-                          Withdraw all
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
+          <CardContent className="p-0 sm:p-4">
+            {consents.isLoading ? (
+              <p className="py-8 text-center text-sm text-muted-foreground">
+                Loading…
+              </p>
+            ) : (
+              <ResponsiveTable<ConsentArtifact>
+                columns={activeColumns}
+                rows={active}
+                getRowId={(row) => row.id}
+                empty={
+                  <p className="py-8 text-center text-sm text-muted-foreground">
+                    No active consent artifacts yet.
+                  </p>
+                }
+              />
+            )}
           </CardContent>
         </Card>
 
@@ -427,75 +474,23 @@ export default function ConsentPage({ params }: Readonly<PageProps>) {
               7-year audit window; a daily cron purges rows past retention.
             </CardDescription>
           </CardHeader>
-          <CardContent className="p-0">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Member</TableHead>
-                  <TableHead>Purposes</TableHead>
-                  <TableHead>Granted</TableHead>
-                  <TableHead>Withdrawn</TableHead>
-                  <TableHead>Status</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {consents.isLoading ? (
-                  <TableRow>
-                    <TableCell
-                      colSpan={5}
-                      className="py-8 text-center text-zinc-500"
-                    >
-                      Loading…
-                    </TableCell>
-                  </TableRow>
-                ) : history.length === 0 ? (
-                  <TableRow>
-                    <TableCell
-                      colSpan={5}
-                      className="py-8 text-center text-zinc-500"
-                    >
-                      No withdrawn consents.
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  history.map((row) => (
-                    <TableRow key={row.id}>
-                      <TableCell className="text-sm">
-                        {memberLabel.get(row.userId) ?? (
-                          <span className="font-mono text-xs text-zinc-500">
-                            {row.userId}
-                          </span>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex flex-wrap gap-1">
-                          {row.purposeCodes.map((p) => (
-                            <Badge
-                              key={p}
-                              variant="secondary"
-                              className="bg-zinc-100 text-zinc-600"
-                            >
-                              {p}
-                            </Badge>
-                          ))}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-xs text-zinc-500">
-                        <LocalDateTime value={row.grantedAt} />
-                      </TableCell>
-                      <TableCell className="text-xs text-zinc-500">
-                        <LocalDateTime value={row.withdrawnAt} />
-                      </TableCell>
-                      <TableCell>
-                        <Badge className="bg-rose-50 text-rose-700">
-                          Withdrawn
-                        </Badge>
-                      </TableCell>
-                    </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
+          <CardContent className="p-0 sm:p-4">
+            {consents.isLoading ? (
+              <p className="py-8 text-center text-sm text-muted-foreground">
+                Loading…
+              </p>
+            ) : (
+              <ResponsiveTable<ConsentArtifact>
+                columns={historyColumns}
+                rows={history}
+                getRowId={(row) => row.id}
+                empty={
+                  <p className="py-8 text-center text-sm text-muted-foreground">
+                    No withdrawn consents.
+                  </p>
+                }
+              />
+            )}
           </CardContent>
         </Card>
       </DashboardContent>

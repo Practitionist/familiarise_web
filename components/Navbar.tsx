@@ -195,7 +195,7 @@ function DesktopDropdownPanel({
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: 8 }}
       transition={{ duration: 0.15 }}
-      className="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-80 bg-white rounded-xl shadow-xl border border-zinc-200 overflow-hidden z-[1100]"
+      className="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-80 bg-popover rounded-xl shadow-xl border border-border overflow-hidden z-[1100]"
     >
       <div className="p-2">
         {group.items.map((item) => {
@@ -206,22 +206,22 @@ function DesktopDropdownPanel({
               href={item.disabled ? "/contactus" : item.href}
               onClick={onClose}
               className={`flex items-start gap-3 px-3 py-2.5 rounded-lg transition-colors ${
-                item.disabled ? "opacity-60 cursor-default" : "hover:bg-zinc-50"
+                item.disabled ? "opacity-60 cursor-default" : "hover:bg-muted"
               }`}
             >
-              <div className="mt-0.5 w-8 h-8 rounded-lg bg-zinc-100 flex items-center justify-center shrink-0">
-                <Icon className="w-4 h-4 text-zinc-600" />
+              <div className="mt-0.5 w-8 h-8 rounded-lg bg-muted flex items-center justify-center shrink-0">
+                <Icon className="w-4 h-4 text-muted-foreground" />
               </div>
               <div className="min-w-0">
-                <div className="text-sm font-medium text-zinc-900 flex items-center gap-2">
+                <div className="text-sm font-medium text-foreground flex items-center gap-2">
                   {item.label}
                   {(item.disabled || item.comingSoon) && (
-                    <span className="text-[10px] font-medium uppercase tracking-wider text-zinc-400 bg-zinc-100 px-1.5 py-0.5 rounded">
+                    <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
                       Soon
                     </span>
                   )}
                 </div>
-                <p className="text-xs text-zinc-500 mt-0.5">
+                <p className="text-xs text-muted-foreground mt-0.5">
                   {item.description}
                 </p>
               </div>
@@ -232,8 +232,8 @@ function DesktopDropdownPanel({
 
       {/* Category chips */}
       {group.categoryChips && group.categoryChips.length > 0 && (
-        <div className="border-t border-zinc-100 px-4 py-3">
-          <p className="text-[10px] font-medium uppercase tracking-wider text-zinc-400 mb-2">
+        <div className="border-t border-border px-4 py-3">
+          <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground mb-2">
             By Category
           </p>
           <div className="flex flex-wrap gap-1.5">
@@ -242,7 +242,7 @@ function DesktopDropdownPanel({
                 key={chip.href}
                 href={chip.href}
                 onClick={onClose}
-                className="text-xs px-2.5 py-1 rounded-full bg-zinc-100 text-zinc-600 hover:bg-zinc-200 hover:text-zinc-900 transition-colors"
+                className="text-xs px-2.5 py-1 rounded-full bg-muted text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
               >
                 {chip.label}
               </Link>
@@ -293,7 +293,7 @@ function DesktopNavItem({
         className={`inline-flex items-center gap-1 px-3 py-2 text-sm font-medium rounded-lg transition-colors ${
           showDarkStyle
             ? "text-white hover:bg-white/10"
-            : "text-zinc-700 hover:bg-zinc-100"
+            : "text-foreground hover:bg-muted"
         }`}
         onClick={() => setOpen((prev) => !prev)}
         aria-expanded={open}
@@ -314,10 +314,16 @@ function DesktopNavItem({
 
 // ─── Main Navbar ─────────────────────────────────────────────────────────────
 
-const Navbar = () => {
+type NavbarSession = ReturnType<typeof useSession>["data"];
+
+const Navbar = ({ initialSession }: { initialSession?: NavbarSession }) => {
   const router = useRouter();
   const pathname = usePathname();
-  const { data: session } = useSession();
+  const { data, isPending } = useSession();
+  // Seed from the server-fetched session so the first paint shows the correct
+  // auth state instead of flashing the signed-out CTA until the client-side
+  // /get-session resolves. useSession takes over once it loads.
+  const session = isPending ? (data ?? initialSession ?? null) : data;
   const [isOpen, setIsOpen] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
   const { currency, symbol, setCurrency } = useCurrency();
@@ -388,7 +394,7 @@ const Navbar = () => {
         className={`fixed w-full z-[1000] transition-all duration-300 ${
           showDarkStyle
             ? "bg-transparent"
-            : "bg-white/90 backdrop-blur-xl border-b border-zinc-200 shadow-sm"
+            : "bg-background/90 backdrop-blur-xl border-b border-border shadow-sm"
         }`}
         style={{
           top: `calc(var(--maintenance-banner-height, 0px) + ${isAnnouncementVisible ? "var(--announcement-bar-height, 0px)" : "0px"})`,
@@ -423,7 +429,7 @@ const Navbar = () => {
                 <Link href="/dashboard">
                   <Button
                     variant="ghost"
-                    className={`font-medium ${showDarkStyle ? "text-white hover:bg-white/10" : "text-zinc-700 hover:bg-zinc-100"}`}
+                    className={`font-medium ${showDarkStyle ? "text-white hover:bg-white/10" : "text-foreground hover:bg-muted"}`}
                   >
                     Dashboard
                   </Button>
@@ -442,7 +448,7 @@ const Navbar = () => {
               <Link href="/pricing">
                 <Button
                   variant="ghost"
-                  className={`font-medium ${showDarkStyle ? "text-white hover:bg-white/10" : "text-zinc-700 hover:bg-zinc-100"}`}
+                  className={`font-medium ${showDarkStyle ? "text-white hover:bg-white/10" : "text-foreground hover:bg-muted"}`}
                 >
                   Pricing
                 </Button>
@@ -460,7 +466,7 @@ const Navbar = () => {
                     className={`gap-1 text-xs font-medium px-2 ${
                       showDarkStyle
                         ? "text-zinc-300 hover:text-white hover:bg-white/10"
-                        : "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100"
+                        : "text-muted-foreground hover:text-foreground hover:bg-muted"
                     }`}
                   >
                     {symbol} {currency}
@@ -473,7 +479,7 @@ const Navbar = () => {
                       key={c.code}
                       onClick={() => setCurrency(c.code)}
                       className={
-                        currency === c.code ? "bg-zinc-100 font-medium" : ""
+                        currency === c.code ? "bg-accent font-medium" : ""
                       }
                     >
                       {c.label}
@@ -495,7 +501,7 @@ const Navbar = () => {
                   <Button
                     variant="ghost"
                     onClick={handleSignOut}
-                    className={`text-sm ${showDarkStyle ? "text-zinc-300 hover:text-white hover:bg-white/10" : "text-zinc-600 hover:text-zinc-900"}`}
+                    className={`text-sm ${showDarkStyle ? "text-zinc-300 hover:text-white hover:bg-white/10" : "text-muted-foreground hover:text-foreground"}`}
                   >
                     Sign out
                   </Button>
@@ -505,7 +511,7 @@ const Navbar = () => {
                   <Button
                     variant="ghost"
                     onClick={() => handleNavigation("/auth/signin")}
-                    className={`font-medium ${showDarkStyle ? "text-white hover:bg-white/10" : "text-zinc-700 hover:bg-zinc-100"}`}
+                    className={`font-medium ${showDarkStyle ? "text-white hover:bg-white/10" : "text-foreground hover:bg-muted"}`}
                   >
                     Sign in
                   </Button>
@@ -514,7 +520,7 @@ const Navbar = () => {
                     className={
                       showDarkStyle
                         ? "bg-white text-zinc-900 hover:bg-zinc-200"
-                        : "bg-zinc-900 text-white hover:bg-zinc-800"
+                        : "bg-primary text-primary-foreground hover:bg-primary/90"
                     }
                   >
                     Become an Expert
@@ -530,7 +536,7 @@ const Navbar = () => {
               className={`lg:hidden p-2 rounded-lg transition-colors ${
                 showDarkStyle
                   ? "text-white hover:bg-white/10"
-                  : "text-zinc-700 hover:bg-zinc-100"
+                  : "text-foreground hover:bg-muted"
               }`}
             >
               {isOpen ? (

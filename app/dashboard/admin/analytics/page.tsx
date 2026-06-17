@@ -2,6 +2,7 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PageHeader } from "@/components/ui/page-header";
 import { useQuery } from "@tanstack/react-query";
 
 async function fetchAnalytics() {
@@ -22,7 +23,7 @@ export default function AdminAnalyticsPage() {
   if (isLoading) {
     return (
       <div className="space-y-6">
-        <h1 className="text-3xl font-bold text-gray-900">Analytics</h1>
+        <PageHeader title="Analytics" />
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
           {[1, 2, 3, 4].map((i) => (
             <Card key={i}>
@@ -42,10 +43,10 @@ export default function AdminAnalyticsPage() {
   if (error) {
     return (
       <div className="space-y-6">
-        <h1 className="text-3xl font-bold text-gray-900">Analytics</h1>
+        <PageHeader title="Analytics" />
         <Card>
           <CardContent className="py-8">
-            <p className="text-center text-red-500">
+            <p className="text-center text-red-500 dark:text-red-400">
               Failed to load analytics. Please try again later.
             </p>
           </CardContent>
@@ -56,24 +57,21 @@ export default function AdminAnalyticsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold text-gray-900">Analytics</h1>
-        <p className="text-gray-600 mt-1">Platform usage and growth metrics</p>
-      </div>
+      <PageHeader title="Analytics" description="Platform usage and growth metrics" />
 
       {/* User Stats */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <Card className="hover:shadow-lg transition-shadow">
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-gray-600">
+            <CardTitle className="text-sm font-medium text-muted-foreground">
               Total Users
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-gray-900">
+            <div className="text-2xl font-bold text-foreground">
               {data?.totalUsers || 0}
             </div>
-            <p className="text-xs text-green-600 mt-1">
+            <p className="text-xs text-green-600 dark:text-green-400 mt-1">
               +{data?.newUsersThisMonth || 0} this month
             </p>
           </CardContent>
@@ -81,15 +79,15 @@ export default function AdminAnalyticsPage() {
 
         <Card className="hover:shadow-lg transition-shadow">
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-gray-600">
+            <CardTitle className="text-sm font-medium text-muted-foreground">
               Consultants
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-green-600">
+            <div className="text-2xl font-bold text-foreground">
               {data?.totalConsultants || 0}
             </div>
-            <p className="text-xs text-gray-500 mt-1">
+            <p className="text-xs text-muted-foreground mt-1">
               {data?.activeConsultants || 0} active
             </p>
           </CardContent>
@@ -97,15 +95,15 @@ export default function AdminAnalyticsPage() {
 
         <Card className="hover:shadow-lg transition-shadow">
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-gray-600">
+            <CardTitle className="text-sm font-medium text-muted-foreground">
               Consultees
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-blue-600">
+            <div className="text-2xl font-bold text-foreground">
               {data?.totalConsultees || 0}
             </div>
-            <p className="text-xs text-gray-500 mt-1">
+            <p className="text-xs text-muted-foreground mt-1">
               {data?.activeConsultees || 0} active
             </p>
           </CardContent>
@@ -113,12 +111,12 @@ export default function AdminAnalyticsPage() {
 
         <Card className="hover:shadow-lg transition-shadow">
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-gray-600">
+            <CardTitle className="text-sm font-medium text-muted-foreground">
               Staff Members
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-purple-600">
+            <div className="text-2xl font-bold text-foreground">
               {data?.totalStaff || 0}
             </div>
           </CardContent>
@@ -134,24 +132,24 @@ export default function AdminAnalyticsPage() {
           <CardContent>
             <div className="space-y-4">
               <div className="flex justify-between items-center">
-                <span className="text-gray-600">Total Sessions</span>
+                <span className="text-muted-foreground">Total Sessions</span>
                 <span className="font-bold">{data?.totalSessions || 0}</span>
               </div>
               <div className="flex justify-between items-center">
-                <span className="text-gray-600">Completed Sessions</span>
-                <span className="font-bold text-green-600">
+                <span className="text-muted-foreground">Completed Sessions</span>
+                <span className="font-bold text-green-600 dark:text-green-400">
                   {data?.completedSessions || 0}
                 </span>
               </div>
               <div className="flex justify-between items-center">
-                <span className="text-gray-600">Upcoming Sessions</span>
-                <span className="font-bold text-blue-600">
+                <span className="text-muted-foreground">Upcoming Sessions</span>
+                <span className="font-bold text-foreground">
                   {data?.upcomingSessions || 0}
                 </span>
               </div>
               <div className="flex justify-between items-center">
-                <span className="text-gray-600">Cancelled Sessions</span>
-                <span className="font-bold text-red-600">
+                <span className="text-muted-foreground">Cancelled Sessions</span>
+                <span className="font-bold text-red-600 dark:text-red-400">
                   {data?.cancelledSessions || 0}
                 </span>
               </div>
@@ -166,26 +164,28 @@ export default function AdminAnalyticsPage() {
           <CardContent>
             <div className="space-y-4">
               <div className="flex justify-between items-center">
-                <span className="text-gray-600">Total Revenue</span>
+                <span className="text-muted-foreground">Total Revenue</span>
                 <span className="font-bold">
                   ${(data?.totalRevenue || 0).toLocaleString()}
                 </span>
               </div>
               <div className="flex justify-between items-center">
-                <span className="text-gray-600">This Month</span>
-                <span className="font-bold text-green-600">
+                <span className="text-muted-foreground">This Month</span>
+                <span className="font-bold text-green-600 dark:text-green-400">
                   ${(data?.revenueThisMonth || 0).toLocaleString()}
                 </span>
               </div>
               <div className="flex justify-between items-center">
-                <span className="text-gray-600">Average Session Value</span>
+                <span className="text-muted-foreground">
+                  Average Session Value
+                </span>
                 <span className="font-bold">
                   ${(data?.avgSessionValue || 0).toFixed(2)}
                 </span>
               </div>
               <div className="flex justify-between items-center">
-                <span className="text-gray-600">Refunds</span>
-                <span className="font-bold text-red-600">
+                <span className="text-muted-foreground">Refunds</span>
+                <span className="font-bold text-red-600 dark:text-red-400">
                   ${(data?.totalRefunds || 0).toLocaleString()}
                 </span>
               </div>
@@ -209,15 +209,15 @@ export default function AdminAnalyticsPage() {
                 ) => (
                   <div
                     key={domain.name}
-                    className="flex items-center justify-between p-3 border rounded-lg"
+                    className="flex items-center justify-between p-3 border border-border rounded-lg"
                   >
                     <div className="flex items-center gap-3">
-                      <span className="text-gray-400 text-sm w-6">
+                      <span className="text-muted-foreground/70 text-sm w-6">
                         #{index + 1}
                       </span>
                       <span className="font-medium">{domain.name}</span>
                     </div>
-                    <span className="text-gray-600">
+                    <span className="text-muted-foreground">
                       {domain.consultantCount} consultants
                     </span>
                   </div>
@@ -225,7 +225,7 @@ export default function AdminAnalyticsPage() {
               )}
             </div>
           ) : (
-            <p className="text-gray-500 text-center py-4">
+            <p className="text-muted-foreground text-center py-4">
               No domain data available
             </p>
           )}
