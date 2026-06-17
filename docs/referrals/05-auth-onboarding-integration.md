@@ -43,8 +43,10 @@ client before authentication so that it survives a full-page OAuth redirect. The
 visitor to `/auth/signup?ref=CODE` (and applies the code directly for an
 already-authenticated visitor), and the signup page persists the code from the
 `?ref=` parameter, and from the manual entry field, into client storage as soon
-as it is known. Persisting before the user clicks a social provider is what
-closes the OAuth gap.
+as it is known. The code is trimmed and validated by a small Zod schema before
+it is stored, and the persisted value is cleared if the user empties the
+referral field, so a stale or whitespace-only code is never carried forward.
+Persisting before the user clicks a social provider is what closes the OAuth gap.
 
 ## 4. Apply after authentication
 
@@ -56,7 +58,11 @@ OAuth or SSO user returns from the provider already authenticated and lands on
 onboarding, where the code is applied. Application reuses the existing
 `applyReferralCode` path and remains idempotent, because the unique constraint
 on `Referral.referredUserId` and the self-referral guard already enforce
-once-only attribution, and the stored code is cleared after a successful apply.
+once-only attribution. The apply is non-destructive: the stored code is read
+without removing it and is cleared only on a successful apply or a terminal
+rejection (an invalid, already-referred, or self-referral `400`); a transient
+failure (network, `429`, or `5xx`) leaves the code in place so a later
+authenticated render can retry rather than permanently losing attribution.
 
 ## 5. Path interaction matrix
 

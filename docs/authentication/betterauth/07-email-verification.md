@@ -37,14 +37,17 @@ The end-to-end path is as follows. A credential signup creates the account but,
 because verification is required, issues no session — `signUp.email` returns with
 a null token. The signup page detects the null token and shows a
 check-your-email panel with a resend button instead of routing onward. The
-verification email's link carries `callbackURL=/auth/verify-email`. When the
-user clicks it, BetterAuth verifies the address and, because
-`autoSignInAfterVerification` is on, establishes a session and redirects to
-`/auth/verify-email` already authenticated. That page detects the authenticated
-session and forwards the user to onboarding (or the dashboard if onboarding is
-already complete). If the link is invalid or expired, BetterAuth redirects to
-`/auth/verify-email?error=CODE`, and the page shows a friendly message with a
-resend form.
+verification email's link carries `callbackURL=/auth/verify-email`, with any
+validated upstream `callbackUrl` (for example an invite or deep-link
+destination) threaded through as a nested, relative-only parameter so the
+original destination survives verification. When the user clicks it, BetterAuth
+verifies the address and, because `autoSignInAfterVerification` is on,
+establishes a session and redirects to `/auth/verify-email` already
+authenticated. That page detects the authenticated session and forwards the user
+to onboarding, or to the validated `callbackUrl` (falling back to the dashboard)
+when onboarding is already complete. If the link is invalid or expired,
+BetterAuth redirects to `/auth/verify-email?error=CODE`, and the page shows a
+friendly message with a resend form that preserves the same `callbackUrl`.
 
 ## 3. Sign-in behaviour for unverified users
 
