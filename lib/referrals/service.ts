@@ -3,7 +3,11 @@ import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { Prisma as PrismaNamespace } from "@prisma/client";
 import type { ReferralCode, Referral, ReferralCredit } from "@prisma/client";
 import { sumPaise } from "@/lib/payments/utils/money";
-import { QUALIFICATION_WINDOW_DAYS, CREDIT_EXPIRY_MONTHS } from "./constants";
+import {
+  QUALIFICATION_WINDOW_DAYS,
+  CREDIT_EXPIRY_DAYS,
+  ANNUAL_REWARD_CAP_PAISE,
+} from "./constants";
 
 // #780 — bare model types still say bigint; the extended client returns number
 export type ReferralCodeRow = Omit<
@@ -31,11 +35,14 @@ export type ReferralCreditRow = Omit<
 };
 
 // Re-export so existing server-side consumers can still import from service
-export { QUALIFICATION_WINDOW_DAYS, CREDIT_EXPIRY_MONTHS };
+export { QUALIFICATION_WINDOW_DAYS, CREDIT_EXPIRY_DAYS };
 
 // Constants
-const DEFAULT_REFERRER_REWARD = 50000; // ₹500 in paise
-const DEFAULT_REFEREE_REWARD = 20000; // ₹200 in paise
+// #880 conservative launch: ₹300 each (the referrer reward ramps to ₹500 once
+// unit economics are validated). Role-weighting and the consultant commission
+// waiver arrive in later phases; these are the flat launch baselines.
+const DEFAULT_REFERRER_REWARD = 30000; // ₹300 in paise
+const DEFAULT_REFEREE_REWARD = 30000; // ₹300 in paise
 
 /**
  * Creates or returns an existing referral code for a user.
@@ -286,32 +293,54 @@ export async function processQualifyingAction(
           return;
         }
 
-        // Give referrer their bonus
+        // Give referrer their bonus, clamped by the annual per-referrer cap.
         const referrerReward = referral.referrerRewardAmount;
         if (referrerReward && referrerReward > 0) {
-          const expiresAt = new Date();
-          expiresAt.setMonth(expiresAt.getMonth() + CREDIT_EXPIRY_MONTHS);
-
-          await tx.referralCredit.create({
-            data: {
+          // #880 — bound a referrer's referral earnings to ANNUAL_REWARD_CAP
+          // over a trailing year; clamp (or skip) the grant if it would exceed.
+          const yearCutoff = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000);
+          const priorCredits = await tx.referralCredit.findMany({
+            where: {
               userId: referral.referralCode.userId,
-              amount: referrerReward,
-              currency: "INR",
               source: "REFERRAL_BONUS",
-              referralId: referral.id,
-              remainingAmount: referrerReward,
-              expiresAt,
+              createdAt: { gte: yearCutoff },
             },
+            select: { amount: true },
           });
+          const earnedThisYear = priorCredits.reduce(
+            (sum, c) => sum + Number(c.amount),
+            0,
+          );
+          const grant = Math.min(
+            referrerReward,
+            Math.max(0, ANNUAL_REWARD_CAP_PAISE - earnedThisYear),
+          );
 
-          // Update referral code stats
-          await tx.referralCode.update({
-            where: { id: referral.referralCodeId },
-            data: {
-              successfulReferrals: { increment: 1 },
-              totalEarned: { increment: referrerReward },
-            },
-          });
+          if (grant > 0) {
+            const expiresAt = new Date();
+            expiresAt.setDate(expiresAt.getDate() + CREDIT_EXPIRY_DAYS);
+
+            await tx.referralCredit.create({
+              data: {
+                userId: referral.referralCode.userId,
+                amount: grant,
+                currency: "INR",
+                source: "REFERRAL_BONUS",
+                referralId: referral.id,
+                remainingAmount: grant,
+                expiresAt,
+              },
+            });
+
+            // Update referral code stats
+            await tx.referralCode.update({
+              where: { id: referral.referralCodeId },
+              data: {
+                successfulReferrals: { increment: 1 },
+                totalEarned: { increment: grant },
+              },
+            });
+          }
         }
 
         // FIX #437: Give referee their bonus (deferred from signup)
@@ -320,7 +349,7 @@ export async function processQualifyingAction(
         const refereeReward = referral.refereeRewardAmount;
         if (refereeReward && refereeReward > 0) {
           const expiresAt = new Date();
-          expiresAt.setMonth(expiresAt.getMonth() + CREDIT_EXPIRY_MONTHS);
+          expiresAt.setDate(expiresAt.getDate() + CREDIT_EXPIRY_DAYS);
 
           await tx.referralCredit.create({
             data: {

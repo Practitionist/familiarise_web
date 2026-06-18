@@ -42,6 +42,7 @@ import {
   processQualifyingAction,
   processConsultantBookingReferral,
 } from "@/lib/referrals/service";
+import { MIN_CREDIT_REDEMPTION_PAISE } from "@/lib/referrals/constants";
 import {
   createEarningsFromPayment,
   type AppointmentType,
@@ -508,8 +509,13 @@ export async function calculateAmountAndValidate(
 
     // Apply referral credits AFTER tax (credits act as a payment method, not a trade discount)
     // Both credits and amount are now in paise — no conversion needed
+    // #880 — credits redeem only when the order is ₹500+ so a credit never
+    // exceeds the value of the booking it discounts.
     let creditsApplied = 0;
-    if (validatedData.useReferralCredits && amount > 0) {
+    if (
+      validatedData.useReferralCredits &&
+      amount >= MIN_CREDIT_REDEMPTION_PAISE
+    ) {
       const { totalAvailable } = await getUserCredits(userId, tx);
       if (totalAvailable > 0) {
         creditsApplied = Math.min(totalAvailable, amount);
