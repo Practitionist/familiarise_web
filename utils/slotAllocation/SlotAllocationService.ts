@@ -1698,7 +1698,9 @@ export class SlotAllocationService {
       const appointments = await tx.appointment.findMany({
         where: whereClause,
         include: {
-          slotsOfAppointment: true,
+          // Include slot participants so enrolled learners on the tentative
+          // slots can be re-linked to the new slots after they're deleted.
+          slotsOfAppointment: { include: { user: { select: { id: true } } } },
           // B8 — Payment has onDelete: Cascade on Appointment; deleting an
           // appointment with payment rows destroys the payment/refund audit
           // trail. Count them so the delete below can refuse.
@@ -1709,6 +1711,13 @@ export class SlotAllocationService {
       // AE-4 — record which appointments had tentative slots freed here (ids
       // captured from the pre-fetched rows, before the deleteMany runs).
       const deletedAppointmentIds: string[] = [];
+      // Capture users connected to the tentative slots being deleted. For a
+      // group event (class) the enrolled learners live ONLY on the slot↔user
+      // M2M — createAppointments reconnects just the consultant, so without
+      // this they'd be orphaned when the class is scheduled (tentative
+      // crud-with-plan slots → onlyTentative path). reconnectEnrolledUsers
+      // re-links them to the new slots; it filters the consultant itself.
+      const enrolledUserIdSet = new Set<string>();
       for (const appointment of appointments) {
         const hasConfirmed = appointment.slotsOfAppointment.some(
           (slot) => !slot.isTentative,
@@ -1719,6 +1728,14 @@ export class SlotAllocationService {
 
         if (hasTentative) {
           deletedAppointmentIds.push(appointment.id);
+          // Collect enrolled participants from the tentative slots before they
+          // are deleted (their M2M links vanish with the slots).
+          for (const slot of appointment.slotsOfAppointment) {
+            if (!slot.isTentative) continue;
+            for (const user of slot.user ?? []) {
+              enrolledUserIdSet.add(user.id);
+            }
+          }
           // Delete only tentative slots using a direct query (not stale IDs)
           await tx.slotOfAppointment.deleteMany({
             where: {
@@ -1737,7 +1754,11 @@ export class SlotAllocationService {
           }
         }
       }
-      return { preservedSlotCount: 0, enrolledUserIds: [], deletedAppointmentIds };
+      return {
+        preservedSlotCount: 0,
+        enrolledUserIds: Array.from(enrolledUserIdSet),
+        deletedAppointmentIds,
+      };
     } else if (preservePastSlots) {
       // In-progress reallocation: only delete future slots, preserve past ones
       const now = new Date();
@@ -1821,8 +1842,27 @@ export class SlotAllocationService {
       // they no longer block availability; delete the rest as before.
       const existingAppointments = await tx.appointment.findMany({
         where: whereClause,
-        include: { _count: { select: { payment: true } } },
+        include: {
+          // Slot participants, so enrolled learners (group events) can be
+          // re-linked to the new slots — same reason as the onlyTentative
+          // branch. Without this, re-scheduling a confirmed, not-yet-started
+          // class orphans its enrolled learners (all slots here are removed).
+          slotsOfAppointment: { include: { user: { select: { id: true } } } },
+          _count: { select: { payment: true } },
+        },
       });
+
+      // Capture enrolled participants from every slot before it's deleted or
+      // stripped; reconnectEnrolledUsers (called by the allocator on a non-empty
+      // result) re-links them to the new slots and filters the consultant.
+      const enrolledUserIdSet = new Set<string>();
+      for (const appointment of existingAppointments) {
+        for (const slot of appointment.slotsOfAppointment) {
+          for (const user of slot.user ?? []) {
+            enrolledUserIdSet.add(user.id);
+          }
+        }
+      }
 
       await Promise.all(
         existingAppointments.map((appointment) => {
@@ -1837,7 +1877,11 @@ export class SlotAllocationService {
           return tx.appointment.delete({ where: { id: appointment.id } });
         }),
       );
-      return { preservedSlotCount: 0, enrolledUserIds: [], deletedAppointmentIds: [] };
+      return {
+        preservedSlotCount: 0,
+        enrolledUserIds: Array.from(enrolledUserIdSet),
+        deletedAppointmentIds: [],
+      };
     }
   }
 

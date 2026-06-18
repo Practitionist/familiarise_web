@@ -91,7 +91,11 @@ function makeMockTx() {
       }),
       delete: jest.fn(),
     },
-    slotOfAppointment: { updateMany: jest.fn(), deleteMany: jest.fn() },
+    slotOfAppointment: {
+      update: jest.fn(),
+      updateMany: jest.fn(),
+      deleteMany: jest.fn(),
+    },
   };
 }
 
@@ -1499,6 +1503,112 @@ describe("deleteExistingAppointments", () => {
     // And only tentative slots were removed (partial reschedule path).
     expect(mockTx.slotOfAppointment.deleteMany).toHaveBeenCalledWith({
       where: { appointmentId: "rescheduled-apt", isTentative: true },
+    });
+  });
+
+  // ── Enrolled learners must survive a tentative-path reschedule ─────────────
+  // Scheduling a class created via crud-with-plan runs the onlyTentative path
+  // (its placeholder slots are tentative). The enrolled learner lives only on
+  // the slot↔user M2M, so deleteExistingAppointments must capture them and
+  // reconnectEnrolledUsers must re-link them to the new slots — otherwise the
+  // paid learner silently loses the class.
+  it("reconnects enrolled learners after a class tentative reschedule", async () => {
+    mockTx.class.findUnique.mockResolvedValue(makeClassEvent());
+
+    // One tentative session (2 slots for a 1h class) the learner is enrolled in.
+    const tentativeClassAppt = {
+      id: "class-apt-1",
+      slotsOfAppointment: [
+        {
+          id: "ts1",
+          isTentative: true,
+          user: [{ id: "consultant-1" }, { id: "learner-1" }],
+          startsAt: new Date("2025-01-06T10:00:00Z"),
+          endsAt: new Date("2025-01-06T10:30:00Z"),
+        },
+        {
+          id: "ts2",
+          isTentative: true,
+          user: [{ id: "consultant-1" }, { id: "learner-1" }],
+          startsAt: new Date("2025-01-06T10:30:00Z"),
+          endsAt: new Date("2025-01-06T11:00:00Z"),
+        },
+      ],
+      _count: { payment: 0 },
+    };
+    mockTx.appointment.findMany.mockResolvedValue([tentativeClassAppt]);
+    // New appointment must expose a slot so reconnect has something to update.
+    mockTx.appointment.create.mockResolvedValue({
+      id: "new-class-apt",
+      slotsOfAppointment: [{ id: "new-slot-1" }],
+    });
+
+    const result = await SlotAllocationService.allocate({
+      eventType: "class",
+      eventId: "class-1",
+      mode: "manual",
+      slots: ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"],
+    });
+
+    expect(result.success).toBe(true);
+    // The enrolled learner is reconnected to the new slot...
+    expect(mockTx.slotOfAppointment.update).toHaveBeenCalledWith({
+      where: { id: "new-slot-1" },
+      data: { user: { connect: [{ id: "learner-1" }] } },
+    });
+    // ...and the consultant is NOT in the reconnect set (already connected).
+    const reconnectCalls = mockTx.slotOfAppointment.update.mock.calls;
+    const connectedIds = reconnectCalls.flatMap((c: any[]) =>
+      (c[0]?.data?.user?.connect ?? []).map((u: { id: string }) => u.id),
+    );
+    expect(connectedIds).not.toContain("consultant-1");
+  });
+
+  // Same hazard via the full-delete branch: re-scheduling a CONFIRMED,
+  // not-yet-started class (no tentative slots, no past sessions) deletes its
+  // session appointments and recreates them — enrolled learners must be
+  // captured and reconnected here too.
+  it("reconnects enrolled learners when a confirmed class is re-scheduled (full-delete)", async () => {
+    mockTx.class.findUnique.mockResolvedValue(makeClassEvent());
+
+    // One confirmed (non-tentative), future session the learner is enrolled in.
+    const confirmedClassAppt = {
+      id: "confirmed-class-apt",
+      slotsOfAppointment: [
+        {
+          id: "cs1",
+          isTentative: false,
+          user: [{ id: "consultant-1" }, { id: "learner-1" }],
+          startsAt: new Date("2025-01-06T10:00:00Z"),
+          endsAt: new Date("2025-01-06T10:30:00Z"),
+        },
+        {
+          id: "cs2",
+          isTentative: false,
+          user: [{ id: "consultant-1" }, { id: "learner-1" }],
+          startsAt: new Date("2025-01-06T10:30:00Z"),
+          endsAt: new Date("2025-01-06T11:00:00Z"),
+        },
+      ],
+      _count: { payment: 0 },
+    };
+    mockTx.appointment.findMany.mockResolvedValue([confirmedClassAppt]);
+    mockTx.appointment.create.mockResolvedValue({
+      id: "new-class-apt-2",
+      slotsOfAppointment: [{ id: "new-slot-2" }],
+    });
+
+    const result = await SlotAllocationService.allocate({
+      eventType: "class",
+      eventId: "class-1",
+      mode: "manual",
+      slots: ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"],
+    });
+
+    expect(result.success).toBe(true);
+    expect(mockTx.slotOfAppointment.update).toHaveBeenCalledWith({
+      where: { id: "new-slot-2" },
+      data: { user: { connect: [{ id: "learner-1" }] } },
     });
   });
 
