@@ -254,6 +254,24 @@ export async function processQualifyingAction(
 
         if (!referral || referral.status !== "SIGNED_UP") return;
 
+        // #880 — program controls (single-row config). A paused program grants
+        // nothing and leaves the referral SIGNED_UP so it can still qualify once
+        // the program resumes. The monthly budget window rolls over lazily.
+        const period = new Date().toISOString().slice(0, 7); // YYYY-MM
+        const config = await tx.referralProgramConfig.upsert({
+          where: { id: "singleton" },
+          create: { id: "singleton", currentPeriod: period },
+          update: {},
+        });
+        if (!config.isActive) return;
+        const spentThisMonth =
+          config.currentPeriod === period ? config.currentMonthSpentPaise : 0;
+        const budgetRemaining =
+          config.monthlyBudgetPaise === null
+            ? Number.POSITIVE_INFINITY
+            : Math.max(0, config.monthlyBudgetPaise - spentThisMonth);
+        if (budgetRemaining <= 0) return; // month's budget exhausted → defer
+
         // REF-3 (#692) — claim the reward atomically: status still SIGNED_UP AND
         // within the qualification window, both asserted in the WHERE. Folding the
         // window into the guarded write (rather than an app-side Date.now() check
@@ -294,9 +312,18 @@ export async function processQualifyingAction(
           return;
         }
 
-        // Give referrer their bonus, clamped by the annual per-referrer cap.
-        const referrerReward = referral.referrerRewardAmount;
-        if (referrerReward && referrerReward > 0) {
+        // Running program spend for this qualification (referrer + referee),
+        // used to honor the monthly budget cap and auto-pause on exhaustion.
+        let spentNow = 0;
+
+        // Give referrer their bonus. The amount comes from the program config
+        // (the conservative-launch ramp, ₹300 → ₹500), clamped by the annual
+        // per-referrer cap and the remaining monthly budget.
+        const rampedReferrerReward =
+          config.referrerRewardPaise > 0
+            ? config.referrerRewardPaise
+            : (referral.referrerRewardAmount ?? 0);
+        if (rampedReferrerReward > 0) {
           // #880 — bound a referrer's referral earnings to ANNUAL_REWARD_CAP
           // over a trailing year; clamp (or skip) the grant if it would exceed.
           const yearCutoff = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000);
@@ -313,8 +340,9 @@ export async function processQualifyingAction(
             0,
           );
           const grant = Math.min(
-            referrerReward,
+            rampedReferrerReward,
             Math.max(0, ANNUAL_REWARD_CAP_PAISE - earnedThisYear),
+            budgetRemaining - spentNow,
           );
 
           if (grant > 0) {
@@ -341,6 +369,7 @@ export async function processQualifyingAction(
                 totalEarned: { increment: grant },
               },
             });
+            spentNow += grant;
           }
         }
 
@@ -358,18 +387,40 @@ export async function processQualifyingAction(
           refereeReward &&
           refereeReward > 0
         ) {
-          const expiresAt = new Date();
-          expiresAt.setDate(expiresAt.getDate() + CREDIT_EXPIRY_DAYS);
+          const grant = Math.min(refereeReward, budgetRemaining - spentNow);
+          if (grant > 0) {
+            const expiresAt = new Date();
+            expiresAt.setDate(expiresAt.getDate() + CREDIT_EXPIRY_DAYS);
 
-          await tx.referralCredit.create({
+            await tx.referralCredit.create({
+              data: {
+                userId: referral.referredUserId,
+                amount: grant,
+                currency: "INR",
+                source: "REFEREE_BONUS",
+                referralId: referral.id,
+                remainingAmount: grant,
+                expiresAt,
+              },
+            });
+            spentNow += grant;
+          }
+        }
+
+        // #880 — persist the budget window (lazy monthly rollover) and the
+        // spend, auto-pausing the program when the monthly budget is exhausted
+        // so later qualifications defer until an admin reviews.
+        if (config.monthlyBudgetPaise !== null || config.currentPeriod !== period) {
+          const newSpent = spentThisMonth + spentNow;
+          await tx.referralProgramConfig.update({
+            where: { id: config.id },
             data: {
-              userId: referral.referredUserId,
-              amount: refereeReward,
-              currency: "INR",
-              source: "REFEREE_BONUS",
-              referralId: referral.id,
-              remainingAmount: refereeReward,
-              expiresAt,
+              currentPeriod: period,
+              currentMonthSpentPaise: newSpent,
+              ...(config.monthlyBudgetPaise !== null &&
+              newSpent >= config.monthlyBudgetPaise
+                ? { isActive: false }
+                : {}),
             },
           });
         }
@@ -723,6 +774,19 @@ export async function expireStaleCredits(): Promise<number> {
   });
 
   return result.count;
+}
+
+/**
+ * #880 — proactively roll the monthly referral-budget window. A cron may call
+ * this; the qualification path also rolls it over lazily. Does NOT re-activate
+ * an auto-paused program — re-enabling is an explicit admin action.
+ */
+export async function resetReferralBudgetMonthly(): Promise<void> {
+  const period = new Date().toISOString().slice(0, 7);
+  await prisma.referralProgramConfig.updateMany({
+    where: { currentPeriod: { not: period } },
+    data: { currentPeriod: period, currentMonthSpentPaise: 0 },
+  });
 }
 
 /**
