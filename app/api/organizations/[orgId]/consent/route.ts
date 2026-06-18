@@ -23,7 +23,10 @@ import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { buildConsentArtifact, withdrawConsent } from "@/lib/compliance/dpdp";
-import { normalizePurposeCode } from "@/lib/compliance/purpose-codes";
+import {
+  normalizePurposeCode,
+  type PurposeCode,
+} from "@/lib/compliance/purpose-codes";
 
 // Schedule VIII of the Indian Constitution enumerates 22 languages.
 // Plus English as the lingua franca for enterprise UIs. Accept ISO 639-1
@@ -123,8 +126,9 @@ export async function POST(
       { status: 400 },
     );
   }
+  // Unknowns rejected above, so every `code` is a narrowed PurposeCode here.
   const purposeCodes = Array.from(
-    new Set(normalized.map((n) => n.code as string)),
+    new Set(normalized.map((n) => n.code as PurposeCode)),
   );
 
   // Cross-org check: caller must be recording consent for an actual
@@ -230,7 +234,7 @@ export async function DELETE(
   // → STREAM_DATA_PROCESSING). An unknown code must 400 — NOT fall back to
   // undefined, which `withdrawConsent` reads as "withdraw ALL consents" and
   // would silently escalate a scoped request into a full opt-out.
-  let purposeCode: string | undefined;
+  let purposeCode: PurposeCode | undefined;
   if (parsed.data.purposeCode) {
     purposeCode = normalizePurposeCode(parsed.data.purposeCode);
     if (purposeCode === undefined) {

@@ -88,7 +88,10 @@ export class ConsentRequiredError extends Error {
 export interface ConsentGrantInput {
   userId: string;
   dataFiduciary: string;
-  purposeCodes: string[];
+  // Canonical codes only — callers normalize raw/dynamic input at the
+  // boundary (normalizePurposeCode) so the taxonomy is enforced at compile
+  // time, not just by the runtime gate (#895).
+  purposeCodes: PurposeCode[];
   language: string; // ISO 639-1 or Schedule VIII code
   consentManager?: string | null;
   version: number;
@@ -98,7 +101,7 @@ export interface ConsentGrantInput {
 export interface ConsentArtifactDraft {
   userId: string;
   dataFiduciary: string;
-  purposeCodes: string[];
+  purposeCodes: PurposeCode[];
   language: string;
   consentManager: string | null;
   version: number;
@@ -163,7 +166,7 @@ export function buildConsentArtifact(input: ConsentGrantInput): ConsentArtifactD
  */
 export async function checkConsent(params: {
   userId: string;
-  purposeCode: string;
+  purposeCode: PurposeCode;
 }): Promise<boolean> {
   const { userId, purposeCode } = params;
   const now = new Date();
@@ -194,7 +197,7 @@ export async function checkConsent(params: {
  */
 export async function withdrawConsent(params: {
   userId: string;
-  purposeCode?: string;
+  purposeCode?: PurposeCode;
 }): Promise<{ withdrawnCount: number }> {
   const { userId, purposeCode } = params;
   const now = new Date();
