@@ -91,7 +91,10 @@ const COLUMNS: Column<AppointmentRow>[] = [
 
 export function AppointmentsPageClient({ orgId }: { orgId: string }) {
   const searchParams = useSearchParams();
-  const page = Number(searchParams?.get("page") ?? "1") || 1;
+  // Clamp to a positive integer — `?page=-1` / `?page=abc` would otherwise
+  // flow into the queryKey + fetch (Number("-1") is truthy, so `|| 1` misses).
+  const rawPage = Number(searchParams?.get("page") ?? "1");
+  const page = Number.isInteger(rawPage) && rawPage > 0 ? rawPage : 1;
 
   const { data, isLoading, isError } = useQuery<AppointmentsResponse>({
     queryKey: ["org-appointments", orgId, page],

@@ -77,13 +77,35 @@ function countByRole(
 
 export function AnalyticsPageClient({ orgId }: { orgId: string }) {
   const { allowed } = useRequireOrgRole(orgId, "MANAGER");
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["org-analytics", orgId],
     queryFn: () => fetchAnalytics(orgId),
     enabled: allowed,
   });
 
   if (!allowed) return null;
+
+  // On failure `isLoading` is false, so the `!data` skeleton below would
+  // hang forever — surface an explicit error + retry instead.
+  if (isError && !data) {
+    return (
+      <>
+        <DashboardHeader title="Analytics" subtitle="Activity at a glance" />
+        <DashboardContent>
+          <div className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-900">
+            <p className="font-medium">Failed to load analytics.</p>
+            <button
+              type="button"
+              onClick={() => refetch()}
+              className="mt-2 inline-flex items-center rounded-md bg-red-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-red-700"
+            >
+              Retry
+            </button>
+          </div>
+        </DashboardContent>
+      </>
+    );
+  }
 
   if (isLoading || !data) {
     return (

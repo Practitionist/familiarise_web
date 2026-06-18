@@ -187,13 +187,16 @@ export async function readConsulteeEvents(
             },
             {
               // Waitlist branch left unbounded by date — a waitlisted
-              // entry may have no scheduled slot yet.
+              // entry may have no scheduled slot yet. Org scope still
+              // applies (via the webinar's 1:1 appointment) so an org view
+              // can't leak waitlisted entries from another tenant/personal.
               waitlist: {
                 some: {
                   userId,
                   status: { in: [WaitlistStatus.WAITING, WaitlistStatus.NOTIFIED, WaitlistStatus.BOOKED] },
                 },
               },
+              ...(oneApptOrgWhere && { appointment: { is: oneApptOrgWhere } }),
             },
           ],
         },
@@ -271,13 +274,16 @@ export async function readConsulteeEvents(
             },
             {
               // Waitlist branch left unbounded by date — a waitlisted
-              // entry may have no scheduled slot yet.
+              // entry may have no scheduled slot yet. Org scope still
+              // applies (via any child appointment) so an org view can't
+              // leak waitlisted entries from another tenant/personal.
               waitlist: {
                 some: {
                   userId,
                   status: { in: [WaitlistStatus.WAITING, WaitlistStatus.NOTIFIED, WaitlistStatus.BOOKED] },
                 },
               },
+              ...(manyApptOrgWhere && { appointments: { some: manyApptOrgWhere } }),
             },
           ],
         },

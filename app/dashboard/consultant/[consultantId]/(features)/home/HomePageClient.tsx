@@ -26,6 +26,7 @@ export default function HomePageClient({
   const {
     data: dashboardData,
     isLoading,
+    isFetching,
     error,
     isStale: _isStale,
   } = useQuery<TConsultantDashboardResponse>(dashboardQuery);
@@ -74,8 +75,9 @@ export default function HomePageClient({
 
   return (
     <DashboardErrorBoundary>
-      {/* Show subtle loading indicator when refreshing */}
-      {isLoading && dashboardData && (
+      {/* Show subtle loading indicator when refreshing. `isLoading` is false
+          once data is cached, so a background refetch needs `isFetching`. */}
+      {isFetching && dashboardData && (
         <div className="fixed top-4 right-4 bg-blue-500 text-white px-3 py-1 rounded-md text-sm z-50">
           Refreshing...
         </div>

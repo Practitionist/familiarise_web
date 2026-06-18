@@ -11,6 +11,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
 import { getStaffAppointments } from "@/lib/data/staff-appointments";
 
+// Coerce a query param to a positive integer; NaN / <1 / non-integer falls
+// back to `fallback`. `parseInt("abc")` returns NaN (truthy), so a bare
+// `|| default` never triggers — and the data layer doesn't clamp the offset.
+function positiveIntParam(raw: string | null, fallback: number): number {
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 ? n : fallback;
+}
+
 export async function GET(req: NextRequest) {
   try {
     const auth = await requirePrivilegedAuth();
@@ -24,8 +32,8 @@ export async function GET(req: NextRequest) {
       dateFrom: searchParams.get("dateFrom"),
       dateTo: searchParams.get("dateTo"),
       orgId: searchParams.get("orgId"),
-      page: parseInt(searchParams.get("page") || "1"),
-      limit: parseInt(searchParams.get("limit") || "20"),
+      page: positiveIntParam(searchParams.get("page"), 1),
+      limit: positiveIntParam(searchParams.get("limit"), 20),
     });
 
     return NextResponse.json(result);

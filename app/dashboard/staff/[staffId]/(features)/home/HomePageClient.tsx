@@ -120,6 +120,7 @@ export default function HomePageClient({
     data: stats,
     isLoading,
     isFetching,
+    isError,
     refetch,
   } = useQuery({
     queryKey: ["staff-stats"],
@@ -128,6 +129,39 @@ export default function HomePageClient({
   });
 
   const loading = isLoading || isFetching;
+
+  // Don't render zeros + "No recent tickets" on a failed fetch — that reads
+  // as a healthy-but-empty queue and hides the operational failure. Only
+  // when there's no cached payload to fall back on.
+  if (isError && !stats) {
+    return (
+      <div className="space-y-6">
+        <PageHeader
+          title="Dashboard"
+          description="Welcome back! Here's what's happening today."
+        />
+        <Card>
+          <CardContent className="p-6">
+            <div className="flex flex-col items-start gap-3">
+              <div className="flex items-center gap-2 text-destructive">
+                <AlertTriangle className="h-4 w-4" />
+                <span>Failed to load staff stats.</span>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-2"
+                onClick={() => refetch()}
+              >
+                <RefreshCw className="h-4 w-4" />
+                Retry
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   const statsConfig = [
     {
@@ -167,6 +201,8 @@ export default function HomePageClient({
             <Button
               variant="outline"
               size="icon"
+              aria-label="Refresh dashboard stats"
+              title="Refresh dashboard stats"
               onClick={() => refetch()}
               disabled={loading}
             >

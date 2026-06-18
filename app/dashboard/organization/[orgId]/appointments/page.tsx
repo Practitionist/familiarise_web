@@ -3,6 +3,8 @@ import {
   QueryClient,
   dehydrate,
 } from "@tanstack/react-query";
+import { redirect } from "next/navigation";
+import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AppointmentsPageClient } from "./AppointmentsPageClient";
 import { getOrgAppointments } from "@/lib/data/org-appointments";
 
@@ -15,6 +17,12 @@ export default async function OrgAppointmentsPage({
   params: Promise<{ orgId: string }>;
 }) {
   const { orgId } = await params;
+
+  // Mirror GET /api/organizations/[orgId]/appointments (MANAGER) — the SSR
+  // prefetch reads org appointments directly, so guard before dehydrating.
+  const access = await requireOrgAccess(orgId, "MANAGER");
+  if (access.error) redirect(`/dashboard/organization/${orgId}/home`);
+
   const queryClient = new QueryClient();
 
   await Promise.allSettled([

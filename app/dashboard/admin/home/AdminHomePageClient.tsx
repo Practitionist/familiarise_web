@@ -52,12 +52,48 @@ const fadeInUp = {
 export default function AdminHomePageClient() {
   // queryKey ["admin-stats"] MUST match the getAdminStats prefetch key in
   // app/dashboard/admin/home/page.tsx so SSR hydration feeds this useQuery. #890
-  const { data: stats, isLoading } = useQuery({
+  const {
+    data: stats,
+    isLoading,
+    isError,
+    refetch,
+  } = useQuery({
     queryKey: ["admin-stats"],
     queryFn: fetchAdminStats,
     staleTime: 1 * 60 * 1000,
     refetchInterval: 2 * 60 * 1000,
   });
+
+  // Surface a real error rather than rendering zeros/"₹0", which an admin
+  // would read as "no platform activity / gateways down" when the fetch
+  // simply failed. Only when there's no cached payload to fall back on.
+  if (isError && !stats) {
+    return (
+      <>
+        <DashboardHeader
+          title="Admin Dashboard"
+          subtitle="Overview of platform payments and transactions"
+        />
+        <DashboardContent>
+          <EmptyState
+            icon={AlertTriangle}
+            title="Unable to load admin stats"
+            description="Something went wrong fetching platform stats. Please retry."
+            action={
+              <button
+                type="button"
+                onClick={() => refetch()}
+                className="inline-flex items-center gap-2 rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-zinc-800"
+              >
+                <RefreshCw className="h-4 w-4" />
+                Retry
+              </button>
+            }
+          />
+        </DashboardContent>
+      </>
+    );
+  }
 
   if (isLoading) {
     return (
