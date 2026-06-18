@@ -48,6 +48,11 @@ import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
+import {
+  ALL_PURPOSE_CODES,
+  PURPOSE_CODE_META,
+  PURPOSE_CODES,
+} from "@/lib/compliance/purpose-codes";
 
 type ConsentArtifact = {
   id: string;
@@ -67,15 +72,12 @@ type Member = {
   role: string;
 };
 
-// Granular purpose taxonomy per the DPDP stub (lib/compliance/dpdp.ts).
-// Free-form codes are still accepted by the API; this is the curated set
-// the dashboard offers as one-click toggles.
-const PURPOSE_CODES = [
-  "session-booking",
-  "marketing",
-  "analytics",
-  "third-party-sharing-with-stream",
-] as const;
+// Granular purpose taxonomy — the SINGLE canonical set shared with the
+// runtime gate (lib/compliance/purpose-codes.ts). The dashboard offers each
+// canonical code as a one-click toggle; crucially the Stream toggle now
+// grants/withdraws STREAM_DATA_PROCESSING, so a user CAN re-grant the consent
+// the fail-closed video/chat gate reads. Free-form codes are still accepted by
+// the API, but the UI only ever emits canonical codes.
 
 // Schedule VIII languages we surface in v1 (English + the most common
 // Indian-enterprise locales). The API accepts any ISO 639-1/2 code.
@@ -112,7 +114,7 @@ export default function ConsentPage({ params }: Readonly<PageProps>) {
   // a purpose-code toggle list, and a language select.
   const [grantUserId, setGrantUserId] = useState("");
   const [grantPurposes, setGrantPurposes] = useState<Set<string>>(
-    new Set(["session-booking"]),
+    new Set([PURPOSE_CODES.PRIMARY_PROCESSING]),
   );
   const [grantLanguage, setGrantLanguage] = useState("en");
   const [actionError, setActionError] = useState<string | null>(null);
@@ -170,7 +172,7 @@ export default function ConsentPage({ params }: Readonly<PageProps>) {
     onSuccess: () => {
       setActionError(null);
       setGrantUserId("");
-      setGrantPurposes(new Set(["session-booking"]));
+      setGrantPurposes(new Set([PURPOSE_CODES.PRIMARY_PROCESSING]));
       setGrantLanguage("en");
       qc.invalidateQueries({ queryKey: ["org-consents", orgId] });
     },
@@ -209,6 +211,11 @@ export default function ConsentPage({ params }: Readonly<PageProps>) {
     });
   };
 
+  // Friendly label for a stored code; falls back to the raw value so any
+  // legacy/free-form code still renders.
+  const purposeLabel = (code: string) =>
+    PURPOSE_CODE_META[code as keyof typeof PURPOSE_CODE_META]?.label ?? code;
+
   const rows = consents.data ?? [];
   const active = rows.filter((r) => r.withdrawnAt === null);
   const history = rows.filter((r) => r.withdrawnAt !== null);
@@ -242,10 +249,10 @@ export default function ConsentPage({ params }: Readonly<PageProps>) {
               variant="secondary"
               className="bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
             >
-              {p}
+              {purposeLabel(p)}
               <button
                 type="button"
-                title={`Withdraw "${p}"`}
+                title={`Withdraw "${purposeLabel(p)}"`}
                 className="ml-1 text-emerald-700/70 hover:text-emerald-900 dark:text-emerald-300/70 dark:hover:text-emerald-200"
                 disabled={withdraw.isPending}
                 onClick={() =>
@@ -311,7 +318,7 @@ export default function ConsentPage({ params }: Readonly<PageProps>) {
               variant="secondary"
               className="bg-muted text-muted-foreground"
             >
-              {p}
+              {purposeLabel(p)}
             </Badge>
           ))}
         </div>
@@ -388,12 +395,14 @@ export default function ConsentPage({ params }: Readonly<PageProps>) {
               <div className="flex flex-col gap-1.5">
                 <Label>Purposes</Label>
                 <div className="flex flex-wrap gap-2">
-                  {PURPOSE_CODES.map((code) => {
+                  {ALL_PURPOSE_CODES.map((code) => {
                     const on = grantPurposes.has(code);
+                    const meta = PURPOSE_CODE_META[code];
                     return (
                       <button
                         key={code}
                         type="button"
+                        title={meta.description}
                         onClick={() => togglePurpose(code)}
                         className={
                           on
@@ -402,7 +411,7 @@ export default function ConsentPage({ params }: Readonly<PageProps>) {
                         }
                         aria-pressed={on}
                       >
-                        {code}
+                        {meta.label}
                       </button>
                     );
                   })}
