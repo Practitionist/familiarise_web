@@ -43,6 +43,11 @@ export interface AllocationOptions {
   totalSessions?: number; // Authoritative session count from plan (overrides weeks × callsPerWeek)
   requestedSlots?: TimeSlot[];
   pastConfirmedSlotCount?: number; // For in-progress recurring events
+  // Per-day session cap, mirroring the manual interactive guard so auto-allocate
+  // can't cluster more sessions on one day than a consultant could place by hand
+  // (subscription default 1, class default 2).
+  maxCallsPerDay?: number; // subscriptions
+  maxSessionsPerDay?: number; // classes
 }
 
 export interface AllocationResult {
@@ -590,6 +595,13 @@ export class AllocationAlgorithms {
 
     const sessionDurationInHours = options.sessionDurationInHours || 1;
     const slotsPerCall = Math.ceil(sessionDurationInHours / 0.5);
+    // Per-day session cap — mirror the manual interactive guard
+    // (useSlotAllocation: subscription maxCallsPerDay=1, class maxSessionsPerDay=2)
+    // so auto-allocate produces a schedule a consultant could also create by hand.
+    const maxCallsPerDay =
+      options.eventType === "class"
+        ? options.maxSessionsPerDay ?? 2
+        : options.maxCallsPerDay ?? 1;
     // FIX: Track 30-min slot count correctly. Previously, slotsNeededThisWeek
     // counted calls but was compared against totalSlots (30-min slot count),
     // and the final split always produced exactly 2 slots per selected block
@@ -657,6 +669,7 @@ export class AllocationAlgorithms {
         hoursPerCall,
         slotsPerCall,
         preferences.minTimeBetweenSessions || 2,
+        maxCallsPerDay,
       );
 
       selectedCalls.push(...callsThisWeek);
@@ -678,9 +691,13 @@ export class AllocationAlgorithms {
     hoursPerCall: number,
     slotsPerCall: number,
     minHoursBetween: number,
+    maxCallsPerDay: number,
   ): TimeSlot[][] {
     const calls: TimeSlot[][] = [];
     const usedSlotIndices = new Set<number>();
+    // Track calls already placed per (UTC) day so we don't exceed the per-day cap.
+    // UTC day-key matches the backend's groupSlotsByDay, keeping the two in sync.
+    const callsPerDay = new Map<string, number>();
     const minMsBetween = minHoursBetween * 60 * 60 * 1000;
 
     const sortedSlots = [...weekSlots].sort(
@@ -714,8 +731,14 @@ export class AllocationAlgorithms {
 
       if (!isConsecutive || blockIndices.length < slotsPerCall) continue;
 
-      // Check spacing against already selected calls
       const blockStart = sortedSlots[blockIndices[0]].startTime;
+
+      // Enforce the per-day cap (subscription 1/day, class 2/day) — mirrors the
+      // manual guard. UTC day-key to match the backend's day grouping.
+      const dayKey = blockStart.toISOString().split("T")[0];
+      if ((callsPerDay.get(dayKey) || 0) >= maxCallsPerDay) continue;
+
+      // Check spacing against already selected calls
       const hasConflict = calls.some((existingCall) => {
         const existingStart = existingCall[0].startTime;
         return (
@@ -739,6 +762,7 @@ export class AllocationAlgorithms {
 
       calls.push(thirtyMinSlots);
       blockIndices.forEach((idx) => usedSlotIndices.add(idx));
+      callsPerDay.set(dayKey, (callsPerDay.get(dayKey) || 0) + 1);
     }
 
     return calls;
