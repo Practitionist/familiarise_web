@@ -1805,15 +1805,33 @@ export class SlotAllocationService {
         deletedAppointmentIds: [],
       };
     } else {
-      // Full delete: remove all appointments for this event
+      // Full delete: remove all appointments for this event.
+      // B8 — an appointment that carries Payment rows must NOT be deleted: the
+      // delete cascades to Payment (onDelete: Cascade), which is Restrict-
+      // referenced by ConsultantEarnings, so the cascade trips the
+      // ConsultantEarnings_paymentId_fkey constraint and the whole allocation
+      // rolls back. This is exactly the SUBSCRIPTION case — checkout leaves a
+      // zero-slot placeholder Appointment carrying the signup Payment+earnings,
+      // and initial allocation reaches this branch. Mirror the onlyTentative
+      // guard: preserve payment-bearing appointments, just free their slots so
+      // they no longer block availability; delete the rest as before.
       const existingAppointments = await tx.appointment.findMany({
         where: whereClause,
+        include: { _count: { select: { payment: true } } },
       });
 
       await Promise.all(
-        existingAppointments.map((appointment) =>
-          tx.appointment.delete({ where: { id: appointment.id } }),
-        ),
+        existingAppointments.map((appointment) => {
+          if ((appointment._count?.payment ?? 0) > 0) {
+            // Keep the Appointment (and its Payment + ConsultantEarnings audit
+            // trail); strip its slots. No-op for the slot-less subscription
+            // placeholder, but frees slots for any other payment-bearing case.
+            return tx.slotOfAppointment.deleteMany({
+              where: { appointmentId: appointment.id },
+            });
+          }
+          return tx.appointment.delete({ where: { id: appointment.id } });
+        }),
       );
       return { preservedSlotCount: 0, enrolledUserIds: [], deletedAppointmentIds: [] };
     }

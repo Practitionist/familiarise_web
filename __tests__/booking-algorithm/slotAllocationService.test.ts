@@ -1516,6 +1516,58 @@ describe("deleteExistingAppointments", () => {
     expect(result.success).toBe(true);
     expect(result.deletedAppointmentIds).toEqual([]);
   });
+
+  // ── B8: full-delete must NOT delete payment-bearing appointments ───────────
+  // Deleting one cascades to its Payment, which is Restrict-referenced by
+  // ConsultantEarnings → FK violation. This is the subscription bug: the
+  // checkout placeholder (zero slots, signup Payment) reaches full-delete on
+  // initial allocation. Preserve it; just strip its slots. (Exercised here via
+  // the consultation fixture — the guard is event-type agnostic.)
+  it("B8: preserves a payment-bearing placeholder on full-delete, deletes only its slots", async () => {
+    mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
+
+    // Placeholder: zero slots, carries the signup Payment.
+    mockTx.appointment.findMany.mockResolvedValue([
+      { id: "placeholder-apt", slotsOfAppointment: [], _count: { payment: 1 } },
+    ]);
+
+    const result = await SlotAllocationService.allocate({
+      eventType: "consultation",
+      eventId: "consult-1",
+      mode: "manual",
+      slots: ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"],
+    });
+
+    expect(result.success).toBe(true);
+    // The placeholder Appointment (and its Payment + ConsultantEarnings) survives.
+    expect(mockTx.appointment.delete).not.toHaveBeenCalledWith({
+      where: { id: "placeholder-apt" },
+    });
+    // Its slots are freed via deleteMany scoped to the appointment id.
+    expect(mockTx.slotOfAppointment.deleteMany).toHaveBeenCalledWith({
+      where: { appointmentId: "placeholder-apt" },
+    });
+  });
+
+  it("B8: still hard-deletes a non-payment appointment on full-delete", async () => {
+    mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
+
+    mockTx.appointment.findMany.mockResolvedValue([
+      { id: "no-pay-1", slotsOfAppointment: [], _count: { payment: 0 } },
+    ]);
+
+    const result = await SlotAllocationService.allocate({
+      eventType: "consultation",
+      eventId: "consult-1",
+      mode: "manual",
+      slots: ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"],
+    });
+
+    expect(result.success).toBe(true);
+    expect(mockTx.appointment.delete).toHaveBeenCalledWith({
+      where: { id: "no-pay-1" },
+    });
+  });
 });
 
 // ─── Edge Cases ─────────────────────────────────────────────────────────────
