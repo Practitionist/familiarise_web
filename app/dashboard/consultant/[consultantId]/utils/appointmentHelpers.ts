@@ -214,7 +214,14 @@ export const calculateSessionProgress = (
   remainingSessions: number;
   progressPercentage: number;
 } => {
-  const dedupedAppointments = groupAppointments;
+  // Exclude slot-less appointments (e.g. the zero-slot subscription checkout
+  // placeholder that carries the signup Payment — preserved by allocation, never
+  // deleted). A row with no slots is not a session, so counting it inflated
+  // totalSessions/remaining by 1 ("11 remaining" for a 10-session sub). This
+  // mirrors the completedSessions rule below, which already requires slots.
+  const dedupedAppointments = groupAppointments.filter(
+    (app) => getSlotTimes(app).length > 0,
+  );
 
   const totalSessions = dedupedAppointments.length;
   const completedSessions = dedupedAppointments.filter((app) => {
