@@ -337,18 +337,23 @@ export class SlotAllocationService {
                 .map((a) => a.id)
             : existingAppointments.map((a) => a.id);
 
+          const slotsPerCall = SlotCalculationService.getSlotsPerCall(
+            config.sessionDurationInHours || config.durationInHours || 1,
+          );
+
           // Calculate required slots
           let requiredSlots: number;
           if (isReschedule) {
-            // Use calculateRequiredSlots instead of tentativeSlotCount.
-            // Class creation (crud-with-plan) creates 1 full-duration slot per appointment,
-            // but the allocation system works with 30-min slots (slotsPerSession per appointment).
-            // tentativeSlotCount would be 8 for an 8-session class, but we actually need 16
-            // (8 sessions × 2 thirty-minute slots each).
-            requiredSlots = SlotCalculationService.calculateRequiredSlots(
-              eventType,
-              config,
-            );
+            // Expected count = (tentative appointments) × slotsPerCall = the number
+            // of SESSIONS being rescheduled (1 Appointment = 1 session). Equals
+            // calculateRequiredSlots for a FULL reschedule — preserving the class
+            // crud-with-plan case (commit 2b6be4c1, 1 full-duration tentative row per
+            // session) — but correctly smaller for a PARTIAL reschedule (e.g. 2 of 10),
+            // which calculateRequiredSlots (the full total) would over-allocate.
+            const rescheduleSessions = existingAppointments.filter((a) =>
+              a.slotsOfAppointment.some((s) => s.isTentative),
+            ).length;
+            requiredSlots = rescheduleSessions * slotsPerCall;
           } else {
             const fullRequired = SlotCalculationService.calculateRequiredSlots(
               eventType,
@@ -359,10 +364,6 @@ export class SlotAllocationService {
               ? fullRequired - pastConfirmedSlotCount
               : fullRequired;
           }
-
-          const slotsPerCall = SlotCalculationService.getSlotsPerCall(
-            config.sessionDurationInHours || config.durationInHours || 1,
-          );
 
           // Find available slots
           // Pass appointmentIdsToExclude so their slots are excluded from bookedSlots
@@ -607,18 +608,21 @@ export class SlotAllocationService {
           // Validate total slot count for recurring event types
           if (isRecurringEventType(eventType)) {
             if (isReschedule) {
-              // Use calculateRequiredSlots instead of tentativeSlotCount.
-              // Class creation creates 1 full-duration slot per appointment,
-              // but the allocation system works with 30-min slots.
-              const rescheduleRequired =
-                SlotCalculationService.calculateRequiredSlots(
-                  eventType,
-                  config,
-                );
+              // Expected count = (tentative appointments) × slotsPerCall, i.e. the
+              // number of SESSIONS actually being rescheduled (1 Appointment = 1
+              // session). This equals calculateRequiredSlots for a FULL reschedule
+              // (all sessions tentative) — preserving the class crud-with-plan case
+              // (commit 2b6be4c1, where each session has 1 full-duration tentative
+              // row) — but is correctly smaller for a PARTIAL reschedule (e.g. 2 of
+              // 10). calculateRequiredSlots (the full total) wrongly rejected partials.
+              const rescheduleSessions = existingAppointments.filter((a) =>
+                a.slotsOfAppointment.some((s) => s.isTentative),
+              ).length;
+              const rescheduleRequired = rescheduleSessions * slotsPerCall;
               if (slots.length !== rescheduleRequired) {
                 throw new AllocationValidationError(
                   `This reschedule requires exactly ${rescheduleRequired} slots ` +
-                    `(replacing ${tentativeSlotCount} tentative slots), ` +
+                    `(replacing ${rescheduleSessions} session(s)), ` +
                     `but ${slots.length} were provided.`,
                 );
               }

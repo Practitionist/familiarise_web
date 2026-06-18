@@ -1570,6 +1570,79 @@ describe("deleteExistingAppointments", () => {
   });
 });
 
+// ─── Partial reschedule slot count (bug #2) ──────────────────────────────────
+// A reschedule's expected slot count must be the number of SESSIONS being
+// rescheduled (tentative appointments × slotsPerCall), NOT the full session
+// total. Commit 2b6be4c1 used calculateRequiredSlots (the full total), which
+// wrongly rejected partial reschedules (e.g. 2 of 10 sessions).
+describe("partial reschedule slot count", () => {
+  // 0.5h subscription (slotsPerCall = 1) with 10 total sessions; only 2 of its
+  // appointments carry tentative slots → a partial reschedule of 2 sessions.
+  const partialReschedSub = () =>
+    makeSubscriptionEvent({
+      subscriptionPlan: {
+        durationInMonths: 1,
+        callsPerWeek: 2,
+        sessionDurationInHours: 0.5,
+        totalSessions: 10,
+        consultantProfile: makeConsultantProfile(),
+      },
+    });
+  const twoTentativeAppointments = [
+    {
+      id: "resched-1",
+      slotsOfAppointment: [
+        { id: "ts1", isTentative: true, startsAt: new Date(), endsAt: new Date() },
+      ],
+      _count: { payment: 0 },
+    },
+    {
+      id: "resched-2",
+      slotsOfAppointment: [
+        { id: "ts2", isTentative: true, startsAt: new Date(), endsAt: new Date() },
+      ],
+      _count: { payment: 0 },
+    },
+  ];
+
+  it("expects the rescheduled-session count (2), not the full total (10)", async () => {
+    mockTx.subscription.findUnique.mockResolvedValue(partialReschedSub());
+    mockTx.appointment.findMany.mockResolvedValue(twoTentativeAppointments);
+
+    // Provide the WRONG count (3). The error must reference the PARTIAL expected
+    // count (2), proving it no longer demands the full session total (10).
+    const result = await SlotAllocationService.allocate({
+      eventType: "subscription",
+      eventId: "sub-1",
+      mode: "manual",
+      slots: [
+        "2025-01-06T09:00:00Z",
+        "2025-01-06T09:30:00Z",
+        "2025-01-06T10:00:00Z",
+      ],
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("requires exactly 2 slots");
+    expect(result.error).not.toContain("exactly 10");
+  });
+
+  it("accepts exactly the rescheduled-session count for a partial reschedule", async () => {
+    mockTx.subscription.findUnique.mockResolvedValue(partialReschedSub());
+    mockTx.appointment.findMany.mockResolvedValue(twoTentativeAppointments);
+
+    // Provide the correct partial count (2) → no longer rejected.
+    const result = await SlotAllocationService.allocate({
+      eventType: "subscription",
+      eventId: "sub-1",
+      mode: "manual",
+      slots: ["2025-01-06T09:00:00Z", "2025-01-06T09:30:00Z"],
+    });
+
+    expect(result.success).toBe(true);
+  });
+});
+
 // ─── Edge Cases ─────────────────────────────────────────────────────────────
 
 describe("Edge cases", () => {
