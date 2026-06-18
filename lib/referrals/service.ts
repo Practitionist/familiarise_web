@@ -7,6 +7,7 @@ import {
   QUALIFICATION_WINDOW_DAYS,
   CREDIT_EXPIRY_DAYS,
   ANNUAL_REWARD_CAP_PAISE,
+  CONSULTANT_WAIVER_SESSIONS,
 } from "./constants";
 
 // #780 — bare model types still say bigint; the extended client returns number
@@ -343,11 +344,20 @@ export async function processQualifyingAction(
           }
         }
 
-        // FIX #437: Give referee their bonus (deferred from signup)
-        // Previously given immediately in applyReferralCode, now deferred to
-        // first paid booking to prevent fake account farming.
+        // FIX #437: Give referee their bonus (deferred from signup), but only
+        // for consultee referees. #880 — a consultant referee's instrument is a
+        // commission waiver on their first sessions (applied in earnings-service),
+        // not a booking credit a seller can't use, so skip the credit for them.
+        const refereeUser = await tx.user.findUnique({
+          where: { id: referral.referredUserId },
+          select: { role: true },
+        });
         const refereeReward = referral.refereeRewardAmount;
-        if (refereeReward && refereeReward > 0) {
+        if (
+          refereeUser?.role !== "CONSULTANT" &&
+          refereeReward &&
+          refereeReward > 0
+        ) {
           const expiresAt = new Date();
           expiresAt.setDate(expiresAt.getDate() + CREDIT_EXPIRY_DAYS);
 
@@ -713,6 +723,40 @@ export async function expireStaleCredits(): Promise<number> {
   });
 
   return result.count;
+}
+
+/**
+ * #880 — is this consultant eligible for the referral commission waiver on the
+ * session being settled? True when they are the referee of a live referral AND
+ * this is within their first CONSULTANT_WAIVER_SESSIONS settled (paid) sessions.
+ * The caller passes the same `tx` as the earnings write so the session count is
+ * consistent; org-hosted settlements are excluded by the caller.
+ */
+export async function isConsultantReferralWaiverActive(
+  tx: Tx,
+  consultantProfileId: string,
+): Promise<boolean> {
+  const profile = await tx.consultantProfile.findUnique({
+    where: { id: consultantProfileId },
+    select: { userId: true },
+  });
+  if (!profile) return false;
+
+  const referral = await tx.referral.findFirst({
+    where: {
+      referredUserId: profile.userId,
+      status: { in: ["SIGNED_UP", "REWARDED"] },
+    },
+    select: { id: true },
+  });
+  if (!referral) return false;
+
+  // Count excludes the row being created (idempotency guarantees this payment
+  // has none yet), so 0/1/2 prior sessions ⇒ waive, 3+ ⇒ full commission.
+  const priorSessions = await tx.consultantEarnings.count({
+    where: { consultantProfileId },
+  });
+  return priorSessions < CONSULTANT_WAIVER_SESSIONS;
 }
 
 /**

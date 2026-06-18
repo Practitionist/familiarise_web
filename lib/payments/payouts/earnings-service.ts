@@ -27,6 +27,7 @@ import { calculateRevenueSplit } from "@/lib/collaborators/service";
 import { recordTdsReversal } from "@/lib/payments/tax/tds-service";
 import { ENABLE_HOST_ORGS } from "@/lib/feature-flags";
 import { recordSystemError } from "@/lib/enterprise/system-events";
+import { isConsultantReferralWaiverActive } from "@/lib/referrals/service";
 import type { RevenueSplit } from "@/types/collaborators";
 
 // ============================================
@@ -294,9 +295,17 @@ export async function createEarningsFromPayment({
       // Determine platform fee and consultant pool based on whether org split applies.
       // #778 §C-2 — floor the marketplace fee (was Math.round); the shaved paisa
       // stays in the consultant pool (gross − fee), the pool's residual party.
+      // #880 — a referred consultant pays 0% platform commission on their first
+      // sessions (their referee instrument). Scoped to individual settlements;
+      // org-hosted splits keep their rate-card economics.
+      const waiveCommission =
+        !orgSplit &&
+        (await isConsultantReferralWaiverActive(tx, consultantProfileId));
       const platformFeePaise = orgSplit
         ? orgSplit.platformFeePaise
-        : prorate(grossAmount, PAYOUT_CONSTANTS.PLATFORM_FEE_PERCENTAGE, 100);
+        : waiveCommission
+          ? 0
+          : prorate(grossAmount, PAYOUT_CONSTANTS.PLATFORM_FEE_PERCENTAGE, 100);
       const totalConsultantPool = orgSplit
         ? orgSplit.consultantSharePaise
         : grossAmount - platformFeePaise;
