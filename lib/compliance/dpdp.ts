@@ -17,8 +17,10 @@
  *
  * 1. Consent artifact per purpose:
  *      - User explicitly grants consent for each data-processing purpose.
- *      - Purposes must be granular (e.g. "session-booking", "marketing",
- *        "analytics", "third-party-sharing-with-stream").
+ *      - Purposes must be granular and drawn from the SINGLE canonical
+ *        taxonomy in `lib/compliance/purpose-codes.ts` (PURPOSE_CODES):
+ *        PRIMARY_PROCESSING, SESSION_BOOKING, STREAM_DATA_PROCESSING,
+ *        MARKETING_COMMS, ANALYTICS. Do not introduce ad-hoc string literals.
  *      - Notice must be presented in English + any of the 22 Schedule VIII
  *        languages the user selects. Store language code on the artifact.
  *
@@ -65,11 +67,31 @@
 
 import { createHash } from "node:crypto";
 import prisma from "@/lib/prisma";
+import type { PurposeCode } from "./purpose-codes";
+
+/**
+ * Thrown when a purpose-scoped action is blocked because the user has not
+ * granted (or has withdrawn) the required consent. Typed so callers can
+ * distinguish a deliberate DPDP gate from an infra failure and degrade
+ * gracefully (skip the processing) instead of erroring the whole path —
+ * without weakening the gate itself.
+ */
+export class ConsentRequiredError extends Error {
+  readonly purposeCode: PurposeCode;
+  constructor(purposeCode: PurposeCode, message: string) {
+    super(message);
+    this.name = "ConsentRequiredError";
+    this.purposeCode = purposeCode;
+  }
+}
 
 export interface ConsentGrantInput {
   userId: string;
   dataFiduciary: string;
-  purposeCodes: string[];
+  // Canonical codes only — callers normalize raw/dynamic input at the
+  // boundary (normalizePurposeCode) so the taxonomy is enforced at compile
+  // time, not just by the runtime gate (#895).
+  purposeCodes: PurposeCode[];
   language: string; // ISO 639-1 or Schedule VIII code
   consentManager?: string | null;
   version: number;
@@ -79,7 +101,7 @@ export interface ConsentGrantInput {
 export interface ConsentArtifactDraft {
   userId: string;
   dataFiduciary: string;
-  purposeCodes: string[];
+  purposeCodes: PurposeCode[];
   language: string;
   consentManager: string | null;
   version: number;
@@ -144,7 +166,7 @@ export function buildConsentArtifact(input: ConsentGrantInput): ConsentArtifactD
  */
 export async function checkConsent(params: {
   userId: string;
-  purposeCode: string;
+  purposeCode: PurposeCode;
 }): Promise<boolean> {
   const { userId, purposeCode } = params;
   const now = new Date();
@@ -170,12 +192,12 @@ export async function checkConsent(params: {
  *
  * Narrow-scoped withdrawal (a single purposeCode) stamps `withdrawnAt`
  * only on artifacts whose purposeCode list contains the target. This
- * lets a user revoke "marketing" without losing their core
- * "session-booking" consent.
+ * lets a user revoke MARKETING_COMMS without losing their core
+ * PRIMARY_PROCESSING consent (canonical codes: lib/compliance/purpose-codes.ts).
  */
 export async function withdrawConsent(params: {
   userId: string;
-  purposeCode?: string;
+  purposeCode?: PurposeCode;
 }): Promise<{ withdrawnCount: number }> {
   const { userId, purposeCode } = params;
   const now = new Date();

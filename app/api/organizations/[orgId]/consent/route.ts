@@ -23,6 +23,10 @@ import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { buildConsentArtifact, withdrawConsent } from "@/lib/compliance/dpdp";
+import {
+  normalizePurposeCode,
+  type PurposeCode,
+} from "@/lib/compliance/purpose-codes";
 
 // Schedule VIII of the Indian Constitution enumerates 22 languages.
 // Plus English as the lingua franca for enterprise UIs. Accept ISO 639-1
@@ -105,6 +109,28 @@ export async function POST(
   }
   const body = parsed.data;
 
+  // Normalise to the single canonical taxonomy (lib/compliance/purpose-codes.ts)
+  // before storage, so the fail-closed runtime gate and the dashboard never
+  // diverge again. `normalizePurposeCode` returns undefined for codes that are
+  // neither a legacy alias nor already canonical — reject the whole request
+  // rather than silently storing/dropping them, so non-canonical strings can
+  // never re-enter the taxonomy.
+  const normalized = body.purposeCodes.map((c) => ({
+    raw: c,
+    code: normalizePurposeCode(c),
+  }));
+  const unknown = normalized.filter((n) => n.code === undefined).map((n) => n.raw);
+  if (unknown.length > 0) {
+    return NextResponse.json(
+      { error: "Unknown purpose code(s)", detail: { unknown } },
+      { status: 400 },
+    );
+  }
+  // Unknowns rejected above, so every `code` is a narrowed PurposeCode here.
+  const purposeCodes = Array.from(
+    new Set(normalized.map((n) => n.code as PurposeCode)),
+  );
+
   // Cross-org check: caller must be recording consent for an actual
   // member of this org.
   const member = await prisma.membership.findUnique({
@@ -123,7 +149,7 @@ export async function POST(
   const draft = buildConsentArtifact({
     userId: body.userId,
     dataFiduciary: `org:${orgId}`,
-    purposeCodes: body.purposeCodes,
+    purposeCodes,
     language: body.language,
     consentManager: body.consentManager ?? null,
     version: body.version,
@@ -148,7 +174,7 @@ export async function POST(
         description: `Consent granted for member ${member.id}`,
         details: {
           membershipId: member.id,
-          purposeCodes: body.purposeCodes,
+          purposeCodes,
           language: body.language,
           version: body.version,
           hash: draft.hash,
@@ -202,7 +228,22 @@ export async function DELETE(
       { status: 400 },
     );
   }
-  const { userId, purposeCode } = parsed.data;
+  const { userId } = parsed.data;
+  // Normalise a legacy kebab-case scope to canonical so a withdrawal targets
+  // the same code the gate/storage uses (e.g. third-party-sharing-with-stream
+  // → STREAM_DATA_PROCESSING). An unknown code must 400 — NOT fall back to
+  // undefined, which `withdrawConsent` reads as "withdraw ALL consents" and
+  // would silently escalate a scoped request into a full opt-out.
+  let purposeCode: PurposeCode | undefined;
+  if (parsed.data.purposeCode) {
+    purposeCode = normalizePurposeCode(parsed.data.purposeCode);
+    if (purposeCode === undefined) {
+      return NextResponse.json(
+        { error: "Unknown purpose code", detail: { purposeCode: parsed.data.purposeCode } },
+        { status: 400 },
+      );
+    }
+  }
 
   // Cross-org guard: same logic as POST — only members of this org can
   // have their consent withdrawn through this endpoint.
