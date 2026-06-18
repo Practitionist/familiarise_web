@@ -75,15 +75,6 @@ export function TopicsMultiSelect({
     };
   }, []);
 
-  // Notify the parent only when the topic VALUES change. topicsKey is the
-  // serialized topics; depending on onTopicsChange/topics (identity changes
-  // every render — callers pass an inline arrow) re-fired this effect on every
-  // render and looped through react-hook-form's onChange.
-  useEffect(() => {
-    onTopicsChange?.(topics);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [topicsKey]);
-
   // Update suggestions when input changes
   useEffect(() => {
     if (inputValue.trim() === "") {
@@ -119,14 +110,18 @@ export function TopicsMultiSelect({
 
     if (isDuplicate) return;
 
-    setTopics((prevTopics) => [...prevTopics, topic]);
+    const nextTopics = [...topics, topic];
+    setTopics(nextTopics);
+    onTopicsChange?.(nextTopics);
     setInputValue("");
     setSuggestions([]);
     inputRef.current?.focus();
   };
 
   const removeTopic = (index: number) => {
-    setTopics((prevTopics) => prevTopics.filter((_, i) => i !== index));
+    const nextTopics = topics.filter((_, i) => i !== index);
+    setTopics(nextTopics);
+    onTopicsChange?.(nextTopics);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
