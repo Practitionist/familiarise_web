@@ -10,6 +10,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { alertOrphanedPayments } from "@/scripts/alerts/alert-orphaned-payments";
 import { CronLockHeldError } from "@/lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
@@ -23,11 +24,17 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    Sentry.logger.info("cron:alert-orphaned-payments started");
     console.log("🔍 Starting orphaned payments alert via API...");
 
     const result = await alertOrphanedPayments();
 
     console.log("✅ Orphaned payments alert completed:", {
+      totalOrphaned: result.totalOrphaned,
+      criticalCount: result.criticalCount,
+      totalAmount: result.totalAmount,
+    });
+    Sentry.logger.info("cron:alert-orphaned-payments finished", {
       totalOrphaned: result.totalOrphaned,
       criticalCount: result.criticalCount,
       totalAmount: result.totalAmount,
@@ -43,6 +50,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     if (error instanceof CronLockHeldError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
     }
+    Sentry.captureException(error, { tags: { subsystem: "cron", job: "alert-orphaned-payments" } });
     console.error("Error in orphaned payments alert:", error);
     return NextResponse.json(
       {

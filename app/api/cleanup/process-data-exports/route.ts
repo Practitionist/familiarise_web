@@ -7,6 +7,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { processDataExports } from "@/scripts/cleanup/process-data-exports";
 import { CronLockHeldError } from "@/lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
   const authHeader = req.headers.get("authorization");
@@ -16,7 +17,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   try {
+    Sentry.logger.info("cron:process-data-exports started");
     const result = await processDataExports();
+    Sentry.logger.info("cron:process-data-exports finished", {
+      picked: result.picked,
+      succeeded: result.succeeded,
+      failed: result.failed,
+    });
     return NextResponse.json(result, { status: result.success ? 200 : 500 });
   } catch (error) {
     // #476 — concurrent invocation (schedule overlap / manual re-run)
@@ -24,6 +31,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     if (error instanceof CronLockHeldError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
     }
+    Sentry.captureException(error, { tags: { subsystem: "cron", job: "process-data-exports" } });
     return NextResponse.json(
       {
         error: "Data export tick failed",

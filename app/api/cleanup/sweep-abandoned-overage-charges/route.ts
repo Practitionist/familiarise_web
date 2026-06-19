@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { sweepAbandonedOverageCharges } from "@/scripts/cleanup/sweep-abandoned-overage-charges";
 import { CronLockHeldError } from "@/lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
@@ -17,8 +18,13 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    Sentry.logger.info("cron:sweep-abandoned-overage-charges started");
     const result = await sweepAbandonedOverageCharges();
     console.log("✅ Abandoned overage-charge sweep completed:", {
+      scanned: result.scanned,
+      failed: result.failed,
+    });
+    Sentry.logger.info("cron:sweep-abandoned-overage-charges finished", {
       scanned: result.scanned,
       failed: result.failed,
     });
@@ -29,6 +35,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     if (error instanceof CronLockHeldError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
     }
+    Sentry.captureException(error, { tags: { subsystem: "cron", job: "sweep-abandoned-overage-charges" } });
     console.error("Error in abandoned overage-charge sweep:", error);
     return NextResponse.json(
       {

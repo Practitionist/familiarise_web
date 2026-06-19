@@ -10,6 +10,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { autoCompleteAppointments } from "@/scripts/appointments/auto-complete-appointments";
 import { CronLockHeldError } from "@/lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
@@ -23,10 +24,17 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    Sentry.logger.info("cron:auto-complete-appointments started");
     console.log("⏰ Starting auto-complete appointments via API...");
 
     const result = await autoCompleteAppointments();
 
+    Sentry.logger.info("cron:auto-complete-appointments finished", {
+      webinarsCompleted: result.webinarsCompleted,
+      classesCompleted: result.classesCompleted,
+      consultationsCompleted: result.consultationsCompleted,
+      subscriptionsCompleted: result.subscriptionsCompleted,
+    });
     console.log("✅ Auto-complete appointments finished:", {
       webinarsCompleted: result.webinarsCompleted,
       classesCompleted: result.classesCompleted,
@@ -41,6 +49,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     if (error instanceof CronLockHeldError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
     }
+    Sentry.captureException(error, { tags: { subsystem: "cron", job: "auto-complete-appointments" } });
     console.error("Error in auto-complete appointments:", error);
     return NextResponse.json(
       {
