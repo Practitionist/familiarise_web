@@ -28,6 +28,7 @@ import "dotenv/config";
 import prisma from "@/lib/prisma";
 import { EarningStatus } from "@prisma/client";
 import { withCronLock, CronLockHeldError } from "@/lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 export interface ReleasePendingTrustResult {
   scanned: number;
@@ -46,6 +47,7 @@ export async function runReleasePendingTrustEarnings(): Promise<ReleasePendingTr
 }
 
 async function runReleasePendingTrustEarningsUnlocked(): Promise<ReleasePendingTrustResult> {
+  Sentry.logger.info("job:release-pending-trust-earnings started");
   const result: ReleasePendingTrustResult = {
     scanned: 0,
     released: 0,
@@ -102,11 +104,13 @@ async function runReleasePendingTrustEarningsUnlocked(): Promise<ReleasePendingT
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     result.errors.push(message);
+    Sentry.captureException(err, { tags: { subsystem: "jobs", job: "release-pending-trust-earnings" } });
   }
 
   console.log(
     `[release-pending-trust-earnings] scanned=${result.scanned} released=${result.released} errors=${result.errors.length}`,
   );
+  Sentry.logger.info("job:release-pending-trust-earnings finished", { scanned: result.scanned, released: result.released, errors: result.errors.length });
   return result;
 }
 
@@ -120,9 +124,11 @@ if (require.main === module) {
     .catch((err) => {
       // #476 — lock held = another run is live; skip cleanly (exit 0).
       if (err instanceof CronLockHeldError) {
+        Sentry.logger.info(`job:release-pending-trust-earnings lock held — ${err.message}`);
         console.log(`⏭️  ${err.message}`);
         process.exit(0);
       }
+      Sentry.captureException(err, { tags: { subsystem: "jobs", job: "release-pending-trust-earnings" } });
       console.error("Fatal:", err);
       process.exit(1);
     })

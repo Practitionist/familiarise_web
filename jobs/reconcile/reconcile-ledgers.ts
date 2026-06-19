@@ -24,9 +24,11 @@ import {
   recordSystemError,
 } from "../../lib/enterprise/system-events";
 import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 async function main(): Promise<void> {
   await abortIfMaintenance("reconcile-ledgers");
+  Sentry.logger.info("job:reconcile-ledgers started");
   console.log("🔎 Starting ledger reconciliation job...");
   console.log(`Timestamp: ${new Date().toISOString()}`);
 
@@ -57,6 +59,15 @@ async function main(): Promise<void> {
       );
     }
 
+    if (report.ok) {
+      Sentry.logger.info("job:reconcile-ledgers finished", {
+        orgsChecked: report.summary.orgsChecked,
+        accountsChecked: report.summary.accountsChecked,
+        assignmentsChecked: report.summary.assignmentsChecked,
+        discrepanciesCount: report.summary.discrepanciesCount,
+      });
+    }
+
     if (!report.ok) {
       console.log("\n⚠️  Discrepancies:");
       for (const f of report.findings) {
@@ -77,15 +88,33 @@ async function main(): Promise<void> {
           kinds: Array.from(new Set(report.findings.map((f) => f.kind))),
         },
       });
+      Sentry.captureException(
+        new Error(
+          `Ledger reconciliation: ${report.summary.discrepanciesCount} discrepancies found`,
+        ),
+        {
+          tags: { subsystem: "jobs", job: "reconcile-ledgers" },
+          contexts: {
+            ledger: {
+              reportId: report.id,
+              discrepancyCount: report.summary.discrepanciesCount,
+            },
+          },
+        },
+      );
       process.exit(2);
     }
   } catch (error) {
     // #476 — lock held = another run is live; skip cleanly (exit 0).
     if (error instanceof CronLockHeldError) {
+      Sentry.logger.info("job:reconcile-ledgers skipped — lock held by another run");
       console.log(`⏭️  ${error.message}`);
       return;
     }
     console.error("❌ Fatal error in ledger reconciliation:", error);
+    Sentry.captureException(error, {
+      tags: { subsystem: "jobs", job: "reconcile-ledgers" },
+    });
     // #776 §K — a crashed auditor means we're flying blind on money integrity.
     await recordSystemError({
       category: "RECONCILE",
