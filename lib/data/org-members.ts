@@ -13,13 +13,20 @@
  * unnecessary.
  */
 
-import type { MemberRole, MemberStatus } from "@prisma/client";
+import type {
+  MemberRole,
+  MemberStatus,
+  PayoutRecipient,
+} from "@prisma/client";
 import prisma from "@/lib/prisma";
 
 export interface MemberRow {
   id: string;
   role: MemberRole;
   status: MemberStatus;
+  // #729 — keep the hydrated shape byte-for-byte with the API payload (the
+  // route returns it via `include`), so the edit dialog reads it pre-refetch.
+  payoutRecipient: PayoutRecipient;
   createdAt: string;
   user: {
     id: string;
@@ -38,6 +45,7 @@ export async function getOrgMembers(
       id: true,
       role: true,
       status: true,
+      payoutRecipient: true,
       createdAt: true,
       user: { select: { id: true, name: true, email: true, image: true } },
     },
@@ -48,6 +56,7 @@ export async function getOrgMembers(
       id: r.id,
       role: r.role,
       status: r.status,
+      payoutRecipient: r.payoutRecipient,
       createdAt: r.createdAt.toISOString(),
       user: r.user,
     })),

@@ -54,7 +54,10 @@ export default function AppointmentsPageClient({
     else setScope({ kind: "org", orgId: next });
   };
 
-  if (isLoading) {
+  // Guard on initial load only — with keepPreviousData the previous scope's
+  // list stays in `eventsData` during a refetch, so gating on `isLoading`
+  // alone would flash the skeleton on every scope switch (#346).
+  if (isLoading && !eventsData) {
     return <PageSkeleton />;
   }
 
