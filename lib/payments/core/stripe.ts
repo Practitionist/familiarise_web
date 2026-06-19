@@ -166,6 +166,10 @@ export async function cancelStripePayment(
       }
     }
     console.error(`Failed to cancel Stripe payment ${paymentIntentId}:`, error);
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "payments", provider: "stripe" } },
+    );
   }
 }
 
@@ -243,6 +247,10 @@ export async function getStripeRefund(refundId: string): Promise<RefundResult> {
     };
   } catch (error) {
     console.error("Stripe refund retrieval failed:", error);
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "payments", provider: "stripe" } },
+    );
     throw handleStripeRefundError(error);
   }
 }
@@ -277,6 +285,10 @@ export async function listStripeRefunds(
     }));
   } catch (error) {
     console.error("Stripe refunds list failed:", error);
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "payments", provider: "stripe" } },
+    );
     throw handleStripeRefundError(error);
   }
 }
@@ -320,6 +332,10 @@ export async function getStripeDispute(
     } else {
       console.error("Stripe dispute retrieval failed:", error);
     }
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "payments", provider: "stripe" } },
+    );
     throw handleStripeDisputeError(error);
   }
 }
@@ -373,6 +389,10 @@ export async function submitStripeDisputeEvidence({
     };
   } catch (error) {
     console.error("Stripe dispute evidence submission failed:", error);
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "payments", provider: "stripe" } },
+    );
     throw handleStripeDisputeError(error);
   }
 }
@@ -405,6 +425,10 @@ export async function listStripeDisputes(
     }));
   } catch (error) {
     console.error("Stripe disputes list failed:", error);
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "payments", provider: "stripe" } },
+    );
     throw handleStripeDisputeError(error);
   }
 }

@@ -3,6 +3,7 @@
  * Handles spot availability and notifying users when slots open up
  */
 
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { WaitlistStatus } from "@prisma/client";
 import {
@@ -141,6 +142,10 @@ export async function handleSlotOpening(params: SlotOpeningParams): Promise<{
         const errorMessage =
           error instanceof Error ? error.message : "Unknown error";
         errors.push({ userId: winner.userId, error: errorMessage });
+        Sentry.captureException(
+          error instanceof Error ? error : new Error(String(error)),
+          { tags: { subsystem: "waitlist" } },
+        );
         console.error(`Error notifying waitlist user ${winner.userId}:`, error);
       }
     }

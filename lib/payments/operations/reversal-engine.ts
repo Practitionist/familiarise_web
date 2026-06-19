@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import type { Tx } from "@/lib/prisma";
 /**
  * Unified reversal engine (#776 §C / ARCH #4).
@@ -278,6 +279,10 @@ async function reversePayoutClawback(
       ],
     });
   } catch (err) {
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "payments" } },
+    );
     console.error(
       `[ledger] payout clawback posting FAILED for payout ${orgPayoutId} (reconcile will flag): ${err instanceof Error ? err.message : String(err)}`,
     );
