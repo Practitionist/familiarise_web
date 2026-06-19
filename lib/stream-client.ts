@@ -3,6 +3,7 @@
  * Provides singleton instances for StreamChat and handles connection management
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { StreamChat } from "stream-chat";
 import { StreamClient } from "@stream-io/node-sdk";
 import { withCircuitBreaker } from "@/lib/redis";
@@ -180,9 +181,15 @@ export async function withStreamCircuitBreaker<T>(
       error.message.includes("circuit breaker is OPEN")
     ) {
       if (fallback) return fallback();
-      throw new StreamUnavailableError();
+      const unavailable = new StreamUnavailableError();
+      Sentry.captureException(unavailable, {
+        tags: { subsystem: "stream" },
+        level: "warning",
+      });
+      throw unavailable;
     }
-    // Genuine Stream/operation error — preserve original behaviour, rethrow.
+    // Genuine Stream/operation error — capture and rethrow.
+    Sentry.captureException(error, { tags: { subsystem: "stream" } });
     throw error;
   }
 }
