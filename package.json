@@ -87,6 +87,7 @@
     "@react-email/components": "^1.0.6",
     "@react-email/render": "^2.0.4",
     "@react-pdf/renderer": "^4.3.2",
+    "@sentry/nextjs": "^10.59.0",
     "@stream-io/node-sdk": "^0.7.36",
     "@stream-io/video-react-sdk": "^1.31.5",
     "@stripe/stripe-js": "^8.6.4",
@@ -131,10 +132,9 @@
     "zod": "^3.25.67"
   },
   "devDependencies": {
-    "@faker-js/faker": "^10.2.0",
     "@eslint/js": "^9.39.2",
+    "@faker-js/faker": "^10.2.0",
     "@next/bundle-analyzer": "^15",
-    "fast-check": "^3.23.2",
     "@next/eslint-plugin-next": "^16.2.2",
     "@testing-library/jest-dom": "^6.9.1",
     "@types/jest": "^30.0.0",
@@ -152,6 +152,7 @@
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-unused-imports": "^4.3.0",
+    "fast-check": "^3.23.2",
     "glob": "^13.0.0",
     "globals": "^17.1.0",
     "jest": "^30.2.0",
