@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma, { type Tx } from "@/lib/prisma";
 import { Prisma, PaymentStatus, AppointmentStatus } from "@prisma/client";
@@ -45,6 +46,8 @@ export async function POST(req: NextRequest) {
     }
 
     const event = JSON.parse(body);
+
+    Sentry.logger.info("xflow webhook received", { type: String(event.type ?? "unknown") });
 
     // Log webhook events
     console.log(`🌊 XFlow Webhook Event: ${event.type}`, {
@@ -154,6 +157,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ status: "ok" });
   } catch (error) {
     console.error("XFlow webhook error:", error);
+    Sentry.captureException(error, {
+      tags: { subsystem: "payments", provider: "xflow" },
+    });
     return NextResponse.json(
       { error: "Webhook handler failed" },
       { status: 500 },

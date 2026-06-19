@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import Stripe from "stripe";
 import {
   PaymentIntentParams,
@@ -116,6 +117,10 @@ export async function createStripeCheckoutSession({
     };
   } catch (error) {
     console.error("Stripe checkout session creation failed:", error);
+    Sentry.captureException(error, {
+      tags: { subsystem: "payments", provider: "stripe" },
+      contexts: { payment: { amount, currency } },
+    });
     throw handleStripeError(error);
   }
 }
@@ -207,6 +212,9 @@ export async function createStripeRefund({
     };
   } catch (error) {
     console.error("Stripe refund creation failed:", error);
+    Sentry.captureException(error, {
+      tags: { subsystem: "payments", provider: "stripe" },
+    });
     throw handleStripeRefundError(error);
   }
 }

@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { after } from "next/server";
 import crypto from "node:crypto";
@@ -18,6 +19,7 @@ import { processRazorpayWebhookEvent } from "../razorpay-dispatch";
 
 export async function POST(req: NextRequest) {
   const secret = process.env.RAZORPAY_WEBHOOK_SECRET;
+  Sentry.setTag("subsystem", "payments");
   if (!secret) {
     console.error("RAZORPAY_WEBHOOK_SECRET not configured");
     return NextResponse.json(
@@ -106,9 +108,7 @@ export async function POST(req: NextRequest) {
 
   // DB health check — return 503 if DB is unreachable so Razorpay retries
   if (!(await isDbHealthy())) {
-    console.warn(
-      "[razorpay webhook] DB unhealthy — returning 503 for Razorpay retry",
-    );
+    Sentry.logger.warn("razorpay webhook: db unhealthy, returning 503");
     return NextResponse.json(
       { error: "Service temporarily unavailable" },
       { status: 503 },
@@ -128,6 +128,10 @@ export async function POST(req: NextRequest) {
     eventType = event.event;
   } catch (parseError) {
     console.error("Razorpay webhook parse error:", parseError);
+    Sentry.captureException(parseError, {
+      tags: { subsystem: "payments" },
+      contexts: { webhook: { provider: "razorpay" } },
+    });
     return NextResponse.json(
       { error: "Invalid webhook payload" },
       { status: 400 },
@@ -163,6 +167,8 @@ export async function POST(req: NextRequest) {
     console.log(`⚠️ Duplicate webhook event ${eventId}, returning OK`);
     return NextResponse.json({ status: "ok", duplicate: true });
   }
+
+  Sentry.logger.info(Sentry.logger.fmt`razorpay webhook: ${eventType}`, { eventId });
 
   // Return 200 immediately — process the event asynchronously
   after(async () => {

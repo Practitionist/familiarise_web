@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "node:crypto";
 import {
@@ -23,6 +24,7 @@ import {
 
 export async function POST(req: NextRequest) {
   const secret = process.env.STRIPE_WEBHOOK_SECRET;
+  Sentry.setTag("subsystem", "payments");
   if (!secret) {
     console.error("STRIPE_WEBHOOK_SECRET not configured");
     return NextResponse.json(
@@ -38,9 +40,7 @@ export async function POST(req: NextRequest) {
 
   // DB health check — return 503 if DB is unreachable so Stripe retries
   if (!(await isDbHealthy())) {
-    console.warn(
-      "[stripe webhook] DB unhealthy — returning 503 for Stripe retry",
-    );
+    Sentry.logger.warn("stripe webhook: db unhealthy, returning 503");
     return NextResponse.json(
       { error: "Service temporarily unavailable" },
       { status: 503 },
@@ -71,6 +71,8 @@ export async function POST(req: NextRequest) {
       console.log(`⚠️ Duplicate webhook event ${eventId}, returning OK`);
       return NextResponse.json({ status: "ok", duplicate: true });
     }
+
+    Sentry.logger.info(Sentry.logger.fmt`stripe webhook: ${eventType}`, { eventId });
 
     // PII-scrub the payload before logging — Stripe payloads can carry
     // `receipt_email`, `billing_details.name/email/phone`, and arbitrary
@@ -245,6 +247,10 @@ export async function POST(req: NextRequest) {
         handlerError instanceof Error
           ? handlerError.message
           : String(handlerError);
+      Sentry.captureException(handlerError, {
+        tags: { subsystem: "payments", provider: "stripe" },
+        contexts: { webhook: { eventType, eventId } },
+      });
       throw handlerError;
     } finally {
       // Mark event as processed
@@ -254,6 +260,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ status: "ok" });
   } catch (error) {
     console.error("Stripe webhook error:", error);
+    Sentry.captureException(error, {
+      tags: { subsystem: "payments", provider: "stripe" },
+    });
     return NextResponse.json(
       { error: "Webhook handler failed" },
       { status: 500 },
