@@ -11,6 +11,8 @@
  *   logClassifiedError("Checkout", classified, error);
  */
 
+import * as Sentry from "@sentry/nextjs";
+
 // ============================================================================
 // Error Types — used by both server routes and frontend toast mapping
 // ============================================================================
@@ -233,6 +235,7 @@ export function logClassifiedError(
   if (result.isBusinessError) {
     console.warn(`[${tag}] Business rule blocked: ${result.errorMessage}`);
   } else {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "payments" } });
     console.error(`[${tag}] Unexpected error:`, error);
   }
 }
