@@ -1,5 +1,6 @@
 "use client";
 
+import * as Sentry from "@sentry/nextjs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -50,6 +51,7 @@ export default function ForgotPassword() {
         toast({ title: "Request Sent", description: successMessage });
       }
     } catch (error: unknown) {
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
       console.error("Forgot password error:", error);
       const errorMessage =
         error instanceof Error

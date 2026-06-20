@@ -3,6 +3,7 @@
  * Handles the complete checkout flow for all appointment types
  */
 
+import * as Sentry from "@sentry/nextjs";
 import prisma, { type Tx } from "@/lib/prisma";
 import { CheckoutInput, checkoutSchema } from "@/schemas/checkout";
 import { calculateSubscriptionEndDate } from "@/utils/dateUtils";
@@ -183,6 +184,9 @@ export class PaymentIntentManager {
       return paymentResponse;
     } catch (error) {
       console.error("Payment intent creation failed:", error);
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), {
+        tags: { subsystem: "payments" },
+      });
       throw new Error(
         "Failed to create payment intent. Please try again later.",
       );
@@ -201,6 +205,10 @@ export class PaymentIntentManager {
       this.activeIntents.delete(intentId);
     } catch (error) {
       console.error(`Failed to cancel payment intent ${intentId}:`, error);
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), {
+        tags: { subsystem: "payments" },
+        level: "warning",
+      });
       // Don't throw - cleanup should be best-effort
     }
   }
@@ -2132,6 +2140,9 @@ export async function handleCheckout(
         });
       } catch (paymentError) {
         console.error("Payment intent creation failed:", paymentError);
+        Sentry.captureException(paymentError instanceof Error ? paymentError : new Error(String(paymentError)), {
+          tags: { subsystem: "payments" },
+        });
         throw new Error(
           "Failed to create payment intent. Please try again later.",
         );
@@ -2407,12 +2418,13 @@ export async function handleCheckout(
                       },
                     );
                   })
-                  .catch((notifyErr) =>
-                    console.error(
-                      "[notifyOrgProgramExhausted] failed:",
-                      notifyErr,
-                    ),
-                  );
+                  .catch((notifyErr) => {
+                    console.error("[notifyOrgProgramExhausted] failed:", notifyErr);
+                    Sentry.captureException(notifyErr instanceof Error ? notifyErr : new Error(String(notifyErr)), {
+                      tags: { subsystem: "payments" },
+                      level: "warning",
+                    });
+                  });
 
                 throw new Error(
                   "Your program has hit its session cap for this cycle. Ask your organization admin to upgrade the program or wait for the next cycle.",
@@ -2511,12 +2523,13 @@ export async function handleCheckout(
                       },
                     );
                   })
-                  .catch((notifyErr) =>
-                    console.error(
-                      "[notifyOrgProgramCapNear] failed:",
-                      notifyErr,
-                    ),
-                  );
+                  .catch((notifyErr) => {
+                    console.error("[notifyOrgProgramCapNear] failed:", notifyErr);
+                    Sentry.captureException(notifyErr instanceof Error ? notifyErr : new Error(String(notifyErr)), {
+                      tags: { subsystem: "payments" },
+                      level: "warning",
+                    });
+                  });
               }
             }
 
@@ -2728,6 +2741,10 @@ export async function handleCheckout(
             `⚠️ Failed to process referral qualifying action for user ${userId}:`,
             referralError,
           );
+          Sentry.captureException(referralError instanceof Error ? referralError : new Error(String(referralError)), {
+            tags: { subsystem: "payments" },
+            level: "warning",
+          });
         }
 
         // Create consultant earnings (mock payments bypass webhooks, so earnings must be created here)
@@ -2836,6 +2853,10 @@ export async function handleCheckout(
             `⚠️ Failed to create earnings for mock payment:`,
             earningsError,
           );
+          Sentry.captureException(earningsError instanceof Error ? earningsError : new Error(String(earningsError)), {
+            tags: { subsystem: "payments" },
+            level: "warning",
+          });
         }
 
         // FIX #437: Consultant qualifying action (receiving first paid booking)
@@ -2849,6 +2870,10 @@ export async function handleCheckout(
             `⚠️ Failed to process consultant referral qualifying action:`,
             consultantRefError,
           );
+          Sentry.captureException(consultantRefError instanceof Error ? consultantRefError : new Error(String(consultantRefError)), {
+            tags: { subsystem: "payments" },
+            level: "warning",
+          });
         }
 
         // Update waitlist status if coming from waitlist flow
@@ -2865,6 +2890,10 @@ export async function handleCheckout(
           } catch (waitlistError) {
             // Log but don't fail the checkout - payment was successful
             console.error("Failed to update waitlist status:", waitlistError);
+            Sentry.captureException(waitlistError instanceof Error ? waitlistError : new Error(String(waitlistError)), {
+              tags: { subsystem: "payments" },
+              level: "warning",
+            });
           }
         }
       }
@@ -2884,6 +2913,9 @@ export async function handleCheckout(
       };
     } catch (dbError) {
       console.error("Failed to create payment record:", dbError);
+      Sentry.captureException(dbError instanceof Error ? dbError : new Error(String(dbError)), {
+        tags: { subsystem: "payments" },
+      });
 
       // CRITICAL: Cancel payment intent since DB operation failed
       // (Skip cleanup for zero-amount payments — they have no real gateway intent)
@@ -2927,6 +2959,10 @@ export async function handleCheckout(
             throw waitlistError;
           }
           // Waitlist creation failed (e.g., already on waitlist) — fall through
+          Sentry.captureException(waitlistError instanceof Error ? waitlistError : new Error(String(waitlistError)), {
+            tags: { subsystem: "payments" },
+            level: "warning",
+          });
         }
       }
 
@@ -2958,6 +2994,10 @@ export async function handleCheckout(
           ) {
             throw waitlistError;
           }
+          Sentry.captureException(waitlistError instanceof Error ? waitlistError : new Error(String(waitlistError)), {
+            tags: { subsystem: "payments" },
+            level: "warning",
+          });
         }
       }
 

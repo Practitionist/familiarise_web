@@ -1,5 +1,6 @@
 "use client";
 
+import * as Sentry from "@sentry/nextjs";
 import { motion } from "framer-motion";
 import { useRouter } from "next/navigation";
 import {

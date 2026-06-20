@@ -220,6 +220,9 @@ export async function getRazorpayRefund(
     };
   } catch (error) {
     console.error("Razorpay refund retrieval failed:", error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), {
+      tags: { subsystem: "payments", provider: "razorpay" },
+    });
     throw handleRazorpayRefundError(error);
   }
 }
@@ -268,6 +271,9 @@ export async function listRazorpayRefunds(
     }));
   } catch (error) {
     console.error("Razorpay refunds list failed:", error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), {
+      tags: { subsystem: "payments", provider: "razorpay" },
+    });
     throw handleRazorpayRefundError(error);
   }
 }

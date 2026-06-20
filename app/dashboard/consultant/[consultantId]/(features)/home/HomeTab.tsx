@@ -1,5 +1,6 @@
 "use client";
 
+import * as Sentry from "@sentry/nextjs";
 import { useMemo } from "react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -167,6 +168,7 @@ export function HomeTab({
       );
       router.push(`/meetings/${meetingId}`);
     } catch (_error) {
+      Sentry.captureException(_error instanceof Error ? _error : new Error(String(_error)), { tags: { subsystem: "client" } });
       toast({
         title: "Error",
         description: "Failed to join meeting.",

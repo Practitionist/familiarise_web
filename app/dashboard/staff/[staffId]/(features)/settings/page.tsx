@@ -4,6 +4,7 @@
  */
 "use client"; // Mark as a Client Component
 
+import * as Sentry from "@sentry/nextjs";
 import { useToast } from "@/hooks/use-toast";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";

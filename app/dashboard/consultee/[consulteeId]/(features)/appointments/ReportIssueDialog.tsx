@@ -1,5 +1,6 @@
 "use client";
 
+import * as Sentry from "@sentry/nextjs";
 import React from "react";
 import {
   ResponsiveModal,
@@ -138,6 +139,7 @@ export function ReportIssueDialog({
       onOpenChange(false);
       onSuccess?.();
     } catch (error) {
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
       console.error("Failed to create support ticket:", error);
       toast({
         title: "Error",

@@ -1,5 +1,6 @@
 "use client";
 
+import * as Sentry from "@sentry/nextjs";
 import { ScheduleType, SessionType } from "@prisma/client";
 import { TrashIcon } from "assets/icons";
 import { Button } from "components/ui/button";
