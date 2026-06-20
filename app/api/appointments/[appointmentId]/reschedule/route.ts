@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth-server";
@@ -555,6 +556,7 @@ export async function POST(
         }
       }
     } catch (error) {
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "appointments" } });
       console.error("[reschedule] Failed to send notification:", error);
     }
 
@@ -593,6 +595,7 @@ export async function POST(
     }
 
     // Only log unexpected errors — the known error types above are normal control flow
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "appointments" } });
     console.error("Error requesting reschedule:", error);
     return NextResponse.json(
       { error: "Failed to request reschedule" },

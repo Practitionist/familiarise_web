@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
@@ -69,6 +70,7 @@ export async function GET(
         { status: 404 },
       );
     }
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "plans" } });
     console.error("Error fetching subscription plan:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching the subscription plan" },
@@ -278,6 +280,7 @@ export async function PUT(
         { status: 404 },
       );
     }
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "plans" } });
     console.error("Error updating subscription plan:", error);
     return NextResponse.json(
       { error: "An error occurred while updating the subscription plan" },
@@ -372,6 +375,7 @@ export async function DELETE(
         { status: 404 },
       );
     }
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "plans" } });
     console.error("Error deleting subscription plan:", error);
     return NextResponse.json(
       { error: "An error occurred while deleting the subscription plan" },

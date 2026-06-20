@@ -3,6 +3,7 @@
  * Manages bank accounts and UPI IDs for receiving payouts
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { PaymentGateway, PayoutAccountType } from "@prisma/client";
@@ -57,6 +58,7 @@ export async function GET() {
     });
   } catch (error) {
     console.error("Error fetching payout accounts:", error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "consultant" } });
     return NextResponse.json(
       { error: "Failed to fetch payout accounts" },
       { status: 500 },
@@ -209,6 +211,7 @@ export async function POST(req: NextRequest) {
         { status: 400 },
       );
     }
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "consultant" } });
     return NextResponse.json(
       { error: "Failed to create payout account" },
       { status: 500 },

@@ -9,6 +9,7 @@
  * 2. SlotValidationService - Validates business rules (conflicts, availability, weekly distribution, etc.)
  */
 
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import { SlotValidationService } from "@/utils/slotAllocation/SlotValidationService";
@@ -219,6 +220,7 @@ export async function POST(
     }
   } catch (error) {
     // Catch-all for unexpected errors (database errors, network issues, etc.)
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
     console.error("Class validation error:", error);
     return NextResponse.json(
       {

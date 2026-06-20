@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import { CancellationReason } from "@prisma/client";
@@ -343,6 +344,7 @@ export async function POST(
         } catch (refundErr) {
           // The cancellation itself stands; a failed refund must be visible,
           // not silently swallowed — surface for ops + tell the caller.
+          Sentry.captureException(refundErr instanceof Error ? refundErr : new Error(String(refundErr)), { tags: { subsystem: "appointments" } });
           console.error(
             `[cancel] refund failed for payment ${paidPayment.id}:`,
             refundErr,
@@ -453,6 +455,7 @@ export async function POST(
       );
     }
 
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "appointments" } });
     console.error("Error canceling appointment:", error);
     return NextResponse.json(
       { error: "Failed to cancel appointment" },

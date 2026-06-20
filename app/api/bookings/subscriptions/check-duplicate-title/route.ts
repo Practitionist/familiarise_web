@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -36,6 +37,7 @@ export async function GET(req: NextRequest) {
       { status: 200 },
     );
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
     console.error("Error checking duplicate subscription title:", error);
     return NextResponse.json(
       {

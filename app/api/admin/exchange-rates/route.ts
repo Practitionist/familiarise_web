@@ -7,6 +7,7 @@
  * Useful when FX markets move significantly within the 1-hour cache window.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 import { requireAdminAuth } from "@/lib/auth-helpers";
 import {
@@ -53,6 +54,7 @@ export async function POST() {
       refreshedAt: new Date().toISOString(),
     });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
     console.error("Error refreshing exchange rate cache:", error);
     return NextResponse.json(
       { success: false, message: "Failed to refresh exchange rate cache" },

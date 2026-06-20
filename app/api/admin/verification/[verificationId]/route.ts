@@ -4,6 +4,7 @@
  * PATCH /api/admin/verification/[verificationId] - Review verification (approve/reject)
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { ConsultantVerificationStatus } from "@prisma/client";
@@ -61,6 +62,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json({ verification });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
     console.error("Error fetching verification:", error);
     return NextResponse.json(
       { error: "Failed to fetch verification" },
@@ -214,6 +216,7 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
             : "More information requested",
     });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
     console.error("Error reviewing verification:", error);
     return NextResponse.json(
       { error: "Failed to review verification" },

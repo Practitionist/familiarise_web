@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 
@@ -41,6 +42,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json(dispute);
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
     console.error("Admin dispute details error:", error);
     return NextResponse.json(
       { error: "Failed to fetch dispute details" },

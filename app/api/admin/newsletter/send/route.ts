@@ -8,6 +8,7 @@
  * This is an interim solution until ConvertKit is integrated (Issue #334).
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireAdminAuth } from "@/lib/auth-helpers";
@@ -114,6 +115,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           if (failedInBatch > 0) failed += failedInBatch;
         }
       } catch (batchError) {
+        Sentry.captureException(batchError instanceof Error ? batchError : new Error(String(batchError)), { tags: { subsystem: "admin" } });
         failed += batch.length;
         errors.push(
           `Batch ${Math.floor(i / BATCH_SIZE) + 1}: ${batchError instanceof Error ? batchError.message : "Unknown error"}`,
@@ -133,6 +135,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       ...(errors.length > 0 && { errors }),
     });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
     console.error("[admin/newsletter/send] Error:", error);
     return NextResponse.json(
       { error: "Failed to send newsletter" },

@@ -5,6 +5,7 @@
  * Gets all recordings the consultee has access to through their enrollments.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { RecordingService } from "@/lib/stream/recording-service";
 import { RecordingTransferService } from "@/lib/stream/recording-transfer-service";
@@ -86,6 +87,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       total: formattedRecordings.length,
     });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "consultees" } });
     console.error("Error getting consultee recordings:", error);
     return NextResponse.json(
       { error: "Failed to get recordings" },

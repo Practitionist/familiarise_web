@@ -6,6 +6,7 @@
  * Access: Consultant owner or enrolled consultees.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { RecordingService } from "@/lib/stream/recording-service";
 import { RecordingTransferService } from "@/lib/stream/recording-transfer-service";

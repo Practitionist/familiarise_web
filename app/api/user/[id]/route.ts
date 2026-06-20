@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import { UserRole, Gender } from "@prisma/client";
@@ -107,6 +108,7 @@ export async function GET(
     if (error instanceof Error) {
       console.error("Error: ", error.stack);
     }
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "user" } });
     return NextResponse.json(
       {
         error:
@@ -211,6 +213,7 @@ export async function PUT(
     return NextResponse.json({ data: updatedUser }, { status: 200 });
   } catch (error) {
     console.error("Error updating user:", error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "user" } });
     return NextResponse.json(
       { error: "An error occurred while updating the user" },
       { status: 500 },
@@ -239,6 +242,7 @@ export async function PATCH(
     return NextResponse.json({ success: true }, { status: 200 });
   } catch (error) {
     console.error("Error patching user professional background:", error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "user" } });
     return NextResponse.json(
       { error: "An error occurred while updating professional background" },
       { status: 500 },
@@ -282,6 +286,7 @@ export async function DELETE(
     );
   } catch (error) {
     console.error("Error deleting user:", error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "user" } });
     return NextResponse.json(
       { error: "An error occurred while deleting the user" },
       { status: 500 },

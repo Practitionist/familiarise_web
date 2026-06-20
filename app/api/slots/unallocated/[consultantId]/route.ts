@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { TSlotTiming } from "@/types/slots";
 import { DayOfWeek } from "@prisma/client";

@@ -15,6 +15,7 @@
  * don't OOM the function. Each chunk = 500 rows.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
@@ -259,6 +260,7 @@ export async function GET(
             reason: err instanceof Error ? err.message : String(err),
           }),
         );
+        Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "organizations" } });
         controller.error(err);
       }
     },
