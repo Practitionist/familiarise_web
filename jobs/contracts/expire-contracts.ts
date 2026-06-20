@@ -27,6 +27,7 @@ import "dotenv/config";
 import prisma from "@/lib/prisma";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { withCronLock, CronLockHeldError } from "@/lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 interface ExpireStats {
   scanned: number;
@@ -111,6 +112,7 @@ export async function runExpireContracts(): Promise<ExpireStats> {
 }
 
 async function main() {
+  Sentry.logger.info("job:expire-contracts started");
   console.log(`[expire-contracts] Starting at ${new Date().toISOString()}`);
   const stats = await withCronLock(
     "expire-contracts",
@@ -120,6 +122,7 @@ async function main() {
   console.log(
     `[expire-contracts] Done. scanned=${stats.scanned} expired=${stats.expired} assignmentsClosed=${stats.assignmentsClosed}`,
   );
+  Sentry.logger.info("job:expire-contracts finished", { scanned: stats.scanned, expired: stats.expired, assignmentsClosed: stats.assignmentsClosed });
 }
 
 // Only run when invoked directly (allows the function to be imported and
@@ -129,9 +132,11 @@ if (require.main === module) {
     .catch((err) => {
       // #476 — lock held = another run is live; skip cleanly (exit 0).
       if (err instanceof CronLockHeldError) {
+        Sentry.logger.info("job:expire-contracts lock held — skipping");
         console.log(`⏭️  ${err.message}`);
         return;
       }
+      Sentry.captureException(err, { tags: { subsystem: "jobs", job: "expire-contracts" } });
       console.error("[expire-contracts] Failed:", err);
       process.exitCode = 1;
     })

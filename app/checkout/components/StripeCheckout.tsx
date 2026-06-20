@@ -1,5 +1,6 @@
 "use client";
 
+import * as Sentry from "@sentry/nextjs";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { CheckoutInput, checkoutResponseSchema } from "@/schemas/checkout";
@@ -101,6 +102,7 @@ export default function StripeCheckout({
       // Validate response using schema
       const validationResult = checkoutResponseSchema.safeParse(rawData);
       if (!validationResult.success) {
+        Sentry.captureException(validationResult.error instanceof Error ? validationResult.error : new Error(String(validationResult.error)), { tags: { subsystem: "payments" } });
         console.error("Invalid checkout response:", validationResult.error);
         console.error("Raw response data:", rawData);
         onPaymentError({ message: "Invalid response from server" });
@@ -162,6 +164,7 @@ export default function StripeCheckout({
         });
       }
     } catch (error) {
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "payments" } });
       onPaymentError({
         message:
           error instanceof Error ? error.message : "An unknown error occurred",

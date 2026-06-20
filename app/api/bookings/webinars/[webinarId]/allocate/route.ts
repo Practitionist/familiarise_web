@@ -9,6 +9,7 @@
  * 2. SlotAllocationService - Validates business rules and executes allocation
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { SlotAllocationService } from "@/utils/slotAllocation/SlotAllocationService";
 import { AllocationMode } from "@/utils/slotAllocation/types";
@@ -138,6 +139,7 @@ export async function PATCH(
     const duration = Date.now() - startTime;
     // Catch-all for unexpected errors (database errors, network issues, etc.)
     console.error(`[Webinar Allocation] Error after ${duration}ms:`, error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
     return NextResponse.json(
       {
         error:

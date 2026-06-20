@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { Prisma } from "@prisma/client";
 
 /**
@@ -49,17 +50,18 @@ export async function withDbConnectRetry<T>(
       return await fn();
     } catch (error) {
       if (!isDbConnectError(error) || attempt >= attempts) {
+        Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "db" } });
         throw error;
       }
       // Exponential: baseMs * 2^(attempt-1) + jitter — with the default 3
       // attempts that's two sleeps (2s, 4s); the final attempt just throws.
       // A cold Supabase pooler needs seconds, not ms.
       const backoffMs = baseMs * 2 ** (attempt - 1) + Math.random() * 500;
-      console.warn(
-        `[connect-retry] transient DB connectivity failure (attempt ${attempt}/${attempts}), retrying in ${Math.round(backoffMs)}ms: ${
-          error instanceof Error ? error.message.split("\n")[0] : String(error)
-        }`,
-      );
+      const warnMsg = `[connect-retry] transient DB connectivity failure (attempt ${attempt}/${attempts}), retrying in ${Math.round(backoffMs)}ms: ${
+        error instanceof Error ? error.message.split("\n")[0] : String(error)
+      }`;
+      console.warn(warnMsg);
+      Sentry.logger.warn(warnMsg, { tags: { subsystem: "db" } });
       await new Promise((resolve) => setTimeout(resolve, backoffMs));
     }
   }

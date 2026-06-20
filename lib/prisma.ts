@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 
@@ -77,9 +78,8 @@ function makeClient() {
   // matches the lib/ convention (lib/redis.ts, lib/maintenance-cron.ts).
   base.$on("query", (e) => {
     if (e.duration > SLOW_QUERY_MS) {
-      console.warn(
-        `[Prisma:SLOW_QUERY] ${e.duration}ms (threshold ${SLOW_QUERY_MS}ms): ${e.query}`,
-        process.env.NODE_ENV === "development" ? { params: e.params } : "",
+      Sentry.logger.warn(
+        Sentry.logger.fmt`[Prisma:SLOW_QUERY] ${e.duration}ms (threshold ${SLOW_QUERY_MS}ms)`,
       );
     }
   });

@@ -24,6 +24,7 @@
  * money was charged.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
@@ -191,6 +192,7 @@ export async function POST(
       });
     });
   } catch (err) {
+    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
     console.error(
       "[wallet/top-ups] placeholder WalletEntry persistence failed:",
       err,
@@ -242,6 +244,7 @@ export async function POST(
         ),
       );
     if (err instanceof PaymentError && err.code === "RAZORPAY_NOT_INITIALIZED") {
+      Sentry.logger.warn("[wallet/top-ups] payment gateway not configured", { tags: { subsystem: "enterprise" } });
       return NextResponse.json(
         {
           error:
@@ -251,6 +254,7 @@ export async function POST(
         { status: 503 },
       );
     }
+    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
     console.error("[wallet/top-ups] createRazorpayOrder failed:", err);
     return NextResponse.json(
       {
@@ -292,6 +296,7 @@ export async function POST(
     // Notes/audit-log write failed, but the WalletEntry already exists
     // and the Razorpay order is live — the top-up will still settle on
     // webhook capture. Return 201 and log for operators.
+    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
     console.error(
       "[wallet/top-ups] notes/audit-log write failed (top-up still valid):",
       err,

@@ -7,6 +7,7 @@
  * Usage: GET /api/stream/debug?userId=USER_ID&secret=YOUR_SECRET
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { getStreamChatClient, isStreamConfigured } from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
@@ -199,6 +200,7 @@ export async function GET(req: NextRequest) {
       }),
     });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
     streamLogger.error("Debug endpoint error", error);
     return NextResponse.json(
       {

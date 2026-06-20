@@ -6,6 +6,7 @@ import { SlotCalculationService } from "@/utils/slotAllocation/SlotCalculationSe
 import { marketplaceVisibilityWhere } from "@/lib/api/plans/visibility";
 
 import { getSession } from "@/lib/auth-server";
+import * as Sentry from "@sentry/nextjs";
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
@@ -53,6 +54,7 @@ export async function GET(request: NextRequest) {
     );
   } catch (error) {
     console.error("Error fetching subscription plans:", error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
     return NextResponse.json(
       { error: "An error occurred while fetching subscription plans" },
       { status: 500 },
@@ -199,6 +201,7 @@ export async function POST(request: NextRequest) {
     );
   } catch (error) {
     console.error("Error creating subscription plan:", error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
     return NextResponse.json(
       { error: "An error occurred while creating the subscription plan" },
       { status: 500 },

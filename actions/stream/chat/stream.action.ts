@@ -7,6 +7,7 @@ import {
   isStreamConfigured,
 } from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
+import * as Sentry from "@sentry/nextjs";
 
 // Token expiry for both chat and video (1 hour)
 const TOKEN_EXPIRATION_SECONDS = 3600;
@@ -39,6 +40,7 @@ export async function tokenProvider(userId: string): Promise<string> {
     streamLogger.error("Failed to generate video token", error, {
       userId: validatedUserId,
     });
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
     throw error;
   }
 }
@@ -68,6 +70,7 @@ export async function chatTokenProvider(userId: string): Promise<string> {
     streamLogger.error("Failed to generate chat token", error, {
       userId: validatedUserId,
     });
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
     throw error;
   }
 }

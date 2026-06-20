@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { Resend } from "resend";
 import { WelcomeEmail } from "@/emails/auth/WelcomeEmail";
 import { PasswordResetEmail } from "@/emails/auth/PasswordResetEmail";
@@ -40,6 +41,16 @@ export async function recordFailedEmail(
   emailType: string,
   sendError: unknown,
 ): Promise<void> {
+  // Capture email send failures in Sentry so they surface without requiring
+  // a query against the FailedEmail table. Only emailType is tagged — the
+  // recipient address is PII and must not appear in Sentry.
+  const errObj =
+    sendError instanceof Error ? sendError : new Error(String(sendError));
+  Sentry.captureException(errObj, {
+    tags: { subsystem: "email", emailType },
+    level: "warning",
+  });
+
   try {
     await prisma.failedEmail.create({
       data: {

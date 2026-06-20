@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { uploadConsultantDocument } from "@/lib/supabase";
@@ -262,6 +263,7 @@ export async function POST(
 
     return NextResponse.json({ data: document }, { status: 201 });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "appointments" } });
     console.error("Error uploading consultant document:", error);
     return NextResponse.json(
       {

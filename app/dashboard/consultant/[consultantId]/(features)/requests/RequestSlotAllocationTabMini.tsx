@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import {
   ResponsiveTable,
   type ResponsiveColumn,
@@ -86,6 +87,7 @@ export function RequestSlotAllocationTabMini() {
 
         setRequests(requests);
       } catch (err) {
+        Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "client" } });
         setError(
           err instanceof Error ? err.message : "Failed to load requests",
         );

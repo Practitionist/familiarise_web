@@ -34,6 +34,7 @@
 // repo secrets, but local + emergency manual runs would fail. See
 // docs/enterprise/50-operations/03-runbooks.md "Running cron jobs locally".
 import "dotenv/config";
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { Resend } from "resend";
 import { getAppUrl } from "@/lib/url";
@@ -59,6 +60,7 @@ async function runDataBreachDeadlineAlertsUnlocked(): Promise<{
   overdue: number;
   emailSent: boolean;
 }> {
+  Sentry.logger.info("job:databreach-deadline-alerts started");
   const now = new Date();
   // Anything detected this far back already has ≤ WARN_HOURS_BEFORE_DEADLINE
   // hours remaining. We pull everything from "deadline minus warn-window"
@@ -156,6 +158,7 @@ async function runDataBreachDeadlineAlertsUnlocked(): Promise<{
       emailSent = true;
       console.log(`[DataBreach] alert email sent to ${to}`);
     } catch (err) {
+      Sentry.captureException(err, { tags: { subsystem: "jobs", job: "databreach-deadline-alerts" } });
       console.error("[DataBreach] alert email failed:", err);
     }
   } else {
@@ -164,6 +167,7 @@ async function runDataBreachDeadlineAlertsUnlocked(): Promise<{
     );
   }
 
+  Sentry.logger.info("job:databreach-deadline-alerts finished", { atRisk, overdue, emailSent });
   return { atRisk, overdue, emailSent };
 }
 
@@ -178,9 +182,11 @@ if (require.main === module) {
     .catch((err) => {
       // #476 — lock held = another run is live; skip cleanly (exit 0).
       if (err instanceof CronLockHeldError) {
+        Sentry.logger.info("job:databreach-deadline-alerts skipped — lock held");
         console.log(`⏭️  ${err.message}`);
         return;
       }
+      Sentry.captureException(err, { tags: { subsystem: "jobs", job: "databreach-deadline-alerts" } });
       console.error("[DataBreach] cron failed:", err);
       process.exitCode = 1;
     })

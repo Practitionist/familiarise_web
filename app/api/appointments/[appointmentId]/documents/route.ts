@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
@@ -207,6 +208,7 @@ export async function GET(
       });
     } catch (dbError) {
       console.error("Database error fetching documents:", dbError);
+      Sentry.captureException(dbError instanceof Error ? dbError : new Error(String(dbError)), { tags: { subsystem: "appointments" } });
       // Return empty array instead of failing - documents folder might not exist yet
       return NextResponse.json({
         data: [],
@@ -237,6 +239,7 @@ export async function GET(
     });
   } catch (error) {
     console.error("Error fetching appointment documents:", error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "appointments" } });
 
     // Provide specific error messages based on error type
     if (error instanceof Error) {
@@ -509,6 +512,7 @@ export async function POST(
       });
     } catch (uploadError) {
       console.error("File upload error:", uploadError);
+      Sentry.captureException(uploadError instanceof Error ? uploadError : new Error(String(uploadError)), { tags: { subsystem: "appointments" } });
 
       if (uploadError instanceof Error) {
         if (
@@ -592,6 +596,7 @@ export async function POST(
       });
     } catch (dbError) {
       console.error("Database error saving document:", dbError);
+      Sentry.captureException(dbError instanceof Error ? dbError : new Error(String(dbError)), { tags: { subsystem: "appointments" } });
 
       // Try to clean up uploaded file if database save failed
       try {
@@ -599,6 +604,7 @@ export async function POST(
         await deleteAppointmentDocument(uploadResult.storagePath!);
       } catch (cleanupError) {
         console.error("Failed to cleanup uploaded file:", cleanupError);
+        Sentry.captureException(cleanupError instanceof Error ? cleanupError : new Error(String(cleanupError)), { tags: { subsystem: "appointments" } });
       }
 
       return NextResponse.json(
@@ -636,6 +642,7 @@ export async function POST(
     );
   } catch (error) {
     console.error("Error uploading document:", error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "appointments" } });
 
     // Provide specific error messages based on error type
     if (error instanceof Error) {

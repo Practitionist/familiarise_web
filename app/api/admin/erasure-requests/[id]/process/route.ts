@@ -9,6 +9,7 @@
  * queue page advances.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireAdminAuth } from "@/lib/auth-helpers";
@@ -69,6 +70,7 @@ export async function POST(
         notes: err instanceof Error ? err.message : String(err),
       },
     });
+    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "admin" } });
     return NextResponse.json(
       {
         error: "Erasure failed; request returned to PENDING",

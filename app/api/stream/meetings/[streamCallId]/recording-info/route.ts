@@ -10,6 +10,7 @@ import prisma from "@/lib/prisma";
 import { isPaymentEntitled } from "@/lib/payments/utils/refund-balance";
 
 import { getSession } from "@/lib/auth-server";
+import * as Sentry from "@sentry/nextjs";
 type RouteParams = {
   params: Promise<{
     streamCallId: string;
@@ -187,6 +188,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       recordingStartedBy: meetingSession.recordingStartedBy,
     });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
     console.error("Error getting meeting recording info:", error);
     return NextResponse.json(
       { error: "Failed to get recording info" },

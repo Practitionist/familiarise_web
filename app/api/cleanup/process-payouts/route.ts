@@ -7,6 +7,7 @@
  * Schedule: Weekly on Mondays at 9:00 PM UTC (via GitHub Actions or external cron)
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { processApprovedPayouts } from "@/lib/payments/payouts";
 
@@ -23,12 +24,14 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     }
 
     console.log("🔄 Starting payout processing via API...");
+    Sentry.logger.info("cron:process-payouts started");
 
     const results = await processApprovedPayouts();
 
     const succeeded = results.filter((r) => r.success).length;
     const failed = results.filter((r) => !r.success).length;
     console.log(`✅ Payout processing completed: ${succeeded} succeeded, ${failed} failed`);
+    Sentry.logger.info("cron:process-payouts finished", { succeeded, failed, processed: results.length });
 
     return NextResponse.json({
       success: failed === 0,
@@ -39,6 +42,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     });
   } catch (error) {
     console.error("Error in payout processing:", error);
+    Sentry.captureException(error, { tags: { subsystem: "cron", job: "process-payouts" } });
     return NextResponse.json(
       {
         error: "Failed to process payouts",

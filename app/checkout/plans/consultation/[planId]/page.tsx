@@ -1,5 +1,6 @@
 "use client";
 
+import * as Sentry from "@sentry/nextjs";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -183,6 +184,7 @@ export default function ConsultationCheckoutPage({
           );
         }
       } catch (error) {
+        Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "payments" } });
         console.error("Error fetching referral credits:", error);
       } finally {
         setIsLoadingCredits(false);
@@ -365,6 +367,7 @@ export default function ConsultationCheckoutPage({
       } catch (error) {
         // Only fires for unexpected errors (network failure, JSON parse error, etc.)
         // API errors are handled above with handleApiError() + return
+        Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "payments" } });
         toast({
           title: "Checkout Failed",
           description:
@@ -436,6 +439,7 @@ export default function ConsultationCheckoutPage({
         const reviewsData = await fetchReviews(data.data.consultantProfile.id);
         setReviews(reviewsData);
       } catch (error) {
+        Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "payments" } });
         console.error("[Checkout] Error fetching event data:", error);
         setError(
           error instanceof Error

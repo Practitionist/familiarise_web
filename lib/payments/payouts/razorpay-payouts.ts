@@ -5,6 +5,7 @@
  * API Documentation: https://razorpay.com/docs/api/x/payouts/
  */
 
+import * as Sentry from "@sentry/nextjs";
 import crypto from "crypto";
 
 // ============================================
@@ -387,7 +388,7 @@ export class RazorpayPayoutsService {
    */
   verifyWebhookSignature(payload: string, signature: string): boolean {
     if (!this.config.webhookSecret) {
-      console.warn("RazorpayX webhook secret not configured");
+      Sentry.logger.warn("RazorpayX webhook secret not configured");
       return false;
     }
 

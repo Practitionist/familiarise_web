@@ -3,6 +3,7 @@
  * Staff/Admin access to all support tickets with filtering and pagination
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
@@ -145,6 +146,7 @@ export async function GET(req: NextRequest) {
       },
     });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "staff" } });
     console.error("Error fetching support tickets:", error);
     return NextResponse.json(
       { error: "Failed to fetch support tickets" },

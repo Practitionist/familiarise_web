@@ -16,6 +16,7 @@ import {
 import fs from "fs";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
 import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 /**
  * Output results to GitHub Actions
@@ -48,6 +49,7 @@ function outputToGitHubActions(result: PaymentEarningSyncResult): void {
  */
 async function main(): Promise<void> {
   await abortIfMaintenance("sync-payment-earnings");
+  Sentry.logger.info("job:sync-payment-earnings started");
   console.log("🔄 Starting payment-earning sync job...");
   console.log(`Timestamp: ${new Date().toISOString()}`);
 
@@ -68,6 +70,13 @@ async function main(): Promise<void> {
 
     outputToGitHubActions(result);
 
+    Sentry.logger.info("job:sync-payment-earnings finished", {
+      totalProcessed: result.totalProcessed,
+      createdCount: result.createdCount,
+      skippedCount: result.skippedCount,
+      errorCount: result.errorCount,
+    });
+
     if (!result.success) {
       process.exit(1);
     }
@@ -76,9 +85,11 @@ async function main(): Promise<void> {
     // outcome (exit 0, no page). CronLockUnavailableError falls through
     // to exit 1 so the workflow's notify step pages.
     if (error instanceof CronLockHeldError) {
+      Sentry.logger.info("job:sync-payment-earnings skipped — lock held");
       console.log(`⏭️  ${error.message}`);
       return;
     }
+    Sentry.captureException(error, { tags: { subsystem: "jobs", job: "sync-payment-earnings" } });
     console.error("❌ Fatal error in payment-earning sync:", error);
     process.exit(1);
   } finally {

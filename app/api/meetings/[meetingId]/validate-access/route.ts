@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { auth } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { headers } from "next/headers";
@@ -208,6 +209,7 @@ export async function GET(
       message: "You are not authorized to join this meeting",
     });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "meetings" } });
     console.error("Error validating meeting access:", error);
     return NextResponse.json(
       { hasAccess: false, role: null, message: "Failed to validate access" },

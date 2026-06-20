@@ -10,6 +10,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { reconcileDisputes } from "@/scripts/disputes/reconcile-disputes";
 import { CronLockHeldError } from "@/lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
@@ -23,10 +24,17 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    Sentry.logger.info("cron:reconcile-disputes started");
     console.log("🔄 Starting dispute reconciliation via API...");
 
     const result = await reconcileDisputes();
 
+    Sentry.logger.info("cron:reconcile-disputes finished", {
+      totalProcessed: result.totalProcessed,
+      reconciledCount: result.reconciledCount,
+      urgentCount: result.urgentCount,
+      razorpayManualReviewCount: result.razorpayManualReviewCount,
+    });
     console.log("✅ Dispute reconciliation completed:", {
       totalProcessed: result.totalProcessed,
       reconciledCount: result.reconciledCount,
@@ -48,6 +56,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     if (error instanceof CronLockHeldError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
     }
+    Sentry.captureException(error, { tags: { subsystem: "cron", job: "reconcile-disputes" } });
     console.error("Error in dispute reconciliation:", error);
     return NextResponse.json(
       {

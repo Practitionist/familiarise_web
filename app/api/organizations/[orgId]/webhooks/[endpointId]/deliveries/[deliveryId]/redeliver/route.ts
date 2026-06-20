@@ -19,6 +19,7 @@
  * external side effects in the receiver — finance-team or owner scope.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireOrgBillingAdminOrOwner } from "@/lib/auth/billing-admin-gate";
@@ -124,6 +125,7 @@ export async function POST(
         { status: (err as { httpStatus?: number }).httpStatus ?? 500 },
       );
     }
+    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
     throw err;
   }
 }

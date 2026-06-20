@@ -8,6 +8,7 @@ import {
   getTimezoneOffsetMinutes,
 } from "@/utils/slotAllocation/slotTimeUtils";
 import { getSession } from "@/lib/auth-server";
+import * as Sentry from "@sentry/nextjs";
 
 export async function GET(
   req: NextRequest,
@@ -32,6 +33,7 @@ export async function GET(
     return NextResponse.json({ data: weeklySlot }, { status: 200 });
   } catch (error) {
     console.error("Error fetching weekly slot:", error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "scheduling" } });
     return NextResponse.json(
       { error: "An error occurred while fetching the weekly slot" },
       { status: 500 },
@@ -195,6 +197,7 @@ export async function PUT(
     return NextResponse.json({ data: updatedSlot }, { status: 200 });
   } catch (error) {
     console.error("Error updating weekly slot:", error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "scheduling" } });
     if (error instanceof Prisma.PrismaClientKnownRequestError) {
       if (error.code === "P2025") {
         return NextResponse.json(
@@ -357,6 +360,7 @@ export async function PATCH(
     return NextResponse.json({ data: updatedSlot }, { status: 200 });
   } catch (error) {
     console.error("Error partially updating weekly slot:", error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "scheduling" } });
     if (error instanceof Prisma.PrismaClientKnownRequestError) {
       if (error.code === "P2025") {
         return NextResponse.json(
@@ -421,6 +425,7 @@ export async function DELETE(
     );
   } catch (error) {
     console.error("Error deleting weekly slot:", error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "scheduling" } });
     if (error instanceof Prisma.PrismaClientKnownRequestError) {
       if (error.code === "P2025") {
         return NextResponse.json(

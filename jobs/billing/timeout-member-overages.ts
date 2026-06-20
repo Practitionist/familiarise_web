@@ -27,6 +27,7 @@ import { restoreOverageBaseCarve } from "@/lib/payments/billing/overage-base-car
 import { recordSystemError } from "@/lib/enterprise/system-events";
 import { getAppUrl } from "@/lib/url";
 import { withCronLock, CronLockHeldError } from "@/lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 // #779 — 14-day window before a never-settled member overage times out.
 const TIMEOUT_DAYS = 14;
@@ -125,6 +126,7 @@ async function main() {
   console.log(
     `[timeout-member-overages] Starting at ${new Date().toISOString()}`,
   );
+  Sentry.logger.info("job:timeout-member-overages started");
   const stats = await withCronLock(
     "timeout-member-overages",
     { failMode: "closed" },
@@ -133,6 +135,7 @@ async function main() {
   console.log(
     `[timeout-member-overages] Done. scanned=${stats.scanned} timedOut=${stats.timedOut}`,
   );
+  Sentry.logger.info("job:timeout-member-overages finished", { scanned: stats.scanned, timedOut: stats.timedOut });
 }
 
 if (require.main === module) {
@@ -140,9 +143,11 @@ if (require.main === module) {
     .catch((err) => {
       // #476 — lock held = another run is live; skip cleanly (exit 0).
       if (err instanceof CronLockHeldError) {
+        Sentry.logger.info("job:timeout-member-overages lock already held, skipping");
         console.log(`⏭️  ${err.message}`);
         return;
       }
+      Sentry.captureException(err, { tags: { subsystem: "jobs", job: "timeout-member-overages" } });
       console.error("[timeout-member-overages] Failed:", err);
       process.exitCode = 1;
     })

@@ -33,6 +33,7 @@ import prisma from "@/lib/prisma";
 import { generateIrn } from "@/lib/compliance/irp";
 import { buildIrpPayload } from "@/lib/compliance/irp-payload";
 import { withCronLock, CronLockHeldError } from "@/lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 // #703 — platform-side seller constants. GSTIN mirrors the invoice-PDF
 // route (PLATFORM_GSTIN); the rest are env-overridable for a future
@@ -66,6 +67,7 @@ async function runIrpUploaderUnlocked(): Promise<{
   skipped: number;
 }> {
   console.log("[cron][irp-uploader] starting");
+  Sentry.logger.info("job:irp-uploader started");
 
   const thirtyDaysAgo = new Date();
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
@@ -219,6 +221,7 @@ async function runIrpUploaderUnlocked(): Promise<{
   console.log(
     `[IRP] uploader finished — processed=${processed} failed=${failed} skipped=${skipped}`,
   );
+  Sentry.logger.info("job:irp-uploader finished", { processed, failed, skipped });
   return { processed, failed, skipped };
 }
 
@@ -230,9 +233,11 @@ if (require.main === module) {
     .catch((err) => {
       // #476 — lock held = another run is live; skip cleanly (exit 0).
       if (err instanceof CronLockHeldError) {
+        Sentry.logger.info("job:irp-uploader lock held — skipping");
         console.log(`⏭️  ${err.message}`);
         return;
       }
+      Sentry.captureException(err, { tags: { subsystem: "jobs", job: "irp-uploader" } });
       console.error("[IRP] uploader failed:", err);
       process.exitCode = 1;
     })

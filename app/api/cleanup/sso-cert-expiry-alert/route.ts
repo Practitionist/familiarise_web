@@ -9,6 +9,7 @@
  * Auth: `CRON_SECRET` bearer.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { runSsoCertExpiryAlert } from "@/scripts/cleanup/sso-cert-expiry-alert";
 import { CronLockHeldError } from "@/lib/cron/with-cron-lock";
@@ -31,12 +32,18 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
 
   try {
+    Sentry.logger.info("cron:sso-cert-expiry-alert started");
     const result = await runSsoCertExpiryAlert();
 
     console.log("✅ SSO cert expiry alert completed:", {
       scanned: result.scanned,
       alerted: result.alerted,
       success: result.success,
+    });
+
+    Sentry.logger.info("cron:sso-cert-expiry-alert finished", {
+      scanned: result.scanned,
+      alerted: result.alerted,
     });
 
     return NextResponse.json(result, { status: result.success ? 200 : 500 });
@@ -47,6 +54,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: error.message }, { status: 409 });
     }
     console.error("[cleanup/sso-cert-expiry-alert] failed:", error);
+    Sentry.captureException(error, {
+      tags: { subsystem: "cron", job: "sso-cert-expiry-alert" },
+    });
     return NextResponse.json(
       {
         error: "Alert scan failed",

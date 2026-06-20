@@ -1,5 +1,6 @@
 "use server";
 
+import * as Sentry from "@sentry/nextjs";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import {
@@ -204,6 +205,7 @@ export async function addUserToEventChannel(
 
     return { success: true, channelId, created };
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
     streamLogger.error("Failed to add user to event channel", error, {
       eventType,
       eventId,
@@ -431,6 +433,7 @@ export async function getUserEventChannels(userId: string) {
       memberCount: Object.keys(channel.state.members || {}).length,
     }));
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
     streamLogger.error("Failed to get user event channels", error, { userId });
     throw error;
   }
@@ -670,6 +673,7 @@ export async function syncUserEventChannels(
       durationMs: duration,
     };
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
     streamLogger.error("Channel sync failed", error, { userId });
     throw error;
   }

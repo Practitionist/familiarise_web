@@ -1,5 +1,6 @@
 "use client";
 
+import * as Sentry from "@sentry/nextjs";
 import { useState, useEffect, useMemo } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -96,6 +97,7 @@ export function EventPlannerForClass({
         const fetchedTopics = await PlannerService.getTopics("");
         setAvailableTopics(fetchedTopics);
       } catch (error) {
+        Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
         console.error("Failed to fetch topics:", error);
         toast({
           title: "Error",
@@ -344,6 +346,7 @@ export function EventPlannerForClass({
       });
       onClose();
     } catch (error) {
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
       console.error("Error saving class:", error);
       toast({
         title: "Error",
