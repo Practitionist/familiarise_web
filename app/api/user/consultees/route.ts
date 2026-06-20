@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import {
@@ -44,6 +45,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(consultees, { status: 200 });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "user" } });
     console.error("Error getting consultees:", error);
     return NextResponse.json(
       { error: "Internal Server Error" },

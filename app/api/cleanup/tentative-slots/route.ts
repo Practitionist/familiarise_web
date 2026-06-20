@@ -10,6 +10,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cleanupTentativeSlots } from "@/scripts/appointments/cleanup-tentative-slots";
 import { CronLockHeldError } from "@/lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
@@ -24,10 +25,15 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     }
 
     console.log("🧹 Starting tentative slot cleanup via API...");
+    Sentry.logger.info("cron:cleanup-tentative-slots started");
 
     const result = await cleanupTentativeSlots();
 
     console.log("✅ Tentative slot cleanup completed:", {
+      slotsReleased: result.slotsReleased,
+      appointmentsAffected: result.appointmentsAffected,
+    });
+    Sentry.logger.info("cron:cleanup-tentative-slots finished", {
       slotsReleased: result.slotsReleased,
       appointmentsAffected: result.appointmentsAffected,
     });
@@ -39,6 +45,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     if (error instanceof CronLockHeldError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
     }
+    Sentry.captureException(error, { tags: { subsystem: "cron", job: "cleanup-tentative-slots" } });
     console.error("Error in tentative slot cleanup:", error);
     return NextResponse.json(
       {

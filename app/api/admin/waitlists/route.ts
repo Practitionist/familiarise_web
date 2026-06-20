@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { Prisma, WaitlistStatus } from "@prisma/client";
@@ -333,6 +334,7 @@ export async function GET(req: NextRequest) {
       },
     });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
     console.error("Error fetching admin waitlists:", error);
     return NextResponse.json(
       { error: "Internal server error" },

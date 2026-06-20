@@ -3,6 +3,7 @@
  * List available system jobs
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 
@@ -110,6 +111,7 @@ export async function GET() {
 
     return NextResponse.json({ jobs: jobsWithStats });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "staff" } });
     console.error("Error fetching system jobs:", error);
     return NextResponse.json(
       { error: "Failed to fetch system jobs" },

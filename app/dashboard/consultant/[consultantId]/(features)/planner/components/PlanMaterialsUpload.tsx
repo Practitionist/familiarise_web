@@ -1,5 +1,6 @@
 "use client";
 
+import * as Sentry from "@sentry/nextjs";
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -76,6 +77,7 @@ export function PlanMaterialsUpload({
       const data = await MaterialsService.getMaterials(planType, planId);
       setMaterials(data);
     } catch (error) {
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
       console.error("Error fetching materials:", error);
       toast({
         title: "Error",
@@ -137,6 +139,7 @@ export function PlanMaterialsUpload({
       await fetchMaterials();
       onMaterialsChange?.();
     } catch (error) {
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
       console.error("Upload error:", error);
       toast({
         title: "Upload failed",
@@ -163,6 +166,7 @@ export function PlanMaterialsUpload({
       await fetchMaterials();
       onMaterialsChange?.();
     } catch (error) {
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
       console.error("Delete error:", error);
       toast({
         title: "Delete failed",

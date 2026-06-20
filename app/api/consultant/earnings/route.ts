@@ -3,6 +3,7 @@
  * View earnings summary and history
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { EarningStatus } from "@prisma/client";
@@ -70,6 +71,7 @@ export async function GET(req: NextRequest) {
       },
     });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "consultant" } });
     console.error("Error fetching earnings:", error);
     return NextResponse.json(
       { error: "Failed to fetch earnings" },

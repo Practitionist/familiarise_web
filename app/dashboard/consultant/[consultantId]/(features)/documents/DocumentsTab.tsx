@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import React, { useState, useEffect, useMemo } from "react";
 import { format } from "date-fns";
 import { Button } from "@/components/ui/button";
@@ -241,7 +242,8 @@ export function DocumentsTab({
         setBulkReviewStatus("");
         setBulkReviewNotes("");
       }
-    } catch {
+    } catch (error) {
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
       toast({
         title: "Error",
         description: "Failed to update documents",
@@ -296,6 +298,7 @@ export function DocumentsTab({
       setReviewDialogOpen(false);
       onRefresh?.();
     } catch (error) {
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
       console.error("Error updating review:", error);
       toast({
         title: "Error",
@@ -318,6 +321,7 @@ export function DocumentsTab({
       link.click();
       window.document.body.removeChild(link);
     } catch (error) {
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
       console.error("Error downloading file:", error);
       toast({
         title: "Error",

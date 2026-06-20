@@ -4,6 +4,7 @@ import { getSession } from "@/lib/auth-server";
 import { spamLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { assertBodySize } from "@/lib/validation/limits";
 import { CreateSupportResponseSchema } from "@/schemas/support";
+import * as Sentry from "@sentry/nextjs";
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ ticketId: string }> },
@@ -81,6 +82,7 @@ export async function POST(
 
     return NextResponse.json(response, { status: 201 });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
     console.error("Error creating support response:", error);
     return NextResponse.json(
       {

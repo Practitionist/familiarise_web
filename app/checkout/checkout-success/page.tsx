@@ -1,5 +1,6 @@
 "use client";
 
+import * as Sentry from "@sentry/nextjs";
 import { useEffect, useState, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -46,6 +47,7 @@ function CheckoutSuccessContent() {
           router.push("/checkout/checkout-failure");
         }
       } catch (error) {
+        Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "payments" } });
         console.error("Payment verification error:", error);
         router.push("/checkout/checkout-failure");
       } finally {

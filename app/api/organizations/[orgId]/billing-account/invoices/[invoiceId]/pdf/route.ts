@@ -20,6 +20,7 @@
  * existing /invoices list endpoint.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
@@ -172,6 +173,7 @@ export async function GET(
         reason: err instanceof Error ? err.message : String(err),
       }),
     );
+    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "organizations" } });
     return NextResponse.json(
       {
         error: "Failed to generate invoice PDF",

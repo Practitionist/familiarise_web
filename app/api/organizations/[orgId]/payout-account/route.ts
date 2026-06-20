@@ -12,6 +12,7 @@
  * endpoint only writes the raw record; the verification job flips status.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
@@ -104,6 +105,7 @@ export async function PUT(
   try {
     encrypted = encodeAccountEnvelope(body.accountNumber);
   } catch (err) {
+    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "organizations" } });
     return NextResponse.json(
       {
         error: "Payout encryption is not configured on this server",

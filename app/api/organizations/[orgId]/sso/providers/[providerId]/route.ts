@@ -11,6 +11,7 @@
  * IdP's metadata).
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess, requireOrgOwner } from "@/lib/auth-helpers";
@@ -153,9 +154,10 @@ export async function DELETE(
       deletedByName:
         access.session.user.name ?? access.session.user.email,
       dashboardUrl: `${origin}/dashboard/organization/${orgId}/settings/sso`,
-    }).catch((err) =>
-      console.error("[notifyOrgSsoProviderDeleted] failed:", err),
-    );
+    }).catch((err) => {
+      Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "organizations" } });
+      console.error("[notifyOrgSsoProviderDeleted] failed:", err);
+    });
 
     return new NextResponse(null, { status: 204 });
   } catch (err) {
@@ -164,6 +166,7 @@ export async function DELETE(
         typeof err.httpStatus === "number" ? err.httpStatus : 500;
       return NextResponse.json({ error: err.message }, { status });
     }
+    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "organizations" } });
     throw err;
   }
 }

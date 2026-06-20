@@ -1,5 +1,6 @@
 "use client";
 
+import * as Sentry from "@sentry/nextjs";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
@@ -146,6 +147,7 @@ export default function WaitlistsPage() {
           }
         }
       } catch (error) {
+        Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
         console.error("Error fetching waitlists:", error);
         toast({
           title: "Error",

@@ -7,6 +7,7 @@
  * and enabling instant UI feedback without waiting for the webhook.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
 import prisma from "@/lib/prisma";
@@ -110,6 +111,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "checkout" } });
     console.error("Signature verification error:", error);
     return NextResponse.json(
       { verified: false, error: "Verification failed" },

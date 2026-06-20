@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import type { Tx } from "@/lib/prisma";
 import { Prisma, type PaymentGateway } from "@prisma/client";
@@ -186,6 +187,7 @@ export async function cancelPendingCheckout(args: {
     try {
       await cancelPaymentIntent(gatewayCancel.paymentIntent, gatewayCancel.gateway);
     } catch (error) {
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "payments" } });
       console.warn(
         JSON.stringify({
           event: "cancel_pending_gateway_cancel_failed",

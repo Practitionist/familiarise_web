@@ -14,6 +14,7 @@ import { streamLogger } from "@/lib/stream-logger";
 import { withCronLock, CronLockHeldError } from "@/lib/cron/with-cron-lock";
 import { notifyRecordingExpiring } from "@/lib/novu/service";
 import { getAppUrl } from "@/lib/url";
+import * as Sentry from "@sentry/nextjs";
 
 // STR-3 — collapse the per-recording expiry list into one notification per
 // consultant: count + soonest expiry. Keeps a consultant with 12 expiring
@@ -67,6 +68,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     }
 
     streamLogger.info("Starting transfer-expiring-recordings cron");
+    Sentry.logger.info("cron:transfer-expiring-recordings started");
 
     // #476 — both phases under one lock, same key as the GH Actions entry.
     const { transferResult, expiringStreamOnly } = await withCronLock(
@@ -96,6 +98,11 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       await notifyConsultantsOfExpiringRecordings(expiringStreamOnly);
     }
 
+    Sentry.logger.info("cron:transfer-expiring-recordings finished", {
+      transferred: transferResult.succeeded,
+      failed: transferResult.failed,
+      expiringStreamOnly: expiringStreamOnly.length,
+    });
     return NextResponse.json({
       success: true,
       transferred: transferResult.succeeded,
@@ -109,6 +116,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     if (error instanceof CronLockHeldError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
     }
+    Sentry.captureException(error, { tags: { subsystem: "cron", job: "transfer-expiring-recordings" } });
     streamLogger.error("Transfer expiring recordings cron failed", error);
     return NextResponse.json(
       { error: "Cron job failed" },

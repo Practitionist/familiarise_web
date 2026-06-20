@@ -36,6 +36,7 @@ import { notifyOrgLicenseRenewalUpcoming } from "@/lib/novu/org-workflows";
 import { getAppUrl } from "@/lib/url";
 import { Currency, OrgInvoiceStatus, Prisma } from "@prisma/client";
 import { withCronLock, CronLockHeldError, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 // Reminder fires when nextInvoiceDate is within this many days. Once
 // per cycle (gated by BillingSubscription.renewalReminderSentAt).
@@ -219,6 +220,7 @@ export async function runGenerateSubscriptionInvoices(): Promise<{
         skipped++;
         continue;
       }
+      Sentry.captureException(err, { tags: { subsystem: "jobs", job: "generate-subscription-invoices" } });
       console.error(
         `[cron] Failed to generate invoice for subscription ${sub.id}:`,
         err,
@@ -305,11 +307,17 @@ async function main() {
   console.log(
     `[generate-subscription-invoices] Starting at ${new Date().toISOString()}`,
   );
-  await withCronLock(
+  Sentry.logger.info("job:generate-subscription-invoices started");
+  const result = await withCronLock(
     "generate-subscription-invoices",
     { failMode: "closed", ttlMs: LONG_JOB_TTL_MS },
     () => runGenerateSubscriptionInvoices(),
   );
+  Sentry.logger.info("job:generate-subscription-invoices finished", {
+    generated: result?.generated,
+    skipped: result?.skipped,
+    remindersSent: result?.remindersSent,
+  });
 }
 
 if (require.main === module) {
@@ -317,9 +325,11 @@ if (require.main === module) {
     .catch((err) => {
       // #476 — lock held = another run is live; skip cleanly (exit 0).
       if (err instanceof CronLockHeldError) {
+        Sentry.logger.info("job:generate-subscription-invoices lock held, skipping");
         console.log(`⏭️  ${err.message}`);
         return;
       }
+      Sentry.captureException(err, { tags: { subsystem: "jobs", job: "generate-subscription-invoices" } });
       console.error("[generate-subscription-invoices] Failed:", err);
       process.exitCode = 1;
     })

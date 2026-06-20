@@ -8,6 +8,7 @@ import prisma from "@/lib/prisma";
 import { getWaitlistStats } from "@/lib/waitlist";
 
 import { getSession } from "@/lib/auth-server";
+import * as Sentry from "@sentry/nextjs";
 /**
  * GET /api/waitlist/stats - Get consultant's waitlist statistics
  */
@@ -44,6 +45,7 @@ export async function GET() {
       data: stats,
     });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "waitlist" } });
     console.error("Error fetching waitlist stats:", error);
     return NextResponse.json(
       { success: false, error: "Failed to fetch waitlist statistics" },

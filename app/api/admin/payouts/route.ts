@@ -8,6 +8,7 @@
  * POST (batch creation) stays inline because staff does not have it.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import {
@@ -43,6 +44,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json(result);
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
     console.error("Error fetching payouts:", error);
     return NextResponse.json(
       { error: "Failed to fetch payouts" },
@@ -95,6 +97,10 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     const classified = classifyError(error, "Failed to create payout batch");
     logClassifiedError("Payouts", classified, error);
+
+    if (classified.httpStatus >= 500) {
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
+    }
 
     return NextResponse.json(
       { error: classified.errorMessage },

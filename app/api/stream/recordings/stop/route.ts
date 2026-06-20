@@ -5,6 +5,7 @@
  * Stops recording for a video call. Only consultants can stop recordings.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { RecordingService } from "@/lib/stream/recording-service";
@@ -151,6 +152,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
     return NextResponse.json(
       { error: "Failed to stop recording" },
       { status: 500 },

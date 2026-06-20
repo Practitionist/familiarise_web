@@ -1,5 +1,6 @@
 "use client";
 
+import * as Sentry from "@sentry/nextjs";
 import { useState, useEffect, useCallback } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -128,6 +129,7 @@ export function EventPlannerForWebinar({
         const fetchedTopics = await PlannerService.getTopics("");
         setAvailableTopics(fetchedTopics);
       } catch (error) {
+        Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
         console.error("Failed to fetch topics:", error);
         toast({
           title: "Error",
@@ -312,6 +314,7 @@ export function EventPlannerForWebinar({
       });
       onClose();
     } catch (error) {
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
       console.error("Error saving webinar:", error);
       toast({
         title: "Error",

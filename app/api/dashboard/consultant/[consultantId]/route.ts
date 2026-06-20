@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth-server";
 import { getConsultantDashboard } from "@/lib/data/consultant-dashboard";
@@ -49,6 +50,7 @@ export async function GET(
       data,
     });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "dashboard" } });
     console.error("Error fetching dashboard data:", error);
     return NextResponse.json(
       {

@@ -3,6 +3,7 @@
  * Process all approved payouts
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { processApprovedPayouts } from "@/lib/payments/payouts";
 import { requireAdminAuth } from "@/lib/auth-helpers";
@@ -30,6 +31,7 @@ export async function POST(_req: NextRequest) {
       results,
     });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
     console.error("Error processing payouts:", error);
     return NextResponse.json(
       { error: "Failed to process payouts" },

@@ -15,6 +15,7 @@
  * consultant's personal payout for that booking is zero.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import prisma, { type Tx } from "@/lib/prisma";
 import {
   postLedgerTxn,
@@ -199,6 +200,10 @@ async function resolveOrgSplit(
   }
 
   if (orgShare < 0) {
+    Sentry.captureException(
+      new Error(`[Earnings] Negative orgShare (${orgShare}) for org ${orgId}: platformBps=${resolved.platformBps}, consultantBps=${resolved.consultantBps}. Clamping.`),
+      { tags: { subsystem: "payments" }, level: "warning" },
+    );
     console.error(
       `[Earnings] Negative orgShare (${orgShare}) for org ${orgId}: ` +
         `platformBps=${resolved.platformBps}, consultantBps=${resolved.consultantBps}. Clamping.`,
@@ -714,6 +719,9 @@ export async function createEarningsFromPayment({
             postings: [...debits, ...credits],
           });
         } catch (err) {
+          Sentry.captureException(err instanceof Error ? err : new Error(String(err)), {
+            tags: { subsystem: "payments" },
+          });
           console.error(
             `[ledger] booking posting FAILED for payment ${payment.id} — rolling back the booking: ${err instanceof Error ? err.message : String(err)}`,
           );

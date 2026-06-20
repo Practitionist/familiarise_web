@@ -16,6 +16,7 @@ import { Prisma } from "@prisma/client";
 import { abortIfMaintenance } from "@/lib/maintenance-cron";
 import { rollupOrgInvoiceAccruals } from "@/lib/payments/billing/invoice-rollup";
 import { withCronLock, CronLockHeldError, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 export async function settleInvoiceAccruals(): Promise<{
   orgsProcessed: number;
@@ -77,6 +78,7 @@ export async function settleInvoiceAccruals(): Promise<{
         `[settle-invoice-accruals] org ${row.organizationId} failed:`,
         err instanceof Error ? err.message : err,
       );
+      Sentry.captureException(err, { tags: { subsystem: "jobs", job: "settle-invoice-accruals" } });
     }
   }
 
@@ -87,6 +89,7 @@ async function main() {
   console.log(
     `[settle-invoice-accruals] Starting at ${new Date().toISOString()}`,
   );
+  Sentry.logger.info("job:settle-invoice-accruals started");
   const r = await withCronLock(
     "settle-invoice-accruals",
     { failMode: "closed", ttlMs: LONG_JOB_TTL_MS },
@@ -95,6 +98,7 @@ async function main() {
   console.log(
     `[settle-invoice-accruals] Done. orgsProcessed=${r.orgsProcessed} invoicesCreated=${r.invoicesCreated}`,
   );
+  Sentry.logger.info("job:settle-invoice-accruals finished", { orgsProcessed: r.orgsProcessed, invoicesCreated: r.invoicesCreated });
 }
 
 if (require.main === module) {
@@ -103,9 +107,11 @@ if (require.main === module) {
       // #476 — lock held = another run is live; skip cleanly (exit 0).
       if (err instanceof CronLockHeldError) {
         console.log(`⏭️  ${err.message}`);
+        Sentry.logger.info("job:settle-invoice-accruals skipped — lock held");
         return;
       }
       console.error("[settle-invoice-accruals] Failed:", err);
+      Sentry.captureException(err, { tags: { subsystem: "jobs", job: "settle-invoice-accruals" } });
       process.exitCode = 1;
     })
     .finally(async () => {

@@ -12,6 +12,7 @@ import { streamLogger } from "@/lib/stream-logger";
 import { markUserSynced, isUserSynced } from "@/lib/stream-cache";
 import { checkConsent, ConsentRequiredError } from "@/lib/compliance/dpdp";
 import { PURPOSE_CODES } from "@/lib/compliance/purpose-codes";
+import * as Sentry from "@sentry/nextjs";
 
 // Input validation schemas
 const userIdSchema = z.string().min(1, "User ID is required");
@@ -113,6 +114,7 @@ export const upsertUserToStream = async (userId: string) => {
     if (error instanceof ConsentRequiredError) {
       throw error;
     }
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
     streamLogger.error("Failed to upsert user to Stream", error, {
       userId: validatedUserId,
     });
@@ -230,6 +232,7 @@ export const upsertUsersToStream = async (userIds: string[]) => {
 
     return result;
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
     streamLogger.error("Failed to batch upsert users to Stream", error, {
       userCount: unsyncedIds.length,
     });
@@ -433,6 +436,7 @@ export const searchUsersWithRelationships = async (
 
     return usersWithRelationships;
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
     streamLogger.error("User search failed", error, {
       searchTerm: validatedTerm,
     });
@@ -474,6 +478,7 @@ export const checkUserRelationship = async (
 
     return relationshipChecks.some(Boolean);
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
     streamLogger.error("Relationship check failed", error, {
       userId1,
       userId2,
@@ -665,6 +670,7 @@ export const searchUsers = async (searchTerm: string) => {
 
     return users;
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
     streamLogger.error("Legacy user search failed", error, {
       searchTerm: validatedTerm,
     });

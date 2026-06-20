@@ -26,6 +26,7 @@
 import prisma from "@/lib/prisma";
 import { abortIfMaintenance } from "@/lib/maintenance-cron";
 import { withCronLock, CronLockHeldError } from "@/lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 const DELETE_BATCH_SIZE = 500;
 const MAX_BATCHES_PER_RUN = 40; // caps total work at 20k rows / sweep
@@ -36,6 +37,7 @@ export async function runConsentRetentionSweeper(): Promise<{
   deleteMode: boolean;
 }> {
   await abortIfMaintenance("consent-retention-sweeper");
+  Sentry.logger.info("job:consent-retention-sweeper started");
   const deleteMode = process.env.DPDP_SWEEPER_DELETE === "true";
   const now = new Date();
 
@@ -53,6 +55,7 @@ export async function runConsentRetentionSweeper(): Promise<{
     } else {
       console.log("[DPDP] consent retention clean — no expired artifacts");
     }
+    Sentry.logger.info("job:consent-retention-sweeper finished", { expired, deleted: 0 });
     return { expired, deleted: 0, deleteMode: false };
   }
 
@@ -85,6 +88,7 @@ export async function runConsentRetentionSweeper(): Promise<{
     `[DPDP] consent retention sweeper finished — deleted=${deleted} of expired=${expired}`,
   );
 
+  Sentry.logger.info("job:consent-retention-sweeper finished", { expired, deleted });
   return { expired, deleted, deleteMode: true };
 }
 
@@ -107,9 +111,11 @@ if (require.main === module) {
     .catch((err) => {
       // #476 — lock held = another run is live; skip cleanly (exit 0).
       if (err instanceof CronLockHeldError) {
+        Sentry.logger.info("job:consent-retention-sweeper lock held — skipping");
         console.log(`⏭️  ${err.message}`);
         return;
       }
+      Sentry.captureException(err, { tags: { subsystem: "jobs", job: "consent-retention-sweeper" } });
       console.error("[consent-retention-sweeper] Failed:", err);
       process.exitCode = 1;
     })

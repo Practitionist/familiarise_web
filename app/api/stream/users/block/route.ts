@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth-server";
 import { getStreamChatClient } from "@/lib/stream-client";
@@ -87,6 +88,7 @@ export async function POST(req: NextRequest) {
       message: "User blocked successfully",
     });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
     streamLogger.error("Failed to block user", error);
     return NextResponse.json(
       { error: "Failed to block user" },

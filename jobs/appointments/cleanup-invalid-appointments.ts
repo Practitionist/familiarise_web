@@ -15,6 +15,7 @@ import {
 import fs from "fs";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
 import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 /**
  * Output results to GitHub Actions using environment files
@@ -49,6 +50,7 @@ function outputToGitHubActions(result: CleanupResult): void {
  */
 async function main(): Promise<void> {
   await abortIfMaintenance("cleanup-invalid-appointments");
+  Sentry.logger.info("job:cleanup-invalid-appointments started");
   const startTime = Date.now();
   console.log(
     `🚀 Starting invalid appointments cleanup job at ${new Date().toISOString()}`,
@@ -83,6 +85,14 @@ async function main(): Promise<void> {
 
     if (result.success) {
       console.log("🎉 Cleanup job completed successfully");
+      Sentry.logger.info("job:cleanup-invalid-appointments finished", {
+        duplicateConsultationsCancelled: result.duplicateConsultationsCancelled,
+        duplicateSubscriptionsCancelled: result.duplicateSubscriptionsCancelled,
+        invalidDurationConsultationsCancelled: result.invalidDurationConsultationsCancelled,
+        invalidDurationSubscriptionsCancelled: result.invalidDurationSubscriptionsCancelled,
+        totalCancelled: result.totalCancelled,
+        errorCount: result.errors.length,
+      });
       process.exit(0);
     } else {
       console.error("❌ Cleanup job completed with errors");
@@ -91,9 +101,11 @@ async function main(): Promise<void> {
   } catch (error) {
     // #476 — lock held = another run is live; skip cleanly (exit 0).
     if (error instanceof CronLockHeldError) {
+      Sentry.logger.info("job:cleanup-invalid-appointments lock held, skipping");
       console.log(`⏭️  ${error.message}`);
       return;
     }
+    Sentry.captureException(error, { tags: { subsystem: "jobs", job: "cleanup-invalid-appointments" } });
     const errorMessage =
       error instanceof Error ? error.message : "Unknown error";
     console.error("💥 Cleanup job failed:", errorMessage);

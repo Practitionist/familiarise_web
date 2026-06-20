@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import type { FileObject } from "@supabase/storage-js"; // Import FileObject type
 
@@ -354,6 +355,7 @@ const uploadAppointmentDocument = async (
 
     if (uploadError) {
       console.error("Supabase upload error:", uploadError);
+      Sentry.captureException(new Error(uploadError.message), { tags: { subsystem: "storage" } });
       return { success: false, error: uploadError.message };
     }
 
@@ -366,6 +368,7 @@ const uploadAppointmentDocument = async (
 
     if (signedUrlError || !signedUrlData?.signedUrl) {
       console.error("Failed to create signed URL:", signedUrlError);
+      Sentry.captureException(signedUrlError instanceof Error ? signedUrlError : new Error("Failed to create signed URL"), { tags: { subsystem: "storage" } });
       return { success: false, error: "Failed to generate document URL" };
     }
 
@@ -379,6 +382,7 @@ const uploadAppointmentDocument = async (
     };
   } catch (error) {
     console.error("Error uploading document:", error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "storage" } });
     return {
       success: false,
       error: error instanceof Error ? error.message : "Upload failed",
@@ -532,6 +536,7 @@ const uploadPlanMaterial = async (
 
     if (uploadError) {
       console.error("Supabase upload error:", uploadError);
+      Sentry.captureException(new Error(uploadError.message), { tags: { subsystem: "storage" } });
       return { success: false, error: uploadError.message };
     }
 
@@ -543,6 +548,7 @@ const uploadPlanMaterial = async (
 
     if (signedUrlError || !signedUrlData?.signedUrl) {
       console.error("Failed to create signed URL:", signedUrlError);
+      Sentry.captureException(signedUrlError instanceof Error ? signedUrlError : new Error("Failed to create signed URL"), { tags: { subsystem: "storage" } });
       return { success: false, error: "Failed to generate document URL" };
     }
 
@@ -556,6 +562,7 @@ const uploadPlanMaterial = async (
     };
   } catch (error) {
     console.error("Error uploading plan material:", error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "storage" } });
     return {
       success: false,
       error: error instanceof Error ? error.message : "Upload failed",
@@ -669,6 +676,7 @@ const uploadConsultantDocument = async (
 
     if (uploadError) {
       console.error("Supabase upload error:", uploadError);
+      Sentry.captureException(new Error(uploadError.message), { tags: { subsystem: "storage" } });
       return { success: false, error: uploadError.message };
     }
 
@@ -680,6 +688,7 @@ const uploadConsultantDocument = async (
 
     if (signedUrlError || !signedUrlData?.signedUrl) {
       console.error("Failed to create signed URL:", signedUrlError);
+      Sentry.captureException(signedUrlError instanceof Error ? signedUrlError : new Error("Failed to create signed URL"), { tags: { subsystem: "storage" } });
       return { success: false, error: "Failed to generate document URL" };
     }
 
@@ -693,6 +702,7 @@ const uploadConsultantDocument = async (
     };
   } catch (error) {
     console.error("Error uploading consultant document:", error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "storage" } });
     return {
       success: false,
       error: error instanceof Error ? error.message : "Upload failed",
@@ -769,6 +779,7 @@ const uploadSupportTicketAttachment = async (
 
     if (uploadError) {
       console.error("Supabase upload error:", uploadError);
+      Sentry.captureException(new Error(uploadError.message), { tags: { subsystem: "storage" } });
       return { success: false, error: uploadError.message };
     }
 
@@ -787,6 +798,7 @@ const uploadSupportTicketAttachment = async (
     };
   } catch (error) {
     console.error("Error uploading support attachment:", error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "storage" } });
     return {
       success: false,
       error: error instanceof Error ? error.message : "Upload failed",
@@ -919,6 +931,7 @@ const uploadPlanImage = async (
 
     if (uploadError) {
       console.error("Supabase plan image upload error:", uploadError);
+      Sentry.captureException(new Error(uploadError.message), { tags: { subsystem: "storage" } });
       return { success: false, error: uploadError.message };
     }
 
@@ -933,6 +946,7 @@ const uploadPlanImage = async (
     };
   } catch (error) {
     console.error("Error uploading plan image:", error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "storage" } });
     return {
       success: false,
       error: error instanceof Error ? error.message : "Upload failed",
@@ -1097,6 +1111,7 @@ const uploadCoverImage = async (
 
     if (uploadError) {
       console.error("Supabase upload error:", uploadError);
+      Sentry.captureException(new Error(uploadError.message), { tags: { subsystem: "storage" } });
       return { success: false, error: uploadError.message };
     }
 
@@ -1112,6 +1127,7 @@ const uploadCoverImage = async (
     };
   } catch (error) {
     console.error("Error uploading cover image:", error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "storage" } });
     return {
       success: false,
       error: error instanceof Error ? error.message : "Upload failed",
@@ -1247,6 +1263,7 @@ const uploadProfileDisplayImage = async (
 
     if (uploadError) {
       console.error("Supabase upload error:", uploadError);
+      Sentry.captureException(new Error(uploadError.message), { tags: { subsystem: "storage" } });
       return { success: false, error: uploadError.message };
     }
 
@@ -1262,6 +1279,7 @@ const uploadProfileDisplayImage = async (
     };
   } catch (error) {
     console.error("Error uploading profile display image:", error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "storage" } });
     return {
       success: false,
       error: error instanceof Error ? error.message : "Upload failed",
@@ -1388,6 +1406,7 @@ const uploadProfileImage = async (options: {
 
     if (uploadError) {
       console.error("Supabase upload error:", uploadError);
+      Sentry.captureException(new Error(uploadError.message), { tags: { subsystem: "storage" } });
       return { success: false, error: uploadError.message };
     }
 
@@ -1402,6 +1421,7 @@ const uploadProfileImage = async (options: {
     };
   } catch (error) {
     console.error("Error uploading profile image:", error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "storage" } });
     return {
       success: false,
       error: error instanceof Error ? error.message : "Upload failed",
@@ -1588,6 +1608,7 @@ const uploadOrganizationBrandingImage = async (
         `Supabase organization ${kind} upload error:`,
         uploadError,
       );
+      Sentry.captureException(new Error(uploadError.message), { tags: { subsystem: "storage" } });
       return { success: false, error: uploadError.message };
     }
 
@@ -1602,6 +1623,7 @@ const uploadOrganizationBrandingImage = async (
     };
   } catch (error) {
     console.error(`Error uploading organization ${kind}:`, error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "storage" } });
     return {
       success: false,
       error: error instanceof Error ? error.message : "Upload failed",
@@ -1702,6 +1724,7 @@ const uploadToSupabase = async (
 
     if (uploadError) {
       console.error("Supabase upload error:", uploadError);
+      Sentry.captureException(new Error(uploadError.message), { tags: { subsystem: "storage" } });
       return { url: null, error: uploadError.message };
     }
 
@@ -1716,6 +1739,7 @@ const uploadToSupabase = async (
 
       if (signedUrlError || !signedUrlData?.signedUrl) {
         console.error("Failed to create signed URL:", signedUrlError);
+        Sentry.captureException(signedUrlError instanceof Error ? signedUrlError : new Error("Failed to create signed URL"), { tags: { subsystem: "storage" } });
         return { url: null, error: "Failed to generate document URL" };
       }
 
@@ -1729,6 +1753,7 @@ const uploadToSupabase = async (
     return { url: urlData.publicUrl, error: null };
   } catch (error) {
     console.error("Error in uploadToSupabase:", error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "storage" } });
     return {
       url: null,
       error: error instanceof Error ? error.message : "Upload failed",
@@ -1750,12 +1775,14 @@ const deleteFromSupabase = async (
 
     if (error) {
       console.error("Error deleting from Supabase:", error);
+      Sentry.captureException(new Error(error.message), { tags: { subsystem: "storage" } });
       return false;
     }
 
     return true;
   } catch (error) {
     console.error("Error in deleteFromSupabase:", error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "storage" } });
     return false;
   }
 };

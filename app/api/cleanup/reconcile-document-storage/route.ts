@@ -10,6 +10,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { reconcileDocumentStorage } from "@/scripts/cleanup/reconcile-document-storage";
 import { CronLockHeldError } from "@/lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
@@ -24,10 +25,16 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     }
 
     console.log("📂 Starting document storage reconciliation via API...");
+    Sentry.logger.info("cron:reconcile-document-storage started");
 
     const result = await reconcileDocumentStorage();
 
     console.log("✅ Document storage reconciliation completed:", {
+      orphanedFilesFound: result.orphanedFilesFound,
+      orphanedFilesDeleted: result.orphanedFilesDeleted,
+      missingFilesFound: result.missingFilesFound,
+    });
+    Sentry.logger.info("cron:reconcile-document-storage finished", {
       orphanedFilesFound: result.orphanedFilesFound,
       orphanedFilesDeleted: result.orphanedFilesDeleted,
       missingFilesFound: result.missingFilesFound,
@@ -44,6 +51,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     if (error instanceof CronLockHeldError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
     }
+    Sentry.captureException(error, { tags: { subsystem: "cron", job: "reconcile-document-storage" } });
     console.error("Error in document storage reconciliation:", error);
     return NextResponse.json(
       {

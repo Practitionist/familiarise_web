@@ -16,6 +16,7 @@ import {
 import { notifyRecordingExpiring } from "../../lib/novu/service";
 import { getAppUrl } from "../../lib/url";
 import fs from "fs";
+import * as Sentry from "@sentry/nextjs";
 
 // STR-3 — one expiry warning per consultant (count + soonest deadline), so a
 // consultant with several expiring STREAM_ONLY recordings isn't spammed.
@@ -55,6 +56,7 @@ async function notifyConsultantsOfExpiringRecordings(
 
 async function main(): Promise<void> {
   await abortIfMaintenance("transfer-expiring-recordings");
+  Sentry.logger.info("job:transfer-expiring-recordings started");
   const startTime = Date.now();
   console.log("🚀 Starting transfer-expiring-recordings job...");
   console.log(`   Timestamp: ${new Date().toISOString()}`);
@@ -102,6 +104,12 @@ async function main(): Promise<void> {
       );
     }
 
+    Sentry.logger.info("job:transfer-expiring-recordings finished", {
+      succeeded: result.succeeded,
+      failed: result.failed,
+      expiringStreamOnly: expiringStreamOnly.length,
+    });
+
     if (result.failed > 0) {
       console.warn("⚠️ Some transfers failed");
       process.exit(1);
@@ -111,9 +119,11 @@ async function main(): Promise<void> {
   } catch (error) {
     // #476 — lock held = another run is live; skip cleanly (exit 0).
     if (error instanceof CronLockHeldError) {
+      Sentry.logger.info("job:transfer-expiring-recordings skipped — lock held");
       console.log(`⏭️  ${error.message}`);
       return;
     }
+    Sentry.captureException(error, { tags: { subsystem: "jobs", job: "transfer-expiring-recordings" } });
     console.error("💥 Job failed:", error);
     if (process.env.GITHUB_ACTIONS && process.env.GITHUB_OUTPUT) {
       fs.appendFileSync(process.env.GITHUB_OUTPUT, "success=false\n");

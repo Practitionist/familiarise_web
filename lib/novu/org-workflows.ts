@@ -15,6 +15,7 @@
  *     themselves.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import type { MemberRole } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import {
@@ -54,6 +55,7 @@ async function triggerOne<T extends NovuRecord>(
     const novu = getNovuClient();
     await novu.trigger({ workflowId, to: subscriberId, payload });
   } catch (err) {
+    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "novu" } });
     console.error(`[Novu/org] Failed to trigger ${workflowId}:`, err);
   }
 }
@@ -69,6 +71,7 @@ async function triggerMany<T extends NovuRecord>(
     const novu = getNovuClient();
     await novu.trigger({ workflowId, to: subscriberIds, payload });
   } catch (err) {
+    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "novu" } });
     console.error(`[Novu/org] Failed to trigger ${workflowId} batch:`, err);
   }
 }

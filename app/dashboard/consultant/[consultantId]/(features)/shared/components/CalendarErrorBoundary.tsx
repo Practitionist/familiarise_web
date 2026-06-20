@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import React, { Component, ErrorInfo, ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { RotateCcw } from "lucide-react";
@@ -21,6 +22,7 @@ class CalendarErrorBoundary extends Component<Props, State> {
   }
 
   public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
     console.error("Uncaught error in calendar:", error, errorInfo);
   }
 

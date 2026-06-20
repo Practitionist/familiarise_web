@@ -1,5 +1,6 @@
 "use client";
 
+import * as Sentry from "@sentry/nextjs";
 import { useState, useEffect, useCallback } from "react";
 import { useDebouncedCallback } from "use-debounce";
 import { Card, CardContent } from "@/components/ui/card";
@@ -184,6 +185,7 @@ export default function AdminSupportTicketsPage() {
       setCounts(data.counts);
       setTotalPages(data.pagination.totalPages);
     } catch (error) {
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
       console.error("Error fetching tickets:", error);
       toast({
         title: "Error",
@@ -207,6 +209,7 @@ export default function AdminSupportTicketsPage() {
       const data = await response.json();
       setTicketDetail(data);
     } catch (error) {
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
       console.error("Error fetching ticket detail:", error);
       toast({
         title: "Error",
@@ -240,6 +243,7 @@ export default function AdminSupportTicketsPage() {
       fetchTickets();
       fetchTicketDetail(selectedTicket.id);
     } catch (error) {
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
       console.error("Error updating status:", error);
       toast({
         title: "Error",
@@ -276,6 +280,7 @@ export default function AdminSupportTicketsPage() {
       fetchTicketDetail(selectedTicket.id);
       fetchTickets();
     } catch (error) {
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
       console.error("Error sending reply:", error);
       toast({
         title: "Error",
@@ -311,6 +316,7 @@ export default function AdminSupportTicketsPage() {
       }
       fetchTickets();
     } catch (error) {
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
       console.error("Error:", error);
       toast({
         title: "Error",

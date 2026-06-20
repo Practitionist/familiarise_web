@@ -8,6 +8,7 @@ import prisma from "@/lib/prisma";
 import { ModerationActionType } from "@prisma/client";
 
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import * as Sentry from "@sentry/nextjs";
 interface RouteParams {
   params: Promise<{ reportId: string }>;
 }
@@ -91,6 +92,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       message: `Action '${actionType}' taken successfully`,
     });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "staff" } });
     console.error("Error taking moderation action:", error);
     return NextResponse.json(
       { error: "Failed to take action" },
