@@ -14,6 +14,7 @@
  * non-zero wallet balance that would be orphaned.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
@@ -277,6 +278,7 @@ export async function PATCH(
         { status },
       );
     }
+    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
     throw err;
   }
 }

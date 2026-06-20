@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -309,6 +310,7 @@ export function RequestSlotAllocationTab({
       setRequests(processedRequests);
     } catch (err) {
       // This catch block now primarily handles errors during data *processing*
+      Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "client" } });
       console.error("Error processing fetched data:", err);
       setError(
         err instanceof Error
@@ -385,6 +387,7 @@ export function RequestSlotAllocationTab({
       // Notify parent
       onUpdate();
     } catch (error) {
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
       toast({
         title: "Error",
         description:
@@ -414,6 +417,7 @@ export function RequestSlotAllocationTab({
       setRequests((prev) => prev.filter((r) => r.id !== request.id));
       onUpdate();
     } catch (error) {
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
       toast({
         title: "Error",
         description:

@@ -15,6 +15,7 @@
  * - Mock provides in-memory Redis with full Lua script support
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { Redis } from "@upstash/redis";
 import crypto from "crypto";
 import { getMockRedis, MockRedis } from "./redis-mock";
@@ -187,6 +188,7 @@ export async function withCircuitBreaker<T>(
           timestamp: new Date().toISOString(),
         }),
       );
+      Sentry.logger.warn(Sentry.logger.fmt`redis circuit breaker: opened after ${circuitBreaker.failures} failures`);
     }
 
     if (fallback) return fallback();
@@ -338,6 +340,7 @@ export async function releaseLock(key: string, token: string): Promise<void> {
         timestamp: new Date().toISOString(),
       }),
     );
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "redis" } });
   }
 }
 

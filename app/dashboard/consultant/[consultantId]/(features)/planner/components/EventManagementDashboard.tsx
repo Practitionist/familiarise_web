@@ -1,5 +1,6 @@
 "use client";
 
+import * as Sentry from "@sentry/nextjs";
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
@@ -194,6 +195,7 @@ export function EventManagementDashboard({
       });
       router.push(`/meetings/${meetingId}`);
     } catch (error) {
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
       console.error("Error joining webinar meeting:", error);
       toast({
         title: "Error joining meeting",
@@ -270,6 +272,7 @@ export function EventManagementDashboard({
       });
       router.push(`/meetings/${meetingId}`);
     } catch (error) {
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
       console.error("Error joining class meeting:", error);
       toast({
         title: "Error joining meeting",
@@ -310,6 +313,7 @@ export function EventManagementDashboard({
       );
       setPendingTrialCounts(counts);
     } catch (error) {
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
       console.error("Error fetching trial counts:", error);
     }
   }, [consultantId]);
@@ -363,6 +367,7 @@ export function EventManagementDashboard({
           })),
         );
       } catch (err) {
+        Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "client" } });
         setError(err instanceof Error ? err.message : "An error occurred");
         console.error("Error fetching events:", err);
       } finally {
@@ -397,6 +402,7 @@ export function EventManagementDashboard({
       setIsWebinarDialogOpen(false);
       setEditingEvent(null);
     } catch (error) {
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
       console.error("Error saving/refreshing webinar:", error);
       // Re-throw the error so it can be handled by the form
       throw error;
@@ -428,6 +434,7 @@ export function EventManagementDashboard({
       setIsClassDialogOpen(false);
       setEditingEvent(null);
     } catch (error) {
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
       console.error("Error saving/refreshing class:", error);
       throw error; // Propagate error to form handler
     } finally {
@@ -485,6 +492,7 @@ export function EventManagementDashboard({
       // Dialog closing is handled by the form component after awaiting this Promise
       setEditingEvent(null);
     } catch (error) {
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
       console.error("Error saving consultation plan:", error);
       throw error;
     } finally {

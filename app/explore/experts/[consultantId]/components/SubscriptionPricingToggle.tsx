@@ -1,5 +1,6 @@
 "use client";
 
+import * as Sentry from "@sentry/nextjs";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -157,6 +158,7 @@ export default function SubscriptionPricingToggle({
           setTrialEligibility({ isEligible: true, isLoading: false });
         }
       } catch (error) {
+        Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
         console.error("Error checking trial eligibility:", error);
         setTrialEligibility({ isEligible: true, isLoading: false });
       }

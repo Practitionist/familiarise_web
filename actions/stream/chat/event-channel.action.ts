@@ -1,5 +1,6 @@
 "use server";
 
+import * as Sentry from "@sentry/nextjs";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import {
@@ -19,6 +20,7 @@ import {
 import { upsertUserToStream, upsertUsersToStream } from "./user.action";
 import { MANAGED_CHANNEL_PREFIXES } from "@/lib/stream-channel-ids";
 import { getDmChannelId } from "@/lib/stream-utils";
+import { ConsentRequiredError } from "@/lib/compliance/dpdp";
 
 // Validation schemas
 const eventTypeSchema = z.enum([
@@ -203,6 +205,7 @@ export async function addUserToEventChannel(
 
     return { success: true, channelId, created };
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
     streamLogger.error("Failed to add user to event channel", error, {
       eventType,
       eventId,
@@ -430,6 +433,7 @@ export async function getUserEventChannels(userId: string) {
       memberCount: Object.keys(channel.state.members || {}).length,
     }));
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
     streamLogger.error("Failed to get user event channels", error, { userId });
     throw error;
   }
@@ -475,8 +479,27 @@ export async function syncUserEventChannels(
   const startTime = Date.now();
 
   try {
-    // Upsert the user to Stream first
-    await upsertUserToStream(userId);
+    // Upsert the user to Stream first. A DPDP consent gate (no/withdrawn
+    // STREAM_DATA_PROCESSING consent) is a deliberate refusal, NOT a failure:
+    // degrade gracefully by skipping the whole Stream sync rather than letting
+    // it bubble as an unhandled error through the dashboard-load path. The gate
+    // is unchanged — we simply don't crash the page for a non-consenting user.
+    try {
+      await upsertUserToStream(userId);
+    } catch (err) {
+      if (err instanceof ConsentRequiredError) {
+        streamLogger.info("Skipping channel sync — Stream consent not granted", {
+          userId,
+          purposeCode: err.purposeCode,
+        });
+        // Mark sync "completed" for this session so we don't retry the gated
+        // upsert on every navigation; a re-grant clears caches via the consent
+        // flow and a forced re-sync re-attempts it.
+        initialSyncCompletedUsers.add(userId);
+        return { success: true, skipped: true };
+      }
+      throw err;
+    }
 
     // Grab the Stream server client (needed for reconciliation query)
     const client = getStreamChatClient();
@@ -650,6 +673,7 @@ export async function syncUserEventChannels(
       durationMs: duration,
     };
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
     streamLogger.error("Channel sync failed", error, { userId });
     throw error;
   }

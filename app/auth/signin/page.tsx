@@ -1,5 +1,6 @@
 "use client";
 
+import * as Sentry from "@sentry/nextjs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -273,6 +274,7 @@ function SignInContent() {
           });
         }
       } else if (data) {
+        Sentry.setUser({ id: data.user.id });
         toast({
           title: "Sign In Successful",
           description: callbackUrl
@@ -282,6 +284,7 @@ function SignInContent() {
         router.push(callbackUrl || "/dashboard");
       }
     } catch (error) {
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
       console.error("Sign in error:", error);
       toast({
         title: "Sign In Error",

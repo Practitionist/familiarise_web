@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { AppointmentStatus } from "@prisma/client";
@@ -246,6 +247,7 @@ export async function GET(
       count: pendingPayments.length,
     });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "dashboard" } });
     console.error("Error fetching pending payments:", error);
     return NextResponse.json(
       {

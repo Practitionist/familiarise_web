@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { Prisma, PlanEmailSupport } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
@@ -30,6 +31,7 @@ export async function GET(
       },
     );
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "plans" } });
     return apiError({ tag: "[ClassPlan.GET]", error });
   }
 }
@@ -164,6 +166,7 @@ export async function PUT(
         { status: 404 },
       );
     }
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "plans" } });
     return apiError({ tag: "[ClassPlan.PUT]", error });
   }
 }

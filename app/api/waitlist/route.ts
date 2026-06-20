@@ -13,6 +13,7 @@ import { resolveOrgScope } from "@/lib/api/scope/parse";
 
 import { getSession } from "@/lib/auth-server";
 import { assertBodySize } from "@/lib/validation/limits";
+import * as Sentry from "@sentry/nextjs";
 /**
  * POST /api/waitlist - Join a waitlist
  */
@@ -102,6 +103,7 @@ export async function POST(request: NextRequest) {
       },
     });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "waitlist" } });
     console.error("Error joining waitlist:", error);
     return NextResponse.json(
       { success: false, error: "Failed to join waitlist" },
@@ -161,6 +163,7 @@ export async function GET(request: NextRequest) {
       data: entries,
     });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "waitlist" } });
     console.error("Error fetching waitlist entries:", error);
     return NextResponse.json(
       { success: false, error: "Failed to fetch waitlist entries" },

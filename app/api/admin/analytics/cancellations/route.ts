@@ -3,6 +3,7 @@
  * Admin-only endpoint for cancellation insights
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { CancellationReason } from "@prisma/client";
@@ -229,6 +230,7 @@ export async function GET(req: NextRequest) {
       availableReasons: Object.values(CancellationReason),
     });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
     console.error("Error fetching cancellation analytics:", error);
     return NextResponse.json(
       { error: "Failed to fetch cancellation analytics" },

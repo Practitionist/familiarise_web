@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { DayOfWeek } from "@prisma/client";
@@ -65,6 +66,7 @@ export async function GET(req: NextRequest) {
     );
   } catch (error) {
     console.error("Error fetching weekly slots:", error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "scheduling" } });
     return NextResponse.json(
       { error: "An error occurred while fetching weekly availability slots" },
       { status: 500 },
@@ -207,6 +209,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ data: newWeeklySlot }, { status: 201 });
   } catch (error) {
     console.error("Error creating weekly slot:", error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "scheduling" } });
     return NextResponse.json(
       {
         error: "An error occurred while creating the weekly availability slot",

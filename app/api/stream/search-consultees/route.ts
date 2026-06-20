@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "lib/prisma";
 
@@ -260,6 +261,7 @@ export async function GET(req: NextRequest) {
       total: results.length,
     });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
     console.error("Error searching consultees:", error);
     return NextResponse.json(
       { error: "Failed to search consultees" },

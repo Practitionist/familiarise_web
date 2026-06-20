@@ -15,6 +15,7 @@
  * without depending on any logger abstraction.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { useEffect } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -38,6 +39,7 @@ export default function OrgDashboardError({
   const orgId = params?.orgId ?? "unknown";
 
   useEffect(() => {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
     console.error(
       JSON.stringify({
         event: "org_dashboard_error",

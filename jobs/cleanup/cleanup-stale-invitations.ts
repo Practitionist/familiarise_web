@@ -18,6 +18,7 @@ import {
 } from "../../scripts/cleanup/cleanup-stale-invitations";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
 import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 function outputToGitHubActions(result: StaleInvitationsCleanupResult): void {
   if (!process.env.GITHUB_ACTIONS) return;
@@ -40,6 +41,7 @@ function outputToGitHubActions(result: StaleInvitationsCleanupResult): void {
 
 async function main(): Promise<void> {
   await abortIfMaintenance("cleanup-stale-invitations");
+  Sentry.logger.info("job:cleanup-stale-invitations started");
   console.log("🧹 Starting stale invitation cleanup job...");
   console.log(`Timestamp: ${new Date().toISOString()}`);
 
@@ -60,12 +62,16 @@ async function main(): Promise<void> {
     if (!result.success) {
       process.exit(1);
     }
+
+    Sentry.logger.info("job:cleanup-stale-invitations finished", { expired: result.expired });
   } catch (error) {
     // #476 — lock held = another run is live; skip cleanly (exit 0).
     if (error instanceof CronLockHeldError) {
+      Sentry.logger.info("job:cleanup-stale-invitations lock held, skipping");
       console.log(`⏭️  ${error.message}`);
       return;
     }
+    Sentry.captureException(error, { tags: { subsystem: "jobs", job: "cleanup-stale-invitations" } });
     console.error("❌ Fatal error in stale invitation cleanup:", error);
     process.exit(1);
   } finally {

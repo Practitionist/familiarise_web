@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import type { PrismaLike } from "@/lib/prisma";
 /**
  * Outbound webhook delivery worker.
@@ -102,6 +103,8 @@ export async function runDispatchTick(params: {
   const fetchImpl = params.fetchFn ?? globalThis.fetch;
   const now = params.now ?? (() => Date.now());
   const batchLimit = params.maxBatch ?? MAX_BATCH;
+
+  Sentry.logger.info("webhook-worker: tick started");
 
   const result: WorkerRunResult = {
     scanned: 0,
@@ -289,6 +292,9 @@ export async function runDispatchTick(params: {
       // DEAD_LETTER, not FAILED: delivery-starved (receiver may be fine
       // tomorrow), operator-replayable via /redeliver. FAILED stays the
       // receiver-rejected terminal (permanent 4xx / endpoint paused).
+      const deadLetterError =
+        networkError ??
+        `Exhausted retries; last status ${httpStatusCode ?? "n/a"}`;
       await prisma.outboundWebhookDelivery.update({
         where: { id: row.id },
         data: {
@@ -296,9 +302,7 @@ export async function runDispatchTick(params: {
           httpStatusCode: httpStatusCode ?? null,
           signature,
           attempts: attemptNumber,
-          lastError:
-            networkError ??
-            `Exhausted retries; last status ${httpStatusCode ?? "n/a"}`,
+          lastError: deadLetterError,
         },
       });
       await prisma.webhookEndpoint.update({
@@ -308,6 +312,22 @@ export async function runDispatchTick(params: {
           failureCount: { increment: 1 },
         },
       });
+      Sentry.captureException(
+        new Error(`Webhook delivery dead-lettered: ${deadLetterError}`),
+        {
+          tags: { subsystem: "enterprise", component: "outbound-webhooks" },
+          level: "warning",
+          contexts: {
+            delivery: {
+              deliveryId: row.id,
+              endpointId: row.endpoint.id,
+              eventType: row.eventType,
+              attempts: attemptNumber,
+              httpStatusCode: httpStatusCode ?? null,
+            },
+          },
+        },
+      );
       result.failed += 1;
     } else {
       const backoff = BACKOFF_MS[nextAttemptNumber] ?? BACKOFF_MS[MAX_ATTEMPTS];
@@ -325,6 +345,13 @@ export async function runDispatchTick(params: {
       result.retried += 1;
     }
   }
+
+  Sentry.logger.info("webhook-worker: tick finished", {
+    scanned: result.scanned,
+    succeeded: result.succeeded,
+    retried: result.retried,
+    failed: result.failed,
+  });
 
   return result;
 }

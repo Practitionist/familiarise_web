@@ -17,6 +17,7 @@ import {
 import fs from "fs";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
 import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 function outputToGitHubActions(result: ProcessExpirationsResult): void {
   if (!process.env.GITHUB_ACTIONS) return;
@@ -43,6 +44,7 @@ function outputToGitHubActions(result: ProcessExpirationsResult): void {
 
 async function main(): Promise<void> {
   await abortIfMaintenance("process-expired-notifications");
+  Sentry.logger.info("job:process-expired-notifications started");
   console.log("🕐 Starting expired notification processor...");
   console.log(`Timestamp: ${new Date().toISOString()}`);
 
@@ -55,6 +57,10 @@ async function main(): Promise<void> {
     console.log(`   Errors: ${result.errors.length}`);
 
     outputToGitHubActions(result);
+    Sentry.logger.info("job:process-expired-notifications finished", {
+      processed: result.processed,
+      emailed: result.emailed,
+    });
 
     if (!result.success) {
       process.exit(1);
@@ -62,9 +68,13 @@ async function main(): Promise<void> {
   } catch (error) {
     // #476 — lock held = another run is live; skip cleanly (exit 0).
     if (error instanceof CronLockHeldError) {
+      Sentry.logger.info("job:process-expired-notifications skipped — lock held");
       console.log(`⏭️  ${error.message}`);
       return;
     }
+    Sentry.captureException(error, {
+      tags: { subsystem: "jobs", job: "process-expired-notifications" },
+    });
     console.error("❌ Error processing expired notifications:", error);
     process.exit(1);
   } finally {
@@ -75,6 +85,9 @@ async function main(): Promise<void> {
 // Run the job — the catch covers rejections that escape main's own
 // try/catch (e.g. abortIfMaintenance), matching the payouts wrapper.
 main().catch((error) => {
+  Sentry.captureException(error, {
+    tags: { subsystem: "jobs", job: "process-expired-notifications" },
+  });
   console.error("❌ expired notification job failed:");
   console.error(error);
   process.exit(1);

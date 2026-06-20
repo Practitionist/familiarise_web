@@ -15,6 +15,7 @@ import {
 import fs from "fs";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
 import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 /**
  * Output results to GitHub Actions
@@ -65,6 +66,7 @@ function outputToGitHubActions(result: PaymentReconciliationResult): void {
  */
 async function main(): Promise<void> {
   await abortIfMaintenance("reconcile-payment-status");
+  Sentry.logger.info("job:reconcile-payment-status started");
   console.log("🔄 Starting payment status reconciliation job...");
   console.log(`Timestamp: ${new Date().toISOString()}`);
 
@@ -87,6 +89,15 @@ async function main(): Promise<void> {
 
     outputToGitHubActions(result);
 
+    Sentry.logger.info("job:reconcile-payment-status finished", {
+      totalProcessed: result.totalProcessed,
+      reconciledCount: result.reconciledCount,
+      succeededCount: result.succeededCount,
+      failedCount: result.failedCount,
+      expiredCount: result.expiredCount,
+      skippedCount: result.skippedCount,
+    });
+
     if (!result.success) {
       process.exit(1);
     }
@@ -95,9 +106,11 @@ async function main(): Promise<void> {
     // outcome (exit 0, no page). CronLockUnavailableError falls through
     // to exit 1 so the workflow's notify step pages.
     if (error instanceof CronLockHeldError) {
+      Sentry.logger.info("job:reconcile-payment-status lock held, skipping");
       console.log(`⏭️  ${error.message}`);
       return;
     }
+    Sentry.captureException(error, { tags: { subsystem: "jobs", job: "reconcile-payment-status" } });
     console.error("❌ Fatal error in payment reconciliation:", error);
     process.exit(1);
   } finally {

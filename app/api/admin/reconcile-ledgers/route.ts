@@ -18,6 +18,7 @@
  * aggregate shapes that we don't want leaking through an in-app UI.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
@@ -59,6 +60,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ data: report });
   } catch (err) {
+    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "admin" } });
     console.error("[admin/reconcile-ledgers] run failed", err);
     return NextResponse.json(
       {

@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { handleSlotOpening } from "@/lib/waitlist/slot-handler";
@@ -110,6 +111,7 @@ export async function GET(
       waitlistTruncated: waitlist.length === WAITLIST_CAP,
     });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
     console.error("[CLASS_PARTICIPANTS_GET]", error);
     return new NextResponse("Internal error", { status: 500 });
   }
@@ -193,12 +195,14 @@ export async function DELETE(
         await handleSlotOpening({ classId, slotsAvailable: 1 });
       } catch (error) {
         // Log error but don't fail the request - participant removal succeeded
+        Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
         console.error("[CLASS_WAITLIST_NOTIFICATION]", error);
       }
     }
 
     return new NextResponse(null, { status: 204 });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
     console.error("[CLASS_PARTICIPANT_DELETE]", error);
     return new NextResponse("Internal error", { status: 500 });
   }

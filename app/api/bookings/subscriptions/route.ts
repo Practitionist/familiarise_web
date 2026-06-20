@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { Prisma, AppointmentStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
@@ -128,6 +129,7 @@ export async function GET(request: NextRequest) {
       },
     });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
     console.error("Error fetching subscriptions:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching subscriptions" },
@@ -320,6 +322,7 @@ export async function PATCH(request: NextRequest) {
 
       return NextResponse.json({ data: subscription });
     } catch (error) {
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
       console.error(
         "Transaction error:",
         error instanceof Error ? error.message : "Unknown error",
@@ -333,6 +336,7 @@ export async function PATCH(request: NextRequest) {
         { status: error.httpStatus },
       );
     }
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
     console.error(
       "Error updating subscription:",
       error instanceof Error ? error.message : "Unknown error",

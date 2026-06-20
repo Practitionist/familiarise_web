@@ -3,6 +3,7 @@
  * Allows users to report inappropriate content
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { ModerationReportType } from "@prisma/client";
@@ -174,6 +175,7 @@ export async function POST(req: NextRequest) {
       { status: 201 },
     );
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "report" } });
     console.error("Error submitting report:", error);
     return NextResponse.json(
       { error: "Failed to submit report" },

@@ -15,6 +15,7 @@ import {
 import fs from "fs";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
 import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 /**
  * Output results to GitHub Actions
@@ -52,6 +53,7 @@ function outputToGitHubActions(result: ReminderResult): void {
  */
 async function main(): Promise<void> {
   await abortIfMaintenance("send-appointment-reminders");
+  Sentry.logger.info("job:send-appointment-reminders started");
   console.log("⏰ Starting appointment reminders job...");
   console.log(`Timestamp: ${new Date().toISOString()}`);
 
@@ -70,15 +72,24 @@ async function main(): Promise<void> {
 
     outputToGitHubActions(result);
 
+    Sentry.logger.info("job:send-appointment-reminders finished", {
+      reminders24h: result.reminders24h,
+      reminders1h: result.reminders1h,
+    });
+
     if (!result.success) {
       process.exit(1);
     }
   } catch (error) {
     // #476 — lock held = another run is live; skip cleanly (exit 0).
     if (error instanceof CronLockHeldError) {
+      Sentry.logger.info("job:send-appointment-reminders skipped — lock held");
       console.log(`⏭️  ${error.message}`);
       return;
     }
+    Sentry.captureException(error, {
+      tags: { subsystem: "jobs", job: "send-appointment-reminders" },
+    });
     console.error("❌ Fatal error in appointment reminders:", error);
     process.exit(1);
   } finally {

@@ -19,6 +19,7 @@
  * an unverified claim can't do real damage.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
@@ -155,6 +156,7 @@ export async function POST(
         { status: 409 },
       );
     }
+    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
     throw err;
   }
 }

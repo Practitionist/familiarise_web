@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { RecordingTransferService } from "@/lib/stream/recording-transfer-service";
 import { streamLogger } from "@/lib/stream-logger";
 import { withCronLock, CronLockHeldError } from "@/lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
@@ -23,6 +24,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     }
 
     streamLogger.info("Starting mark-expired-recordings cron");
+    Sentry.logger.info("cron:mark-expired-recordings started");
 
     // #476 — same lock key as the GH Actions entry (jobs/stream/...).
     const expiredCount = await withCronLock(
@@ -31,6 +33,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       () => RecordingTransferService.markExpiredRecordings(),
     );
 
+    Sentry.logger.info("cron:mark-expired-recordings finished", { expiredCount });
     return NextResponse.json({
       success: true,
       expiredCount,
@@ -41,6 +44,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     if (error instanceof CronLockHeldError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
     }
+    Sentry.captureException(error, { tags: { subsystem: "cron", job: "mark-expired-recordings" } });
     streamLogger.error("Mark expired recordings cron failed", error);
     return NextResponse.json(
       { error: "Cron job failed" },

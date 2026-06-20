@@ -1,5 +1,6 @@
 "use client";
 
+import * as Sentry from "@sentry/nextjs";
 import React from "react";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
@@ -89,6 +90,7 @@ export default function ClassParticipantsPage() {
       });
     },
     onError: (error) => {
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
       console.error("Error removing participant:", error);
     },
   });

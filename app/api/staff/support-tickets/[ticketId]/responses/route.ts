@@ -8,6 +8,7 @@ import prisma from "@/lib/prisma";
 import { notifySupportTicketResponse } from "@/lib/novu";
 import { CreateSupportResponseSchema } from "@/schemas/support";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import * as Sentry from "@sentry/nextjs";
 
 interface RouteParams {
   params: Promise<{ ticketId: string }>;
@@ -88,6 +89,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json(response, { status: 201 });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "staff" } });
     console.error("Error creating support response:", error);
     return NextResponse.json(
       { error: "Failed to create response" },
@@ -124,6 +126,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json(responses);
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "staff" } });
     console.error("Error fetching support responses:", error);
     return NextResponse.json(
       { error: "Failed to fetch responses" },

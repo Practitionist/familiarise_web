@@ -7,6 +7,7 @@
  * Consultants sync their own sessions, consultees sync their enrolled sessions.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { RecordingService } from "@/lib/stream/recording-service";
 import prisma from "@/lib/prisma";
@@ -82,6 +83,7 @@ export async function POST(_req: NextRequest) {
     });
   } catch (error) {
     console.error("Error syncing recordings:", error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
 
     return NextResponse.json(
       { error: "Failed to sync recordings" },

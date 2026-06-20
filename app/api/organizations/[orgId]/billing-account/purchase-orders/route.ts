@@ -12,6 +12,7 @@
  * same number to appear on the invoice. We enforce uniqueness per org.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
@@ -142,6 +143,7 @@ export async function POST(
         { status: 409 },
       );
     }
+    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
     throw err;
   }
 }

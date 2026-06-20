@@ -1,5 +1,6 @@
 "use client";
 
+import * as Sentry from "@sentry/nextjs";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { loadScript } from "../plans/utils";
@@ -179,6 +180,7 @@ export default function RazorpayCheckout({
             }
           } catch (verifyErr) {
             // Network failure — don't block; webhook is the ultimate authority
+            Sentry.captureException(verifyErr instanceof Error ? verifyErr : new Error(String(verifyErr)), { tags: { subsystem: "payments" } });
             console.error("Signature verification request failed:", verifyErr);
           }
           onPaymentSuccess(response);
@@ -203,6 +205,7 @@ export default function RazorpayCheckout({
       });
       rzp.open();
     } catch (error) {
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "payments" } });
       onPaymentError({
         description: error instanceof Error ? error.message : "An unexpected error occurred",
       });

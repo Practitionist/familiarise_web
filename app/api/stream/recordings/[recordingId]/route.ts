@@ -13,6 +13,7 @@ import { streamLogger } from "@/lib/stream-logger";
 import { isPaymentEntitled } from "@/lib/payments/utils/refund-balance";
 
 import { getSession } from "@/lib/auth-server";
+import * as Sentry from "@sentry/nextjs";
 type RouteParams = {
   params: Promise<{
     recordingId: string;
@@ -157,6 +158,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       },
     });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
     streamLogger.error("Error getting recording", error);
     return NextResponse.json(
       { error: "Failed to get recording" },

@@ -3,6 +3,7 @@
  * Update/Delete specific payout accounts
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 
@@ -78,6 +79,7 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
       account: updatedAccount,
     });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "consultant" } });
     console.error("Error updating payout account:", error);
     return NextResponse.json(
       { error: "Failed to update payout account" },
@@ -163,6 +165,7 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json({ success: true });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "consultant" } });
     console.error("Error deleting payout account:", error);
     return NextResponse.json(
       { error: "Failed to delete payout account" },

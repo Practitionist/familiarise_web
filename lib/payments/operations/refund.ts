@@ -37,6 +37,7 @@
  * the paise.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import prisma, { type Tx } from "@/lib/prisma";
 import {
   EarningStatus,
@@ -927,6 +928,10 @@ export async function applyRefundCascade(
     console.error(
       `[ledger] refund reversal posting FAILED for payment ${payment.id} — rolling back the cascade: ${err instanceof Error ? err.message : String(err)}`,
     );
+    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), {
+      tags: { subsystem: "payments" },
+      contexts: { refund: { paymentId: payment.id, refundId: input.refundId } },
+    });
     void recordSystemError({
       organizationId: payment.organizationId ?? null,
       category: "LEDGER",

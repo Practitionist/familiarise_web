@@ -11,6 +11,7 @@
  * org), to prevent locking every user out.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireOrgOwner } from "@/lib/auth-helpers";
@@ -94,6 +95,7 @@ export async function DELETE(
         typeof err.httpStatus === "number" ? err.httpStatus : 500;
       return NextResponse.json({ error: err.message }, { status });
     }
+    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "organizations" } });
     throw err;
   }
 }
