@@ -8,7 +8,6 @@
  * rejection stamp so the admin queue picks it up fresh.
  */
 
-import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";

@@ -1,4 +1,3 @@
-import * as Sentry from "@sentry/nextjs";
 import { acquireLock, releaseLock, isMockRedis, checkRedisHealth } from "@/lib/redis";
 
 /**

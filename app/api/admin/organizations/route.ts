@@ -7,7 +7,6 @@
  * verify, suspend, or reactivate without needing DB access.
  */
 
-import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";

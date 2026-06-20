@@ -14,7 +14,6 @@
  * docs/enterprise/40-compliance-and-data/02-deletion-policy.md is the source of truth.
  */
 
-import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 
 // Build a fresh Response per call. A Web Response body is one-shot —

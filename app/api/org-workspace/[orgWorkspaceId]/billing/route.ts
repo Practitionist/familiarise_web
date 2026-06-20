@@ -20,7 +20,6 @@
  * to handle a "no profile yet" branch separately.
  */
 
-import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth-helpers";

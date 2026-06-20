@@ -1,4 +1,3 @@
-import * as Sentry from "@sentry/nextjs";
 import { useTimezone } from "@/app/explore/experts/[consultantId]/hooks/useTimezone";
 import { TrashIcon } from "@/assets/icons";
 import { Button } from "@/components/ui/button";

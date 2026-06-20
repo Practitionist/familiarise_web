@@ -1,6 +1,5 @@
 "use server";
 
-import * as Sentry from "@sentry/nextjs";
 import { z } from "zod";
 import { processOnboardingData } from "@/utils/onboarding-server";
 import { getSession } from "@/lib/auth-server";

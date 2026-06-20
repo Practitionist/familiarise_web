@@ -17,7 +17,6 @@
  *  - canSponsor=true → BillingAccount created with the chosen fundingSource.
  */
 
-import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { randomUUID } from "crypto";
 import { z } from "zod";

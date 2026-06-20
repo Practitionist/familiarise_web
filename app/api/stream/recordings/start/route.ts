@@ -5,7 +5,6 @@
  * Starts recording for a video call. Only consultants can start recordings.
  */
 
-import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { RecordingService } from "@/lib/stream/recording-service";

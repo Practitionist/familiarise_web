@@ -20,7 +20,6 @@
  * name so the UI doesn't need a follow-up join.
  */
 
-import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";

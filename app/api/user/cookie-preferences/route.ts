@@ -1,4 +1,3 @@
-import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import { requireApiAuth } from "@/lib/auth-helpers";

@@ -1,6 +1,5 @@
 "use client";
 
-import * as Sentry from "@sentry/nextjs";
 import { useState, useEffect, useCallback } from "react";
 import {
   Card,

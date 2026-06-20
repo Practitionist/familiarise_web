@@ -6,7 +6,6 @@
  * Only consultants who own the recording can trigger transfer.
  */
 
-import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { RecordingTransferService } from "@/lib/stream/recording-transfer-service";
 import { getRecordingOwnershipInfo } from "@/lib/stream/recording-utils";

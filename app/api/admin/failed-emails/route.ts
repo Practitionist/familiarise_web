@@ -17,7 +17,6 @@
  * bodies can carry payment/PII detail, so this never reaches an org UI.
  */
 
-import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";

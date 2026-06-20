@@ -9,7 +9,6 @@
  * friendly happy-path.
  */
 
-import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";

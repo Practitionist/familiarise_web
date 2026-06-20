@@ -1,4 +1,3 @@
-import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { TrialSessionStatus, AppointmentsType, Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";

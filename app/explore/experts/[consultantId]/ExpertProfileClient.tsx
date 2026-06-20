@@ -1,6 +1,5 @@
 "use client";
 
-import * as Sentry from "@sentry/nextjs";
 import { useToast } from "@/components/ui/use-toast";
 import type { ConsultantDetailData } from "./types";
 import { TSlotTiming } from "@/types/slots";

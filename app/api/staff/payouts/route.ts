@@ -6,7 +6,6 @@
  * `lib/api/operators/payouts.ts` and is shared with `/api/admin/payouts`.
  */
 
-import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { PayoutStatus } from "@prisma/client";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";

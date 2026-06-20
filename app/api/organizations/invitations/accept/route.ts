@@ -12,7 +12,6 @@
  * the second sees count=0 and reports 409.
  */
 
-import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";

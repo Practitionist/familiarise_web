@@ -6,7 +6,6 @@
  * `lib/api/operators/stats.ts` (`getStaffDashboardStats`).
  */
 
-import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
 import { getStaffDashboardStats } from "@/lib/api/operators";

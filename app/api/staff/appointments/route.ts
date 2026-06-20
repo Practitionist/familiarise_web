@@ -3,7 +3,6 @@
  * Staff/Admin access to all appointments with filtering and pagination
  */
 
-import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { AppointmentsType, Prisma } from "@prisma/client";

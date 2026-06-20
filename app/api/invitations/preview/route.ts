@@ -18,7 +18,6 @@
  * used" from "expired", limiting information leakage to the happy path only.
  */
 
-import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 

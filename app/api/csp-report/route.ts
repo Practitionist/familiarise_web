@@ -18,7 +18,6 @@
  * allowed-but-flagged one.
  */
 
-import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { applyRateLimit, spamLimiter } from "@/lib/rate-limit";
 

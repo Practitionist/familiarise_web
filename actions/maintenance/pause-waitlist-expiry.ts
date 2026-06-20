@@ -8,7 +8,6 @@
  * maintenance duration so they don't lose their spot unfairly.
  */
 
-import * as Sentry from "@sentry/nextjs";
 import { WaitlistStatus } from "@prisma/client";
 
 import prisma from "@/lib/prisma";

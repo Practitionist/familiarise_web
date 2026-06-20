@@ -16,7 +16,6 @@
  *   - `limit` — page size (default 100, max 500)
  */
 
-import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { Prisma, SystemEventSeverity } from "@prisma/client";

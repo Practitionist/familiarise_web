@@ -388,7 +388,7 @@ export class RazorpayPayoutsService {
    */
   verifyWebhookSignature(payload: string, signature: string): boolean {
     if (!this.config.webhookSecret) {
-      console.warn("RazorpayX webhook secret not configured");
+      Sentry.logger.warn("RazorpayX webhook secret not configured");
       return false;
     }
 
