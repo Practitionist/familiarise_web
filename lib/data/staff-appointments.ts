@@ -79,6 +79,55 @@ export type StaffAppointmentsParams = {
 };
 
 /**
+ * #897 — map the derived display status (the staff tabs: scheduled / completed
+ * / issue) to a DB condition across the four event types, so filtering and the
+ * tab counts run in the query instead of on an already-paginated page.
+ *
+ * "issue" mirrors the per-row hasIssue rule: cancelled, OR no payment with a
+ * non-PENDING status (webinar/class have no PENDING state, so any unpaid one
+ * qualifies). Returns null for "all"/unknown — no status constraint.
+ */
+function buildStatusWhere(
+  status: string | null,
+): Prisma.AppointmentWhereInput | null {
+  if (status === "scheduled" || status === "completed") {
+    const s = status === "scheduled" ? "SCHEDULED" : "COMPLETED";
+    return {
+      OR: [
+        { consultation: { status: s } },
+        { subscription: { status: s } },
+        { webinar: { status: s } },
+        { class: { status: s } },
+      ],
+    };
+  }
+  if (status === "issue") {
+    return {
+      OR: [
+        { consultation: { status: "CANCELLED" } },
+        { subscription: { status: "CANCELLED" } },
+        { webinar: { status: "CANCELLED" } },
+        { class: { status: "CANCELLED" } },
+        {
+          AND: [
+            { payment: { none: {} } },
+            {
+              OR: [
+                { consultation: { status: { not: "PENDING" } } },
+                { subscription: { status: { not: "PENDING" } } },
+                { webinarId: { not: null } },
+                { classId: { not: null } },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+  }
+  return null;
+}
+
+/**
  * Fetch the staff appointments table as a JSON-safe payload.
  *
  * Single source of truth for both the route and the prefetch — the returned
@@ -101,20 +150,23 @@ export async function getStaffAppointments(
   const limit = params.limit ?? 20;
   const offset = (page - 1) * limit;
 
-  // Build where clause
-  const where: Prisma.AppointmentWhereInput = {};
+  // Base where (type / org / date / search) — NOT status. #897: status is a
+  // derived value (per-type sub-entity status + payment presence), so it's
+  // resolved to DB conditions and AND-ed in below, instead of post-filtering a
+  // single page (which broke page sizes and totals).
+  const baseWhere: Prisma.AppointmentWhereInput = {};
 
   if (type && Object.values(AppointmentsType).includes(type)) {
-    where.appointmentType = type;
+    baseWhere.appointmentType = type;
   }
 
   if (orgId) {
-    where.organizationId = orgId;
+    baseWhere.organizationId = orgId;
   }
 
   // Filter by date at the database level using slotsOfAppointment
   if (dateFrom || dateTo) {
-    where.slotsOfAppointment = {
+    baseWhere.slotsOfAppointment = {
       some: {
         ...(dateFrom && { startsAt: { gte: new Date(dateFrom) } }),
         ...(dateTo && { startsAt: { lte: new Date(dateTo) } }),
@@ -124,7 +176,7 @@ export async function getStaffAppointments(
 
   // Handle search across multiple fields
   if (search) {
-    where.OR = [
+    baseWhere.OR = [
       { id: { contains: search, mode: "insensitive" } },
       // Consultation search
       {
@@ -187,10 +239,26 @@ export async function getStaffAppointments(
     ];
   }
 
-  // Get appointments with related data
-  const [appointments, total] = await Promise.all([
+  // #897 — AND the resolved status condition onto the base for the list query
+  // so pagination + total reflect the filtered set.
+  const statusCond = buildStatusWhere(status);
+  const listWhere: Prisma.AppointmentWhereInput = statusCond
+    ? { AND: [baseWhere, statusCond] }
+    : baseWhere;
+
+  // One paginated list query + per-tab count queries. `total` drives
+  // pagination for the CURRENT view; the tab badges are global counts within
+  // the base filter (not page-scoped), which is the #897 fix.
+  const [
+    appointments,
+    total,
+    allCount,
+    scheduledCount,
+    completedCount,
+    issuesCount,
+  ] = await Promise.all([
     prisma.appointment.findMany({
-      where,
+      where: listWhere,
       include: {
         slotsOfAppointment: {
           orderBy: { startsAt: "asc" },
@@ -356,7 +424,17 @@ export async function getStaffAppointments(
       take: limit,
       skip: offset,
     }),
-    prisma.appointment.count({ where }),
+    prisma.appointment.count({ where: listWhere }),
+    prisma.appointment.count({ where: baseWhere }),
+    prisma.appointment.count({
+      where: { AND: [baseWhere, buildStatusWhere("scheduled") ?? {}] },
+    }),
+    prisma.appointment.count({
+      where: { AND: [baseWhere, buildStatusWhere("completed") ?? {}] },
+    }),
+    prisma.appointment.count({
+      where: { AND: [baseWhere, buildStatusWhere("issue") ?? {}] },
+    }),
   ]);
 
   // Format appointments for frontend
@@ -480,33 +558,20 @@ export async function getStaffAppointments(
     };
   });
 
-  // Filter by status if provided (after formatting since status is derived)
-  let filteredAppointments = formattedAppointments;
-  if (status && status !== "all") {
-    if (status === "issue") {
-      filteredAppointments = formattedAppointments.filter((apt) => apt.hasIssue);
-    } else {
-      filteredAppointments = formattedAppointments.filter(
-        (apt) => apt.status === status,
-      );
-    }
-  }
-
-  // Get counts for stats
+  // #897 — status filtering and counts now run in the DB above, so the page is
+  // already the correct slice and the tab badges are global, not page-scoped.
   const counts = {
-    all: total,
-    issues: formattedAppointments.filter((a) => a.hasIssue).length,
-    scheduled: formattedAppointments.filter((a) => a.status === "scheduled")
-      .length,
-    completed: formattedAppointments.filter((a) => a.status === "completed")
-      .length,
+    all: allCount,
+    issues: issuesCount,
+    scheduled: scheduledCount,
+    completed: completedCount,
   };
 
   // toPlain — payment rows carry the #780/#781 money result extension's inspect
   // symbol, so the payload must be plainified before crossing the RSC→Client
   // HydrationBoundary.
   return toPlain({
-    appointments: filteredAppointments,
+    appointments: formattedAppointments,
     counts,
     pagination: {
       total,
