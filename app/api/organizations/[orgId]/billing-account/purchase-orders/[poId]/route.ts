@@ -7,6 +7,7 @@
  * hard-deleted. Otherwise mark CANCELLED via PATCH.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";

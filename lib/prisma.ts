@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 

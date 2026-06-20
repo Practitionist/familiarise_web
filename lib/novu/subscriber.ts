@@ -2,6 +2,7 @@
  * Novu Subscriber Management
  * Syncs user data to Novu as subscribers using User.id as subscriberId.
  */
+import * as Sentry from "@sentry/nextjs";
 import { getNovuClient, isNovuConfigured } from "./client";
 
 interface SubscriberData {
@@ -39,6 +40,7 @@ export async function syncSubscriber(data: SubscriberData): Promise<void> {
     });
     console.log(`[Novu] Subscriber synced: ${data.userId}`);
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "novu" } });
     console.error("[Novu] Failed to sync subscriber:", error);
   }
 }
@@ -94,6 +96,7 @@ export async function updateSubscriberPreferences(
     );
     console.log(`[Novu] Preferences updated for subscriber: ${userId}`);
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "novu" } });
     console.error("[Novu] Failed to update subscriber preferences:", error);
   }
 }
@@ -109,6 +112,7 @@ export async function deleteSubscriber(userId: string): Promise<void> {
     await novu.subscribers.delete(userId);
     console.log(`[Novu] Subscriber deleted: ${userId}`);
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "novu" } });
     console.error("[Novu] Failed to delete subscriber:", error);
   }
 }

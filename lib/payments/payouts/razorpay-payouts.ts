@@ -5,6 +5,7 @@
  * API Documentation: https://razorpay.com/docs/api/x/payouts/
  */
 
+import * as Sentry from "@sentry/nextjs";
 import crypto from "crypto";
 
 // ============================================

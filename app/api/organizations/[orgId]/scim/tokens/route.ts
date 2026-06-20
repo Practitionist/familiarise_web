@@ -11,6 +11,7 @@
  * lost token requires creating a fresh one — there's no recovery path.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { createHash, randomBytes } from "node:crypto";
@@ -30,19 +31,24 @@ export async function GET(
   const access = await requireOrgOwner(orgId);
   if (access.error) return access.error;
 
-  const tokens = await prisma.scimToken.findMany({
-    where: { organizationId: orgId },
-    orderBy: { createdAt: "desc" },
-    select: {
-      id: true,
-      label: true,
-      status: true,
-      createdAt: true,
-      lastUsedAt: true,
-      revokedAt: true,
-    },
-  });
-  return NextResponse.json({ data: tokens });
+  try {
+    const tokens = await prisma.scimToken.findMany({
+      where: { organizationId: orgId },
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        label: true,
+        status: true,
+        createdAt: true,
+        lastUsedAt: true,
+        revokedAt: true,
+      },
+    });
+    return NextResponse.json({ data: tokens });
+  } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "enterprise" } });
+    return NextResponse.json({ error: "Failed to list SCIM tokens" }, { status: 500 });
+  }
 }
 
 export async function POST(
@@ -68,28 +74,34 @@ export async function POST(
   const rawToken = randomBytes(48).toString("base64url");
   const tokenHash = createHash("sha256").update(rawToken).digest("hex");
 
-  const created = await prisma.$transaction(async (tx) => {
-    const token = await tx.scimToken.create({
-      data: {
-        organizationId: orgId,
-        tokenHash,
-        label: parsed.data.label,
-        status: "ACTIVE",
-        createdByMembershipId: access.member.id,
-      },
+  let created;
+  try {
+    created = await prisma.$transaction(async (tx) => {
+      const token = await tx.scimToken.create({
+        data: {
+          organizationId: orgId,
+          tokenHash,
+          label: parsed.data.label,
+          status: "ACTIVE",
+          createdByMembershipId: access.member.id,
+        },
+      });
+      await tx.orgAuditLog.create({
+        data: {
+          organizationId: orgId,
+          actorMembershipId: access.member.id,
+          category: "SYSTEM",
+          action: AUDIT_ACTIONS.SYSTEM.SCIM_TOKEN_CREATED,
+          description: `Created SCIM token '${parsed.data.label}'`,
+          details: { tokenId: token.id, label: parsed.data.label },
+        },
+      });
+      return token;
     });
-    await tx.orgAuditLog.create({
-      data: {
-        organizationId: orgId,
-        actorMembershipId: access.member.id,
-        category: "SYSTEM",
-        action: AUDIT_ACTIONS.SYSTEM.SCIM_TOKEN_CREATED,
-        description: `Created SCIM token '${parsed.data.label}'`,
-        details: { tokenId: token.id, label: parsed.data.label },
-      },
-    });
-    return token;
-  });
+  } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "enterprise" } });
+    return NextResponse.json({ error: "Failed to create SCIM token" }, { status: 500 });
+  }
 
   return NextResponse.json(
     {

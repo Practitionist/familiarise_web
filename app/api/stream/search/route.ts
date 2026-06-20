@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import {
   searchUsersWithRelationships,
   upsertUsersToStream,
@@ -46,6 +47,7 @@ export async function GET(req: NextRequest) {
           count: users.length,
         });
       } catch (upsertError) {
+        Sentry.captureException(upsertError instanceof Error ? upsertError : new Error(String(upsertError)), { tags: { subsystem: "stream" } });
         streamLogger.error("User upsert to Stream failed", upsertError);
         // Continue even if upserting fails
       }
@@ -56,6 +58,7 @@ export async function GET(req: NextRequest) {
       users,
     });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
     streamLogger.error("User search failed", error);
     return NextResponse.json(
       { success: false, error: (error as Error).message },

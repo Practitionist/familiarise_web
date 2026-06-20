@@ -3,6 +3,7 @@
  * Unified payment gateway abstraction for Stripe, Razorpay, LemonSqueezy, and XFlow
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { PaymentGateway } from "@prisma/client";
 import {
   PaymentIntentParams,

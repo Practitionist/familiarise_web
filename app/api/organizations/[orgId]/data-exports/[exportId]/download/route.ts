@@ -9,6 +9,7 @@
  * Gate: OWNER + BILLING_ADMIN, same as the request route.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireOrgBillingAdminOrOwner } from "@/lib/auth/billing-admin-gate";

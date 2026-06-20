@@ -21,6 +21,7 @@
  * deferring to a follow-up issue.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { requireOrgAccess } from "@/lib/auth-helpers";
@@ -112,6 +113,7 @@ export async function GET(
       rows,
     });
   } catch (err) {
+    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
     streamLogger.error("Failed to query org channels", err, { orgId, page });
     return NextResponse.json(
       {

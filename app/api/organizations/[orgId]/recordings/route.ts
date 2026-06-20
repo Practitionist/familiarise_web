@@ -6,6 +6,7 @@
  * checkout / via the backfill script) so this is a one-hop lookup.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { requireOrgAccess } from "@/lib/auth-helpers";

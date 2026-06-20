@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { auth } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { headers } from "next/headers";

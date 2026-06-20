@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import {
   AppointmentSlot,
@@ -371,6 +372,7 @@ export async function GET(
 
     return NextResponse.json({ data: slotsByDate }, { status: 200 });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "scheduling" } });
     console.error("Error fetching availability slots:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching availability slots" },

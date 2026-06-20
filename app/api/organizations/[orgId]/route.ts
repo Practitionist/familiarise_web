@@ -11,6 +11,7 @@
  * — otherwise admins must DEACTIVATE via the admin-verify endpoint.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";

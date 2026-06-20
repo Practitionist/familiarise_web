@@ -6,6 +6,7 @@
  * historical context. Admin-only.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireAdminAuth } from "@/lib/auth-helpers";

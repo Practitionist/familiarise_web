@@ -13,6 +13,7 @@
  * matrix in `docs/enterprise/00-foundations/04-roles-and-permissions.md`.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";

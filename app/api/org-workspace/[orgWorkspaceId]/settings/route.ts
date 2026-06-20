@@ -27,6 +27,7 @@
  * `app/api/organizations/route.ts`).
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { NotificationRoutingMode } from "@prisma/client";

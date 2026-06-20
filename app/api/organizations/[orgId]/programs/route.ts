@@ -8,6 +8,7 @@
  * at the create endpoint. See schema.prisma for the full subtype story.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";

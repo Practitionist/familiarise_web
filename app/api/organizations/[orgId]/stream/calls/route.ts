@@ -17,6 +17,7 @@
  * Every successful GET writes a `STREAM_CALLS_EXPORTED` audit row.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";

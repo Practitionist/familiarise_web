@@ -17,6 +17,7 @@
  * 24 bundles in a day even if their integrators allow it.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireOrgBillingAdminOrOwner } from "@/lib/auth/billing-admin-gate";

@@ -10,6 +10,7 @@
  * those rows (they'd cascade-delete via the FK).
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
@@ -220,6 +221,7 @@ export async function DELETE(
         { status: (err as { httpStatus?: number }).httpStatus ?? 500 },
       );
     }
+    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
     throw err;
   }
 }

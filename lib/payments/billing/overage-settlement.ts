@@ -5,6 +5,7 @@
  * dependency-light); this module carries the heavier graph (computeOverage +
  * the Novu member-due notification).
  */
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import {
   PaymentStatus,

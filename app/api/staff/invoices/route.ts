@@ -6,6 +6,7 @@
  * and is shared with `/api/admin/invoices`.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { PaymentStatus } from "@prisma/client";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
@@ -32,6 +33,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json(result);
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "staff" } });
     console.error("Error fetching invoices:", error);
     return NextResponse.json(
       { error: "Failed to fetch invoices" },

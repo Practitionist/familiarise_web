@@ -12,6 +12,7 @@
  * closes the previous card and creates the new one.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
@@ -176,6 +177,7 @@ export async function PATCH(
         typeof err.httpStatus === "number" ? err.httpStatus : 500;
       return NextResponse.json({ error: err.message }, { status });
     }
+    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
     throw err;
   }
 }

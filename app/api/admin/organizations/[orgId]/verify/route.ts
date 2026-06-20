@@ -10,6 +10,7 @@
  * DEACTIVATED is terminal and not reversible from this endpoint.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";

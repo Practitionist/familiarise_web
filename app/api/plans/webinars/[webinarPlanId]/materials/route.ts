@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest } from "next/server";
 import {
   handleGetMaterials,
