@@ -176,7 +176,7 @@ export async function drainActiveSessions(): Promise<DrainResult> {
       });
       result.notified = userIdList.length;
     } catch (err) {
-      Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "maintenance" } });
+      Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "maintenance" }, level: "warning" });
       result.errors.push(
         `Notification: ${err instanceof Error ? err.message : String(err)}`,
       );

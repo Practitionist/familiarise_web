@@ -115,7 +115,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           if (failedInBatch > 0) failed += failedInBatch;
         }
       } catch (batchError) {
-        Sentry.captureException(batchError instanceof Error ? batchError : new Error(String(batchError)), { tags: { subsystem: "admin" } });
+        Sentry.captureException(batchError instanceof Error ? batchError : new Error(String(batchError)), { tags: { subsystem: "admin" }, level: "warning" });
         failed += batch.length;
         errors.push(
           `Batch ${Math.floor(i / BATCH_SIZE) + 1}: ${batchError instanceof Error ? batchError.message : "Unknown error"}`,

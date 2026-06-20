@@ -418,7 +418,7 @@ export async function freezeAppointments(
           },
         });
       } catch (dbErr) {
-        Sentry.captureException(dbErr instanceof Error ? dbErr : new Error(String(dbErr)), { tags: { subsystem: "maintenance" } });
+        Sentry.captureException(dbErr instanceof Error ? dbErr : new Error(String(dbErr)), { tags: { subsystem: "maintenance" }, level: "fatal" });
         console.error(
           JSON.stringify({
             event: "maintenance_refund_record_failed",
@@ -476,7 +476,7 @@ export async function freezeAppointments(
       await notifyAppointmentCancelled(userIds, data);
       notified += userIds.length;
     } catch (err) {
-      Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "maintenance" } });
+      Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "maintenance" }, level: "warning" });
       console.error(
         JSON.stringify({
           event: "maintenance_freeze_notification_failed",

@@ -281,7 +281,7 @@ async function reversePayoutClawback(
   } catch (err) {
     Sentry.captureException(
       err instanceof Error ? err : new Error(String(err)),
-      { tags: { subsystem: "payments" } },
+      { tags: { subsystem: "payments" }, level: "fatal" },
     );
     console.error(
       `[ledger] payout clawback posting FAILED for payout ${orgPayoutId} (reconcile will flag): ${err instanceof Error ? err.message : String(err)}`,

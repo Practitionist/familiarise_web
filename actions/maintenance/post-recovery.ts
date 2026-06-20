@@ -125,7 +125,7 @@ export async function runPostRecovery(): Promise<RecoveryResult> {
     });
     result.notification = notifResult.success;
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "maintenance" } });
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "maintenance" }, level: "warning" });
     result.errors.push(
       `Notification: ${error instanceof Error ? error.message : String(error)}`,
     );

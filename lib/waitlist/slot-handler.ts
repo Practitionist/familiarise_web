@@ -144,7 +144,7 @@ export async function handleSlotOpening(params: SlotOpeningParams): Promise<{
         errors.push({ userId: winner.userId, error: errorMessage });
         Sentry.captureException(
           error instanceof Error ? error : new Error(String(error)),
-          { tags: { subsystem: "waitlist" } },
+          { tags: { subsystem: "waitlist" }, level: "warning" },
         );
         console.error(`Error notifying waitlist user ${winner.userId}:`, error);
       }
