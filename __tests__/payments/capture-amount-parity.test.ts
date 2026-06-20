@@ -26,7 +26,9 @@ jest.mock("../../lib/db/serializable-retry", () => ({
   withSerializableRetry: (fn: () => unknown) => withSerializableRetry(fn),
 }));
 
-const paymentUpdate = jest.fn(async () => ({}));
+const paymentUpdate = jest.fn(
+  async (_args: { where: unknown; data: { description?: string } }) => ({}),
+);
 const paymentFindUnique = jest.fn();
 const appointmentFindUnique = jest.fn();
 const txStub = {
@@ -102,9 +104,7 @@ describe("#677 — handlePaymentSuccess capture-amount parity", () => {
 
     // Marked for manual recovery (and NOT a normal confirmation).
     expect(paymentUpdate).toHaveBeenCalledTimes(1);
-    const update = paymentUpdate.mock.calls[0][0] as {
-      data: { description?: string };
-    };
+    const update = paymentUpdate.mock.calls[0][0];
     expect(update.data.description).toContain("REQUIRES_MANUAL_RECOVERY");
 
     // Returned before confirming the booking or doing any Phase-2 work.
@@ -125,9 +125,7 @@ describe("#677 — handlePaymentSuccess capture-amount parity", () => {
 
     expect(captureException).not.toHaveBeenCalled();
     const recoveryWrite = paymentUpdate.mock.calls.find((c) =>
-      String(
-        (c[0] as { data?: { description?: string } })?.data?.description ?? "",
-      ).includes("REQUIRES_MANUAL_RECOVERY"),
+      String(c[0].data.description ?? "").includes("REQUIRES_MANUAL_RECOVERY"),
     );
     expect(recoveryWrite).toBeUndefined();
     // The guard let the flow proceed to the tentative-appointment lookup.

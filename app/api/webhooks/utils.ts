@@ -1613,8 +1613,12 @@ export async function applyB2cChargebackReversal(
         },
         direction:
           e.direction === "DEBIT" ? ("CREDIT" as const) : ("DEBIT" as const),
-        amountPaise: Math.floor(
-          (Number(e.amountPaise) * settlePaise) / paymentAmountPaise,
+        // BigInt arithmetic (not Number*) so the proportional scale can't lose
+        // precision on large paise values; BigInt division truncates toward zero
+        // == Math.floor for these non-negative operands.
+        amountPaise: Number(
+          (BigInt(e.amountPaise) * BigInt(settlePaise)) /
+            BigInt(paymentAmountPaise),
         ),
       }),
     )
