@@ -23,6 +23,12 @@ import { NextResponse } from "next/server";
 
 type RatelimitRedis = ConstructorParameters<typeof Ratelimit>[0]["redis"];
 
+// These limiters run in edge middleware on every matched request and fail OPEN
+// (see applyRateLimit). The Ratelimit default timeout is 5000ms, so a slow or
+// unreachable Upstash would stall the request 5s before allowing it through;
+// 500ms keeps the fail-open fallback fast.
+const LIMITER_TIMEOUT_MS = 500;
+
 function makeLimiter(
   requests: number,
   window: `${number} ${"ms" | "s" | "m" | "h" | "d"}`,
@@ -32,6 +38,7 @@ function makeLimiter(
     redis: redis as RatelimitRedis,
     limiter: Ratelimit.slidingWindow(requests, window),
     prefix,
+    timeout: LIMITER_TIMEOUT_MS,
   });
 }
 
