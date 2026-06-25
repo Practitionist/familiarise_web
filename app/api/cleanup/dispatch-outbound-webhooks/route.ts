@@ -7,6 +7,7 @@
  * the bearer gate keeps random callers from running it.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { CronLockHeldError } from "@/lib/cron/with-cron-lock";
 import {
@@ -30,7 +31,14 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
 
   try {
+    Sentry.logger.info("cron:dispatch-outbound-webhooks started");
     const result = await dispatchOutboundWebhooks();
+    Sentry.logger.info("cron:dispatch-outbound-webhooks finished", {
+      scanned: result.scanned,
+      succeeded: result.succeeded,
+      retried: result.retried,
+      failed: result.failed,
+    });
     return NextResponse.json(result, { status: result.success ? 200 : 500 });
   } catch (error) {
     // #476 — concurrent invocation (schedule overlap / manual re-run)
@@ -38,6 +46,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     if (error instanceof CronLockHeldError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
     }
+    Sentry.captureException(error, {
+      tags: { subsystem: "cron", job: "dispatch-outbound-webhooks" },
+    });
     console.error("[cleanup/dispatch-outbound-webhooks] failed:", error);
     return NextResponse.json(
       {

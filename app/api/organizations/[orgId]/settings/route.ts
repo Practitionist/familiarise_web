@@ -6,6 +6,7 @@
  * pass-through to the same Prisma logic.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
@@ -75,6 +76,7 @@ export async function GET(
         stack: error instanceof Error ? error.stack : undefined,
       }),
     );
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "organizations" } });
     return NextResponse.json(
       { error: "Failed to fetch settings" },
       { status: 500 },

@@ -15,6 +15,7 @@ import {
 } from "../../scripts/stream/stream-sync";
 import fs from "fs";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
+import * as Sentry from "@sentry/nextjs";
 
 /**
  * Output results to GitHub Actions
@@ -57,6 +58,7 @@ function outputToGitHubActions(summary: SyncSummary): void {
  */
 async function main(): Promise<void> {
   await abortIfMaintenance("stream-sync");
+  Sentry.logger.info("job:stream-sync started");
   const startTime = Date.now();
   console.log("🚀 Starting Stream user sync job...");
   console.log(`   Timestamp: ${new Date().toISOString()}`);
@@ -81,8 +83,15 @@ async function main(): Promise<void> {
       process.exit(1);
     }
 
+    Sentry.logger.info("job:stream-sync finished", {
+      usersProcessed: result.totalStreamUsersProcessed,
+      staleIdentified: result.totalStaleUsersIdentified,
+      usersDeleted: result.totalStaleUsersDeleted,
+      failedDeletions: result.totalFailedDeletions,
+    });
     console.log("\n🎉 Job completed successfully");
   } catch (error) {
+    Sentry.captureException(error, { tags: { subsystem: "jobs", job: "stream-sync" } });
     const errorMessage =
       error instanceof Error ? error.message : "Unknown error";
     console.error("💥 Job failed:", errorMessage);

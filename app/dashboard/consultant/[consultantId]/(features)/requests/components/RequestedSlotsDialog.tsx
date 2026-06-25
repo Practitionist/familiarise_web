@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -117,6 +118,7 @@ export function RequestedSlotsDialog({
         validSlots: validationResponse.data?.validSlots || [],
       });
     } catch (err) {
+      Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "client" } });
       setError(err instanceof Error ? err.message : "Failed to validate slots");
     } finally {
       setLoading(false);

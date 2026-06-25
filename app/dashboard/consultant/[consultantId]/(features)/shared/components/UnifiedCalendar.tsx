@@ -1,5 +1,6 @@
 "use client";
 
+import * as Sentry from "@sentry/nextjs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -419,6 +420,7 @@ export function UnifiedCalendar({
         // Refetch event slots and appointments so newly allocated slots appear correctly
         await Promise.all([refetchEventSlots(), refetchAppointments()]);
       } catch (error) {
+        Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
         console.error(
           "Error refetching calendar data after allocation:",
           error,
@@ -1375,6 +1377,7 @@ export function UnifiedCalendar({
 
                 return `${selectedSlots.length} selected out of ${requiredSlotsForThisEvent} required slots`;
               } catch (error) {
+                Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
                 console.error("Error calculating footer stats:", error);
                 if (error instanceof Error) {
                   return error.message;

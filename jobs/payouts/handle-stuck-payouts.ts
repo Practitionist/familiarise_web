@@ -19,6 +19,7 @@ import {
   recordSystemError,
 } from "../../lib/enterprise/system-events";
 import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 /**
  * Output results to GitHub Actions
@@ -68,6 +69,7 @@ function outputToGitHubActions(result: StuckPayoutsResult): void {
  */
 async function main(): Promise<void> {
   await abortIfMaintenance("handle-stuck-payouts");
+  Sentry.logger.info("job:handle-stuck-payouts started");
   console.log("🔄 Starting stuck payouts handler job...");
   console.log(`Timestamp: ${new Date().toISOString()}`);
 
@@ -88,6 +90,14 @@ async function main(): Promise<void> {
     }
 
     outputToGitHubActions(result);
+
+    Sentry.logger.info("job:handle-stuck-payouts finished", {
+      totalProcessed: result.totalProcessed,
+      reconciledCount: result.reconciledCount,
+      retriedCount: result.retriedCount,
+      failedCount: result.failedCount,
+      skippedCount: result.skippedCount,
+    });
 
     // #776 §K — stuck/failed payouts mean a consultant isn't getting paid;
     // page on it rather than leaving it in CI logs.
@@ -113,10 +123,12 @@ async function main(): Promise<void> {
     // outcome (exit 0, no page). CronLockUnavailableError falls through
     // to exit 1 so the workflow's notify step pages.
     if (error instanceof CronLockHeldError) {
+      Sentry.logger.info("job:handle-stuck-payouts skipped — lock held");
       console.log(`⏭️  ${error.message}`);
       return;
     }
     console.error("❌ Fatal error in stuck payouts handler:", error);
+    Sentry.captureException(error, { tags: { subsystem: "jobs", job: "handle-stuck-payouts" } });
     await recordSystemError({
       category: "PAYOUT",
       summary: "Stuck-payout handler crashed",

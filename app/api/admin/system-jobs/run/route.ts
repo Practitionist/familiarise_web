@@ -8,6 +8,7 @@
  * Uses session-based authentication instead.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 
 // Import job functions directly - organized by category
@@ -410,6 +411,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
     return NextResponse.json(result);
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
     console.error("[System Jobs] Error running job:", error);
     return NextResponse.json(
       {

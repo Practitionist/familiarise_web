@@ -17,6 +17,7 @@
  * purges expired rows — this endpoint does NOT delete.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
@@ -283,9 +284,10 @@ export async function DELETE(
           },
         },
       })
-      .catch((err) =>
-        console.error("[consent DELETE] audit write failed", err),
-      );
+      .catch((err) => {
+        Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
+        console.error("[consent DELETE] audit write failed", err);
+      });
   }
 
   return NextResponse.json({ withdrawnCount });

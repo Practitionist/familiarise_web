@@ -1,5 +1,6 @@
 "use client";
 
+import * as Sentry from "@sentry/nextjs";
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -220,6 +221,7 @@ export function AppointmentsTab({
         variant: "success",
       });
     } catch (error) {
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
       console.error("Error joining meeting:", error);
       toast({
         title: "Error joining meeting",
@@ -286,6 +288,7 @@ export function AppointmentsTab({
       });
       router.push(`/meetings/${meetingId}`);
     } catch (error) {
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
       console.error("Error joining trial meeting:", error);
       toast({
         title: "Error joining meeting",

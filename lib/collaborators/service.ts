@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import prisma, { type Tx } from "@/lib/prisma";
 import { Prisma, type CollaboratorRole } from "@prisma/client";
 import type { Collaborator, CollaboratorStatus } from "@prisma/client";
@@ -186,6 +187,7 @@ export async function inviteCollaborator(
         });
       }
     } catch (error) {
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" }, level: "warning" });
       console.error(
         "[collaborators] Failed to send invitation notification:",
         error,
@@ -229,6 +231,7 @@ export async function respondToInvitation(
         await import("@/actions/stream/chat/channel.action");
       await createCollaboratorChannel(planType, planId);
     } catch (err) {
+      Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "stream" }, level: "warning" });
       console.error("Failed to create collaborator channel:", err);
     }
 
@@ -264,6 +267,7 @@ export async function respondToInvitation(
         });
       }
     } catch (error) {
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" }, level: "warning" });
       console.error(
         "[collaborators] Failed to send acceptance notification:",
         error,
@@ -321,6 +325,7 @@ export async function removeCollaborator(
         dashboardUrl: `${getAppUrl()}/dashboard`,
       });
     } catch (error) {
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" }, level: "warning" });
       console.error(
         "[collaborators] Failed to send removal notification:",
         error,
@@ -349,6 +354,7 @@ export async function removeCollaborator(
           .catch(() => {}),
       ]);
     } catch (error) {
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" }, level: "warning" });
       console.error("[collaborators] Failed to revoke Stream access:", error);
     }
   }

@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { syncSubscriber } from "@/lib/novu/subscriber";
@@ -44,6 +45,7 @@ export async function POST() {
 
     return NextResponse.json({ success: true });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "notifications" } });
     console.error("Failed to sync Novu subscriber:", error);
     return NextResponse.json({ error: "Sync failed" }, { status: 500 });
   }

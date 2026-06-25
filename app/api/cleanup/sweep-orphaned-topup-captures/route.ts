@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { sweepOrphanedTopupCaptures } from "@/scripts/cleanup/sweep-orphaned-topup-captures";
 import { CronLockHeldError } from "@/lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
@@ -16,8 +17,14 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    Sentry.logger.info("cron:sweep-orphaned-topup-captures started");
     const result = await sweepOrphanedTopupCaptures();
     console.log("✅ Captured-top-up sweep completed:", {
+      scanned: result.scanned,
+      recredited: result.recredited,
+      stillFailing: result.stillFailing,
+    });
+    Sentry.logger.info("cron:sweep-orphaned-topup-captures finished", {
       scanned: result.scanned,
       recredited: result.recredited,
       stillFailing: result.stillFailing,
@@ -31,6 +38,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     if (error instanceof CronLockHeldError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
     }
+    Sentry.captureException(error, { tags: { subsystem: "cron", job: "sweep-orphaned-topup-captures" } });
     console.error("Error in captured-top-up sweep:", error);
     return NextResponse.json(
       {

@@ -21,6 +21,7 @@ import { abortIfMaintenance } from "../../lib/maintenance-cron";
 import prisma from "../../lib/prisma";
 import { recordSystemEvent } from "../../lib/enterprise/system-events";
 import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 // The delivery table IS the queue (see worker.ts). If overdue rows pile up
 // past this, the worker isn't keeping pace — page someone (#776 §K).
@@ -67,19 +68,23 @@ function outputToGitHubActions(result: DispatchOutboundWebhooksResult): void {
 if (require.main === module) {
   (async () => {
     await abortIfMaintenance("dispatch-outbound-webhooks");
+    Sentry.logger.info("job:dispatch-outbound-webhooks started");
     console.log("📤 Dispatching outbound webhooks...");
     try {
       const result = await dispatchOutboundWebhooks();
       console.log(JSON.stringify(result, null, 2));
       outputToGitHubActions(result);
       await checkQueueBacklog();
+      Sentry.logger.info("job:dispatch-outbound-webhooks finished", { scanned: result.scanned, succeeded: result.succeeded, retried: result.retried, failed: result.failed });
       if (!result.success) process.exit(1);
     } catch (err) {
       // #476 — lock held = another run is live; skip cleanly (exit 0).
       if (err instanceof CronLockHeldError) {
+        Sentry.logger.info("job:dispatch-outbound-webhooks skipped — lock held by another run");
         console.log(`⏭️  ${err.message}`);
         return;
       }
+      Sentry.captureException(err, { tags: { subsystem: "jobs", job: "dispatch-outbound-webhooks" } });
       console.error("Fatal error:", err);
       process.exit(1);
     } finally {

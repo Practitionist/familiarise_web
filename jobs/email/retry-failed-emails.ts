@@ -39,6 +39,7 @@ import { DEFAULT_FROM_ADDRESS } from "@/lib/email";
 import { withCronLock, CronLockHeldError } from "@/lib/cron/with-cron-lock";
 import { recordSystemError } from "@/lib/enterprise/system-events";
 import { abortIfMaintenance } from "@/lib/maintenance-cron";
+import * as Sentry from "@sentry/nextjs";
 
 const MAX_BATCH = 50;
 const MAX_ATTEMPTS = 5;
@@ -217,14 +218,23 @@ if (require.main === module) {
   require("dotenv/config");
   (async () => {
     await abortIfMaintenance("retry-failed-emails");
+    Sentry.logger.info("job:retry-failed-emails started");
     console.log("📧 Retrying dead-lettered transactional emails...");
     try {
       const result = await retryFailedEmails();
       console.log(JSON.stringify(result, null, 2));
+      Sentry.logger.info("job:retry-failed-emails finished", {
+        scanned: result.scanned,
+        sent: result.sent,
+        retried: result.retried,
+        deadLettered: result.deadLettered,
+        errors: result.errors.length,
+      });
       if (result.errors.length > 0) process.exit(1);
     } catch (err) {
       // #476 — lock held = another run is live; skip cleanly (exit 0).
       if (err instanceof CronLockHeldError) {
+        Sentry.logger.info("job:retry-failed-emails lock held, skipping");
         console.log(`⏭️  ${err.message}`);
         return;
       }
@@ -235,6 +245,7 @@ if (require.main === module) {
         summary: "Transactional email retry job crashed",
         err,
       });
+      Sentry.captureException(err, { tags: { subsystem: "jobs", job: "retry-failed-emails" } });
       process.exit(1);
     } finally {
       await prisma.$disconnect();

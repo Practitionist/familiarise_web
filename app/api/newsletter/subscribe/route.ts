@@ -6,6 +6,7 @@
  * No ConvertKit sync yet — TODO when implementing Issue #334.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { z } from "zod";
@@ -40,6 +41,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
     return NextResponse.json({ success: true });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "newsletter" } });
     console.error("[newsletter/subscribe] Error:", error);
     return NextResponse.json(
       { error: "Failed to subscribe. Please try again." },

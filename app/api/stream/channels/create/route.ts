@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import {
   createWebinarChannel,
@@ -137,6 +138,7 @@ export async function POST(req: NextRequest) {
         : "Custom channel created successfully",
     });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
     streamLogger.error("Channel creation API error", error);
     return NextResponse.json(
       {

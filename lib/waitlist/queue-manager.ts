@@ -3,6 +3,7 @@
  * Handles queue position calculations, ordering, and position updates
  */
 
+import * as Sentry from "@sentry/nextjs";
 import prisma, { type Db } from "@/lib/prisma";
 import { Prisma, WaitlistStatus } from "@prisma/client";
 
@@ -301,6 +302,10 @@ export async function processExpiredNotifications(): Promise<{
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
       errors.push({ id: entry.id, error: errorMessage });
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "waitlist" } },
+      );
       console.error(
         `Error processing expired waitlist entry ${entry.id}:`,
         error,

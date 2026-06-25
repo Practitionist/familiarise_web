@@ -13,6 +13,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { TrialSessionStatus } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { withCronLock, CronLockHeldError } from "@/lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
@@ -26,6 +27,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     }
 
     const now = new Date();
+
+    Sentry.logger.info("cron:auto-complete-trials started");
 
     // #476 — entry-level cron lock; fail-open (idempotent updateMany).
     const result = await withCronLock(
@@ -59,6 +62,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       }),
     );
 
+    Sentry.logger.info("cron:auto-complete-trials finished", { trialsCompleted: result.count });
+
     return NextResponse.json({
       success: true,
       trialsCompleted: result.count,
@@ -69,6 +74,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     if (error instanceof CronLockHeldError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
     }
+    Sentry.captureException(error, { tags: { subsystem: "cron", job: "auto-complete-trials" } });
     console.error("Error in auto-complete-trials cleanup:", error);
     return NextResponse.json(
       { success: false, error: "Failed to auto-complete trial sessions" },

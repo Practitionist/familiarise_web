@@ -20,6 +20,7 @@
  * internals) so leaking it to unauthenticated callers is safe.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
@@ -90,8 +91,9 @@ export async function GET(req: NextRequest) {
           errorCode: "SSO_PROVIDER_MISCONFIGURED",
         });
       }
-    } catch {
+    } catch (error) {
       // Stored config is not parseable JSON — also a misconfiguration.
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
       return NextResponse.json({
         enforceSSO: true,
         providerMisconfigured: true,

@@ -3,6 +3,8 @@
  * Provides conditional logging based on environment and structured output
  */
 
+import * as Sentry from "@sentry/nextjs";
+
 type LogLevel = "debug" | "info" | "warn" | "error";
 
 interface LogContext {
@@ -76,9 +78,16 @@ export const streamLogger = {
     };
     console.error(formatMessage("Stream:ERROR", message, errorContext));
 
-    // In production, could send to error tracking service (Sentry, etc.)
     if (!isDevelopment && error instanceof Error) {
-      // Example: Sentry.captureException(error, { extra: context });
+      Sentry.captureException(error, {
+        tags: { subsystem: "stream" },
+        contexts: {
+          stream: {
+            channelId: context?.channelId,
+            operation: context?.operation,
+          },
+        },
+      });
     }
   },
 

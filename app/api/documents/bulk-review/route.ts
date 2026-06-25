@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { DocumentReviewStatus, Prisma } from "@prisma/client";
@@ -104,6 +105,7 @@ export async function PATCH(request: NextRequest) {
       data: { updated: result.count, requested: documentIds.length },
     });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "documents" } });
     console.error("Error in bulk document review:", error);
     return NextResponse.json(
       { error: "Failed to review documents", code: "SERVER_ERROR" },

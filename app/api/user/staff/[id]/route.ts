@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 
 // GET /api/user/staff/{id} - Fetch a single staff member by profile ID
@@ -34,6 +35,7 @@ export async function GET(
     if (error instanceof Error) {
       console.error("Error: ", error.stack);
     }
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "staff" } });
     return NextResponse.json(
       {
         error:
@@ -81,6 +83,7 @@ export async function POST(
     return NextResponse.json(createdStaffProfile, { status: 201 });
   } catch (error) {
     console.error("Error creating staff profile:", error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "staff" } });
     return NextResponse.json(
       {
         error: "An unexpected error occurred while creating the staff profile",
@@ -127,6 +130,7 @@ export async function PATCH(
     return NextResponse.json(updatedStaffProfile, { status: 200 });
   } catch (error) {
     console.error("Error updating staff profile:", error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "staff" } });
     return NextResponse.json(
       {
         error: "An unexpected error occurred while updating the staff profile",
@@ -257,6 +261,7 @@ export async function PUT(
     return NextResponse.json(freshStaffProfile, { status: 200 });
   } catch (error) {
     console.error("Error updating staff profile:", error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "staff" } });
     return NextResponse.json(
       {
         error: "An unexpected error occurred while updating the staff profile",
@@ -297,6 +302,7 @@ export async function DELETE(
     return NextResponse.json(deletedStaffProfile, { status: 200 });
   } catch (error) {
     console.error("Error deleting staff profile:", error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "staff" } });
     return NextResponse.json(
       {
         error: "An unexpected error occurred while deleting the staff profile",

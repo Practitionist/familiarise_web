@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { WaitlistStatus, type Prisma } from "@prisma/client";
@@ -442,6 +443,7 @@ export async function GET(
       success: true,
     });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "dashboard" } });
     console.error("Error fetching consultee events:", error);
     return NextResponse.json(
       { error: "Failed to fetch consultee events" },

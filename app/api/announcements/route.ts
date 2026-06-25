@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { notifyGeneralAnnouncement } from "@/lib/novu";
@@ -32,6 +33,7 @@ export async function GET() {
       data: announcements,
     });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "notifications" } });
     console.error("Get announcements error:", error);
     return NextResponse.json(
       { success: false, error: "Failed to fetch announcements" },
@@ -110,6 +112,7 @@ export async function POST(request: NextRequest) {
       data: announcement,
     });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "notifications" } });
     console.error("Create announcement error:", error);
     return NextResponse.json(
       { success: false, error: "Failed to create announcement" },

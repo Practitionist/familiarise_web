@@ -8,6 +8,7 @@ import { markChannelExists } from "@/lib/stream-cache";
 import { upsertUsersToStream } from "./user.action";
 import { getDmChannelId } from "@/lib/stream-utils";
 import { getChannelTypeFromId } from "@/lib/stream-channel-ids";
+import * as Sentry from "@sentry/nextjs";
 
 // Input validation schemas
 const channelTypeSchema = z.enum(["messaging", "team"]);
@@ -826,6 +827,7 @@ export async function addMemberToChannel(
       channelId,
       userId,
     });
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
     throw error;
   }
 }

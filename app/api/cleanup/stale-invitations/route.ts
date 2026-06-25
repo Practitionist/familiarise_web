@@ -12,6 +12,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { cleanupStaleInvitations } from "@/scripts/cleanup/cleanup-stale-invitations";
 import { CronLockHeldError } from "@/lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
   const authHeader = req.headers.get("authorization");
@@ -31,9 +32,15 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
 
   try {
+    Sentry.logger.info("cron:cleanup-stale-invitations started");
     const result = await cleanupStaleInvitations();
 
     console.log("✅ Stale invitation cleanup completed:", {
+      expired: result.expired,
+      success: result.success,
+    });
+
+    Sentry.logger.info("cron:cleanup-stale-invitations finished", {
       expired: result.expired,
       success: result.success,
     });
@@ -45,6 +52,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     if (error instanceof CronLockHeldError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
     }
+    Sentry.captureException(error, {
+      tags: { subsystem: "cron", job: "cleanup-stale-invitations" },
+    });
     console.error("[cleanup/stale-invitations] failed:", error);
     return NextResponse.json(
       {

@@ -95,3 +95,6 @@ node-payment-main/
 
 # scratch dir for agent/test scripts — never commit
 /temp/
+
+# Sentry Config File
+.env.sentry-build-plugin

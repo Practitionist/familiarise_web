@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { getSession } from "@/lib/auth-server";
+import * as Sentry from "@sentry/nextjs";
 // ============================================================================
 // Validation Schemas
 // ============================================================================
@@ -122,6 +123,7 @@ export async function GET(req: NextRequest) {
     }
   } catch (error) {
     console.error("Disputes listing error:", error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "payments" } });
 
     return NextResponse.json(
       {
@@ -242,6 +244,8 @@ export async function POST(req: NextRequest) {
         { status: 400 },
       );
     }
+
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "payments" } });
 
     return NextResponse.json(
       {

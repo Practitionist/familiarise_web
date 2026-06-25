@@ -4,6 +4,7 @@
  * Non-throwing: logs errors and returns success/failure status.
  * Pattern follows lib/email.ts (graceful degradation).
  */
+import * as Sentry from "@sentry/nextjs";
 import { getNovuClient, isNovuConfigured } from "./client";
 import {
   NOVU_WORKFLOWS,
@@ -71,6 +72,10 @@ async function triggerWorkflow<T extends NovuPayload>(
     return { success: true };
   } catch (error) {
     console.error(`[Novu] Failed to trigger ${workflowId}:`, error);
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "novu" }, level: "warning" },
+    );
     return {
       success: false,
       error: error instanceof Error ? error : String(error),

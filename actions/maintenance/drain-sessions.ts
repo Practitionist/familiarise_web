@@ -7,6 +7,7 @@
  * notifies participants, and ends calls via Stream server SDK.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { RecordingService } from "@/lib/stream/recording-service";
 import { getStreamVideoClient } from "@/lib/stream-client";
 import prisma from "@/lib/prisma";
@@ -131,6 +132,7 @@ export async function drainActiveSessions(): Promise<DrainResult> {
         });
         result.recordingsStopped++;
       } catch (err) {
+        Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "maintenance" } });
         result.errors.push(
           `Stop recording ${session.streamCallId}: ${err instanceof Error ? err.message : String(err)}`,
         );
@@ -174,6 +176,7 @@ export async function drainActiveSessions(): Promise<DrainResult> {
       });
       result.notified = userIdList.length;
     } catch (err) {
+      Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "maintenance" }, level: "warning" });
       result.errors.push(
         `Notification: ${err instanceof Error ? err.message : String(err)}`,
       );

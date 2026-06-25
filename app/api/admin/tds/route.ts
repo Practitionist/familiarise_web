@@ -3,6 +3,7 @@
  * View TDS deduction summaries and manage Form 26Q filing status
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireAdminAuth, requirePrivilegedAuth } from "@/lib/auth-helpers";
@@ -86,6 +87,7 @@ export async function GET(req: NextRequest) {
     const summary = await getTDSSummary(fy);
     return NextResponse.json(summary);
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
     console.error("Admin TDS API error:", error);
     return NextResponse.json(
       { error: "Failed to fetch TDS data" },
@@ -141,6 +143,7 @@ export async function POST(req: NextRequest) {
       recordsUpdated: result.count,
     });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
     console.error("Admin TDS filing error:", error);
     return NextResponse.json(
       { error: "Failed to update TDS filing status" },

@@ -1,5 +1,6 @@
 "use client";
 
+import * as Sentry from "@sentry/nextjs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -263,6 +264,7 @@ function SignUpContent() {
         router.push(onboardingUrl);
       }
     } catch (error: unknown) {
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
       console.error("Sign up error:", error);
       const message =
         error instanceof Error

@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { supabaseAdmin } from "@/lib/supabase";
@@ -156,6 +157,7 @@ export async function GET(
       console.error(
         "Supabase admin client not configured. Set SUPABASE_SERVICE_ROLE_KEY to enable document downloads.",
       );
+      Sentry.captureException(new Error("Supabase admin client not configured"), { tags: { subsystem: "appointments" } });
       return NextResponse.json(
         {
           error: "Storage configuration error",
@@ -173,6 +175,7 @@ export async function GET(
 
     if (downloadError || !fileData) {
       console.error("Supabase download error:", downloadError);
+      Sentry.captureException(downloadError instanceof Error ? downloadError : new Error(String(downloadError)), { tags: { subsystem: "appointments" } });
       return NextResponse.json(
         {
           error: "Download failed",
@@ -203,6 +206,7 @@ export async function GET(
     return response;
   } catch (error) {
     console.error("Document download error:", error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "appointments" } });
     return NextResponse.json(
       {
         error: "Server error",

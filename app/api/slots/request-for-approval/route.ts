@@ -10,6 +10,7 @@ import { requestApprovalLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { ensureConsulteeProfile } from "@/lib/profiles/ensure-consultee-profile";
 
 import { getSession } from "@/lib/auth-server";
+import * as Sentry from "@sentry/nextjs";
 export async function POST(req: NextRequest) {
   try {
     const session = await getSession();
@@ -272,6 +273,7 @@ export async function POST(req: NextRequest) {
         );
       }
 
+      Sentry.captureException(lockError instanceof Error ? lockError : new Error(String(lockError)), { tags: { subsystem: "scheduling" } });
       throw lockError; // Re-throw other errors for general error handler
     } finally {
       // ALWAYS release lock (even on error)
@@ -290,6 +292,7 @@ export async function POST(req: NextRequest) {
     }
   } catch (error) {
     console.error("Error creating approval request:", error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "scheduling" } });
     return NextResponse.json(
       { error: "An error occurred while creating the approval request" },
       { status: 500 },

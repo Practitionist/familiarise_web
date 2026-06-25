@@ -48,6 +48,7 @@
  *     re-derive these for any rows still on stub defaults.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import type { PaymentGateway, PayoutStatus } from "@prisma/client";
@@ -487,6 +488,7 @@ export async function createOrgPayoutBatch(
         };
       }
     }
+    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "payments" } });
     throw err;
   } finally {
     await releaseLock(lockKey, token);
@@ -639,6 +641,7 @@ export async function processOrgPayout(
         }
         // Transient — leave row in PROCESSING and re-throw so the cron
         // retries with the same idempotency key.
+        Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "payments" } });
         throw err;
       }
     });
@@ -824,6 +827,7 @@ export async function processPendingOrgPayouts(): Promise<OrgProcessingResult> {
         result.advanced++;
       }
     } catch (err) {
+      Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "payments" } });
       const message = err instanceof Error ? err.message : String(err);
       result.errors.push(`OrgPayout ${p.id}: ${message}`);
     }
@@ -1199,7 +1203,10 @@ export async function markOrgPayoutReversed(
         reason: reason.slice(0, 200),
         kind: "REVERSED",
         dashboardUrl: `${getAppUrl()}/dashboard/organization/${completedResult.notify.organizationId}/payouts`,
-      }).catch((e) => console.error("[org-payout] REVERSED notify failed:", e));
+      }).catch((e) => {
+        Sentry.captureException(e instanceof Error ? e : new Error(String(e)), { tags: { subsystem: "payments" } });
+        console.error("[org-payout] REVERSED notify failed:", e);
+      });
     }
     return { wasNoOp: false, status: "REVERSED" as PayoutStatus };
   }
