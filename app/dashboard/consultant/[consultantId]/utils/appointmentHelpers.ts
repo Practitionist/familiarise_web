@@ -219,12 +219,12 @@ export const calculateSessionProgress = (
   // deleted). A row with no slots is not a session, so counting it inflated
   // totalSessions/remaining by 1 ("11 remaining" for a 10-session sub). This
   // mirrors the completedSessions rule below, which already requires slots.
-  const dedupedAppointments = groupAppointments.filter(
+  const appointmentsWithSlots = groupAppointments.filter(
     (app) => getSlotTimes(app).length > 0,
   );
 
-  const totalSessions = dedupedAppointments.length;
-  const completedSessions = dedupedAppointments.filter((app) => {
+  const totalSessions = appointmentsWithSlots.length;
+  const completedSessions = appointmentsWithSlots.filter((app) => {
     const slotTimes = getSlotTimes(app);
     return (
       slotTimes.length > 0 &&

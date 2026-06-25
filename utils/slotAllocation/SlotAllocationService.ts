@@ -402,14 +402,17 @@ export class SlotAllocationService {
           // For reschedules: only delete appointments with tentative slots (preserve confirmed ones)
           // For in-progress: only delete future slots (preserve past confirmed ones)
           // For initial allocation: delete all (shouldn't be any, but safety measure)
-          const { enrolledUserIds, deletedAppointmentIds } =
-            await this.deleteExistingAppointments(
-              tx,
-              eventType,
-              eventId,
-              isReschedule,
-              isInProgressReallocation,
-            );
+          const {
+            enrolledUserIds,
+            deletedAppointmentIds,
+            reusableAppointmentId,
+          } = await this.deleteExistingAppointments(
+            tx,
+            eventType,
+            eventId,
+            isReschedule,
+            isInProgressReallocation,
+          );
 
           // Create appointments
           const appointments = await this.createAppointments(
@@ -421,6 +424,7 @@ export class SlotAllocationService {
             consulteeUserId,
             config,
             organizationId,
+            reusableAppointmentId, // #898 — REUSE preserved 1:1 appointment
           );
 
           // Reconnect enrolled users to new slots (for group events like classes)
@@ -682,14 +686,17 @@ export class SlotAllocationService {
           // For reschedules: only delete tentative slots (preserve confirmed ones)
           // For in-progress: only delete future slots (preserve past confirmed ones)
           // For initial allocation: delete all
-          const { enrolledUserIds, deletedAppointmentIds } =
-            await this.deleteExistingAppointments(
-              tx,
-              eventType,
-              eventId,
-              isReschedule,
-              isInProgressReallocation,
-            );
+          const {
+            enrolledUserIds,
+            deletedAppointmentIds,
+            reusableAppointmentId,
+          } = await this.deleteExistingAppointments(
+            tx,
+            eventType,
+            eventId,
+            isReschedule,
+            isInProgressReallocation,
+          );
 
           // Create appointments
           const appointments = await this.createAppointments(
@@ -701,6 +708,7 @@ export class SlotAllocationService {
             consulteeUserId,
             config,
             organizationId,
+            reusableAppointmentId, // #898 — REUSE preserved 1:1 appointment
           );
 
           // Reconnect enrolled users to new slots (for group events like classes)
@@ -1388,6 +1396,11 @@ export class SlotAllocationService {
     // classPlan.organizationId (host wins per #768 design decision);
     // CONSULTATION/WEBINAR re-read the existing Appointment's tag.
     organizationId?: string | null,
+    // #898 — when set (a 1:1 consultation/webinar whose payment-bearing
+    // appointment was preserved by the delete guard), REUSE that appointment
+    // instead of creating a second row on the @unique event FK (P2002). Only
+    // ever set for single-call event types.
+    reuseAppointmentId?: string,
   ): Promise<any[]> {
     const slotsPerCall = SlotCalculationService.getSlotsPerCall(
       config?.sessionDurationInHours || config?.durationInHours || 1,
@@ -1459,6 +1472,24 @@ export class SlotAllocationService {
               },
             };
           });
+
+          // #898 — REUSE the preserved 1:1 appointment: attach the new slots to
+          // it rather than creating a second row on the @unique event FK. Its
+          // event link and booking-time cancellationPolicySnapshot are already
+          // set, so leave them untouched.
+          if (reuseAppointmentId) {
+            return tx.appointment.update({
+              where: { id: reuseAppointmentId },
+              data: {
+                slotsOfAppointment: {
+                  create: slotsToCreate,
+                },
+              },
+              include: {
+                slotsOfAppointment: true,
+              },
+            });
+          }
 
           return tx.appointment.create({
             data: {
@@ -1687,11 +1718,18 @@ export class SlotAllocationService {
     preservedSlotCount: number;
     enrolledUserIds: string[];
     deletedAppointmentIds: string[];
+    // #898 — id of a preserved 1:1 (consultation/webinar) payment-bearing
+    // appointment the caller must REUSE: its @unique event FK is still taken,
+    // so a fresh create would throw P2002. At most one per 1:1 event.
+    reusableAppointmentId?: string;
   }> {
     const relationField = this.getEventRelationField(eventType);
     const whereClause = {
       [`${relationField}Id`]: eventId,
     } as Prisma.AppointmentWhereInput;
+    // #898 — set in the onlyTentative / full-delete branches when a 1:1
+    // payment-bearing appointment is kept rather than deleted.
+    let reusableAppointmentId: string | undefined;
 
     if (onlyTentative) {
       // Find appointments with tentative slots for this event
@@ -1751,6 +1789,11 @@ export class SlotAllocationService {
             await tx.appointment.delete({
               where: { id: appointment.id },
             });
+          } else if (eventType === "consultation" || eventType === "webinar") {
+            // #898 — the appointment is kept (confirmed slots remain or the
+            // payment guard fired). For a 1:1 event it still holds the @unique
+            // event FK, so the allocator must REUSE it; a fresh create P2002s.
+            reusableAppointmentId = appointment.id;
           }
         }
       }
@@ -1758,6 +1801,7 @@ export class SlotAllocationService {
         preservedSlotCount: 0,
         enrolledUserIds: Array.from(enrolledUserIdSet),
         deletedAppointmentIds,
+        reusableAppointmentId,
       };
     } else if (preservePastSlots) {
       // In-progress reallocation: only delete future slots, preserve past ones
@@ -1771,6 +1815,9 @@ export class SlotAllocationService {
               meetingSession: { select: { id: true, endedAt: true } },
             },
           },
+          // #898 — needed by the defensive payment guard on the empty-appointment
+          // delete below.
+          _count: { select: { payment: true } },
         },
       });
 
@@ -1816,8 +1863,16 @@ export class SlotAllocationService {
           });
         }
 
-        // Only delete the appointment if no slots remain at all
-        if (pastSlots.length === 0 && protectedFutureSlots.length === 0) {
+        // Only delete the appointment if no slots remain at all — and never
+        // when it carries payments (#898 defense-in-depth: the Payment cascade
+        // is Restrict-blocked by ConsultantEarnings and rolls back the tx).
+        // Latent today (the subscription placeholder can't reach this branch),
+        // but mirrors the onlyTentative / full-delete guards.
+        if (
+          pastSlots.length === 0 &&
+          protectedFutureSlots.length === 0 &&
+          appointment._count.payment === 0
+        ) {
           await tx.appointment.delete({ where: { id: appointment.id } });
         }
       }
@@ -1828,6 +1883,8 @@ export class SlotAllocationService {
         // AE-4 — in-progress path frees future slots, not tentative ones; the
         // freed-id contract is scoped to the partial-reschedule case.
         deletedAppointmentIds: [],
+        // #898 — only class/subscription (1:N) reach this branch; no 1:1 reuse.
+        reusableAppointmentId,
       };
     } else {
       // Full delete: remove all appointments for this event.
@@ -1870,6 +1927,12 @@ export class SlotAllocationService {
             // Keep the Appointment (and its Payment + ConsultantEarnings audit
             // trail); strip its slots. No-op for the slot-less subscription
             // placeholder, but frees slots for any other payment-bearing case.
+            if (eventType === "consultation" || eventType === "webinar") {
+              // #898 — 1:1 event: the kept appointment still holds the @unique
+              // event FK, so the allocator must REUSE it (a fresh create P2002s).
+              // At most one such appointment exists per 1:1 event.
+              reusableAppointmentId = appointment.id;
+            }
             return tx.slotOfAppointment.deleteMany({
               where: { appointmentId: appointment.id },
             });
@@ -1881,6 +1944,7 @@ export class SlotAllocationService {
         preservedSlotCount: 0,
         enrolledUserIds: Array.from(enrolledUserIdSet),
         deletedAppointmentIds: [],
+        reusableAppointmentId,
       };
     }
   }

@@ -695,8 +695,9 @@ export class AllocationAlgorithms {
   ): TimeSlot[][] {
     const calls: TimeSlot[][] = [];
     const usedSlotIndices = new Set<number>();
-    // Track calls already placed per (UTC) day so we don't exceed the per-day cap.
-    // UTC day-key matches the backend's groupSlotsByDay, keeping the two in sync.
+    // Track calls already placed per local day so we don't exceed the per-day
+    // cap. Local day-key (toDateString) mirrors the manual interactive guard in
+    // useSlotAllocation; see the keying note at the cap check below (#898).
     const callsPerDay = new Map<string, number>();
     const minMsBetween = minHoursBetween * 60 * 60 * 1000;
 
@@ -733,9 +734,11 @@ export class AllocationAlgorithms {
 
       const blockStart = sortedSlots[blockIndices[0]].startTime;
 
-      // Enforce the per-day cap (subscription 1/day, class 2/day) — mirrors the
-      // manual guard. UTC day-key to match the backend's day grouping.
-      const dayKey = blockStart.toISOString().split("T")[0];
+      // Enforce the per-day cap (subscription 1/day, class 2/day) — must mirror
+      // the manual interactive guard in useSlotAllocation, which buckets by
+      // local day (toDateString). This runs client-side, so the local day is
+      // the consultant's; a UTC key disagreed at the IST/UTC boundary (#898).
+      const dayKey = blockStart.toDateString();
       if ((callsPerDay.get(dayKey) || 0) >= maxCallsPerDay) continue;
 
       // Check spacing against already selected calls
