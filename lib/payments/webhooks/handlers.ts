@@ -134,6 +134,7 @@ interface EventData {
 export async function handlePaymentSuccess(
   paymentIntentId: string,
   rawMetadata: Record<string, string>,
+  gatewayAmountPaise?: number,
 ): Promise<void> {
   // #679 transition dual-read (see normalizeLegacySlotKeys) — in-flight
   // Razorpay orders created pre-rename replay webhooks with legacy slot
@@ -173,6 +174,56 @@ export async function handlePaymentSuccess(
     if (payment.paymentStatus === PaymentStatus.SUCCEEDED) {
       console.log(`Payment ${paymentIntentId} has already been processed.`);
       return null; // Signal: already processed, skip Phase 2
+    }
+
+    // #677 — defence-in-depth amount parity (mirrors handleOrgPaymentSuccess).
+    // The gateway order is created at checkout for exactly Payment.amount and the
+    // webhook is HMAC-verified, so a captured amount that differs is a gateway
+    // anomaly or our-own bug — never silently confirm a booking for the wrong
+    // money. Mark for manual recovery + page (like the metadata-failure path) and
+    // skip confirmation; the captured funds are reconciled by hand.
+    if (
+      gatewayAmountPaise !== undefined &&
+      gatewayAmountPaise !== payment.amount
+    ) {
+      Sentry.captureException(
+        new Error(
+          `Capture amount mismatch for ${paymentIntentId}: gateway=${gatewayAmountPaise} expected=${payment.amount}`,
+        ),
+        {
+          tags: { subsystem: "payments" },
+          level: "fatal",
+          contexts: {
+            payment: {
+              paymentIntentId,
+              paymentId: payment.id,
+              userId: payment.userId,
+            },
+          },
+        },
+      );
+      await tx.payment.update({
+        where: { id: payment.id },
+        data: {
+          paymentStatus: PaymentStatus.SUCCEEDED,
+          description: `REQUIRES_MANUAL_RECOVERY: capture amount ${gatewayAmountPaise}p ≠ expected ${payment.amount}p. Booking NOT confirmed.`,
+        },
+      });
+      console.error(
+        JSON.stringify({
+          event: "CRITICAL_PAYMENT_AMOUNT_MISMATCH",
+          alert_priority: "P1",
+          payment_id: payment.id,
+          payment_intent: paymentIntentId,
+          user_id: payment.userId,
+          gateway_amount_paise: gatewayAmountPaise,
+          expected_amount_paise: payment.amount,
+          action_required:
+            "IMMEDIATE: reconcile captured funds; confirm or refund manually",
+          timestamp: new Date().toISOString(),
+        }),
+      );
+      return null; // Skip confirmation + Phase 2 — requires manual intervention
     }
 
     // VALIDATION: Check metadata before processing
