@@ -1031,7 +1031,7 @@ Five issues have been validated against the codebase. All are legitimate and tra
 
 ### Issue 1: slotIds vs Session-Based Selection
 
-**Priority:** HIGH | **Status:** Planned fix (Phase 3)
+**Priority:** HIGH | **Status:** Partially addressed ([#448](https://github.com/Practitionist/familiarise_web/issues/448)) — the API responses and `rescheduleType` are now session-based, so the user-facing semantics no longer mislead. The request contract still accepts `slotIds[]`, so migrating the request itself to `appointmentIds[]` remains the Phase 3 work.
 
 **The problem:** The API accepts `slotIds[]` (individual 30-minute time blocks) instead of `appointmentIds[]` (logical sessions). There is no session-level abstraction in the API contract.
 
@@ -1090,7 +1090,7 @@ In practice, this edge case is unlikely because sessions rarely span midnight. B
 
 ### Issue 5: Toast Shows Slot Count, Not Session Count
 
-**Priority:** HIGH | **Status:** Tracked in [#448](https://github.com/Practitionist/familiarise_web/issues/448).
+**Priority:** HIGH | **Status:** FIXED ([#448](https://github.com/Practitionist/familiarise_web/issues/448) follow-up) — the reschedule API now returns `sessionsAffected` (the count of distinct appointments) alongside `slotsAffected`, derives `rescheduleType` from sessions, and the consultee toast displays the session count. A one-hour (two-slot) session now correctly reports one session rather than "2 sessions".
 
 **The problem:** The API returns `slotsAffected` (e.g., 72 slots for 18 four-slot sessions), and the frontend displays this as a session count. The user sees "72 sessions marked for rescheduling" when it should say "18 sessions."
 

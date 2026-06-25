@@ -35,6 +35,11 @@ jest.mock("../../utils/appointmentlock", () => ({
     .fn()
     .mockResolvedValue({ key: "mock-key", value: "mock-value" }),
   unlockAutoAllocate: jest.fn().mockResolvedValue(undefined),
+  // #898 follow-up — consultee-scoped lock used in the allocate paths.
+  lockConsulteeBooking: jest
+    .fn()
+    .mockResolvedValue({ key: "mock-consultee-key", value: "mock-value" }),
+  unlockConsulteeBooking: jest.fn().mockResolvedValue(undefined),
 }));
 
 // Mock SlotValidationService to isolate unit under test.
@@ -820,6 +825,60 @@ describe("Auto allocation", () => {
 
     expect(result.success).toBe(true);
     expect(mockTx.appointment.create).toHaveBeenCalledTimes(1);
+  });
+
+  // #898 follow-up — auto-allocate selection is consultee-aware: it folds the
+  // consultee's existing bookings (with ANY consultant) into bookedSlots, so it
+  // picks slots free for BOTH parties instead of consultant-free ones that then
+  // fail the consultee-conflict validation.
+  it("#898: skips a consultee-busy block and picks the next mutually-free one", async () => {
+    // Consultant is free all Monday 9–11 (two 1h blocks: 09:00 and 10:00).
+    mockTx.consultation.findUnique.mockResolvedValue(
+      makeConsultationEvent({
+        consultationPlan: {
+          durationInHours: 1,
+          consultantProfile: makeConsultantProfile({
+            slotsOfAvailabilityWeekly: [
+              makeWeeklyAvailabilitySlot(DayOfWeek.MONDAY, 9, 10),
+              makeWeeklyAvailabilitySlot(DayOfWeek.TUESDAY, 9, 10),
+            ],
+          }),
+        },
+        requestedBy: { user: { id: "consultee-1" } },
+      }),
+    );
+
+    // The CONSULTEE is already booked (with another consultant) every Monday
+    // 09:00 in the search window → auto-allocate must skip Monday and pick the
+    // mutually-free Tuesday block.
+    const consulteeBusy: any[] = [];
+    for (let week = 0; week < 8; week++) {
+      const d = new Date("2025-01-06T09:00:00Z");
+      d.setUTCDate(d.getUTCDate() + week * 7);
+      consulteeBusy.push({ startsAt: new Date(d) });
+    }
+
+    mockTx.appointment.findMany
+      .mockResolvedValueOnce([]) // reschedule check
+      .mockResolvedValueOnce([]) // consultant booked slots — none
+      .mockResolvedValueOnce([{ slotsOfAppointment: consulteeBusy }]) // #898 consultee-busy query
+      .mockResolvedValue([]); // delete
+
+    const result = await SlotAllocationService.allocate({
+      eventType: "consultation",
+      eventId: "consult-1",
+      mode: "auto",
+    });
+
+    expect(result.success).toBe(true);
+    const createCall = mockTx.appointment.create.mock.calls[0][0];
+    const starts = createCall.data.slotsOfAppointment.create.map((s: any) =>
+      new Date(s.startsAt).toISOString(),
+    );
+    // Booked the mutually-free Tuesday block, not a consultant-free Monday slot
+    // that would have failed the consultee-conflict validation (#898). Without
+    // the consultee-aware selection, auto-allocate would have picked Monday.
+    expect(starts.every((t: string) => t.startsWith("2025-01-07"))).toBe(true);
   });
 
   it("should fail auto-allocation when all slots are booked", async () => {
@@ -2159,6 +2218,62 @@ describe("Manual allocation - distributed lock", () => {
     expect(result.success).toBe(false);
     expect(result.httpStatus).toBe(409);
     expect(result.errorCode).toBe("LOCK_CONTENTION");
+  });
+
+  // #898 follow-up — the consultee-scoped lock serializes the consultee-conflict
+  // check → write so one person can't be booked across two consultants at once.
+  it("#898: acquires + releases the consultee lock around the allocation", async () => {
+    const {
+      lockConsulteeBooking,
+      unlockConsulteeBooking,
+    } = require("../../utils/appointmentlock");
+
+    // getConsulteeUserId reads requestedBy.user.id off the same findUnique mock.
+    (prisma.consultation.findUnique as jest.Mock).mockResolvedValue({
+      consultationPlan: { consultantProfileId: "consultant-profile-1" },
+      requestedBy: { user: { id: "consultee-9" } },
+    });
+    mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
+
+    await SlotAllocationService.allocate({
+      eventType: "consultation",
+      eventId: "consult-1",
+      mode: "manual",
+      slots: ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"],
+    });
+
+    expect(lockConsulteeBooking).toHaveBeenCalledWith("consultee-9");
+    expect(unlockConsulteeBooking).toHaveBeenCalled();
+  });
+
+  it("#898: fails closed when the consultee lock can't be acquired", async () => {
+    const {
+      lockConsulteeBooking,
+      unlockAutoAllocate,
+    } = require("../../utils/appointmentlock");
+
+    (prisma.consultation.findUnique as jest.Mock).mockResolvedValue({
+      consultationPlan: { consultantProfileId: "consultant-profile-1" },
+      requestedBy: { user: { id: "consultee-9" } },
+    });
+    mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
+    lockConsulteeBooking.mockRejectedValueOnce(
+      new Error(
+        "Lock contention: Another booking is in progress for this account.",
+      ),
+    );
+
+    const result = await SlotAllocationService.allocate({
+      eventType: "consultation",
+      eventId: "consult-1",
+      mode: "manual",
+      slots: ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"],
+    });
+
+    // Fails closed (no booking on contention) and still releases the consultant
+    // lock acquired before it.
+    expect(result.success).toBe(false);
+    expect(unlockAutoAllocate).toHaveBeenCalled();
   });
 });
 

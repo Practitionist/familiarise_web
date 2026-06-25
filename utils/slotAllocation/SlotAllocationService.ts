@@ -30,7 +30,13 @@ import {
   isOccupiedByLiveAppointment,
 } from "./SlotValidationService";
 import { buildOccupiedAppointmentFilter } from "./occupancyPolicy";
-import { lockAutoAllocate, unlockAutoAllocate } from "@/utils/appointmentlock";
+import {
+  lockAutoAllocate,
+  unlockAutoAllocate,
+  lockConsulteeBooking,
+  unlockConsulteeBooking,
+  type ApprovalLock,
+} from "@/utils/appointmentlock";
 import { isExclusionViolation, isUniqueViolation } from "@/lib/db/pg-errors";
 import {
   ALLOCATION_APPROVABLE_FROM,
@@ -214,6 +220,36 @@ export class SlotAllocationService {
   }
 
   /**
+   * #898 follow-up — resolve the single consultee's user id for the
+   * consultee-booking lock key. Only CONSULTATION/SUBSCRIPTION have one booker;
+   * WEBINAR/CLASS are group events (many attendees) with no single consultee to
+   * serialize on, so they return null and skip the lock.
+   */
+  private static async getConsulteeUserId(
+    eventType: EventType,
+    eventId: string,
+  ): Promise<string | null> {
+    switch (eventType) {
+      case "consultation": {
+        const event = await prisma.consultation.findUnique({
+          where: { id: eventId },
+          select: { requestedBy: { select: { user: { select: { id: true } } } } },
+        });
+        return event?.requestedBy?.user?.id ?? null;
+      }
+      case "subscription": {
+        const event = await prisma.subscription.findUnique({
+          where: { id: eventId },
+          select: { requestedBy: { select: { user: { select: { id: true } } } } },
+        });
+        return event?.requestedBy?.user?.id ?? null;
+      }
+      default:
+        return null;
+    }
+  }
+
+  /**
    * AUTO ALLOCATION: Find and allocate first available consecutive slots
    *
    * FIX Issue #1 from Architecture Review (#446):
@@ -242,7 +278,15 @@ export class SlotAllocationService {
 
     // Acquire consultant-level distributed lock before the transaction
     const lock = await lockAutoAllocate(consultantProfileId);
+    // #898 follow-up — also serialize on the consultee so one person can't be
+    // booked across two consultants concurrently (the GiST overlap guard is
+    // consultant-keyed). Lock order: consultant → consultee.
+    let consulteeLock: ApprovalLock | null = null;
     try {
+      const consulteeUserId = await this.getConsulteeUserId(eventType, eventId);
+      if (consulteeUserId) {
+        consulteeLock = await lockConsulteeBooking(consulteeUserId);
+      }
       return await prisma.$transaction(
         async (tx) => {
           // Fetch event details and consultant info
@@ -377,6 +421,7 @@ export class SlotAllocationService {
             config,
             appointmentIdsToExclude,
             existingAppointments,
+            consulteeUserId, // #898 — pick slots free for the consultee too
           );
 
           // Validate
@@ -458,6 +503,7 @@ export class SlotAllocationService {
         },
       );
     } finally {
+      if (consulteeLock) await unlockConsulteeBooking(consulteeLock);
       await unlockAutoAllocate(lock);
     }
   }
@@ -507,7 +553,14 @@ export class SlotAllocationService {
     // Without this, concurrent manual allocations for the same subscription/class
     // can both pass validateNoConflicts() and create duplicate appointments.
     const lock = await lockAutoAllocate(consultantProfileId);
+    // #898 follow-up — serialize on the consultee too (consultant → consultee
+    // lock order) so one person can't be booked with two consultants at once.
+    let consulteeLock: ApprovalLock | null = null;
     try {
+      const consulteeUserId = await this.getConsulteeUserId(eventType, eventId);
+      if (consulteeUserId) {
+        consulteeLock = await lockConsulteeBooking(consulteeUserId);
+      }
       return await prisma.$transaction(
         async (tx) => {
           // Fetch event details
@@ -742,6 +795,7 @@ export class SlotAllocationService {
         },
       );
     } finally {
+      if (consulteeLock) await unlockConsulteeBooking(consulteeLock);
       await unlockAutoAllocate(lock);
     }
   }
@@ -930,6 +984,11 @@ export class SlotAllocationService {
     config: EventConfig,
     excludeAppointmentIds: string[] = [],
     eventOwnAppointments: AppointmentWithSlots[] = [],
+    // #898 follow-up — when set, the CONSULTEE's existing bookings (across ANY
+    // consultant) are also treated as occupied, so auto-allocate picks
+    // mutually-free slots instead of consultant-free ones that then fail the
+    // consultee-conflict validation.
+    consulteeUserId?: string,
   ): Promise<Date[]> {
     // Get all existing booked slots for this consultant
     // FIX Bug #15: Use centralized occupancy policy for consistent conflict detection
@@ -985,6 +1044,46 @@ export class SlotAllocationService {
           ),
         ),
     );
+
+    // #898 follow-up — also fold the CONSULTEE's existing bookings into
+    // bookedSlots so auto-allocate avoids slots where the consultee is already
+    // busy with ANOTHER consultant. Without this, selection picks
+    // consultant-free slots that then fail validateNoConflicts' consultee check
+    // (a graceful 400, but no placement and no retry). Mirrors the consultant
+    // query above, scoped to the consultee on the slot↔user M2M.
+    if (consulteeUserId) {
+      const consulteeAppointments = await tx.appointment.findMany({
+        where: {
+          AND: [
+            { OR: buildOccupiedAppointmentFilter() },
+            {
+              slotsOfAppointment: {
+                some: { user: { some: { id: consulteeUserId } } },
+              },
+            },
+            ...(excludeAppointmentIds.length > 0
+              ? [{ NOT: { id: { in: excludeAppointmentIds } } }]
+              : []),
+          ],
+        },
+        include: {
+          slotsOfAppointment: true,
+          consultation: { select: { status: true } },
+          subscription: { select: { status: true } },
+          payment: { select: { expiresAt: true } },
+        },
+      });
+      consulteeAppointments
+        .filter((appointment) =>
+          isOccupiedByLiveAppointment(appointment, occupancyNow),
+        )
+        .flatMap((appointment) =>
+          appointment.slotsOfAppointment.map((slot) =>
+            new Date(slot.startsAt).toISOString(),
+          ),
+        )
+        .forEach((iso) => bookedSlots.add(iso));
+    }
 
     // Validate availability exists
     const hasWeeklySlots = consultant.slotsOfAvailabilityWeekly.length > 0;

@@ -22,6 +22,8 @@ import {
   unlockSlotBooking,
   lockEventCheckout,
   unlockEventCheckout,
+  lockConsulteeBooking,
+  unlockConsulteeBooking,
   extendLock,
   CHECKOUT_LOCK_TTL_MS,
   ApprovalLock,
@@ -1810,6 +1812,9 @@ export async function handleCheckout(
 ) {
   let lock: ApprovalLock | null = null;
   let lockType = "";
+  // #898 follow-up — tier-2 consultee lock (acquired alongside the checkout lock
+  // below; see the ordering note at STEP 2).
+  let consulteeLock: ApprovalLock | null = null;
   // TYPE-1: Properly typed payment response instead of any
   let paymentResponse: { id: string; client_secret: string | null } | null =
     null;
@@ -2043,8 +2048,23 @@ export async function handleCheckout(
     const planData = await getPlanDataForLock(validatedData);
 
     // STEP 2: ACQUIRE DISTRIBUTED LOCK (prevents race conditions)
+    // #898 follow-up — also serialize on the consultee so the SAME person can't
+    // book two DIFFERENT consultants at overlapping times via concurrent direct
+    // checkout. The GiST overlap guard is consultant-keyed, so the consultee-slot
+    // conflict in revalidateInsideLock below is otherwise a check-then-write
+    // (TOCTOU) window. Global lock order (a total order ⇒ deadlock-free):
+    // event/consultant → consultee → slot. So for a slot-based checkout
+    // (consultation) the consultee lock is taken BEFORE the slot lock; for an
+    // event-based checkout it is taken AFTER the event lock.
+    const isSlotBasedCheckout = !!validatedData.startsAt;
+    if (isSlotBasedCheckout) {
+      consulteeLock = await lockConsulteeBooking(userId);
+    }
     lock = await acquireCheckoutLock(validatedData, planData);
     lockType = validatedData.startsAt ? "slot-based" : "event-based";
+    if (!isSlotBasedCheckout) {
+      consulteeLock = await lockConsulteeBooking(userId);
+    }
 
     console.log(
       JSON.stringify({
@@ -3101,9 +3121,13 @@ export async function handleCheckout(
     }
     throw error;
   } finally {
-    // ALWAYS RELEASE LOCK (even on error)
+    // ALWAYS RELEASE LOCKS (even on error). Release order doesn't affect
+    // deadlock-freedom (only acquisition order does), so both are freed here.
     if (lock) {
       await releaseCheckoutLock(lock, lockType);
+    }
+    if (consulteeLock) {
+      await unlockConsulteeBooking(consulteeLock);
     }
   }
 }
