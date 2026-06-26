@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import Image from "next/image";
 import Link from "next/link";
 import prisma from "@/lib/prisma";
+import { emptyOnTransientDbError } from "@/lib/data/fail-open";
 
 export const revalidate = 60;
 
@@ -211,7 +212,11 @@ export default async function ExploreOrganisationsPage({
   searchParams: Promise<{ industry?: string }>;
 }) {
   const { industry } = await searchParams;
-  const industries = await fetchIndustryList();
+  // Outside the orgs Suspense boundary — a transient timeout here would crash the
+  // whole page, so degrade to no industry filters rather than erroring (#925).
+  const industries = await fetchIndustryList().catch(
+    emptyOnTransientDbError("org industries"),
+  );
 
   return (
     <main className="min-h-screen bg-background">
