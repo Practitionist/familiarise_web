@@ -6,6 +6,7 @@ import {
   getExpertsMetadata,
   getCuratedExperts,
 } from "@/lib/data/explore-experts";
+import { emptyOnTransientDbError } from "@/lib/data/fail-open";
 
 function HeroSection({
   totalConsultants,
@@ -79,9 +80,15 @@ export default async function ExploreExperts() {
   const [metadata, featuredExperts, trendingExperts, newestExperts] =
     await Promise.all([
       getExpertsMetadata(),
-      getCuratedExperts("rating", 5).catch(() => []),
-      getCuratedExperts("trending", 8).catch(() => []),
-      getCuratedExperts("newest", 8).catch(() => []),
+      getCuratedExperts("rating", 5).catch(
+        emptyOnTransientDbError("featured experts"),
+      ),
+      getCuratedExperts("trending", 8).catch(
+        emptyOnTransientDbError("trending experts"),
+      ),
+      getCuratedExperts("newest", 8).catch(
+        emptyOnTransientDbError("newest experts"),
+      ),
     ]);
 
   return (
