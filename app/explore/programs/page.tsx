@@ -16,11 +16,13 @@ import ProgramsInteractiveContent from "./ProgramsInteractiveContent";
  * `useCuratedPrograms` / `useTopicsWithCount` hooks.
  */
 export default async function ExplorePrograms() {
+  // Degrade gracefully: a heavy curated read that times out (cold query brushing
+  // the pg query budget) renders an empty row instead of erroring the whole page.
   const [trendingPrograms, newestPrograms, topicsWithCount, stats] =
     await Promise.all([
-      getCuratedPrograms("all", "trending", 8),
-      getCuratedPrograms("all", "newest", 8),
-      getTopicsWithCount("all"),
+      getCuratedPrograms("all", "trending", 8).catch(() => []),
+      getCuratedPrograms("all", "newest", 8).catch(() => []),
+      getTopicsWithCount("all").catch(() => []),
       fetchProgramStats(),
     ]);
 
