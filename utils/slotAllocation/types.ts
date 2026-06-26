@@ -92,6 +92,9 @@ export interface AllocationResult {
   errorCode?: AllocationErrorCode;
   httpStatus?: number;
   warnings?: string[];
+  // AE-4 — appointment ids whose tentative slots were freed during a partial
+  // reschedule, so callers (calendar refresh, notifications) know what to drop.
+  deletedAppointmentIds?: string[];
 }
 
 /**

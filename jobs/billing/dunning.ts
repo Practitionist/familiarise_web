@@ -31,6 +31,7 @@ import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { notifyOrgInvoiceOverdue } from "@/lib/novu/org-workflows";
 import { getAppUrl } from "@/lib/url";
 import { withCronLock, CronLockHeldError } from "@/lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 // #779 — 7-day cadence between escalations, capped at 3 reminders.
 const REMINDER_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -279,6 +280,7 @@ export async function runDunning(): Promise<DunningStats> {
 
 async function main() {
   console.log(`[dunning] Starting at ${new Date().toISOString()}`);
+  Sentry.logger.info("job:dunning started");
   const stats = await withCronLock(
     "dunning",
     { failMode: "closed" },
@@ -287,6 +289,13 @@ async function main() {
   console.log(
     `[dunning] Done. scannedStage1=${stats.scannedStage1} markedOverdue=${stats.markedOverdue} scannedStage2=${stats.scannedStage2} remindersSent=${stats.remindersSent} suspended=${stats.suspended}`,
   );
+  Sentry.logger.info("job:dunning finished", {
+    scannedStage1: stats.scannedStage1,
+    markedOverdue: stats.markedOverdue,
+    scannedStage2: stats.scannedStage2,
+    remindersSent: stats.remindersSent,
+    suspended: stats.suspended,
+  });
 }
 
 if (require.main === module) {
@@ -294,9 +303,11 @@ if (require.main === module) {
     .catch((err) => {
       // #476 — lock held = another run is live; skip cleanly (exit 0).
       if (err instanceof CronLockHeldError) {
+        Sentry.logger.info("job:dunning lock already held — skipping");
         console.log(`⏭️  ${err.message}`);
         return;
       }
+      Sentry.captureException(err, { tags: { subsystem: "jobs", job: "dunning" } });
       console.error("[dunning] Failed:", err);
       process.exitCode = 1;
     })

@@ -39,7 +39,7 @@ export function DashboardNavbar({
 }: DashboardNavbarProps) {
   return (
     <div
-      className="flex h-16 items-center justify-end gap-2 px-6 border-b border-zinc-200 bg-white"
+      className="flex h-16 items-center justify-end gap-2 px-6 border-b border-border bg-card"
       style={{ overflow: "visible" }}
     >
       {/* Breadcrumbs — rendered in the left gutter when provided */}

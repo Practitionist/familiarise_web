@@ -21,6 +21,7 @@ import {
 
 import fs from "fs";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
+import * as Sentry from "@sentry/nextjs";
 
 interface JobSummary {
   processed: number;
@@ -87,6 +88,7 @@ function outputToGitHubActions(result: JobSummary): void {
  */
 async function main(): Promise<void> {
   await abortIfMaintenance("process-payouts");
+  Sentry.logger.info("job:process-payouts started");
   const startTime = Date.now();
   console.log(
     `🚀 Starting payout processing job at ${new Date().toISOString()}`,
@@ -146,6 +148,7 @@ async function main(): Promise<void> {
     outputToGitHubActions(result);
 
     if (result.success) {
+      Sentry.logger.info("job:process-payouts finished", { processed: result.processed, succeeded: result.succeeded, failed: result.failed, orgErrors: result.orgErrors });
       console.log("🎉 Payout processing job completed successfully");
       process.exit(0);
     } else {
@@ -153,6 +156,7 @@ async function main(): Promise<void> {
       process.exit(1);
     }
   } catch (error) {
+    Sentry.captureException(error, { tags: { subsystem: "jobs", job: "process-payouts" } });
     const errorMessage =
       error instanceof Error ? error.message : "Unknown error";
     console.error("💥 Payout processing job failed:", errorMessage);

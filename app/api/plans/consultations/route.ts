@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { ConsultationPlanSchema } from "@/schemas/plans";
 import { findOrCreateTopics, transformTopicsToStrings } from "@/lib/topics";
 import { marketplaceVisibilityWhere } from "@/lib/api/plans/visibility";
-
+import * as Sentry from "@sentry/nextjs";
 import { getSession } from "@/lib/auth-server";
 export async function GET(request: NextRequest) {
   try {
@@ -48,6 +48,7 @@ export async function GET(request: NextRequest) {
       { status: 200 },
     );
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
     console.error("Error fetching consultation plans:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching consultation plans" },
@@ -139,6 +140,7 @@ export async function POST(request: NextRequest) {
       { status: 201 },
     );
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
     console.error("Error creating consultation plan:", error);
     return NextResponse.json(
       { error: "An error occurred while creating the consultation plan" },

@@ -20,6 +20,7 @@
  */
 
 import "dotenv/config";
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { notifyOrgWalletLow } from "@/lib/novu/org-workflows";
 import { getAppUrl } from "@/lib/url";
@@ -97,6 +98,7 @@ export async function runWalletLowBalance(): Promise<WalletLowStats> {
 
 async function main() {
   console.log(`[wallet-low-balance] Starting at ${new Date().toISOString()}`);
+  Sentry.logger.info("job:wallet-low-balance started");
   const stats = await withCronLock(
     "wallet-low-balance",
     { failMode: "open" },
@@ -105,6 +107,7 @@ async function main() {
   console.log(
     `[wallet-low-balance] Done. scanned=${stats.scanned} notified=${stats.notified}`,
   );
+  Sentry.logger.info("job:wallet-low-balance finished", { scanned: stats.scanned, notified: stats.notified });
 }
 
 if (require.main === module) {
@@ -112,9 +115,11 @@ if (require.main === module) {
     .catch((err) => {
       // #476 — lock held = another run is live; skip cleanly (exit 0).
       if (err instanceof CronLockHeldError) {
+        Sentry.logger.info("job:wallet-low-balance lock held, skipping");
         console.log(`⏭️  ${err.message}`);
         return;
       }
+      Sentry.captureException(err, { tags: { subsystem: "jobs", job: "wallet-low-balance" } });
       console.error("[wallet-low-balance] Failed:", err);
       process.exitCode = 1;
     })

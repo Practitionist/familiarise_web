@@ -23,6 +23,7 @@
 // PrismaClient throws on the first query. See
 // docs/enterprise/50-operations/03-runbooks.md "Running cron jobs locally".
 import "dotenv/config";
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { Resend } from "resend";
 import { getAppUrl } from "@/lib/url";
@@ -47,6 +48,7 @@ async function runMsmePaymentAlertsUnlocked(): Promise<{
   atRisk: number;
   emailSent: boolean;
 }> {
+  Sentry.logger.info("job:msme-payment-alerts started");
   const windowEnd = new Date();
   windowEnd.setDate(windowEnd.getDate() + ALERT_WINDOW_DAYS);
 
@@ -166,6 +168,7 @@ async function runMsmePaymentAlertsUnlocked(): Promise<{
       console.log(`[MSME] alert email sent to ${to}`);
     } catch (err) {
       console.error("[MSME] alert email failed:", err);
+      Sentry.captureException(err, { tags: { subsystem: "jobs", job: "msme-payment-alerts" } });
     }
   } else {
     console.log(
@@ -173,7 +176,9 @@ async function runMsmePaymentAlertsUnlocked(): Promise<{
     );
   }
 
-  return { alerted: emailSent ? atRisk : 0, atRisk, emailSent };
+  const result = { alerted: emailSent ? atRisk : 0, atRisk, emailSent };
+  Sentry.logger.info("job:msme-payment-alerts finished", { alerted: result.alerted, atRisk: result.atRisk, emailSent: result.emailSent });
+  return result;
 }
 
 // Self-execute when invoked directly via `npx tsx`. Allows imports for
@@ -189,9 +194,11 @@ if (require.main === module) {
       // #476 — lock held = another run is live; skip cleanly (exit 0).
       if (err instanceof CronLockHeldError) {
         console.log(`⏭️  ${err.message}`);
+        Sentry.logger.info("job:msme-payment-alerts skipped — lock held");
         return;
       }
       console.error("[MSME] cron failed:", err);
+      Sentry.captureException(err, { tags: { subsystem: "jobs", job: "msme-payment-alerts" } });
       process.exitCode = 1;
     })
     .finally(async () => {

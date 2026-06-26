@@ -55,6 +55,15 @@ let cachedState: MaintenanceState | null = null;
 let cacheTimestamp = 0;
 const CACHE_TTL_MS = 30_000; // 30 seconds
 
+// Per-request fail-open budget for the edge Upstash read. Document loads + /api/*
+// pay this (RSC/prefetch sub-navigations use getMaintenanceStateCachedOnly and
+// never read live), and it falls back to OFF on timeout — so a slow Upstash gives
+// up fast rather than adding latency to live traffic. 200ms: well under a frame.
+const REDIS_FETCH_TIMEOUT_MS = (() => {
+  const v = Number(process.env.REDIS_FETCH_TIMEOUT_MS);
+  return Number.isFinite(v) && v > 0 ? v : 200;
+})();
+
 /**
  * Direct Upstash REST call — edge-safe, no SDK needed.
  */
@@ -66,7 +75,7 @@ async function redisGet(key: string): Promise<string | null> {
   const res = await fetch(`${url}/get/${encodeURIComponent(key)}`, {
     headers: { Authorization: `Bearer ${token}` },
     cache: "no-store",
-    signal: AbortSignal.timeout(1500),
+    signal: AbortSignal.timeout(REDIS_FETCH_TIMEOUT_MS),
   });
 
   if (!res.ok) return null;
@@ -120,6 +129,22 @@ export async function getMaintenanceState(): Promise<MaintenanceState> {
     cacheTimestamp = now;
     return OFF_STATE;
   }
+}
+
+/**
+ * Non-blocking maintenance read for the hot sub-navigation path (Next RSC +
+ * prefetch fetches). Returns the in-memory cached state if fresh, else OFF —
+ * NEVER a live Upstash round-trip. Without this, the blocking read in
+ * getMaintenanceState() runs before the RSC response can stream, so a soft
+ * navigation sits blank until it resolves (the gap before loading.tsx appears).
+ * A full document load still does the live read, so a maintenance window is
+ * always enforced within one document navigation / the 30s cache window.
+ */
+export function getMaintenanceStateCachedOnly(): MaintenanceState {
+  if (cachedState && Date.now() - cacheTimestamp < CACHE_TTL_MS) {
+    return cachedState;
+  }
+  return OFF_STATE;
 }
 
 // Matches paths ending with a file extension (e.g. .js, .css, .png, .woff2).

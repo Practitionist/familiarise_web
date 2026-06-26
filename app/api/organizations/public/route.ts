@@ -15,6 +15,7 @@
  *   limit     — default 12, max 50
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { apiError } from "@/lib/errors";
@@ -105,6 +106,7 @@ export async function GET(req: NextRequest) {
       },
     );
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "organizations" } });
     return apiError({ tag: "[Organizations.Public.GET]", error });
   }
 }

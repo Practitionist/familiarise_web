@@ -3,6 +3,7 @@
  * POST: Respond to a waitlist notification (ACCEPT/DECLINE/SKIP)
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { handleWaitlistResponse } from "@/lib/waitlist";
 
@@ -64,6 +65,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       message: result.message,
     });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "waitlist" } });
     console.error("Error responding to waitlist:", error);
     return NextResponse.json(
       { success: false, error: "Failed to process response" },
@@ -124,6 +126,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       ),
     );
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "waitlist" } });
     console.error("Error responding to waitlist via GET:", error);
     return NextResponse.redirect(
       new URL("/dashboard?error=processing_failed", request.url),

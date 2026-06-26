@@ -48,6 +48,7 @@
  *     re-derive these for any rows still on stub defaults.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import type { PaymentGateway, PayoutStatus } from "@prisma/client";
@@ -487,6 +488,7 @@ export async function createOrgPayoutBatch(
         };
       }
     }
+    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "payments" } });
     throw err;
   } finally {
     await releaseLock(lockKey, token);
@@ -639,6 +641,7 @@ export async function processOrgPayout(
         }
         // Transient — leave row in PROCESSING and re-throw so the cron
         // retries with the same idempotency key.
+        Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "payments" } });
         throw err;
       }
     });
@@ -824,6 +827,7 @@ export async function processPendingOrgPayouts(): Promise<OrgProcessingResult> {
         result.advanced++;
       }
     } catch (err) {
+      Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "payments" } });
       const message = err instanceof Error ? err.message : String(err);
       result.errors.push(`OrgPayout ${p.id}: ${message}`);
     }
@@ -901,25 +905,27 @@ export async function markOrgPayoutCompleted(payoutId: string): Promise<{
     //   Dr ORG_PAYABLE (gross)   Cr CASH (paid)   Cr TDS_PAYABLE (withheld)
     const orgTds = payout.tdsAmountPaise ?? 0;
     if (payout.netPayoutPaise > 0) {
+      // #783 — ledger is INR-only; never key accounts by the payout's settlement
+      // currency (would orphan INR paise in a foreign-labelled account). Matches
+      // the consultant payout postings, which already omit currency.
       const orgPostings: Posting[] = [
         {
           account: {
             kind: "ORG_PAYABLE",
             organizationId: payout.organizationId,
-            currency: payout.currency,
           },
           direction: "DEBIT",
           amountPaise: payout.netPayoutPaise + orgTds,
         },
         {
-          account: { kind: "CASH", currency: payout.currency },
+          account: { kind: "CASH" },
           direction: "CREDIT",
           amountPaise: payout.netPayoutPaise,
         },
       ];
       if (orgTds > 0) {
         orgPostings.push({
-          account: { kind: "TDS_PAYABLE", currency: payout.currency },
+          account: { kind: "TDS_PAYABLE" },
           direction: "CREDIT",
           amountPaise: orgTds,
         });
@@ -1123,9 +1129,11 @@ export async function markOrgPayoutReversed(
     // here only un-does this payout's accrual, which is correct for a bounce.)
     const orgTds = payout.tdsAmountPaise ?? 0;
     if (payout.netPayoutPaise > 0) {
+      // #783 — INR-only ledger; the reversal keys the same INR accounts as the
+      // original posting (which now omits currency) so the pair nets to zero.
       const reversal: Posting[] = [
         {
-          account: { kind: "CASH", currency: payout.currency },
+          account: { kind: "CASH" },
           direction: "DEBIT",
           amountPaise: payout.netPayoutPaise,
         },
@@ -1133,7 +1141,6 @@ export async function markOrgPayoutReversed(
           account: {
             kind: "ORG_PAYABLE",
             organizationId: payout.organizationId,
-            currency: payout.currency,
           },
           direction: "CREDIT",
           amountPaise: payout.netPayoutPaise + orgTds,
@@ -1141,7 +1148,7 @@ export async function markOrgPayoutReversed(
       ];
       if (orgTds > 0) {
         reversal.push({
-          account: { kind: "TDS_PAYABLE", currency: payout.currency },
+          account: { kind: "TDS_PAYABLE" },
           direction: "DEBIT",
           amountPaise: orgTds,
         });
@@ -1196,7 +1203,10 @@ export async function markOrgPayoutReversed(
         reason: reason.slice(0, 200),
         kind: "REVERSED",
         dashboardUrl: `${getAppUrl()}/dashboard/organization/${completedResult.notify.organizationId}/payouts`,
-      }).catch((e) => console.error("[org-payout] REVERSED notify failed:", e));
+      }).catch((e) => {
+        Sentry.captureException(e instanceof Error ? e : new Error(String(e)), { tags: { subsystem: "payments" } });
+        console.error("[org-payout] REVERSED notify failed:", e);
+      });
     }
     return { wasNoOp: false, status: "REVERSED" as PayoutStatus };
   }

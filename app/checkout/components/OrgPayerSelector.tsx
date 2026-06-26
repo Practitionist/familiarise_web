@@ -126,7 +126,7 @@ export function OrgPayerSelector({
 
   return (
     <div className="space-y-3">
-      <p className="text-sm font-medium text-zinc-700">Who is paying?</p>
+      <p className="text-sm font-medium text-muted-foreground">Who is paying?</p>
 
       {/* Personal payment option */}
       <button
@@ -134,16 +134,18 @@ export function OrgPayerSelector({
         onClick={() => onSelect(null)}
         className={`w-full flex items-center gap-3 p-3 rounded-lg border text-left transition-colors ${
           selectedOrganizationId === null
-            ? "border-zinc-900 bg-zinc-50 ring-1 ring-zinc-900"
-            : "border-zinc-200 hover:border-zinc-300"
+            ? "border-foreground bg-muted ring-1 ring-foreground"
+            : "border-border hover:border-muted-foreground/40"
         }`}
       >
-        <div className="w-8 h-8 rounded-md bg-zinc-100 flex items-center justify-center shrink-0">
-          <CreditCard className="w-4 h-4 text-zinc-600" />
+        <div className="w-8 h-8 rounded-md bg-muted flex items-center justify-center shrink-0">
+          <CreditCard className="w-4 h-4 text-muted-foreground" />
         </div>
-        <div>
-          <p className="text-sm font-medium text-zinc-900">Pay with your card</p>
-          <p className="text-xs text-zinc-500">Personal payment</p>
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-foreground">
+            Pay with your card
+          </p>
+          <p className="text-xs text-muted-foreground/70">Personal payment</p>
         </div>
       </button>
 
@@ -158,11 +160,11 @@ export function OrgPayerSelector({
             onClick={() => onSelect(m.organizationId)}
             className={`w-full flex items-center gap-3 p-3 rounded-lg border text-left transition-colors ${
               isSelected
-                ? "border-zinc-900 bg-zinc-50 ring-1 ring-zinc-900"
-                : "border-zinc-200 hover:border-zinc-300"
+                ? "border-foreground bg-muted ring-1 ring-foreground"
+                : "border-border hover:border-muted-foreground/40"
             }`}
           >
-            <div className="w-8 h-8 rounded-md bg-zinc-100 flex items-center justify-center overflow-hidden shrink-0">
+            <div className="w-8 h-8 rounded-md bg-muted flex items-center justify-center overflow-hidden shrink-0">
               {m.organizationLogo ? (
                 <Image
                   src={m.organizationLogo}
@@ -172,11 +174,11 @@ export function OrgPayerSelector({
                   className="w-full h-full object-cover"
                 />
               ) : (
-                <Building2 className="w-4 h-4 text-zinc-500" />
+                <Building2 className="w-4 h-4 text-muted-foreground" />
               )}
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-zinc-900 truncate">
+              <p className="text-sm font-medium text-foreground truncate">
                 Bill to {m.organizationName}
               </p>
               <p className="text-xs mt-0.5 truncate">{subtitle}</p>
@@ -220,14 +222,16 @@ function renderSubtitle(m: {
     case "WALLET": {
       const paise = m.walletBalance ?? 0;
       return (
-        <span className={paise === 0 ? "text-red-500" : "text-zinc-500"}>
+        <span className={paise === 0 ? "text-red-500" : "text-muted-foreground"}>
           Wallet: ₹{(paise / 100).toLocaleString("en-IN")} remaining
         </span>
       );
     }
     case "INVOICE":
       return (
-        <span className="text-zinc-500">Added to org&apos;s monthly invoice</span>
+        <span className="text-muted-foreground">
+          Added to org&apos;s monthly invoice
+        </span>
       );
     case "LICENSE":
       return (
@@ -237,12 +241,14 @@ function renderSubtitle(m: {
       );
     case "PERSONAL":
       return (
-        <span className="text-zinc-500">You pay — org receives the report</span>
+        <span className="text-muted-foreground">
+          You pay — org receives the report
+        </span>
       );
     case null:
       // No billing account attached — org was set up without one, or it
       // was deleted. Default to a neutral label; server-side will reject
       // the org-funded checkout on validation.
-      return <span className="text-zinc-500">Organization billing</span>;
+      return <span className="text-muted-foreground">Organization billing</span>;
   }
 }

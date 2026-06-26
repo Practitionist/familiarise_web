@@ -3,6 +3,7 @@
  * Handles the complete checkout flow for all appointment types
  */
 
+import * as Sentry from "@sentry/nextjs";
 import prisma, { type Tx } from "@/lib/prisma";
 import { CheckoutInput, checkoutSchema } from "@/schemas/checkout";
 import { calculateSubscriptionEndDate } from "@/utils/dateUtils";
@@ -21,6 +22,8 @@ import {
   unlockSlotBooking,
   lockEventCheckout,
   unlockEventCheckout,
+  lockConsulteeBooking,
+  unlockConsulteeBooking,
   extendLock,
   CHECKOUT_LOCK_TTL_MS,
   ApprovalLock,
@@ -42,6 +45,7 @@ import {
   processQualifyingAction,
   processConsultantBookingReferral,
 } from "@/lib/referrals/service";
+import { MIN_CREDIT_REDEMPTION_PAISE } from "@/lib/referrals/constants";
 import {
   createEarningsFromPayment,
   type AppointmentType,
@@ -183,6 +187,9 @@ export class PaymentIntentManager {
       return paymentResponse;
     } catch (error) {
       console.error("Payment intent creation failed:", error);
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), {
+        tags: { subsystem: "payments" },
+      });
       throw new Error(
         "Failed to create payment intent. Please try again later.",
       );
@@ -201,6 +208,10 @@ export class PaymentIntentManager {
       this.activeIntents.delete(intentId);
     } catch (error) {
       console.error(`Failed to cancel payment intent ${intentId}:`, error);
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), {
+        tags: { subsystem: "payments" },
+        level: "warning",
+      });
       // Don't throw - cleanup should be best-effort
     }
   }
@@ -508,8 +519,13 @@ export async function calculateAmountAndValidate(
 
     // Apply referral credits AFTER tax (credits act as a payment method, not a trade discount)
     // Both credits and amount are now in paise — no conversion needed
+    // #880 — credits redeem only when the order is ₹500+ so a credit never
+    // exceeds the value of the booking it discounts.
     let creditsApplied = 0;
-    if (validatedData.useReferralCredits && amount > 0) {
+    if (
+      validatedData.useReferralCredits &&
+      amount >= MIN_CREDIT_REDEMPTION_PAISE
+    ) {
       const { totalAvailable } = await getUserCredits(userId, tx);
       if (totalAvailable > 0) {
         creditsApplied = Math.min(totalAvailable, amount);
@@ -1802,6 +1818,9 @@ export async function handleCheckout(
 ) {
   let lock: ApprovalLock | null = null;
   let lockType = "";
+  // #898 follow-up — tier-2 consultee lock (acquired alongside the checkout lock
+  // below; see the ordering note at STEP 2).
+  let consulteeLock: ApprovalLock | null = null;
   // TYPE-1: Properly typed payment response instead of any
   let paymentResponse: { id: string; client_secret: string | null } | null =
     null;
@@ -2035,8 +2054,23 @@ export async function handleCheckout(
     const planData = await getPlanDataForLock(validatedData);
 
     // STEP 2: ACQUIRE DISTRIBUTED LOCK (prevents race conditions)
+    // #898 follow-up — also serialize on the consultee so the SAME person can't
+    // book two DIFFERENT consultants at overlapping times via concurrent direct
+    // checkout. The GiST overlap guard is consultant-keyed, so the consultee-slot
+    // conflict in revalidateInsideLock below is otherwise a check-then-write
+    // (TOCTOU) window. Global lock order (a total order ⇒ deadlock-free):
+    // event/consultant → consultee → slot. So for a slot-based checkout
+    // (consultation) the consultee lock is taken BEFORE the slot lock; for an
+    // event-based checkout it is taken AFTER the event lock.
+    const isSlotBasedCheckout = !!validatedData.startsAt;
+    if (isSlotBasedCheckout) {
+      consulteeLock = await lockConsulteeBooking(userId);
+    }
     lock = await acquireCheckoutLock(validatedData, planData);
     lockType = validatedData.startsAt ? "slot-based" : "event-based";
+    if (!isSlotBasedCheckout) {
+      consulteeLock = await lockConsulteeBooking(userId);
+    }
 
     console.log(
       JSON.stringify({
@@ -2132,6 +2166,9 @@ export async function handleCheckout(
         });
       } catch (paymentError) {
         console.error("Payment intent creation failed:", paymentError);
+        Sentry.captureException(paymentError instanceof Error ? paymentError : new Error(String(paymentError)), {
+          tags: { subsystem: "payments" },
+        });
         throw new Error(
           "Failed to create payment intent. Please try again later.",
         );
@@ -2407,12 +2444,13 @@ export async function handleCheckout(
                       },
                     );
                   })
-                  .catch((notifyErr) =>
-                    console.error(
-                      "[notifyOrgProgramExhausted] failed:",
-                      notifyErr,
-                    ),
-                  );
+                  .catch((notifyErr) => {
+                    console.error("[notifyOrgProgramExhausted] failed:", notifyErr);
+                    Sentry.captureException(notifyErr instanceof Error ? notifyErr : new Error(String(notifyErr)), {
+                      tags: { subsystem: "payments" },
+                      level: "warning",
+                    });
+                  });
 
                 throw new Error(
                   "Your program has hit its session cap for this cycle. Ask your organization admin to upgrade the program or wait for the next cycle.",
@@ -2511,12 +2549,13 @@ export async function handleCheckout(
                       },
                     );
                   })
-                  .catch((notifyErr) =>
-                    console.error(
-                      "[notifyOrgProgramCapNear] failed:",
-                      notifyErr,
-                    ),
-                  );
+                  .catch((notifyErr) => {
+                    console.error("[notifyOrgProgramCapNear] failed:", notifyErr);
+                    Sentry.captureException(notifyErr instanceof Error ? notifyErr : new Error(String(notifyErr)), {
+                      tags: { subsystem: "payments" },
+                      level: "warning",
+                    });
+                  });
               }
             }
 
@@ -2728,6 +2767,10 @@ export async function handleCheckout(
             `⚠️ Failed to process referral qualifying action for user ${userId}:`,
             referralError,
           );
+          Sentry.captureException(referralError instanceof Error ? referralError : new Error(String(referralError)), {
+            tags: { subsystem: "payments" },
+            level: "warning",
+          });
         }
 
         // Create consultant earnings (mock payments bypass webhooks, so earnings must be created here)
@@ -2836,6 +2879,10 @@ export async function handleCheckout(
             `⚠️ Failed to create earnings for mock payment:`,
             earningsError,
           );
+          Sentry.captureException(earningsError instanceof Error ? earningsError : new Error(String(earningsError)), {
+            tags: { subsystem: "payments" },
+            level: "warning",
+          });
         }
 
         // FIX #437: Consultant qualifying action (receiving first paid booking)
@@ -2849,6 +2896,10 @@ export async function handleCheckout(
             `⚠️ Failed to process consultant referral qualifying action:`,
             consultantRefError,
           );
+          Sentry.captureException(consultantRefError instanceof Error ? consultantRefError : new Error(String(consultantRefError)), {
+            tags: { subsystem: "payments" },
+            level: "warning",
+          });
         }
 
         // Update waitlist status if coming from waitlist flow
@@ -2865,6 +2916,10 @@ export async function handleCheckout(
           } catch (waitlistError) {
             // Log but don't fail the checkout - payment was successful
             console.error("Failed to update waitlist status:", waitlistError);
+            Sentry.captureException(waitlistError instanceof Error ? waitlistError : new Error(String(waitlistError)), {
+              tags: { subsystem: "payments" },
+              level: "warning",
+            });
           }
         }
       }
@@ -2884,6 +2939,9 @@ export async function handleCheckout(
       };
     } catch (dbError) {
       console.error("Failed to create payment record:", dbError);
+      Sentry.captureException(dbError instanceof Error ? dbError : new Error(String(dbError)), {
+        tags: { subsystem: "payments" },
+      });
 
       // CRITICAL: Cancel payment intent since DB operation failed
       // (Skip cleanup for zero-amount payments — they have no real gateway intent)
@@ -2927,6 +2985,10 @@ export async function handleCheckout(
             throw waitlistError;
           }
           // Waitlist creation failed (e.g., already on waitlist) — fall through
+          Sentry.captureException(waitlistError instanceof Error ? waitlistError : new Error(String(waitlistError)), {
+            tags: { subsystem: "payments" },
+            level: "warning",
+          });
         }
       }
 
@@ -2958,6 +3020,10 @@ export async function handleCheckout(
           ) {
             throw waitlistError;
           }
+          Sentry.captureException(waitlistError instanceof Error ? waitlistError : new Error(String(waitlistError)), {
+            tags: { subsystem: "payments" },
+            level: "warning",
+          });
         }
       }
 
@@ -3061,9 +3127,13 @@ export async function handleCheckout(
     }
     throw error;
   } finally {
-    // ALWAYS RELEASE LOCK (even on error)
+    // ALWAYS RELEASE LOCKS (even on error). Release order doesn't affect
+    // deadlock-freedom (only acquisition order does), so both are freed here.
     if (lock) {
       await releaseCheckoutLock(lock, lockType);
+    }
+    if (consulteeLock) {
+      await unlockConsulteeBooking(consulteeLock);
     }
   }
 }

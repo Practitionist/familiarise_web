@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { deleteAppointmentDocument } from "@/lib/supabase";
@@ -116,6 +117,7 @@ export async function GET(
 
     return NextResponse.json({ data: document });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "appointments" } });
     console.error("Error fetching document:", error);
     return NextResponse.json(
       { error: "Failed to fetch document" },
@@ -233,7 +235,7 @@ export async function PATCH(
         ...(reviewStatus && { reviewStatus }),
         ...(reviewNotes && { reviewNotes }),
         ...(reviewStatus && { reviewedAt: new Date() }),
-        ...(reviewStatus && { reviewedBy: session.user.id }),
+        ...(reviewStatus && { reviewedById: session.user.id }), // A8 — FK scalar (#676)
       },
     });
 
@@ -246,6 +248,7 @@ export async function PATCH(
 
     return NextResponse.json({ data: updatedDocument });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "appointments" } });
     console.error("Error updating document review:", error);
     return NextResponse.json(
       { error: "Failed to update document review" },
@@ -364,6 +367,7 @@ export async function DELETE(
         : "Document deleted successfully",
     });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "appointments" } });
     console.error("Error deleting document:", error);
     return NextResponse.json(
       { error: "Failed to delete document" },

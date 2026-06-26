@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import type { Tx } from "@/lib/prisma";
 /**
  * Unified reversal engine (#776 §C / ARCH #4).
@@ -133,7 +134,15 @@ async function reverseClassMulti(
 
   const payments = await tx.payment.findMany({
     where: { id: { in: paymentIds } },
-    select: { id: true, amount: true, currency: true, paymentGateway: true },
+    select: {
+      id: true,
+      amount: true,
+      currency: true,
+      paymentGateway: true,
+      // #781 §C — carry the FX snapshot onto each child refund (mirrors refund.ts).
+      displayCurrencyAtCheckout: true,
+      exchangeRateAtCheckout: true,
+    },
   });
   const totalAmount = payments.reduce((s, p) => s + p.amount, 0);
   if (totalAmount <= 0) return [];
@@ -180,6 +189,9 @@ async function reverseClassMulti(
         status: RefundStatus.PENDING,
         refundId: `app_${globalThis.crypto.randomUUID()}`,
         paymentGateway: payment.paymentGateway,
+        // #781 §C — preserve the buyer's FX snapshot on the child refund row.
+        exchangeRateAtRefund: payment.exchangeRateAtCheckout,
+        displayCurrency: payment.displayCurrencyAtCheckout,
         metadata: {
           initiatedByUserId: input.initiatedByUserId ?? null,
           source: "class-multi",
@@ -267,6 +279,10 @@ async function reversePayoutClawback(
       ],
     });
   } catch (err) {
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "payments" }, level: "fatal" },
+    );
     console.error(
       `[ledger] payout clawback posting FAILED for payout ${orgPayoutId} (reconcile will flag): ${err instanceof Error ? err.message : String(err)}`,
     );

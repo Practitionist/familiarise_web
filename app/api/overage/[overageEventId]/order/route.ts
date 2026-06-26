@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { auth } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { headers } from "next/headers";
@@ -82,6 +83,7 @@ export async function POST(
     return false;
   }).catch((err) => {
     if (err instanceof Error && "httpStatus" in err) return true;
+    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "overage" } });
     throw err;
   });
   if (retryBlocked) {

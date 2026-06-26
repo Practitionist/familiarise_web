@@ -149,7 +149,9 @@ cancel-vs-cancel guard). Tracked by #849.
 **14b. Last-seat enrollment storm (implemented:
 `test-last-seat-storm`).** N concurrent checkouts race for a webinar
 with exactly one free seat. Guards under test: per-event checkout lock
-plus the tentative-inclusive `validateEventCapacity` participant count.
+plus the tentative-inclusive participant recount
+(`countWebinarParticipants`/`countUniqueParticipants`) inside the
+Serializable checkout transaction.
 Invariants: exactly one winner, losers receive a clean 4xx ("Webinar is
 full"), zero 5xx, and the confirmed participant count never exceeds
 `maxParticipants`. This is a capacity regression test for the #440

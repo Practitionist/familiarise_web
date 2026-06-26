@@ -5,6 +5,7 @@ import { ConsultationPlanSchema } from "@/schemas/plans";
 import { findOrCreateTopics, transformTopicsToStrings } from "@/lib/topics";
 
 import { getSession } from "@/lib/auth-server";
+import * as Sentry from "@sentry/nextjs";
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ consultationPlanId: string }> },
@@ -53,6 +54,7 @@ export async function GET(
         { status: 404 },
       );
     }
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
     console.error("Error fetching consultation plan:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching the consultation plan" },
@@ -174,6 +176,7 @@ export async function PUT(
         { status: 404 },
       );
     }
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
     console.error("Error updating consultation plan:", error);
     return NextResponse.json(
       { error: "An error occurred while updating the consultation plan" },
@@ -271,6 +274,7 @@ export async function DELETE(
         { status: 404 },
       );
     }
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
     console.error("Error deleting consultation plan:", error);
     return NextResponse.json(
       { error: "An error occurred while deleting the consultation plan" },

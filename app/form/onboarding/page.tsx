@@ -14,8 +14,9 @@ import { Check, LogOut } from "lucide-react";
 import { cn } from "@/utils/tailwind";
 import { useToast } from "@/hooks/use-toast";
 import { signOut, useSession } from "@/lib/auth-client";
+import { getPendingReferral, clearPendingReferral } from "@/lib/pending-referral";
 import { useRouter } from "next/navigation";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { FormProvider, useForm } from "react-hook-form";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import ConsultantPreferredScheduleForm from "./components/ConsultantPreferredScheduleForm";
@@ -60,6 +61,29 @@ const MultiStepForm: React.FC = () => {
   const [formData, setFormData] = useState<Partial<OnboardingFormData>>({});
   const router = useRouter();
   const { toast } = useToast();
+
+  // Apply a referral code captured at first touch (signup / r/[code]) now that
+  // the user is authenticated — covers OAuth and verified-email signups, which
+  // no longer apply it at signup. Idempotent server-side (referredUserId is
+  // unique), best-effort. #880
+  useEffect(() => {
+    if (!session?.user?.id) return;
+    const code = getPendingReferral();
+    if (!code) return;
+    // Keep the code until a definitive outcome: clear on success or a terminal
+    // 400 (invalid / already-referred / self-referral), but retain it on
+    // transient failures (network / 429 / 5xx) so a later authenticated render
+    // can retry rather than permanently losing attribution. #880
+    fetch("/api/referrals/apply", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code }),
+    })
+      .then((res) => {
+        if (res.ok || res.status === 400) clearPendingReferral();
+      })
+      .catch(() => {});
+  }, [session?.user?.id]);
 
   const methods = useForm<OnboardingFormData>({
     mode: "onChange",
@@ -445,11 +469,11 @@ const MultiStepForm: React.FC = () => {
 
   return (
     <FormProvider {...methods}>
-      <div className="min-h-screen bg-gradient-to-b from-gray-50 to-gray-100 dark:from-gray-900 dark:to-gray-950">
+      <div className="min-h-screen bg-gradient-to-b from-muted to-background dark:from-gray-900 dark:to-gray-950">
         {/* Header */}
-        <header className="border-b bg-white/80 dark:bg-gray-900/80 backdrop-blur-sm sticky top-0 z-50">
-          <div className="container mx-auto px-4 py-4 flex items-center justify-between">
-            <div className="flex items-center gap-2">
+        <header className="border-b bg-card/80 dark:bg-gray-900/80 backdrop-blur-sm sticky top-0 z-50">
+          <div className="container mx-auto px-4 py-4 flex items-center justify-between gap-4">
+            <div className="flex items-center gap-2 min-w-0">
               <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
                 <svg
                   className="w-5 h-5 text-primary-foreground"
@@ -465,9 +489,9 @@ const MultiStepForm: React.FC = () => {
                   />
                 </svg>
               </div>
-              <span className="text-xl font-semibold">Familiarise</span>
+              <span className="text-xl font-semibold truncate">Familiarise</span>
             </div>
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-3 sm:gap-4 shrink-0">
               <span className="text-sm text-muted-foreground">
                 Step {step + 1} of {totalSteps}
               </span>
@@ -547,7 +571,7 @@ const MultiStepForm: React.FC = () => {
           {/* Form Card */}
           <Card className="shadow-lg">
             <CardHeader className="text-center pb-2">
-              <CardTitle className="text-2xl">
+              <CardTitle className="text-fluid-2xl tracking-tight">
                 {step === 0 ? "Welcome! Let's get started" : stepLabels[step]}
               </CardTitle>
               <p className="text-muted-foreground text-sm mt-1">

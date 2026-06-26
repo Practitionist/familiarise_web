@@ -587,7 +587,7 @@ If the algorithm did not detect the reschedule, it would call `calculateRequired
 
 ### How Detection Works
 
-The algorithm inspects existing slot data before deciding how many slots to create (SlotAllocationService.ts L92-127):
+The algorithm inspects existing slot data before deciding how many slots to create (`SlotAllocationService.autoAllocate`):
 
 ```typescript
 // Count existing slots by tentative status
@@ -607,8 +607,16 @@ const isReschedule = tentativeSlotCount > 0;
 
 let requiredSlots: number;
 if (isReschedule) {
-  // RESCHEDULE: Preserve the original total slot count
-  requiredSlots = existingNonTentativeSlotCount + tentativeSlotCount;
+  // RESCHEDULE: allocate only the sessions being rescheduled, not the whole
+  // booking. One appointment is one session, so the count is the number of
+  // appointments carrying a tentative slot, times the slots each session needs.
+  // (#898 — a partial reschedule of 2 of 10 sessions needs 2 sessions' worth of
+  // new slots, not all 10; the earlier `existingNonTentative + tentative`
+  // formula over-allocated partial reschedules.)
+  const rescheduleSessions = existingAppointments.filter((a) =>
+    a.slotsOfAppointment.some((s) => s.isTentative),
+  ).length;
+  requiredSlots = rescheduleSessions * slotsPerCall;
 } else {
   // INITIAL ALLOCATION: Calculate from config
   requiredSlots = SlotCalculationService.calculateRequiredSlots(
@@ -620,16 +628,17 @@ if (isReschedule) {
 
 ### The Math
 
-Using our example:
+Using our example (3 sessions rescheduled, each a 1-hour call = 2 slots):
 
-| Count                           | Value  | Explanation                                        |
-| ------------------------------- | ------ | -------------------------------------------------- |
-| `existingNonTentativeSlotCount` | 90     | Slots that are confirmed and not being rescheduled |
-| `tentativeSlotCount`            | 6      | Slots marked for rescheduling                      |
-| `isReschedule`                  | `true` | Because `tentativeSlotCount > 0`                   |
-| `requiredSlots`                 | 96     | `90 + 6 = 96` (the original total)                 |
+| Count                           | Value  | Explanation                                            |
+| ------------------------------- | ------ | ------------------------------------------------------ |
+| `existingNonTentativeSlotCount` | 90     | Slots that are confirmed and not being rescheduled     |
+| `tentativeSlotCount`            | 6      | Slots marked for rescheduling                          |
+| `isReschedule`                  | `true` | Because `tentativeSlotCount > 0`                       |
+| `rescheduleSessions`            | 3      | Appointments carrying at least one tentative slot      |
+| `requiredSlots`                 | 6      | `3 sessions x 2 slots = 6` (only the rescheduled slots) |
 
-The algorithm now knows: "I need 96 total slots. 90 are already confirmed. I need to find new times for 6 slots." It will replace the 6 tentative slots with 6 new confirmed slots, leaving the 90 confirmed ones untouched.
+The algorithm now knows: "I need to find 6 new slots -- one replacement per tentative slot, across the 3 rescheduled sessions." It allocates 6 new confirmed slots, leaving the 90 confirmed ones untouched. (#898 made `requiredSlots` the count of slots being rescheduled; previously it was the booking's full total, which silently over-allocated partial reschedules.)
 
 ### What Would Go Wrong Without This
 
@@ -645,7 +654,7 @@ flowchart LR
 
     subgraph With_Detection["WITH Reschedule Detection"]
         A2["96 original slots"] --> B2["6 marked tentative"]
-        B2 --> C2["requiredSlots = 90 + 6 = 96"]
+        B2 --> C2["requiredSlots = 3 sessions × 2 = 6"]
         C2 --> D2["Algorithm allocates 6 replacement slots"]
         D2 --> E2["Total: 90 confirmed + 6 new = 96 slots"]
         E2 --> F2["CORRECT: Subscription still has<br/>48 sessions"]
@@ -654,6 +663,16 @@ flowchart LR
     style F1 fill:#ffcdd2
     style F2 fill:#c8e6c9
 ```
+
+### Preserving Paid Appointments During Re-Allocation
+
+When the allocator clears an event's old slots before writing the new ones, it must not destroy any appointment that carries a `Payment`. Deleting such an appointment cascades to its `Payment`, which `ConsultantEarnings` references with `onDelete: Restrict`, so the cascade aborts the whole transaction. The allocator therefore preserves any payment-bearing appointment and strips only its slots.
+
+For subscriptions and classes this is sufficient, because their relation to `Appointment` is one-to-many: the allocator writes the new slots onto fresh appointment rows alongside the preserved one. Consultations and webinars are one-to-one (`consultationId` and `webinarId` are unique), so creating a second appointment for the same event would violate that unique constraint. For those two types the allocator instead reuses the preserved appointment, attaching the new slots to the existing row rather than creating a replacement (#898). The original payment, earnings, and cancellation-policy snapshot all stay attached, and a rescheduled webinar's enrolled attendees are re-linked to the new slots.
+
+### Per-Day Session Cap
+
+Auto-allocation also enforces a per-day session cap -- one call per day for subscriptions and two for classes -- so a week's sessions are spread across days rather than stacked onto one. The cap buckets candidate slots by local day, matching the consultant's manual-allocation guard so that automatic and manual allocation agree at timezone boundaries (#898).
 
 ---
 
@@ -1012,7 +1031,7 @@ Five issues have been validated against the codebase. All are legitimate and tra
 
 ### Issue 1: slotIds vs Session-Based Selection
 
-**Priority:** HIGH | **Status:** Planned fix (Phase 3)
+**Priority:** HIGH | **Status:** Partially addressed ([#448](https://github.com/Practitionist/familiarise_web/issues/448)) — the API responses and `rescheduleType` are now session-based, so the user-facing semantics no longer mislead. The request contract still accepts `slotIds[]`, so migrating the request itself to `appointmentIds[]` remains the Phase 3 work.
 
 **The problem:** The API accepts `slotIds[]` (individual 30-minute time blocks) instead of `appointmentIds[]` (logical sessions). There is no session-level abstraction in the API contract.
 
@@ -1028,7 +1047,7 @@ Five issues have been validated against the codebase. All are legitimate and tra
 
 ### Issue 2: Status Always Set to PENDING
 
-**Priority:** HIGH | **Status:** Planned fix (Phase 1)
+**Priority:** HIGH | **Status:** Tracked in [#448](https://github.com/Practitionist/familiarise_web/issues/448).
 
 **The problem:** When a subscription reschedule occurs, the subscription's `status` is unconditionally set to `PENDING`, regardless of whether it is a partial or full reschedule.
 
@@ -1071,7 +1090,7 @@ In practice, this edge case is unlikely because sessions rarely span midnight. B
 
 ### Issue 5: Toast Shows Slot Count, Not Session Count
 
-**Priority:** HIGH | **Status:** Planned fix (Phase 1)
+**Priority:** HIGH | **Status:** FIXED ([#448](https://github.com/Practitionist/familiarise_web/issues/448) follow-up) — the reschedule API now returns `sessionsAffected` (the count of distinct appointments) alongside `slotsAffected`, derives `rescheduleType` from sessions, and the consultee toast displays the session count. A one-hour (two-slot) session now correctly reports one session rather than "2 sessions".
 
 **The problem:** The API returns `slotsAffected` (e.g., 72 slots for 18 four-slot sessions), and the frontend displays this as a session count. The user sees "72 sessions marked for rescheduling" when it should say "18 sessions."
 

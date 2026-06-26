@@ -96,9 +96,9 @@ export function DashboardShell({
         </AnimatePresence>
 
         {/* Main Content */}
-        <main className="flex-1 lg:ml-64 min-h-screen bg-zinc-100 overflow-x-clip">
+        <main className="flex-1 lg:ml-64 min-h-screen bg-muted overflow-x-clip">
           {/* Mobile Header Bar */}
-          <div className="sticky top-maintenance z-50 overflow-visible flex items-center gap-3 px-4 py-3 bg-white border-b border-zinc-200 lg:hidden">
+          <div className="sticky top-maintenance z-50 overflow-visible flex items-center gap-3 px-4 py-3 bg-card border-b border-border lg:hidden">
             <Button
               variant="ghost"
               size="icon"
@@ -108,7 +108,7 @@ export function DashboardShell({
               <Menu className="h-5 w-5" />
               <span className="sr-only">Open menu</span>
             </Button>
-            <span className="font-semibold text-zinc-900 flex-1">
+            <span className="font-semibold text-foreground flex-1">
               Familiarise
             </span>
             {(mobileHeaderActions || headerActions) && (
@@ -127,7 +127,7 @@ export function DashboardShell({
               {navbar}
             </div>
           ) : headerActions ? (
-            <div className="hidden lg:flex items-center justify-end gap-2 px-6 py-2 border-b border-zinc-200 bg-white relative z-50 overflow-visible">
+            <div className="hidden lg:flex items-center justify-end gap-2 px-6 py-2 border-b border-border bg-card relative z-50 overflow-visible">
               {headerActions}
             </div>
           ) : null}
@@ -138,7 +138,7 @@ export function DashboardShell({
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }}
               transition={{ duration: 0.2, ease: "easeOut" }}
-              className="min-h-0 p-6 lg:p-8 bg-zinc-100"
+              className="min-h-0 p-4 sm:p-6 lg:p-8 bg-muted"
             >
               {children}
             </motion.div>
@@ -180,10 +180,10 @@ export function DashboardHeader({
   breadcrumbs,
 }: DashboardHeaderProps) {
   return (
-    <div className="bg-white/80 backdrop-blur-xl border-b border-zinc-200/50">
+    <div className="bg-card/80 backdrop-blur-xl border-b border-border/50">
       <div className="px-4 sm:px-6 py-3 sm:py-4 lg:px-8">
         {breadcrumbs && breadcrumbs.length > 0 && (
-          <nav className="flex items-center gap-2 text-sm text-zinc-500 mb-2">
+          <nav className="flex items-center gap-2 text-sm text-muted-foreground mb-2">
             {breadcrumbs.map((crumb, index) => (
               <span key={crumb.label} className="flex items-center gap-2">
                 {index > 0 && <span>/</span>}

@@ -8,7 +8,6 @@ import {
   Clock,
   Loader2,
   PauseCircle,
-  PlayCircle,
   Search,
   XCircle,
 } from "lucide-react";
@@ -25,13 +24,10 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+  ResponsiveTable,
+  type ResponsiveColumn,
+} from "@/components/ui/responsive-table";
+import { PageHeader } from "@/components/ui/page-header";
 import {
   Select,
   SelectContent,
@@ -119,10 +115,13 @@ function fmtDate(iso: string) {
 }
 
 const STATUS_BADGE: Record<OrgStatus, string> = {
-  PENDING_VERIFICATION: "bg-amber-50 text-amber-800 border-amber-300",
-  ACTIVE: "bg-green-50 text-green-800 border-green-300",
-  SUSPENDED: "bg-red-50 text-red-700 border-red-300",
-  DEACTIVATED: "bg-zinc-100 text-zinc-600 border-zinc-300",
+  PENDING_VERIFICATION:
+    "bg-amber-50 text-amber-800 border-amber-300 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800",
+  ACTIVE:
+    "bg-green-50 text-green-800 border-green-300 dark:bg-green-950 dark:text-green-300 dark:border-green-800",
+  SUSPENDED:
+    "bg-red-50 text-red-700 border-red-300 dark:bg-red-950 dark:text-red-300 dark:border-red-800",
+  DEACTIVATED: "bg-muted text-muted-foreground border-border",
 };
 
 const STATUS_ICON: Record<OrgStatus, React.ElementType> = {
@@ -157,7 +156,8 @@ const ACTION_LABELS: Record<VerifyAction, string> = {
 const ACTION_VARIANT: Record<VerifyAction, string> = {
   VERIFY: "bg-green-600 hover:bg-green-700 text-white",
   SUSPEND: "bg-amber-600 hover:bg-amber-700 text-white",
-  REACTIVATE: "bg-blue-600 hover:bg-blue-700 text-white",
+  // REACTIVATE is a neutral restore action — keep it monochrome (was off-brand blue).
+  REACTIVATE: "bg-primary text-primary-foreground hover:bg-primary/90",
   DEACTIVATE: "bg-red-600 hover:bg-red-700 text-white",
 };
 
@@ -204,7 +204,7 @@ function ActionDialog({
         </AlertDialogHeader>
         <div className="space-y-2 py-2">
           <Label htmlFor="action-reason">
-            Reason <span className="text-zinc-400">(optional)</span>
+            Reason <span className="text-muted-foreground/70">(optional)</span>
           </Label>
           <Textarea
             id="action-reason"
@@ -214,7 +214,7 @@ function ActionDialog({
             rows={3}
             className="text-sm"
           />
-          {error && <p className="text-sm text-red-600">{error}</p>}
+          {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
         </div>
         <AlertDialogFooter>
           <AlertDialogCancel onClick={onClose} disabled={isPending}>
@@ -292,19 +292,109 @@ export default function AdminOrganizationsPage() {
     ? (pagination?.total ?? 0)
     : null;
 
+  const renderRowActions = (org: OrgListItem) => {
+    const actions = ALLOWED_ACTIONS[org.status];
+    if (actions.length === 0) {
+      return <span className="text-xs text-muted-foreground/70">No actions</span>;
+    }
+    return (
+      <div className="flex items-center justify-end gap-1">
+        {actions.map((action) => (
+          <Button
+            key={action}
+            size="sm"
+            variant="outline"
+            className={
+              action === "DEACTIVATE"
+                ? "text-red-600 border-red-200 hover:bg-red-50 dark:text-red-400 dark:border-red-900 dark:hover:bg-red-950"
+                : action === "SUSPEND"
+                  ? "text-amber-700 border-amber-200 hover:bg-amber-50 dark:text-amber-400 dark:border-amber-900 dark:hover:bg-amber-950"
+                  : ""
+            }
+            onClick={() => {
+              setActionError(null);
+              setPendingAction({ org, action });
+            }}
+          >
+            {ACTION_LABELS[action]}
+          </Button>
+        ))}
+      </div>
+    );
+  };
+
+  const columns: ResponsiveColumn<OrgListItem>[] = [
+    {
+      key: "organization",
+      header: "Organization",
+      primary: true,
+      cell: (org) => (
+        <div>
+          <p className="font-medium text-foreground">{org.name}</p>
+          <p className="text-xs text-muted-foreground/70">{org.billingEmail}</p>
+        </div>
+      ),
+    },
+    {
+      key: "status",
+      header: "Status",
+      cell: (org) => {
+        const StatusIcon = STATUS_ICON[org.status];
+        return (
+          <Badge
+            variant="outline"
+            className={`${STATUS_BADGE[org.status]} flex items-center gap-1 w-fit`}
+          >
+            <StatusIcon className="h-3 w-3" />
+            {org.status.replace(/_/g, " ")}
+          </Badge>
+        );
+      },
+    },
+    {
+      key: "capability",
+      header: "Capability",
+      className: "text-sm text-muted-foreground",
+      cell: (org) => capabilityLabel(org.canSponsor, org.canHost),
+    },
+    {
+      key: "funding",
+      header: "Funding",
+      className: "text-sm text-muted-foreground",
+      cell: (org) => org.billingAccount?.fundingSource ?? "—",
+    },
+    {
+      key: "members",
+      header: "Members",
+      className: "text-sm text-muted-foreground",
+      cell: (org) => org._count.memberships,
+    },
+    {
+      key: "created",
+      header: "Created",
+      className: "text-sm text-muted-foreground",
+      cell: (org) => fmtDate(org.createdAt),
+    },
+  ];
+
+  const emptyState = (
+    <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
+      <Building2 className="h-10 w-10 mb-3 text-muted-foreground/40" />
+      <p className="text-sm">No organizations found.</p>
+    </div>
+  );
+
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold">Organizations</h1>
-        <p className="text-sm text-zinc-500 mt-1">
-          Review pending organizations and manage their lifecycle status.
-        </p>
-      </div>
+      <PageHeader
+        title="Organizations"
+        description="Review pending organizations and manage their lifecycle status."
+      />
 
       {/* Filters */}
-      <div className="flex items-center gap-3">
-        <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-zinc-400" />
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative w-full min-w-0 sm:w-auto sm:max-w-sm sm:flex-1">
+          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground/70" />
           <Input
             placeholder="Search by name, email, or slug…"
             value={search}
@@ -319,7 +409,7 @@ export default function AdminOrganizationsPage() {
             setPage(1);
           }}
         >
-          <SelectTrigger className="w-52">
+          <SelectTrigger className="w-full sm:w-52">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -344,7 +434,7 @@ export default function AdminOrganizationsPage() {
                     {pagination?.total ?? 0} organization
                     {(pagination?.total ?? 0) !== 1 ? "s" : ""}
                     {pendingCount !== null && pendingCount > 0 && (
-                      <Badge className="bg-amber-100 text-amber-800 border-amber-300 text-xs">
+                      <Badge className="bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800 text-xs">
                         {pendingCount} pending
                       </Badge>
                     )}
@@ -360,98 +450,24 @@ export default function AdminOrganizationsPage() {
         </CardHeader>
         <CardContent className="p-0">
           {orgs.isLoading ? (
-            <div className="flex items-center justify-center py-16 gap-2 text-sm text-zinc-500">
+            <div className="flex items-center justify-center py-16 gap-2 text-sm text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" /> Loading…
             </div>
-          ) : orgList.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-16 text-zinc-500">
-              <Building2 className="h-10 w-10 mb-3 text-zinc-300" />
-              <p className="text-sm">No organizations found.</p>
-            </div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Organization</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Capability</TableHead>
-                  <TableHead>Funding</TableHead>
-                  <TableHead>Members</TableHead>
-                  <TableHead>Created</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {orgList.map((org) => {
-                  const StatusIcon = STATUS_ICON[org.status];
-                  const actions = ALLOWED_ACTIONS[org.status];
-                  return (
-                    <TableRow key={org.id}>
-                      <TableCell>
-                        <div>
-                          <p className="font-medium text-zinc-900">{org.name}</p>
-                          <p className="text-xs text-zinc-400">{org.billingEmail}</p>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge
-                          variant="outline"
-                          className={`${STATUS_BADGE[org.status]} flex items-center gap-1 w-fit`}
-                        >
-                          <StatusIcon className="h-3 w-3" />
-                          {org.status.replace(/_/g, " ")}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-sm text-zinc-600">
-                        {capabilityLabel(org.canSponsor, org.canHost)}
-                      </TableCell>
-                      <TableCell className="text-sm text-zinc-600">
-                        {org.billingAccount?.fundingSource ?? "—"}
-                      </TableCell>
-                      <TableCell className="text-sm text-zinc-600">
-                        {org._count.memberships}
-                      </TableCell>
-                      <TableCell className="text-sm text-zinc-600">
-                        {fmtDate(org.createdAt)}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {actions.length > 0 ? (
-                          <div className="flex items-center justify-end gap-1">
-                            {actions.map((action) => (
-                              <Button
-                                key={action}
-                                size="sm"
-                                variant="outline"
-                                className={
-                                  action === "DEACTIVATE"
-                                    ? "text-red-600 border-red-200 hover:bg-red-50"
-                                    : action === "SUSPEND"
-                                      ? "text-amber-700 border-amber-200 hover:bg-amber-50"
-                                      : ""
-                                }
-                                onClick={() => {
-                                  setActionError(null);
-                                  setPendingAction({ org, action });
-                                }}
-                              >
-                                {ACTION_LABELS[action]}
-                              </Button>
-                            ))}
-                          </div>
-                        ) : (
-                          <span className="text-xs text-zinc-400">No actions</span>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
+            <div className="p-4">
+              <ResponsiveTable<OrgListItem>
+                columns={columns}
+                rows={orgList}
+                getRowId={(o) => o.id}
+                rowActions={renderRowActions}
+                empty={emptyState}
+              />
+            </div>
           )}
 
           {/* Pagination */}
           {pagination && pagination.pages > 1 && (
-            <div className="flex items-center justify-between px-4 py-3 border-t text-sm text-zinc-600">
+            <div className="flex items-center justify-between px-4 py-3 border-t border-border text-sm text-muted-foreground">
               <span>
                 Page {pagination.page} of {pagination.pages} ({pagination.total} total)
               </span>

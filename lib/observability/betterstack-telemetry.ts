@@ -17,6 +17,7 @@
  * stays inert (zero network calls) until a source token is provisioned.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { ENABLE_BETTERSTACK_TELEMETRY } from "@/lib/feature-flags";
 
 type TelemetryLevel = "info" | "warn" | "error";
@@ -80,6 +81,7 @@ export async function emitTelemetryLog(log: TelemetryLog): Promise<void> {
     }
   } catch (err) {
     // Ingest is best-effort; the DB SystemEvent row is the source of truth.
+    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "betterstack" }, level: "warning" });
     console.error("[BetterStack Telemetry] ingest failed:", err);
   }
 }

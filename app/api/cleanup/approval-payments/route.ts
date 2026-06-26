@@ -20,6 +20,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma, { type Tx } from "@/lib/prisma";
 import { PaymentStatus, Prisma, AppointmentStatus } from "@prisma/client";
+import * as Sentry from "@sentry/nextjs";
 
 /**
  * Revert consultation or subscription status from APPROVED_PENDING_PAYMENT to PENDING
@@ -111,6 +112,8 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    Sentry.logger.info("cron:expire-approval-payments started");
+
     console.log("🕐 Starting approval payment expiration check...");
 
     // Find expired pending payments
@@ -177,6 +180,7 @@ export async function GET(req: NextRequest) {
         });
       } catch (error) {
         console.error(`Error processing payment ${payment.id}:`, error);
+        Sentry.captureException(error, { tags: { subsystem: "cron", job: "expire-approval-payments" } });
         // Continue with next payment
       }
     }
@@ -193,6 +197,13 @@ export async function GET(req: NextRequest) {
       timestamp: new Date().toISOString(),
     };
 
+    Sentry.logger.info("cron:expire-approval-payments finished", {
+      totalExpiredPayments: result.statistics.totalExpiredPayments,
+      paymentsExpired: result.statistics.paymentsExpired,
+      consultationsReverted: result.statistics.consultationsReverted,
+      subscriptionsReverted: result.statistics.subscriptionsReverted,
+    });
+
     console.log(
       "✅ Approval payment expiration check completed:",
       result.statistics,
@@ -201,6 +212,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(result);
   } catch (error) {
     console.error("Error in approval payment expiration job:", error);
+    Sentry.captureException(error, { tags: { subsystem: "cron", job: "expire-approval-payments" } });
     return NextResponse.json(
       {
         error: "Failed to process payment expirations",

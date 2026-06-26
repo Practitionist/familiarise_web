@@ -358,6 +358,8 @@ This pattern ensures:
 2. Email delivery failures don't cause transaction rollbacks
 3. The user gets their booking/payment confirmation regardless of notification status
 
+For Novu triggers this remains a true fire-and-forget: a failed call is logged and forgotten. As of #474 the direct Resend transactional emails behave differently on failure. When a Resend send throws — typically a transient provider outage — the sender no longer drops the message. Instead it persists the already-rendered message (subject, HTML and text body, recipient, from and reply-to) to the `FailedEmail` table via `recordFailedEmail()` in `lib/email.ts`. A retry worker, `jobs/email/retry-failed-emails.ts`, then re-sends that stored message verbatim — no re-render — on a fixed backoff schedule of one minute, five minutes, thirty minutes, two hours, and eight hours. After the fifth attempt is exhausted the row is moved to the `DEAD_LETTER` status, where it remains operator-replayable because the rendered message is still on the row. The calling operation still never blocks or rolls back; the difference is that a transient failure is now captured and replayed rather than silently lost.
+
 ---
 
 ## Environment Variables

@@ -30,13 +30,9 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+  ResponsiveTable,
+  type ResponsiveColumn,
+} from "@/components/ui/responsive-table";
 
 type ExportJob = {
   id: string;
@@ -51,11 +47,13 @@ type ExportJob = {
 };
 
 const STATUS_TONE: Record<ExportJob["status"], string> = {
-  PENDING: "bg-amber-50 text-amber-700",
-  PROCESSING: "bg-blue-50 text-blue-700",
-  READY: "bg-emerald-50 text-emerald-700",
-  FAILED: "bg-red-50 text-red-700",
-  EXPIRED: "bg-zinc-200 text-zinc-700",
+  PENDING: "bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300",
+  // In-flight is a neutral/transient state — monochrome instead of an
+  // off-brand blue accent. Terminal states keep their semantic colors.
+  PROCESSING: "bg-muted text-muted-foreground",
+  READY: "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300",
+  FAILED: "bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-300",
+  EXPIRED: "bg-muted text-muted-foreground",
 };
 
 type PageProps = { params: Promise<{ orgId: string }> };
@@ -106,6 +104,45 @@ export default function DataExportsPage({ params }: Readonly<PageProps>) {
     },
     onError: (err) => setRequestError(err.message),
   });
+
+  const exportColumns: ResponsiveColumn<ExportJob>[] = [
+    {
+      key: "requested",
+      header: "Requested",
+      primary: true,
+      className: "text-xs text-muted-foreground",
+      cell: (row) => new Date(row.createdAt).toLocaleString(),
+    },
+    {
+      key: "status",
+      header: "Status",
+      cell: (row) => (
+        <>
+          <Badge className={STATUS_TONE[row.status]}>{row.status}</Badge>
+          {row.error && (
+            <p className="mt-1 text-xs text-red-600">{row.error}</p>
+          )}
+        </>
+      ),
+    },
+    {
+      key: "size",
+      header: "Size",
+      className: "text-right text-xs text-muted-foreground",
+      headClassName: "text-right",
+      cell: (row) =>
+        row.fileSizeBytes
+          ? `${(Number(row.fileSizeBytes) / 1024).toFixed(1)} KB`
+          : "—",
+    },
+    {
+      key: "expires",
+      header: "Expires",
+      className: "text-xs text-muted-foreground",
+      cell: (row) =>
+        row.expiresAt ? new Date(row.expiresAt).toLocaleString() : "—",
+    },
+  ];
 
   async function download(exportId: string) {
     const res = await fetch(
@@ -171,63 +208,29 @@ export default function DataExportsPage({ params }: Readonly<PageProps>) {
           </CardHeader>
           <CardContent>
             {list.isLoading ? (
-              <p className="text-sm text-zinc-500">Loading...</p>
-            ) : !list.data || list.data.length === 0 ? (
-              <p className="text-sm text-zinc-500">
-                No exports yet. Click &quot;Request export&quot; above.
-              </p>
+              <p className="text-sm text-muted-foreground">Loading...</p>
             ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Requested</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="text-right">Size</TableHead>
-                    <TableHead>Expires</TableHead>
-                    <TableHead className="text-right">Action</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {list.data.map((row) => (
-                    <TableRow key={row.id}>
-                      <TableCell className="text-xs text-zinc-600">
-                        {new Date(row.createdAt).toLocaleString()}
-                      </TableCell>
-                      <TableCell>
-                        <Badge className={STATUS_TONE[row.status]}>
-                          {row.status}
-                        </Badge>
-                        {row.error && (
-                          <p className="mt-1 text-xs text-red-600">
-                            {row.error}
-                          </p>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-right text-xs text-zinc-600">
-                        {row.fileSizeBytes
-                          ? `${(Number(row.fileSizeBytes) / 1024).toFixed(1)} KB`
-                          : "—"}
-                      </TableCell>
-                      <TableCell className="text-xs text-zinc-500">
-                        {row.expiresAt
-                          ? new Date(row.expiresAt).toLocaleString()
-                          : "—"}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {row.status === "READY" && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => download(row.id)}
-                          >
-                            Download
-                          </Button>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+              <ResponsiveTable<ExportJob>
+                columns={exportColumns}
+                rows={list.data ?? []}
+                getRowId={(row) => row.id}
+                rowActions={(row) =>
+                  row.status === "READY" ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => download(row.id)}
+                    >
+                      Download
+                    </Button>
+                  ) : null
+                }
+                empty={
+                  <p className="text-sm text-muted-foreground">
+                    No exports yet. Click &quot;Request export&quot; above.
+                  </p>
+                }
+              />
             )}
           </CardContent>
         </Card>

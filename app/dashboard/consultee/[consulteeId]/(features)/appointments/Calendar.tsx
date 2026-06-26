@@ -215,7 +215,7 @@ export function Calendar({
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-center">
-        <h2 className="text-2xl font-semibold">
+        <h2 className="text-fluid-2xl font-semibold tracking-tight text-foreground">
           {currentDate.toLocaleString("default", {
             month: "long",
             year: "numeric",
@@ -265,9 +265,12 @@ export function Calendar({
       </div>
 
       <Card className="p-4">
-        <div className="grid grid-cols-7 gap-px bg-gray-200">
+        <div className="grid grid-cols-7 gap-px bg-border">
           {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => (
-            <div key={day} className="p-2 text-center font-semibold bg-white">
+            <div
+              key={day}
+              className="p-2 text-center font-semibold bg-card text-foreground"
+            >
               {day}
             </div>
           ))}
@@ -299,15 +302,15 @@ export function Calendar({
               <div
                 key={`day-${i}`}
                 className={cn(
-                  "min-h-[100px] p-2 bg-white",
-                  !isCurrentMonth && "text-gray-400",
-                  isToday && "ring-2 ring-blue-500 ring-inset bg-blue-50/50",
+                  "min-h-[100px] p-2 bg-card text-foreground",
+                  !isCurrentMonth && "text-muted-foreground/70",
+                  isToday && "ring-2 ring-ring ring-inset bg-muted/50",
                 )}
               >
                 <div
                   className={cn(
                     "font-medium mb-1",
-                    isToday && "text-blue-600 font-bold",
+                    isToday && "text-foreground font-bold",
                   )}
                 >
                   {isCurrentMonth ? dayNumber : ""}

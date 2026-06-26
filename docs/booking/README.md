@@ -88,6 +88,7 @@ graph TD
 | I want to...                           | Go to                                                                          |
 | -------------------------------------- | ------------------------------------------------------------------------------ |
 | **Get the big-picture lifecycle**      | [06-booking-lifecycle.md](./06-booking-lifecycle.md)                           |
+| See why the system is built this way   | [00-architecture-decisions.md](./00-architecture-decisions.md)                 |
 | Understand the system architecture     | [01-architecture.md](./01-architecture.md)                                     |
 | Learn event type rules and validation  | [02-event-types-and-validation.md](./02-event-types-and-validation.md)         |
 | Understand slot math and calculations  | [03-slot-math-and-calculations.md](./03-slot-math-and-calculations.md)         |

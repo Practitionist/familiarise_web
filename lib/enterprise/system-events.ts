@@ -13,6 +13,7 @@
  * insert doesn't take down the worker.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import type { Prisma, SystemEventSeverity } from "@prisma/client";
 import { emitTelemetryLog } from "@/lib/observability/betterstack-telemetry";
@@ -126,5 +127,22 @@ export async function recordSystemError(params: {
       ...(stack ? { stack } : {}),
     },
     correlationId: params.correlationId,
+  });
+
+  // Escalate to Sentry so engineers see it without querying the DB.
+  // Best-effort: never throw. Callers of recordSystemError already swallow
+  // exceptions, so a failing captureException must not change that contract.
+  const errorObj =
+    params.err instanceof Error ? params.err : new Error(errorMessage);
+  Sentry.captureException(errorObj, {
+    tags: { subsystem: "system-events", category: params.category },
+    contexts: {
+      systemEvent: {
+        organizationId: params.organizationId ?? null,
+        category: params.category,
+        summary: params.summary,
+        correlationId: params.correlationId ?? null,
+      },
+    },
   });
 }

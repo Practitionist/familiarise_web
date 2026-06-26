@@ -3,7 +3,7 @@ title: Design decisions (ADRs) — band index
 band: 70-design-decisions
 audience: sde3
 status: live
-last-reviewed: 2026-06-05
+last-reviewed: 2026-06-15
 ---
 
 # Design decisions (ADRs) — band index
@@ -21,7 +21,7 @@ Every ADR follows the same four-part shape, written in full sentences:
 
 ## Index
 
-All fourteen ADRs below are written and live (#793 wrote the first twelve); this index is the authoritative list. Each row links to its record.
+All seventeen ADRs below are written and live (#793 wrote the first twelve; #872 added 15–17); this index is the authoritative list. Each row links to its record.
 
 | # | ADR | Decision in one line |
 |---|---|---|
@@ -39,3 +39,6 @@ All fourteen ADRs below are written and live (#793 wrote the first twelve); this
 | 12 | [PENDING_TRUST earnings parking](12-pending-trust-earnings-parking.md) | Earnings for unverified INVOICE-funded orgs park in `PENDING_TRUST` until the org verifies or pays, closing the ghost-org fraud hole (#687). |
 | 13 | [Postgres-native concurrency](13-postgres-native-concurrency.md) | State transitions are guarded by CAS WHERE clauses, Serializable retries, version columns, and Redis cron locks — no Kafka, RabbitMQ, Temporal, or Inngest at this stage. |
 | 14 | [Async and queue posture](14-async-queue-posture.md) | Background work stays queue-less for launch (GH Actions crons + `after()` + sweeper re-drives); Upstash QStash is the pre-approved escalation, gated on two named telemetry triggers. |
+| 15 | [Currency as enum with display fields](15-currency-as-enum-with-display-fields.md) | Settlement currency stays the `Currency` enum; gateway and buyer codes live in free-text display fields, and the ledger is keyed INR-only (#783). |
+| 16 | [Slot freshness without realtime](16-slot-freshness-without-realtime.md) | Slot freshness comes from server-authoritative 409 conflicts plus focused refetch and invalidate-on-mutation, not Supabase Realtime. |
+| 17 | [Timezone pinned to IST for launch](17-timezone-pinned-to-ist-for-launch.md) | The platform pins to IST and removes the speculative DST materialization layer; the full IANA-TZID implementation is deferred to #872. |

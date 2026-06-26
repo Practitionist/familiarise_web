@@ -2,6 +2,7 @@
 
 import { useToast } from "@/hooks/use-toast";
 import { getErrorToast } from "@/lib/errors/mapping/payment-error-toast-map";
+import { ErrorTypes } from "@/lib/errors/classification/payment-error-classification";
 import { CheckoutInput, checkoutResponseSchema } from "@/schemas/checkout";
 import { PaymentGateway } from "@prisma/client";
 
@@ -204,6 +205,21 @@ export function createStripeCheckoutHandlers(
       window.location.href = "/checkout/checkout-success";
     },
     onPaymentError: (error: { message?: string; code?: string; errorType?: string; error?: string }) => {
+      // Booking-conflict errors from /api/checkout (slot taken/relinquished,
+      // event expired) carry our own errorType — route them through the precise
+      // toast map instead of the gateway card-decline heuristics.
+      const conflictCode = error.errorType ?? error.code;
+      if (
+        conflictCode &&
+        (Object.values(ErrorTypes) as string[]).includes(conflictCode)
+      ) {
+        const { title, description } = getErrorToast(
+          conflictCode,
+          error.message ?? error.error,
+        );
+        toast({ title, description, variant: "destructive" });
+        return;
+      }
       const errorMessage =
         error.message || error.code || "An unexpected error occurred";
       const userFriendlyMessage =
@@ -244,6 +260,20 @@ export function createRazorpayCheckoutHandlers(
       reason?: string;
       message?: string;
     }) => {
+      // Booking-conflict errors from /api/checkout (slot taken/relinquished,
+      // event expired) carry our own errorType in `code` — surface the precise
+      // toast instead of the gateway card-decline heuristics.
+      if (
+        error.code &&
+        (Object.values(ErrorTypes) as string[]).includes(error.code)
+      ) {
+        const { title, description } = getErrorToast(
+          error.code,
+          error.description ?? error.message,
+        );
+        toast({ title, description, variant: "destructive" });
+        return;
+      }
       const errorDescription =
         error.description || error.reason || "An unexpected error occurred";
       const userFriendlyMessage =

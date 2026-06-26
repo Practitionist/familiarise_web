@@ -3,10 +3,16 @@
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { mapRoleToStream } from "@/lib/user";
-import { getStreamChatClient } from "@/lib/stream-client";
+import {
+  getStreamChatClient,
+  withStreamCircuitBreaker,
+  StreamUnavailableError,
+} from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
 import { markUserSynced, isUserSynced } from "@/lib/stream-cache";
-import { checkConsent } from "@/lib/compliance/dpdp";
+import { checkConsent, ConsentRequiredError } from "@/lib/compliance/dpdp";
+import { PURPOSE_CODES } from "@/lib/compliance/purpose-codes";
+import * as Sentry from "@sentry/nextjs";
 
 // Input validation schemas
 const userIdSchema = z.string().min(1, "User ID is required");
@@ -52,19 +58,22 @@ export const upsertUserToStream = async (userId: string) => {
 
     // DPDP Act 2023: refuse to hand user PII over to Stream.io when the
     // user has withdrawn (or never granted) consent for STREAM_DATA_PROCESSING.
-    // The signup hook auto-stamps this; an in-app withdrawal via
-    // /api/organizations/[orgId]/consent revokes it and `checkConsent`
-    // returns false, killing future video/chat sessions until re-granted.
+    // The signup hook auto-stamps this; a full opt-out via the org consent
+    // flow (DELETE /api/organizations/[orgId]/consent with no purposeCode)
+    // revokes it and `checkConsent` returns false, killing future video/chat
+    // sessions. There is no personal self-service re-grant page today; consent
+    // is re-established by an org admin via that consent route (#701).
     const hasStreamConsent = await checkConsent({
       userId: user.id,
-      purposeCode: "STREAM_DATA_PROCESSING",
+      purposeCode: PURPOSE_CODES.STREAM_DATA_PROCESSING,
     });
     if (!hasStreamConsent) {
       streamLogger.warn("Refusing Stream upsert — STREAM_DATA_PROCESSING consent absent", {
         userId: user.id,
       });
-      throw new Error(
-        "Stream video/chat consent is required. Please re-grant data processing consent under Account → Privacy.",
+      throw new ConsentRequiredError(
+        PURPOSE_CODES.STREAM_DATA_PROCESSING,
+        "Video and chat are unavailable because data-processing consent for messaging has not been granted (or was withdrawn). Consent is established at signup and managed by your organization administrator.",
       );
     }
 
@@ -77,19 +86,35 @@ export const upsertUserToStream = async (userId: string) => {
     });
 
     // Upsert the user to Stream Chat
-    const streamUser = await client.upsertUser({
-      id: user.id,
-      name: user.name ?? user.id,
-      email: user.email,
-      image: user.image ?? undefined,
-      role: streamRole,
-    });
+    // #473 — fast-fail under a Stream outage instead of blocking the dashboard
+    // on the 30s timeout. Breaker-open rethrows StreamUnavailableError, which
+    // the caller's existing catch logs and surfaces gracefully.
+    const streamUser = await withStreamCircuitBreaker(
+      () =>
+        client.upsertUser({
+          id: user.id,
+          name: user.name ?? user.id,
+          email: user.email,
+          image: user.image ?? undefined,
+          role: streamRole,
+        }),
+      () => {
+        throw new StreamUnavailableError();
+      },
+    );
 
     // Mark as synced in cache
     markUserSynced(user.id);
 
     return streamUser;
   } catch (error) {
+    // A consent gate is a deliberate refusal (already warn-logged above), not
+    // an infra failure — rethrow without an error-level log so it doesn't
+    // pollute error-monitoring dashboards with false positives.
+    if (error instanceof ConsentRequiredError) {
+      throw error;
+    }
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
     streamLogger.error("Failed to upsert user to Stream", error, {
       userId: validatedUserId,
     });
@@ -148,7 +173,7 @@ export const upsertUsersToStream = async (userIds: string[]) => {
         user: u,
         hasConsent: await checkConsent({
           userId: u.id,
-          purposeCode: "STREAM_DATA_PROCESSING",
+          purposeCode: PURPOSE_CODES.STREAM_DATA_PROCESSING,
         }),
       })),
     );
@@ -191,8 +216,15 @@ export const upsertUsersToStream = async (userIds: string[]) => {
 
     // Single batch API call
     // Cast to satisfy TypeScript (custom user data in stream-chat v9)
-    const result = await client.upsertUsers(
-      streamUsers as Parameters<typeof client.upsertUsers>[0],
+    // #473 — fast-fail the batch upsert under a Stream outage.
+    const result = await withStreamCircuitBreaker(
+      () =>
+        client.upsertUsers(
+          streamUsers as Parameters<typeof client.upsertUsers>[0],
+        ),
+      () => {
+        throw new StreamUnavailableError();
+      },
     );
 
     // Mark all as synced
@@ -200,6 +232,7 @@ export const upsertUsersToStream = async (userIds: string[]) => {
 
     return result;
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
     streamLogger.error("Failed to batch upsert users to Stream", error, {
       userCount: unsyncedIds.length,
     });
@@ -403,6 +436,7 @@ export const searchUsersWithRelationships = async (
 
     return usersWithRelationships;
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
     streamLogger.error("User search failed", error, {
       searchTerm: validatedTerm,
     });
@@ -444,6 +478,7 @@ export const checkUserRelationship = async (
 
     return relationshipChecks.some(Boolean);
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
     streamLogger.error("Relationship check failed", error, {
       userId1,
       userId2,
@@ -635,6 +670,7 @@ export const searchUsers = async (searchTerm: string) => {
 
     return users;
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
     streamLogger.error("Legacy user search failed", error, {
       searchTerm: validatedTerm,
     });

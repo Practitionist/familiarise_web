@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { reconcileOrphanedSessions } from "@/jobs/meetings/reconcile-orphaned-sessions";
 import { getMaintenanceState } from "@/lib/maintenance";
 import { CronLockHeldError } from "@/lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 export async function POST(req: NextRequest) {
   try {
@@ -27,7 +28,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    Sentry.logger.info("cron:reconcile-sessions started");
     const result = await reconcileOrphanedSessions();
+    Sentry.logger.info("cron:reconcile-sessions finished", { ...result });
 
     return NextResponse.json(result);
   } catch (error) {
@@ -36,6 +39,7 @@ export async function POST(req: NextRequest) {
     if (error instanceof CronLockHeldError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
     }
+    Sentry.captureException(error, { tags: { subsystem: "cron", job: "reconcile-sessions" } });
     console.error("Reconcile sessions API route failed:", error);
     return NextResponse.json(
       {

@@ -6,6 +6,7 @@
  * Runs daily via scheduled workflow.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { RecordingTransferService } from "../../lib/stream/recording-transfer-service";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
 import {
@@ -16,6 +17,7 @@ import fs from "fs";
 
 async function main(): Promise<void> {
   await abortIfMaintenance("mark-expired-recordings");
+  Sentry.logger.info("job:mark-expired-recordings started");
   const startTime = Date.now();
   console.log("🚀 Starting mark-expired-recordings job...");
   console.log(`   Timestamp: ${new Date().toISOString()}`);
@@ -39,13 +41,16 @@ async function main(): Promise<void> {
       );
     }
 
+    Sentry.logger.info("job:mark-expired-recordings finished", { expiredCount });
     console.log("🎉 Job completed successfully");
   } catch (error) {
     // #476 — lock held = another run is live; skip cleanly (exit 0).
     if (error instanceof CronLockHeldError) {
+      Sentry.logger.info("job:mark-expired-recordings lock held, skipping");
       console.log(`⏭️  ${error.message}`);
       return;
     }
+    Sentry.captureException(error, { tags: { subsystem: "jobs", job: "mark-expired-recordings" } });
     console.error("💥 Job failed:", error);
     if (process.env.GITHUB_ACTIONS && process.env.GITHUB_OUTPUT) {
       fs.appendFileSync(process.env.GITHUB_OUTPUT, "success=false\n");

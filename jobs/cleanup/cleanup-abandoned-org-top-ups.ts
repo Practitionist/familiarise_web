@@ -16,6 +16,7 @@ import {
 import fs from "fs";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
 import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 function outputToGitHubActions(result: AbandonedOrgTopUpCleanupResult): void {
   if (!process.env.GITHUB_ACTIONS) return;
@@ -41,6 +42,7 @@ function outputToGitHubActions(result: AbandonedOrgTopUpCleanupResult): void {
 
 async function main(): Promise<void> {
   await abortIfMaintenance("cleanup-abandoned-org-top-ups");
+  Sentry.logger.info("job:cleanup-abandoned-org-top-ups started");
   console.log("🧹 Starting abandoned org top-up cleanup job...");
   console.log(`Timestamp: ${new Date().toISOString()}`);
 
@@ -63,14 +65,18 @@ async function main(): Promise<void> {
     if (!result.success) {
       process.exit(1);
     }
+
+    Sentry.logger.info("job:cleanup-abandoned-org-top-ups finished", { reaped: result.reaped });
   } catch (error) {
     // #476 — lock held = another run is live; skipping is the correct
     // outcome (exit 0, no page). CronLockUnavailableError falls through
     // to exit 1 so the workflow's notify step pages.
     if (error instanceof CronLockHeldError) {
+      Sentry.logger.info("job:cleanup-abandoned-org-top-ups skipped — lock held");
       console.log(`⏭️  ${error.message}`);
       return;
     }
+    Sentry.captureException(error, { tags: { subsystem: "jobs", job: "cleanup-abandoned-org-top-ups" } });
     console.error("❌ Fatal error in abandoned org top-up cleanup:", error);
     process.exit(1);
   } finally {

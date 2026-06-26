@@ -32,6 +32,7 @@ import prisma from "@/lib/prisma";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { Prisma } from "@prisma/client";
 import { withCronLock, CronLockHeldError } from "@/lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 const BATCH_SIZE = 500;
 
@@ -154,6 +155,7 @@ export async function runAutoRenewContracts(): Promise<RenewStats> {
         stats.skipped += 1;
         continue;
       }
+      Sentry.captureException(err, { tags: { subsystem: "jobs", job: "auto-renew-contracts" } });
       console.error(`[auto-renew-contracts] Failed for contract ${c.id}:`, err);
       stats.skipped += 1;
     }
@@ -163,6 +165,7 @@ export async function runAutoRenewContracts(): Promise<RenewStats> {
 }
 
 async function main() {
+  Sentry.logger.info("job:auto-renew-contracts started");
   console.log(`[auto-renew-contracts] Starting at ${new Date().toISOString()}`);
   const stats = await withCronLock(
     "auto-renew-contracts",
@@ -172,6 +175,7 @@ async function main() {
   console.log(
     `[auto-renew-contracts] Done. scanned=${stats.scanned} renewed=${stats.renewed} skipped=${stats.skipped}`,
   );
+  Sentry.logger.info("job:auto-renew-contracts finished", { scanned: stats.scanned, renewed: stats.renewed, skipped: stats.skipped });
 }
 
 // Self-execute only when invoked directly (importable for unit tests).
@@ -180,9 +184,11 @@ if (require.main === module) {
     .catch((err) => {
       // #476 — lock held = another run is live; skip cleanly (exit 0).
       if (err instanceof CronLockHeldError) {
+        Sentry.logger.info("job:auto-renew-contracts lock already held — skipping");
         console.log(`⏭️  ${err.message}`);
         return;
       }
+      Sentry.captureException(err, { tags: { subsystem: "jobs", job: "auto-renew-contracts" } });
       console.error("[auto-renew-contracts] Failed:", err);
       process.exitCode = 1;
     })

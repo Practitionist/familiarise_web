@@ -286,7 +286,7 @@ Tentative appointments handle two scenarios: pending payment and rescheduling.
 stateDiagram-v2
     [*] --> Tentative: Checkout creates appointment
     Tentative --> Confirmed: Payment succeeds
-    Tentative --> CleanedUp: Abandoned (30 min)
+    Tentative --> CleanedUp: Abandoned (24h)
 
     [*] --> Tentative2: Reschedule marks slots tentative
     Tentative2 --> Confirmed: Consultant approves new slots
@@ -295,7 +295,7 @@ stateDiagram-v2
     state Tentative {
         direction LR
         Created --> PendingPayment
-        PendingPayment --> Expired: No payment in 30 min
+        PendingPayment --> Expired: No payment in 24h
     }
 ```
 

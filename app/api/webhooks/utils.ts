@@ -1,6 +1,6 @@
 import type { Tx } from "@/lib/prisma";
 import prisma from "../../../lib/prisma";
-import { postLedgerTxn } from "@/lib/payments/ledger/post";
+import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
 import { sumPaise } from "@/lib/payments/utils/money";
 import {
   isLegalDisputeTransition,
@@ -36,6 +36,7 @@ import {
 } from "@/lib/payments/operations/refund";
 import { recordTdsReversal } from "@/lib/payments/tax/tds-service";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { recordSystemError } from "@/lib/enterprise/system-events";
 
 // Re-export payment handlers from lib (architectural fix)
 export {
@@ -701,18 +702,20 @@ export async function handleRefundCreated(
             idempotencyKey: `topup-refund:${providerPaymentId}`,
             kind: "TOPUP_REFUND",
             description: `Refund for top-up ${topUp.providerOrderId} (gateway refund ${refundId})`,
+            // #783 — ledger is INR-only; never key accounts by acct.currency.
+            // Must mirror the INR-keyed top-up posting (lib/api/organizations/
+            // wallet.ts) so the refund reversal nets against the same account.
             postings: [
               {
                 account: {
                   kind: "WALLET",
                   organizationId: acct.ownerOrgId,
-                  currency: acct.currency,
                 },
                 direction: "DEBIT",
                 amountPaise: refundAmt,
               },
               {
-                account: { kind: "CASH", currency: acct.currency },
+                account: { kind: "CASH" },
                 direction: "CREDIT",
                 amountPaise: refundAmt,
               },
@@ -954,6 +957,17 @@ export async function handleRefundCreated(
       return;
     }
 
+    // PM-13 — a `refund.failed` for a refund we never recorded (e.g. a refund
+    // initiated from the Razorpay dashboard, not our app) would otherwise mint
+    // an orphan FAILED Refund row attached to the B2C payment. No money moves
+    // either way on a failed refund, so there's nothing to record — skip it.
+    if (mapRefundStatus(status) === "FAILED" && !existingRefund) {
+      console.log(
+        `↩️ Ignoring refund.failed for unknown refund ${refundId} (no existing row, no money movement)`,
+      );
+      return;
+    }
+
     // Create new refund record
     const createdRefund = await tx.refund.create({
       data: {
@@ -1030,6 +1044,9 @@ export async function handleDisputeCreated(
     // Find payment by charge ID or payment intent
     // For Stripe, we need to get the payment intent from the charge
     let payment;
+    // #873 — page once per dispute-unlink incident: the Razorpay-lookup catch
+    // and the !payment branch below must not both fire for the same webhook.
+    let unlinkAlertRecorded = false;
     if (gateway === "STRIPE" && stripeClient) {
       try {
         const charge = await stripeClient.charges.retrieve(chargeId);
@@ -1062,12 +1079,36 @@ export async function handleDisputeCreated(
             `Failed to fetch Razorpay payment ${chargeId} to link dispute:`,
             error,
           );
+          // PM-4 — without the gateway lookup we can't link the dispute, so
+          // earnings won't be held. The 6h reconcile-disputes cron is the only
+          // backstop; page so it isn't silently dropped for 6h.
+          void recordSystemError({
+            category: "WEBHOOK",
+            summary: `CRITICAL_DISPUTE_UNLINKED: Razorpay payment lookup failed for dispute ${disputeId}`,
+            err: error,
+            context: { disputeId, chargeId, gateway },
+            correlationId: disputeId,
+          }).catch(() => {});
+          unlinkAlertRecorded = true;
         }
       }
     }
 
     if (!payment) {
       console.warn(`Payment not found for dispute: ${disputeId}`);
+      // PM-4 — dispute couldn't be linked to a payment (lookup miss, or the
+      // gateway fetch above threw). Dropping it silently means disputed
+      // earnings stay payable until the 6h reconcile-disputes cron — page on it,
+      // unless the lookup-failure catch above already paged for this incident.
+      if (!unlinkAlertRecorded) {
+        void recordSystemError({
+          category: "WEBHOOK",
+          summary: `CRITICAL_DISPUTE_UNLINKED: no payment matched dispute ${disputeId}`,
+          err: new Error("dispute payment not found"),
+          context: { disputeId, chargeId, gateway },
+          correlationId: disputeId,
+        }).catch(() => {});
+      }
       return;
     }
 
@@ -1293,6 +1334,18 @@ export async function handleDisputeUpdated(
             amountPaise: dispute.amountPaise,
             disputeId,
           });
+        } else if (disputedPayment) {
+          // #677 — B2C (non-org) booking: the org path above posts the REFUND
+          // ledger leg via applyOrgChargeback; the B2C path historically posted
+          // nothing, so a lost chargeback left the booking journal's CASH-in +
+          // payable un-reversed (REVERSED_EARNING_WITHOUT_REFUND_TXN). Post the
+          // symmetric reversal so the journal clears when the bank pulls the cash.
+          await applyB2cChargebackReversal(tx, {
+            paymentId: disputedPayment.id,
+            disputeId,
+            amountPaise: dispute.amountPaise,
+            paymentAmountPaise: disputedPayment.amount,
+          });
         }
 
         // #738-B — GST parity with the refund path: a lost chargeback reverses
@@ -1469,6 +1522,132 @@ async function applyOrgChargeback(
         recoveredFromWallet,
       } as Prisma.InputJsonValue,
     },
+  });
+}
+
+/**
+ * #677 — B2C analog of `applyOrgChargeback`. A lost chargeback on a non-org
+ * (B2C card) booking pulls the CASH back via the card network, and the dispute
+ * handler flips the consultant earnings to REFUNDED — but, unlike the refund
+ * cascade (`refund.ts`) and unlike the org path, the B2C path never posted the
+ * REFUND ledger leg. The booking journal kept its CASH-in + payable, so the
+ * reconcile cron flags `REVERSED_EARNING_WITHOUT_REFUND_TXN` ("the cash left but
+ * the payable was never cleared in the journal").
+ *
+ * Reverse the original `booking:<paymentId>` journal by mirroring its posted
+ * entries as their inverse — funding-leg-correct for ANY booking shape
+ * (card-only, discounted, referral-credit-funded, collaborator host-org) without
+ * re-deriving the fee/share/GST split. Idempotent on `chargeback:<disputeId>`;
+ * netted against prior SUCCEEDED refunds so a refund-then-chargeback reverses the
+ * journal exactly once (pairs with `refundPayment`'s dispute-netting). PLATFORM_FEE
+ * absorbs the partial-refund rounding residual (matching the cascade's policy), so
+ * the post is always balanced — and for a full chargeback the residual is 0, i.e.
+ * the exact negation of the booking.
+ */
+export async function applyB2cChargebackReversal(
+  tx: Tx,
+  params: {
+    paymentId: string;
+    disputeId: string;
+    amountPaise: number;
+    paymentAmountPaise: number;
+  },
+): Promise<void> {
+  const { paymentId, disputeId, amountPaise, paymentAmountPaise } = params;
+  if (amountPaise <= 0 || paymentAmountPaise <= 0) return;
+
+  // Idempotent: a webhook redelivery re-derives the same key and no-ops.
+  const alreadyPosted = await tx.ledgerTransaction.findUnique({
+    where: { idempotencyKey: `chargeback:${disputeId}` },
+    select: { id: true },
+  });
+  if (alreadyPosted) return;
+
+  // Net against money an app refund already returned on this payment so the
+  // booking journal reverses exactly once across the refund+chargeback pair
+  // (mirrors applyOrgChargeback + refundPayment's dispute-netting).
+  const priorRefundAgg = await tx.refund.aggregate({
+    where: { paymentId, status: { in: ["SUCCEEDED"] } },
+    _sum: { amountPaise: true },
+  });
+  const settlePaise = Math.max(
+    0,
+    amountPaise - sumPaise(priorRefundAgg._sum.amountPaise),
+  );
+  if (settlePaise <= 0) {
+    console.log(
+      `[Webhook] B2C chargeback ${disputeId} fully covered by prior refund(s) — no ledger reversal`,
+    );
+    return;
+  }
+
+  // Mirror the original booking journal. Reading the posted entries (rather than
+  // recomputing the split) keeps the reversal correct for every funding mix.
+  const booking = await tx.ledgerTransaction.findUnique({
+    where: { idempotencyKey: `booking:${paymentId}` },
+    include: { entries: { include: { account: true } } },
+  });
+  if (!booking || booking.entries.length === 0) {
+    // Earnings were reversed but there's no booking journal to mirror — don't
+    // post an unbalanced guess. Page; the reconcile cron's
+    // EARNINGS_WITHOUT_BOOKING_TXN owns the upstream gap.
+    void recordSystemError({
+      organizationId: null,
+      category: "LEDGER",
+      summary: `B2C chargeback ${disputeId}: no booking ledger txn for payment ${paymentId} to reverse`,
+      err: new Error("missing booking ledger txn"),
+      context: { paymentId, disputeId },
+    }).catch(() => {});
+    return;
+  }
+
+  // Proportional inverse: flip each leg's direction and floor-scale by the
+  // settled fraction (== the whole booking for a full chargeback, no prior refund).
+  const postings: Posting[] = booking.entries
+    .map(
+      (e): Posting => ({
+        account: {
+          kind: e.account.kind,
+          organizationId: e.account.organizationId,
+          consultantProfileId: e.account.consultantProfileId,
+        },
+        direction:
+          e.direction === "DEBIT" ? ("CREDIT" as const) : ("DEBIT" as const),
+        // BigInt arithmetic (not Number*) so the proportional scale can't lose
+        // precision on large paise values; BigInt division truncates toward zero
+        // == Math.floor for these non-negative operands.
+        amountPaise: Number(
+          (BigInt(e.amountPaise) * BigInt(settlePaise)) /
+            BigInt(paymentAmountPaise),
+        ),
+      }),
+    )
+    .filter((p) => p.amountPaise > 0);
+
+  // Balance the floor residual onto PLATFORM_FEE (the platform absorbs rounding,
+  // mirroring refund.ts). residual === 0 for a full chargeback → exact negation.
+  let debit = 0;
+  let credit = 0;
+  for (const p of postings) {
+    if (p.direction === "DEBIT") debit += p.amountPaise;
+    else credit += p.amountPaise;
+  }
+  const residual = debit - credit;
+  if (residual !== 0) {
+    postings.push({
+      account: { kind: "PLATFORM_FEE" },
+      direction: residual > 0 ? ("CREDIT" as const) : ("DEBIT" as const),
+      amountPaise: Math.abs(residual),
+    });
+  }
+
+  if (postings.length === 0) return;
+
+  await postLedgerTxn(tx, {
+    idempotencyKey: `chargeback:${disputeId}`,
+    kind: "REFUND",
+    paymentId,
+    postings,
   });
 }
 
@@ -1732,6 +1911,9 @@ export async function handleRazorpayPayoutWebhook(
     payoutData.id,
     status,
     payoutData.failure_reason,
+    // UTR — forward the bank reference so a completing consultant payout
+    // persists it, mirroring the org branch above.
+    payoutData.utr,
   );
 
   console.log(

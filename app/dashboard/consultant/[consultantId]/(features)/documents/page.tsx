@@ -49,7 +49,10 @@ export default function DocumentsPage({
   // fetcher. The retrofitted /api/dashboard/consultant/[id]/documents
   // accepts the param and filters via Appointment.organizationId on
   // the joined parent appointment.
-  const { scope, setScope } = useOrgScope();
+  // Default org members to "all" (personal + every org) so the review
+  // queue is complete — defaulting to a single org would hide personal
+  // submissions. Matches the appointments tab. #883
+  const { scope, setScope } = useOrgScope({ defaultForOrgMember: "all" });
   // "all" sends `?orgScope=all` to the API. Self-scoped consultant
   // endpoints opt in via allowAllForOwner — returns personal + every
   // org the user belongs to.

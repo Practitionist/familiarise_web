@@ -30,7 +30,7 @@
  */
 
 import { faker } from "@faker-js/faker";
-import bcrypt from "bcryptjs";
+import bcrypt from "bcrypt";
 import {
   Currency,
   FundingSource,
@@ -52,6 +52,7 @@ import {
 } from "@prisma/client";
 import prisma from "../../lib/prisma";
 import { buildConsentArtifact } from "../../lib/compliance/dpdp";
+import { PURPOSE_CODES } from "../../lib/compliance/purpose-codes";
 import { postLedgerTxn } from "../../lib/payments/ledger/post";
 import type { UserWithProfiles } from "./1a-create-users";
 
@@ -187,7 +188,9 @@ export async function createOrganizations(
   }
 
   // -------------------------------------------------------- CONSENT ARTIFACTS
-  await seedConsentArtifacts(users.slice(0, 10));
+  // ALL seeded users, not just the first 10 — every user the runtime touches
+  // (Stream upsert on dashboard load) needs the gate to pass.
+  await seedConsentArtifacts(users);
 
   // ---------------------------------------------------- TOUR OWNER (#723)
   // Dedicated ORG_WORKSPACE account with deterministic credentials so tour
@@ -759,15 +762,30 @@ async function seedSoloConsultant(user: UserWithProfiles) {
 // ---------------------------------------------------------------------------
 
 async function seedConsentArtifacts(users: UserWithProfiles[]) {
+  // Stamp the canonical runtime purpose codes that `checkConsent` (fail-closed)
+  // gates on — mirror the signup hook (lib/auth.ts) so seeded users behave like
+  // real signups. STREAM_DATA_PROCESSING is what actions/stream/chat/user.action.ts
+  // checks before handing PII to Stream; without it every seeded user fails the
+  // Stream upsert on dashboard load. Codes come from the single canonical
+  // taxonomy (lib/compliance/purpose-codes.ts) the whole app now shares.
+  // One artifact PER purpose code (mirror the signup hook in lib/auth.ts).
+  // A single artifact bundling both codes would let a scoped withdrawal of
+  // one code revoke the other, since withdrawConsent stamps the whole artifact
+  // matching the target code. language "en-IN" for consistency with signup.
   for (const u of users) {
-    const draft = buildConsentArtifact({
-      userId: u.id,
-      dataFiduciary: "Familiarise Pvt Ltd",
-      purposeCodes: ["account-management", "session-booking", "analytics"],
-      language: "en",
-      version: 1,
-    });
-    await prisma.consentArtifact.create({ data: draft });
+    for (const purposeCode of [
+      PURPOSE_CODES.PRIMARY_PROCESSING,
+      PURPOSE_CODES.STREAM_DATA_PROCESSING,
+    ] as const) {
+      const draft = buildConsentArtifact({
+        userId: u.id,
+        dataFiduciary: "Familiarise Pvt Ltd",
+        purposeCodes: [purposeCode],
+        language: "en-IN",
+        version: 1,
+      });
+      await prisma.consentArtifact.create({ data: draft });
+    }
   }
   console.log(`[15a]   ✓ ConsentArtifact seeded for ${users.length} users`);
 }

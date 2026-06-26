@@ -1,8 +1,10 @@
 "use client";
 
+import * as Sentry from "@sentry/nextjs";
 import { useCallback, useEffect, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { PageHeader } from "@/components/ui/page-header";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   RefreshCw,
@@ -54,6 +56,7 @@ export default function StaffMetricsPage() {
       const data = await response.json();
       setMetrics(data);
     } catch (error) {
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
       console.error("Error fetching metrics:", error);
       toast({
         title: "Error",
@@ -72,7 +75,7 @@ export default function StaffMetricsPage() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <Loader2 className="h-8 w-8 animate-spin text-zinc-400" />
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
       </div>
     );
   }
@@ -80,17 +83,13 @@ export default function StaffMetricsPage() {
   if (!metrics) {
     return (
       <div className="space-y-6">
-        <div>
-          <h1 className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">
-            Metrics
-          </h1>
-          <p className="text-zinc-500 dark:text-zinc-400">
-            Operational metrics and insights
-          </p>
-        </div>
+        <PageHeader
+          title="Metrics"
+          description="Operational metrics and insights"
+        />
         <Card>
-          <CardContent className="flex flex-col items-center justify-center h-64 text-zinc-500">
-            <BarChart3 className="h-12 w-12 mb-4 text-zinc-300" />
+          <CardContent className="flex flex-col items-center justify-center h-64 text-muted-foreground">
+            <BarChart3 className="h-12 w-12 mb-4 text-muted-foreground/40" />
             <p>Unable to load metrics</p>
             <Button variant="outline" onClick={fetchMetrics} className="mt-4">
               <RefreshCw className="h-4 w-4 mr-2" />
@@ -105,22 +104,18 @@ export default function StaffMetricsPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">
-            Metrics
-          </h1>
-          <p className="text-zinc-500 dark:text-zinc-400">
-            Operational metrics and insights
-          </p>
-        </div>
-        <Button variant="outline" onClick={fetchMetrics} disabled={loading}>
-          <RefreshCw
-            className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`}
-          />
-          Refresh
-        </Button>
-      </div>
+      <PageHeader
+        title="Metrics"
+        description="Operational metrics and insights"
+        actions={
+          <Button variant="outline" onClick={fetchMetrics} disabled={loading}>
+            <RefreshCw
+              className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`}
+            />
+            Refresh
+          </Button>
+        }
+      />
 
       {/* Staff Access Notice */}
       <Alert>
@@ -134,22 +129,22 @@ export default function StaffMetricsPage() {
 
       {/* Support Performance */}
       <div>
-        <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-          <Ticket className="h-5 w-5 text-blue-600" />
+        <h2 className="text-lg font-semibold mb-4 flex items-center gap-2 text-foreground">
+          <Ticket className="h-5 w-5 text-muted-foreground" />
           Support Performance
         </h2>
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <Card>
             <CardContent className="p-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-zinc-500">Resolved Today</p>
-                  <p className="text-3xl font-bold text-green-600">
+                  <p className="text-sm text-muted-foreground">Resolved Today</p>
+                  <p className="text-3xl font-bold text-green-600 dark:text-green-400">
                     {metrics.supportMetrics.ticketsResolvedToday}
                   </p>
                 </div>
                 <div className="p-3 rounded-full bg-green-50 dark:bg-green-950">
-                  <CheckCircle className="h-6 w-6 text-green-600" />
+                  <CheckCircle className="h-6 w-6 text-green-600 dark:text-green-400" />
                 </div>
               </div>
             </CardContent>
@@ -159,13 +154,15 @@ export default function StaffMetricsPage() {
             <CardContent className="p-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-zinc-500">Resolved This Week</p>
-                  <p className="text-3xl font-bold text-blue-600">
+                  <p className="text-sm text-muted-foreground">
+                    Resolved This Week
+                  </p>
+                  <p className="text-3xl font-bold text-foreground">
                     {metrics.supportMetrics.ticketsResolvedThisWeek}
                   </p>
                 </div>
-                <div className="p-3 rounded-full bg-blue-50 dark:bg-blue-950">
-                  <TrendingUp className="h-6 w-6 text-blue-600" />
+                <div className="p-3 rounded-full bg-muted">
+                  <TrendingUp className="h-6 w-6 text-foreground" />
                 </div>
               </div>
             </CardContent>
@@ -175,18 +172,18 @@ export default function StaffMetricsPage() {
             <CardContent className="p-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-zinc-500">Open Tickets</p>
+                  <p className="text-sm text-muted-foreground">Open Tickets</p>
                   <p
-                    className={`text-3xl font-bold ${metrics.supportMetrics.openTickets > 10 ? "text-red-600" : "text-yellow-600"}`}
+                    className={`text-3xl font-bold ${metrics.supportMetrics.openTickets > 10 ? "text-red-600 dark:text-red-400" : "text-foreground"}`}
                   >
                     {metrics.supportMetrics.openTickets}
                   </p>
                 </div>
                 <div
-                  className={`p-3 rounded-full ${metrics.supportMetrics.openTickets > 10 ? "bg-red-50 dark:bg-red-950" : "bg-yellow-50 dark:bg-yellow-950"}`}
+                  className={`p-3 rounded-full ${metrics.supportMetrics.openTickets > 10 ? "bg-red-50 dark:bg-red-950" : "bg-muted"}`}
                 >
                   <Ticket
-                    className={`h-6 w-6 ${metrics.supportMetrics.openTickets > 10 ? "text-red-600" : "text-yellow-600"}`}
+                    className={`h-6 w-6 ${metrics.supportMetrics.openTickets > 10 ? "text-red-600 dark:text-red-400" : "text-foreground"}`}
                   />
                 </div>
               </div>
@@ -197,13 +194,15 @@ export default function StaffMetricsPage() {
             <CardContent className="p-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-zinc-500">Avg Response Time</p>
-                  <p className="text-3xl font-bold text-purple-600">
+                  <p className="text-sm text-muted-foreground">
+                    Avg Response Time
+                  </p>
+                  <p className="text-3xl font-bold text-foreground">
                     {metrics.supportMetrics.avgResponseTimeHours}h
                   </p>
                 </div>
-                <div className="p-3 rounded-full bg-purple-50 dark:bg-purple-950">
-                  <Clock className="h-6 w-6 text-purple-600" />
+                <div className="p-3 rounded-full bg-muted">
+                  <Clock className="h-6 w-6 text-foreground" />
                 </div>
               </div>
             </CardContent>
@@ -213,24 +212,24 @@ export default function StaffMetricsPage() {
 
       {/* User Metrics */}
       <div>
-        <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-          <Users className="h-5 w-5 text-indigo-600" />
+        <h2 className="text-lg font-semibold mb-4 flex items-center gap-2 text-foreground">
+          <Users className="h-5 w-5 text-muted-foreground" />
           User Metrics
         </h2>
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <Card>
             <CardContent className="p-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-zinc-500">
+                  <p className="text-sm text-muted-foreground">
                     Users Helped This Week
                   </p>
-                  <p className="text-3xl font-bold text-indigo-600">
+                  <p className="text-3xl font-bold text-foreground">
                     {metrics.userMetrics.usersHelpedThisWeek}
                   </p>
                 </div>
-                <div className="p-3 rounded-full bg-indigo-50 dark:bg-indigo-950">
-                  <Users className="h-6 w-6 text-indigo-600" />
+                <div className="p-3 rounded-full bg-muted">
+                  <Users className="h-6 w-6 text-foreground" />
                 </div>
               </div>
             </CardContent>
@@ -240,14 +239,14 @@ export default function StaffMetricsPage() {
             <CardContent className="p-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-zinc-500">Active Users</p>
-                  <p className="text-3xl font-bold text-emerald-600">
+                  <p className="text-sm text-muted-foreground">Active Users</p>
+                  <p className="text-3xl font-bold text-foreground">
                     {metrics.userMetrics.activeUsers}
                   </p>
-                  <p className="text-xs text-zinc-400">This month</p>
+                  <p className="text-xs text-muted-foreground/70">This month</p>
                 </div>
-                <div className="p-3 rounded-full bg-emerald-50 dark:bg-emerald-950">
-                  <Activity className="h-6 w-6 text-emerald-600" />
+                <div className="p-3 rounded-full bg-muted">
+                  <Activity className="h-6 w-6 text-foreground" />
                 </div>
               </div>
             </CardContent>
@@ -257,30 +256,30 @@ export default function StaffMetricsPage() {
             <CardContent className="p-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-zinc-500">New Signups</p>
-                  <p className="text-3xl font-bold text-cyan-600">
+                  <p className="text-sm text-muted-foreground">New Signups</p>
+                  <p className="text-3xl font-bold text-foreground">
                     {metrics.userMetrics.newSignupsThisMonth}
                   </p>
-                  <p className="text-xs text-zinc-400">This month</p>
+                  <p className="text-xs text-muted-foreground/70">This month</p>
                 </div>
-                <div className="p-3 rounded-full bg-cyan-50 dark:bg-cyan-950">
-                  <UserPlus className="h-6 w-6 text-cyan-600" />
+                <div className="p-3 rounded-full bg-muted">
+                  <UserPlus className="h-6 w-6 text-foreground" />
                 </div>
               </div>
             </CardContent>
           </Card>
 
-          <Card className="bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-950/20 dark:to-indigo-950/20">
+          <Card>
             <CardContent className="p-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-blue-600">Total Users</p>
-                  <p className="text-3xl font-bold text-blue-700">
+                  <p className="text-sm text-muted-foreground">Total Users</p>
+                  <p className="text-3xl font-bold text-foreground">
                     {metrics.userMetrics.totalUsers.toLocaleString()}
                   </p>
                 </div>
-                <div className="p-3 rounded-full bg-blue-100 dark:bg-blue-900">
-                  <Users className="h-6 w-6 text-blue-600" />
+                <div className="p-3 rounded-full bg-muted">
+                  <Users className="h-6 w-6 text-foreground" />
                 </div>
               </div>
             </CardContent>
@@ -290,22 +289,24 @@ export default function StaffMetricsPage() {
 
       {/* Platform Health */}
       <div>
-        <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-          <Calendar className="h-5 w-5 text-amber-600" />
+        <h2 className="text-lg font-semibold mb-4 flex items-center gap-2 text-foreground">
+          <Calendar className="h-5 w-5 text-muted-foreground" />
           Platform Activity
         </h2>
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <Card>
             <CardContent className="p-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-zinc-500">Total Appointments</p>
-                  <p className="text-3xl font-bold text-amber-600">
+                  <p className="text-sm text-muted-foreground">
+                    Total Appointments
+                  </p>
+                  <p className="text-3xl font-bold text-foreground">
                     {metrics.platformMetrics.totalAppointments.toLocaleString()}
                   </p>
                 </div>
-                <div className="p-3 rounded-full bg-amber-50 dark:bg-amber-950">
-                  <Calendar className="h-6 w-6 text-amber-600" />
+                <div className="p-3 rounded-full bg-muted">
+                  <Calendar className="h-6 w-6 text-foreground" />
                 </div>
               </div>
             </CardContent>
@@ -315,18 +316,20 @@ export default function StaffMetricsPage() {
             <CardContent className="p-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-zinc-500">Pending Payments</p>
+                  <p className="text-sm text-muted-foreground">
+                    Pending Payments
+                  </p>
                   <p
-                    className={`text-3xl font-bold ${metrics.platformMetrics.pendingPayments > 20 ? "text-orange-600" : "text-teal-600"}`}
+                    className={`text-3xl font-bold ${metrics.platformMetrics.pendingPayments > 20 ? "text-amber-600 dark:text-amber-400" : "text-foreground"}`}
                   >
                     {metrics.platformMetrics.pendingPayments}
                   </p>
                 </div>
                 <div
-                  className={`p-3 rounded-full ${metrics.platformMetrics.pendingPayments > 20 ? "bg-orange-50 dark:bg-orange-950" : "bg-teal-50 dark:bg-teal-950"}`}
+                  className={`p-3 rounded-full ${metrics.platformMetrics.pendingPayments > 20 ? "bg-amber-50 dark:bg-amber-950" : "bg-muted"}`}
                 >
                   <Clock
-                    className={`h-6 w-6 ${metrics.platformMetrics.pendingPayments > 20 ? "text-orange-600" : "text-teal-600"}`}
+                    className={`h-6 w-6 ${metrics.platformMetrics.pendingPayments > 20 ? "text-amber-600 dark:text-amber-400" : "text-foreground"}`}
                   />
                 </div>
               </div>
@@ -337,13 +340,15 @@ export default function StaffMetricsPage() {
             <CardContent className="p-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-zinc-500">Monthly Resolved</p>
-                  <p className="text-3xl font-bold text-rose-600">
+                  <p className="text-sm text-muted-foreground">
+                    Monthly Resolved
+                  </p>
+                  <p className="text-3xl font-bold text-foreground">
                     {metrics.supportMetrics.ticketsResolvedThisMonth}
                   </p>
                 </div>
-                <div className="p-3 rounded-full bg-rose-50 dark:bg-rose-950">
-                  <BarChart3 className="h-6 w-6 text-rose-600" />
+                <div className="p-3 rounded-full bg-muted">
+                  <BarChart3 className="h-6 w-6 text-foreground" />
                 </div>
               </div>
             </CardContent>

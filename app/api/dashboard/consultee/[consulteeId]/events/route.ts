@@ -1,12 +1,16 @@
+import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { WaitlistStatus, type Prisma } from "@prisma/client";
 import {
   requireApiAuth,
   isPrivileged,
   forbiddenResponse,
 } from "@/lib/auth-helpers";
 import { resolveOrgScope, type Scope } from "@/lib/api/scope/parse";
+import {
+  readConsulteeEvents,
+  ConsulteeProfileNotFoundError,
+} from "@/lib/data/consultee-events-read";
 
 /**
  * Personal "all my bookings" widget endpoint. Returns the union of 5
@@ -92,320 +96,22 @@ export async function GET(
     }
     const scope: Scope = scopeResolution.scope;
 
-    // Build per-resource org filters. The 5 booking models attach to
-    // org context differently:
-    //   - Consultation / Webinar (1:1 appointment): filter via
-    //     `appointment.is.organizationId`
-    //   - Subscription / Class (1:many appointments): filter via
-    //     `appointments.some.organizationId` so the parent surfaces if
-    //     ANY child appointment matches the scope
-    //   - TrialSession: filter directly via `organizationId`
-    const oneApptOrgWhere: Prisma.AppointmentWhereInput | undefined =
-      scope.kind === "personal"
-        ? { organizationId: null }
-        : scope.kind === "org"
-          ? { organizationId: scope.orgId }
-          : undefined;
-    const manyApptOrgWhere: Prisma.AppointmentWhereInput | undefined =
-      oneApptOrgWhere;
-    const trialOrgWhere: Prisma.TrialSessionWhereInput | undefined =
-      scope.kind === "personal"
-        ? { organizationId: null }
-        : scope.kind === "org"
-          ? { organizationId: scope.orgId }
-          : undefined;
-
-    // PERFORMANCE FIX: Use direct Prisma queries instead of internal HTTP fetches
-    // This avoids network overhead and reduces response time from 11+ seconds to <1 second
-    const [consultations, subscriptions, webinars, classes, trials] =
-      await Promise.all([
-        prisma.consultation.findMany({
-          where: {
-            requestedById: consulteeId,
-            ...(oneApptOrgWhere && { appointment: { is: oneApptOrgWhere } }),
-          },
-          include: {
-            consultationPlan: {
-              include: {
-                consultantProfile: {
-                  include: {
-                    user: {
-                      select: {
-                        id: true,
-                        name: true,
-                        image: true,
-                        email: true,
-                      },
-                    },
-                  },
-                },
-              },
-            },
-            appointment: {
-              include: {
-                slotsOfAppointment: {
-                  orderBy: { startsAt: "asc" },
-                  include: {
-                    meetingSession: {
-                      select: { id: true, endedAt: true },
-                    },
-                  },
-                },
-                payment: true,
-              },
-            },
-          },
-          orderBy: { requestedAt: "desc" },
-        }),
-        prisma.subscription.findMany({
-          where: {
-            requestedById: consulteeId,
-            ...(manyApptOrgWhere && {
-              appointments: { some: manyApptOrgWhere },
-            }),
-          },
-          include: {
-            subscriptionPlan: {
-              include: {
-                consultantProfile: {
-                  include: {
-                    user: {
-                      select: {
-                        id: true,
-                        name: true,
-                        image: true,
-                        email: true,
-                      },
-                    },
-                  },
-                },
-              },
-            },
-            appointments: {
-              include: {
-                slotsOfAppointment: {
-                  orderBy: { startsAt: "asc" },
-                  include: {
-                    meetingSession: {
-                      select: { id: true, endedAt: true },
-                    },
-                  },
-                },
-                payment: true,
-              },
-            },
-          },
-          orderBy: { requestedAt: "desc" },
-        }),
-        // Webinars: User registered via appointment slots OR waitlisted
-        prisma.webinar.findMany({
-          where: {
-            OR: [
-              {
-                appointment: {
-                  slotsOfAppointment: {
-                    some: { user: { some: { id: userId } } },
-                  },
-                  ...(oneApptOrgWhere ?? {}),
-                },
-              },
-              {
-                waitlist: {
-                  some: {
-                    userId,
-                    status: { in: [WaitlistStatus.WAITING, WaitlistStatus.NOTIFIED, WaitlistStatus.BOOKED] },
-                  },
-                },
-              },
-            ],
-          },
-          include: {
-            webinarPlan: {
-              include: {
-                consultantProfile: {
-                  include: {
-                    user: {
-                      select: {
-                        id: true,
-                        name: true,
-                        image: true,
-                        email: true,
-                      },
-                    },
-                  },
-                },
-                collaborators: {
-                  where: { status: "ACCEPTED" },
-                  include: {
-                    consultantProfile: {
-                      include: {
-                        user: {
-                          select: {
-                            id: true,
-                            name: true,
-                            image: true,
-                          },
-                        },
-                      },
-                    },
-                  },
-                },
-              },
-            },
-            appointment: {
-              include: {
-                slotsOfAppointment: {
-                  orderBy: { startsAt: "asc" },
-                  include: {
-                    meetingSession: {
-                      select: { id: true, endedAt: true },
-                    },
-                  },
-                },
-                payment: true,
-              },
-            },
-            waitlist: {
-              where: { userId },
-            },
-          },
-          orderBy: { createdAt: "desc" },
-        }),
-        // Classes: User registered via appointment slots OR waitlisted
-        prisma.class.findMany({
-          where: {
-            OR: [
-              {
-                appointments: {
-                  some: {
-                    slotsOfAppointment: {
-                      some: { user: { some: { id: userId } } },
-                    },
-                    ...(manyApptOrgWhere ?? {}),
-                  },
-                },
-              },
-              {
-                waitlist: {
-                  some: {
-                    userId,
-                    status: { in: [WaitlistStatus.WAITING, WaitlistStatus.NOTIFIED, WaitlistStatus.BOOKED] },
-                  },
-                },
-              },
-            ],
-          },
-          include: {
-            classPlan: {
-              include: {
-                consultantProfile: {
-                  include: {
-                    user: {
-                      select: {
-                        id: true,
-                        name: true,
-                        image: true,
-                        email: true,
-                      },
-                    },
-                  },
-                },
-                collaborators: {
-                  where: { status: "ACCEPTED" },
-                  include: {
-                    consultantProfile: {
-                      include: {
-                        user: {
-                          select: {
-                            id: true,
-                            name: true,
-                            image: true,
-                          },
-                        },
-                      },
-                    },
-                  },
-                },
-              },
-            },
-            appointments: {
-              include: {
-                slotsOfAppointment: {
-                  orderBy: { startsAt: "asc" },
-                  include: {
-                    meetingSession: {
-                      select: { id: true, endedAt: true },
-                    },
-                  },
-                },
-                payment: true,
-              },
-            },
-            waitlist: {
-              where: { userId },
-            },
-          },
-          orderBy: { createdAt: "desc" },
-        }),
-        // Trial sessions: Free trials requested by the consultee
-        prisma.trialSession.findMany({
-          where: {
-            consulteeProfileId: consulteeId,
-            ...(trialOrgWhere ?? {}),
-          },
-          include: {
-            subscriptionPlan: {
-              include: {
-                consultantProfile: {
-                  include: {
-                    user: {
-                      select: {
-                        id: true,
-                        name: true,
-                        image: true,
-                        email: true,
-                      },
-                    },
-                  },
-                },
-              },
-            },
-            appointment: {
-              include: {
-                slotsOfAppointment: {
-                  orderBy: { startsAt: "asc" },
-                  include: {
-                    user: {
-                      select: {
-                        id: true,
-                        name: true,
-                        email: true,
-                        image: true,
-                      },
-                    },
-                    meetingSession: {
-                      select: { id: true, endedAt: true },
-                    },
-                  },
-                },
-              },
-            },
-          },
-          orderBy: { requestedAt: "desc" },
-        }),
-      ]);
+    // #890 — shared read; same fn the consultee home server page calls so
+    // SSR hydration matches.
+    const data = await readConsulteeEvents(consulteeId, scope);
 
     return NextResponse.json({
-      data: {
-        consultations,
-        subscriptions,
-        webinars,
-        classes,
-        trials,
-      },
+      data,
       success: true,
     });
   } catch (error) {
+    if (error instanceof ConsulteeProfileNotFoundError) {
+      return NextResponse.json(
+        { error: "Consultee profile not found" },
+        { status: 404 },
+      );
+    }
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "dashboard" } });
     console.error("Error fetching consultee events:", error);
     return NextResponse.json(
       { error: "Failed to fetch consultee events" },

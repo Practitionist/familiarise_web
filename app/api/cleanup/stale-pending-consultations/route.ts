@@ -10,6 +10,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cleanupStalePendingConsultations } from "@/scripts/appointments/cleanup-stale-pending-consultations";
 import { CronLockHeldError } from "@/lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
@@ -23,11 +24,16 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    Sentry.logger.info("cron:cleanup-stale-pending-consultations started");
     console.log("🧹 Starting stale pending consultations cleanup via API...");
 
     const result = await cleanupStalePendingConsultations();
 
     console.log("✅ Stale pending consultations cleanup completed:", {
+      consultationsCancelled: result.consultationsCancelled,
+      slotsReleased: result.slotsReleased,
+    });
+    Sentry.logger.info("cron:cleanup-stale-pending-consultations finished", {
       consultationsCancelled: result.consultationsCancelled,
       slotsReleased: result.slotsReleased,
     });
@@ -39,6 +45,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     if (error instanceof CronLockHeldError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
     }
+    Sentry.captureException(error, { tags: { subsystem: "cron", job: "cleanup-stale-pending-consultations" } });
     console.error("Error in stale consultation cleanup:", error);
     return NextResponse.json(
       {

@@ -138,7 +138,7 @@ export function OneOffEventCard({
       transition={{ duration: 0.2 }}
       className="w-full h-full"
     >
-      <div className="bg-white rounded-xl border border-zinc-200 p-4 hover:border-zinc-300 hover:shadow-md transition-all duration-200 h-full flex flex-col">
+      <div className="bg-card rounded-xl border border-border p-4 hover:border-foreground/20 hover:shadow-md transition-all duration-200 h-full flex flex-col">
         {/* Header */}
         <div className="mb-3">
           <CardHeader
@@ -164,14 +164,14 @@ export function OneOffEventCard({
         {/* Schedule section */}
         <div className="flex-1">
           {firstSlot ? (
-            <div className="bg-zinc-50 rounded-lg p-3 border border-zinc-100">
+            <div className="bg-muted rounded-lg p-3 border border-border">
               <div className="flex items-center justify-between">
                 <div>
-                  <div className="flex items-center gap-2 text-xs text-zinc-500 mb-1">
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
                     <Calendar className="h-3.5 w-3.5" />
                     <span>{formatSlotDate(firstSlot.startsAt)}</span>
                   </div>
-                  <div className="text-sm text-zinc-700 font-medium">
+                  <div className="text-sm text-foreground font-medium">
                     {formatSlotTime(firstSlot.startsAt)} —{" "}
                     {formatSlotTime(lastSlot?.endsAt ?? firstSlot.endsAt)}
                   </div>
@@ -185,8 +185,8 @@ export function OneOffEventCard({
               </div>
             </div>
           ) : (
-            <div className="bg-zinc-50 rounded-lg p-3 border border-zinc-100">
-              <div className="flex items-center gap-2 text-xs text-zinc-500">
+            <div className="bg-muted rounded-lg p-3 border border-border">
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 <Clock className="h-3.5 w-3.5" />
                 <span>
                   {isTentative
@@ -204,7 +204,7 @@ export function OneOffEventCard({
 
         {/* Pay Now for pending payment */}
         {isPendingPayment && pendingPaymentUrl && (
-          <div className="mt-3 pt-3 border-t border-zinc-100">
+          <div className="mt-3 pt-3 border-t border-border">
             <Button
               size="sm"
               onClick={() => {
@@ -219,12 +219,12 @@ export function OneOffEventCard({
                   );
                 }
               }}
-              className="w-full h-9 text-sm font-medium bg-amber-500 hover:bg-amber-600 text-white"
+              className="w-full h-9 text-sm font-medium bg-amber-500 hover:bg-amber-600 text-white dark:bg-amber-600 dark:hover:bg-amber-500"
             >
               <CreditCard className="h-4 w-4 mr-2" />
               Pay Now to Confirm
             </Button>
-            <p className="text-xs text-amber-600 text-center mt-2">
+            <p className="text-xs text-amber-600 dark:text-amber-400 text-center mt-2">
               Complete payment to confirm your appointment
             </p>
           </div>
@@ -232,7 +232,7 @@ export function OneOffEventCard({
 
         {/* Document upload — full width, above action buttons */}
         {showDocUpload && (
-          <div className="mt-3 pt-3 border-t border-zinc-100">
+          <div className="mt-3 pt-3 border-t border-border">
             <DocumentUpload
               appointmentId={appointmentId!}
               appointmentTitle={title}
@@ -247,7 +247,7 @@ export function OneOffEventCard({
             "flex items-center gap-2",
             showDocUpload && !isInactive
               ? "mt-3"
-              : "mt-3 pt-3 border-t border-zinc-100",
+              : "mt-3 pt-3 border-t border-border",
           )}
         >
           {!isTentative && isApproved && !isInactive ? (
@@ -263,7 +263,7 @@ export function OneOffEventCard({
               <Button
                 variant="outline"
                 size="icon"
-                className="h-9 w-9 shrink-0 border-zinc-200"
+                className="h-9 w-9 shrink-0 border-border"
                 onClick={() => actions.handleRescheduleClick(false)}
                 disabled={actions.isLoading}
                 title="Reschedule"
@@ -272,7 +272,7 @@ export function OneOffEventCard({
               </Button>
             </>
           ) : !isInactive ? (
-            <div className="flex-1 text-xs text-zinc-400 text-center py-2">
+            <div className="flex-1 text-xs text-muted-foreground/70 text-center py-2">
               {isTentative
                 ? "Awaiting confirmation"
                 : isPendingPayment || bookingStatus === "CONFIRMED"
@@ -280,7 +280,7 @@ export function OneOffEventCard({
                   : "Pending approval"}
             </div>
           ) : (
-            <div className="flex-1 text-xs text-zinc-400 text-center py-2">
+            <div className="flex-1 text-xs text-muted-foreground/70 text-center py-2">
               {status}
             </div>
           )}
@@ -323,7 +323,7 @@ export function OneOffEventCard({
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2">
-              <CalendarClock className="h-5 w-5 text-zinc-600" />
+              <CalendarClock className="h-5 w-5 text-muted-foreground" />
               Reschedule {type}?
             </AlertDialogTitle>
             <AlertDialogDescription asChild>
@@ -333,7 +333,7 @@ export function OneOffEventCard({
                   <strong>&quot;{title}&quot;</strong> with{" "}
                   <strong>{consultant}</strong>?
                 </p>
-                <p className="text-zinc-600">
+                <p className="text-muted-foreground">
                   Your current time slot will be released and the{" "}
                   {type === "Consultation"
                     ? "consultation"
@@ -354,7 +354,7 @@ export function OneOffEventCard({
                 actions.handleReschedule();
               }}
               disabled={actions.isLoading}
-              className="bg-zinc-900 hover:bg-zinc-800"
+              className="bg-primary text-primary-foreground hover:bg-primary/90"
             >
               {actions.isLoading ? (
                 <Loader2 className="h-4 w-4 animate-spin mr-2" />

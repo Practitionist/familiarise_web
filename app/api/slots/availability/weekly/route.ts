@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { DayOfWeek } from "@prisma/client";
@@ -8,7 +9,6 @@ import {
   getTimezoneOffsetMinutes,
 } from "@/utils/slotAllocation/slotTimeUtils";
 import { getSession } from "@/lib/auth-server";
-import { toLocalMinutes, toLocalDay } from "@/utils/slotAllocation/localTime";
 
 export async function GET(req: NextRequest) {
   try {
@@ -66,6 +66,7 @@ export async function GET(req: NextRequest) {
     );
   } catch (error) {
     console.error("Error fetching weekly slots:", error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "scheduling" } });
     return NextResponse.json(
       { error: "An error occurred while fetching weekly availability slots" },
       { status: 500 },
@@ -177,14 +178,9 @@ export async function POST(req: NextRequest) {
 
     const utcOffsetMinutes = consultantProfile.user?.timezone
       ? getTimezoneOffsetMinutes(consultantProfile.user.timezone)
-      : 0;
-    // #503 — persist the DST-proof source of truth alongside the frozen
-    // offset; the slot math migrates read-side in the follow-up.
-    const timezone = consultantProfile.user?.timezone ?? null;
-    const localStartMinutes = toLocalMinutes(startTimeUtc, utcOffsetMinutes);
-    const localEndMinutes = toLocalMinutes(endTimeUtc, utcOffsetMinutes);
-    const localStartDay = toLocalDay(startDay, startTimeUtc, utcOffsetMinutes);
-    const localEndDay = toLocalDay(endDay, endTimeUtc, utcOffsetMinutes);
+      : 330; // #872 — IST-only at launch: default a missing timezone to IST, never UTC 0.
+    // TODO(#872): restore the local wall-clock + IANA-zone source of truth when
+    // non-IST consultants onboard; DST is parked post-MVP (IST-only at launch).
 
     const newWeeklySlot = await prisma.slotOfAvailabilityWeekly.create({
       data: {
@@ -194,11 +190,6 @@ export async function POST(req: NextRequest) {
         startTimeUtc,
         endTimeUtc,
         utcOffsetMinutes,
-        timezone,
-        localStartMinutes,
-        localEndMinutes,
-        localStartDay,
-        localEndDay,
       },
       include: {
         consultantProfile: {
@@ -218,6 +209,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ data: newWeeklySlot }, { status: 201 });
   } catch (error) {
     console.error("Error creating weekly slot:", error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "scheduling" } });
     return NextResponse.json(
       {
         error: "An error occurred while creating the weekly availability slot",

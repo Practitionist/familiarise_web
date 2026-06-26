@@ -12,7 +12,7 @@ import { experienceValidation } from "@/schemas/shared";
 import { checkActiveAppointments } from "../utils/consultant-appointments";
 import { getSession } from "@/lib/auth-server";
 import { apiError } from "@/lib/errors";
-import { toLocalMinutes, toLocalDay } from "@/utils/slotAllocation/localTime";
+import * as Sentry from "@sentry/nextjs";
 import {
   dateToMinuteUtc,
   validateWeeklySlotTimeOrder,
@@ -238,6 +238,7 @@ export async function GET(
       },
     );
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
     return apiError({ tag: "[Consultant.GET]", error });
   }
 }
@@ -382,7 +383,7 @@ export async function PUT(
           .then((u) => u?.timezone ?? null);
         const utcOffsetMinutes = userTimezone
           ? getTimezoneOffsetMinutes(userTimezone)
-          : 0;
+          : 330; // #872 — IST-only at launch: default a missing timezone to IST, never UTC 0.
 
         const weeklySlotData: Prisma.SlotOfAvailabilityWeeklyCreateManyInput[] =
           slotsOfAvailabilityWeekly.map((slot) => {
@@ -397,20 +398,8 @@ export async function PUT(
               startTimeUtc,
               endTimeUtc,
               utcOffsetMinutes,
-              // #503 — DST-proof columns written alongside the frozen offset.
-              timezone: userTimezone,
-              localStartMinutes: toLocalMinutes(startTimeUtc, utcOffsetMinutes),
-              localEndMinutes: toLocalMinutes(endTimeUtc, utcOffsetMinutes),
-              localStartDay: toLocalDay(
-                slot.dayOfWeekforStartTimeInUTC,
-                startTimeUtc,
-                utcOffsetMinutes,
-              ),
-              localEndDay: toLocalDay(
-                slot.dayOfWeekforEndTimeInUTC,
-                endTimeUtc,
-                utcOffsetMinutes,
-              ),
+              // TODO(#872): restore local wall-clock + IANA-zone source of truth
+              // for non-IST consultants; DST parked post-MVP (IST-only at launch).
             };
           });
 
@@ -565,6 +554,7 @@ export async function PUT(
 
     return NextResponse.json({ data: updatedConsultant });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
     return apiError({ tag: "[Consultant.PUT]", error });
   }
 }
@@ -667,6 +657,7 @@ export async function DELETE(
 
     return NextResponse.json({ message: "Consultant deleted successfully" });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
     return apiError({ tag: "[Consultant.DELETE]", error });
   }
 }

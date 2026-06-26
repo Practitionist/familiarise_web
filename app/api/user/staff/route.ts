@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { UserRole } from "@prisma/client";
@@ -73,6 +74,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(newUser, { status: 201 });
   } catch (error) {
     console.error("Error creating staff:", error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "staff" } });
     // Provide a generic error message
     return NextResponse.json(
       { message: "Internal Server Error" },
@@ -108,6 +110,7 @@ export async function GET(_request: NextRequest) {
     return NextResponse.json(staffUsers);
   } catch (error) {
     console.error("Failed to fetch staff users:", error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "staff" } });
     return NextResponse.json(
       { message: "Internal Server Error fetching staff" },
       { status: 500 },

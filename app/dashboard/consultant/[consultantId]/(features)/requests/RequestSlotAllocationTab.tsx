@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -8,20 +9,16 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+  ResponsiveModal,
+  ResponsiveModalContent,
+  ResponsiveModalDescription,
+  ResponsiveModalHeader,
+  ResponsiveModalTitle,
+} from "@/components/ui/responsive-modal";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+  ResponsiveTable,
+  type ResponsiveColumn,
+} from "@/components/ui/responsive-table";
 import { toast } from "@/components/ui/use-toast";
 import { AppointmentsType, AppointmentStatus } from "@prisma/client";
 import { AlertTriangle, CheckCircle2, RefreshCw } from "lucide-react";
@@ -313,6 +310,7 @@ export function RequestSlotAllocationTab({
       setRequests(processedRequests);
     } catch (err) {
       // This catch block now primarily handles errors during data *processing*
+      Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "client" } });
       console.error("Error processing fetched data:", err);
       setError(
         err instanceof Error
@@ -389,6 +387,7 @@ export function RequestSlotAllocationTab({
       // Notify parent
       onUpdate();
     } catch (error) {
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
       toast({
         title: "Error",
         description:
@@ -418,6 +417,7 @@ export function RequestSlotAllocationTab({
       setRequests((prev) => prev.filter((r) => r.id !== request.id));
       onUpdate();
     } catch (error) {
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
       toast({
         title: "Error",
         description:
@@ -478,10 +478,231 @@ export function RequestSlotAllocationTab({
     );
   }
 
+  const columns: ResponsiveColumn<Request>[] = [
+    {
+      key: "type",
+      header: "Type",
+      headClassName: "w-[110px]",
+      cell: (request) => getRequestTypeLabel(request.type),
+    },
+    {
+      key: "title",
+      header: "Title",
+      primary: true,
+      headClassName: "w-[150px]",
+      cell: (request) => request.title,
+    },
+    {
+      key: "requestedBy",
+      header: "Requested By",
+      headClassName: "w-[130px]",
+      cell: (request) => request.requestedBy.user.name,
+    },
+    {
+      key: "requestedAt",
+      header: "Requested At",
+      headClassName: "w-[130px]",
+      cell: (request) =>
+        new Date(request.requestedAt).toLocaleString(undefined, {
+          dateStyle: "medium",
+          timeStyle: "short",
+        }),
+    },
+    {
+      key: "requestedTimes",
+      header: "Requested Times",
+      cell: (request) => (
+        <>
+          {/* Reschedule indicator */}
+          {request.tentativeSlotCount !== undefined &&
+            request.tentativeSlotCount > 0 &&
+            request.totalSlotCount !== undefined && (
+              <div className="mb-2">
+                {request.tentativeSlotCount === request.totalSlotCount ? (
+                  <div className="flex items-center gap-1.5 text-xs font-medium text-foreground bg-secondary px-2 py-1 rounded-md">
+                    <RefreshCw className="h-3 w-3" />
+                    Full Reschedule (all {request.totalSlotCount} session
+                    {request.totalSlotCount !== 1 ? "s" : ""})
+                  </div>
+                ) : request.tentativeSlotCount === 1 ? (
+                  <div className="flex items-center gap-1.5 text-xs font-medium text-amber-600 bg-amber-50 px-2 py-1 rounded-md">
+                    <AlertTriangle className="h-3 w-3" />
+                    Individual Session (1 of {request.totalSlotCount} needs new
+                    time)
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1.5 text-xs font-medium text-amber-600 bg-amber-50 px-2 py-1 rounded-md">
+                    <AlertTriangle className="h-3 w-3" />
+                    Multiple Sessions ({request.tentativeSlotCount} of{" "}
+                    {request.totalSlotCount} need new times)
+                  </div>
+                )}
+              </div>
+            )}
+
+          {request.requestedSlots && request.requestedSlots.length > 0 ? (
+            <div className="space-y-1">
+              {request.requestedSlots.slice(0, 5).map((slot, index) => {
+                const date = new Date(slot.startsAt);
+                const isValidDate = !isNaN(date.getTime());
+
+                return (
+                  <div
+                    key={`${request.id}-slot-${index}`}
+                    className={`flex items-center gap-1.5 text-sm ${
+                      slot.isTentative
+                        ? "text-amber-600"
+                        : "text-muted-foreground"
+                    }`}
+                  >
+                    {slot.isTentative ? (
+                      <AlertTriangle className="h-3 w-3 flex-shrink-0" />
+                    ) : (
+                      <CheckCircle2 className="h-3 w-3 flex-shrink-0 text-green-500" />
+                    )}
+                    <span>
+                      {isValidDate
+                        ? date.toLocaleString(undefined, {
+                            dateStyle: "medium",
+                            timeStyle: "short",
+                          })
+                        : "Invalid date"}
+                    </span>
+                    {slot.isTentative && (
+                      <span className="text-xs text-amber-500">
+                        (needs rescheduling)
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+              {request.requestedSlots.length > 5 && (
+                <div className="text-xs text-muted-foreground pl-5">
+                  ... and {request.requestedSlots.length - 5} more slot
+                  {request.requestedSlots.length - 5 !== 1 ? "s" : ""}
+                </div>
+              )}
+            </div>
+          ) : request.requestedTimes && request.requestedTimes.length > 0 ? (
+            // Fallback to old format if requestedSlots not available
+            <div className="space-y-1">
+              {request.requestedTimes.slice(0, 5).map((time, index) => {
+                const date = new Date(time);
+                const isValidDate = !isNaN(date.getTime());
+
+                return (
+                  <div key={`${request.id}-time-${index}`} className="text-sm">
+                    {isValidDate
+                      ? date.toLocaleString(undefined, {
+                          dateStyle: "medium",
+                          timeStyle: "short",
+                        })
+                      : "Invalid date"}
+                  </div>
+                );
+              })}
+              {request.requestedTimes.length > 5 && (
+                <div className="text-xs text-muted-foreground">
+                  ... and {request.requestedTimes.length - 5} more slot
+                  {request.requestedTimes.length - 5 !== 1 ? "s" : ""}
+                </div>
+              )}
+            </div>
+          ) : request.type === AppointmentsType.SUBSCRIPTION &&
+            request.startDate &&
+            request.endDate ? (
+            <div className="text-sm">
+              <div className="font-medium text-foreground">
+                Scheduling Period
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {request.startDate.toLocaleDateString()} -{" "}
+                {request.endDate.toLocaleDateString()}
+              </div>
+            </div>
+          ) : (
+            <div className="text-sm text-muted-foreground">Not available</div>
+          )}
+        </>
+      ),
+    },
+    {
+      key: "requiredSlots",
+      header: "Required Slots",
+      headClassName: "w-[90px] text-center",
+      className: "text-center",
+      cell: (request) => request.requiredSlots,
+    },
+    {
+      key: "status",
+      header: "Status",
+      headClassName: "w-[120px]",
+      cell: (request) => (
+        <div className="flex flex-col gap-1">
+          <Badge variant={getRequestStatusBadgeVariant(request.status)}>
+            {getRequestStatusLabel(request.status)}
+          </Badge>
+          {request.status === AppointmentStatus.APPROVED_PENDING_PAYMENT && (
+            <PaymentRequiredBadge variant="full" />
+          )}
+        </div>
+      ),
+    },
+    {
+      key: "actions",
+      header: "Actions",
+      headClassName: "w-[150px]",
+      cell: (request) =>
+        request.status === AppointmentStatus.PENDING ? (
+          <div className="flex flex-col gap-1.5">
+            {/* Hide "Use Requested Times" for directly booked consultations (Bug #8 fix) */}
+            {request.requestedTimes &&
+              request.requestedTimes.length > 0 &&
+              request.bookingSource === "REQUEST_SUBMITTED" && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="w-full"
+                  onClick={() => {
+                    setSelectedRequestForDialog(request);
+                    setRequestedSlotsDialogOpen(true);
+                  }}
+                >
+                  Use Requested Times
+                </Button>
+              )}
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full"
+              onClick={() => {
+                setSelectedRequest(request);
+                setDialogOpen(true);
+              }}
+            >
+              Allocate Slots
+            </Button>
+            {request.type === AppointmentsType.CONSULTATION && (
+              <Button
+                variant="destructive"
+                size="sm"
+                className="w-full"
+                onClick={() => handleDecline(request)}
+              >
+                Decline
+              </Button>
+            )}
+          </div>
+        ) : null,
+    },
+  ];
+
   return (
     <Card className="border-0 shadow-none rounded-none">
       <CardHeader>
-        <CardTitle className="text-xl font-bold">Requests</CardTitle>
+        <CardTitle className="text-fluid-xl font-semibold tracking-tight">
+          Requests
+        </CardTitle>
         <CardDescription>
           Review and allocate slots for incoming session requests
         </CardDescription>
@@ -489,248 +710,31 @@ export function RequestSlotAllocationTab({
       <CardContent className="p-0 sm:p-6">
         {requests.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-center">
-            <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-zinc-100">
-              <AlertTriangle className="h-8 w-8 text-zinc-400" />
+            <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-muted">
+              <AlertTriangle className="h-8 w-8 text-muted-foreground/70" />
             </div>
-            <h4 className="text-lg font-semibold text-zinc-900">
+            <h4 className="text-lg font-semibold text-foreground">
               No pending requests
             </h4>
-            <p className="mt-2 max-w-sm text-sm text-zinc-500">
+            <p className="mt-2 max-w-sm text-sm text-muted-foreground">
               When consultees request sessions through your profile, they will
               appear here for slot allocation.
             </p>
           </div>
         ) : (
-        <div className="overflow-x-auto w-full">
-          <Table className="w-full min-w-[820px]">
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-[110px]">Type</TableHead>
-                <TableHead className="w-[150px]">Title</TableHead>
-                <TableHead className="w-[130px]">Requested By</TableHead>
-                <TableHead className="w-[130px]">Requested At</TableHead>
-                <TableHead>Requested Times</TableHead>
-                <TableHead className="w-[90px] text-center">
-                  Required Slots
-                </TableHead>
-                <TableHead className="w-[120px]">Status</TableHead>
-                <TableHead className="w-[150px]">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {requests.map((request) => (
-                <TableRow key={request.id}>
-                  <TableCell>{getRequestTypeLabel(request.type)}</TableCell>
-                  <TableCell>{request.title}</TableCell>
-                  <TableCell>{request.requestedBy.user.name}</TableCell>
-                  <TableCell>
-                    {new Date(request.requestedAt).toLocaleString(undefined, {
-                      dateStyle: "medium",
-                      timeStyle: "short",
-                    })}
-                  </TableCell>
-                  <TableCell>
-                    {/* Reschedule indicator */}
-                    {request.tentativeSlotCount !== undefined &&
-                      request.tentativeSlotCount > 0 &&
-                      request.totalSlotCount !== undefined && (
-                        <div className="mb-2">
-                          {request.tentativeSlotCount ===
-                          request.totalSlotCount ? (
-                            <div className="flex items-center gap-1.5 text-xs font-medium text-blue-600 bg-blue-50 px-2 py-1 rounded-md">
-                              <RefreshCw className="h-3 w-3" />
-                              Full Reschedule (all {request.totalSlotCount}{" "}
-                              session
-                              {request.totalSlotCount !== 1 ? "s" : ""})
-                            </div>
-                          ) : request.tentativeSlotCount === 1 ? (
-                            <div className="flex items-center gap-1.5 text-xs font-medium text-amber-600 bg-amber-50 px-2 py-1 rounded-md">
-                              <AlertTriangle className="h-3 w-3" />
-                              Individual Session (1 of {
-                                request.totalSlotCount
-                              }{" "}
-                              needs new time)
-                            </div>
-                          ) : (
-                            <div className="flex items-center gap-1.5 text-xs font-medium text-amber-600 bg-amber-50 px-2 py-1 rounded-md">
-                              <AlertTriangle className="h-3 w-3" />
-                              Multiple Sessions ({
-                                request.tentativeSlotCount
-                              } of {request.totalSlotCount} need new times)
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                    {request.requestedSlots &&
-                    request.requestedSlots.length > 0 ? (
-                      <div className="space-y-1">
-                        {request.requestedSlots
-                          .slice(0, 5)
-                          .map((slot, index) => {
-                            const date = new Date(slot.startsAt);
-                            const isValidDate = !isNaN(date.getTime());
-
-                            return (
-                              <div
-                                key={`${request.id}-slot-${index}`}
-                                className={`flex items-center gap-1.5 text-sm ${
-                                  slot.isTentative
-                                    ? "text-amber-600"
-                                    : "text-muted-foreground"
-                                }`}
-                              >
-                                {slot.isTentative ? (
-                                  <AlertTriangle className="h-3 w-3 flex-shrink-0" />
-                                ) : (
-                                  <CheckCircle2 className="h-3 w-3 flex-shrink-0 text-green-500" />
-                                )}
-                                <span>
-                                  {isValidDate
-                                    ? date.toLocaleString(undefined, {
-                                        dateStyle: "medium",
-                                        timeStyle: "short",
-                                      })
-                                    : "Invalid date"}
-                                </span>
-                                {slot.isTentative && (
-                                  <span className="text-xs text-amber-500">
-                                    (needs rescheduling)
-                                  </span>
-                                )}
-                              </div>
-                            );
-                          })}
-                        {request.requestedSlots.length > 5 && (
-                          <div className="text-xs text-muted-foreground pl-5">
-                            ... and {request.requestedSlots.length - 5} more
-                            slot
-                            {request.requestedSlots.length - 5 !== 1 ? "s" : ""}
-                          </div>
-                        )}
-                      </div>
-                    ) : request.requestedTimes &&
-                      request.requestedTimes.length > 0 ? (
-                      // Fallback to old format if requestedSlots not available
-                      <div className="space-y-1">
-                        {request.requestedTimes
-                          .slice(0, 5)
-                          .map((time, index) => {
-                            const date = new Date(time);
-                            const isValidDate = !isNaN(date.getTime());
-
-                            return (
-                              <div
-                                key={`${request.id}-time-${index}`}
-                                className="text-sm"
-                              >
-                                {isValidDate
-                                  ? date.toLocaleString(undefined, {
-                                      dateStyle: "medium",
-                                      timeStyle: "short",
-                                    })
-                                  : "Invalid date"}
-                              </div>
-                            );
-                          })}
-                        {request.requestedTimes.length > 5 && (
-                          <div className="text-xs text-muted-foreground">
-                            ... and {request.requestedTimes.length - 5} more
-                            slot
-                            {request.requestedTimes.length - 5 !== 1 ? "s" : ""}
-                          </div>
-                        )}
-                      </div>
-                    ) : request.type === AppointmentsType.SUBSCRIPTION &&
-                      request.startDate &&
-                      request.endDate ? (
-                      <div className="text-sm">
-                        <div className="font-medium text-blue-600">
-                          Scheduling Period
-                        </div>
-                        <div className="text-xs text-muted-foreground">
-                          {request.startDate.toLocaleDateString()} -{" "}
-                          {request.endDate.toLocaleDateString()}
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="text-sm text-muted-foreground">
-                        Not available
-                      </div>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-center">
-                    {request.requiredSlots}
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex flex-col gap-1">
-                      <Badge
-                        variant={getRequestStatusBadgeVariant(request.status)}
-                      >
-                        {getRequestStatusLabel(request.status)}
-                      </Badge>
-                      {request.status ===
-                        AppointmentStatus.APPROVED_PENDING_PAYMENT && (
-                        <PaymentRequiredBadge variant="full" />
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    {request.status === AppointmentStatus.PENDING && (
-                      <div className="flex flex-col gap-1.5">
-                        {/* Hide "Use Requested Times" for directly booked consultations (Bug #8 fix) */}
-                        {request.requestedTimes &&
-                          request.requestedTimes.length > 0 &&
-                          request.bookingSource === "REQUEST_SUBMITTED" && (
-                            <Button
-                              variant="secondary"
-                              size="sm"
-                              className="w-full"
-                              onClick={() => {
-                                setSelectedRequestForDialog(request);
-                                setRequestedSlotsDialogOpen(true);
-                              }}
-                            >
-                              Use Requested Times
-                            </Button>
-                          )}
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="w-full"
-                          onClick={() => {
-                            setSelectedRequest(request);
-                            setDialogOpen(true);
-                          }}
-                        >
-                          Allocate Slots
-                        </Button>
-                        {request.type === AppointmentsType.CONSULTATION && (
-                          <Button
-                            variant="destructive"
-                            size="sm"
-                            className="w-full"
-                            onClick={() => handleDecline(request)}
-                          >
-                            Decline
-                          </Button>
-                        )}
-                      </div>
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
+          <ResponsiveTable<Request>
+            columns={columns}
+            rows={requests}
+            getRowId={(r) => r.id}
+          />
         )}
 
         {/* Single Allocation Dialog - moved outside map loop to prevent multiple dialogs */}
-        <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-          <DialogContent className="max-w-[95vw] w-[1400px]">
-            <DialogHeader>
-              <DialogTitle>Allocate Slots</DialogTitle>
-              <DialogDescription asChild>
+        <ResponsiveModal open={dialogOpen} onOpenChange={setDialogOpen}>
+          <ResponsiveModalContent className="max-w-[95vw] w-[1400px]">
+            <ResponsiveModalHeader>
+              <ResponsiveModalTitle>Allocate Slots</ResponsiveModalTitle>
+              <ResponsiveModalDescription asChild>
                 {selectedRequest && (
                   <div className="space-y-1 text-sm text-muted-foreground">
                     <p>
@@ -763,7 +767,7 @@ export function RequestSlotAllocationTab({
                         </p>
                       )}
                     {selectedRequest.startDate && selectedRequest.endDate && (
-                      <p className="text-xs text-blue-600">
+                      <p className="text-xs text-muted-foreground">
                         Scheduling period:{" "}
                         {selectedRequest.startDate.toLocaleDateString()} -{" "}
                         {selectedRequest.endDate.toLocaleDateString()}
@@ -771,8 +775,8 @@ export function RequestSlotAllocationTab({
                     )}
                   </div>
                 )}
-              </DialogDescription>
-            </DialogHeader>
+              </ResponsiveModalDescription>
+            </ResponsiveModalHeader>
             {selectedRequest && (
               <SafeUnifiedCalendar
                 consultantId={consultantId}
@@ -814,8 +818,8 @@ export function RequestSlotAllocationTab({
                 }
               />
             )}
-          </DialogContent>
-        </Dialog>
+          </ResponsiveModalContent>
+        </ResponsiveModal>
 
         <RequestedSlotsDialog
           open={requestedSlotsDialogOpen}

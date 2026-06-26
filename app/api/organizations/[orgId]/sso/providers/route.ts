@@ -13,6 +13,7 @@
  * setup instructions stay aligned with what BetterAuth actually mounts.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { randomUUID } from "crypto";
 import prisma from "@/lib/prisma";
@@ -227,6 +228,7 @@ export async function POST(
         { status },
       );
     }
+    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
     throw err;
   }
 }

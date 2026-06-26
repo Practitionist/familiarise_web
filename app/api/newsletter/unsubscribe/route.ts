@@ -10,6 +10,7 @@
  * - Always returns same HTML regardless of subscriber existence (prevents enumeration)
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getAppUrl } from "@/lib/url";
@@ -57,6 +58,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       searchParams.get("token"),
     );
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "newsletter" } });
     console.error("[newsletter/unsubscribe] Error:", error);
     return NextResponse.json(
       { error: "Failed to unsubscribe. Please try again." },

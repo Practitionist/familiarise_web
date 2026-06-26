@@ -255,6 +255,8 @@ When a user is notified of an available spot, they can respond in one of three w
 3. Updates positions for all affected events
 4. Slot handler is called separately to notify the next person in queue
 
+The hourly sweep is idempotent by `expiresAt`: it acts only on entries that are still `NOTIFIED` and whose `expiresAt` has already passed, and marking an entry `EXPIRED` removes it from the next run's candidate set. Because the query is keyed on the deadline rather than on the current hour, a run that is skipped, delayed, or fired twice causes no double-processing or missed work. The next successful run simply picks up every entry whose `expiresAt` is now in the past, so any expirations that accumulated during the skipped hours are caught up in a single pass.
+
 ---
 
 ## API Functions

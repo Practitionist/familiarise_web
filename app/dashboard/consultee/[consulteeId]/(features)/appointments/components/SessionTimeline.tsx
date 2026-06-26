@@ -166,7 +166,7 @@ export function SessionTimeline({
       {/* Dot summary when collapsed */}
       {dotSummary && dotSummary.length > 0 && (
         <div className="flex items-center gap-0.5 px-1 py-1 text-xs">
-          <span className="text-zinc-400 mr-1">Sessions:</span>
+          <span className="text-muted-foreground/70 mr-1">Sessions:</span>
           {dotSummary.map((dot, i) => (
             <span key={i} className="text-[10px]">
               {dot}
@@ -187,8 +187,8 @@ export function SessionTimeline({
             className={cn(
               "flex items-center gap-2 px-2 py-1.5 rounded-md text-xs transition-colors",
               isJoinable
-                ? "bg-green-50 border border-green-200 cursor-pointer hover:bg-green-100"
-                : "bg-zinc-50",
+                ? "bg-green-50 border border-green-200 cursor-pointer hover:bg-green-100 dark:bg-green-900/20 dark:border-green-900/40 dark:hover:bg-green-900/30"
+                : "bg-muted",
               status === "completed" && "opacity-70",
               status === "noRecord" && "opacity-80",
             )}
@@ -220,10 +220,10 @@ export function SessionTimeline({
 
             {/* Date + time range */}
             <div className="flex-1 min-w-0">
-              <span className="font-medium text-zinc-700">
+              <span className="font-medium text-foreground">
                 {format(session.startTime, "MMM d")}
               </span>
-              <span className="text-zinc-400 ml-2">
+              <span className="text-muted-foreground/70 ml-2">
                 {format(session.startTime, "h:mm a")}
                 {" - "}
                 {format(session.endTime, "h:mm a")}
@@ -238,7 +238,7 @@ export function SessionTimeline({
                   onJoinSlot(joinableSlot);
                 }}
                 disabled={isJoining}
-                className="flex items-center gap-1 px-2 py-0.5 rounded bg-green-600 text-white text-[10px] font-semibold hover:bg-green-700 disabled:opacity-50"
+                className="flex items-center gap-1 px-2 py-0.5 rounded bg-green-600 text-white text-[10px] font-semibold hover:bg-green-700 disabled:opacity-50 dark:bg-green-600 dark:hover:bg-green-500"
               >
                 {isJoining ? (
                   <Loader2 className="h-3 w-3 animate-spin" />
@@ -257,9 +257,10 @@ export function SessionTimeline({
               <span
                 className={cn(
                   "text-[10px] font-medium uppercase",
-                  status === "completed" && "text-zinc-400",
-                  status === "noRecord" && "text-amber-500",
-                  status === "upcoming" && "text-zinc-400",
+                  status === "completed" && "text-muted-foreground/70",
+                  status === "noRecord" &&
+                    "text-amber-500 dark:text-amber-400",
+                  status === "upcoming" && "text-muted-foreground/70",
                 )}
                 title={
                   status === "noRecord"
@@ -278,7 +279,7 @@ export function SessionTimeline({
       {showExpand && (
         <button
           onClick={() => setExpanded(!expanded)}
-          className="flex items-center gap-1 w-full justify-center py-1 text-xs text-zinc-500 hover:text-zinc-700"
+          className="flex items-center gap-1 w-full justify-center py-1 text-xs text-muted-foreground hover:text-foreground"
         >
           <ChevronDown
             className={cn(

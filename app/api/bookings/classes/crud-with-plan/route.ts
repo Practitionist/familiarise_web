@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { ClassPlanSchema, ClassContentSchema } from "@/schemas/plans";
 import { ClassStatus, Prisma } from "@prisma/client";
@@ -266,6 +267,10 @@ export async function POST(request: NextRequest) {
                           startsAt: slotStart,
                           endsAt: slotEnd,
                           isTentative: true, // Mark as tentative until confirmed
+                          // #784 — owner denormalized so the overlap exclusion
+                          // guards the host once the session is confirmed
+                          // (constraint applies WHERE NOT isTentative).
+                          consultantProfileId,
                         },
                       },
                     };
@@ -331,6 +336,7 @@ export async function POST(request: NextRequest) {
         console.error("Prisma Error Meta:", error.meta);
       }
     }
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
     return NextResponse.json(
       { error: errorMessage, details: errorDetails }, // Return more details
       { status: 500 },
@@ -816,6 +822,7 @@ export async function PATCH(request: NextRequest) {
           "Failed to notify waitlist after capacity increase:",
           waitlistError,
         );
+        Sentry.captureException(waitlistError instanceof Error ? waitlistError : new Error(String(waitlistError)), { tags: { subsystem: "bookings" } });
       }
     }
 
@@ -865,6 +872,7 @@ export async function PATCH(request: NextRequest) {
       );
     }
 
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
     return NextResponse.json(
       { error: "An error occurred while updating the class" },
       { status: 500 },

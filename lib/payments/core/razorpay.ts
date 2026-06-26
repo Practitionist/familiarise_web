@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import Razorpay from "razorpay";
 import {
   PaymentIntentParams,
@@ -65,12 +66,18 @@ export async function createRazorpayOrder({
   }
 
   try {
-    const order = await razorpayClient.orders.create({
-      amount: amount, // already in smallest currency unit (paise)
-      currency,
-      notes: metadata,
-      receipt: `receipt_${Date.now()}`,
-    });
+    const order = await Sentry.startSpan(
+      { op: "http.client", name: "razorpay.createOrder" },
+      () =>
+        razorpayClient.orders.create({
+          amount: amount, // already in smallest currency unit (paise)
+          currency,
+          notes: metadata,
+          // PM-11 — Date.now() collides for two orders in the same ms; the uuid
+          // suffix keeps the receipt unique so Razorpay doesn't reject the dupe.
+          receipt: `receipt_${Date.now()}_${globalThis.crypto.randomUUID().slice(0, 8)}`,
+        }),
+    );
 
     return {
       id: order.id,
@@ -81,6 +88,10 @@ export async function createRazorpayOrder({
     };
   } catch (error) {
     console.error("Razorpay order creation failed:", error);
+    Sentry.captureException(error, {
+      tags: { subsystem: "payments", provider: "razorpay" },
+      contexts: { payment: { amount, currency } },
+    });
     throw handleRazorpayError(error);
   }
 }
@@ -148,7 +159,11 @@ export async function createRazorpayRefund({
       );
     }
 
-    const payment = payments.items[0];
+    // PM-12 — an order can carry failed attempts before the captured one;
+    // items[0] is creation-ordered, so refunding it blindly can target a
+    // non-captured payment. Prefer the captured payment.
+    const payment =
+      payments.items.find((p) => p.status === "captured") ?? payments.items[0];
 
     // Create refund on the payment
     const refund = await razorpayClient.payments.refund(payment.id, {
@@ -170,6 +185,9 @@ export async function createRazorpayRefund({
     };
   } catch (error) {
     console.error("Razorpay refund creation failed:", error);
+    Sentry.captureException(error, {
+      tags: { subsystem: "payments", provider: "razorpay" },
+    });
     throw handleRazorpayRefundError(error);
   }
 }
@@ -202,6 +220,9 @@ export async function getRazorpayRefund(
     };
   } catch (error) {
     console.error("Razorpay refund retrieval failed:", error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), {
+      tags: { subsystem: "payments", provider: "razorpay" },
+    });
     throw handleRazorpayRefundError(error);
   }
 }
@@ -228,7 +249,10 @@ export async function listRazorpayRefunds(
     if (payments.count === 0) {
       return []; // No payments for this order, so no refunds
     }
-    const paymentId = payments.items[0].id;
+    // PM-12 — prefer the captured payment over a failed earlier attempt.
+    const paymentId = (
+      payments.items.find((p) => p.status === "captured") ?? payments.items[0]
+    ).id;
 
     // Fetch refunds for the specific payment using the SDK method
     const refundsResponse = await razorpayClient.payments.fetchMultipleRefund(
@@ -247,6 +271,9 @@ export async function listRazorpayRefunds(
     }));
   } catch (error) {
     console.error("Razorpay refunds list failed:", error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), {
+      tags: { subsystem: "payments", provider: "razorpay" },
+    });
     throw handleRazorpayRefundError(error);
   }
 }

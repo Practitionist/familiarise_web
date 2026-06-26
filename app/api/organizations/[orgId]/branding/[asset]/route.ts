@@ -11,6 +11,7 @@
  * the column. OWNER-only on both verbs — branding is a settings surface.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
@@ -142,6 +143,7 @@ export async function POST(
 
     return NextResponse.json({ organization: updated });
   } catch (err) {
+    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
     console.error(`Failed to persist organization ${asset}:`, err);
     return NextResponse.json(
       { error: "Failed to update organization branding" },
@@ -222,6 +224,7 @@ export async function DELETE(
 
     return NextResponse.json({ organization: updated });
   } catch (err) {
+    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
     console.error(`Failed to clear organization ${asset}:`, err);
     return NextResponse.json(
       { error: "Failed to update organization branding" },

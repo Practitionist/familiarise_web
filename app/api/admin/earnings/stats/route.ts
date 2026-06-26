@@ -3,6 +3,7 @@
  * Get earnings statistics for admin dashboard
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { getEarningsStats } from "@/lib/payments/payouts/earnings-service";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
@@ -20,6 +21,7 @@ export async function GET(_req: NextRequest) {
 
     return NextResponse.json({ stats });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
     console.error("Error fetching earnings stats:", error);
     return NextResponse.json(
       { error: "Failed to fetch earnings stats" },

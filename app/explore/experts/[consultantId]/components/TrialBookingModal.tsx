@@ -1,5 +1,6 @@
 "use client";
 
+import * as Sentry from "@sentry/nextjs";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "@/lib/auth-client";
@@ -117,6 +118,7 @@ export function TrialBookingModal({
         setNotes("");
       }, 2000);
     } catch (error) {
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
       console.error("Error requesting trial:", error);
       toast({
         title: "Error",
@@ -143,7 +145,7 @@ export function TrialBookingModal({
             </DialogDescription>
           </DialogHeader>
           <div className="py-6 text-center">
-            <p className="text-gray-600 mb-4">
+            <p className="text-muted-foreground mb-4">
               Please sign in to request a free trial with {consultantName}
             </p>
             <Button onClick={() => router.push("/auth/signin")}>
@@ -163,10 +165,10 @@ export function TrialBookingModal({
             <div className="mx-auto w-16 h-16 bg-emerald-100 rounded-full flex items-center justify-center mb-4">
               <CheckCircle className="h-8 w-8 text-emerald-600" />
             </div>
-            <h3 className="text-xl font-semibold text-gray-900 mb-2">
+            <h3 className="text-xl font-semibold text-foreground mb-2">
               Trial Requested!
             </h3>
-            <p className="text-gray-600">
+            <p className="text-muted-foreground">
               {consultantName} will review your request and get back to you
               soon.
             </p>
@@ -192,9 +194,9 @@ export function TrialBookingModal({
 
         <div className="space-y-4 py-4">
           {/* Plan Info */}
-          <div className="bg-gray-50 rounded-lg p-4">
-            <p className="text-sm font-medium text-gray-900">{planTitle}</p>
-            <div className="flex items-center gap-2 mt-2 text-sm text-gray-600">
+          <div className="bg-muted rounded-lg p-4">
+            <p className="text-sm font-medium text-foreground">{planTitle}</p>
+            <div className="flex items-center gap-2 mt-2 text-sm text-muted-foreground">
               <Clock className="h-4 w-4" />
               <span>{trialDurationMinutes} minute free trial</span>
             </div>
@@ -212,13 +214,13 @@ export function TrialBookingModal({
               onChange={(e) => setNotes(e.target.value)}
               className="min-h-[100px]"
             />
-            <p className="text-xs text-gray-500">
+            <p className="text-xs text-muted-foreground">
               This helps the consultant prepare for your session
             </p>
           </div>
 
           {/* Info */}
-          <div className="bg-blue-50 rounded-lg p-4 text-sm text-blue-700">
+          <div className="bg-muted rounded-lg p-4 text-sm text-muted-foreground">
             <p>
               After submitting, the consultant will review your request and
               contact you to schedule a time that works for both of you.

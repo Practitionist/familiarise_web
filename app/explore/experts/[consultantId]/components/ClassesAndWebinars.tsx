@@ -92,7 +92,7 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
         className="group"
       >
         <div
-          className="relative bg-white rounded-2xl border border-zinc-200 overflow-hidden hover:border-zinc-300 hover:shadow-xl transition-all duration-300 cursor-pointer h-full flex flex-col"
+          className="relative bg-card rounded-2xl border border-border overflow-hidden hover:border-muted-foreground/30 hover:shadow-xl transition-all duration-300 cursor-pointer h-full flex flex-col"
           onClick={() =>
             router.push(`/explore/programs/plans/classes/${classPlan.id}`)
           }
@@ -124,30 +124,30 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
 
           {/* Content */}
           <div className="p-4 sm:p-5 md:p-6 flex flex-col flex-1 min-w-0">
-            <h3 className="text-base sm:text-lg font-semibold text-zinc-900 mb-2 line-clamp-2 group-hover:text-zinc-700 transition-colors min-h-[2.5rem] sm:min-h-[3rem]">
+            <h3 className="text-base sm:text-lg font-semibold text-foreground mb-2 line-clamp-2 group-hover:text-muted-foreground transition-colors min-h-[2.5rem] sm:min-h-[3rem]">
               {classPlan.title}
             </h3>
 
-            <p className="text-xs sm:text-sm text-zinc-500 mb-3 sm:mb-4 line-clamp-3 min-h-[3rem] sm:min-h-[3.75rem]">
+            <p className="text-xs sm:text-sm text-muted-foreground mb-3 sm:mb-4 line-clamp-3 min-h-[3rem] sm:min-h-[3.75rem]">
               {classPlan.description}
             </p>
 
             {/* Stats Row */}
             <div className="flex flex-wrap gap-x-3 gap-y-1 mb-3 sm:mb-4">
-              <div className="flex items-center gap-1 sm:gap-1.5 text-[11px] sm:text-xs text-zinc-500">
+              <div className="flex items-center gap-1 sm:gap-1.5 text-[11px] sm:text-xs text-muted-foreground">
                 <Clock className="w-3 h-3 sm:w-3.5 sm:h-3.5 flex-shrink-0" />
                 <span className="whitespace-nowrap">
                   {classPlan.durationInMonths} month
                   {classPlan.durationInMonths > 1 ? "s" : ""}
                 </span>
               </div>
-              <div className="flex items-center gap-1 sm:gap-1.5 text-[11px] sm:text-xs text-zinc-500">
+              <div className="flex items-center gap-1 sm:gap-1.5 text-[11px] sm:text-xs text-muted-foreground">
                 <Users className="w-3 h-3 sm:w-3.5 sm:h-3.5 flex-shrink-0" />
                 <span className="whitespace-nowrap">
                   {classPlan.maxParticipants} max
                 </span>
               </div>
-              <div className="flex items-center gap-1 sm:gap-1.5 text-[11px] sm:text-xs text-zinc-500">
+              <div className="flex items-center gap-1 sm:gap-1.5 text-[11px] sm:text-xs text-muted-foreground">
                 <GraduationCap className="w-3 h-3 sm:w-3.5 sm:h-3.5 flex-shrink-0" />
                 <span>{classPlan.level}</span>
               </div>
@@ -157,7 +157,7 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
             <div className="flex flex-wrap gap-1.5 sm:gap-2 mb-4">
               <Badge
                 variant="secondary"
-                className="text-[10px] sm:text-xs bg-zinc-100 text-zinc-600 h-fit"
+                className="text-[10px] sm:text-xs bg-muted text-muted-foreground h-fit"
               >
                 <Globe className="w-2.5 h-2.5 sm:w-3 sm:h-3 mr-0.5 sm:mr-1" />
                 {classPlan.language}
@@ -175,7 +175,7 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
 
             {/* CTA */}
             <Button
-              className="w-full bg-zinc-900 hover:bg-zinc-800 text-white rounded-xl h-10 sm:h-11 text-sm font-medium group/btn mt-auto"
+              className="w-full bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl h-10 sm:h-11 text-sm font-medium group/btn mt-auto"
               onClick={(e) => {
                 e.stopPropagation();
                 router.push(`/explore/programs/plans/classes/${classPlan.id}`);
@@ -204,7 +204,7 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
         className="group"
       >
         <div
-          className="relative bg-white rounded-2xl border border-zinc-200 overflow-hidden hover:border-zinc-300 hover:shadow-xl transition-all duration-300 cursor-pointer h-full flex flex-col"
+          className="relative bg-card rounded-2xl border border-border overflow-hidden hover:border-muted-foreground/30 hover:shadow-xl transition-all duration-300 cursor-pointer h-full flex flex-col"
           onClick={() =>
             router.push(`/explore/programs/plans/webinars/${webinarPlan.id}`)
           }
@@ -236,30 +236,30 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
 
           {/* Content */}
           <div className="p-4 sm:p-5 md:p-6 flex flex-col flex-1 min-w-0">
-            <h3 className="text-base sm:text-lg font-semibold text-zinc-900 mb-2 line-clamp-2 group-hover:text-zinc-700 transition-colors min-h-[2.5rem] sm:min-h-[3rem]">
+            <h3 className="text-base sm:text-lg font-semibold text-foreground mb-2 line-clamp-2 group-hover:text-muted-foreground transition-colors min-h-[2.5rem] sm:min-h-[3rem]">
               {webinarPlan.title}
             </h3>
 
-            <p className="text-xs sm:text-sm text-zinc-500 mb-3 sm:mb-4 line-clamp-3 min-h-[3rem] sm:min-h-[3.75rem]">
+            <p className="text-xs sm:text-sm text-muted-foreground mb-3 sm:mb-4 line-clamp-3 min-h-[3rem] sm:min-h-[3.75rem]">
               {webinarPlan.description}
             </p>
 
             {/* Stats Row */}
             <div className="flex flex-wrap gap-x-3 gap-y-1 mb-3 sm:mb-4">
-              <div className="flex items-center gap-1 sm:gap-1.5 text-[11px] sm:text-xs text-zinc-500">
+              <div className="flex items-center gap-1 sm:gap-1.5 text-[11px] sm:text-xs text-muted-foreground">
                 <Clock className="w-3 h-3 sm:w-3.5 sm:h-3.5 flex-shrink-0" />
                 <span className="whitespace-nowrap">
                   {webinarPlan.durationInHours} hour
                   {webinarPlan.durationInHours > 1 ? "s" : ""}
                 </span>
               </div>
-              <div className="flex items-center gap-1 sm:gap-1.5 text-[11px] sm:text-xs text-zinc-500">
+              <div className="flex items-center gap-1 sm:gap-1.5 text-[11px] sm:text-xs text-muted-foreground">
                 <Users className="w-3 h-3 sm:w-3.5 sm:h-3.5 flex-shrink-0" />
                 <span className="whitespace-nowrap">
                   {webinarPlan.maxParticipants} max
                 </span>
               </div>
-              <div className="flex items-center gap-1 sm:gap-1.5 text-[11px] sm:text-xs text-zinc-500">
+              <div className="flex items-center gap-1 sm:gap-1.5 text-[11px] sm:text-xs text-muted-foreground">
                 <GraduationCap className="w-3 h-3 sm:w-3.5 sm:h-3.5 flex-shrink-0" />
                 <span>{webinarPlan.level}</span>
               </div>
@@ -269,14 +269,14 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
             <div className="flex flex-wrap gap-1.5 sm:gap-2 mb-4">
               <Badge
                 variant="secondary"
-                className="text-[10px] sm:text-xs bg-zinc-100 text-zinc-600 h-fit"
+                className="text-[10px] sm:text-xs bg-muted text-muted-foreground h-fit"
               >
                 <Globe className="w-2.5 h-2.5 sm:w-3 sm:h-3 mr-0.5 sm:mr-1" />
                 {webinarPlan.language}
               </Badge>
               <Badge
                 variant="secondary"
-                className="text-[10px] sm:text-xs bg-zinc-100 text-zinc-600 h-fit"
+                className="text-[10px] sm:text-xs bg-muted text-muted-foreground h-fit"
               >
                 <Video className="w-2.5 h-2.5 sm:w-3 sm:h-3 mr-0.5 sm:mr-1" />
                 Live
@@ -285,7 +285,7 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
 
             {/* CTA */}
             <Button
-              className="w-full bg-zinc-900 hover:bg-zinc-800 text-white rounded-xl h-10 sm:h-11 text-sm font-medium group/btn mt-auto"
+              className="w-full bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl h-10 sm:h-11 text-sm font-medium group/btn mt-auto"
               onClick={(e) => {
                 e.stopPropagation();
                 router.push(
@@ -304,19 +304,19 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
 
   return (
     <div>
-      <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
+      <div className="bg-card rounded-2xl border border-border overflow-hidden">
         {/* Header with Tabs */}
-        <div className="border-b border-zinc-200 px-6 md:px-8 py-5">
+        <div className="border-b border-border px-6 md:px-8 py-5">
           <div className="flex items-center justify-between flex-wrap gap-4">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-zinc-100 flex items-center justify-center">
-                <GraduationCap className="w-5 h-5 text-zinc-600" />
+              <div className="w-10 h-10 rounded-xl bg-muted flex items-center justify-center">
+                <GraduationCap className="w-5 h-5 text-muted-foreground" />
               </div>
               <div>
-                <h2 className="text-lg font-semibold text-zinc-900">
+                <h2 className="text-lg font-semibold text-foreground">
                   Programs by this Expert
                 </h2>
-                <p className="text-sm text-zinc-500">
+                <p className="text-sm text-muted-foreground">
                   {classPlans.length} class{classPlans.length !== 1 ? "es" : ""}{" "}
                   • {webinarPlans.length} webinar
                   {webinarPlans.length !== 1 ? "s" : ""}
@@ -326,19 +326,19 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
 
             {/* Tabs */}
             {hasClasses && hasWebinars && (
-              <div className="flex bg-zinc-100 rounded-xl p-1">
+              <div className="flex bg-muted rounded-xl p-1">
                 <button
                   onClick={() => setActiveTab("classes")}
                   className={`relative px-4 py-2 text-sm font-medium rounded-lg transition-all ${
                     activeTab === "classes"
-                      ? "text-zinc-900"
-                      : "text-zinc-500 hover:text-zinc-700"
+                      ? "text-foreground"
+                      : "text-muted-foreground hover:text-foreground"
                   }`}
                 >
                   {activeTab === "classes" && (
                     <motion.div
                       layoutId="activeTab"
-                      className="absolute inset-0 bg-white rounded-lg shadow-sm"
+                      className="absolute inset-0 bg-card rounded-lg shadow-sm"
                       transition={{
                         type: "spring",
                         bounce: 0.2,
@@ -355,14 +355,14 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
                   onClick={() => setActiveTab("webinars")}
                   className={`relative px-4 py-2 text-sm font-medium rounded-lg transition-all ${
                     activeTab === "webinars"
-                      ? "text-zinc-900"
-                      : "text-zinc-500 hover:text-zinc-700"
+                      ? "text-foreground"
+                      : "text-muted-foreground hover:text-foreground"
                   }`}
                 >
                   {activeTab === "webinars" && (
                     <motion.div
                       layoutId="activeTab"
-                      className="absolute inset-0 bg-white rounded-lg shadow-sm"
+                      className="absolute inset-0 bg-card rounded-lg shadow-sm"
                       transition={{
                         type: "spring",
                         bounce: 0.2,
@@ -422,14 +422,14 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
                 animate={{ opacity: 1 }}
                 className="text-center py-12"
               >
-                <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-zinc-100 flex items-center justify-center">
+                <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-muted flex items-center justify-center">
                   {activeTab === "classes" ? (
-                    <BookOpen className="w-8 h-8 text-zinc-400" />
+                    <BookOpen className="w-8 h-8 text-muted-foreground/70" />
                   ) : (
-                    <Video className="w-8 h-8 text-zinc-400" />
+                    <Video className="w-8 h-8 text-muted-foreground/70" />
                   )}
                 </div>
-                <p className="text-zinc-500">
+                <p className="text-muted-foreground">
                   No {activeTab === "classes" ? "classes" : "webinars"}{" "}
                   available yet
                 </p>

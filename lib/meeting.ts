@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import {
   createDbMeetingSession,
   findDbMeetingSessionBySlot,
@@ -107,6 +108,7 @@ export const createMeeting = async (
     return id;
   } catch (error) {
     console.error("Error creating meeting:", error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
     throw error;
   }
 };
@@ -210,6 +212,7 @@ export const getOrCreateAppointmentMeeting = async (
       `Error in getOrCreateAppointmentMeeting for slot ${slot.id}:`,
       error,
     );
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
     // Wrap the original error
     if (error instanceof Error) {
       throw new Error(`Failed to get/create meeting session: ${error.message}`);

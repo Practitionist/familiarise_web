@@ -1,6 +1,8 @@
+import * as Sentry from "@sentry/nextjs";
 import { Resend } from "resend";
 import { WelcomeEmail } from "@/emails/auth/WelcomeEmail";
 import { PasswordResetEmail } from "@/emails/auth/PasswordResetEmail";
+import { VerificationEmail } from "@/emails/auth/VerificationEmail";
 import { AccountLinkedEmail } from "@/emails/auth/AccountLinkedEmail";
 import { PaymentLinkEmail } from "@/emails/payments/PaymentLinkEmail";
 import { PaymentSuccessEmail } from "@/emails/payments/PaymentSuccessEmail";
@@ -8,6 +10,71 @@ import { PaymentFailedEmail } from "@/emails/payments/PaymentFailedEmail";
 import { OrgInvitationEmail } from "@/emails/organizations/OrgInvitationEmail";
 import { render } from "@react-email/render";
 import { getAppUrl } from "@/lib/url";
+import prisma from "@/lib/prisma";
+
+// #474 — default sender when a dead-lettered row was persisted without a
+// `from` (shouldn't happen — every sender below sets one — but the worker's
+// replay needs a non-null fallback). Mirrors the senders' onboarding identity.
+export const DEFAULT_FROM_ADDRESS = "Familiarise <onboarding@familiarise.com>";
+
+// #474 — the already-RENDERED message a sender handed to Resend. We persist
+// THIS verbatim (not the sender args) so retry is a re-send, not a re-render.
+export interface RenderedEmail {
+  from: string;
+  to: string;
+  subject: string;
+  html: string;
+  text?: string;
+  replyTo?: string;
+}
+
+/**
+ * #474 — single persistence point for a transient Resend send failure. Each
+ * sender's catch calls this with the message it already built, so a dropped
+ * transactional email lands in `FailedEmail` (PENDING, retry-now) for the
+ * worker to replay instead of being swallowed by a console.error. Best-effort:
+ * a failure here must not change the sender's existing non-throwing contract,
+ * so we swallow + log rather than rethrow.
+ */
+export async function recordFailedEmail(
+  message: RenderedEmail,
+  emailType: string,
+  sendError: unknown,
+): Promise<void> {
+  // Capture email send failures in Sentry so they surface without requiring
+  // a query against the FailedEmail table. Only emailType is tagged — the
+  // recipient address is PII and must not appear in Sentry.
+  const errObj =
+    sendError instanceof Error ? sendError : new Error(String(sendError));
+  Sentry.captureException(errObj, {
+    tags: { subsystem: "email", emailType },
+    level: "warning",
+  });
+
+  try {
+    await prisma.failedEmail.create({
+      data: {
+        recipient: message.to,
+        fromAddress: message.from,
+        replyTo: message.replyTo ?? null,
+        subject: message.subject,
+        htmlBody: message.html,
+        textBody: message.text ?? null,
+        emailType,
+        status: "PENDING",
+        // Retry-now: the worker's first pass picks it up; backoff only kicks
+        // in once a replay attempt itself fails.
+        nextRetryAt: new Date(),
+        lastError:
+          sendError instanceof Error ? sendError.message : String(sendError),
+      },
+    });
+  } catch (persistError) {
+    // The dead-letter insert itself failed — log and move on. We've already
+    // lost the email; taking down the caller too helps no one.
+    console.error("[recordFailedEmail] persist failed:", persistError);
+  }
+}
 
 // Initialize Resend lazily to avoid build-time issues
 let resendClient: Resend | null = null;
@@ -46,6 +113,9 @@ export async function sendWelcomeEmail({
   name: string;
   dashboardUrl?: string;
 }) {
+  // #474 — holds the rendered message so the catch can dead-letter exactly
+  // what we tried to send. Undefined until render+build succeeds.
+  let sentMessage: RenderedEmail | undefined;
   try {
     const resend = getResendClient();
 
@@ -63,21 +133,32 @@ export async function sendWelcomeEmail({
     // Render email template
     const html = await render(WelcomeEmail({ name, dashboardUrl }));
 
-    // Send email
-    console.log(
-      `Attempting to send welcome email to ${email} from onboarding@familiarise.com`,
-    );
-    const data = await resend.emails.send({
+    // #474 — build the rendered message once so the catch can dead-letter it
+    // verbatim (no re-render). Hoisted above resend.emails.send so the catch
+    // sees it; a render-stage failure has nothing to replay so it stays null.
+    sentMessage = {
       from: "Familiarise <onboarding@familiarise.com>",
       to: email,
       subject: "Welcome to Familiarise!",
       html,
-    });
+    };
+
+    // Send email
+    console.log(
+      `Attempting to send welcome email to ${email} from onboarding@familiarise.com`,
+    );
+    const data = await resend.emails.send(sentMessage);
+    // #474 — Resend resolves (does not throw) on API-level errors, returning a
+    // non-null `error`. Throw so the catch below dead-letters the message
+    // instead of reporting a false success.
+    if (data.error) throw new Error(data.error.message || "Resend API error");
 
     console.log("Resend API response:", data);
     return { success: true, data };
   } catch (error) {
     console.error("Failed to send welcome email:", error);
+    // #474 — dead-letter the rendered message so the worker can replay it.
+    if (sentMessage) await recordFailedEmail(sentMessage, "WELCOME", error);
     return { success: false, error };
   }
 }
@@ -96,6 +177,7 @@ export async function sendPasswordResetEmail({
   name: string;
   token: string;
 }) {
+  let sentMessage: RenderedEmail | undefined;
   try {
     const resend = getResendClient();
 
@@ -112,16 +194,89 @@ export async function sendPasswordResetEmail({
     const resetLink = `${baseUrl}/auth/reset-password?token=${token}`;
     const html = await render(PasswordResetEmail({ name, resetLink }));
 
-    const data = await resend.emails.send({
+    sentMessage = {
       from: "Familiarise Security <security@familiarise.com>",
       to: email,
       subject: "Reset your Familiarise password",
       html,
-    });
+    };
+
+    const data = await resend.emails.send(sentMessage);
+    // #474 — Resend resolves (does not throw) on API-level errors, returning a
+    // non-null `error`. Throw so the catch below dead-letters the message
+    // instead of reporting a false success.
+    if (data.error) throw new Error(data.error.message || "Resend API error");
 
     return { success: true, data };
   } catch (error) {
     console.error("Failed to send password reset email:", error);
+    // #474 — dead-letter the rendered message so the worker can replay it.
+    if (sentMessage) await recordFailedEmail(sentMessage, "PASSWORD_RESET", error);
+    return { success: false, error };
+  }
+}
+
+/**
+ * Send email-address verification link.
+ *
+ * `verificationUrl` is the ready-to-use link BetterAuth hands the
+ * `emailVerification.sendVerificationEmail` hook (it already carries the token
+ * + callbackURL), so we pass it through verbatim rather than rebuilding it.
+ *
+ * @param params User email, name, and the BetterAuth verification URL
+ * @returns Response from Resend
+ */
+export async function sendVerificationEmail({
+  email,
+  name,
+  verificationUrl,
+}: {
+  email: string;
+  name: string;
+  verificationUrl: string;
+}) {
+  // Dev affordance: when RESEND_API_KEY is unset the email can't send, so log
+  // the link to the server console so local verification flows are testable.
+  if (!process.env.RESEND_API_KEY) {
+    console.log(`[verify-email] ${email} -> ${verificationUrl}`);
+  }
+
+  let sentMessage: RenderedEmail | undefined;
+  try {
+    const resend = getResendClient();
+
+    if (!resend) {
+      console.error(
+        "RESEND_API_KEY is not configured. Cannot send verification email.",
+      );
+      return {
+        success: false,
+        error: "Email service not configured",
+      };
+    }
+
+    const html = await render(
+      VerificationEmail({ name, verificationLink: verificationUrl }),
+    );
+
+    sentMessage = {
+      from: "Familiarise <onboarding@familiarise.com>",
+      to: email,
+      subject: "Verify your Familiarise email address",
+      html,
+    };
+
+    const data = await resend.emails.send(sentMessage);
+    // #474 — Resend resolves (does not throw) on API-level errors, returning a
+    // non-null `error`. Throw so the catch below dead-letters the message
+    // instead of reporting a false success.
+    if (data.error) throw new Error(data.error.message || "Resend API error");
+
+    return { success: true, data };
+  } catch (error) {
+    console.error("Failed to send verification email:", error);
+    // #474 — dead-letter the rendered message so the worker can replay it.
+    if (sentMessage) await recordFailedEmail(sentMessage, "EMAIL_VERIFICATION", error);
     return { success: false, error };
   }
 }
@@ -142,6 +297,7 @@ export async function sendAccountLinkedEmail({
   provider: string;
   dashboardUrl?: string;
 }) {
+  let sentMessage: RenderedEmail | undefined;
   try {
     const resend = getResendClient();
 
@@ -159,16 +315,24 @@ export async function sendAccountLinkedEmail({
       AccountLinkedEmail({ name, provider, dashboardUrl }),
     );
 
-    const data = await resend.emails.send({
+    sentMessage = {
       from: "Familiarise Security <security@familiarise.com>",
       to: email,
       subject: `Your Familiarise account now linked with ${provider}`,
       html,
-    });
+    };
+
+    const data = await resend.emails.send(sentMessage);
+    // #474 — Resend resolves (does not throw) on API-level errors, returning a
+    // non-null `error`. Throw so the catch below dead-letters the message
+    // instead of reporting a false success.
+    if (data.error) throw new Error(data.error.message || "Resend API error");
 
     return { success: true, data };
   } catch (error) {
     console.error("Failed to send account linked email:", error);
+    // #474 — dead-letter the rendered message so the worker can replay it.
+    if (sentMessage) await recordFailedEmail(sentMessage, "ACCOUNT_LINKED", error);
     return { success: false, error };
   }
 }
@@ -197,6 +361,7 @@ export async function sendPaymentLinkEmail({
   paymentUrl: string;
   expiresAt: Date;
 }) {
+  let sentMessage: RenderedEmail | undefined;
   try {
     const resend = getResendClient();
 
@@ -225,16 +390,22 @@ export async function sendPaymentLinkEmail({
     const appointmentLabel =
       appointmentType.charAt(0).toUpperCase() + appointmentType.slice(1);
 
-    console.log(
-      `Sending payment link email to ${email} for ${appointmentType} with ${consultantName}`,
-    );
-
-    const data = await resend.emails.send({
+    sentMessage = {
       from: "Familiarise Payments <payments@familiarise.com>",
       to: email,
       subject: `Payment Required - ${appointmentLabel} with ${consultantName}`,
       html,
-    });
+    };
+
+    console.log(
+      `Sending payment link email to ${email} for ${appointmentType} with ${consultantName}`,
+    );
+
+    const data = await resend.emails.send(sentMessage);
+    // #474 — Resend resolves (does not throw) on API-level errors, returning a
+    // non-null `error`. Throw so the catch below dead-letters the message
+    // instead of reporting a false success.
+    if (data.error) throw new Error(data.error.message || "Resend API error");
 
     console.log(
       "Payment link email sent successfully:",
@@ -243,6 +414,8 @@ export async function sendPaymentLinkEmail({
     return { success: true, data };
   } catch (error) {
     console.error("Failed to send payment link email:", error);
+    // #474 — dead-letter the rendered message so the worker can replay it.
+    if (sentMessage) await recordFailedEmail(sentMessage, "PAYMENT_LINK", error);
     return { success: false, error };
   }
 }
@@ -271,6 +444,7 @@ export async function sendPaymentSuccessEmail({
   receiptUrl?: string;
   dashboardUrl?: string;
 }) {
+  let sentMessage: RenderedEmail | undefined;
   try {
     const resend = getResendClient();
 
@@ -299,16 +473,22 @@ export async function sendPaymentSuccessEmail({
     const appointmentLabel =
       appointmentType.charAt(0).toUpperCase() + appointmentType.slice(1);
 
-    console.log(
-      `Sending payment success email to ${email} for ${appointmentType} with ${consultantName}`,
-    );
-
-    const data = await resend.emails.send({
+    sentMessage = {
       from: "Familiarise Payments <payments@familiarise.com>",
       to: email,
       subject: `Payment Confirmed - ${appointmentLabel} with ${consultantName}`,
       html,
-    });
+    };
+
+    console.log(
+      `Sending payment success email to ${email} for ${appointmentType} with ${consultantName}`,
+    );
+
+    const data = await resend.emails.send(sentMessage);
+    // #474 — Resend resolves (does not throw) on API-level errors, returning a
+    // non-null `error`. Throw so the catch below dead-letters the message
+    // instead of reporting a false success.
+    if (data.error) throw new Error(data.error.message || "Resend API error");
 
     console.log(
       "Payment success email sent successfully:",
@@ -317,6 +497,8 @@ export async function sendPaymentSuccessEmail({
     return { success: true, data };
   } catch (error) {
     console.error("Failed to send payment success email:", error);
+    // #474 — dead-letter the rendered message so the worker can replay it.
+    if (sentMessage) await recordFailedEmail(sentMessage, "PAYMENT_SUCCESS", error);
     return { success: false, error };
   }
 }
@@ -347,6 +529,7 @@ export async function sendPaymentFailedEmail({
   failureReason?: string;
   expiresAt?: Date;
 }) {
+  let sentMessage: RenderedEmail | undefined;
   try {
     const resend = getResendClient();
 
@@ -376,16 +559,22 @@ export async function sendPaymentFailedEmail({
     const appointmentLabel =
       appointmentType.charAt(0).toUpperCase() + appointmentType.slice(1);
 
-    console.log(
-      `Sending payment failed email to ${email} for ${appointmentType} with ${consultantName}`,
-    );
-
-    const data = await resend.emails.send({
+    sentMessage = {
       from: "Familiarise Payments <payments@familiarise.com>",
       to: email,
       subject: `Payment Failed - ${appointmentLabel} with ${consultantName}`,
       html,
-    });
+    };
+
+    console.log(
+      `Sending payment failed email to ${email} for ${appointmentType} with ${consultantName}`,
+    );
+
+    const data = await resend.emails.send(sentMessage);
+    // #474 — Resend resolves (does not throw) on API-level errors, returning a
+    // non-null `error`. Throw so the catch below dead-letters the message
+    // instead of reporting a false success.
+    if (data.error) throw new Error(data.error.message || "Resend API error");
 
     console.log(
       "Payment failed email sent successfully:",
@@ -394,6 +583,8 @@ export async function sendPaymentFailedEmail({
     return { success: true, data };
   } catch (error) {
     console.error("Failed to send payment failed email:", error);
+    // #474 — dead-letter the rendered message so the worker can replay it.
+    if (sentMessage) await recordFailedEmail(sentMessage, "PAYMENT_FAILED", error);
     return { success: false, error };
   }
 }
@@ -416,6 +607,7 @@ export async function sendOrgInvitationEmail({
   inviteUrl: string;
   expiresAt?: string;
 }) {
+  let sentMessage: RenderedEmail | undefined;
   try {
     const resend = getResendClient();
     if (!resend) {
@@ -427,17 +619,25 @@ export async function sendOrgInvitationEmail({
       OrgInvitationEmail({ inviterName, orgName, role, inviteUrl, expiresAt }),
     );
 
-    const data = await resend.emails.send({
+    sentMessage = {
       from: "Familiarise <notifications@familiarise.com>",
       to: email,
       subject: `You're invited to join ${orgName} on Familiarise`,
       html,
-    });
+    };
+
+    const data = await resend.emails.send(sentMessage);
+    // #474 — Resend resolves (does not throw) on API-level errors, returning a
+    // non-null `error`. Throw so the catch below dead-letters the message
+    // instead of reporting a false success.
+    if (data.error) throw new Error(data.error.message || "Resend API error");
 
     console.log(`Org invitation email sent to ${email}:`, data);
     return { success: true, data };
   } catch (error) {
     console.error("Failed to send org invitation email:", error);
+    // #474 — dead-letter the rendered message so the worker can replay it.
+    if (sentMessage) await recordFailedEmail(sentMessage, "ORG_INVITATION", error);
     return { success: false, error };
   }
 }

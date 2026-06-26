@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import prisma, { type Tx } from "@/lib/prisma";
 import {
   PaymentGateway,
@@ -157,6 +158,7 @@ export async function GET(
         { status: 404 },
       );
     }
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
     console.error("Error fetching subscription:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching the subscription" },
@@ -284,6 +286,7 @@ export async function PUT(
 
     return NextResponse.json({ data: subscriptionData }, { status: 200 });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
     console.error("Error updating subscription:", error);
     return NextResponse.json(
       { error: "An error occurred while updating the subscription" },
@@ -361,6 +364,7 @@ export async function DELETE(
 
     return NextResponse.json({ data: subscriptionData }, { status: 200 });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
     console.error("Error deleting subscription:", error);
     return NextResponse.json(
       { error: "An error occurred while deleting the subscription" },
@@ -702,6 +706,7 @@ export async function PATCH(
             `📧 Payment link email sent for subscription ${subscriptionId}`,
           );
         } catch (emailError) {
+          Sentry.captureException(emailError instanceof Error ? emailError : new Error(String(emailError)), { tags: { subsystem: "bookings" } });
           console.error(
             `⚠️ Failed to send payment link email for subscription ${subscriptionId}:`,
             emailError instanceof Error ? emailError.message : "Unknown error",
@@ -788,6 +793,7 @@ export async function PATCH(
             );
           }
         } catch (channelError) {
+          Sentry.captureException(channelError instanceof Error ? channelError : new Error(String(channelError)), { tags: { subsystem: "bookings" } });
           streamLogger.error(
             "Auto-channel creation failed on subscription approval",
             channelError,
@@ -801,6 +807,7 @@ export async function PATCH(
         result as typeof result & { emailData?: unknown };
       return NextResponse.json(responseData);
     } catch (error) {
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
       console.error(
         "Transaction error:",
         error instanceof Error ? error.message : "Unknown error",
@@ -819,6 +826,7 @@ export async function PATCH(
         { status: error.httpStatus },
       );
     }
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
     console.error(
       "Error updating subscription:",
       error instanceof Error ? error.message : "Unknown error",

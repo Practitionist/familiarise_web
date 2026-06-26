@@ -3,6 +3,7 @@
  * Email notification helpers for waitlist events
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { Resend } from "resend";
 import { render } from "@react-email/render";
 import { WaitlistJoinedEmail } from "@/emails/waitlist/WaitlistJoinedEmail";
@@ -84,6 +85,10 @@ export async function sendWaitlistJoinedEmail(params: {
     );
     return { success: true, data };
   } catch (error) {
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "waitlist" }, level: "warning" },
+    );
     console.error("Failed to send waitlist joined email:", error);
     return { success: false, error };
   }
@@ -146,6 +151,10 @@ export async function sendWaitlistSpotAvailableEmail(params: {
     );
     return { success: true, data };
   } catch (error) {
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "waitlist" }, level: "warning" },
+    );
     console.error("Failed to send spot available email:", error);
     return { success: false, error };
   }
@@ -202,6 +211,10 @@ export async function sendWaitlistExpiringEmail(params: {
     );
     return { success: true, data };
   } catch (error) {
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "waitlist" }, level: "warning" },
+    );
     console.error("Failed to send expiring email:", error);
     return { success: false, error };
   }
@@ -256,6 +269,10 @@ export async function sendWaitlistExpiredEmail(params: {
     );
     return { success: true, data };
   } catch (error) {
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "waitlist" }, level: "warning" },
+    );
     console.error("Failed to send expired email:", error);
     return { success: false, error };
   }

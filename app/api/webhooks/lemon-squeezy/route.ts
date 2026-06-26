@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma, { type Tx } from "@/lib/prisma";
 import { Prisma, PaymentStatus, AppointmentStatus } from "@prisma/client";
@@ -47,6 +48,8 @@ export async function POST(req: NextRequest) {
     }
 
     const event = JSON.parse(body);
+
+    Sentry.logger.info("lemon squeezy webhook received", { eventName: String(event.meta?.event_name ?? "unknown") });
 
     // Log webhook events
     console.log(`🍋 Lemon Squeezy Webhook Event: ${event.meta?.event_name}`, {
@@ -142,6 +145,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ status: "ok" });
   } catch (error) {
     console.error("Lemon Squeezy webhook error:", error);
+    Sentry.captureException(error, {
+      tags: { subsystem: "payments", provider: "lemon-squeezy" },
+    });
     return NextResponse.json(
       { error: "Webhook handler failed" },
       { status: 500 },

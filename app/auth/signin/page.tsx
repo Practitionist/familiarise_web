@@ -1,10 +1,11 @@
 "use client";
 
+import * as Sentry from "@sentry/nextjs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { signIn, useSession } from "@/lib/auth-client";
+import { signIn, useSession, sendVerificationEmail } from "@/lib/auth-client";
 import { ssoSigninWithGuard } from "@/lib/sso/signin-with-toast";
 import { GlobeIcon } from "@/components/auth/auth-icons";
 import { SocialLoginButtons } from "@/components/auth/social-login-buttons";
@@ -16,7 +17,7 @@ export default function SignIn() {
   return (
     <Suspense
       fallback={
-        <div className="min-h-screen flex items-center justify-center bg-gray-900">
+        <div className="min-h-screen flex items-center justify-center bg-neutral-950">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white" />
         </div>
       }
@@ -41,6 +42,8 @@ function SignInContent() {
     ssoBody: { providerId: string; domain: string; callbackURL: string };
   } | null>(null);
   const [ssoChecking, setSsoChecking] = useState(false);
+  const [needsVerification, setNeedsVerification] = useState(false);
+  const [resending, setResending] = useState(false);
 
   useEffect(() => {
     const url = searchParams.get("callbackUrl");
@@ -76,7 +79,7 @@ function SignInContent() {
       ? "dashboard"
       : "onboarding";
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-900">
+      <div className="min-h-screen flex items-center justify-center bg-neutral-950">
         <p className="text-white">Redirecting to {destination}...</p>
       </div>
     );
@@ -214,8 +217,38 @@ function SignInContent() {
     return raw.replace(/\[body\.\w+\]\s*/g, "").trim() || "Invalid email or password.";
   };
 
+  const handleResendVerification = async () => {
+    if (!email || !email.includes("@")) {
+      toast({ title: "Enter your email address first", variant: "destructive" });
+      return;
+    }
+    setResending(true);
+    try {
+      // Preserve the validated callbackUrl so the original destination survives
+      // verification (callbackUrl state is only set for relative paths).
+      const verificationCallbackUrl = callbackUrl
+        ? `/auth/verify-email?callbackUrl=${encodeURIComponent(callbackUrl)}`
+        : "/auth/verify-email";
+      await sendVerificationEmail({ email, callbackURL: verificationCallbackUrl });
+      toast({
+        title: "Verification email sent",
+        description: `Check ${email} for the link.`,
+      });
+    } catch {
+      toast({
+        title: "Couldn't resend the email",
+        description: "Please try again in a moment.",
+        variant: "destructive",
+      });
+    } finally {
+      setResending(false);
+    }
+  };
+
   const handleEmailSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
+    // Clear any stale "verify your email" banner from a previous attempt.
+    setNeedsVerification(false);
     setIsLoading(true);
     toast({ title: "Signing in..." });
 
@@ -226,12 +259,22 @@ function SignInContent() {
       });
 
       if (error) {
-        toast({
-          title: "Sign In Failed",
-          description: friendlyAuthError(error.message),
-          variant: "destructive",
-        });
+        const code = (error as { code?: string }).code;
+        if (code === "EMAIL_NOT_VERIFIED" || /verif/i.test(error.message ?? "")) {
+          setNeedsVerification(true);
+          toast({
+            title: "Verify your email",
+            description: "Your email isn't verified yet — resend the link below.",
+          });
+        } else {
+          toast({
+            title: "Sign In Failed",
+            description: friendlyAuthError(error.message),
+            variant: "destructive",
+          });
+        }
       } else if (data) {
+        Sentry.setUser({ id: data.user.id });
         toast({
           title: "Sign In Successful",
           description: callbackUrl
@@ -241,6 +284,7 @@ function SignInContent() {
         router.push(callbackUrl || "/dashboard");
       }
     } catch (error) {
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
       console.error("Sign in error:", error);
       toast({
         title: "Sign In Error",
@@ -253,43 +297,61 @@ function SignInContent() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col md:flex-row h-full">
-      <div className="flex-1 md:w-1/2 bg-white text-black p-6 md:p-12 flex flex-col justify-between">
+    <div className="flex min-h-screen flex-col md:flex-row">
+      <div className="hidden flex-col justify-between bg-pearl p-6 text-black md:flex md:w-1/2 md:p-12">
         <Link href="/">
           <div className="flex items-center justify-start space-x-2">
-            <GlobeIcon className="text-black w-5 md:w-6 h-5 md:h-6" />
-            <h1 className="text-2xl md:text-4xl font-semibold">Familiarise</h1>
+            <GlobeIcon className="h-5 w-5 text-black md:h-6 md:w-6" />
+            <h1 className="text-2xl font-semibold tracking-tight md:text-4xl">
+              Familiarise
+            </h1>
           </div>
         </Link>
         <div className="my-8 md:my-0">
-          <blockquote className="text-sm md:text-base">
-            "The mentors on this platform have been incredible. Their deep
+          <blockquote className="text-fluid-lg leading-relaxed text-neutral-700">
+            &ldquo;The mentors on this platform have been incredible. Their deep
             industry expertise and personalized guidance helped me navigate
             complex career decisions and accelerate my professional growth. The
-            insights I gained were truly transformative."
+            insights I gained were truly transformative.&rdquo;
           </blockquote>
-          <p className="mt-4 text-sm md:text-base">
+          <p className="mt-4 text-sm font-medium md:text-base">
             Shubham, Software Engineer
           </p>
         </div>
-        <div className="text-xs md:text-sm">
+        <div className="text-xs text-neutral-600 md:text-sm">
           Connect with experienced mentors who can guide you towards your
           professional goals.
         </div>
       </div>
-      <div className="flex-1 md:w-1/2 bg-gray-900 text-white p-6 md:p-12 flex flex-col justify-center mt-auto md:mt-0">
-        <div className="flex flex-col p-4 md:p-20">
-          <h2 className="text-2xl md:text-3xl font-semibold mb-4 md:mb-6">
+      <div className="flex flex-1 flex-col justify-center bg-neutral-950 p-6 text-white md:w-1/2 md:p-12">
+        <div className="mx-auto flex w-full max-w-md flex-col">
+          <h2 className="mb-2 text-fluid-3xl font-semibold tracking-tight">
             Sign in to your account
           </h2>
           {searchParams.get("sso_required") === "1" && (
-            <div className="mb-4 p-3 rounded-md bg-yellow-900/40 border border-yellow-600">
+            <div className="mb-4 rounded-md border border-yellow-600 bg-yellow-900/40 p-3">
               <p className="text-sm text-yellow-300">
                 Your organization requires SSO sign-in.
               </p>
             </div>
           )}
-          <p className="text-sm md:text-base mb-4 md:mb-6">
+          {needsVerification && (
+            <div className="mb-4 rounded-md border border-yellow-600 bg-yellow-900/40 p-3">
+              <p className="mb-2 text-sm text-yellow-300">
+                Your email isn&apos;t verified yet. Check your inbox, or resend
+                the link.
+              </p>
+              <Button
+                type="button"
+                onClick={handleResendVerification}
+                disabled={resending}
+                className="bg-zinc-800 hover:bg-zinc-700"
+              >
+                {resending ? "Resending…" : "Resend verification email"}
+              </Button>
+            </div>
+          )}
+          <p className="mb-6 text-sm text-zinc-400 md:text-base">
             Enter your email and password below to sign in.
           </p>
           <form onSubmit={handleEmailSignIn}>
@@ -315,7 +377,7 @@ function SignInContent() {
                   <Label htmlFor="password">Password</Label>
                   <Link
                     href="/auth/forgot-password"
-                    className="text-sm font-medium text-blue-400 hover:underline"
+                    className="text-sm font-medium text-zinc-300 underline-offset-4 hover:text-white hover:underline"
                   >
                     Forgot password?
                   </Link>
@@ -333,7 +395,7 @@ function SignInContent() {
             {ssoCheck?.enforceSSO ? (
               <Button
                 type="button"
-                className="w-full mt-4 bg-blue-600 hover:bg-blue-500"
+                className="mt-4 w-full bg-white text-black hover:bg-white/90"
                 onClick={handleSSOSignIn}
               >
                 Sign in with {ssoCheck.organizationName} SSO &rarr;
@@ -341,7 +403,7 @@ function SignInContent() {
             ) : (
               <Button
                 type="submit"
-                className="w-full mt-4 bg-gray-800 hover:bg-gray-700"
+                className="mt-4 w-full bg-white text-black hover:bg-white/90"
                 disabled={isLoading}
               >
                 {isLoading ? "Signing In..." : "Sign In with Email"}
@@ -350,12 +412,12 @@ function SignInContent() {
           </form>
           {!ssoCheck?.enforceSSO && (
             <>
-              <div className="relative my-4 md:my-6">
+              <div className="relative my-6">
                 <div className="absolute inset-0 flex items-center">
-                  <div className="w-full border-t border-gray-600" />
+                  <div className="w-full border-t border-white/15" />
                 </div>
                 <div className="relative flex justify-center text-sm">
-                  <span className="px-2 bg-gray-900 text-gray-400">
+                  <span className="bg-neutral-950 px-2 text-zinc-400">
                     OR CONTINUE WITH
                   </span>
                 </div>
@@ -370,16 +432,16 @@ function SignInContent() {
               />
             </>
           )}
-          <p className="text-xs text-gray-400 mt-4 md:mt-6">
+          <p className="mt-6 text-xs text-zinc-400">
             Don't have an account?{" "}
             <Link
               href="/auth/signup"
-              className="font-medium text-blue-400 hover:underline"
+              className="font-medium text-white underline-offset-4 hover:underline"
             >
               Sign up
             </Link>
           </p>
-          <p className="text-xs text-gray-400 mt-2">
+          <p className="mt-2 text-xs text-zinc-400">
             By clicking continue, you agree to our Terms of Service and Privacy
             Policy.
           </p>

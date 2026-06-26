@@ -165,6 +165,19 @@ export async function POST(
     }
   }
 
+  // #783 — money is INR-only until the multi-currency ledger lands. Non-INR
+  // invoices aren't supported yet: the subtotal below is summed in
+  // displayCurrency and fed straight into the INR GST breakdown (and stored as
+  // inrEquivalentPaise) with no FX conversion, and fxRateUsed is never written —
+  // a GST-filing defect for a foreign invoice. Reject non-INR until FX is wired;
+  // the dashboard only ever sends INR.
+  if (body.displayCurrency !== "INR") {
+    return NextResponse.json(
+      { error: "Non-INR invoices are not yet supported." },
+      { status: 400 },
+    );
+  }
+
   const subtotal = body.items.reduce(
     (sum, item) => sum + item.quantity * item.unitPrice,
     0,

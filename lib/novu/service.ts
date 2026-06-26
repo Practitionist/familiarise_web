@@ -4,6 +4,7 @@
  * Non-throwing: logs errors and returns success/failure status.
  * Pattern follows lib/email.ts (graceful degradation).
  */
+import * as Sentry from "@sentry/nextjs";
 import { getNovuClient, isNovuConfigured } from "./client";
 import {
   NOVU_WORKFLOWS,
@@ -26,6 +27,7 @@ import {
   type DisputePayload,
   type RecordingPayload,
   type RecordingFailedPayload,
+  type RecordingExpiringPayload,
   type ConsultantApplicationPayload,
   type ReferralBonusPayload,
   type RefereeWelcomeBonusPayload,
@@ -70,6 +72,10 @@ async function triggerWorkflow<T extends NovuPayload>(
     return { success: true };
   } catch (error) {
     console.error(`[Novu] Failed to trigger ${workflowId}:`, error);
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "novu" }, level: "warning" },
+    );
     return {
       success: false,
       error: error instanceof Error ? error : String(error),
@@ -524,6 +530,18 @@ export async function notifyRecordingFailed(
   return triggerWorkflow(
     NOVU_WORKFLOWS.RECORDING_FAILED,
     subscriberId,
+    payload,
+  );
+}
+
+// STR-3 — warn a consultant their STREAM_ONLY recording(s) expire soon.
+export async function notifyRecordingExpiring(
+  consultantUserId: string,
+  payload: RecordingExpiringPayload,
+) {
+  return triggerWorkflow(
+    NOVU_WORKFLOWS.RECORDING_EXPIRING,
+    consultantUserId,
     payload,
   );
 }

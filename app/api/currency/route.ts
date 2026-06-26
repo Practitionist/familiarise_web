@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { getExchangeRates, CURRENCY_SYMBOLS } from "@/lib/currency";
 
@@ -31,6 +32,7 @@ export async function GET(request: NextRequest) {
       symbol: CURRENCY_SYMBOLS[to] || to,
     });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "currency" } });
     console.error("Currency API error:", error);
     return NextResponse.json(
       { error: "Failed to fetch exchange rates" },

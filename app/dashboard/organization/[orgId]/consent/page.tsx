@@ -45,13 +45,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+  ResponsiveTable,
+  type ResponsiveColumn,
+} from "@/components/ui/responsive-table";
+import {
+  ALL_PURPOSE_CODES,
+  PURPOSE_CODE_META,
+  PURPOSE_CODES,
+} from "@/lib/compliance/purpose-codes";
 
 type ConsentArtifact = {
   id: string;
@@ -71,15 +72,12 @@ type Member = {
   role: string;
 };
 
-// Granular purpose taxonomy per the DPDP stub (lib/compliance/dpdp.ts).
-// Free-form codes are still accepted by the API; this is the curated set
-// the dashboard offers as one-click toggles.
-const PURPOSE_CODES = [
-  "session-booking",
-  "marketing",
-  "analytics",
-  "third-party-sharing-with-stream",
-] as const;
+// Granular purpose taxonomy — the SINGLE canonical set shared with the
+// runtime gate (lib/compliance/purpose-codes.ts). The dashboard offers each
+// canonical code as a one-click toggle; crucially the Stream toggle now
+// grants/withdraws STREAM_DATA_PROCESSING, so a user CAN re-grant the consent
+// the fail-closed video/chat gate reads. Free-form codes are still accepted by
+// the API, but the UI only ever emits canonical codes.
 
 // Schedule VIII languages we surface in v1 (English + the most common
 // Indian-enterprise locales). The API accepts any ISO 639-1/2 code.
@@ -116,7 +114,7 @@ export default function ConsentPage({ params }: Readonly<PageProps>) {
   // a purpose-code toggle list, and a language select.
   const [grantUserId, setGrantUserId] = useState("");
   const [grantPurposes, setGrantPurposes] = useState<Set<string>>(
-    new Set(["session-booking"]),
+    new Set([PURPOSE_CODES.PRIMARY_PROCESSING]),
   );
   const [grantLanguage, setGrantLanguage] = useState("en");
   const [actionError, setActionError] = useState<string | null>(null);
@@ -174,7 +172,7 @@ export default function ConsentPage({ params }: Readonly<PageProps>) {
     onSuccess: () => {
       setActionError(null);
       setGrantUserId("");
-      setGrantPurposes(new Set(["session-booking"]));
+      setGrantPurposes(new Set([PURPOSE_CODES.PRIMARY_PROCESSING]));
       setGrantLanguage("en");
       qc.invalidateQueries({ queryKey: ["org-consents", orgId] });
     },
@@ -213,12 +211,141 @@ export default function ConsentPage({ params }: Readonly<PageProps>) {
     });
   };
 
+  // Friendly label for a stored code; falls back to the raw value so any
+  // legacy/free-form code still renders.
+  const purposeLabel = (code: string) =>
+    PURPOSE_CODE_META[code as keyof typeof PURPOSE_CODE_META]?.label ?? code;
+
   const rows = consents.data ?? [];
   const active = rows.filter((r) => r.withdrawnAt === null);
   const history = rows.filter((r) => r.withdrawnAt !== null);
 
   const canGrant =
     grantUserId !== "" && grantPurposes.size > 0 && !grant.isPending;
+
+  const memberCell = (row: ConsentArtifact) =>
+    memberLabel.get(row.userId) ?? (
+      <span className="font-mono text-xs text-muted-foreground">
+        {row.userId}
+      </span>
+    );
+
+  const activeColumns: ResponsiveColumn<ConsentArtifact>[] = [
+    {
+      key: "member",
+      header: "Member",
+      primary: true,
+      className: "text-sm",
+      cell: memberCell,
+    },
+    {
+      key: "purposes",
+      header: "Purposes",
+      cell: (row) => (
+        <div className="flex flex-wrap items-center gap-1">
+          {row.purposeCodes.map((p) => (
+            <Badge
+              key={p}
+              variant="secondary"
+              className="bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
+            >
+              {purposeLabel(p)}
+              <button
+                type="button"
+                title={`Withdraw "${purposeLabel(p)}"`}
+                className="ml-1 text-emerald-700/70 hover:text-emerald-900 dark:text-emerald-300/70 dark:hover:text-emerald-200"
+                disabled={withdraw.isPending}
+                onClick={() =>
+                  withdraw.mutate({
+                    userId: row.userId,
+                    purposeCode: p,
+                  })
+                }
+              >
+                ×
+              </button>
+            </Badge>
+          ))}
+        </div>
+      ),
+    },
+    {
+      key: "language",
+      header: "Language",
+      className: "text-xs uppercase text-muted-foreground",
+      cell: (row) => row.language,
+    },
+    {
+      key: "granted",
+      header: "Granted",
+      className: "text-xs text-muted-foreground",
+      cell: (row) => <LocalDateTime value={row.grantedAt} />,
+    },
+    {
+      key: "withdraw",
+      header: "Withdraw",
+      headClassName: "text-right",
+      className: "text-right",
+      cell: (row) => (
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={withdraw.isPending}
+          onClick={() => withdraw.mutate({ userId: row.userId })}
+        >
+          Withdraw all
+        </Button>
+      ),
+    },
+  ];
+
+  const historyColumns: ResponsiveColumn<ConsentArtifact>[] = [
+    {
+      key: "member",
+      header: "Member",
+      primary: true,
+      className: "text-sm",
+      cell: memberCell,
+    },
+    {
+      key: "purposes",
+      header: "Purposes",
+      cell: (row) => (
+        <div className="flex flex-wrap gap-1">
+          {row.purposeCodes.map((p) => (
+            <Badge
+              key={p}
+              variant="secondary"
+              className="bg-muted text-muted-foreground"
+            >
+              {purposeLabel(p)}
+            </Badge>
+          ))}
+        </div>
+      ),
+    },
+    {
+      key: "granted",
+      header: "Granted",
+      className: "text-xs text-muted-foreground",
+      cell: (row) => <LocalDateTime value={row.grantedAt} />,
+    },
+    {
+      key: "withdrawn",
+      header: "Withdrawn",
+      className: "text-xs text-muted-foreground",
+      cell: (row) => <LocalDateTime value={row.withdrawnAt} />,
+    },
+    {
+      key: "status",
+      header: "Status",
+      cell: () => (
+        <Badge className="bg-rose-50 text-rose-700 dark:bg-rose-950 dark:text-rose-300">
+          Withdrawn
+        </Badge>
+      ),
+    },
+  ];
 
   return (
     <>
@@ -268,21 +395,23 @@ export default function ConsentPage({ params }: Readonly<PageProps>) {
               <div className="flex flex-col gap-1.5">
                 <Label>Purposes</Label>
                 <div className="flex flex-wrap gap-2">
-                  {PURPOSE_CODES.map((code) => {
+                  {ALL_PURPOSE_CODES.map((code) => {
                     const on = grantPurposes.has(code);
+                    const meta = PURPOSE_CODE_META[code];
                     return (
                       <button
                         key={code}
                         type="button"
+                        title={meta.description}
                         onClick={() => togglePurpose(code)}
                         className={
                           on
                             ? "rounded-full border border-primary bg-primary/10 px-3 py-1 text-xs font-medium text-primary"
-                            : "rounded-full border border-input px-3 py-1 text-xs text-zinc-600 hover:bg-zinc-50"
+                            : "rounded-full border border-input px-3 py-1 text-xs text-muted-foreground hover:bg-muted"
                         }
                         aria-pressed={on}
                       >
-                        {code}
+                        {meta.label}
                       </button>
                     );
                   })}
@@ -326,96 +455,23 @@ export default function ConsentPage({ params }: Readonly<PageProps>) {
               downstream processing.
             </CardDescription>
           </CardHeader>
-          <CardContent className="p-0">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Member</TableHead>
-                  <TableHead>Purposes</TableHead>
-                  <TableHead>Language</TableHead>
-                  <TableHead>Granted</TableHead>
-                  <TableHead className="text-right">Withdraw</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {consents.isLoading ? (
-                  <TableRow>
-                    <TableCell
-                      colSpan={5}
-                      className="py-8 text-center text-zinc-500"
-                    >
-                      Loading…
-                    </TableCell>
-                  </TableRow>
-                ) : active.length === 0 ? (
-                  <TableRow>
-                    <TableCell
-                      colSpan={5}
-                      className="py-8 text-center text-zinc-500"
-                    >
-                      No active consent artifacts yet.
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  active.map((row) => (
-                    <TableRow key={row.id}>
-                      <TableCell className="text-sm">
-                        {memberLabel.get(row.userId) ?? (
-                          <span className="font-mono text-xs text-zinc-500">
-                            {row.userId}
-                          </span>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex flex-wrap items-center gap-1">
-                          {row.purposeCodes.map((p) => (
-                            <Badge
-                              key={p}
-                              variant="secondary"
-                              className="bg-emerald-50 text-emerald-700"
-                            >
-                              {p}
-                              <button
-                                type="button"
-                                title={`Withdraw "${p}"`}
-                                className="ml-1 text-emerald-700/70 hover:text-emerald-900"
-                                disabled={withdraw.isPending}
-                                onClick={() =>
-                                  withdraw.mutate({
-                                    userId: row.userId,
-                                    purposeCode: p,
-                                  })
-                                }
-                              >
-                                ×
-                              </button>
-                            </Badge>
-                          ))}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-xs uppercase text-zinc-600">
-                        {row.language}
-                      </TableCell>
-                      <TableCell className="text-xs text-zinc-600">
-                        <LocalDateTime value={row.grantedAt} />
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={withdraw.isPending}
-                          onClick={() =>
-                            withdraw.mutate({ userId: row.userId })
-                          }
-                        >
-                          Withdraw all
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
+          <CardContent className="p-0 sm:p-4">
+            {consents.isLoading ? (
+              <p className="py-8 text-center text-sm text-muted-foreground">
+                Loading…
+              </p>
+            ) : (
+              <ResponsiveTable<ConsentArtifact>
+                columns={activeColumns}
+                rows={active}
+                getRowId={(row) => row.id}
+                empty={
+                  <p className="py-8 text-center text-sm text-muted-foreground">
+                    No active consent artifacts yet.
+                  </p>
+                }
+              />
+            )}
           </CardContent>
         </Card>
 
@@ -427,75 +483,23 @@ export default function ConsentPage({ params }: Readonly<PageProps>) {
               7-year audit window; a daily cron purges rows past retention.
             </CardDescription>
           </CardHeader>
-          <CardContent className="p-0">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Member</TableHead>
-                  <TableHead>Purposes</TableHead>
-                  <TableHead>Granted</TableHead>
-                  <TableHead>Withdrawn</TableHead>
-                  <TableHead>Status</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {consents.isLoading ? (
-                  <TableRow>
-                    <TableCell
-                      colSpan={5}
-                      className="py-8 text-center text-zinc-500"
-                    >
-                      Loading…
-                    </TableCell>
-                  </TableRow>
-                ) : history.length === 0 ? (
-                  <TableRow>
-                    <TableCell
-                      colSpan={5}
-                      className="py-8 text-center text-zinc-500"
-                    >
-                      No withdrawn consents.
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  history.map((row) => (
-                    <TableRow key={row.id}>
-                      <TableCell className="text-sm">
-                        {memberLabel.get(row.userId) ?? (
-                          <span className="font-mono text-xs text-zinc-500">
-                            {row.userId}
-                          </span>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex flex-wrap gap-1">
-                          {row.purposeCodes.map((p) => (
-                            <Badge
-                              key={p}
-                              variant="secondary"
-                              className="bg-zinc-100 text-zinc-600"
-                            >
-                              {p}
-                            </Badge>
-                          ))}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-xs text-zinc-500">
-                        <LocalDateTime value={row.grantedAt} />
-                      </TableCell>
-                      <TableCell className="text-xs text-zinc-500">
-                        <LocalDateTime value={row.withdrawnAt} />
-                      </TableCell>
-                      <TableCell>
-                        <Badge className="bg-rose-50 text-rose-700">
-                          Withdrawn
-                        </Badge>
-                      </TableCell>
-                    </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
+          <CardContent className="p-0 sm:p-4">
+            {consents.isLoading ? (
+              <p className="py-8 text-center text-sm text-muted-foreground">
+                Loading…
+              </p>
+            ) : (
+              <ResponsiveTable<ConsentArtifact>
+                columns={historyColumns}
+                rows={history}
+                getRowId={(row) => row.id}
+                empty={
+                  <p className="py-8 text-center text-sm text-muted-foreground">
+                    No withdrawn consents.
+                  </p>
+                }
+              />
+            )}
           </CardContent>
         </Card>
       </DashboardContent>

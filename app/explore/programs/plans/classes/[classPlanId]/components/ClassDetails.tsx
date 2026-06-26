@@ -50,7 +50,7 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
   }, []);
 
   return (
-    <main className="min-h-screen bg-zinc-50">
+    <main className="min-h-screen bg-muted">
       {/* Hero Banner */}
       <div className="relative h-[350px] md:h-[400px] w-full overflow-hidden">
         <Image
@@ -78,8 +78,8 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
         {/* Title Overlay */}
         <div className="absolute bottom-0 left-0 right-0 z-10">
           <div className="max-w-[1600px] mx-auto px-4 md:px-8 lg:px-12 pb-8">
-            <Badge className="bg-white text-zinc-900 mb-4">Class</Badge>
-            <h1 className="text-3xl md:text-4xl lg:text-5xl font-bold text-white mb-2">
+            <Badge className="bg-background text-foreground mb-4">Class</Badge>
+            <h1 className="text-fluid-4xl tracking-tight font-bold text-white mb-2">
               {plan.title}
             </h1>
             <div className="flex items-center gap-4 text-white/80">
@@ -128,30 +128,30 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
             </div>
 
             {/* About */}
-            <Card className="border-zinc-200 shadow-sm">
+            <Card className="border-border shadow-sm">
               <CardContent className="p-6 md:p-8">
-                <h2 className="text-xl font-semibold text-zinc-900 mb-4">
+                <h2 className="text-xl font-semibold text-foreground mb-4">
                   About this Class
                 </h2>
-                <p className="text-zinc-600 whitespace-pre-line leading-relaxed">
+                <p className="text-muted-foreground whitespace-pre-line leading-relaxed">
                   {plan.description}
                 </p>
 
-                <div className="grid grid-cols-2 gap-4 mt-6 pt-6 border-t border-zinc-100">
-                  <div className="flex items-center gap-2 text-sm text-zinc-600">
-                    <Video className="h-4 w-4 text-zinc-400" />
+                <div className="grid grid-cols-2 gap-4 mt-6 pt-6 border-t border-border">
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Video className="h-4 w-4 text-muted-foreground/70" />
                     <span>{plan.materialProvided ?? "Zoom"}</span>
                   </div>
-                  <div className="flex items-center gap-2 text-sm text-zinc-600">
-                    <Globe className="h-4 w-4 text-zinc-400" />
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Globe className="h-4 w-4 text-muted-foreground/70" />
                     <span>{plan.language ?? "English"}</span>
                   </div>
-                  <div className="flex items-center gap-2 text-sm text-zinc-600">
-                    <Book className="h-4 w-4 text-zinc-400" />
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Book className="h-4 w-4 text-muted-foreground/70" />
                     <span>{plan.classContents.length} Modules</span>
                   </div>
-                  <div className="flex items-center gap-2 text-sm text-zinc-600">
-                    <Award className="h-4 w-4 text-zinc-400" />
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Award className="h-4 w-4 text-muted-foreground/70" />
                     <span>
                       {plan.certificateProvided
                         ? "Certificate Included"
@@ -163,16 +163,16 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
             </Card>
 
             {/* What You'll Learn */}
-            <Card className="border-zinc-200 shadow-sm">
+            <Card className="border-border shadow-sm">
               <CardContent className="p-6 md:p-8">
-                <h2 className="text-xl font-semibold text-zinc-900 mb-4">
+                <h2 className="text-xl font-semibold text-foreground mb-4">
                   What you&apos;ll learn
                 </h2>
                 <div className="grid md:grid-cols-2 gap-3">
                   {plan.learningOutcomes.map((outcome: string) => (
                     <div key={outcome} className="flex items-start gap-3">
                       <CheckCircle2 className="w-5 h-5 text-emerald-500 flex-shrink-0 mt-0.5" />
-                      <span className="text-zinc-600">{outcome}</span>
+                      <span className="text-muted-foreground">{outcome}</span>
                     </div>
                   ))}
                 </div>
@@ -180,12 +180,12 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
             </Card>
 
             {/* Prerequisites */}
-            <Card className="border-zinc-200 shadow-sm">
+            <Card className="border-border shadow-sm">
               <CardContent className="p-6 md:p-8">
-                <h2 className="text-xl font-semibold text-zinc-900 mb-4">
+                <h2 className="text-xl font-semibold text-foreground mb-4">
                   Prerequisites
                 </h2>
-                <p className="text-zinc-600">
+                <p className="text-muted-foreground">
                   {plan.prerequisites ??
                     "No prerequisites required. This class is suitable for beginners."}
                 </p>
@@ -193,25 +193,25 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
             </Card>
 
             {/* Course Content */}
-            <Card className="border-zinc-200 shadow-sm">
+            <Card className="border-border shadow-sm">
               <CardContent className="p-6 md:p-8">
-                <h2 className="text-xl font-semibold text-zinc-900 mb-6">
+                <h2 className="text-xl font-semibold text-foreground mb-6">
                   Course Content
                 </h2>
                 <div className="space-y-4">
                   {plan.classContents.map((content, index) => (
                     <div
                       key={content.id}
-                      className="flex items-start gap-4 p-4 bg-zinc-50 rounded-xl hover:bg-zinc-100 transition-colors"
+                      className="flex items-start gap-4 p-4 bg-muted rounded-xl hover:bg-muted/70 transition-colors"
                     >
-                      <div className="w-10 h-10 rounded-lg bg-zinc-900 text-white flex items-center justify-center font-semibold text-sm flex-shrink-0">
+                      <div className="w-10 h-10 rounded-lg bg-primary text-primary-foreground flex items-center justify-center font-semibold text-sm flex-shrink-0">
                         {index + 1}
                       </div>
-                      <div>
-                        <h3 className="font-semibold text-zinc-900">
+                      <div className="min-w-0">
+                        <h3 className="font-semibold text-foreground">
                           {content.title}
                         </h3>
-                        <p className="text-sm text-zinc-500 mt-1">
+                        <p className="text-sm text-muted-foreground mt-1">
                           {content.description}
                         </p>
                       </div>
@@ -222,16 +222,16 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
             </Card>
 
             {/* Topics */}
-            <Card className="border-zinc-200 shadow-sm">
+            <Card className="border-border shadow-sm">
               <CardContent className="p-6 md:p-8">
-                <h2 className="text-xl font-semibold text-zinc-900 mb-4">
+                <h2 className="text-xl font-semibold text-foreground mb-4">
                   Topics Covered
                 </h2>
                 <div className="flex flex-wrap gap-2">
                   {plan.topics.map((topic: Topic) => (
                     <Badge
                       key={topic.id}
-                      className="bg-zinc-100 text-zinc-700 hover:bg-zinc-200 px-3 py-1"
+                      className="bg-muted text-muted-foreground hover:bg-muted/70 px-3 py-1"
                     >
                       {topic.name}
                     </Badge>
@@ -241,9 +241,9 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
             </Card>
 
             {/* Schedule */}
-            <Card className="border-zinc-200 shadow-sm">
+            <Card className="border-border shadow-sm">
               <CardContent className="p-6 md:p-8">
-                <h2 className="text-xl font-semibold text-zinc-900 mb-6">
+                <h2 className="text-xl font-semibold text-foreground mb-6">
                   Class Schedule
                 </h2>
                 {plan.classes && plan.classes.length > 0 ? (
@@ -257,10 +257,10 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
                       return (
                         <div
                           key={classInstance.id}
-                          className="p-4 border border-zinc-200 rounded-xl"
+                          className="p-4 border border-border rounded-xl"
                         >
                           {plan.classes.length > 1 && (
-                            <h3 className="font-medium text-zinc-900 mb-4">
+                            <h3 className="font-medium text-foreground mb-4">
                               Batch {classIndex + 1}
                             </h3>
                           )}
@@ -269,7 +269,7 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
                               {Array.from(weeks.entries()).map(
                                 ([weekNum, weekSessions]) => (
                                   <div key={weekNum}>
-                                    <h4 className="text-xs font-medium text-zinc-400 uppercase tracking-wider mb-2 px-1">
+                                    <h4 className="text-xs font-medium text-muted-foreground/70 uppercase tracking-wider mb-2 px-1">
                                       Week {weekNum}
                                     </h4>
                                     <div className="space-y-2">
@@ -278,23 +278,23 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
                                           key={session.appointmentId}
                                           className={`flex items-center justify-between p-3 rounded-lg ${
                                             session.status === "Completed"
-                                              ? "bg-zinc-50 opacity-60"
-                                              : "bg-zinc-50"
+                                              ? "bg-muted opacity-60"
+                                              : "bg-muted"
                                           }`}
                                         >
                                           <div className="flex items-center gap-3">
-                                            <div className="w-7 h-7 rounded-full bg-zinc-200 text-zinc-700 flex items-center justify-center text-xs font-semibold flex-shrink-0">
+                                            <div className="w-7 h-7 rounded-full bg-border text-muted-foreground flex items-center justify-center text-xs font-semibold flex-shrink-0">
                                               {session.sessionNumber}
                                             </div>
                                             <div className="text-sm">
-                                              <span className="font-medium text-zinc-800">
+                                              <span className="font-medium text-foreground">
                                                 {formatInTimeZone(
                                                   session.sessionStart,
                                                   userTimeZone,
                                                   "EEEE, MMMM d",
                                                 )}
                                               </span>
-                                              <span className="text-zinc-500 ml-2">
+                                              <span className="text-muted-foreground ml-2">
                                                 {formatInTimeZone(
                                                   session.sessionStart,
                                                   userTimeZone,
@@ -324,7 +324,7 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
                               )}
                             </div>
                           ) : (
-                            <p className="text-sm text-zinc-500">
+                            <p className="text-sm text-muted-foreground">
                               Schedule to be announced
                             </p>
                           )}
@@ -333,7 +333,7 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
                     })}
                   </div>
                 ) : (
-                  <p className="text-zinc-500">
+                  <p className="text-muted-foreground">
                     Class schedule to be announced.
                   </p>
                 )}
@@ -350,13 +350,13 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
           >
             <div className="sticky top-24 space-y-6">
               {/* Instructor Card */}
-              <Card className="border-zinc-200 shadow-sm">
+              <Card className="border-border shadow-sm">
                 <CardHeader className="pb-2">
                   <CardTitle className="text-lg">Your Instructor</CardTitle>
                 </CardHeader>
                 <CardContent>
                   <div className="flex items-center gap-4 mb-4">
-                    <div className="relative h-16 w-16 rounded-full overflow-hidden ring-2 ring-zinc-100">
+                    <div className="relative h-16 w-16 rounded-full overflow-hidden ring-2 ring-border">
                       <Image
                         src={
                           plan.consultantProfile?.user?.image ??
@@ -367,20 +367,20 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
                         className="object-cover"
                       />
                     </div>
-                    <div>
-                      <h3 className="font-semibold text-zinc-900">
+                    <div className="min-w-0">
+                      <h3 className="font-semibold text-foreground">
                         {plan.consultantProfile?.user?.name}
                       </h3>
-                      <p className="text-sm text-zinc-500">Expert Instructor</p>
+                      <p className="text-sm text-muted-foreground">Expert Instructor</p>
                     </div>
                   </div>
-                  <p className="text-sm text-zinc-600">
+                  <p className="text-sm text-muted-foreground">
                     An experienced professional dedicated to sharing knowledge
                     and expertise.
                   </p>
                   <Link
                     href={`/explore/experts/${plan.consultantProfile?.id}`}
-                    className="inline-flex items-center gap-1 text-sm font-medium text-zinc-900 hover:text-zinc-700 mt-3"
+                    className="inline-flex items-center gap-1 text-sm font-medium text-foreground hover:text-muted-foreground mt-3"
                   >
                     View Full Profile
                     <ArrowLeft className="w-4 h-4 rotate-180" />
@@ -390,7 +390,7 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
 
               {/* Collaborators */}
               {plan.collaborators && plan.collaborators.length > 0 && (
-                <Card className="border-zinc-200 shadow-sm">
+                <Card className="border-border shadow-sm">
                   <CardHeader className="pb-2">
                     <CardTitle className="text-lg flex items-center gap-2">
                       <Users className="w-4 h-4" />
@@ -402,9 +402,9 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
                       <Link
                         key={collab.id}
                         href={`/explore/experts/${collab.consultantProfile.id}`}
-                        className="flex items-center gap-3 hover:bg-zinc-50 rounded-lg p-2 -mx-2 transition-colors"
+                        className="flex items-center gap-3 hover:bg-muted rounded-lg p-2 -mx-2 transition-colors"
                       >
-                        <div className="relative h-10 w-10 rounded-full overflow-hidden ring-2 ring-zinc-100">
+                        <div className="relative h-10 w-10 rounded-full overflow-hidden ring-2 ring-border flex-shrink-0">
                           <Image
                             src={
                               collab.consultantProfile.user.image ??
@@ -418,11 +418,11 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
                             className="object-cover"
                           />
                         </div>
-                        <div>
-                          <p className="text-sm font-medium text-zinc-900">
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-foreground">
                             {collab.consultantProfile.user.name}
                           </p>
-                          <p className="text-xs text-zinc-500">
+                          <p className="text-xs text-muted-foreground">
                             {collab.role.replace(/_/g, " ")}
                           </p>
                         </div>

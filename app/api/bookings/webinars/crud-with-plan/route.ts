@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
@@ -7,6 +8,11 @@ import { findOrCreateTopics, transformNestedPlanTopics } from "@/lib/topics";
 import { handleSlotOpening } from "@/lib/waitlist/slot-handler";
 import { checkConsultantVerification } from "@/lib/verification";
 import { countWebinarParticipants } from "@/lib/payments/utils/participants";
+import {
+  assertCollaboratorsAvailable,
+  CollaboratorUnavailableError,
+} from "@/lib/collaborators/availability";
+import { isExclusionViolation } from "@/lib/db/pg-errors";
 
 import { getSession } from "@/lib/auth-server";
 // Schema for POST request body based on WebinarPlanSchema
@@ -243,6 +249,9 @@ export async function POST(request: NextRequest) {
                           startsAt: startTime, // Use calculated startTime
                           endsAt: endTime, // Use calculated endTime
                           isTentative: false,
+                          // #784 — owner denormalized so the slot overlap
+                          // exclusion guards the host on group events too.
+                          consultantProfileId,
                         },
                       },
                     },
@@ -303,6 +312,18 @@ export async function POST(request: NextRequest) {
     }
     // --- End Zod Error Handling ---
 
+    // #784 — owner now denormalized onto group-event slots, so a scheduling
+    // overlap trips slot_no_confirmed_overlap (23P01): that's a conflict, not 500.
+    if (isExclusionViolation(error)) {
+      return NextResponse.json(
+        {
+          error:
+            "That time conflicts with another confirmed session on your calendar.",
+        },
+        { status: 409 },
+      );
+    }
+
     console.error("Error creating webinar with plan:", error);
 
     // If error indicates topics don't exist, handle specifically
@@ -316,6 +337,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
     return NextResponse.json(
       { error: "An error occurred while creating the webinar" },
       { status: 500 },
@@ -693,6 +715,17 @@ export async function PATCH(request: NextRequest) {
             // Check if recalculation happened
             const appointment = updatedWebinar.appointment;
 
+            // AE-2 (#784) — block (re)scheduling onto a time any ACCEPTED co-host
+            // is already committed to; co-hosts aren't slot participants, so no
+            // other guard catches their double-booking. Throws → 409 below.
+            await assertCollaboratorsAvailable(tx, {
+              planType: "WEBINAR",
+              planId: id,
+              startsAt: startTime,
+              endsAt: endTime,
+              excludeAppointmentId: appointment?.id ?? null,
+            });
+
             if (appointment) {
               // Update existing appointment slots
               if (
@@ -714,6 +747,10 @@ export async function PATCH(request: NextRequest) {
                   data: {
                     startsAt: startTime,
                     endsAt: endTime,
+                    // #784 — denormalize the owner so slot_no_confirmed_overlap
+                    // guards the host against double-booking on group events too
+                    // (group slots were NULL here, leaving the owner unprotected).
+                    consultantProfileId: existingPlan.consultantProfileId,
                   },
                 });
               } else {
@@ -730,6 +767,8 @@ export async function PATCH(request: NextRequest) {
                     startsAt: startTime,
                     endsAt: endTime,
                     isTentative: false,
+                    // #784 — owner denormalized for the overlap exclusion guard.
+                    consultantProfileId: existingPlan.consultantProfileId,
                   },
                 });
               }
@@ -746,6 +785,8 @@ export async function PATCH(request: NextRequest) {
                       startsAt: startTime,
                       endsAt: endTime,
                       isTentative: false,
+                      // #784 — owner denormalized for the overlap exclusion guard.
+                      consultantProfileId: existingPlan.consultantProfileId,
                     },
                   },
                 },
@@ -826,6 +867,7 @@ export async function PATCH(request: NextRequest) {
           "Failed to notify waitlist after capacity increase:",
           waitlistError,
         );
+        Sentry.captureException(waitlistError instanceof Error ? waitlistError : new Error(String(waitlistError)), { tags: { subsystem: "bookings" } });
       }
     }
 
@@ -852,8 +894,24 @@ export async function PATCH(request: NextRequest) {
     }
     // --- End Zod Error Handling ---
 
+    // AE-2 — co-host clash is a conflict, not a server error.
+    if (error instanceof CollaboratorUnavailableError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
+    // #784 — owner overlap on the shared exclusion constraint → 409, not 500.
+    if (isExclusionViolation(error)) {
+      return NextResponse.json(
+        {
+          error:
+            "That time conflicts with another confirmed session on your calendar.",
+        },
+        { status: 409 },
+      );
+    }
+
     console.error("Error updating webinar with plan:", error);
 
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
     return NextResponse.json(
       { error: "An error occurred while updating the webinar" },
       { status: 500 },

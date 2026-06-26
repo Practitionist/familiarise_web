@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import {
   getMaintenanceState,
+  getMaintenanceStateCachedOnly,
   isMaintenanceExempt,
   validateBypass,
   isWriteBlockedInDegraded,
@@ -352,12 +353,18 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
     return NextResponse.next();
   }
 
-  // 2. Maintenance gate (fail-open; 30s-cached read).
-  const maintenance = handleMaintenance(
-    req,
-    pathname,
-    await getMaintenanceState(),
-  );
+  // 2. Maintenance gate (fail-open; 30s-cached read). RSC/prefetch sub-navigation
+  // fetches use the cached value only — no blocking Upstash round-trip — so a soft
+  // navigation can't sit blank before its loading.tsx streams. A full document
+  // load still does the live read, so a maintenance window is enforced within one
+  // navigation / the 30s cache window.
+  const isSubNavigation =
+    req.headers.get("Next-Router-Prefetch") === "1" ||
+    req.headers.get("RSC") === "1";
+  const maintenanceState = isSubNavigation
+    ? getMaintenanceStateCachedOnly()
+    : await getMaintenanceState();
+  const maintenance = handleMaintenance(req, pathname, maintenanceState);
   if (maintenance) return maintenance;
 
   // 3. Edge rate limiting.

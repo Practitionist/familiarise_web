@@ -1,8 +1,13 @@
 "use server";
 
+import * as Sentry from "@sentry/nextjs";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
-import { getStreamChatClient } from "@/lib/stream-client";
+import {
+  getStreamChatClient,
+  withStreamCircuitBreaker,
+  StreamUnavailableError,
+} from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
 import {
   isChannelCached,
@@ -15,6 +20,7 @@ import {
 import { upsertUserToStream, upsertUsersToStream } from "./user.action";
 import { MANAGED_CHANNEL_PREFIXES } from "@/lib/stream-channel-ids";
 import { getDmChannelId } from "@/lib/stream-utils";
+import { ConsentRequiredError } from "@/lib/compliance/dpdp";
 
 // Validation schemas
 const eventTypeSchema = z.enum([
@@ -71,14 +77,22 @@ export async function checkEventChannelExists(
 
   try {
     const channel = client.channel(channelType, channelId);
-    await channel.query({ state: false, messages: { limit: 0 } });
+    // #473 — fast-fail under a Stream outage instead of blocking the dashboard
+    // for the full 30s timeout. Breaker-open degrades to "false" (same as a
+    // query failure), so the caller treats the channel as not-yet-existing.
+    await withStreamCircuitBreaker(
+      () => channel.query({ state: false, messages: { limit: 0 } }),
+      () => {
+        throw new StreamUnavailableError();
+      },
+    );
 
     // Cache the result
     markChannelExists(channelType, channelId);
     streamLogger.debug("Channel exists", { channelId });
     return true;
   } catch (error) {
-    // Channel doesn't exist if query fails
+    // Channel doesn't exist if query fails (or Stream is unavailable)
     streamLogger.debug("Channel does not exist", { channelId });
     return false;
   }
@@ -117,7 +131,15 @@ export async function addUserToEventChannel(
 
     // Try to add member directly (works for existing channels)
     try {
-      await channel.addMembers([userId]);
+      // #473 — breaker-open rethrows StreamUnavailableError, which propagates
+      // out of the outer try (so we don't masquerade an outage as "channel
+      // missing" and attempt a pointless create that also fast-fails).
+      await withStreamCircuitBreaker(
+        () => channel.addMembers([userId]),
+        () => {
+          throw new StreamUnavailableError();
+        },
+      );
       markMembership(channelId, userId, true);
       streamLogger.debug("Added user to existing channel", {
         channelId,
@@ -125,6 +147,7 @@ export async function addUserToEventChannel(
       });
       return { success: true, channelId };
     } catch (addError) {
+      if (addError instanceof StreamUnavailableError) throw addError;
       // Channel might not exist, try to create it
       streamLogger.debug("Channel may not exist, attempting creation", {
         channelId,
@@ -162,7 +185,13 @@ export async function addUserToEventChannel(
       eventChannelData as Record<string, unknown>,
     );
 
-    await channelWithData.create();
+    // #473 — fast-fail channel creation under a Stream outage.
+    await withStreamCircuitBreaker(
+      () => channelWithData.create(),
+      () => {
+        throw new StreamUnavailableError();
+      },
+    );
 
     markChannelExists(channelType, channelId);
     markMembership(channelId, userId, true);
@@ -176,6 +205,7 @@ export async function addUserToEventChannel(
 
     return { success: true, channelId, created };
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
     streamLogger.error("Failed to add user to event channel", error, {
       eventType,
       eventId,
@@ -381,10 +411,18 @@ export async function getUserEventChannels(userId: string) {
   const client = getStreamChatClient();
 
   try {
-    const channels = await client.queryChannels(
-      { members: { $in: [userId] } },
-      { last_message_at: -1 },
-      { limit: 100 },
+    // #473 — dashboard hot path. Breaker-open returns an empty channel list so
+    // the page renders (degraded) rather than hanging on the 30s Stream timeout.
+    const channels = await withStreamCircuitBreaker(
+      () =>
+        client.queryChannels(
+          { members: { $in: [userId] } },
+          { last_message_at: -1 },
+          { limit: 100 },
+        ),
+      // #473 — degrade to an empty list when the breaker is open (T is inferred
+      // from the operation, so the empty array needs no cast).
+      () => [],
     );
 
     return channels.map((channel) => ({
@@ -395,6 +433,7 @@ export async function getUserEventChannels(userId: string) {
       memberCount: Object.keys(channel.state.members || {}).length,
     }));
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
     streamLogger.error("Failed to get user event channels", error, { userId });
     throw error;
   }
@@ -440,8 +479,27 @@ export async function syncUserEventChannels(
   const startTime = Date.now();
 
   try {
-    // Upsert the user to Stream first
-    await upsertUserToStream(userId);
+    // Upsert the user to Stream first. A DPDP consent gate (no/withdrawn
+    // STREAM_DATA_PROCESSING consent) is a deliberate refusal, NOT a failure:
+    // degrade gracefully by skipping the whole Stream sync rather than letting
+    // it bubble as an unhandled error through the dashboard-load path. The gate
+    // is unchanged — we simply don't crash the page for a non-consenting user.
+    try {
+      await upsertUserToStream(userId);
+    } catch (err) {
+      if (err instanceof ConsentRequiredError) {
+        streamLogger.info("Skipping channel sync — Stream consent not granted", {
+          userId,
+          purposeCode: err.purposeCode,
+        });
+        // Mark sync "completed" for this session so we don't retry the gated
+        // upsert on every navigation; a re-grant clears caches via the consent
+        // flow and a forced re-sync re-attempts it.
+        initialSyncCompletedUsers.add(userId);
+        return { success: true, skipped: true };
+      }
+      throw err;
+    }
 
     // Grab the Stream server client (needed for reconciliation query)
     const client = getStreamChatClient();
@@ -538,10 +596,17 @@ export async function syncUserEventChannels(
     let offset = 0;
     let page;
     do {
-      page = await client.queryChannels(
-        { members: { $in: [userId] } },
-        {},
-        { limit: PAGE_SIZE, offset },
+      // #473 — breaker-open returns [] so reconciliation simply skips the
+      // stale-cleanup pass this run rather than blocking the sync on a dead
+      // Stream backend; the add-pass above already short-circuits too.
+      page = await withStreamCircuitBreaker(
+        () =>
+          client.queryChannels(
+            { members: { $in: [userId] } },
+            {},
+            { limit: PAGE_SIZE, offset },
+          ),
+        () => [], // #473 — degrade to empty page when the breaker is open.
       );
       allStreamChannels = allStreamChannels.concat(page);
       offset += PAGE_SIZE;
@@ -608,6 +673,7 @@ export async function syncUserEventChannels(
       durationMs: duration,
     };
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
     streamLogger.error("Channel sync failed", error, { userId });
     throw error;
   }
@@ -727,10 +793,18 @@ async function addUserToDmChannel(
 
   // Try adding to existing channel first
   try {
-    await channel.addMembers([currentUserId]);
+    // #473 — surface breaker-open as StreamUnavailableError so an outage
+    // doesn't get mistaken for "channel missing" and trigger a doomed create.
+    await withStreamCircuitBreaker(
+      () => channel.addMembers([currentUserId]),
+      () => {
+        throw new StreamUnavailableError();
+      },
+    );
     markMembership(channelId, currentUserId, true);
     return { success: true, channelId };
-  } catch {
+  } catch (addError) {
+    if (addError instanceof StreamUnavailableError) throw addError;
     // Channel may not exist — fall through to creation
   }
 
@@ -742,7 +816,12 @@ async function addUserToDmChannel(
     dm_consultant_user_id: consultantUserId,
     dm_consultee_user_id: consulteeUserId,
   } as Record<string, unknown>);
-  await channelWithData.create();
+  await withStreamCircuitBreaker(
+    () => channelWithData.create(),
+    () => {
+      throw new StreamUnavailableError();
+    },
+  );
 
   markChannelExists(channelType, channelId);
   markMembership(channelId, currentUserId, true);

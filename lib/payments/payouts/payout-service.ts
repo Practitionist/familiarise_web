@@ -3,6 +3,7 @@
  * Provider-agnostic payout orchestration with admin approval workflow
  */
 
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import {
   PayoutStatus,
@@ -700,10 +701,20 @@ async function processSinglePayout(payout: {
           `[payout-service] CRITICAL: gateway accepted ${providerPayoutId} but DB persist failed twice for payout ${payout.id}; manual reconcile required`,
           persistErr,
         );
+        Sentry.captureException(persistErr instanceof Error ? persistErr : new Error(String(persistErr)), {
+          tags: { subsystem: "payments" },
+          level: "fatal",
+          contexts: { payout: { payoutId: payout.id, providerPayoutId } },
+        });
       }
       console.error(
         `⚠️ Payout ${payout.id}: gateway accepted ${providerPayoutId} but DB write failed — quarantined PROCESSING (NOT failed) to avoid double-pay`,
       );
+      Sentry.captureException(new Error(`gateway-accepted-db-write-failed: payout ${payout.id}`), {
+        tags: { subsystem: "payments" },
+        level: "error",
+        contexts: { payout: { payoutId: payout.id, providerPayoutId } },
+      });
       return {
         payoutId: payout.id,
         success: false,
@@ -855,6 +866,10 @@ export async function handlePayoutWebhook(
   providerPayoutId: string,
   status: "PENDING" | "PROCESSING" | "COMPLETED" | "FAILED" | "CANCELLED",
   failureReason?: string,
+  // UTR — bank settlement reference the gateway returns on a completed payout
+  // (mirrors the OrganizationPayout branch). Optional + only persisted when
+  // present, so PROCESSING/FAILED deliveries and pre-UTR gateways leave it null.
+  gatewayUtr?: string,
 ): Promise<void> {
   const payout = await prisma.consultantPayout.findFirst({
     where: { providerPayoutId },
@@ -898,6 +913,12 @@ export async function handlePayoutWebhook(
         processedAt:
           payoutStatus === PayoutStatus.COMPLETED ? new Date() : undefined,
         failureReason: failureReason,
+        // UTR — persist only on a completing payout that carried one; absent
+        // value leaves the column untouched (idempotent re-drive safe).
+        gatewayUtr:
+          payoutStatus === PayoutStatus.COMPLETED && gatewayUtr
+            ? gatewayUtr
+            : undefined,
       },
     });
 
@@ -1030,9 +1051,13 @@ export async function handlePayoutWebhook(
         currency: payout.currency,
         payoutId: payout.id,
         dashboardUrl: `${getAppUrl()}/dashboard`,
-      }).catch((error) =>
-        console.error("[payouts] Failed to send payout notification:", error),
-      );
+      }).catch((error) => {
+        console.error("[payouts] Failed to send payout notification:", error);
+        Sentry.captureException(error instanceof Error ? error : new Error(String(error)), {
+          tags: { subsystem: "payments" },
+          level: "warning",
+        });
+      });
     }
   }
 }

@@ -11,12 +11,15 @@
  * Session Events:
  * - call.session_ended
  * - call.ended
+ * - call.session_participant_joined
+ * - call.session_participant_left
  *
  * Chat Moderation Events:
  * - user.flagged
  * - message.flagged
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
 import { z } from "zod";
@@ -32,8 +35,12 @@ import {
 import {
   handleSessionEnded,
   handleCallEnded,
+  handleSessionParticipantJoined,
+  handleSessionParticipantLeft,
   StreamSessionEndedEvent,
   StreamCallEndedEvent,
+  StreamSessionParticipantJoinedEvent,
+  StreamSessionParticipantLeftEvent,
 } from "@/lib/stream/session-handlers";
 import {
   handleUserFlagged,
@@ -57,6 +64,9 @@ const HANDLED_EVENT_TYPES = [
   // Session events
   "call.session_ended",
   "call.ended",
+  // STR-4 — per-attendee presence (unblocks #471 no-show / #472 overrun)
+  "call.session_participant_joined",
+  "call.session_participant_left",
   // Chat moderation events
   "user.flagged",
   "message.flagged",
@@ -140,6 +150,27 @@ const streamCallEndedSchema = streamCallBaseEventSchema.extend({
     })
     .optional(),
   ended_by_user_id: z.string().optional(),
+});
+
+// STR-4 — participant joined/left. We only need the nested app user id
+// (participant.user.id) + session_id; everything else is passed through loosely.
+const streamParticipantSchema = z.object({
+  user: z.object({ id: z.string() }),
+  user_session_id: z.string().optional(),
+  role: z.string().optional(),
+});
+
+const streamSessionParticipantJoinedSchema = streamCallBaseEventSchema.extend({
+  type: z.literal("call.session_participant_joined"),
+  session_id: z.string(),
+  participant: streamParticipantSchema,
+});
+
+const streamSessionParticipantLeftSchema = streamCallBaseEventSchema.extend({
+  type: z.literal("call.session_participant_left"),
+  session_id: z.string(),
+  duration_seconds: z.number().optional(),
+  participant: streamParticipantSchema,
 });
 
 // Chat moderation: user flagged schema
@@ -309,6 +340,24 @@ export async function POST(req: NextRequest) {
           break;
         }
 
+        // STR-4 — per-attendee presence
+        case "call.session_participant_joined": {
+          const joinedEvent =
+            streamSessionParticipantJoinedSchema.parse(event);
+          await handleSessionParticipantJoined(
+            joinedEvent as StreamSessionParticipantJoinedEvent,
+          );
+          break;
+        }
+
+        case "call.session_participant_left": {
+          const leftEvent = streamSessionParticipantLeftSchema.parse(event);
+          await handleSessionParticipantLeft(
+            leftEvent as StreamSessionParticipantLeftEvent,
+          );
+          break;
+        }
+
         // Chat moderation events
         case "user.flagged": {
           const userFlaggedEvent = streamUserFlaggedSchema.parse(event);
@@ -336,6 +385,7 @@ export async function POST(req: NextRequest) {
           ? handlerError.message
           : String(handlerError);
       streamLogger.error(`Error processing ${eventType}`, handlerError);
+      Sentry.captureException(handlerError instanceof Error ? handlerError : new Error(String(handlerError)), { tags: { subsystem: "stream" } });
       throw handlerError;
     } finally {
       // Mark event as processed
@@ -354,6 +404,13 @@ export async function POST(req: NextRequest) {
         { error: "Invalid event format", details: error.errors },
         { status: 400 },
       );
+    }
+
+    // Only capture here for errors that did NOT originate from the inner handler
+    // (inner handler already calls captureException before rethrowing)
+    // This covers JSON.parse failures, logWebhookEvent failures, etc.
+    if (!(error instanceof Error && (error as { _sentryHandled?: boolean })._sentryHandled)) {
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
     }
 
     return NextResponse.json(

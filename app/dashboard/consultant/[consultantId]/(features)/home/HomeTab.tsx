@@ -1,12 +1,16 @@
 "use client";
 
+import * as Sentry from "@sentry/nextjs";
 import { useMemo } from "react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
-import { getOrCreateAppointmentMeeting } from "@/lib/meeting";
-import { useStreamVideoClient } from "@stream-io/video-react-sdk";
+// #248: do NOT statically import the Stream SDK (useStreamVideoClient) or
+// lib/meeting (which imports the SDK) here — that would pull the heavy SDK into
+// the dashboard-HOME bundle / critical path. The video client + meeting helper
+// are acquired lazily inside the Join handler (only when a user clicks Join).
+import { waitForGlobalVideoClient } from "@/lib/stream/disconnect";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
@@ -91,7 +95,6 @@ export function HomeTab({
   financialSummary,
 }: Readonly<HomeTabProps>) {
   const router = useRouter();
-  const client = useStreamVideoClient();
   const { toast } = useToast();
   const { data: session } = useSession();
   // Sponsoring-org lookup for the indigo "Sponsored · <Org>" badge —
@@ -112,8 +115,17 @@ export function HomeTab({
     appointment: TAppointment,
     joinableSlot?: TAppointment["slotsOfAppointment"][number],
   ) => {
+    // #248: read the already-connected video client singleton at click time
+    // (same instance <StreamVideo> uses) instead of via useStreamVideoClient,
+    // so the SDK stays off the home bundle. The video connect is now deferred
+    // to requestIdleCallback, so a fast Join click can land before the client
+    // exists — briefly wait for it instead of immediately erroring.
+    const client = await waitForGlobalVideoClient();
     if (!client) {
-      toast({ title: "Error", description: "Meeting client not ready." });
+      toast({
+        title: "Connecting…",
+        description: "Setting up your meeting client. Please try Join again.",
+      });
       return;
     }
     const relevantSlot =
@@ -127,6 +139,8 @@ export function HomeTab({
     }
 
     try {
+      // #248: lazy-import the meeting helper (it imports the SDK) on demand.
+      const { getOrCreateAppointmentMeeting } = await import("@/lib/meeting");
       const meetingId = await getOrCreateAppointmentMeeting(
         client,
         appointment,
@@ -134,6 +148,7 @@ export function HomeTab({
       );
       router.push(`/meetings/${meetingId}`);
     } catch (_error) {
+      Sentry.captureException(_error instanceof Error ? _error : new Error(String(_error)), { tags: { subsystem: "client" } });
       toast({
         title: "Error",
         description: "Failed to join meeting.",

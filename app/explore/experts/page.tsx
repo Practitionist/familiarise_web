@@ -6,6 +6,7 @@ import {
   getExpertsMetadata,
   getCuratedExperts,
 } from "@/lib/data/explore-experts";
+import { emptyOnTransientDbError } from "@/lib/data/fail-open";
 
 function HeroSection({
   totalConsultants,
@@ -45,7 +46,7 @@ function HeroSection({
             </span>
           </div>
 
-          <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold text-white mb-6">
+          <h1 className="text-fluid-4xl md:text-fluid-5xl font-bold tracking-tight text-white mb-6">
             Meet Your Perfect <span className="silver-text">Mentor</span>
           </h1>
 
@@ -74,16 +75,24 @@ function HeroSection({
 }
 
 export default async function ExploreExperts() {
+  // Degrade gracefully: a heavy curated read that times out (cold query brushing
+  // the pg query budget) renders an empty row instead of erroring the whole page.
   const [metadata, featuredExperts, trendingExperts, newestExperts] =
     await Promise.all([
       getExpertsMetadata(),
-      getCuratedExperts("rating", 5),
-      getCuratedExperts("trending", 8),
-      getCuratedExperts("newest", 8),
+      getCuratedExperts("rating", 5).catch(
+        emptyOnTransientDbError("featured experts"),
+      ),
+      getCuratedExperts("trending", 8).catch(
+        emptyOnTransientDbError("trending experts"),
+      ),
+      getCuratedExperts("newest", 8).catch(
+        emptyOnTransientDbError("newest experts"),
+      ),
     ]);
 
   return (
-    <main className="min-h-screen bg-white">
+    <main className="min-h-screen bg-background">
       <HeroSection
         totalConsultants={metadata.consultantMetadata.totalConsultants}
         averageRating={metadata.consultantMetadata.averageRating}
@@ -94,7 +103,7 @@ export default async function ExploreExperts() {
       <Suspense
         fallback={
           <div className="flex items-center justify-center py-32">
-            <div className="w-8 h-8 border-3 border-zinc-200 border-t-zinc-900 rounded-full animate-spin" />
+            <div className="w-8 h-8 border-3 border-muted border-t-foreground rounded-full animate-spin" />
           </div>
         }
       >

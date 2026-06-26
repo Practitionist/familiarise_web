@@ -1,5 +1,6 @@
 "use client";
 
+import * as Sentry from "@sentry/nextjs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -394,6 +395,7 @@ export function UnifiedCalendar({
     availableSlots,
     existingAppointments,
     eventSlots,
+    eventTentativeSlots = [],
     loading,
     error,
     refetch,
@@ -418,6 +420,7 @@ export function UnifiedCalendar({
         // Refetch event slots and appointments so newly allocated slots appear correctly
         await Promise.all([refetchEventSlots(), refetchAppointments()]);
       } catch (error) {
+        Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
         console.error(
           "Error refetching calendar data after allocation:",
           error,
@@ -484,6 +487,18 @@ export function UnifiedCalendar({
     () =>
       new Set(eventSlots.map((s) => Math.round(s.startTime.getTime() / 1000))),
     [eventSlots],
+  );
+
+  // This event's OWN tentative slots (being rescheduled). Rendered as a distinct
+  // "Rescheduling" state — NOT the foreign "Booked" gray they used to fall into.
+  const eventTentativeSlotsSet = useMemo(
+    () =>
+      new Set(
+        eventTentativeSlots.map((s) =>
+          Math.round(s.startTime.getTime() / 1000),
+        ),
+      ),
+    [eventTentativeSlots],
   );
 
   // Initialize pre-selected slots
@@ -647,6 +662,10 @@ export function UnifiedCalendar({
       const isCurrentEventSlot = eventSlotsSet.has(
         Math.round(slot.startTime.getTime() / 1000),
       );
+      // This event's own slot currently being rescheduled (tentative).
+      const isCurrentEventTentative = eventTentativeSlotsSet.has(
+        Math.round(slot.startTime.getTime() / 1000),
+      );
 
       // First-line guard: allow click but block selection with feedback if outside allowed range
       if (allowedStart || allowedEnd) {
@@ -755,6 +774,18 @@ export function UnifiedCalendar({
         return;
       }
 
+      // This event's own tentative slot (being rescheduled) — NOT a foreign
+      // booking. Don't show "already booked"; guide the consultant to pick a new
+      // time. The old slot is freed when the re-allocation completes.
+      if (isCurrentEventTentative) {
+        toast({
+          title: "Session being rescheduled",
+          description:
+            "This is the session you're rescheduling — pick a new available time for it.",
+        });
+        return;
+      }
+
       // Allow current event slots to be toggled for rescheduling
       if (
         !isCurrentEventSlot &&
@@ -814,6 +845,7 @@ export function UnifiedCalendar({
       selectedSlots,
       existingAppointments,
       eventSlotsSet,
+      eventTentativeSlotsSet,
       toast,
     ],
   );
@@ -834,6 +866,10 @@ export function UnifiedCalendar({
 
       // Check if this slot belongs to the current event — O(1) via Set lookup
       const isCurrentEventSlot = eventSlotsSet.has(
+        Math.round(slot.startTime.getTime() / 1000),
+      );
+      // This event's own slot being rescheduled (tentative) — distinct state.
+      const isCurrentEventTentative = eventTentativeSlotsSet.has(
         Math.round(slot.startTime.getTime() / 1000),
       );
 
@@ -872,6 +908,14 @@ export function UnifiedCalendar({
           " bg-black text-white cursor-pointer hover:bg-gray-900 border-gray-800";
         cellClassName += status.isInPast ? " opacity-60" : "";
         buttonText = status.isInPast ? "Past Session" : "This Event";
+      } else if (isCurrentEventTentative) {
+        // Amber for THIS event's slot being rescheduled — distinct from the gray
+        // "Booked" used for foreign appointments. It's the consultant's own slot
+        // pending a new time, not someone else's booking.
+        cellClassName +=
+          " bg-amber-400 text-amber-900 cursor-pointer hover:bg-amber-500 border-amber-500";
+        cellClassName += status.isInPast ? " opacity-50" : "";
+        buttonText = "Rescheduling";
       } else if (status.isBookedForDisplay) {
         // Grey for other appointments
         cellClassName +=
@@ -992,6 +1036,7 @@ export function UnifiedCalendar({
       allowedEnd,
       eventType,
       eventSlotsSet,
+      eventTentativeSlotsSet,
     ],
   );
 
@@ -1332,6 +1377,7 @@ export function UnifiedCalendar({
 
                 return `${selectedSlots.length} selected out of ${requiredSlotsForThisEvent} required slots`;
               } catch (error) {
+                Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
                 console.error("Error calculating footer stats:", error);
                 if (error instanceof Error) {
                   return error.message;

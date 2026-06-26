@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { checkoutSchema } from "@/schemas/checkout";
 import { handleCheckout } from "@/lib/payments/operations/checkout";
 import {
@@ -6,6 +7,7 @@ import {
 } from "@/lib/errors/classification/payment-error-classification";
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth-server";
+import { EventCheckoutLockUnavailableError } from "@/utils/appointmentlock";
 import { checkoutLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { ZodError } from "zod";
 import { Prisma } from "@prisma/client";
@@ -116,6 +118,22 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // #676 CN-1 — the event-checkout lock fails CLOSED on a Redis outage with a
+    // typed 503; classifyError is message-only and would mislabel it 500. Honor
+    // the structured status so the client sees a retryable 503, not a 500.
+    if (error instanceof EventCheckoutLockUnavailableError) {
+      return NextResponse.json(
+        {
+          error:
+            "The booking system is briefly busy and your card was not charged. Please try again in a moment.",
+          errorType: error.code,
+          timestamp: new Date().toISOString(),
+        },
+        { status: error.httpStatus },
+      );
+    }
+
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "checkout" } });
     const classified = classifyError(error, "Checkout failed");
     logClassifiedError("Checkout", classified, error);
 

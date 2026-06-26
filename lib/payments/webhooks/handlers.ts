@@ -4,6 +4,7 @@
  * Can be used by both webhook API routes and direct checkout flows
  */
 
+import * as Sentry from "@sentry/nextjs";
 import prisma, { type Tx } from "@/lib/prisma";
 import {
   AppointmentsType,
@@ -16,6 +17,7 @@ import { buildOccupiedAppointmentFilter } from "@/utils/slotAllocation/occupancy
 import { REQUEST_ALLOWED_FROM } from "@/lib/booking/transitions";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { recordSystemError } from "@/lib/enterprise/system-events";
+import { refundPayment } from "@/lib/payments/operations/refund";
 import {
   normalizeLegacySlotKeys,
   validateWebhookMetadata,
@@ -132,6 +134,7 @@ interface EventData {
 export async function handlePaymentSuccess(
   paymentIntentId: string,
   rawMetadata: Record<string, string>,
+  gatewayAmountPaise?: number,
 ): Promise<void> {
   // #679 transition dual-read (see normalizeLegacySlotKeys) — in-flight
   // Razorpay orders created pre-rename replay webhooks with legacy slot
@@ -173,6 +176,56 @@ export async function handlePaymentSuccess(
       return null; // Signal: already processed, skip Phase 2
     }
 
+    // #677 — defence-in-depth amount parity (mirrors handleOrgPaymentSuccess).
+    // The gateway order is created at checkout for exactly Payment.amount and the
+    // webhook is HMAC-verified, so a captured amount that differs is a gateway
+    // anomaly or our-own bug — never silently confirm a booking for the wrong
+    // money. Mark for manual recovery + page (like the metadata-failure path) and
+    // skip confirmation; the captured funds are reconciled by hand.
+    if (
+      gatewayAmountPaise !== undefined &&
+      gatewayAmountPaise !== payment.amount
+    ) {
+      Sentry.captureException(
+        new Error(
+          `Capture amount mismatch for ${paymentIntentId}: gateway=${gatewayAmountPaise} expected=${payment.amount}`,
+        ),
+        {
+          tags: { subsystem: "payments" },
+          level: "fatal",
+          contexts: {
+            payment: {
+              paymentIntentId,
+              paymentId: payment.id,
+              userId: payment.userId,
+            },
+          },
+        },
+      );
+      await tx.payment.update({
+        where: { id: payment.id },
+        data: {
+          paymentStatus: PaymentStatus.SUCCEEDED,
+          description: `REQUIRES_MANUAL_RECOVERY: capture amount ${gatewayAmountPaise}p ≠ expected ${payment.amount}p. Booking NOT confirmed.`,
+        },
+      });
+      console.error(
+        JSON.stringify({
+          event: "CRITICAL_PAYMENT_AMOUNT_MISMATCH",
+          alert_priority: "P1",
+          payment_id: payment.id,
+          payment_intent: paymentIntentId,
+          user_id: payment.userId,
+          gateway_amount_paise: gatewayAmountPaise,
+          expected_amount_paise: payment.amount,
+          action_required:
+            "IMMEDIATE: reconcile captured funds; confirm or refund manually",
+          timestamp: new Date().toISOString(),
+        }),
+      );
+      return null; // Skip confirmation + Phase 2 — requires manual intervention
+    }
+
     // VALIDATION: Check metadata before processing
     try {
       validateWebhookMetadata(metadata);
@@ -186,6 +239,10 @@ export async function handlePaymentSuccess(
             ? validationError.message
             : String(validationError);
 
+      Sentry.captureException(
+        validationError instanceof Error ? validationError : new Error(String(validationError)),
+        { tags: { subsystem: "payments" }, level: "fatal", contexts: { payment: { paymentIntentId, paymentId: payment.id, userId: payment.userId } } },
+      );
       console.error(
         `❌ Metadata validation failed for payment ${paymentIntentId}:`,
         errorMessage,
@@ -281,7 +338,11 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
     }
 
     // Confirm appointment: set isTentative = false and update status to APPROVED
-    await confirmExistingAppointment(tx, appointment.id, payment.userId);
+    const confirmResult = await confirmExistingAppointment(
+      tx,
+      appointment.id,
+      payment.userId,
+    );
 
     console.log(
       `✅ Payment ${paymentIntentId} processed successfully. Appointment ID: ${appointment.id}`,
@@ -296,6 +357,9 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
       userName: payment.user.name,
       amount: payment.amount,
       currency: payment.currency,
+      // #855 — a capture that landed after the booking was cancelled; Phase 2
+      // auto-refunds it instead of treating it as a confirmed booking.
+      capturedAfterTerminal: confirmResult.capturedAfterTerminal,
     };
     },
     { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
@@ -304,6 +368,30 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
 
   // If transaction returned null, the payment was already processed or had a metadata error
   if (!txResult) return;
+
+  // #855 — the capture landed after the booking was cancelled. The payment is
+  // SUCCEEDED (gateway truth) but the booking is dead, so auto-refund and skip
+  // the rest of Phase 2 — no success email, earnings, invoice, or notifications
+  // for a cancelled booking. Idempotent against webhook replay (see refund.ts).
+  if (txResult.capturedAfterTerminal) {
+    try {
+      await refundPayment({
+        paymentId: txResult.paymentId,
+        reason: "capture after cancellation",
+        initiatedByUserId: null,
+      });
+    } catch (refundError) {
+      Sentry.captureException(
+        refundError instanceof Error ? refundError : new Error(String(refundError)),
+        { tags: { subsystem: "payments" }, level: "error" },
+      );
+      console.error(
+        "Failed to auto-refund capture-after-cancellation (Phase 2):",
+        refundError,
+      );
+    }
+    return;
+  }
 
   // Phase 2: Non-critical post-transaction work (earnings, invoice, waitlist, notifications)
   // Failures here are logged but do NOT roll back the payment.
@@ -325,6 +413,10 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
       );
     }
   } catch (emailError) {
+    Sentry.captureException(
+      emailError instanceof Error ? emailError : new Error(String(emailError)),
+      { tags: { subsystem: "payments" }, level: "warning" },
+    );
     console.error(
       "Failed to send payment success email (Phase 2):",
       emailError,
@@ -432,6 +524,10 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
       }
     }
   } catch (earningsError) {
+    Sentry.captureException(
+      earningsError instanceof Error ? earningsError : new Error(String(earningsError)),
+      { tags: { subsystem: "payments" }, level: "warning" },
+    );
     // Log but don't fail — sync-payment-earnings job will pick up the gap
     console.error(
       `⚠️ Failed to create earnings for payment ${paymentId}:`,
@@ -444,6 +540,10 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
   try {
     await processQualifyingAction(userId, "first_paid_booking");
   } catch (referralError) {
+    Sentry.captureException(
+      referralError instanceof Error ? referralError : new Error(String(referralError)),
+      { tags: { subsystem: "payments" }, level: "warning" },
+    );
     console.error(
       `⚠️ Failed to process referral qualifying action for user ${userId}:`,
       referralError,
@@ -457,6 +557,10 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
   try {
     await processConsultantBookingReferral({ id: paymentId }, userId);
   } catch (consultantReferralError) {
+    Sentry.captureException(
+      consultantReferralError instanceof Error ? consultantReferralError : new Error(String(consultantReferralError)),
+      { tags: { subsystem: "payments" }, level: "warning" },
+    );
     console.error(
       `⚠️ Failed to process consultant referral qualifying action:`,
       consultantReferralError,
@@ -482,6 +586,10 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
         }),
       );
     } catch (waitlistError) {
+      Sentry.captureException(
+        waitlistError instanceof Error ? waitlistError : new Error(String(waitlistError)),
+        { tags: { subsystem: "payments" }, level: "warning" },
+      );
       console.error(
         `⚠️ Failed to update waitlist status for payment ${paymentId}:`,
         waitlistError,
@@ -567,6 +675,10 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
       dashboardUrl,
     });
   } catch (novuError) {
+    Sentry.captureException(
+      novuError instanceof Error ? novuError : new Error(String(novuError)),
+      { tags: { subsystem: "payments" }, level: "warning" },
+    );
     console.error(
       `⚠️ Failed to send Novu notifications for payment ${paymentId}:`,
       novuError,
@@ -764,6 +876,10 @@ export async function handlePaymentFailure(paymentIntentId: string) {
         retryUrl: `${getAppUrl()}/dashboard`,
       });
     } catch (novuError) {
+      Sentry.captureException(
+        novuError instanceof Error ? novuError : new Error(String(novuError)),
+        { tags: { subsystem: "payments" }, level: "warning" },
+      );
       console.error(
         `⚠️ Failed to send Novu payment failed notification for payment ${payment.id}:`,
         novuError,
@@ -1048,7 +1164,10 @@ async function confirmApprovalStatus(
   tx: Tx,
   entityType: "consultation" | "subscription",
   entityId: string,
-): Promise<void> {
+): Promise<{ capturedAfterTerminal: boolean }> {
+  // #855 — signals Phase 2 to auto-refund a capture that landed after the
+  // booking was cancelled (money collected for a now-dead booking).
+  let capturedAfterTerminal = false;
   if (entityType === "consultation") {
     const consultation = await tx.consultation.findUnique({
       where: { id: entityId },
@@ -1087,6 +1206,7 @@ async function confirmApprovalStatus(
         freshStatus !== AppointmentStatus.SCHEDULED &&
         freshStatus !== AppointmentStatus.COMPLETED
       ) {
+        capturedAfterTerminal = true; // #855 — Phase 2 auto-refunds
         void recordSystemError({
           organizationId: null,
           category: "PAYMENT",
@@ -1121,12 +1241,25 @@ async function confirmApprovalStatus(
       console.log(
         `✅ Subscription ${entityId} payment completed - moving from APPROVED_PENDING_PAYMENT to APPROVED`,
       );
+    } else if (subscription.status === AppointmentStatus.CANCELLED) {
+      // #855 — capture landed after the subscription was cancelled: money for a
+      // dead booking. PENDING here is normal (slots are allocated later), so
+      // only CANCELLED is the terminal-capture case.
+      capturedAfterTerminal = true;
+      void recordSystemError({
+        organizationId: null,
+        category: "PAYMENT",
+        summary: `Payment captured for subscription ${entityId} in terminal state CANCELLED — refund needed`,
+        err: new Error("CAPTURE_AFTER_TERMINAL_STATE"),
+        context: { entityType: "subscription", entityId },
+      }).catch(() => {});
     } else {
       console.log(
         `ℹ️ Subscription ${entityId} payment received - keeping status as ${subscription.status} (consultant will allocate slots)`,
       );
     }
   }
+  return { capturedAfterTerminal };
 }
 
 /**
@@ -1144,7 +1277,7 @@ export async function confirmExistingAppointment(
   tx: Tx,
   appointmentId: string,
   userId?: string,
-) {
+): Promise<{ capturedAfterTerminal: boolean }> {
   // First fetch appointment to determine type
   const appointment = await tx.appointment.findUnique({
     where: { id: appointmentId },
@@ -1158,7 +1291,7 @@ export async function confirmExistingAppointment(
 
   if (!appointment) {
     console.warn(`Appointment ${appointmentId} not found for confirmation`);
-    return;
+    return { capturedAfterTerminal: false };
   }
 
   // #827 — first-confirmed-wins recheck for the EXCLUSIVE booking types.
@@ -1198,6 +1331,10 @@ export async function confirmExistingAppointment(
         select: { id: true, appointmentId: true },
       });
       if (conflict) {
+        Sentry.captureException(
+          new Error("CONFIRMATION_BLOCKED_DOUBLE_BOOKING"),
+          { tags: { subsystem: "payments" }, level: "error", contexts: { booking: { appointmentId, conflictingAppointmentId: conflict.appointmentId, slotId: slot.id } } },
+        );
         console.error(
           JSON.stringify({
             event: "confirmation_blocked_double_booking",
@@ -1218,7 +1355,8 @@ export async function confirmExistingAppointment(
             slotId: slot.id,
           },
         }).catch(() => {});
-        return; // slots stay tentative; do not confirm over the winner
+        // slots stay tentative; do not confirm over the winner
+        return { capturedAfterTerminal: false };
       }
     }
   }
@@ -1272,20 +1410,23 @@ export async function confirmExistingAppointment(
   }
 
   // Update status for consultation and subscription
+  let capturedAfterTerminal = false;
   if (appointment.consultation) {
-    await confirmApprovalStatus(
+    const r = await confirmApprovalStatus(
       tx,
       "consultation",
       appointment.consultation.id,
     );
+    capturedAfterTerminal = capturedAfterTerminal || r.capturedAfterTerminal;
   }
 
   if (appointment.subscription) {
-    await confirmApprovalStatus(
+    const r = await confirmApprovalStatus(
       tx,
       "subscription",
       appointment.subscription.id,
     );
+    capturedAfterTerminal = capturedAfterTerminal || r.capturedAfterTerminal;
   }
 
   // Update webinar status
@@ -1303,6 +1444,8 @@ export async function confirmExistingAppointment(
       data: { status: "SCHEDULED" },
     });
   }
+
+  return { capturedAfterTerminal };
 }
 
 /**
@@ -1430,6 +1573,10 @@ async function sendPaymentSuccessNotification(
     });
 
     if (!appointment) {
+      Sentry.captureException(
+        new Error(`Cannot send payment success email: appointment ${appointmentId} not found`),
+        { tags: { subsystem: "payments" }, level: "warning" },
+      );
       console.error(
         `Cannot send payment success email: appointment ${appointmentId} not found`,
       );
@@ -1479,6 +1626,10 @@ async function sendPaymentSuccessNotification(
       `📧 Payment success email sent to ${payment.user.email} for ${appointmentType}`,
     );
   } catch (error) {
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "payments" }, level: "warning" },
+    );
     // Don't throw - email failures shouldn't block payment processing
     console.error("Failed to send payment success email:", error);
   }
@@ -1561,6 +1712,10 @@ async function sendPaymentFailureNotification(
     });
 
     if (!appointment) {
+      Sentry.captureException(
+        new Error(`Cannot send payment failure email: appointment not found for payment ${payment.id}`),
+        { tags: { subsystem: "payments" }, level: "warning" },
+      );
       console.error(
         `Cannot send payment failure email: appointment not found for payment ${payment.id}`,
       );
@@ -1605,6 +1760,10 @@ async function sendPaymentFailureNotification(
       `📧 Payment failure email sent to ${payment.user.email} for ${appointmentType}`,
     );
   } catch (error) {
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "payments" }, level: "warning" },
+    );
     // Don't throw - email failures shouldn't block payment processing
     console.error("Failed to send payment failure email:", error);
   }

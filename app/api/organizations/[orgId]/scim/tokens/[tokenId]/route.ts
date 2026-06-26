@@ -9,6 +9,7 @@
  * "you forgot to update Okta after rotating" signal.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireOrgOwner } from "@/lib/auth-helpers";
@@ -65,6 +66,7 @@ export async function DELETE(
         { status: (err as { httpStatus?: number }).httpStatus ?? 500 },
       );
     }
+    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "organizations" } });
     throw err;
   }
 }
