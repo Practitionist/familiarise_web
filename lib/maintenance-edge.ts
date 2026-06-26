@@ -10,19 +10,13 @@
 
 import { NextRequest } from "next/server";
 
-// Redis key constants. Platform-scoped: the middleware reads the single
-// platform maintenance phase/config on every request (30s-cached below).
-//
-// NOTE for future devs: per-org maintenance windows
-// ("maintenance:phase:org:<orgId>") are NOT implemented. There was previously
-// `orgMaintenanceKeys()` / `platformMaintenanceKeys()` scaffolding here with no
-// consumers — it was removed (#776) as dead code. If/when per-org windows ship,
-// add the org-scoped read here (org key first, fall back to platform) and a
-// matching writer in the admin maintenance route.
-const REDIS_KEYS = {
-  PHASE: "maintenance:phase",
-  CONFIG: "maintenance:config",
-} as const;
+import { REDIS_KEYS } from "./maintenance-keys";
+
+// REDIS_KEYS is platform-scoped (single phase/config read per request, 30s-cached
+// below). Per-org windows ("maintenance:phase:org:<orgId>") are NOT implemented —
+// prior orgMaintenanceKeys()/platformMaintenanceKeys() scaffolding was removed
+// (#776) as dead code. If they ship, add the org-scoped read here (org key first,
+// fall back to platform) and a matching writer in the admin maintenance route.
 
 // Routes exempt from maintenance mode
 const EXEMPT_PREFIXES = [
@@ -140,16 +134,32 @@ export async function getMaintenanceState(): Promise<MaintenanceState> {
  * A full document load still does the live read, so a maintenance window is
  * always enforced within one document navigation / the 30s cache window.
  *
- * When the cache is stale we kick off a non-blocking refresh (so the NEXT
- * sub-navigation sees fresh state) and return the last-known state rather than
- * OFF — otherwise a session that only soft-navigates would bypass an active
- * window indefinitely once the TTL lapses (#927).
+ * When the cache is stale we kick off a refresh (so the NEXT sub-navigation sees
+ * fresh state) and return the last-known state rather than OFF — otherwise a
+ * session that only soft-navigates would bypass an active window indefinitely
+ * once the TTL lapses (#927). Two edge-runtime caveats (#929 review):
+ *  - an unawaited promise is not guaranteed to run after the response is sent, so
+ *    the caller passes `event.waitUntil` to keep the refresh alive;
+ *  - a single `isRefreshing` guard collapses concurrent stale sub-navigations into
+ *    one Upstash read instead of a thundering herd.
  */
-export function getMaintenanceStateCachedOnly(): MaintenanceState {
+let isRefreshing = false;
+
+export function getMaintenanceStateCachedOnly(
+  waitUntil?: (promise: Promise<unknown>) => void,
+): MaintenanceState {
   if (cachedState && Date.now() - cacheTimestamp < CACHE_TTL_MS) {
     return cachedState;
   }
-  void getMaintenanceState().catch(() => {});
+  if (!isRefreshing) {
+    isRefreshing = true;
+    const refresh = getMaintenanceState()
+      .catch(() => {})
+      .finally(() => {
+        isRefreshing = false;
+      });
+    waitUntil?.(refresh);
+  }
   return cachedState ?? OFF_STATE;
 }
 
@@ -191,7 +201,6 @@ const WRITE_BLOCKED_IN_DEGRADED = [
   "/api/waitlist", // Block waitlist mutations
   "/api/referrals", // Block referral code creation
   "/api/collaborators", // Block collaborator management
-  "/api/payments/refunds", // Block refund mutations
   "/api/payments/disputes", // Block dispute handling mutations
   "/api/admin/payouts", // Block admin payout mutations
 ];
