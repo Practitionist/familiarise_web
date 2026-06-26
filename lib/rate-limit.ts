@@ -27,7 +27,10 @@ type RatelimitRedis = ConstructorParameters<typeof Ratelimit>[0]["redis"];
 // (see applyRateLimit). The Ratelimit default timeout is 5000ms, so a slow or
 // unreachable Upstash would stall the request 5s before allowing it through;
 // 500ms keeps the fail-open fallback fast.
-const LIMITER_TIMEOUT_MS = 500;
+const LIMITER_TIMEOUT_MS = (() => {
+  const v = Number(process.env.LIMITER_TIMEOUT_MS);
+  return Number.isFinite(v) && v > 0 ? v : 500;
+})();
 
 function makeLimiter(
   requests: number,
