@@ -306,7 +306,7 @@ export default function ConsultantReferralsPage({
             <div className="rounded-lg bg-zinc-50 px-4 py-3">
               <p className="text-zinc-500">Max Referrals</p>
               <p className="mt-1 font-medium text-zinc-900">
-                {code?.maxReferrals ?? 50}
+                {code?.maxReferrals ?? 25}
               </p>
             </div>
           </div>

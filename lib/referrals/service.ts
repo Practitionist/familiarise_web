@@ -291,9 +291,11 @@ export async function processQualifyingAction(
             status: "REWARDED",
             qualifiedAt: new Date(),
             qualifyingAction: action,
-            referrerRewardPaidAt: new Date(),
-            // FIX #437: Both bonuses awarded together on first paid booking
-            refereeRewardPaidAt: new Date(),
+            // #896 — the *RewardPaidAt timestamps are set below, each only when a
+            // credit row is actually created for that side. The referrer grant can
+            // clamp to 0 (annual cap / monthly budget) and the referee grant is
+            // skipped entirely for CONSULTANT referees, so an unconditional "paid"
+            // stamp here would claim a payment that never happened.
           },
         });
 
@@ -315,6 +317,10 @@ export async function processQualifyingAction(
         // Running program spend for this qualification (referrer + referee),
         // used to honor the monthly budget cap and auto-pause on exhaustion.
         let spentNow = 0;
+
+        // #896 — only stamp *RewardPaidAt for a side that actually got a credit.
+        let referrerCredited = false;
+        let refereeCredited = false;
 
         // Give referrer their bonus. The amount comes from the program config
         // (the conservative-launch ramp, ₹300 → ₹500), clamped by the annual
@@ -370,6 +376,7 @@ export async function processQualifyingAction(
               },
             });
             spentNow += grant;
+            referrerCredited = true;
           }
         }
 
@@ -404,7 +411,21 @@ export async function processQualifyingAction(
               },
             });
             spentNow += grant;
+            refereeCredited = true;
           }
+        }
+
+        // #896 — stamp paid-at per side, each only when its credit landed. A
+        // clamped/skipped grant leaves the timestamp null so the row never
+        // claims a payment that didn't happen.
+        if (referrerCredited || refereeCredited) {
+          await tx.referral.update({
+            where: { id: referral.id },
+            data: {
+              ...(referrerCredited ? { referrerRewardPaidAt: new Date() } : {}),
+              ...(refereeCredited ? { refereeRewardPaidAt: new Date() } : {}),
+            },
+          });
         }
 
         // #880 — persist the budget window (lazy monthly rollover) and the
@@ -806,10 +827,20 @@ export async function isConsultantReferralWaiverActive(
   });
   if (!profile) return false;
 
+  // #896 — a still-SIGNED_UP referral only grants the waiver while it's inside
+  // the qualification window; past it the row is stale (the expire cron just
+  // hasn't run yet) and must not waive. REWARDED rows already qualified, so
+  // they carry no window check.
+  const windowCutoff = new Date(
+    Date.now() - QUALIFICATION_WINDOW_DAYS * 24 * 60 * 60 * 1000,
+  );
   const referral = await tx.referral.findFirst({
     where: {
       referredUserId: profile.userId,
-      status: { in: ["SIGNED_UP", "REWARDED"] },
+      OR: [
+        { status: "REWARDED" },
+        { status: "SIGNED_UP", signedUpAt: { gte: windowCutoff } },
+      ],
     },
     select: { id: true },
   });
@@ -817,8 +848,15 @@ export async function isConsultantReferralWaiverActive(
 
   // Count excludes the row being created (idempotency guarantees this payment
   // has none yet), so 0/1/2 prior sessions ⇒ waive, 3+ ⇒ full commission.
+  // #896 — exclude org-hosted settlements (the waiver only applies to non-org
+  // sessions, so a HYBRID consultant must not burn quota on org sessions) and
+  // REFUNDED earnings (a refunded session must not consume a waiver slot).
   const priorSessions = await tx.consultantEarnings.count({
-    where: { consultantProfileId },
+    where: {
+      consultantProfileId,
+      status: { not: "REFUNDED" },
+      payment: { organizationEarnings: { none: {} } },
+    },
   });
   return priorSessions < CONSULTANT_WAIVER_SESSIONS;
 }
