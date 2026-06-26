@@ -45,7 +45,7 @@ migrations/
 
 # Screenshots and feedback (large binaries / local notes)
 highlight-reel-screenshots/
-feedback/
+/feedback/
 
 # dependencies
 /node_modules
