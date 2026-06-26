@@ -36,7 +36,7 @@ const withBundleAnalyzer =
 const CSP_DIRECTIVES = [
   "default-src 'self'",
   "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://checkout.razorpay.com https://*.sentry.io https://*.getstream.io https://*.supabase.co",
-  "connect-src 'self' https://*.getstream.io wss://*.getstream.io https://*.supabase.co https://*.upstash.io https://api.razorpay.com https://*.sentry.io https://api.resend.com",
+  "connect-src 'self' https://*.getstream.io wss://*.getstream.io https://*.supabase.co https://*.upstash.io https://api.razorpay.com https://*.sentry.io https://api.resend.com https://*.novu.co wss://*.novu.co",
   "img-src 'self' data: https: blob:",
   "media-src 'self' blob: https://*.getstream.io",
   "style-src 'self' 'unsafe-inline'",
