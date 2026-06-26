@@ -10,7 +10,9 @@
  */
 import * as Sentry from "@sentry/nextjs";
 
-function isTransientDbError(err: unknown): boolean {
+// Exported so non-explore read paths (e.g. the public announcements banner) can
+// share the same transient-class detection and degrade rather than 500 (#929).
+export function isTransientDbError(err: unknown): boolean {
   const code = (err as { code?: string } | null)?.code;
   const msg = err instanceof Error ? err.message : String(err);
   return (
@@ -20,21 +22,25 @@ function isTransientDbError(err: unknown): boolean {
   );
 }
 
-// Report a degraded read without re-raising it. console for local visibility +
-// a Sentry warning so the fail-open path is observable rather than silent (#929).
-function reportTransient(context: string, err: unknown): void {
+// Report a degraded read without re-raising it: a console line for local/server
+// log visibility + a structured Sentry warning carrying the underlying error
+// message, so the fail-open path stays observable rather than silent. Shared by
+// the explore reads and other public read paths (e.g. announcements). (#929, #931.)
+export function reportTransient(
+  context: string,
+  err: unknown,
+  tags?: Record<string, string>,
+): void {
   const msg = err instanceof Error ? err.message : String(err);
-  console.error(
-    `[explore] ${context} read failed (transient DB timeout) — degrading:`,
+  console.warn(
+    `[fail-open] ${context} (transient DB timeout) — degrading:`,
     msg,
   );
-  Sentry.captureMessage(
-    `explore fail-open: ${context} (transient DB timeout)`,
-    {
-      level: "warning",
-      extra: { context, message: msg },
-    },
-  );
+  Sentry.captureMessage(`fail-open: ${context} (transient DB timeout)`, {
+    level: "warning",
+    extra: { context, message: msg },
+    ...(tags ? { tags } : {}),
+  });
 }
 
 export function emptyOnTransientDbError(context: string) {
