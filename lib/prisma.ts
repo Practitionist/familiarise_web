@@ -239,6 +239,11 @@ function makeClient() {
       },
       gstTcsAdjustment: { amountPaise: f("amountPaise") },
       discountCode: { maxDiscount: fn("maxDiscount") },
+      referralProgramConfig: {
+        monthlyBudgetPaise: fn("monthlyBudgetPaise"),
+        currentMonthSpentPaise: f("currentMonthSpentPaise"),
+        referrerRewardPaise: f("referrerRewardPaise"),
+      },
       referralCode: {
         referrerReward: fn("referrerReward"),
         refereeReward: fn("refereeReward"),

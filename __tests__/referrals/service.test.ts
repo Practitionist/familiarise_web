@@ -20,9 +20,23 @@ const mockTx = {
     updateMany: jest.fn(),
     update: jest.fn(),
   },
-  referralCredit: { create: jest.fn() },
+  referralCredit: { create: jest.fn(), findMany: jest.fn() },
   referralCode: { update: jest.fn() },
+  referralProgramConfig: { upsert: jest.fn(), update: jest.fn() },
+  user: { findUnique: jest.fn() },
 };
+
+// #880 — default program config (active, unlimited budget, ₹300 ramp stage).
+const THIS_MONTH = new Date().toISOString().slice(0, 7);
+const activeConfig = (over: Record<string, unknown> = {}) => ({
+  id: "singleton",
+  isActive: true,
+  monthlyBudgetPaise: null,
+  currentPeriod: THIS_MONTH,
+  currentMonthSpentPaise: 0,
+  referrerRewardPaise: 30000,
+  ...over,
+});
 
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
@@ -120,7 +134,13 @@ describe("REF-3 — processQualifyingAction claims reward atomically", () => {
     mockTx.referral.updateMany.mockReset();
     mockTx.referral.update.mockReset();
     mockTx.referralCredit.create.mockReset();
+    mockTx.referralCredit.findMany.mockReset().mockResolvedValue([]);
     mockTx.referralCode.update.mockReset();
+    mockTx.referralProgramConfig.upsert
+      .mockReset()
+      .mockResolvedValue(activeConfig());
+    mockTx.referralProgramConfig.update.mockReset();
+    mockTx.user.findUnique.mockReset().mockResolvedValue({ role: "CONSULTEE" });
   });
 
   const signedUpReferral = {
@@ -178,5 +198,86 @@ describe("REF-3 — processQualifyingAction claims reward atomically", () => {
       }),
     );
     expect(mockTx.referralCredit.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("#880 — role weighting, caps and program budget", () => {
+  beforeEach(() => {
+    mockTx.referral.findUnique.mockReset();
+    mockTx.referral.updateMany.mockReset().mockResolvedValue({ count: 1 });
+    mockTx.referralCredit.create.mockReset();
+    mockTx.referralCredit.findMany.mockReset().mockResolvedValue([]);
+    mockTx.referralCode.update.mockReset();
+    mockTx.referralProgramConfig.upsert
+      .mockReset()
+      .mockResolvedValue(activeConfig());
+    mockTx.referralProgramConfig.update.mockReset();
+    mockTx.user.findUnique.mockReset().mockResolvedValue({ role: "CONSULTEE" });
+  });
+
+  const baseReferral = {
+    id: "ref-1",
+    status: "SIGNED_UP",
+    signedUpAt: new Date(),
+    referralCodeId: "code-1",
+    referredUserId: "referee-1",
+    referrerRewardAmount: 30000,
+    refereeRewardAmount: 30000,
+    referralCode: { userId: "referrer-1" },
+  };
+
+  it("skips the booking credit for a consultant referee (they get the waiver)", async () => {
+    mockTx.referral.findUnique.mockResolvedValue(baseReferral);
+    mockTx.user.findUnique.mockResolvedValue({ role: "CONSULTANT" });
+
+    await processQualifyingAction("referee-1", "first_paid_booking_received");
+
+    expect(mockTx.referralCredit.create).toHaveBeenCalledTimes(1);
+    expect(mockTx.referralCredit.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ source: "REFERRAL_BONUS" }),
+      }),
+    );
+  });
+
+  it("grants nothing and does not claim when the program is paused", async () => {
+    mockTx.referral.findUnique.mockResolvedValue(baseReferral);
+    mockTx.referralProgramConfig.upsert.mockResolvedValue(
+      activeConfig({ isActive: false }),
+    );
+
+    await processQualifyingAction("referee-1", "first_paid_booking");
+
+    expect(mockTx.referral.updateMany).not.toHaveBeenCalled();
+    expect(mockTx.referralCredit.create).not.toHaveBeenCalled();
+  });
+
+  it("defers (no claim) when the monthly budget is exhausted", async () => {
+    mockTx.referral.findUnique.mockResolvedValue(baseReferral);
+    mockTx.referralProgramConfig.upsert.mockResolvedValue(
+      activeConfig({ monthlyBudgetPaise: 10000, currentMonthSpentPaise: 10000 }),
+    );
+
+    await processQualifyingAction("referee-1", "first_paid_booking");
+
+    expect(mockTx.referral.updateMany).not.toHaveBeenCalled();
+    expect(mockTx.referralCredit.create).not.toHaveBeenCalled();
+  });
+
+  it("clamps the referrer grant by the annual per-referrer cap", async () => {
+    mockTx.referral.findUnique.mockResolvedValue(baseReferral);
+    // Already earned ₹9,990 this year → only ₹10 (1000 paise) of headroom.
+    mockTx.referralCredit.findMany.mockResolvedValue([{ amount: 999000 }]);
+
+    await processQualifyingAction("referee-1", "first_paid_booking");
+
+    expect(mockTx.referralCredit.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          source: "REFERRAL_BONUS",
+          amount: 1000,
+        }),
+      }),
+    );
   });
 });
