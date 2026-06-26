@@ -1,3 +1,5 @@
+# Availability-with-allocation — slow wide-window query
+
 ## Summary
 
 The **subscription slot-allocation calendar** (consultant → Requests → "Allocate Slots") can hang on "Loading calendar…" for minutes and intermittently 429s. Root cause: `GET /api/slots/availability-with-allocation/[consultantId]` is **O(window width)** and very slow for wide date ranges, and the allocation flow requests the **entire subscription scheduling period** (1 / 6 / 12 months).

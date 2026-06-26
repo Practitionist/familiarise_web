@@ -735,26 +735,35 @@ export async function createEarningsFromPayment({
                 postings: [...debits, ...credits],
               });
             } catch (err) {
-              Sentry.captureException(
-                err instanceof Error ? err : new Error(String(err)),
-                {
-                  tags: { subsystem: "payments" },
-                },
-              );
-              console.error(
-                `[ledger] booking posting FAILED for payment ${payment.id} — rolling back the booking: ${err instanceof Error ? err.message : String(err)}`,
-              );
-              // #812 — record the drift on its own connection (survives the rollback),
-              // then RE-THROW so the imbalance rolls back the whole booking
-              // transaction. The ledger is the source of truth: a booking that can't
-              // post a balanced journal must not be allowed to half-commit and drift.
-              void recordSystemError({
-                organizationId: payment.organizationId ?? null,
-                category: "LEDGER",
-                summary: `Booking ledger posting failed for payment ${payment.id}`,
-                err,
-                context: { paymentId: payment.id },
-              }).catch(() => {});
+              // #896 — a P2034 serialization conflict here is retryable
+              // (withSerializableRetry re-runs the whole txn); logging it as a
+              // ledger failure would flood system events on every retry. Only a
+              // genuine, non-retryable posting failure is the drift we must record.
+              const isRetryableSerialization =
+                err instanceof Prisma.PrismaClientKnownRequestError &&
+                err.code === "P2034";
+              if (!isRetryableSerialization) {
+                Sentry.captureException(
+                  err instanceof Error ? err : new Error(String(err)),
+                  {
+                    tags: { subsystem: "payments" },
+                  },
+                );
+                console.error(
+                  `[ledger] booking posting FAILED for payment ${payment.id} — rolling back the booking: ${err instanceof Error ? err.message : String(err)}`,
+                );
+                // #812 — record the drift on its own connection (survives the rollback),
+                // then RE-THROW so the imbalance rolls back the whole booking
+                // transaction. The ledger is the source of truth: a booking that can't
+                // post a balanced journal must not be allowed to half-commit and drift.
+                void recordSystemError({
+                  organizationId: payment.organizationId ?? null,
+                  category: "LEDGER",
+                  summary: `Booking ledger posting failed for payment ${payment.id}`,
+                  err,
+                  context: { paymentId: payment.id },
+                }).catch(() => {});
+              }
               throw err;
             }
           }

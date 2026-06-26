@@ -1,3 +1,5 @@
+# Subscription auto-allocate — HTTP 500 / transaction-start timeout
+
 ## Summary
 
 Submitting a subscription slot allocation (consultant → Requests → Allocate Slots → **Auto Allocate**) can fail with **HTTP 500** after ~**115 seconds**. The subscription stays `PENDING_ALLOCATION`, so the consultee never receives their sessions. The booking is paid for but cannot be fulfilled.

@@ -1,3 +1,5 @@
+# Consultee dashboard — slow /api/appointments query
+
 ## Summary
 
 The consultee dashboard's appointments list (`GET /api/appointments`) takes **~2.3s warm** on the shared dev environment. This is independent of page size and is **not** dev-server compilation — it is a real backend cost from sequential DB round-trips plus a deep multi-join query, amplified by remote-Supabase latency. It will persist in production.
