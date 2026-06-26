@@ -599,12 +599,21 @@ describe("Reschedule Route Handler - POST", () => {
       });
     });
 
-    it("should return 'multiple_sessions' type for multiple slotIds", async () => {
+    it("should return 'multiple_sessions' type when slotIds span multiple sessions", async () => {
       const appointment = makeSubscriptionAppointment();
       mockTx.appointment.findUnique.mockResolvedValue(appointment);
 
+      // #448 — multiple_sessions means slots from MULTIPLE appointments
+      // (sessions), not merely multiple slots of one session.
+      const slotA = makeSlot("slot-1", FUTURE_DATE, { appointmentId: "apt-1" });
+      const slotB = makeSlot(
+        "slot-2",
+        new Date(FUTURE_DATE.getTime() + 24 * 60 * 60 * 1000),
+        { appointmentId: "apt-2" },
+      );
       mockTx.appointment.findMany.mockResolvedValueOnce([
-        { id: "apt-1", slotsOfAppointment: appointment.slotsOfAppointment },
+        { id: "apt-1", slotsOfAppointment: [slotA] },
+        { id: "apt-2", slotsOfAppointment: [slotB] },
       ]);
 
       const req = makeRescheduleRequest("apt-1", "SUBSCRIPTION", {
@@ -615,6 +624,7 @@ describe("Reschedule Route Handler - POST", () => {
 
       expect(res.status).toBe(200);
       expect(body.rescheduleType).toBe("multiple_sessions");
+      expect(body.sessionsAffected).toBe(2);
       expect(body.slotsAffected).toBe(2);
     });
 

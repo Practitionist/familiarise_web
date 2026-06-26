@@ -738,9 +738,29 @@ export class SlotValidationService {
       allExcludeIds,
     );
 
+    // #898 follow-up — server-side per-DAY cap (subscription ≤1/day). The
+    // SubscriptionValidationService enforces the weekly limit; the per-day cap
+    // previously lived only in allocation selection + the client guard.
+    const MAX_SUBSCRIPTION_SESSIONS_PER_DAY = 1;
+    const subscriptionAppointments =
+      await this.prismaClient.appointment.findMany({
+        where: { subscriptionId },
+        select: {
+          id: true,
+          slotsOfAppointment: { select: { startsAt: true, isTentative: true } },
+        },
+      });
+    const perDayErrors = this.validatePerDaySessionCap(
+      subscriptionAppointments,
+      new Set(allExcludeIds),
+      slots,
+      slotsPerSession,
+      MAX_SUBSCRIPTION_SESSIONS_PER_DAY,
+    );
+
     return {
-      isValid: result.isValid,
-      errors: [...errors, ...result.errors],
+      isValid: result.isValid && perDayErrors.length === 0,
+      errors: [...errors, ...result.errors, ...perDayErrors],
       warnings: [...warnings, ...result.warnings],
     };
   }
@@ -947,10 +967,70 @@ export class SlotValidationService {
       }
     });
 
+    // #898 follow-up — server-side per-DAY cap (class ≤2/day). Was only enforced
+    // at allocation-selection time + the client guard, so a hand-crafted manual
+    // allocate could stack same-day sessions.
+    const MAX_CLASS_SESSIONS_PER_DAY = 2;
+    errors.push(
+      ...this.validatePerDaySessionCap(
+        classAppointments,
+        excludeSet,
+        slots,
+        slotsPerSession,
+        MAX_CLASS_SESSIONS_PER_DAY,
+      ),
+    );
+
     return {
       isValid: errors.length === 0,
       errors,
       warnings,
     };
+  }
+
+  /**
+   * #898 follow-up — server-side per-DAY session cap. The per-day limit
+   * (subscription 1/day, class 2/day) was only enforced at allocation-selection
+   * time + the client guard, not in validation, so a hand-crafted manual
+   * allocate could stack same-day sessions. Mirrors the weekly seed/group logic
+   * but keyed by local day (same convention as allocationAlgorithms
+   * `selectCallsFromWeek`'s toDateString day-key). One Appointment = one session,
+   * keyed by its first slot's day; tentative/excluded appointments are skipped.
+   */
+  private validatePerDaySessionCap(
+    existingAppointments: {
+      id: string;
+      slotsOfAppointment: { startsAt: Date | string; isTentative: boolean }[];
+    }[],
+    excludeSet: Set<string>,
+    slots: Date[],
+    slotsPerSession: number,
+    maxPerDay: number,
+  ): string[] {
+    const errors: string[] = [];
+    const existingPerDay = new Map<string, number>();
+    for (const appt of existingAppointments) {
+      if (excludeSet.has(appt.id)) continue;
+      if (appt.slotsOfAppointment.length === 0) continue;
+      const firstSlot = appt.slotsOfAppointment.reduce((earliest, s) =>
+        new Date(s.startsAt) < new Date(earliest.startsAt) ? s : earliest,
+      );
+      const dayKey = new Date(firstSlot.startsAt).toDateString();
+      existingPerDay.set(dayKey, (existingPerDay.get(dayKey) || 0) + 1);
+    }
+    const proposedPerDay = new Map<string, number>();
+    for (let i = 0; i < slots.length; i += slotsPerSession) {
+      const dayKey = slots[i].toDateString();
+      proposedPerDay.set(dayKey, (proposedPerDay.get(dayKey) || 0) + 1);
+    }
+    proposedPerDay.forEach((count, dayKey) => {
+      const total = count + (existingPerDay.get(dayKey) || 0);
+      if (total > maxPerDay) {
+        errors.push(
+          `[DAILY_LIMIT] ${dayKey} has ${total} session(s) but the max is ${maxPerDay} per day`,
+        );
+      }
+    });
+    return errors;
   }
 }

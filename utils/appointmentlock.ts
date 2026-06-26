@@ -594,3 +594,55 @@ export async function lockAutoAllocate(
 export async function unlockAutoAllocate(lock: ApprovalLock): Promise<void> {
   await releaseLock(lock);
 }
+
+// ============================================================================
+// Public API - Consultee Booking Locks
+// #898 follow-up — the GiST exclusion constraint `slot_no_confirmed_overlap`
+// is keyed on consultantProfileId, so it CANNOT stop the SAME consultee being
+// booked across two DIFFERENT consultants at overlapping times. The AE-1
+// consultee-calendar conflict check (SlotValidationService.validateNoConflicts)
+// runs at Read-Committed with no consultee lock, leaving a check-then-write
+// window under concurrent checkout. This lock serializes booking activity for
+// one consultee (different consultees stay fully parallel) so the
+// consultee-conflict-check → slot write is atomic.
+// ============================================================================
+
+/**
+ * Lock all booking activity for a single consultee so concurrent bookings
+ * (across different consultants) cannot both pass the consultee-calendar
+ * conflict check and overcommit the same person.
+ *
+ * Keyed on consulteeUserId ONLY — different consultees never contend.
+ *
+ * LOCK ORDER (deadlock avoidance): always acquired AFTER the consultant-level
+ * lock (lockAutoAllocate / lockEventCheckout) and BEFORE any per-slot lock.
+ * Every booking path follows the same consultant → consultee → slot order, so
+ * the locks form a total order and cannot cycle.
+ *
+ * @param consulteeUserId - The consultee's user ID
+ * @param ttl - Time to live in ms (default 150s — matches lockAutoAllocate so it
+ *   spans the allocation transaction)
+ */
+export async function lockConsulteeBooking(
+  consulteeUserId: string,
+  ttl: number = 150000,
+): Promise<ApprovalLock> {
+  const key = `consultee-booking:${consulteeUserId}`;
+  try {
+    return await acquireLockWithRetry(key, ttl);
+  } catch (error) {
+    throw new Error(
+      "Lock contention: Another booking is in progress for this account. Please try again.",
+    );
+  }
+}
+
+/**
+ * Release a consultee booking lock
+ * @param lock - The lock instance to release
+ */
+export async function unlockConsulteeBooking(
+  lock: ApprovalLock,
+): Promise<void> {
+  await releaseLock(lock);
+}

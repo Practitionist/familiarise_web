@@ -1955,6 +1955,10 @@ export function useEventSlotAllocation(
           endDate: options.endDate,
           totalSessions: options.maxTotalCalls, // maxTotalCalls is already totalSessions-aware
           pastConfirmedSlotCount: options.pastConfirmedSlotCount,
+          // Per-day caps so auto-allocate respects the same limit as the manual
+          // path (subscription 1/day, class 2/day). Finding #1.
+          maxCallsPerDay: options.maxCallsPerDay,
+          maxSessionsPerDay: options.maxSessionsPerDay,
         };
 
         // For recurring events (subscription/class), the calendar UI only
