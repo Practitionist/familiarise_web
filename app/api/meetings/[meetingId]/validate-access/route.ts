@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { auth } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { headers } from "next/headers";
@@ -139,7 +140,7 @@ export async function GET(
       const classPlanId = appointment.class?.classPlan?.id;
 
       if (webinarPlanId) {
-        const collab = await prisma.webinarCollaborator.findFirst({
+        const collab = await prisma.collaborator.findFirst({
           where: {
             webinarPlanId,
             consultantProfileId: userProfile.consultantProfileId,
@@ -156,7 +157,7 @@ export async function GET(
       }
 
       if (classPlanId) {
-        const collab = await prisma.classCollaborator.findFirst({
+        const collab = await prisma.collaborator.findFirst({
           where: {
             classPlanId,
             consultantProfileId: userProfile.consultantProfileId,
@@ -208,6 +209,7 @@ export async function GET(
       message: "You are not authorized to join this meeting",
     });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "meetings" } });
     console.error("Error validating meeting access:", error);
     return NextResponse.json(
       { hasAccess: false, role: null, message: "Failed to validate access" },

@@ -53,8 +53,8 @@ export function WeeklyAvailability({ slotsByDay }: WeeklyAvailabilityProps) {
 
   // Get the date for booked slots in user timezone
   const getBookedSlotDate = (slot: ProcessedSlot) => {
-    if (!slot.slotStartTimeInUTC) return "";
-    const date = new Date(slot.slotStartTimeInUTC);
+    if (!slot.startsAt) return "";
+    const date = new Date(slot.startsAt);
     return date.toLocaleDateString(undefined, {
       month: "short",
       day: "numeric",
@@ -140,7 +140,7 @@ export function WeeklyAvailability({ slotsByDay }: WeeklyAvailabilityProps) {
                       );
                     })
                   ) : (
-                    <div className="h-16 flex items-center justify-center text-xs text-gray-400 bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl border border-gray-200 shadow-sm">
+                    <div className="h-16 flex items-center justify-center text-xs text-muted-foreground/70 bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl border border-border shadow-sm">
                       No slots
                     </div>
                   )}

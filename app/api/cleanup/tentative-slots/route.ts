@@ -9,6 +9,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { cleanupTentativeSlots } from "@/scripts/appointments/cleanup-tentative-slots";
+import { CronLockHeldError } from "@/lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
@@ -23,6 +25,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     }
 
     console.log("🧹 Starting tentative slot cleanup via API...");
+    Sentry.logger.info("cron:cleanup-tentative-slots started");
 
     const result = await cleanupTentativeSlots();
 
@@ -30,9 +33,19 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       slotsReleased: result.slotsReleased,
       appointmentsAffected: result.appointmentsAffected,
     });
+    Sentry.logger.info("cron:cleanup-tentative-slots finished", {
+      slotsReleased: result.slotsReleased,
+      appointmentsAffected: result.appointmentsAffected,
+    });
 
     return NextResponse.json(result, { status: result.success ? 200 : 500 });
   } catch (error) {
+    // #476 — concurrent invocation (schedule overlap / manual re-run)
+    // skips with a 409 instead of double-running.
+    if (error instanceof CronLockHeldError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
+    Sentry.captureException(error, { tags: { subsystem: "cron", job: "cleanup-tentative-slots" } });
     console.error("Error in tentative slot cleanup:", error);
     return NextResponse.json(
       {

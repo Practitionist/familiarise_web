@@ -1,5 +1,7 @@
 # Payout Processing
 
+> **Moved (org/B2B side):** The organization-side documentation for payouts now lives in [`docs/enterprise/10-money-and-ledger/07-payout-pipeline.md`](../../enterprise/10-money-and-ledger/07-payout-pipeline.md) and [`06-earnings-lifecycle.md`](../../enterprise/10-money-and-ledger/06-earnings-lifecycle.md). This file keeps the consumer-marketplace (B2C) and gateway-generic details only.
+
 > Batch creation, approval workflow, and payment gateway integration
 
 ---
@@ -320,7 +322,7 @@ All payout requests use idempotency keys to prevent duplicates.
 ```mermaid
 flowchart TD
     A[Create Payout Request] --> B[Generate Idempotency Key]
-    B --> C[payout_{id}_{timestamp}]
+    B --> C[payout_{payoutId}]
     C --> D[Send to Provider]
     D --> E{Duplicate Request?}
     E -->|Yes| F[Return Original Response]
@@ -332,12 +334,15 @@ flowchart TD
 ### Key Format
 
 ```typescript
-// Idempotency key generation
-const idempotencyKey = `payout_${payout.id}_${Date.now()}`;
+// Idempotency key generation — deterministic, not time-based.
+// razorpay-payouts.ts generateIdempotencyKey():
+const idempotencyKey = `payout_${payoutId}`;
 
-// RazorpayX: X-Payout-Idempotency header
+// RazorpayX: X-Payout-Idempotency header (lib/payments/payouts/razorpay-payouts.ts:328)
 // Stripe: Idempotency-Key header
 ```
+
+> **Note (#771 P1-6):** The key is intentionally deterministic (`payout_<id>`). Using `Date.now()` would generate a new key on every retry — defeating RazorpayX's duplicate-suppression for that `payoutId` and potentially double-disbursing.
 
 ---
 

@@ -14,6 +14,12 @@ import {
 } from "../../scripts/payouts/handle-stuck-payouts";
 import fs from "fs";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
+import {
+  recordSystemEvent,
+  recordSystemError,
+} from "../../lib/enterprise/system-events";
+import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 /**
  * Output results to GitHub Actions
@@ -35,7 +41,11 @@ function outputToGitHubActions(result: StuckPayoutsResult): void {
     fs.appendFileSync(outputFile, outputs + "\n");
   }
 
-  if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
+  // #677 PM-1 — match the canonical name the underlying script reads
+  if (
+    !process.env.RAZORPAY_KEY_ID ||
+    !(process.env.RAZORPAY_SECRET ?? process.env.RAZORPAY_KEY_SECRET)
+  ) {
     console.log(
       `::warning::Razorpay credentials not configured — Razorpay records were skipped`,
     );
@@ -59,6 +69,7 @@ function outputToGitHubActions(result: StuckPayoutsResult): void {
  */
 async function main(): Promise<void> {
   await abortIfMaintenance("handle-stuck-payouts");
+  Sentry.logger.info("job:handle-stuck-payouts started");
   console.log("🔄 Starting stuck payouts handler job...");
   console.log(`Timestamp: ${new Date().toISOString()}`);
 
@@ -80,11 +91,49 @@ async function main(): Promise<void> {
 
     outputToGitHubActions(result);
 
+    Sentry.logger.info("job:handle-stuck-payouts finished", {
+      totalProcessed: result.totalProcessed,
+      reconciledCount: result.reconciledCount,
+      retriedCount: result.retriedCount,
+      failedCount: result.failedCount,
+      skippedCount: result.skippedCount,
+    });
+
+    // #776 §K — stuck/failed payouts mean a consultant isn't getting paid;
+    // page on it rather than leaving it in CI logs.
+    if (result.failedCount > 0 || !result.success) {
+      await recordSystemEvent({
+        category: "PAYOUT",
+        severity: "ERROR",
+        message: `Stuck-payout handler: ${result.failedCount} permanently failed, success=${result.success}`,
+        context: {
+          totalProcessed: result.totalProcessed,
+          failedCount: result.failedCount,
+          retriedCount: result.retriedCount,
+          errors: result.errors,
+        },
+      });
+    }
+
     if (!result.success) {
       process.exit(1);
     }
   } catch (error) {
+    // #476 — lock held = another run is live; skipping is the correct
+    // outcome (exit 0, no page). CronLockUnavailableError falls through
+    // to exit 1 so the workflow's notify step pages.
+    if (error instanceof CronLockHeldError) {
+      Sentry.logger.info("job:handle-stuck-payouts skipped — lock held");
+      console.log(`⏭️  ${error.message}`);
+      return;
+    }
     console.error("❌ Fatal error in stuck payouts handler:", error);
+    Sentry.captureException(error, { tags: { subsystem: "jobs", job: "handle-stuck-payouts" } });
+    await recordSystemError({
+      category: "PAYOUT",
+      summary: "Stuck-payout handler crashed",
+      err: error,
+    });
     process.exit(1);
   } finally {
     await disconnectDatabase();

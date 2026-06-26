@@ -10,6 +10,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { RecordingTransferService } from "@/lib/stream/recording-transfer-service";
 import { streamLogger } from "@/lib/stream-logger";
+import { withCronLock, CronLockHeldError } from "@/lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
@@ -22,14 +24,27 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     }
 
     streamLogger.info("Starting mark-expired-recordings cron");
+    Sentry.logger.info("cron:mark-expired-recordings started");
 
-    const expiredCount = await RecordingTransferService.markExpiredRecordings();
+    // #476 — same lock key as the GH Actions entry (jobs/stream/...).
+    const expiredCount = await withCronLock(
+      "mark-expired-recordings",
+      { failMode: "open" },
+      () => RecordingTransferService.markExpiredRecordings(),
+    );
 
+    Sentry.logger.info("cron:mark-expired-recordings finished", { expiredCount });
     return NextResponse.json({
       success: true,
       expiredCount,
     });
   } catch (error) {
+    // #476 — concurrent invocation (schedule overlap / manual re-run)
+    // skips with a 409 instead of double-running.
+    if (error instanceof CronLockHeldError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
+    Sentry.captureException(error, { tags: { subsystem: "cron", job: "mark-expired-recordings" } });
     streamLogger.error("Mark expired recordings cron failed", error);
     return NextResponse.json(
       { error: "Cron job failed" },

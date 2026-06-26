@@ -23,8 +23,8 @@ export const paymentGatewaySchema = z.enum([
 export const searchParamsSchema = z.object({
   slotOfAvailabilityWeeklyId: z.string().optional(),
   slotOfAvailabilityCustomId: z.string().optional(),
-  slotStartTimeInUTC: z.string().datetime().optional(),
-  slotEndTimeInUTC: z.string().datetime().optional(),
+  startsAt: z.string().datetime().optional(),
+  endsAt: z.string().datetime().optional(),
   discountCode: z.string().optional(),
   eventId: z.string().optional(),
   notes: z.string().optional(),
@@ -33,8 +33,8 @@ export const searchParamsSchema = z.object({
 // Consultation-specific validation
 export const consultationSearchParamsSchema = searchParamsSchema
   .extend({
-    slotStartTimeInUTC: z.string().datetime(),
-    slotEndTimeInUTC: z.string().datetime(),
+    startsAt: z.string().datetime(),
+    endsAt: z.string().datetime(),
   })
   .refine(
     (data) =>
@@ -48,10 +48,10 @@ export const consultationSearchParamsSchema = searchParamsSchema
   )
   .refine(
     (data) =>
-      new Date(data.slotStartTimeInUTC) < new Date(data.slotEndTimeInUTC),
+      new Date(data.startsAt) < new Date(data.endsAt),
     {
       message: "Start time must be before end time",
-      path: ["slotStartTimeInUTC"],
+      path: ["startsAt"],
     },
   );
 
@@ -77,28 +77,40 @@ export const checkoutSchema = z
     appointmentType: appointmentTypeSchema,
     planId: z.string(),
     eventId: z.string().optional(),
-    slotStartTimeInUTC: z.string().datetime().optional(),
-    slotEndTimeInUTC: z.string().datetime().optional(),
+    startsAt: z.string().datetime().optional(),
+    endsAt: z.string().datetime().optional(),
     slotOfAvailabilityWeeklyId: z.string().optional(),
     slotOfAvailabilityCustomId: z.string().optional(),
     schedulingPeriodStartsAt: z.string().datetime().optional(),
     schedulingPeriodEndsAt: z.string().datetime().optional(),
     discountCode: z.string().optional(),
+    // #828 — one key per logical checkout attempt; the server replays the
+    // original response for a duplicate instead of minting a second order.
+    clientIdempotencyKey: z.string().min(8).max(128).optional(),
     paymentGateway: paymentGatewaySchema.default("RAZORPAY"), // Server auto-routes; client hint only
     displayCurrency: z.string().length(3).optional(), // Currency shown in the checkout UI
     notes: z.string().optional(),
     fromWaitlist: z.string().optional(), // Waitlist ID if coming from waitlist flow
     useReferralCredits: z.boolean().optional(), // Apply available referral credits
+    // Enterprise: optional org context. When set, the payment is tagged with
+    // organizationId and billing is routed per the BillingAccount's
+    // fundingSource (Arch-4 model):
+    //   PERSONAL  → normal gateway, payment tagged for reporting.
+    //   WALLET    → wallet debit (lib/api/organizations/wallet.ts).
+    //   LICENSE   → covered by an active LICENSED_SEAT ProgramAssignment.
+    //   INVOICE   → deferred billing; line item lands on next invoice.
+    //   PROJECT   → reserved for v2.
+    organizationId: z.string().optional(),
   })
   .superRefine((data, ctx) => {
     // === CONSULTATION validation ===
     if (data.appointmentType === "CONSULTATION") {
       // Require slot timing
-      if (!data.slotStartTimeInUTC || !data.slotEndTimeInUTC) {
+      if (!data.startsAt || !data.endsAt) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message: "Consultation requires slot start and end times",
-          path: ["slotStartTimeInUTC"],
+          path: ["startsAt"],
         });
       }
 
@@ -117,7 +129,7 @@ export const checkoutSchema = z
 
     // === SUBSCRIPTION validation ===
     if (data.appointmentType === "SUBSCRIPTION") {
-      const hasSlotData = data.slotStartTimeInUTC && data.slotEndTimeInUTC;
+      const hasSlotData = data.startsAt && data.endsAt;
       const hasSchedulingPeriod =
         data.schedulingPeriodStartsAt && data.schedulingPeriodEndsAt;
 
@@ -127,7 +139,7 @@ export const checkoutSchema = z
           code: z.ZodIssueCode.custom,
           message:
             "Subscription requires either slot timing or scheduling period",
-          path: ["slotStartTimeInUTC"],
+          path: ["startsAt"],
         });
       }
 
@@ -168,27 +180,27 @@ export const checkoutSchema = z
     }
 
     // Validate slot timing order if both provided
-    if (data.slotStartTimeInUTC && data.slotEndTimeInUTC) {
-      const startTime = new Date(data.slotStartTimeInUTC);
-      const endTime = new Date(data.slotEndTimeInUTC);
+    if (data.startsAt && data.endsAt) {
+      const startTime = new Date(data.startsAt);
+      const endTime = new Date(data.endsAt);
       if (startTime >= endTime) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message: "Start time must be before end time",
-          path: ["slotEndTimeInUTC"],
+          path: ["endsAt"],
         });
       }
     }
 
     // Validate slot is not in the past or within minimum booking lead time
-    if (data.slotStartTimeInUTC) {
-      const slotStart = new Date(data.slotStartTimeInUTC);
+    if (data.startsAt) {
+      const slotStart = new Date(data.startsAt);
       const timingError = validateSlotTiming(slotStart);
       if (timingError) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message: timingError,
-          path: ["slotStartTimeInUTC"],
+          path: ["startsAt"],
         });
       }
     }
@@ -231,7 +243,7 @@ export const checkoutSuccessResponseSchema = z.object({
   paymentIntent: z
     .object({
       id: z.string(),
-      client_secret: z.string().optional(), // Can be Payment Intent secret or Checkout URL
+      client_secret: z.string().nullish(), // Can be Payment Intent secret, Checkout URL, or null for org billing modes
     })
     .optional(),
   amount: z.number().optional(),
@@ -260,13 +272,6 @@ export type SubscriptionSearchParams = z.infer<
   typeof subscriptionSearchParamsSchema
 >;
 export type WebinarSearchParams = z.infer<typeof webinarSearchParamsSchema>;
-export type ClassSearchParams = z.infer<typeof classSearchParamsSchema>;
-export type PaymentMetadata = z.infer<typeof paymentMetadataSchema>;
-export type CheckoutResponse = z.infer<typeof checkoutResponseSchema>;
-export type CheckoutSuccessResponse = z.infer<
-  typeof checkoutSuccessResponseSchema
->;
-export type CheckoutErrorResponse = z.infer<typeof checkoutErrorResponseSchema>;
 
 // Utility functions for validation
 export const validateSearchParamsForAppointmentType = (
@@ -295,8 +300,8 @@ export const createCheckoutData = (params: {
   planId: string;
   paymentGateway: PaymentGateway;
   eventId?: string;
-  slotStartTimeInUTC?: string;
-  slotEndTimeInUTC?: string;
+  startsAt?: string;
+  endsAt?: string;
   slotOfAvailabilityWeeklyId?: string;
   slotOfAvailabilityCustomId?: string;
   schedulingPeriodStartsAt?: string;
@@ -306,14 +311,15 @@ export const createCheckoutData = (params: {
   notes?: string;
   fromWaitlist?: string;
   useReferralCredits?: boolean;
+  organizationId?: string;
 }): CheckoutInput => {
   return {
     appointmentType: params.appointmentType,
     planId: params.planId,
     paymentGateway: params.paymentGateway,
     eventId: params.eventId,
-    slotStartTimeInUTC: params.slotStartTimeInUTC,
-    slotEndTimeInUTC: params.slotEndTimeInUTC,
+    startsAt: params.startsAt,
+    endsAt: params.endsAt,
     slotOfAvailabilityWeeklyId: params.slotOfAvailabilityWeeklyId,
     slotOfAvailabilityCustomId: params.slotOfAvailabilityCustomId,
     schedulingPeriodStartsAt: params.schedulingPeriodStartsAt,
@@ -323,5 +329,6 @@ export const createCheckoutData = (params: {
     notes: params.notes,
     fromWaitlist: params.fromWaitlist,
     useReferralCredits: params.useReferralCredits,
+    organizationId: params.organizationId,
   };
 };

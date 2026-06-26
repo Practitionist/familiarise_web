@@ -1,6 +1,8 @@
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { Prisma, DocumentReviewStatus } from "@prisma/client";
+import { resolveOrgScope } from "@/lib/api/scope/parse";
 
 import { getSession } from "@/lib/auth-server";
 // GET - Get all documents for review by consultant
@@ -115,6 +117,7 @@ export async function GET(
       }
     } catch (dbError) {
       console.error("Database error fetching consultant:", dbError);
+      Sentry.captureException(dbError instanceof Error ? dbError : new Error(String(dbError)), { tags: { subsystem: "dashboard" } });
       return NextResponse.json(
         {
           error: "Database temporarily unavailable",
@@ -140,6 +143,35 @@ export async function GET(
       );
     }
 
+    // B1-personal-retrofit: parse + authorize ?orgScope=. Filter applies
+    // to the parent Appointment.organizationId.
+    const callerMembershipsForScope = await prisma.membership.findMany({
+      where: { userId: session.user.id, status: "ACTIVE" },
+      select: { organizationId: true, status: true },
+    });
+    const docScopeResolution = resolveOrgScope({
+      raw: searchParams.get("orgScope"),
+      memberships: callerMembershipsForScope,
+      userRole: session.user.role,
+      // Self-scoped consultant endpoint.
+      allowAllForOwner: true,
+    });
+    if (!docScopeResolution.ok) {
+      return NextResponse.json(
+        {
+          error: docScopeResolution.message,
+          code: docScopeResolution.code,
+        },
+        { status: docScopeResolution.status },
+      );
+    }
+    const docOrgFilter: Partial<Prisma.AppointmentWhereInput> =
+      docScopeResolution.scope.kind === "personal"
+        ? { organizationId: null }
+        : docScopeResolution.scope.kind === "org"
+          ? { organizationId: docScopeResolution.scope.orgId }
+          : {};
+
     // Build where clause
     const where: Prisma.AppointmentDocumentWhereInput = {
       appointment: {
@@ -161,6 +193,7 @@ export async function GET(
             },
           },
         ],
+        ...docOrgFilter,
       },
     };
 
@@ -267,6 +300,7 @@ export async function GET(
       ]);
     } catch (dbError) {
       console.error("Database error fetching documents:", dbError);
+      Sentry.captureException(dbError instanceof Error ? dbError : new Error(String(dbError)), { tags: { subsystem: "dashboard" } });
 
       // Return an empty page envelope with helpful message instead of failing.
       // Shape must match the success branch so the UI's pagination prop is
@@ -350,6 +384,7 @@ export async function GET(
         };
       } catch (transformError) {
         console.error("Error transforming document:", transformError, doc);
+        Sentry.captureException(transformError instanceof Error ? transformError : new Error(String(transformError)), { tags: { subsystem: "dashboard" } });
 
         // Return a safe fallback version of the document
         return {
@@ -439,6 +474,7 @@ export async function GET(
     });
   } catch (error) {
     console.error("Error fetching consultant documents:", error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "dashboard" } });
 
     // Provide specific error messages based on error type
     if (error instanceof Error) {

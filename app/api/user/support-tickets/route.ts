@@ -5,6 +5,8 @@ import { CreateSupportTicketSchema } from "@/schemas/support";
 import { spamLimiter, applyRateLimit } from "@/lib/rate-limit";
 
 import { getSession } from "@/lib/auth-server";
+import { assertBodySize } from "@/lib/validation/limits";
+import * as Sentry from "@sentry/nextjs";
 export async function GET() {
   try {
     const session = await getSession();
@@ -49,6 +51,7 @@ export async function GET() {
 
     return NextResponse.json(tickets);
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
     console.error("Error fetching support tickets:", error);
     return NextResponse.json(
       {
@@ -74,6 +77,10 @@ export async function POST(req: NextRequest) {
     // Rate limit: 5 support tickets per hour per user
     const rl = await applyRateLimit(spamLimiter, `tickets:${session.user.id}`);
     if (rl) return rl;
+
+    // #831 — cap request body before parsing
+    const tooLarge = assertBodySize(req);
+    if (tooLarge) return tooLarge;
 
     const body = await req.json();
     const result = CreateSupportTicketSchema.safeParse(body);
@@ -196,6 +203,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(ticket, { status: 201 });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
     console.error("Error creating support ticket:", error);
     return NextResponse.json(
       {

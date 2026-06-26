@@ -14,6 +14,8 @@ import {
 } from "../../scripts/cleanup/archive-webhook-events";
 import fs from "fs";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
+import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 /**
  * Output results to GitHub Actions
@@ -51,6 +53,7 @@ function outputToGitHubActions(result: WebhookArchiveResult): void {
  */
 async function main(): Promise<void> {
   await abortIfMaintenance("archive-webhook-events");
+  Sentry.logger.info("job:archive-webhook-events started");
   console.log("🗄️ Starting webhook event archive job...");
   console.log(`Timestamp: ${new Date().toISOString()}`);
 
@@ -70,12 +73,24 @@ async function main(): Promise<void> {
       result.errors.forEach((e) => console.log(`   - ${e}`));
     }
 
+    Sentry.logger.info("job:archive-webhook-events finished", {
+      processedDeleted: result.processedEventsDeleted,
+      failedDeleted: result.failedEventsDeleted,
+      totalDeleted: result.totalDeleted,
+    });
     outputToGitHubActions(result);
 
     if (!result.success) {
       process.exit(1);
     }
   } catch (error) {
+    // #476 — lock held = another run is live; skip cleanly (exit 0).
+    if (error instanceof CronLockHeldError) {
+      Sentry.logger.info("job:archive-webhook-events lock held, skipping");
+      console.log(`⏭️  ${error.message}`);
+      return;
+    }
+    Sentry.captureException(error, { tags: { subsystem: "jobs", job: "archive-webhook-events" } });
     console.error("❌ Fatal error in webhook archive:", error);
     process.exit(1);
   } finally {

@@ -143,10 +143,10 @@ function useEventsInternal(mode: TEventQueryMode): IEventsResult {
 
         const [consultationsRes, subscriptionsRes, webinarsRes, classesRes] =
           await Promise.all([
-            fetch(`/api/events/consultations?${queryParam}`),
-            fetch(`/api/events/subscriptions?${queryParam}`),
-            fetch(`/api/events/webinars?${queryParam}`),
-            fetch(`/api/events/classes?${queryParam}`),
+            fetch(`/api/bookings/consultations?${queryParam}`),
+            fetch(`/api/bookings/subscriptions?${queryParam}`),
+            fetch(`/api/bookings/webinars?${queryParam}`),
+            fetch(`/api/bookings/classes?${queryParam}`),
           ]);
 
         if (

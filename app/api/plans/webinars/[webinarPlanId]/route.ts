@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
@@ -30,6 +31,7 @@ export async function GET(
       },
     );
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "plans" } });
     return apiError({ tag: "[WebinarPlan.GET]", error });
   }
 }
@@ -131,6 +133,7 @@ export async function PUT(
         { status: 404 },
       );
     }
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "plans" } });
     return apiError({ tag: "[WebinarPlan.PUT]", error });
   }
 }
@@ -179,7 +182,7 @@ export async function DELETE(
     }
 
     // Check for active collaborators (PENDING or ACCEPTED)
-    const activeCollaborators = await prisma.webinarCollaborator.count({
+    const activeCollaborators = await prisma.collaborator.count({
       where: {
         webinarPlanId,
         status: { in: ["PENDING", "ACCEPTED"] },
@@ -229,6 +232,7 @@ export async function DELETE(
         { status: 404 },
       );
     }
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "plans" } });
     return apiError({ tag: "[WebinarPlan.DELETE]", error });
   }
 }

@@ -1,14 +1,15 @@
 "use client";
 
+import * as Sentry from "@sentry/nextjs";
 import React from "react";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+  ResponsiveModal,
+  ResponsiveModalContent,
+  ResponsiveModalDescription,
+  ResponsiveModalFooter,
+  ResponsiveModalHeader,
+  ResponsiveModalTitle,
+} from "@/components/ui/responsive-modal";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -138,6 +139,7 @@ export function ReportIssueDialog({
       onOpenChange(false);
       onSuccess?.();
     } catch (error) {
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
       console.error("Failed to create support ticket:", error);
       toast({
         title: "Error",
@@ -164,41 +166,41 @@ export function ReportIssueDialog({
     appointmentStatus === "COMPLETED" ? "Completed" : "Upcoming";
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto scrollbar-hide">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
+    <ResponsiveModal open={open} onOpenChange={onOpenChange}>
+      <ResponsiveModalContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto scrollbar-hide">
+        <ResponsiveModalHeader>
+          <ResponsiveModalTitle className="flex items-center gap-2">
             <AlertCircle className="h-5 w-5 text-amber-500" />
             Report an Issue
-          </DialogTitle>
-          <DialogDescription>
+          </ResponsiveModalTitle>
+          <ResponsiveModalDescription>
             Let us know what went wrong with your {typeLabel.toLowerCase()}.
-          </DialogDescription>
-        </DialogHeader>
+          </ResponsiveModalDescription>
+        </ResponsiveModalHeader>
 
         <div className="space-y-5 py-4">
           {/* Appointment Context Card */}
-          <div className="p-4 rounded-xl bg-gradient-to-r from-zinc-50 to-zinc-100 border border-zinc-200">
-            <div className="flex items-center gap-2 text-xs text-zinc-500 mb-3">
+          <div className="p-4 rounded-xl bg-muted border border-border">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground mb-3">
               <Calendar className="h-3.5 w-3.5" />
               <span>Linked to {typeLabel}</span>
             </div>
             <div className="space-y-2">
               <div className="flex items-center gap-2">
-                <User className="h-4 w-4 text-zinc-400" />
-                <span className="font-medium text-zinc-800">
+                <User className="h-4 w-4 text-muted-foreground/70" />
+                <span className="font-medium text-foreground">
                   {consultantName}
                 </span>
               </div>
               {formattedDate && (
-                <div className="flex items-center gap-2 text-sm text-zinc-600">
-                  <Calendar className="h-4 w-4 text-zinc-400" />
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Calendar className="h-4 w-4 text-muted-foreground/70" />
                   <span>{formattedDate}</span>
                 </div>
               )}
               <div className="flex items-center gap-2">
-                <Tag className="h-4 w-4 text-zinc-400" />
-                <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-zinc-200 text-zinc-700">
+                <Tag className="h-4 w-4 text-muted-foreground/70" />
+                <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-muted text-muted-foreground">
                   {statusLabel}
                 </span>
               </div>
@@ -207,7 +209,7 @@ export function ReportIssueDialog({
 
           {/* Issue Type */}
           <div className="space-y-2">
-            <Label className="text-sm font-medium text-zinc-700">
+            <Label className="text-sm font-medium text-foreground">
               What&apos;s this about? <span className="text-red-500">*</span>
             </Label>
             <Select
@@ -233,7 +235,7 @@ export function ReportIssueDialog({
 
           {/* Subject */}
           <div className="space-y-2">
-            <Label className="text-sm font-medium text-zinc-700">
+            <Label className="text-sm font-medium text-foreground">
               Subject <span className="text-red-500">*</span>
             </Label>
             <Input
@@ -246,7 +248,7 @@ export function ReportIssueDialog({
 
           {/* Description */}
           <div className="space-y-2">
-            <Label className="text-sm font-medium text-zinc-700">
+            <Label className="text-sm font-medium text-foreground">
               Description <span className="text-red-500">*</span>
             </Label>
             <Textarea
@@ -259,7 +261,7 @@ export function ReportIssueDialog({
 
           {/* Priority */}
           <div className="space-y-2">
-            <Label className="text-sm font-medium text-zinc-700">
+            <Label className="text-sm font-medium text-foreground">
               Priority
             </Label>
             <Select
@@ -280,7 +282,7 @@ export function ReportIssueDialog({
           </div>
         </div>
 
-        <DialogFooter className="gap-2 sm:gap-0">
+        <ResponsiveModalFooter className="gap-2 sm:gap-0">
           <Button
             variant="outline"
             onClick={() => onOpenChange(false)}
@@ -291,7 +293,7 @@ export function ReportIssueDialog({
           <Button
             onClick={handleSubmit}
             disabled={isLoading || !issueType || !title || !description}
-            className="bg-amber-600 hover:bg-amber-700 text-white"
+            className="bg-amber-600 hover:bg-amber-700 text-white dark:bg-amber-600 dark:hover:bg-amber-500"
           >
             {isLoading ? (
               <>
@@ -305,8 +307,8 @@ export function ReportIssueDialog({
               </>
             )}
           </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </ResponsiveModalFooter>
+      </ResponsiveModalContent>
+    </ResponsiveModal>
   );
 }

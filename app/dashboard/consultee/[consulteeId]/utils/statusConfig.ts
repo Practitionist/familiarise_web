@@ -12,7 +12,7 @@ export interface StatusStyle {
   label?: string;
 }
 
-export interface StatusStyleDark {
+interface StatusStyleDark {
   bg: string;
   text: string;
 }
@@ -51,7 +51,7 @@ export const STATUS_CONFIG: Record<string, StatusStyle> = {
 };
 
 /** Dark variant for dark-background cards (e.g. UpcomingSessionCard) */
-export const STATUS_CONFIG_DARK: Record<string, StatusStyleDark> = {
+const STATUS_CONFIG_DARK: Record<string, StatusStyleDark> = {
   APPROVED: { bg: "bg-teal-500/15", text: "text-teal-400" },
   PENDING: { bg: "bg-orange-500/15", text: "text-orange-400" },
   SCHEDULED: { bg: "bg-indigo-500/15", text: "text-indigo-400" },

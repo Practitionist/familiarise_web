@@ -2,7 +2,7 @@
  * Tentative Slot Cleanup - Core Logic
  *
  * Releases slots marked as isTentative=true that are associated with
- * abandoned booking flows (no successful payment after 7 days).
+ * abandoned booking flows (no successful payment after 24 hours, #833).
  *
  * This happens when:
  * - User started booking but never completed payment
@@ -19,9 +19,13 @@
 
 import prisma from "../../lib/prisma";
 import { PaymentStatus } from "@prisma/client";
+import { withCronLock } from "@/lib/cron/with-cron-lock";
 
-// Release tentative slots older than 7 days with no successful payment
-const TENTATIVE_EXPIRATION_DAYS = 7;
+// #833 — hours, not days: gateway orders expire well inside a day, so a
+// 7-day hold locked users out of rebooking for most of a week. 24h keeps
+// margin over Payment.expiresAt and the 2-hourly cron cadence; the parent
+// status guard below still protects requests under consultant review.
+const TENTATIVE_EXPIRATION_HOURS = 24;
 
 export interface TentativeSlotCleanupResult {
   success: boolean;
@@ -34,17 +38,25 @@ export interface TentativeSlotCleanupResult {
 /**
  * Find and release stale tentative slots
  */
+// #476 — locked at the core so every entry (GH Actions / HTTP) shares one
+// mutual exclusion; fail-open: repeat-safe side effects, lock is belt-and-braces.
 export async function cleanupTentativeSlots(): Promise<TentativeSlotCleanupResult> {
+  return withCronLock("cleanup-tentative-slots", { failMode: "open" }, () =>
+    cleanupTentativeSlotsUnlocked(),
+  );
+}
+
+async function cleanupTentativeSlotsUnlocked(): Promise<TentativeSlotCleanupResult> {
   const errors: string[] = [];
   let slotsReleased = 0;
   const appointmentsAffected = new Set<string>();
 
   const expirationDate = new Date(
-    Date.now() - TENTATIVE_EXPIRATION_DAYS * 24 * 60 * 60 * 1000,
+    Date.now() - TENTATIVE_EXPIRATION_HOURS * 60 * 60 * 1000,
   );
 
   console.log("🧹 Starting tentative slot cleanup...");
-  console.log(`   Expiration threshold: ${TENTATIVE_EXPIRATION_DAYS} days`);
+  console.log(`   Expiration threshold: ${TENTATIVE_EXPIRATION_HOURS} hours`);
 
   try {
     // Find tentative slots with no successful payment AND whose parent event
@@ -67,7 +79,7 @@ export async function cleanupTentativeSlots(): Promise<TentativeSlotCleanupResul
                 { consultation: null },
                 {
                   consultation: {
-                    requestStatus: {
+                    status: {
                       notIn: ["PENDING", "APPROVED_PENDING_PAYMENT"],
                     },
                   },
@@ -79,7 +91,7 @@ export async function cleanupTentativeSlots(): Promise<TentativeSlotCleanupResul
                 { subscription: null },
                 {
                   subscription: {
-                    requestStatus: {
+                    status: {
                       notIn: ["PENDING", "APPROVED_PENDING_PAYMENT"],
                     },
                   },
@@ -96,7 +108,7 @@ export async function cleanupTentativeSlots(): Promise<TentativeSlotCleanupResul
             consultation: {
               select: {
                 id: true,
-                requestStatus: true,
+                status: true,
                 requestedBy: {
                   include: { user: { select: { name: true, email: true } } },
                 },
@@ -105,7 +117,7 @@ export async function cleanupTentativeSlots(): Promise<TentativeSlotCleanupResul
             subscription: {
               select: {
                 id: true,
-                requestStatus: true,
+                status: true,
                 requestedBy: {
                   include: { user: { select: { name: true, email: true } } },
                 },
@@ -154,6 +166,14 @@ export async function cleanupTentativeSlots(): Promise<TentativeSlotCleanupResul
       const result = await prisma.slotOfAppointment.deleteMany({
         where: {
           id: { in: staleTentativeSlots.map((s) => s.id) },
+          // #829 — re-state the tentative + unpaid conditions so a slot whose
+          // capture webhook confirmed it between the findMany above and this
+          // delete no longer matches (re-evaluated under the row lock). An
+          // id-only delete here destroyed paid bookings.
+          isTentative: true,
+          appointment: {
+            payment: { none: { paymentStatus: PaymentStatus.SUCCEEDED } },
+          },
         },
       });
 

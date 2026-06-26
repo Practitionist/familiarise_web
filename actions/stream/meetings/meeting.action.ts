@@ -1,5 +1,6 @@
 "use server";
 
+import * as Sentry from "@sentry/nextjs";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
@@ -59,6 +60,7 @@ export async function findDbMeetingSessionBySlot(
 
     return meetingSession;
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
     streamLogger.error("Error finding meeting session", error, {
       slotId: validatedSlotId,
     });
@@ -97,6 +99,15 @@ export async function createDbMeetingSession(
     streamCallId: validatedStreamCallId,
   });
 
+  let organizationId: string | null = null;
+  if (slot.appointmentId) {
+    const appointment = await prisma.appointment.findUnique({
+      where: { id: slot.appointmentId },
+      select: { organizationId: true },
+    });
+    organizationId = appointment?.organizationId ?? null;
+  }
+
   try {
     const meetingSession = await prisma.meetingSession.create({
       data: {
@@ -105,6 +116,9 @@ export async function createDbMeetingSession(
         slotOfAppointment: {
           connect: { id: slot.id },
         },
+        ...(organizationId
+          ? { organization: { connect: { id: organizationId } } }
+          : {}),
       },
     });
 
@@ -132,6 +146,7 @@ export async function createDbMeetingSession(
       if (existing) return existing;
     }
 
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
     streamLogger.error("Failed to create meeting session", error, {
       slotId: slot.id,
       streamCallId: validatedStreamCallId,
@@ -194,6 +209,7 @@ export async function updateMeetingSessionCallId(
 
     return updated;
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
     streamLogger.error("Failed to update meeting session", error, {
       sessionId: validatedSessionId,
     });

@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
@@ -112,23 +113,35 @@ const classInclude = {
   },
 } satisfies Prisma.ClassInclude;
 
-type ConsultationWithResources = Prisma.ConsultationGetPayload<{
-  include: typeof consultationInclude;
-}>;
-type SubscriptionWithResources = Prisma.SubscriptionGetPayload<{
-  include: typeof subscriptionInclude;
-}>;
-type WebinarWithResources = Prisma.WebinarGetPayload<{
-  include: typeof webinarInclude;
-}>;
-type ClassWithResources = Prisma.ClassGetPayload<{
-  include: typeof classInclude;
-}>;
+// Derived via the extended client — raw GetPayload would re-introduce
+// bigint money/fileSize fields (#780).
+type ConsultationWithResources = Prisma.Result<
+  typeof prisma.consultation,
+  { include: typeof consultationInclude },
+  "findFirstOrThrow"
+>;
+type SubscriptionWithResources = Prisma.Result<
+  typeof prisma.subscription,
+  { include: typeof subscriptionInclude },
+  "findFirstOrThrow"
+>;
+type WebinarWithResources = Prisma.Result<
+  typeof prisma.webinar,
+  { include: typeof webinarInclude },
+  "findFirstOrThrow"
+>;
+type ClassWithResources = Prisma.Result<
+  typeof prisma.class,
+  { include: typeof classInclude },
+  "findFirstOrThrow"
+>;
 
 // Appointment type that has slotsOfAppointment with meetingSession recordings
-type AppointmentWithSlots = Prisma.AppointmentGetPayload<{
-  include: typeof slotsWithRecordings;
-}>;
+type AppointmentWithSlots = Prisma.Result<
+  typeof prisma.appointment,
+  { include: typeof slotsWithRecordings },
+  "findFirstOrThrow"
+>;
 
 export async function GET(
   request: Request,
@@ -300,10 +313,9 @@ export async function GET(
             planTitle: c.consultationPlan.title,
             consultantName: c.consultationPlan.consultantProfile.user.name,
             consultantImage: c.consultationPlan.consultantProfile.user.image,
-            status: c.requestStatus,
+            status: c.status,
             date:
-              c.appointment?.slotsOfAppointment?.[0]?.startsAt ||
-              c.requestedAt,
+              c.appointment?.slotsOfAppointment?.[0]?.startsAt || c.requestedAt,
             materials: c.consultationPlan.materials,
             recordings: await extractRecordings(
               c.appointment ? [c.appointment] : [],
@@ -318,7 +330,7 @@ export async function GET(
             planTitle: s.subscriptionPlan.title,
             consultantName: s.subscriptionPlan.consultantProfile.user.name,
             consultantImage: s.subscriptionPlan.consultantProfile.user.image,
-            status: s.requestStatus,
+            status: s.status,
             date: s.schedulingPeriodStartsAt || s.requestedAt,
             materials: s.subscriptionPlan.materials,
             recordings: await extractRecordings(s.appointments),
@@ -349,8 +361,7 @@ export async function GET(
             id: cl.id,
             planTitle: cl.classPlan.title,
             consultantName: cl.classPlan.consultantProfile?.user.name ?? null,
-            consultantImage:
-              cl.classPlan.consultantProfile?.user.image ?? null,
+            consultantImage: cl.classPlan.consultantProfile?.user.image ?? null,
             status: cl.status,
             date:
               cl.schedulingPeriodStartsAt ||
@@ -365,6 +376,7 @@ export async function GET(
 
     return NextResponse.json({ data: transform, success: true });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "dashboard" } });
     console.error("Error fetching consultee resources:", error);
     return NextResponse.json(
       { error: "Failed to fetch resources" },

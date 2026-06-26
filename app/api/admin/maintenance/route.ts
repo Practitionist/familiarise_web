@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { drainActiveSessions } from "@/actions/maintenance/drain-sessions";
 import { freezeAppointments } from "@/actions/maintenance/freeze-appointments";
 import { pauseDiscountCodes } from "@/actions/maintenance/pause-discount-codes";
@@ -67,24 +68,28 @@ async function runOfflineActivation(
   try {
     result.drain = await drainActiveSessions();
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
     result.errors.push(formatError("drainActiveSessions failed", error));
   }
 
   try {
     result.freeze = await freezeAppointments(start, estimatedEnd);
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
     result.errors.push(formatError("freezeAppointments failed", error));
   }
 
   try {
     result.discounts = await pauseDiscountCodes();
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
     result.errors.push(formatError("pauseDiscountCodes failed", error));
   }
 
   try {
     result.waitlist = await pauseWaitlistExpiry(start, end);
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
     result.errors.push(formatError("pauseWaitlistExpiry failed", error));
   }
 
@@ -159,7 +164,7 @@ export async function POST(request: NextRequest) {
         status: { in: ["NEEDS_RESPONSE", "WARNING_NEEDS_RESPONSE"] },
         dueBy: { gte: new Date(), lte: bufferEnd },
       },
-      select: { id: true, dueBy: true, amount: true, currency: true },
+      select: { id: true, dueBy: true, amountPaise: true, currency: true },
       orderBy: { dueBy: "asc" },
     });
     if (urgentDisputes.length > 0) {

@@ -14,6 +14,8 @@ import {
 } from "../../scripts/disputes/alert-dispute-deadlines";
 import fs from "fs";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
+import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 /**
  * Output results to GitHub Actions
@@ -48,6 +50,7 @@ function outputToGitHubActions(result: DisputeDeadlineAlertResult): void {
  */
 async function main(): Promise<void> {
   await abortIfMaintenance("alert-dispute-deadlines");
+  Sentry.logger.info("job:alert-dispute-deadlines started");
   console.log("🔔 Starting dispute deadline alert check...");
   console.log(`Timestamp: ${new Date().toISOString()}`);
 
@@ -68,6 +71,10 @@ async function main(): Promise<void> {
     }
 
     outputToGitHubActions(result);
+    Sentry.logger.info("job:alert-dispute-deadlines finished", {
+      urgentCount: result.urgentCount,
+      criticalCount: result.criticalCount,
+    });
 
     // Exit with error if critical disputes found (to trigger notifications)
     if (result.criticalCount > 0) {
@@ -75,6 +82,13 @@ async function main(): Promise<void> {
       process.exit(1);
     }
   } catch (error) {
+    // #476 — lock held = another run is live; skip cleanly (exit 0).
+    if (error instanceof CronLockHeldError) {
+      Sentry.logger.info("job:alert-dispute-deadlines lock held, skipping");
+      console.log(`⏭️  ${error.message}`);
+      return;
+    }
+    Sentry.captureException(error, { tags: { subsystem: "jobs", job: "alert-dispute-deadlines" } });
     console.error("❌ Fatal error in dispute deadline alert:", error);
     process.exit(1);
   } finally {

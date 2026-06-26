@@ -15,6 +15,8 @@ import {
 
 import fs from "fs";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
+import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 /**
  * Output results to GitHub Actions using environment files
@@ -46,6 +48,7 @@ function outputToGitHubActions(result: ReleaseResult): void {
  */
 async function main(): Promise<void> {
   await abortIfMaintenance("release-earnings");
+  Sentry.logger.info("job:release-earnings started");
   const startTime = Date.now();
   console.log(
     `🚀 Starting release earnings job at ${new Date().toISOString()}`,
@@ -67,6 +70,7 @@ async function main(): Promise<void> {
     outputToGitHubActions(result);
 
     if (result.success) {
+      Sentry.logger.info("job:release-earnings finished", { releasedCount: result.releasedCount, errorCount: result.errorCount });
       console.log("🎉 Release earnings job completed successfully");
       process.exit(0);
     } else {
@@ -74,6 +78,15 @@ async function main(): Promise<void> {
       process.exit(1);
     }
   } catch (error) {
+    // #476 — lock held = another run is live; skipping is the correct
+    // outcome (exit 0, no page). CronLockUnavailableError falls through
+    // to exit 1 so the workflow's notify step pages.
+    if (error instanceof CronLockHeldError) {
+      Sentry.logger.info("job:release-earnings skipped — cron lock held");
+      console.log(`⏭️  ${error.message}`);
+      return;
+    }
+    Sentry.captureException(error, { tags: { subsystem: "jobs", job: "release-earnings" } });
     const errorMessage =
       error instanceof Error ? error.message : "Unknown error";
     console.error("💥 Release earnings job failed:", errorMessage);

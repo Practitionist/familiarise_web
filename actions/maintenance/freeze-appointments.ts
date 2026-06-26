@@ -9,6 +9,8 @@
 
 import crypto from "crypto";
 
+import * as Sentry from "@sentry/nextjs";
+
 import { notifyAppointmentCancelled } from "@/lib/novu/service";
 import { createRefund } from "@/lib/payments";
 import prisma from "@/lib/prisma";
@@ -215,7 +217,7 @@ export async function freezeAppointments(
           await tx.consultation.update({
             where: { id: consultation.id },
             data: {
-              requestStatus: "CANCELLED",
+              status: "CANCELLED",
               cancellationReason: "TECHNICAL_ISSUE",
               cancellationNotes:
                 "Cancelled due to scheduled platform maintenance",
@@ -244,7 +246,7 @@ export async function freezeAppointments(
           await tx.subscription.update({
             where: { id: subscription.id },
             data: {
-              requestStatus: "CANCELLED",
+              status: "CANCELLED",
               cancellationReason: "TECHNICAL_ISSUE",
               cancellationNotes:
                 "Cancelled due to scheduled platform maintenance",
@@ -378,7 +380,7 @@ export async function freezeAppointments(
       });
       await prisma.refund.create({
         data: {
-          amount: payment.amount,
+          amountPaise: payment.amount,
           currency: payment.currency,
           reason: "Scheduled platform maintenance",
           status: result.status,
@@ -392,6 +394,7 @@ export async function freezeAppointments(
       });
       refundsIssued++;
     } catch (err) {
+      Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "maintenance" } });
       console.error(
         JSON.stringify({
           event: "maintenance_refund_failed",
@@ -404,7 +407,7 @@ export async function freezeAppointments(
       try {
         await prisma.refund.create({
           data: {
-            amount: payment.amount,
+            amountPaise: payment.amount,
             currency: payment.currency,
             reason: "Scheduled platform maintenance",
             status: "PENDING",
@@ -415,6 +418,7 @@ export async function freezeAppointments(
           },
         });
       } catch (dbErr) {
+        Sentry.captureException(dbErr instanceof Error ? dbErr : new Error(String(dbErr)), { tags: { subsystem: "maintenance" }, level: "fatal" });
         console.error(
           JSON.stringify({
             event: "maintenance_refund_record_failed",
@@ -452,6 +456,7 @@ export async function freezeAppointments(
           subscriptionsExtended++;
         }
       } catch (err) {
+        Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "maintenance" } });
         console.error(
           JSON.stringify({
             event: "maintenance_subscription_extend_failed",
@@ -471,6 +476,7 @@ export async function freezeAppointments(
       await notifyAppointmentCancelled(userIds, data);
       notified += userIds.length;
     } catch (err) {
+      Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "maintenance" }, level: "warning" });
       console.error(
         JSON.stringify({
           event: "maintenance_freeze_notification_failed",

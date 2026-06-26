@@ -9,6 +9,7 @@ import prisma from "@/lib/prisma";
 import { calculatePosition, leaveWaitlist } from "@/lib/waitlist";
 
 import { getSession } from "@/lib/auth-server";
+import * as Sentry from "@sentry/nextjs";
 interface RouteParams {
   params: Promise<{ id: string }>;
 }
@@ -123,6 +124,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       },
     });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "waitlist" } });
     console.error("Error fetching waitlist entry:", error);
     return NextResponse.json(
       { success: false, error: "Failed to fetch waitlist entry" },
@@ -164,6 +166,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       message: result.message,
     });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "waitlist" } });
     console.error("Error leaving waitlist:", error);
     return NextResponse.json(
       { success: false, error: "Failed to leave waitlist" },

@@ -1,5 +1,6 @@
 "use client";
 
+import * as Sentry from "@sentry/nextjs";
 import { useState, useEffect, useMemo } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -60,6 +61,7 @@ import { ClassEvent, ClassPlannerProps } from "../types/event";
 import { PlanMaterialsUpload } from "./PlanMaterialsUpload";
 import { CollaboratorsTab } from "@/components/collaborators/CollaboratorsTab";
 import { PlanImageUploader } from "@/components/plans/PlanImageUploader";
+import { toCurrencyEnum } from "@/lib/payments/validation/currency-guards";
 
 export function EventPlannerForClass({
   isOpen,
@@ -95,6 +97,7 @@ export function EventPlannerForClass({
         const fetchedTopics = await PlannerService.getTopics("");
         setAvailableTopics(fetchedTopics);
       } catch (error) {
+        Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
         console.error("Failed to fetch topics:", error);
         toast({
           title: "Error",
@@ -285,7 +288,7 @@ export function EventPlannerForClass({
           title: formData.title,
           description: formData.description || "",
           price: Math.round(formData.price * 100),
-          priceCurrency: formData.priceCurrency ?? "INR",
+          priceCurrency: toCurrencyEnum(formData.priceCurrency),
           durationInMonths: formData.durationInMonths,
           maxParticipants: formData.maxParticipants,
           language: formData.language ?? "English",
@@ -296,6 +299,10 @@ export function EventPlannerForClass({
           topics: formData.topics,
           consultantProfileId: consultantId,
           consultantProfile: null,
+          organizationId: null,
+          // #726 — personal plans default to PUBLIC; org-owned plans
+          // surface a visibility toggle in their dedicated catalog UI.
+          visibility: initialData?.classPlan?.visibility ?? "PUBLIC",
           certificateProvided: formData.certificateProvided ?? false,
           recordingEnabled: formData.recordingEnabled ?? false,
           recordingStoragePolicy: initialData?.classPlan?.recordingStoragePolicy ?? "STREAM_ONLY",
@@ -339,6 +346,7 @@ export function EventPlannerForClass({
       });
       onClose();
     } catch (error) {
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
       console.error("Error saving class:", error);
       toast({
         title: "Error",

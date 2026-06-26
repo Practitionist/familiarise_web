@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { Prisma, AppointmentsType } from "@prisma/client";
 import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
@@ -226,8 +227,8 @@ interface UpdateSlotsRequest {
     deleteMany?: Record<string, never>;
     createMany?: {
       data: Array<{
-        slotStartTimeInUTC: string;
-        slotEndTimeInUTC: string;
+        startsAt: string;
+        endsAt: string;
         type?: "WEEKLY" | "CUSTOM";
         isTentative?: boolean;
       }>;
@@ -538,6 +539,7 @@ export async function GET(
     return NextResponse.json({ data: appointment }, { status: 200 });
   } catch (error) {
     console.error("Error fetching appointment:", error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "scheduling" } });
     return NextResponse.json(
       { error: "An error occurred while fetching the appointment" },
       { status: 500 },
@@ -585,8 +587,8 @@ export async function PATCH(
       slotsOfAppointment: {
         deleteMany: {},
         create: body.slotsOfAppointment.createMany.data.map((slot) => ({
-          startsAt: new Date(slot.slotStartTimeInUTC),
-          endsAt: new Date(slot.slotEndTimeInUTC),
+          startsAt: new Date(slot.startsAt),
+          endsAt: new Date(slot.endsAt),
           type: slot.type || "WEEKLY", // Default to WEEKLY if not specified
           isTentative: slot.isTentative ?? defaultIsTentative, // Explicit tentative flag
         })),
@@ -728,6 +730,7 @@ export async function PATCH(
         );
       }
     }
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "scheduling" } });
     return NextResponse.json(
       { error: "An error occurred while updating the appointment slots" },
       { status: 500 },
@@ -925,6 +928,7 @@ export async function PUT(
         );
       }
     }
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "scheduling" } });
     return NextResponse.json(
       { error: "An error occurred while updating the appointment" },
       { status: 500 },
@@ -1111,6 +1115,7 @@ export async function DELETE(
         );
       }
     }
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "scheduling" } });
     return NextResponse.json(
       { error: "An error occurred while deleting the appointment" },
       { status: 500 },

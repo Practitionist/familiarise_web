@@ -21,6 +21,9 @@ export const NOVU_WORKFLOWS = {
   PAYMENT_FAILED: "payment-failed",
   REFUND_PROCESSED: "refund-processed",
   REFUND_REQUESTED: "refund-requested",
+  // #779 §A — a refund the gateway rejected. In-app to the payer so they
+  // know the money isn't coming back via this attempt + can chase support.
+  REFUND_FAILED: "refund-failed",
 
   // Support
   SUPPORT_TICKET_CREATED: "support-ticket-created",
@@ -61,6 +64,9 @@ export const NOVU_WORKFLOWS = {
   // Recordings
   RECORDING_AVAILABLE: "recording-available",
   RECORDING_FAILED: "recording-failed",
+  // STR-3 — STREAM_ONLY recordings aren't auto-transferred; warn the host
+  // before their Stream S3 URL lapses so they can download/keep it.
+  RECORDING_EXPIRING: "recording-expiring",
 
   // Referrals
   REFERRAL_BONUS_EARNED: "referral-bonus-earned",
@@ -76,10 +82,44 @@ export const NOVU_WORKFLOWS = {
   MAINTENANCE_SCHEDULED: "maintenance-scheduled",
   MAINTENANCE_STARTED: "maintenance-started",
   MAINTENANCE_ENDED: "maintenance-ended",
-} as const;
 
-export type NovuWorkflowId =
-  (typeof NOVU_WORKFLOWS)[keyof typeof NOVU_WORKFLOWS];
+  // Enterprise (arch-4) — org-scoped events. Workflow definitions must
+  // exist in the Novu dashboard with the matching slug; each is one
+  // in-app + optional email step. Delivery-channel routing is Novu's
+  // responsibility — the app just triggers with payload.
+  ORG_INVITE_SENT: "org-invite-sent",
+  ORG_INVITE_ACCEPTED: "org-invite-accepted",
+  ORG_INVOICE_ISSUED: "org-invoice-issued",
+  ORG_INVOICE_PAID: "org-invoice-paid",
+  // #779 §A — dunning. ISSUED→OVERDUE first-notice + the escalating
+  // 7-day reminders share one workflow; `reminderStage` drives the copy.
+  ORG_INVOICE_OVERDUE: "org-invoice-overdue",
+  // #779 §A — a CHARGE_MEMBER overage side-charge hit its 14-day timeout
+  // (PENDING→FAILED). In-app to the member only (their obligation lapsed).
+  ORG_MEMBER_OVERAGE_TIMED_OUT: "org-member-overage-timed-out",
+  ORG_LICENSE_RENEWAL_UPCOMING: "org-license-renewal-upcoming",
+  ORG_DATA_EXPORT_READY: "org-data-export-ready",
+  ORG_WALLET_TOPUP_CONFIRMED: "org-wallet-topup-confirmed",
+  // #777 §C — wallet dipped below its configured minimum. NOTIFY-ONLY floor:
+  // tells finance to top up; the auto-charge lands with payment mandates.
+  ORG_WALLET_LOW: "org-wallet-low",
+  ORG_PAYOUT_COMPLETED: "org-payout-completed",
+  ORG_PAYOUT_FAILED: "org-payout-failed",
+  ORG_PAYOUT_REVERSED: "org-payout-reversed",
+  ORG_PROGRAM_EXHAUSTED: "org-program-exhausted",
+  // #768 lockdown #22 — 80% early-warning sibling of ORG_PROGRAM_EXHAUSTED.
+  // Fires once per cycle on the <80% → >=80% transition so operators can
+  // upsize before bookings actually start getting refused at 100%.
+  ORG_PROGRAM_CAP_NEAR: "org-program-cap-near",
+  // #775 — a CHARGE_MEMBER over-cap booking created a side-charge the member
+  // now owes. In-app to the member only (their personal payment obligation).
+  ORG_PROGRAM_OVERAGE_DUE: "org-program-overage-due",
+  ORG_SSO_PROVIDER_DELETED: "org-sso-provider-deleted",
+  ORG_SSO_CERT_EXPIRING: "org-sso-cert-expiring",
+  // A7: notify the consultant that their EXPERT membership at an org was
+  // soft-deleted. Triggered from the member DELETE handler.
+  ORG_EXPERT_REMOVED: "org-expert-removed",
+} as const;
 
 // ============================================================================
 // Payload Type Definitions
@@ -235,6 +275,15 @@ export type RecordingFailedPayload = {
   dashboardUrl: string;
 };
 
+// STR-3 — one notification per consultant summarising how many of their
+// STREAM_ONLY recordings expire soon. `expiresAt` is the soonest expiry in the
+// batch so the copy can lead with the nearest deadline.
+export type RecordingExpiringPayload = {
+  recordingCount: number;
+  expiresAt: string;
+  dashboardUrl: string;
+};
+
 export type ConsultantApplicationPayload = {
   applicantName: string;
   applicantEmail: string;
@@ -292,4 +341,182 @@ export type MaintenancePayload = {
   phase: string;
   reason?: string;
   estimatedEnd?: string;
+};
+
+// ============================================================================
+// Enterprise (arch-4) Payload Types
+// ============================================================================
+
+export type OrgInviteSentPayload = {
+  inviterName: string;
+  orgName: string;
+  role: string;
+  inviteUrl: string;
+  expiresAt: string;
+};
+
+export type OrgInviteAcceptedPayload = {
+  accepteeName: string;
+  accepteeEmail: string;
+  orgName: string;
+  role: string;
+  dashboardUrl: string;
+};
+
+export type OrgInvoiceIssuedPayload = {
+  invoiceNumber: string;
+  orgName: string;
+  totalPaise: number;
+  currency: string;
+  dueDate: string;
+  dashboardUrl: string;
+};
+
+export type OrgInvoicePaidPayload = {
+  invoiceNumber: string;
+  orgName: string;
+  totalPaise: number;
+  currency: string;
+  paidAt: string;
+  dashboardUrl: string;
+};
+
+// #779 §A — dunning notice. `reminderStage` is 0 for the first OVERDUE
+// notice and 1..3 for the escalating 7-day reminders so the template can
+// ramp the urgency copy. `daysLate` is days since dueDate; `payUrl` deep-
+// links to the invoice pay surface.
+export type OrgInvoiceOverduePayload = {
+  invoiceNumber: string;
+  orgName: string;
+  totalPaise: number;
+  currency: string;
+  daysLate: number;
+  reminderStage: number;
+  payUrl: string;
+};
+
+// #779 §A — a member-owed overage side-charge timed out (PENDING→FAILED)
+// after 14 days unpaid. `payUrl` still points at the settle surface (the
+// member can retry via FAILED→PENDING resume-checkout).
+export type OrgMemberOverageTimedOutPayload = {
+  orgName: string;
+  programName: string;
+  amountPaise: number;
+  currency: string;
+  payUrl: string;
+};
+
+export type OrgLicenseRenewalUpcomingPayload = {
+  orgName: string;
+  cycle: "MONTHLY" | "QUARTERLY" | "ANNUAL";
+  renewalDate: string;
+  daysUntilRenewal: number;
+  expectedTotalPaise: number;
+  currency: string;
+  dashboardUrl: string;
+};
+
+export type OrgDataExportReadyPayload = {
+  orgName: string;
+  exportId: string;
+  fileSizeBytes: number;
+  expiresAt: string;
+  downloadUrl: string;
+  dashboardUrl: string;
+};
+
+export type OrgWalletTopupConfirmedPayload = {
+  orgName: string;
+  amountPaise: number;
+  currency: string;
+  newBalancePaise: number;
+  dashboardUrl: string;
+};
+
+// #777 §C — wallet low-balance alert. `balancePaise` is the live balance that
+// tripped the floor; `minimumPaise` is the configured threshold. NOTIFY-ONLY —
+// no money moves until mandates land. `topUpUrl` deep-links to the wallet tab.
+export type OrgWalletLowPayload = {
+  orgName: string;
+  balancePaise: number;
+  minimumPaise: number;
+  currency: string;
+  topUpUrl: string;
+};
+
+export type OrgPayoutCompletedPayload = {
+  orgName: string;
+  payoutId: string;
+  amountPaise: number;
+  currency: string;
+  dashboardUrl: string;
+};
+
+export type OrgProgramExhaustedPayload = {
+  orgName: string;
+  programName: string;
+  assigneeName: string;
+  dashboardUrl: string;
+};
+
+// #768 lockdown #22 — early-warning payload. `usedPct` is the post-booking
+// utilization ratio (0-100) that crossed the 80% line; `engagementsUsed` /
+// `cap` let the template render "41 of 50 sessions used".
+export type OrgProgramCapNearPayload = {
+  orgName: string;
+  programName: string;
+  assigneeName: string;
+  engagementsUsed: number;
+  cap: number;
+  usedPct: number;
+  dashboardUrl: string;
+};
+
+// #775 — CHARGE_MEMBER overage side-charge owed by the member. `amountPaise`
+// is the marginal (incl. surcharge); `payUrl` deep-links to the pay surface.
+export type OrgProgramOverageDuePayload = {
+  orgName: string;
+  programName: string;
+  amountPaise: number;
+  payUrl: string;
+};
+
+export type OrgSsoProviderDeletedPayload = {
+  orgName: string;
+  providerId: string;
+  deletedByName: string;
+  dashboardUrl: string;
+};
+
+export type OrgSsoCertExpiringPayload = {
+  orgName: string;
+  providerId: string;
+  daysRemaining: number;
+  severity: "WARN" | "CRITICAL" | "EXPIRED";
+  notAfter: string;
+  dashboardUrl: string;
+};
+
+// A1+A8: discriminated payload for the failed/reversed payout webhook
+// fan-out. `kind` distinguishes a gateway rejection (FAILED) from a bank
+// reversal (REVERSED) so the Novu template can render the right copy.
+export type OrgPayoutFailedPayload = {
+  orgName: string;
+  payoutId: string;
+  amountPaise: number;
+  currency: string;
+  reason: string;
+  kind: "FAILED" | "REVERSED";
+  dashboardUrl: string;
+};
+
+// A7: payload for the EXPERT-removed-from-org notification. `removedByName`
+// is the operator who triggered the soft-delete (or "system" for cron-
+// driven removals such as contract expiry). `reason` is optional free-text.
+export type OrgExpertRemovedPayload = {
+  orgName: string;
+  orgSlug: string;
+  removedByName: string;
+  reason: string | null;
+  dashboardUrl: string;
 };

@@ -1,7 +1,8 @@
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
-import { consultantListInclude } from "@/lib/data/explore-experts";
+import { consultantListInclude, orgMembershipInclude } from "@/lib/data/explore-experts";
 import { apiError } from "@/lib/errors";
 
 export async function GET(request: NextRequest) {
@@ -43,6 +44,10 @@ export async function GET(request: NextRequest) {
     if (!includeUnverified) {
       conditions.push({ verificationStatus: "VERIFIED" });
     }
+
+    // #781 §B — soft-deleted profiles leave public surfaces (this route is
+    // unauthenticated; admin surfaces read soft-deleted rows elsewhere)
+    conditions.push({ deletedAt: null });
 
     // Domain filter
     if (domain) {
@@ -115,6 +120,15 @@ export async function GET(request: NextRequest) {
       conditions.push({ languages: { has: language } });
     }
 
+    // Affiliation type filter: independent (isIndependent=true) or agency
+    // (isIndependent=false). When null/absent, show all verified consultants.
+    const affiliationType = searchParams.get("affiliationType");
+    if (affiliationType === "independent") {
+      conditions.push({ isIndependent: true });
+    } else if (affiliationType === "agency") {
+      conditions.push({ isIndependent: false });
+    }
+
     // Search filter
     if (search) {
       conditions.push({
@@ -171,15 +185,34 @@ export async function GET(request: NextRequest) {
       orderBy,
       skip,
       take: limit,
-      include: consultantListInclude,
+      include: { ...consultantListInclude, ...orgMembershipInclude },
     });
 
     // Get total count for pagination
     const total = await prisma.consultantProfile.count({ where });
 
+    // Map memberships -> organizationBadge for frontend.
+    // Arch 4-Modified: the include pulls `memberships[0].organization`
+    // for the first ACTIVE EXPERT membership at a canHost org.
+    // `c` is typed via Prisma's payload inference from the include shape —
+    // no explicit type annotation or narrowing cast needed.
+    const mappedConsultants = consultants.map(({ memberships, ...rest }) => {
+      const firstOrg = memberships[0]?.organization ?? null;
+      return {
+        ...rest,
+        organizationBadge: firstOrg
+          ? {
+              name: firstOrg.name,
+              slug: firstOrg.slug,
+              logo: firstOrg.brandingProfile?.logo ?? null,
+            }
+          : null,
+      };
+    });
+
     return NextResponse.json(
       {
-        data: consultants,
+        data: mappedConsultants,
         meta: {
           total,
           page,
@@ -194,6 +227,7 @@ export async function GET(request: NextRequest) {
       },
     );
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
     return apiError({ tag: "[Consultants.GET]", error });
   }
 }

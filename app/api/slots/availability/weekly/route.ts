@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { DayOfWeek } from "@prisma/client";
@@ -65,6 +66,7 @@ export async function GET(req: NextRequest) {
     );
   } catch (error) {
     console.error("Error fetching weekly slots:", error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "scheduling" } });
     return NextResponse.json(
       { error: "An error occurred while fetching weekly availability slots" },
       { status: 500 },
@@ -176,7 +178,9 @@ export async function POST(req: NextRequest) {
 
     const utcOffsetMinutes = consultantProfile.user?.timezone
       ? getTimezoneOffsetMinutes(consultantProfile.user.timezone)
-      : 0;
+      : 330; // #872 — IST-only at launch: default a missing timezone to IST, never UTC 0.
+    // TODO(#872): restore the local wall-clock + IANA-zone source of truth when
+    // non-IST consultants onboard; DST is parked post-MVP (IST-only at launch).
 
     const newWeeklySlot = await prisma.slotOfAvailabilityWeekly.create({
       data: {
@@ -205,6 +209,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ data: newWeeklySlot }, { status: 201 });
   } catch (error) {
     console.error("Error creating weekly slot:", error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "scheduling" } });
     return NextResponse.json(
       {
         error: "An error occurred while creating the weekly availability slot",

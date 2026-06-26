@@ -9,6 +9,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { handleStuckPayouts } from "@/scripts/payouts/handle-stuck-payouts";
+import { CronLockHeldError } from "@/lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
@@ -22,6 +24,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    Sentry.logger.info("cron:handle-stuck-payouts started");
     console.log("🔄 Starting stuck payouts handler via API...");
 
     const result = await handleStuckPayouts();
@@ -32,9 +35,21 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       retriedCount: result.retriedCount,
       failedCount: result.failedCount,
     });
+    Sentry.logger.info("cron:handle-stuck-payouts finished", {
+      totalProcessed: result.totalProcessed,
+      reconciledCount: result.reconciledCount,
+      retriedCount: result.retriedCount,
+      failedCount: result.failedCount,
+    });
 
     return NextResponse.json(result, { status: result.success ? 200 : 500 });
   } catch (error) {
+    // #476 — concurrent invocation (schedule overlap / manual re-run)
+    // skips with a 409 instead of double-running.
+    if (error instanceof CronLockHeldError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
+    Sentry.captureException(error, { tags: { subsystem: "cron", job: "handle-stuck-payouts" } });
     console.error("Error in stuck payouts handler:", error);
     return NextResponse.json(
       {

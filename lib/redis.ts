@@ -15,6 +15,7 @@
  * - Mock provides in-memory Redis with full Lua script support
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { Redis } from "@upstash/redis";
 import crypto from "crypto";
 import { getMockRedis, MockRedis } from "./redis-mock";
@@ -94,11 +95,16 @@ const CIRCUIT_CONFIG = {
  *
  * @param operation - The Redis operation to execute
  * @param fallback - Optional fallback value if circuit is open
+ * @param shouldTrip - Optional predicate; when it returns false for a thrown
+ *   error, that error is rethrown WITHOUT counting toward the breaker (an
+ *   expected/application-level failure is not an outage). Defaults to "trip on
+ *   any error".
  * @returns Result of operation or fallback
  */
 export async function withCircuitBreaker<T>(
   operation: () => Promise<T>,
   fallback?: () => T,
+  shouldTrip?: (error: unknown) => boolean,
 ): Promise<T> {
   // Check circuit state
   if (circuitBreaker.state === "OPEN") {
@@ -162,6 +168,12 @@ export async function withCircuitBreaker<T>(
 
     return result;
   } catch (error) {
+    // #899 — a caller-classified expected error (e.g. Stream "channel not
+    // found") proves the backend is up; rethrow without touching breaker state
+    // so 404-style misses don't dilute the outage signal and trip the shared
+    // breaker for everyone.
+    if (shouldTrip && !shouldTrip(error)) throw error;
+
     // Failure handling
     circuitBreaker.failures++;
     circuitBreaker.lastFailure = Date.now();
@@ -187,6 +199,7 @@ export async function withCircuitBreaker<T>(
           timestamp: new Date().toISOString(),
         }),
       );
+      Sentry.logger.warn(Sentry.logger.fmt`redis circuit breaker: opened after ${circuitBreaker.failures} failures`);
     }
 
     if (fallback) return fallback();
@@ -338,6 +351,7 @@ export async function releaseLock(key: string, token: string): Promise<void> {
         timestamp: new Date().toISOString(),
       }),
     );
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "redis" } });
   }
 }
 

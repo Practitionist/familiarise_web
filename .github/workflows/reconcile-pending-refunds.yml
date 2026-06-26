@@ -3,7 +3,7 @@ name: Reconcile Pending Refunds
 on:
   schedule:
     # Run every 15 minutes
-    - cron: "*/15 * * * *"
+    - cron: "11-59/15 * * * *"
   workflow_dispatch: # Allow manual triggering
 
 jobs:
@@ -15,6 +15,9 @@ jobs:
       # Database connection (required for Prisma)
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       DIRECT_URL: ${{ secrets.DIRECT_URL }}
+      # #476 — fail-closed cron lock: without these the job refuses to run.
+      UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
+      UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
 
       # Payment gateway credentials for querying refund status
       STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
@@ -42,6 +45,6 @@ jobs:
 
       - name: Notify on failure
         if: failure()
-        run: |
-          echo "Refund reconciliation failed"
-          # Add notification logic here (Slack, email, etc.)
+        env:
+          SLACK_OPS_WEBHOOK_URL: ${{ secrets.SLACK_OPS_WEBHOOK_URL }}
+        run: bash scripts/ci/notify-ops-failure.sh "reconcile-pending-refunds"

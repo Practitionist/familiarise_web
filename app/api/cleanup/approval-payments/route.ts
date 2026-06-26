@@ -18,8 +18,9 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
-import { PaymentStatus, Prisma, RequestStatus } from "@prisma/client";
+import prisma, { type Tx } from "@/lib/prisma";
+import { PaymentStatus, Prisma, AppointmentStatus } from "@prisma/client";
+import * as Sentry from "@sentry/nextjs";
 
 /**
  * Revert consultation or subscription status from APPROVED_PENDING_PAYMENT to PENDING
@@ -29,7 +30,7 @@ import { PaymentStatus, Prisma, RequestStatus } from "@prisma/client";
  * user completes payment between initial query and transaction execution.
  */
 async function revertApprovalStatus(
-  tx: Prisma.TransactionClient,
+  tx: Tx,
   entityType: "consultation" | "subscription",
   entityId: string,
 ): Promise<boolean> {
@@ -40,16 +41,16 @@ async function revertApprovalStatus(
     // Re-fetch inside transaction to get current status (prevents race condition)
     const consultation = await tx.consultation.findUnique({
       where: { id: entityId },
-      select: { requestStatus: true, requestNotes: true },
+      select: { status: true, requestNotes: true },
     });
 
     // Check status INSIDE transaction - if user completed payment, status will be APPROVED
     if (
       !consultation ||
-      consultation.requestStatus !== RequestStatus.APPROVED_PENDING_PAYMENT
+      consultation.status !== AppointmentStatus.APPROVED_PENDING_PAYMENT
     ) {
       console.log(
-        `⏭️ Skipping consultation ${entityId} - status is ${consultation?.requestStatus || "not found"}`,
+        `⏭️ Skipping consultation ${entityId} - status is ${consultation?.status || "not found"}`,
       );
       return false; // Already processed or status changed
     }
@@ -57,7 +58,7 @@ async function revertApprovalStatus(
     await tx.consultation.update({
       where: { id: entityId },
       data: {
-        requestStatus: RequestStatus.PENDING,
+        status: AppointmentStatus.PENDING,
         requestNotes: consultation.requestNotes
           ? `${consultation.requestNotes}\n\n${systemNote}`
           : systemNote,
@@ -70,16 +71,16 @@ async function revertApprovalStatus(
     // Re-fetch inside transaction to get current status (prevents race condition)
     const subscription = await tx.subscription.findUnique({
       where: { id: entityId },
-      select: { requestStatus: true, requestNotes: true },
+      select: { status: true, requestNotes: true },
     });
 
     // Check status INSIDE transaction - if user completed payment, status will be APPROVED
     if (
       !subscription ||
-      subscription.requestStatus !== RequestStatus.APPROVED_PENDING_PAYMENT
+      subscription.status !== AppointmentStatus.APPROVED_PENDING_PAYMENT
     ) {
       console.log(
-        `⏭️ Skipping subscription ${entityId} - status is ${subscription?.requestStatus || "not found"}`,
+        `⏭️ Skipping subscription ${entityId} - status is ${subscription?.status || "not found"}`,
       );
       return false; // Already processed or status changed
     }
@@ -87,7 +88,7 @@ async function revertApprovalStatus(
     await tx.subscription.update({
       where: { id: entityId },
       data: {
-        requestStatus: RequestStatus.PENDING,
+        status: AppointmentStatus.PENDING,
         requestNotes: subscription.requestNotes
           ? `${subscription.requestNotes}\n\n${systemNote}`
           : systemNote,
@@ -110,6 +111,8 @@ export async function GET(req: NextRequest) {
       console.warn("Unauthorized cron job attempt");
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+
+    Sentry.logger.info("cron:expire-approval-payments started");
 
     console.log("🕐 Starting approval payment expiration check...");
 
@@ -177,6 +180,7 @@ export async function GET(req: NextRequest) {
         });
       } catch (error) {
         console.error(`Error processing payment ${payment.id}:`, error);
+        Sentry.captureException(error, { tags: { subsystem: "cron", job: "expire-approval-payments" } });
         // Continue with next payment
       }
     }
@@ -193,6 +197,13 @@ export async function GET(req: NextRequest) {
       timestamp: new Date().toISOString(),
     };
 
+    Sentry.logger.info("cron:expire-approval-payments finished", {
+      totalExpiredPayments: result.statistics.totalExpiredPayments,
+      paymentsExpired: result.statistics.paymentsExpired,
+      consultationsReverted: result.statistics.consultationsReverted,
+      subscriptionsReverted: result.statistics.subscriptionsReverted,
+    });
+
     console.log(
       "✅ Approval payment expiration check completed:",
       result.statistics,
@@ -201,6 +212,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(result);
   } catch (error) {
     console.error("Error in approval payment expiration job:", error);
+    Sentry.captureException(error, { tags: { subsystem: "cron", job: "expire-approval-payments" } });
     return NextResponse.json(
       {
         error: "Failed to process payment expirations",

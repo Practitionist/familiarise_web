@@ -1,84 +1,94 @@
 /**
- * Job: Process Expired Waitlist Notifications
+ * Process Waitlist Expirations Job (GitHub Actions Wrapper)
  *
- * Modular job function that can be called from various schedulers
- * (GitHub Actions, Vercel Cron, AWS Lambda, etc.)
+ * Thin wrapper around scripts/waitlist/process-expired-notifications.ts
+ * (#856 — this file previously held a full duplicate implementation; the
+ * script's core is now the single source).
+ * Adds GitHub Actions-specific outputs and error handling.
+ *
+ * Runs hourly at :05 via scheduled workflow.
  */
 
-import { processExpiredNotifications, handleSlotOpening } from "@/lib/waitlist";
-import { sendWaitlistExpiredEmail } from "@/lib/waitlist/notifications";
+import {
+  processWaitlistExpirations,
+  disconnectDatabase,
+  type ProcessExpirationsResult,
+} from "../../scripts/waitlist/process-expired-notifications";
+import fs from "fs";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
-import { getAppUrl } from "../../lib/url";
+import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
-export interface ProcessExpiredResult {
-  processed: number;
-  emailsSent: number;
-  errors: Array<{ id: string; error: string }>;
-  duration: number;
-}
+function outputToGitHubActions(result: ProcessExpirationsResult): void {
+  if (!process.env.GITHUB_ACTIONS) return;
 
-/**
- * Process expired waitlist notifications
- *
- * 1. Find entries where status = NOTIFIED AND expiresAt < now()
- * 2. Mark as EXPIRED
- * 3. Send expiration notification email
- * 4. Notify next person in queue
- */
-export async function processExpiredNotificationsJob(): Promise<ProcessExpiredResult> {
-  await abortIfMaintenance("process-expired-notifications");
-  const startTime = Date.now();
-  const errors: Array<{ id: string; error: string }> = [];
+  const outputFile = process.env.GITHUB_OUTPUT;
+  if (outputFile) {
+    const outputs = [
+      `processed=${result.processed}`,
+      `emailed=${result.emailed}`,
+      `success=${result.success}`,
+    ].join("\n");
 
-  // Process expired notifications - now returns the processed entries directly
-  const result = await processExpiredNotifications();
-
-  let emailsSent = 0;
-
-  // Use the entries returned from processExpiredNotifications instead of re-querying
-  for (const entry of result.entries) {
-    try {
-      const eventTitle =
-        entry.webinar?.webinarPlan.title ||
-        entry.class?.classPlan.title ||
-        "Event";
-      const eventType = entry.webinarId ? "webinar" : "class";
-      const eventId = entry.webinarId || entry.classId;
-
-      // Send expired notification email
-      if (entry.user.email) {
-        await sendWaitlistExpiredEmail({
-          email: entry.user.email,
-          name: entry.user.name || "Valued User",
-          eventTitle,
-          eventType,
-          rejoinUrl: eventId
-            ? `${getAppUrl()}/explore/programs/plans/${eventType}s/${eventId}`
-            : undefined,
-        });
-        emailsSent++;
-      }
-
-      // Notify next person in queue
-      await handleSlotOpening({
-        webinarId: entry.webinarId ?? undefined,
-        classId: entry.classId ?? undefined,
-        slotsAvailable: 1,
-        reason: "cancellation",
-      });
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error";
-      errors.push({ id: entry.id, error: errorMessage });
-    }
+    fs.appendFileSync(outputFile, outputs + "\n");
   }
 
-  return {
-    processed: result.processed,
-    emailsSent,
-    errors: [...result.errors, ...errors],
-    duration: Date.now() - startTime,
-  };
+  if (!result.success) {
+    console.log(
+      `::warning::Waitlist expiration processing had errors: ${result.errors
+        .map((e) => `${e.id}: ${e.error}`)
+        .join("; ")}`,
+    );
+  }
 }
 
-export default processExpiredNotificationsJob;
+async function main(): Promise<void> {
+  await abortIfMaintenance("process-expired-notifications");
+  Sentry.logger.info("job:process-expired-notifications started");
+  console.log("🕐 Starting expired notification processor...");
+  console.log(`Timestamp: ${new Date().toISOString()}`);
+
+  try {
+    const result = await processWaitlistExpirations();
+
+    console.log("\n📊 Job Results:");
+    console.log(`   Processed: ${result.processed}`);
+    console.log(`   Emails sent: ${result.emailed}`);
+    console.log(`   Errors: ${result.errors.length}`);
+
+    outputToGitHubActions(result);
+    Sentry.logger.info("job:process-expired-notifications finished", {
+      processed: result.processed,
+      emailed: result.emailed,
+    });
+
+    if (!result.success) {
+      process.exit(1);
+    }
+  } catch (error) {
+    // #476 — lock held = another run is live; skip cleanly (exit 0).
+    if (error instanceof CronLockHeldError) {
+      Sentry.logger.info("job:process-expired-notifications skipped — lock held");
+      console.log(`⏭️  ${error.message}`);
+      return;
+    }
+    Sentry.captureException(error, {
+      tags: { subsystem: "jobs", job: "process-expired-notifications" },
+    });
+    console.error("❌ Error processing expired notifications:", error);
+    process.exit(1);
+  } finally {
+    await disconnectDatabase();
+  }
+}
+
+// Run the job — the catch covers rejections that escape main's own
+// try/catch (e.g. abortIfMaintenance), matching the payouts wrapper.
+main().catch((error) => {
+  Sentry.captureException(error, {
+    tags: { subsystem: "jobs", job: "process-expired-notifications" },
+  });
+  console.error("❌ expired notification job failed:");
+  console.error(error);
+  process.exit(1);
+});

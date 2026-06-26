@@ -1,7 +1,7 @@
 "use client";
 
 import { useToast } from "@/components/ui/use-toast";
-import type { TConsultantDetailData } from "@/types/consultant";
+import type { ConsultantDetailData } from "./types";
 import { TSlotTiming } from "@/types/slots";
 import { TUserWithProfessionalBackground } from "@/types/user";
 import { TConsultantReview } from "@/types/review";
@@ -21,7 +21,7 @@ import { useTimezone } from "./hooks/useTimezone";
 import { formatInTimeZone } from "date-fns-tz";
 
 interface ExpertProfileClientProps {
-  consultantDetails: TConsultantDetailData;
+  consultantDetails: ConsultantDetailData;
   userDetails: TUserWithProfessionalBackground;
   reviews: TConsultantReview[];
 }
@@ -52,7 +52,10 @@ export function ExpertProfileClient({
 
     // Small delay to let the page render before scrolling
     const timer = setTimeout(() => {
-      pricingRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      pricingRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
       if (action === "trial") {
         setAutoOpenTrial(true);
       }
@@ -82,7 +85,11 @@ export function ExpertProfileClient({
         }
 
         const { data } = await response.json();
-        const selectedDateKey = formatInTimeZone(selectedDate, timezone, "yyyy-MM-dd");
+        const selectedDateKey = formatInTimeZone(
+          selectedDate,
+          timezone,
+          "yyyy-MM-dd",
+        );
         const slotsForSelectedDate = data[selectedDateKey] || [];
         setSlotTimings(slotsForSelectedDate);
       } catch (error) {
@@ -105,44 +112,46 @@ export function ExpertProfileClient({
 
   const handleConsultationBooking = useCallback(
     async (consultationPlanId: string) => {
-    if (!selectedSlot || !consultantDetails) {
-      toast({ title: "Please select a slot", variant: "destructive" });
-      return;
-    }
+      if (!selectedSlot || !consultantDetails) {
+        toast({ title: "Please select a slot", variant: "destructive" });
+        return;
+      }
 
-    const activePlan = consultantDetails.consultationPlans.find(
-      (plan) => plan.id === consultationPlanId,
-    );
-
-    if (!activePlan) {
-      toast({ title: "Consultation unavailable", variant: "destructive" });
-      return;
-    }
-
-    const params = new URLSearchParams();
-    const slotStartTimeInUTC = new Date(selectedSlot.slotStartTimeInUTC);
-    const slotEndTimeInUTC = new Date(selectedSlot.slotEndTimeInUTC);
-
-    if (
-      (selectedSlot as TSlotTiming & { type: "WEEKLY" | "CUSTOM" }).type ===
-      "WEEKLY"
-    ) {
-      params.append(
-        "slotOfAvailabilityWeeklyId",
-        selectedSlot.slotOfAvailabilityId,
+      const activePlan = consultantDetails.consultationPlans.find(
+        (plan) => plan.id === consultationPlanId,
       );
-    } else {
-      params.append(
-        "slotOfAvailabilityCustomId",
-        selectedSlot.slotOfAvailabilityId,
-      );
-    }
-    params.append("slotStartTimeInUTC", slotStartTimeInUTC.toISOString());
-    params.append("slotEndTimeInUTC", slotEndTimeInUTC.toISOString());
 
-    const checkoutUrl = `/checkout/plans/consultation/${activePlan.id}?${params.toString()}`;
-    window.location.href = checkoutUrl;
-  }, [selectedSlot, consultantDetails, toast]);
+      if (!activePlan) {
+        toast({ title: "Consultation unavailable", variant: "destructive" });
+        return;
+      }
+
+      const params = new URLSearchParams();
+      const startsAt = new Date(selectedSlot.startsAt);
+      const endsAt = new Date(selectedSlot.endsAt);
+
+      if (
+        (selectedSlot as TSlotTiming & { type: "WEEKLY" | "CUSTOM" }).type ===
+        "WEEKLY"
+      ) {
+        params.append(
+          "slotOfAvailabilityWeeklyId",
+          selectedSlot.slotOfAvailabilityId,
+        );
+      } else {
+        params.append(
+          "slotOfAvailabilityCustomId",
+          selectedSlot.slotOfAvailabilityId,
+        );
+      }
+      params.append("startsAt", startsAt.toISOString());
+      params.append("endsAt", endsAt.toISOString());
+
+      const checkoutUrl = `/checkout/plans/consultation/${activePlan.id}?${params.toString()}`;
+      window.location.href = checkoutUrl;
+    },
+    [selectedSlot, consultantDetails, toast],
+  );
 
   const handleSubscriptionBooking = useCallback(
     async (
@@ -241,13 +250,13 @@ export function ExpertProfileClient({
   }, [currentDate, selectedDate]);
 
   return (
-    <main className="bg-zinc-50">
+    <main className="bg-muted">
       {/* Back Navigation */}
-      <div className="bg-white border-b border-zinc-200">
+      <div className="bg-card border-b border-border">
         <div className="w-full px-4 md:px-8 lg:px-12 py-4">
           <Link
             href="/explore/experts"
-            className="inline-flex items-center gap-2 text-sm text-zinc-500 hover:text-zinc-900 transition-colors"
+            className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
           >
             <ArrowLeft className="w-4 h-4" />
             Back to Experts

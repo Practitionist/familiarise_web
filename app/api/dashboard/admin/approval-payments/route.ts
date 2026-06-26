@@ -1,6 +1,7 @@
+import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { RequestStatus } from "@prisma/client";
+import { AppointmentStatus } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
 
 /**
@@ -21,7 +22,7 @@ export async function GET() {
     // Fetch consultations with APPROVED_PENDING_PAYMENT status
     const pendingConsultations = await prisma.consultation.findMany({
       where: {
-        requestStatus: RequestStatus.APPROVED_PENDING_PAYMENT,
+        status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
       },
       include: {
         consultationPlan: {
@@ -72,7 +73,7 @@ export async function GET() {
     // Fetch subscriptions with APPROVED_PENDING_PAYMENT status
     const pendingSubscriptions = await prisma.subscription.findMany({
       where: {
-        requestStatus: RequestStatus.APPROVED_PENDING_PAYMENT,
+        status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
       },
       include: {
         subscriptionPlan: {
@@ -152,7 +153,7 @@ export async function GET() {
           expiresAt: expiresAt.toISOString(),
           isExpired,
           isExpiringSoon,
-          status: consultation.requestStatus,
+          status: consultation.status,
         };
       }),
       ...pendingSubscriptions.map((subscription) => {
@@ -184,7 +185,7 @@ export async function GET() {
           expiresAt: expiresAt.toISOString(),
           isExpired,
           isExpiringSoon,
-          status: subscription.requestStatus,
+          status: subscription.status,
         };
       }),
     ].sort((a, b) => {
@@ -212,6 +213,7 @@ export async function GET() {
       ).length,
     });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "dashboard" } });
     console.error("Error fetching approval payments:", error);
     return NextResponse.json(
       {

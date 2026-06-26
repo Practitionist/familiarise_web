@@ -17,6 +17,7 @@ import {
   ArrowRight,
   CheckCircle2,
   BadgeCheck,
+  Building2,
 } from "lucide-react";
 import { useCurrency } from "@/hooks/useCurrency";
 
@@ -39,9 +40,9 @@ const ConsultantInfo = ({
   value: string | null | undefined;
 }) => (
   <div className="flex items-center gap-2 text-sm">
-    <Icon className="w-4 h-4 text-zinc-400" />
-    <span className="text-zinc-500">{label}:</span>
-    <span className="text-zinc-800 font-medium">
+    <Icon className="w-4 h-4 text-muted-foreground/70" />
+    <span className="text-muted-foreground">{label}:</span>
+    <span className="text-foreground font-medium">
       {value || "Not specified"}
     </span>
   </div>
@@ -91,20 +92,22 @@ const SubscriptionPlanCard = ({
   };
 
   return (
-    <div className="bg-white rounded-xl p-5 border border-zinc-200">
+    <div className="bg-card rounded-xl p-5 border border-border">
       <div className="flex flex-wrap items-baseline justify-between gap-2 mb-4">
-        <div className="text-2xl sm:text-3xl font-bold text-zinc-900">
+        <div className="text-2xl sm:text-3xl font-bold text-foreground">
           {formatPrice(plan.price)}
         </div>
-        <div className="text-xs sm:text-sm text-zinc-500 font-medium bg-zinc-100 px-2 sm:px-3 py-1 rounded-full whitespace-nowrap">
+        <div className="text-xs sm:text-sm text-muted-foreground font-medium bg-muted px-2 sm:px-3 py-1 rounded-full whitespace-nowrap">
           {formatDuration(plan.durationInMonths)}
         </div>
       </div>
       <div className="space-y-2.5">
-        {plan.callsPerWeek != null && plan.callsPerWeek > 0 && (
+        {plan.callsPerWeek !== null &&
+          plan.callsPerWeek !== undefined &&
+          plan.callsPerWeek > 0 && (
           <div className="flex items-center gap-2 text-sm">
             <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-            <span className="text-zinc-600">
+            <span className="text-muted-foreground">
               {plan.callsPerWeek} {plan.callsPerWeek === 1 ? "call" : "calls"}/week
             </span>
           </div>
@@ -112,15 +115,17 @@ const SubscriptionPlanCard = ({
         {plan.emailSupport && (
           <div className="flex items-center gap-2 text-sm">
             <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-            <span className="text-zinc-600 capitalize">
+            <span className="text-muted-foreground capitalize">
               {plan.emailSupport.toLowerCase()} email support
             </span>
           </div>
         )}
-        {plan.totalSessions != null && plan.totalSessions > 0 && (
+        {plan.totalSessions !== null &&
+          plan.totalSessions !== undefined &&
+          plan.totalSessions > 0 && (
           <div className="flex items-center gap-2 text-sm">
             <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-            <span className="text-zinc-600">
+            <span className="text-muted-foreground">
               {plan.totalSessions}{" "}
               {plan.totalSessions === 1 ? "session" : "sessions"} total
             </span>
@@ -164,17 +169,24 @@ export const ConsultantCard = memo(function ConsultantCard({
   });
 
   return (
-    <div className="bg-white rounded-2xl border border-zinc-200 hover:border-zinc-300 hover:shadow-xl transition-all duration-300 overflow-hidden group">
+    <div className="bg-card rounded-2xl border border-border hover:border-border hover:shadow-xl transition-all duration-300 overflow-hidden group">
       <div className="p-6 md:p-8 lg:p-10 flex flex-col lg:flex-row gap-8 lg:gap-12">
-        {/* Left Section: Consultant Info — real <Link> so right-click /
-            cmd-click / middle-click open in a new tab. */}
-        <Link href={profileHref} className="flex-grow block">
+        {/* Left Section: Consultant Info. Uses a stretched overlay <Link>
+            (absolute inset-0) instead of wrapping the whole section, so the
+            nested org-badge link stays valid HTML (no <a> inside <a>) while
+            right-click / cmd-click / middle-click still open the profile. */}
+        <div className="relative flex-grow">
+          <Link
+            href={profileHref}
+            aria-label={`View ${consultant.user.name}'s profile`}
+            className="absolute inset-0 z-0"
+          />
           {/* Header */}
           <div className="flex items-start gap-4 mb-6">
             <div className="relative h-20 w-20 flex-shrink-0">
               <Image
                 alt={`Portrait of ${consultant.user.name}`}
-                className="rounded-2xl object-cover ring-2 ring-zinc-100"
+                className="rounded-2xl object-cover ring-2 ring-muted"
                 src={consultant.user.image || "/placeholder-user.jpg"}
                 fill
               />
@@ -182,7 +194,7 @@ export const ConsultantCard = memo(function ConsultantCard({
             </div>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-1.5">
-                <h3 className="text-xl font-bold text-zinc-900 group-hover:text-zinc-700 transition-colors">
+                <h3 className="text-xl font-bold text-foreground group-hover:text-muted-foreground transition-colors">
                   {consultant.user.name}
                 </h3>
                 {consultant.isVerified && (
@@ -190,16 +202,32 @@ export const ConsultantCard = memo(function ConsultantCard({
                     <BadgeCheck className="w-5 h-5 text-blue-500" />
                   </span>
                 )}
+                {consultant.organizationBadge && (
+                  <Link
+                    href={`/explore/enterprise/organisations/${consultant.organizationBadge.slug}`}
+                    title={consultant.organizationBadge.name}
+                    onClick={(e) => e.stopPropagation()}
+                    className="relative z-10"
+                  >
+                    <Badge
+                      variant="outline"
+                      className="border-border text-foreground text-[10px] px-1.5 py-0 hover:bg-muted transition-colors"
+                    >
+                      <Building2 className="w-3 h-3 mr-0.5" />
+                      {consultant.organizationBadge.name}
+                    </Badge>
+                  </Link>
+                )}
               </div>
               <div className="flex items-center gap-2 mt-2">
                 <div className="flex items-center gap-1">
                   <Star className="w-4 h-4 text-amber-400 fill-amber-400" />
-                  <span className="font-semibold text-zinc-900">
+                  <span className="font-semibold text-foreground">
                     {consultant.rating.toFixed(1)}
                   </span>
                 </div>
-                <span className="text-zinc-300">•</span>
-                <span className="text-sm text-zinc-500">
+                <span className="text-muted-foreground/70">•</span>
+                <span className="text-sm text-muted-foreground">
                   {consultant.reviews?.length || 0} reviews
                 </span>
               </div>
@@ -208,7 +236,7 @@ export const ConsultantCard = memo(function ConsultantCard({
 
           {/* Description — only render when it's meaningful free-form text */}
           {isMeaningfulText(consultant.description) && (
-            <p className="text-zinc-600 leading-relaxed mb-6 line-clamp-2">
+            <p className="text-muted-foreground leading-relaxed mb-6 line-clamp-2">
               {consultant.description.trim()}
             </p>
           )}
@@ -258,10 +286,10 @@ export const ConsultantCard = memo(function ConsultantCard({
                     companyName={exp.company}
                     companyDomain={exp.companyDomain ?? undefined}
                     size={36}
-                    className="border-zinc-200"
+                    className="border-border"
                   />
                 ))}
-                <span className="text-sm text-zinc-600 ml-1">
+                <span className="text-sm text-muted-foreground ml-1">
                   {consultant.user.workExperiences[0].company}
                   {consultant.user.workExperiences.length > 1 &&
                     ` +${consultant.user.workExperiences.length - 1}`}
@@ -272,7 +300,7 @@ export const ConsultantCard = memo(function ConsultantCard({
           {/* Domain & Subdomains */}
           <div className="flex flex-wrap gap-2">
             {consultant.domain?.name && (
-              <Badge className="bg-zinc-900 text-white hover:bg-zinc-800 px-3 py-1">
+              <Badge className="bg-primary text-primary-foreground hover:bg-primary/90 px-3 py-1">
                 {consultant.domain.name}
               </Badge>
             )}
@@ -280,7 +308,7 @@ export const ConsultantCard = memo(function ConsultantCard({
               <Badge
                 key={`${consultant.id}-subdomain-${sd.id}`}
                 variant="outline"
-                className="border-zinc-300 text-zinc-700 px-3 py-1"
+                className="border-border text-muted-foreground px-3 py-1"
               >
                 {sd.name}
               </Badge>
@@ -293,26 +321,26 @@ export const ConsultantCard = memo(function ConsultantCard({
               {consultant.tags.slice(0, 3).map((t) => (
                 <Badge
                   key={`${consultant.id}-tag-${t.id}`}
-                  className="bg-zinc-100 text-zinc-600 hover:bg-zinc-200 px-3 py-1"
+                  className="bg-muted text-muted-foreground hover:bg-muted/80 px-3 py-1"
                 >
                   {t.name}
                 </Badge>
               ))}
             </div>
           )}
-        </Link>
+        </div>
 
         {/* Right Section: Subscription Plans & Actions */}
         <div className="flex-shrink-0 lg:w-[380px] xl:w-[420px] space-y-4">
-          <div className="bg-zinc-50 rounded-xl p-4">
+          <div className="bg-muted rounded-xl p-4">
             {sortedPlans.length > 0 ? (
               <Tabs defaultValue={sortedPlans[0].id} className="w-full">
-                <TabsList className="w-full mb-4 bg-white p-1 rounded-lg border border-zinc-200">
+                <TabsList className="w-full mb-4 bg-card p-1 rounded-lg border border-border">
                   {sortedPlans.map((plan, index) => (
                     <TabsTrigger
                       key={`${consultant.id}-tab-trigger-${plan.id}`}
                       value={plan.id}
-                      className="flex-1 data-[state=active]:bg-zinc-900 data-[state=active]:text-white rounded-md text-sm font-medium transition-all duration-200"
+                      className="flex-1 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground rounded-md text-sm font-medium transition-all duration-200"
                     >
                       {tabLabels[index]}
                     </TabsTrigger>
@@ -331,7 +359,7 @@ export const ConsultantCard = memo(function ConsultantCard({
                 ))}
               </Tabs>
             ) : (
-              <div className="text-center text-zinc-500 py-8">
+              <div className="text-center text-muted-foreground py-8">
                 <p className="text-sm">No subscription plans available</p>
               </div>
             )}
@@ -342,7 +370,7 @@ export const ConsultantCard = memo(function ConsultantCard({
           <div className="flex flex-col gap-2">
             <Button
               asChild
-              className="w-full h-12 bg-zinc-900 hover:bg-zinc-800 text-white font-medium rounded-xl transition-all"
+              className="w-full h-12 bg-primary hover:bg-primary/90 text-primary-foreground font-medium rounded-xl transition-all"
             >
               <Link href={profileHref}>
                 <span>View Profile</span>
@@ -353,14 +381,14 @@ export const ConsultantCard = memo(function ConsultantCard({
               <Button
                 asChild
                 variant="outline"
-                className="h-10 border-zinc-300 hover:bg-zinc-50 text-zinc-700 rounded-xl text-sm font-medium"
+                className="h-10 border-border hover:bg-muted text-muted-foreground rounded-xl text-sm font-medium"
               >
                 <Link href={`${profileHref}?action=trial`}>Free Trial</Link>
               </Button>
               <Button
                 asChild
                 variant="outline"
-                className="h-10 border-zinc-300 hover:bg-zinc-50 text-zinc-700 rounded-xl text-sm font-medium"
+                className="h-10 border-border hover:bg-muted text-muted-foreground rounded-xl text-sm font-medium"
               >
                 <Link href={`${profileHref}?action=book`}>Book Session</Link>
               </Button>

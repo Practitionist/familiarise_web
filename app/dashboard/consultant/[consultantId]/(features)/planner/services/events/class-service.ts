@@ -30,7 +30,7 @@ export class ClassService {
       }
 
       const response = await fetch(
-        `/api/events/classes/check-duplicate-title?${params}`,
+        `/api/bookings/classes/check-duplicate-title?${params}`,
       );
       if (!response.ok) {
         const errorData = await response.json();
@@ -66,7 +66,7 @@ export class ClassService {
         params.append("endDate", endDate.toISOString());
       }
 
-      const response = await fetch(`/api/events/classes?${params}`);
+      const response = await fetch(`/api/bookings/classes?${params}`);
       if (!response.ok) {
         throw new Error("Failed to fetch classes");
       }
@@ -112,7 +112,7 @@ export class ClassService {
         }
       }
 
-      const endpoint = "/api/events/classes/crud-with-plan";
+      const endpoint = "/api/bookings/classes/crud-with-plan";
       const method = isUpdate ? "PATCH" : "POST";
 
       const topicNames = classData.classPlan?.topics ?? [];
@@ -153,7 +153,7 @@ export class ClassService {
    */
   static async deleteClass(classId: string): Promise<boolean> {
     try {
-      const response = await fetch(`/api/events/classes/${classId}`, {
+      const response = await fetch(`/api/bookings/classes/${classId}`, {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
       });

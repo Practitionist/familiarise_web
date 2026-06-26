@@ -19,6 +19,7 @@
 
 import prisma from "../../lib/prisma";
 import { PaymentStatus, PaymentGateway } from "@prisma/client";
+import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 
 // Only reconcile payments older than 5 minutes (give webhooks time)
 const MIN_AGE_MINUTES = 5;
@@ -54,6 +55,30 @@ async function getStripePaymentStatus(
     const Stripe = (await import("stripe")).default;
     const stripe = new Stripe(stripeSecretKey);
 
+    // Checkout-flow payments store the cs_ session id as the payment ref
+    // (the cancel path in lib/payments/core/stripe.ts handles the same
+    // split). Passing a cs_ id to paymentIntents.retrieve throws "No such
+    // payment_intent", which used to poison every run with the same two
+    // stale rows. Resolve the session to its intent; a session that never
+    // produced one maps on its own state — expired → canceled (the row
+    // finally EXPIREs), open → processing (Stripe auto-expires within 24h,
+    // the next sweep settles it).
+    if (paymentIntent.startsWith("cs_")) {
+      const session = await stripe.checkout.sessions.retrieve(paymentIntent);
+      const intentRef = session.payment_intent;
+      if (!intentRef) {
+        return { status: session.status === "expired" ? "canceled" : "processing" };
+      }
+      const pi =
+        typeof intentRef === "string"
+          ? await stripe.paymentIntents.retrieve(intentRef)
+          : intentRef;
+      return {
+        status: pi.status,
+        failureMessage: pi.last_payment_error?.message ?? undefined,
+      };
+    }
+
     const pi = await stripe.paymentIntents.retrieve(paymentIntent);
     return {
       status: pi.status,
@@ -72,7 +97,11 @@ async function getRazorpayPaymentStatus(
   orderId: string,
 ): Promise<{ status: string; paymentId?: string } | null> {
   const keyId = process.env.RAZORPAY_KEY_ID;
-  const keySecret = process.env.RAZORPAY_KEY_SECRET;
+  // #677 PM-1 — prod env defines RAZORPAY_SECRET (the canonical name the
+  // core lib reads); reading only RAZORPAY_KEY_SECRET silently disabled
+  // this reconciliation in production while it looked green.
+  const keySecret =
+    process.env.RAZORPAY_SECRET ?? process.env.RAZORPAY_KEY_SECRET;
 
   if (!keyId || !keySecret) {
     console.warn("Razorpay credentials not configured");
@@ -175,7 +204,15 @@ function mapGatewayStatus(
 /**
  * Find and reconcile stale PENDING payments
  */
+// #476 — locked at the core so every entry (GH Actions / HTTP) shares one
+// mutual exclusion; fail-closed: money state must not double-run unlocked.
 export async function reconcilePaymentStatus(): Promise<PaymentReconciliationResult> {
+  return withCronLock("reconcile-payment-status", { failMode: "closed", ttlMs: LONG_JOB_TTL_MS }, () =>
+    reconcilePaymentStatusUnlocked(),
+  );
+}
+
+async function reconcilePaymentStatusUnlocked(): Promise<PaymentReconciliationResult> {
   const errors: string[] = [];
   let reconciledCount = 0;
   let succeededCount = 0;
@@ -206,7 +243,8 @@ export async function reconcilePaymentStatus(): Promise<PaymentReconciliationRes
     orderBy: { createdAt: "asc" },
   });
 
-  const razorpayConfigured = !!(process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET);
+  const razorpayConfigured = !!(process.env.RAZORPAY_KEY_ID &&
+    (process.env.RAZORPAY_SECRET ?? process.env.RAZORPAY_KEY_SECRET));
   if (!razorpayConfigured) {
     console.warn("⚠️ Razorpay credentials not configured — Razorpay records will be skipped");
   }
@@ -277,12 +315,25 @@ export async function reconcilePaymentStatus(): Promise<PaymentReconciliationRes
 
     // Update if status changed
     if (mappedStatus !== payment.paymentStatus) {
-      await prisma.payment.update({
-        where: { id: payment.id },
+      // #776 — guard on the status we read. A webhook can transition this
+      // payment (e.g. PENDING→SUCCEEDED) between the findMany and here; without
+      // the predicate the reconcile would clobber that real transition back to
+      // EXPIRED/FAILED. updateMany lets us add the guard; count===0 means another
+      // writer already moved it — skip rather than overwrite.
+      const claimed = await prisma.payment.updateMany({
+        where: { id: payment.id, paymentStatus: payment.paymentStatus },
         data: {
           paymentStatus: mappedStatus,
         },
       });
+
+      if (claimed.count === 0) {
+        console.log(
+          `   Skipped: payment ${payment.id} already transitioned by another writer`,
+        );
+        skippedCount++;
+        continue;
+      }
 
       console.log(
         `   Updated status: ${payment.paymentStatus} → ${mappedStatus}`,

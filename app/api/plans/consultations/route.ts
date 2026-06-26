@@ -2,7 +2,8 @@ import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import { ConsultationPlanSchema } from "@/schemas/plans";
 import { findOrCreateTopics, transformTopicsToStrings } from "@/lib/topics";
-
+import { marketplaceVisibilityWhere } from "@/lib/api/plans/visibility";
+import * as Sentry from "@sentry/nextjs";
 import { getSession } from "@/lib/auth-server";
 export async function GET(request: NextRequest) {
   try {
@@ -12,7 +13,11 @@ export async function GET(request: NextRequest) {
     const limit = parseInt(searchParams.get("limit") || "10");
     const skip = (page - 1) * limit;
 
-    const where = consultantId ? { consultantProfileId: consultantId } : {};
+    // #726 — public marketplace must not surface ORG_ONLY plans.
+    const where = {
+      ...(consultantId ? { consultantProfileId: consultantId } : {}),
+      ...marketplaceVisibilityWhere(),
+    };
 
     const [consultationPlans, total] = await Promise.all([
       prisma.consultationPlan.findMany({
@@ -43,6 +48,7 @@ export async function GET(request: NextRequest) {
       { status: 200 },
     );
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
     console.error("Error fetching consultation plans:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching consultation plans" },
@@ -134,6 +140,7 @@ export async function POST(request: NextRequest) {
       { status: 201 },
     );
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
     console.error("Error creating consultation plan:", error);
     return NextResponse.json(
       { error: "An error occurred while creating the consultation plan" },

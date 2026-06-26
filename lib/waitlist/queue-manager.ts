@@ -3,42 +3,49 @@
  * Handles queue position calculations, ordering, and position updates
  */
 
-import prisma from "@/lib/prisma";
+import * as Sentry from "@sentry/nextjs";
+import prisma, { type Db } from "@/lib/prisma";
 import { Prisma, WaitlistStatus } from "@prisma/client";
 
 // Type for waitlist entry with user details
-export type WaitlistEntryWithDetails = Prisma.WaitlistGetPayload<{
-  include: {
-    user: {
-      select: {
-        id: true;
-        name: true;
-        email: true;
-        image: true;
+// #780 — Prisma.Result over the extended client (not WaitlistGetPayload) so
+// nested plan.price types as number
+export type WaitlistEntryWithDetails = Prisma.Result<
+  Db["waitlist"],
+  {
+    include: {
+      user: {
+        select: {
+          id: true;
+          name: true;
+          email: true;
+          image: true;
+        };
       };
-    };
-    webinar: {
-      include: {
-        webinarPlan: true;
-        appointment: {
-          include: {
-            slotsOfAppointment: true;
+      webinar: {
+        include: {
+          webinarPlan: true;
+          appointment: {
+            include: {
+              slotsOfAppointment: true;
+            };
+          };
+        };
+      };
+      class: {
+        include: {
+          classPlan: true;
+          appointments: {
+            include: {
+              slotsOfAppointment: true;
+            };
           };
         };
       };
     };
-    class: {
-      include: {
-        classPlan: true;
-        appointments: {
-          include: {
-            slotsOfAppointment: true;
-          };
-        };
-      };
-    };
-  };
-}>;
+  },
+  "findFirstOrThrow"
+>;
 
 /**
  * Calculate a user's position in the waitlist queue
@@ -101,6 +108,22 @@ export async function getNextInQueue(params: {
   webinarId?: string;
   classId?: string;
 }): Promise<WaitlistEntryWithDetails | null> {
+  const batch = await getNextBatchInQueue(params, 1);
+  return batch[0] ?? null;
+}
+
+/**
+ * Ordered head-of-queue batch — the batched sibling of getNextInQueue so
+ * handleSlotOpening can claim N candidates in one round trip instead of a
+ * findFirst-per-slot loop (write-path scale hardening).
+ */
+export async function getNextBatchInQueue(
+  params: {
+    webinarId?: string;
+    classId?: string;
+  },
+  take: number,
+): Promise<WaitlistEntryWithDetails[]> {
   const { webinarId, classId } = params;
 
   if (!webinarId && !classId) {
@@ -109,7 +132,7 @@ export async function getNextInQueue(params: {
 
   const eventFilter = webinarId ? { webinarId } : { classId };
 
-  const entry = await prisma.waitlist.findFirst({
+  return prisma.waitlist.findMany({
     where: {
       ...eventFilter,
       status: WaitlistStatus.WAITING,
@@ -118,6 +141,7 @@ export async function getNextInQueue(params: {
       { priority: "desc" }, // Higher priority first
       { joinedAt: "asc" }, // Earlier joiners first
     ],
+    take,
     include: {
       user: {
         select: {
@@ -149,8 +173,6 @@ export async function getNextInQueue(params: {
       },
     },
   });
-
-  return entry;
 }
 
 /**
@@ -191,27 +213,33 @@ export async function updatePositions(params: {
 }
 
 // Type for expired entry with user and event details
-export type ExpiredEntryWithDetails = Prisma.WaitlistGetPayload<{
-  include: {
-    user: {
-      select: {
-        id: true;
-        name: true;
-        email: true;
+// #780 — Prisma.Result over the extended client (not WaitlistGetPayload) so
+// nested plan.price types as number
+export type ExpiredEntryWithDetails = Prisma.Result<
+  Db["waitlist"],
+  {
+    include: {
+      user: {
+        select: {
+          id: true;
+          name: true;
+          email: true;
+        };
+      };
+      webinar: {
+        include: {
+          webinarPlan: true;
+        };
+      };
+      class: {
+        include: {
+          classPlan: true;
+        };
       };
     };
-    webinar: {
-      include: {
-        webinarPlan: true;
-      };
-    };
-    class: {
-      include: {
-        classPlan: true;
-      };
-    };
-  };
-}>;
+  },
+  "findFirstOrThrow"
+>;
 
 /**
  * Process expired notifications and notify next person in queue
@@ -274,6 +302,10 @@ export async function processExpiredNotifications(): Promise<{
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
       errors.push({ id: entry.id, error: errorMessage });
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "waitlist" } },
+      );
       console.error(
         `Error processing expired waitlist entry ${entry.id}:`,
         error,
@@ -440,11 +472,27 @@ async function _getTotalWaitingCount(entry: {
 /**
  * Get all waitlist entries for a user
  */
-export async function getUserWaitlistEntries(userId: string) {
+/**
+ * #674 org-scope filter applied via the caller's resolved scope.
+ *   - `personal` (default) — only personal-tagged waitlist entries
+ *     (Waitlist.organizationId IS NULL)
+ *   - `org:<id>` — only entries tagged to that org
+ *   - `all` (admin) — no scope filter; every entry
+ *
+ * Waitlist.organizationId is populated by the #674 backfill, so the
+ * filter is a simple equality check.
+ */
+export async function getUserWaitlistEntries(
+  userId: string,
+  orgFilter: {
+    organizationId?: string | null;
+  } = { organizationId: null },
+) {
   const entries = await prisma.waitlist.findMany({
     where: {
       userId,
       status: { in: [WaitlistStatus.WAITING, WaitlistStatus.NOTIFIED] },
+      ...orgFilter,
     },
     include: {
       webinar: {

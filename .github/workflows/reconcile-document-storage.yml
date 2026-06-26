@@ -2,8 +2,8 @@ name: Reconcile Document Storage
 
 on:
   schedule:
-    # Run daily at 2 AM UTC
-    - cron: "0 2 * * *"
+    # Daily 02:35 UTC. #709 — off cleanup-abandoned-org-top-ups (02:00).
+    - cron: "35 2 * * *"
   workflow_dispatch: # Allow manual triggering
 
 jobs:
@@ -14,6 +14,9 @@ jobs:
     env:
       # Database connection (required for Prisma)
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      # #476 cron locks load lib/redis at import — every job entry needs these
+      UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
+      UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
       DIRECT_URL: ${{ secrets.DIRECT_URL }}
 
       # Supabase credentials (required for storage operations)
@@ -41,6 +44,6 @@ jobs:
 
       - name: Notify on failure
         if: failure()
-        run: |
-          echo "Document storage reconciliation job failed"
-          # Add notification logic here (Slack, email, etc.)
+        env:
+          SLACK_OPS_WEBHOOK_URL: ${{ secrets.SLACK_OPS_WEBHOOK_URL }}
+        run: bash scripts/ci/notify-ops-failure.sh "reconcile-document-storage"

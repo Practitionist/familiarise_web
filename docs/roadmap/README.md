@@ -27,11 +27,9 @@ BetterAuth migration from NextAuth (Auth.js now in maintenance mode).
 
 ## Enterprise B2B Tier
 
-Organization management, SSO, team seats, recording library, org billing.
+Organization management, SSO, team seats, recording library, org billing. The roadmap-local enterprise notes were superseded by the shipped subsystem; the maintained documentation now lives in the banded tree.
 
-- [enterprise/README.md](./enterprise/README.md) - Enterprise overview and implementation order
-- [enterprise/01-b2b-vs-b2c-features.md](./enterprise/01-b2b-vs-b2c-features.md) - B2B vs B2C feature comparison
-- [enterprise/02-schema-changes.md](./enterprise/02-schema-changes.md) - All schema changes for enterprise + auth migration
+- [../enterprise/README.md](../enterprise/README.md) - The enterprise documentation index, with band map and SDE reading paths
 
 ---
 
@@ -93,7 +91,6 @@ Individual features in design or proposal phase.
 - [features/collaborators/implementation.md](./features/collaborators/implementation.md) - Webinar/class collaborators
 - [features/collaborators/podcast-schema-integration.md](./features/collaborators/podcast-schema-integration.md) - Podcast schema
 - [features/consultant-badges/README.md](./features/consultant-badges/README.md) - Achievement badges
-- [features/consultant-companies/README.md](./features/consultant-companies/README.md) - B2B consultant companies
 - [features/gift-consultations/README.md](./features/gift-consultations/README.md) - Gift consultation purchases
 - [features/live-qa-sessions/README.md](./features/live-qa-sessions/README.md) - Live Q&A sessions
 - [features/notification-channels/README.md](./features/notification-channels/README.md) - SMS/WhatsApp notifications (email/in-app already working)

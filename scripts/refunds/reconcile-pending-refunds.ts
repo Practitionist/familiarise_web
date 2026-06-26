@@ -14,6 +14,9 @@
 import prisma from "../../lib/prisma";
 import { PaymentGateway, Prisma, RefundStatus } from "@prisma/client";
 import { listRefunds } from "../../lib/payments";
+import { notifyRefundFailed } from "../../lib/novu/service";
+import { getAppUrl } from "../../lib/url";
+import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 
 // Threshold: Only reconcile refunds older than 1 hour
 const RECONCILIATION_THRESHOLD_MS = 60 * 60 * 1000;
@@ -53,7 +56,15 @@ function mapGatewayRefundStatus(status: string): RefundStatus {
 /**
  * Find and reconcile PENDING refunds with placeholder IDs
  */
+// #476 — locked at the core so every entry (GH Actions / HTTP) shares one
+// mutual exclusion; fail-closed: money state must not double-run unlocked.
 export async function reconcilePendingRefunds(): Promise<RefundReconciliationResult> {
+  return withCronLock("reconcile-pending-refunds", { failMode: "closed", ttlMs: LONG_JOB_TTL_MS }, () =>
+    reconcilePendingRefundsUnlocked(),
+  );
+}
+
+async function reconcilePendingRefundsUnlocked(): Promise<RefundReconciliationResult> {
   const thresholdDate = new Date(Date.now() - RECONCILIATION_THRESHOLD_MS);
   const errors: string[] = [];
   let reconciledCount = 0;
@@ -102,7 +113,7 @@ export async function reconcilePendingRefunds(): Promise<RefundReconciliationRes
 
       // Find matching refund by amount and approximate time window
       const matchingRefund = gatewayRefunds.find((gr) => {
-        const amountMatches = gr.amount === refund.amount;
+        const amountMatches = gr.amount === refund.amountPaise;
         const timeMatches =
           gr.metadata?.created &&
           Math.abs(
@@ -175,6 +186,81 @@ export async function reconcilePendingRefunds(): Promise<RefundReconciliationRes
     errors,
     timestamp: new Date().toISOString(),
   };
+}
+
+// #779 §A — default failure reason when the gateway metadata carries none.
+const REFUND_FAILED_DEFAULT_REASON = "Gateway rejected the refund";
+
+export interface FailedRefundNotifyResult {
+  scanned: number;
+  notified: number;
+}
+
+/**
+ * #779 §A — notify the payer when a refund FAILED. The two-phase refund +
+ * reconcile path can leave a Refund in FAILED without the payer ever hearing.
+ * Selects FAILED refunds where `failedNotifiedAt` is null, backfills
+ * `failureReason` / `failedAt` if empty (from gateway metadata if present,
+ * else the default copy), notifies the payer, and claim-stamps
+ * `failedNotifiedAt` so the same failure isn't paged twice.
+ */
+// #476 — locked at the core so every entry (GH Actions / HTTP) shares one
+// mutual exclusion; fail-closed: money state must not double-run unlocked.
+export async function notifyFailedRefunds(): Promise<FailedRefundNotifyResult> {
+  return withCronLock("reconcile-pending-refunds", { failMode: "closed", ttlMs: LONG_JOB_TTL_MS }, () =>
+    notifyFailedRefundsUnlocked(),
+  );
+}
+
+async function notifyFailedRefundsUnlocked(): Promise<FailedRefundNotifyResult> {
+  const now = new Date();
+  const failed = await prisma.refund.findMany({
+    where: {
+      status: RefundStatus.FAILED,
+      failedNotifiedAt: null,
+    },
+    include: { payment: { select: { userId: true } } },
+    orderBy: { createdAt: "asc" },
+  });
+
+  let notified = 0;
+  for (const refund of failed) {
+    // Prefer a gateway-supplied reason carried in metadata; fall back to the
+    // existing operator `reason` only as failure context, else default copy.
+    const meta = (refund.metadata ?? {}) as Record<string, unknown>;
+    const gatewayReason =
+      typeof meta.failure_reason === "string"
+        ? meta.failure_reason
+        : typeof meta.error_description === "string"
+          ? meta.error_description
+          : null;
+    const failureReason =
+      refund.failureReason ?? gatewayReason ?? REFUND_FAILED_DEFAULT_REASON;
+
+    // Claim the row: stamp failedNotifiedAt only if still null so a re-run or
+    // a second replica can't double-notify. Backfill failureReason / failedAt
+    // in the same gate when they're empty.
+    const claim = await prisma.refund.updateMany({
+      where: { id: refund.id, failedNotifiedAt: null },
+      data: {
+        failedNotifiedAt: now,
+        failureReason: refund.failureReason ?? failureReason,
+        failedAt: refund.failedAt ?? now,
+      },
+    });
+    if (claim.count === 0) continue;
+    notified++;
+
+    // Fire-and-forget — committed state, no DB writes in the notify path.
+    void notifyRefundFailed(refund.payment.userId, {
+      amount: refund.amountPaise,
+      currency: refund.currency,
+      reason: failureReason,
+      dashboardUrl: `${getAppUrl()}/dashboard`,
+    });
+  }
+
+  return { scanned: failed.length, notified };
 }
 
 /**

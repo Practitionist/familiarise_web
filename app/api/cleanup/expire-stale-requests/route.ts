@@ -9,6 +9,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { expireStaleRequests } from "@/scripts/appointments/expire-stale-requests";
+import { CronLockHeldError } from "@/lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
@@ -23,6 +25,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     }
 
     console.log("🕐 Starting stale request expiration via API...");
+    Sentry.logger.info("cron:expire-stale-requests started");
 
     const result = await expireStaleRequests();
 
@@ -31,9 +34,20 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       subscriptionsExpired: result.subscriptionsExpired,
       paymentPendingExpired: result.paymentPendingExpired,
     });
+    Sentry.logger.info("cron:expire-stale-requests finished", {
+      consultationsExpired: result.consultationsExpired,
+      subscriptionsExpired: result.subscriptionsExpired,
+      paymentPendingExpired: result.paymentPendingExpired,
+    });
 
     return NextResponse.json(result, { status: result.success ? 200 : 500 });
   } catch (error) {
+    // #476 — concurrent invocation (schedule overlap / manual re-run)
+    // skips with a 409 instead of double-running.
+    if (error instanceof CronLockHeldError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
+    Sentry.captureException(error, { tags: { subsystem: "cron", job: "expire-stale-requests" } });
     console.error("Error in stale request expiration:", error);
     return NextResponse.json(
       {

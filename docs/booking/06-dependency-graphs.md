@@ -199,7 +199,7 @@ sequenceDiagram
   Note over UC: User clicks "Allocate"
 
   UC->>AS: allocateSlots(type, id, mode, slots)
-  AS->>API: PATCH /api/events/{type}/{id}/allocate
+  AS->>API: PATCH /api/bookings/{type}/{id}/allocate
 
   API->>ZOD: Parse request body
   ZOD-->>API: Validated {isAuto, slots?, useRequestedSlots?}
@@ -256,7 +256,7 @@ sequenceDiagram
   participant DB as Prisma + PostgreSQL
 
   UC->>AS: validateSlots(type, id, slots)
-  AS->>API: POST /api/events/{type}/{id}/validate
+  AS->>API: POST /api/bookings/{type}/{id}/validate
 
   API->>ZOD: Parse {slots: ["ISO...", ...]}
   API->>DB: Fetch event + consultant + availability
@@ -282,11 +282,11 @@ How cron jobs keep the system healthy:
 ```mermaid
 flowchart LR
   subgraph triggers ["GitHub Actions (Cron Triggers)"]
-    GH1["cleanup-tentative-slots.yml\nevery 15 min"]
+    GH1["cleanup-tentative-slots.yml\nevery 2 hours"]
     GH2["auto-complete-appointments.yml\nevery hour"]
     GH3["cleanup-invalid-appointments.yml\ndaily"]
     GH4["reconcile-slot-availability.yml\ndaily"]
-    GH5["expire-stale-requests.yml\nevery 30 min"]
+    GH5["expire-stale-requests.yml\ndaily at 01:00 UTC"]
   end
 
   subgraph jobs ["Job Files (Lightweight)"]
@@ -303,7 +303,7 @@ flowchart LR
   end
 
   subgraph cleanup_actions ["What They Do"]
-    A1["Remove tentative appointments\nolder than 30 minutes"]
+    A1["Remove tentative appointments\nolder than 24 hours"]
     A2["Mark past appointments\nas COMPLETED"]
     A3["Remove orphaned records\nwith missing FKs"]
     A4["Sync slot availability\nstate with appointments"]

@@ -1,5 +1,6 @@
 "use client";
 
+import * as Sentry from "@sentry/nextjs";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -17,6 +18,7 @@ import {
   createCheckoutData,
 } from "@/schemas/checkout";
 import type { AppliedDiscount } from "@/types/checkout";
+import { OrgPayerSelector } from "@/app/checkout/components/OrgPayerSelector";
 import {
   ConsultantProfile,
   ConsultantReview,
@@ -36,8 +38,11 @@ import {
 import { calculatePricing, formatPercentage } from "../../math";
 import { useCurrency } from "@/hooks/useCurrency";
 import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
+import { mintClientIdempotencyKey } from "@/app/checkout/plans/utils";
 
-type SubscriptionPlanWithConsultant = SubscriptionPlan & {
+// price arrives as number: extended client + JSON serialization (#780)
+type SubscriptionPlanWithConsultant = Omit<SubscriptionPlan, "price"> & {
+  price: number;
   consultantProfile: ConsultantProfile & {
     user: {
       id: string;
@@ -77,6 +82,8 @@ export default function SubscriptionCheckoutPage({
   const [error, setError] = useState<string | null>(null);
   const [_reviews, setReviews] = useState<ConsultantReview[]>([]);
   const [isCheckoutProcessing, setIsCheckoutProcessing] = useState(false);
+  // #828 — useState's lazy initializer runs once per mount.
+  const [idempotencyKey] = useState(mintClientIdempotencyKey);
   const isProcessingRef = useRef(false);
   const [processingGateway, setProcessingGateway] = useState<string | null>(
     null,
@@ -87,6 +94,9 @@ export default function SubscriptionCheckoutPage({
   const [isApplyingDiscount, setIsApplyingDiscount] = useState(false);
   const [discountError, setDiscountError] = useState<string | null>(null);
   const [useReferralCredits, setUseReferralCredits] = useState(false);
+  const [selectedOrganizationId, setSelectedOrganizationId] = useState<
+    string | null
+  >(null);
   const [availableCredits, setAvailableCredits] = useState(0);
   const [isLoadingCredits, setIsLoadingCredits] = useState(true);
 
@@ -98,7 +108,8 @@ export default function SubscriptionCheckoutPage({
 
   // Validate search params once with Zod — single source of truth for all checkout flows
   const validatedSearchParams = useMemo((): SubscriptionSearchParams | null => {
-    const result = subscriptionSearchParamsSchema.safeParse(resolvedSearchParams);
+    const result =
+      subscriptionSearchParamsSchema.safeParse(resolvedSearchParams);
     return result.success ? result.data : null;
   }, [resolvedSearchParams]);
 
@@ -159,6 +170,7 @@ export default function SubscriptionCheckoutPage({
           );
         }
       } catch (error) {
+        Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "payments" } });
         console.error("Error fetching referral credits:", error);
       } finally {
         setIsLoadingCredits(false);
@@ -173,18 +185,23 @@ export default function SubscriptionCheckoutPage({
   const razorpayHandlers = createRazorpayCheckoutHandlers(toast);
 
   // Common API request logic
-  const makeCheckoutRequest = useCallback(async (
-    checkoutData: CheckoutInput,
-    isMockPayment: boolean = false,
-  ) => {
-    return fetch("/api/checkout", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ ...checkoutData, isMockPayment }),
-    });
-  }, []);
+  const makeCheckoutRequest = useCallback(
+    async (checkoutData: CheckoutInput, isMockPayment: boolean = false) => {
+      return fetch("/api/checkout", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          ...checkoutData,
+          isMockPayment,
+          // #828 — stable per-mount; the server dedupes retries on this key.
+          clientIdempotencyKey: idempotencyKey,
+        }),
+      });
+    },
+    [idempotencyKey],
+  );
 
   const handleCheckout = useCallback(
     async (gateway: PaymentGateway, isMockPayment: boolean = false) => {
@@ -230,7 +247,9 @@ export default function SubscriptionCheckoutPage({
         }
 
         // Staleness check: verify scheduling period hasn't expired
-        const periodEnd = new Date(validatedSearchParams.schedulingPeriodEndsAt);
+        const periodEnd = new Date(
+          validatedSearchParams.schedulingPeriodEndsAt,
+        );
         if (periodEnd.getTime() < Date.now()) {
           throw new Error(
             "The scheduling period has expired. Please go back and select new dates.",
@@ -240,12 +259,16 @@ export default function SubscriptionCheckoutPage({
         const checkoutData = createCheckoutData({
           appointmentType: "SUBSCRIPTION",
           planId: planData.data.id,
-          schedulingPeriodStartsAt: validatedSearchParams.schedulingPeriodStartsAt,
+          schedulingPeriodStartsAt:
+            validatedSearchParams.schedulingPeriodStartsAt,
           schedulingPeriodEndsAt: validatedSearchParams.schedulingPeriodEndsAt,
           discountCode: appliedDiscount?.code,
           paymentGateway: gateway,
           displayCurrency: currency,
-          useReferralCredits,
+          useReferralCredits: selectedOrganizationId
+            ? false
+            : useReferralCredits,
+          organizationId: selectedOrganizationId ?? undefined,
         });
 
         // Make API call - backend decides dev vs prod flow
@@ -292,6 +315,7 @@ export default function SubscriptionCheckoutPage({
           handleApiError({ error: data.error, errorType: data.errorType });
         }
       } catch (error) {
+        Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "payments" } });
         console.error("Checkout error:", error);
         if (error instanceof Error) {
           toast({
@@ -314,6 +338,7 @@ export default function SubscriptionCheckoutPage({
       toast,
       appliedDiscount,
       useReferralCredits,
+      selectedOrganizationId,
       validatedSearchParams,
       currency,
       handleApiError,
@@ -344,6 +369,7 @@ export default function SubscriptionCheckoutPage({
         const reviewsData = await fetchReviews(data.data.consultantProfile.id);
         setReviews(reviewsData);
       } catch (error) {
+        Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "payments" } });
         console.error("Error fetching plan data:", error);
         setError(
           error instanceof Error
@@ -410,22 +436,22 @@ export default function SubscriptionCheckoutPage({
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-screen bg-zinc-50">
-        <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-zinc-900"></div>
+      <div className="flex items-center justify-center h-screen bg-muted">
+        <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-foreground"></div>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="col-span-full flex items-center justify-center min-h-screen bg-zinc-50">
+      <div className="col-span-full flex items-center justify-center min-h-screen bg-muted">
         <div
-          className="bg-zinc-900 border border-zinc-800 text-white p-8 max-w-md w-full mx-4 text-center rounded-xl shadow-xl"
+          className="bg-foreground border border-border text-background p-8 max-w-md w-full mx-4 text-center rounded-xl shadow-xl"
           role="alert"
         >
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-zinc-800">
+          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-background/10">
             <svg
-              className="h-6 w-6 text-zinc-400"
+              className="h-6 w-6 text-background/70"
               fill="none"
               viewBox="0 0 24 24"
               strokeWidth={1.5}
@@ -439,10 +465,10 @@ export default function SubscriptionCheckoutPage({
             </svg>
           </div>
           <p className="font-semibold text-lg mb-2">Unable to load checkout</p>
-          <p className="text-zinc-400 text-sm">{error}</p>
+          <p className="text-background/70 text-sm">{error}</p>
           <button
             onClick={() => window.history.back()}
-            className="mt-5 inline-flex items-center rounded-lg bg-white px-4 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-100 transition-colors"
+            className="mt-5 inline-flex items-center rounded-lg bg-background px-4 py-2 text-sm font-medium text-foreground hover:bg-muted transition-colors"
           >
             Go back
           </button>
@@ -456,10 +482,10 @@ export default function SubscriptionCheckoutPage({
 
   return (
     <>
-      <div className="flex flex-col gap-6 border-r border-zinc-300 bg-gradient-to-br from-zinc-200 via-zinc-100 to-gray-200 p-8">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <Avatar className="w-12 h-12 border">
+      <div className="flex flex-col gap-6 border-r border-border bg-gradient-to-br from-muted via-background to-muted p-6 sm:p-8">
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-4 min-w-0">
+            <Avatar className="w-12 h-12 border shrink-0">
               <AvatarImage
                 src={userDetails?.image || "/placeholder-user.jpg"}
                 alt={userDetails?.name || "Consultant"}
@@ -468,11 +494,11 @@ export default function SubscriptionCheckoutPage({
                 {userDetails?.name ? userDetails.name.charAt(0) : "C"}
               </AvatarFallback>
             </Avatar>
-            <div>
-              <div className="font-semibold">
+            <div className="min-w-0">
+              <div className="font-semibold truncate">
                 {userDetails?.name || "Consultant Name"}
               </div>
-              <div className="text-sm text-muted-foreground">
+              <div className="text-sm text-muted-foreground truncate">
                 {consultantDetails?.headline || "Consultant"}
               </div>
               {userDetails?.workExperiences &&
@@ -484,21 +510,21 @@ export default function SubscriptionCheckoutPage({
                         companyName={exp.company}
                         companyDomain={exp.companyDomain ?? undefined}
                         size={20}
-                        className="border-zinc-200"
+                        className="border-border"
                       />
                     ))}
                   </div>
                 )}
             </div>
           </div>
-          <div className="text-right">
+          <div className="text-right min-w-0">
             <div className="font-semibold">Subscription</div>
-            <div className="text-sm text-muted-foreground">
+            <div className="text-sm text-muted-foreground truncate">
               {planData?.data?.title || "Monthly Plan"}
             </div>
           </div>
         </div>
-        <Separator className="bg-zinc-200" />
+        <Separator className="bg-border" />
         <div className="grid gap-2">
           <div className="font-semibold">Subscription Details</div>
           <div className="grid gap-2">
@@ -522,7 +548,7 @@ export default function SubscriptionCheckoutPage({
                       ).toLocaleDateString()}
                     </div>
                   </div>
-                  <Separator className="bg-zinc-200" />
+                  <Separator className="bg-border" />
                 </>
               )}
             <div className="flex items-center justify-between">
@@ -580,7 +606,17 @@ export default function SubscriptionCheckoutPage({
             </div>
           </div>
         </div>
-        <Separator className="bg-zinc-200" />
+        <Separator className="bg-border" />
+        <OrgPayerSelector
+          selectedOrganizationId={selectedOrganizationId}
+          planType="SUBSCRIPTION"
+          planId={resolvedParams.planId}
+          onSelect={(id) => {
+            setSelectedOrganizationId(id);
+            if (id) setUseReferralCredits(false);
+          }}
+        />
+        <Separator className="bg-border" />
         <div className="grid gap-4">
           <div className="font-semibold">Discount Codes</div>
           <div className="flex items-center gap-2">
@@ -604,9 +640,9 @@ export default function SubscriptionCheckoutPage({
             <div className="text-sm text-red-500">{discountError}</div>
           )}
           {appliedDiscount && (
-            <div className="flex items-center justify-between bg-green-50 p-3 rounded-md">
-              <div>
-                <div className="font-medium text-green-700">
+            <div className="flex items-center justify-between gap-3 bg-green-50 p-3 rounded-md">
+              <div className="min-w-0">
+                <div className="font-medium text-green-700 truncate">
                   {appliedDiscount.code}
                 </div>
                 <div className="text-sm text-green-600">
@@ -618,6 +654,7 @@ export default function SubscriptionCheckoutPage({
               <Button
                 variant="ghost"
                 size="sm"
+                className="shrink-0"
                 onClick={() => {
                   setAppliedDiscount(null);
                   setDiscountError(null);
@@ -628,14 +665,14 @@ export default function SubscriptionCheckoutPage({
             </div>
           )}
           <div className="grid gap-2">
-            <div className="flex items-center justify-between">
-              <div>
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
                 <div className="font-medium">SUB20</div>
                 <div className="text-sm text-muted-foreground">
                   Get 20% off your subscription
                 </div>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 shrink-0">
                 <div className="text-muted-foreground">20% off</div>
                 <Button
                   variant="outline"
@@ -649,7 +686,7 @@ export default function SubscriptionCheckoutPage({
             </div>
           </div>
         </div>
-        <Separator className="bg-zinc-200" />
+        <Separator className="bg-border" />
         <div className="grid gap-4">
           <div className="font-semibold">Referral Credits</div>
           {isLoadingCredits ? (
@@ -657,12 +694,12 @@ export default function SubscriptionCheckoutPage({
               Loading credits...
             </div>
           ) : availableCredits > 0 ? (
-            <div className="flex items-center justify-between bg-blue-50 p-3 rounded-lg border border-blue-200">
-              <div>
-                <div className="font-medium text-blue-700">
+            <div className="flex items-center justify-between gap-3 bg-muted p-3 rounded-lg border border-border">
+              <div className="min-w-0">
+                <div className="font-medium text-foreground">
                   {formatPrice(availableCredits)} available
                 </div>
-                <div className="text-sm text-blue-600">
+                <div className="text-sm text-muted-foreground">
                   Apply to this purchase
                 </div>
               </div>
@@ -678,10 +715,10 @@ export default function SubscriptionCheckoutPage({
           )}
         </div>
       </div>
-      <div className="flex flex-col gap-8 p-8 bg-white">
-        <Card className="border-zinc-200 shadow-sm">
+      <div className="flex flex-col gap-8 p-6 sm:p-8 bg-card">
+        <Card className="border-border shadow-sm">
           <CardHeader>
-            <CardTitle className="text-zinc-900">
+            <CardTitle className="text-foreground">
               Subscription Pricing
             </CardTitle>
           </CardHeader>
@@ -723,7 +760,7 @@ export default function SubscriptionCheckoutPage({
                 </div>
               </div>
             </div>
-            <Separator className="bg-zinc-200" />
+            <Separator className="bg-border" />
             <div className="grid gap-2">
               <div className="flex items-center justify-between">
                 <div>Subtotal</div>
@@ -744,12 +781,12 @@ export default function SubscriptionCheckoutPage({
                 </div>
               )}
               {pricing.creditsApplied > 0 && (
-                <div className="flex items-center justify-between text-blue-600">
+                <div className="flex items-center justify-between text-foreground">
                   <div>Referral Credits</div>
                   <div>-{formatPrice(pricing.creditsApplied)}</div>
                 </div>
               )}
-              <Separator className="bg-zinc-200" />
+              <Separator className="bg-border" />
               <div className="flex items-center justify-between font-semibold">
                 <div>Total</div>
                 <div>{formatPrice(pricing.total)}</div>
@@ -778,19 +815,19 @@ export default function SubscriptionCheckoutPage({
               isActive: true,
             },
           ].map((gateway) => (
-            <Card key={gateway.gateway} className="border-zinc-200">
+            <Card key={gateway.gateway} className="border-border">
               <CardHeader>
-                <CardTitle className="text-zinc-900">{gateway.name}</CardTitle>
+                <CardTitle className="text-foreground">{gateway.name}</CardTitle>
               </CardHeader>
               <CardContent className="grid gap-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-4">
-                    <CreditCardIcon className="w-8 h-8 text-zinc-600" />
-                    <div>
-                      <div className="font-semibold text-zinc-900">
+                <div className="flex flex-wrap items-center justify-between gap-4">
+                  <div className="flex items-center gap-4 min-w-0">
+                    <CreditCardIcon className="w-8 h-8 text-muted-foreground shrink-0" />
+                    <div className="min-w-0">
+                      <div className="font-semibold text-foreground">
                         Credit/Debit Card
                       </div>
-                      <div className="text-sm text-zinc-500">
+                      <div className="text-sm text-muted-foreground/70">
                         {gateway.description}
                       </div>
                     </div>
@@ -798,18 +835,23 @@ export default function SubscriptionCheckoutPage({
                   {gateway.isActive ? (
                     <div className="flex gap-2">
                       {validatedSearchParams?.schedulingPeriodStartsAt &&
-                       validatedSearchParams?.schedulingPeriodEndsAt &&
-                       gateway.gateway === "RAZORPAY" ? (
+                      validatedSearchParams?.schedulingPeriodEndsAt &&
+                      gateway.gateway === "RAZORPAY" ? (
                         <RazorpayCheckout
                           checkoutData={createCheckoutData({
                             appointmentType: "SUBSCRIPTION",
                             planId: planData?.data?.id || "",
                             paymentGateway: "RAZORPAY",
-                            schedulingPeriodStartsAt: validatedSearchParams.schedulingPeriodStartsAt,
-                            schedulingPeriodEndsAt: validatedSearchParams.schedulingPeriodEndsAt,
+                            schedulingPeriodStartsAt:
+                              validatedSearchParams.schedulingPeriodStartsAt,
+                            schedulingPeriodEndsAt:
+                              validatedSearchParams.schedulingPeriodEndsAt,
                             discountCode: appliedDiscount?.code,
                             displayCurrency: currency,
-                            useReferralCredits,
+                            useReferralCredits: selectedOrganizationId
+                              ? false
+                              : useReferralCredits,
+                            organizationId: selectedOrganizationId ?? undefined,
                           })}
                           onPaymentSuccess={razorpayHandlers.onPaymentSuccess}
                           onPaymentError={razorpayHandlers.onPaymentError}
@@ -823,11 +865,16 @@ export default function SubscriptionCheckoutPage({
                             appointmentType: "SUBSCRIPTION",
                             planId: planData?.data?.id || "",
                             paymentGateway: "STRIPE",
-                            schedulingPeriodStartsAt: validatedSearchParams.schedulingPeriodStartsAt,
-                            schedulingPeriodEndsAt: validatedSearchParams.schedulingPeriodEndsAt,
+                            schedulingPeriodStartsAt:
+                              validatedSearchParams.schedulingPeriodStartsAt,
+                            schedulingPeriodEndsAt:
+                              validatedSearchParams.schedulingPeriodEndsAt,
                             discountCode: appliedDiscount?.code,
                             displayCurrency: currency,
-                            useReferralCredits,
+                            useReferralCredits: selectedOrganizationId
+                              ? false
+                              : useReferralCredits,
+                            organizationId: selectedOrganizationId ?? undefined,
                           })}
                           onPaymentSuccess={stripeHandlers.onPaymentSuccess}
                           onPaymentError={stripeHandlers.onPaymentError}
@@ -838,7 +885,9 @@ export default function SubscriptionCheckoutPage({
                         <Button
                           variant="secondary"
                           onClick={() => handleCheckout(gateway.gateway, true)}
-                          disabled={isCheckoutProcessing || isMaintenanceBlocked}
+                          disabled={
+                            isCheckoutProcessing || isMaintenanceBlocked
+                          }
                         >
                           {isCheckoutProcessing &&
                           processingGateway === `${gateway.gateway}-mock` ? (

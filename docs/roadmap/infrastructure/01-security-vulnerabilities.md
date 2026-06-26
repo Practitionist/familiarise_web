@@ -57,10 +57,10 @@ This document outlines critical security vulnerabilities identified in the appli
 
 | Endpoint                    | Method    | Risk | Impact                          |
 | --------------------------- | --------- | ---- | ------------------------------- |
-| `/api/events/classes`       | GET/POST  | HIGH | Enumerate/create classes        |
-| `/api/events/consultations` | GET/PATCH | HIGH | Query any consultation          |
-| `/api/events/subscriptions` | GET       | HIGH | View all subscriptions          |
-| `/api/events/webinars`      | GET       | HIGH | View all webinars               |
+| `/api/bookings/classes`       | GET/POST  | HIGH | Enumerate/create classes        |
+| `/api/bookings/consultations` | GET/PATCH | HIGH | Query any consultation          |
+| `/api/bookings/subscriptions` | GET       | HIGH | View all subscriptions          |
+| `/api/bookings/webinars`      | GET       | HIGH | View all webinars               |
 | `/api/plans/classes`        | GET/POST  | HIGH | Create plans for any consultant |
 | `/api/plans/consultations`  | GET/POST  | HIGH | Create plans for any consultant |
 | `/api/plans/subscriptions`  | GET/POST  | HIGH | Create plans for any consultant |
@@ -165,7 +165,7 @@ Even when authentication exists, many endpoints don't verify the user has permis
 | Endpoint                        | Issue                                 | File Location                                               |
 | ------------------------------- | ------------------------------------- | ----------------------------------------------------------- |
 | `/api/appointments/[id]/cancel` | Any user can cancel any appointment   | `app/api/appointments/[appointmentId]/cancel/route.ts:6-16` |
-| `/api/events/classes`           | Can query by any `consulteeProfileId` | `app/api/events/classes/route.ts`                           |
+| `/api/bookings/classes`           | Can query by any `consulteeProfileId` | `app/api/bookings/classes/route.ts`                           |
 | `/api/slots/appointments`       | Accepts any `consultantProfileId`     | `app/api/slots/appointments/route.ts`                       |
 | `/api/user/consultants/[id]`    | PUT doesn't verify ownership          | `app/api/user/consultants/[id]/route.ts:172`                |
 
@@ -467,10 +467,10 @@ app/api/user/consultees/route.ts
 app/api/user/consultees/[id]/route.ts
 app/api/user/reviews/route.ts
 app/api/user/staff/route.ts
-app/api/events/classes/route.ts
-app/api/events/consultations/route.ts
-app/api/events/subscriptions/route.ts
-app/api/events/webinars/route.ts
+app/api/bookings/classes/route.ts
+app/api/bookings/consultations/route.ts
+app/api/bookings/subscriptions/route.ts
+app/api/bookings/webinars/route.ts
 app/api/plans/classes/route.ts
 app/api/plans/consultations/route.ts
 app/api/plans/subscriptions/route.ts

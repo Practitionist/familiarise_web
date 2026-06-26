@@ -15,6 +15,8 @@ import {
 } from "../../scripts/refunds/cascade-refund-earnings";
 import fs from "fs";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
+import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 /**
  * Output results to GitHub Actions
@@ -47,6 +49,7 @@ function outputToGitHubActions(result: RefundEarningCascadeResult): void {
  */
 async function main(): Promise<void> {
   await abortIfMaintenance("cascade-refund-earnings");
+  Sentry.logger.info("job:cascade-refund-earnings started");
   console.log("🔄 Starting refund-earning cascade job...");
   console.log(`Timestamp: ${new Date().toISOString()}`);
 
@@ -70,7 +73,23 @@ async function main(): Promise<void> {
     if (!result.success) {
       process.exit(1);
     }
+
+    Sentry.logger.info("job:cascade-refund-earnings finished", {
+      totalProcessed: result.totalProcessed,
+      updatedCount: result.updatedCount,
+      skippedCount: result.skippedCount,
+      errorCount: result.errorCount,
+    });
   } catch (error) {
+    // #476 — lock held = another run is live; skipping is the correct
+    // outcome (exit 0, no page). CronLockUnavailableError falls through
+    // to exit 1 so the workflow's notify step pages.
+    if (error instanceof CronLockHeldError) {
+      Sentry.logger.info("job:cascade-refund-earnings lock held, skipping");
+      console.log(`⏭️  ${error.message}`);
+      return;
+    }
+    Sentry.captureException(error, { tags: { subsystem: "jobs", job: "cascade-refund-earnings" } });
     console.error("❌ Fatal error in refund-earning cascade:", error);
     process.exit(1);
   } finally {

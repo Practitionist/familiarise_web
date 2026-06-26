@@ -1,5 +1,6 @@
 "use client";
 
+import * as Sentry from "@sentry/nextjs";
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -23,7 +24,9 @@ import {
   Video,
   Loader2,
   Search,
+  Building2,
 } from "lucide-react";
+import { useSession } from "@/lib/auth-client";
 import {
   AppointmentsTabProps,
   ScheduledTrial,
@@ -72,10 +75,26 @@ export function AppointmentsTab({
   consultantId,
   unscheduledClasses = [],
   unscheduledWebinars = [],
+  headerSlot,
 }: Readonly<AppointmentsTabProps>) {
   const router = useRouter();
   const client = useStreamVideoClient();
   const { toast } = useToast();
+  const { data: session } = useSession();
+  // Memberships used to resolve an appointment's `organizationId` to a
+  // displayable org name for the "Sponsored · <Org>" badge. Mirrors the
+  // consultee dashboard convention so a panel expert can tell at a
+  // glance which sessions came through which org.
+  const orgMemberships = session?.user?.organizationMemberships ?? [];
+  const resolveSponsoringOrgName = (
+    orgId: string | null | undefined,
+  ): string | null => {
+    if (!orgId) return null;
+    return (
+      orgMemberships.find((m) => m.organizationId === orgId)?.organizationName ??
+      "the organization"
+    );
+  };
   const [joiningTrialId, setJoiningTrialId] = useState<string | null>(null);
   const searchParams = useSearchParams();
   const [selectedAppointment, setSelectedAppointment] =
@@ -202,6 +221,7 @@ export function AppointmentsTab({
         variant: "success",
       });
     } catch (error) {
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
       console.error("Error joining meeting:", error);
       toast({
         title: "Error joining meeting",
@@ -268,6 +288,7 @@ export function AppointmentsTab({
       });
       router.push(`/meetings/${meetingId}`);
     } catch (error) {
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
       console.error("Error joining trial meeting:", error);
       toast({
         title: "Error joining meeting",
@@ -397,9 +418,12 @@ export function AppointmentsTab({
 
   return (
     <div className="bg-white p-4 sm:p-6 rounded-lg shadow">
-      <h2 className="text-xl font-semibold mb-4 text-gray-800">
-        All Appointments
-      </h2>
+      <div className="flex items-center justify-between gap-3 flex-wrap mb-4">
+        <h2 className="text-xl font-semibold text-gray-800">
+          All Appointments
+        </h2>
+        {headerSlot}
+      </div>
       <div className="space-y-3 mb-4">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
@@ -868,10 +892,28 @@ export function AppointmentsTab({
                                         <div className="min-w-0">
                                           {!isRecurring && (
                                             <>
-                                              <div className="flex items-center gap-2">
+                                              <div className="flex items-center gap-2 flex-wrap">
                                                 <h3 className="font-semibold text-gray-800">
                                                   {getConsumeeName(appointment)}
                                                 </h3>
+                                                {(() => {
+                                                  const sponsoringOrgName =
+                                                    resolveSponsoringOrgName(
+                                                      appointment.organizationId,
+                                                    );
+                                                  return sponsoringOrgName ? (
+                                                    <Badge
+                                                      className="text-[10px] font-semibold px-2 py-0.5 bg-indigo-50 text-indigo-700 border-0 rounded-md inline-flex items-center gap-1 max-w-[200px]"
+                                                      title={`Sponsored by ${sponsoringOrgName}`}
+                                                    >
+                                                      <Building2 className="h-3 w-3 shrink-0" />
+                                                      <span className="truncate">
+                                                        Sponsored ·{" "}
+                                                        {sponsoringOrgName}
+                                                      </span>
+                                                    </Badge>
+                                                  ) : null;
+                                                })()}
                                                 {consultantId &&
                                                   (() => {
                                                     const role =

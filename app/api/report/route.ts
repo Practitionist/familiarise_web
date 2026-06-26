@@ -3,12 +3,32 @@
  * Allows users to report inappropriate content
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { ModerationReportType } from "@prisma/client";
 import { spamLimiter, applyRateLimit } from "@/lib/rate-limit";
+import {
+  assertBodySize,
+  MAX_TEXT_LENGTH,
+  MAX_TITLE_LENGTH,
+} from "@/lib/validation/limits";
+import { z } from "zod";
 
 import { getSession } from "@/lib/auth-server";
+
+// #831 — raw destructuring accepted unbounded strings; every user-typed
+// field now carries a .max()
+const CreateReportSchema = z.object({
+  type: z.nativeEnum(ModerationReportType),
+  reason: z.string().min(1).max(MAX_TITLE_LENGTH),
+  description: z.string().max(MAX_TEXT_LENGTH).optional(),
+  targetUserId: z.string().min(1).max(MAX_TITLE_LENGTH),
+  contentText: z.string().max(MAX_TEXT_LENGTH).optional(),
+  contentUrl: z.string().max(MAX_TITLE_LENGTH).optional(),
+  reviewId: z.string().max(MAX_TITLE_LENGTH).optional(),
+});
+
 /**
  * POST /api/report
  * Submit a content report
@@ -24,7 +44,17 @@ export async function POST(req: NextRequest) {
     const rl = await applyRateLimit(spamLimiter, `report:${session.user.id}`);
     if (rl) return rl;
 
+    const tooLarge = assertBodySize(req);
+    if (tooLarge) return tooLarge;
+
     const body = await req.json();
+    const parsed = CreateReportSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: "Validation failed", details: parsed.error.issues },
+        { status: 400 },
+      );
+    }
     const {
       type,
       reason,
@@ -33,7 +63,7 @@ export async function POST(req: NextRequest) {
       contentText,
       contentUrl,
       reviewId,
-    } = body;
+    } = parsed.data;
 
     // Validate required fields
     if (!type || !reason || !targetUserId) {
@@ -145,6 +175,7 @@ export async function POST(req: NextRequest) {
       { status: 201 },
     );
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "report" } });
     console.error("Error submitting report:", error);
     return NextResponse.json(
       { error: "Failed to submit report" },

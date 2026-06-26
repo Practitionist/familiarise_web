@@ -1,5 +1,6 @@
 import { cache } from "react";
 import prisma from "@/lib/prisma";
+import { toPlain } from "@/lib/data/serialize";
 import { fetchImagesFromSupabaseStorage } from "@/lib/supabase";
 
 /**
@@ -9,7 +10,8 @@ import { fetchImagesFromSupabaseStorage } from "@/lib/supabase";
 
 export const getHomeExperts = cache(async () => {
   const consultants = await prisma.consultantProfile.findMany({
-    where: { verificationStatus: "VERIFIED" },
+    // #781 §B — soft-deleted profiles leave public surfaces
+    where: { verificationStatus: "VERIFIED", deletedAt: null },
     orderBy: { rating: "desc" },
     take: 10,
     include: {
@@ -43,12 +45,16 @@ export const getHomeExperts = cache(async () => {
       },
     },
   });
-  return consultants;
+  // price is already number at the JS boundary (#780 result extension);
+  // toPlain strips the extension's inspect symbol so the rows can cross
+  // the RSC boundary.
+  return toPlain(consultants);
 });
 
 export const getHomeReviews = cache(async () => {
   const reviews = await prisma.consultantReview.findMany({
-    where: { rating: { gte: 4 } },
+    // #781 §B — soft-deleted profiles leave public surfaces
+    where: { rating: { gte: 4 }, consultantProfile: { deletedAt: null } },
     take: 20,
     include: {
       consultantProfile: {
@@ -64,7 +70,7 @@ export const getHomeReviews = cache(async () => {
     },
     orderBy: { rating: "desc" },
   });
-  return reviews;
+  return toPlain(reviews);
 });
 
 export const getHomeImages = cache(async () => {

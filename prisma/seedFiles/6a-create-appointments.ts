@@ -7,7 +7,7 @@ import {
   DayOfWeek,
   Platform,
   Prisma,
-  RequestStatus,
+  AppointmentStatus,
   SlotOfAvailabilityCustom,
   SlotOfAvailabilityWeekly,
   SubscriptionPlan,
@@ -17,6 +17,12 @@ import {
 import prisma from "../../lib/prisma";
 import { UserWithProfiles } from "./1a-create-users";
 import { config, getTotalAppointments } from "./config";
+
+// #780 — the extended client reads plan `price` as number; the raw model
+// types still say bigint.
+type PlanRead<T extends { price: bigint }> = Omit<T, "price"> & {
+  price: number;
+};
 
 // Appointment volumes - configurable via SEED_MODE environment variable
 const NUM_CONSULTATION = config.volumes.appointments.consultation;
@@ -40,17 +46,17 @@ const getAppointmentType = (index: number): AppointmentsType => {
 const getAppointmentStatus = (
   index: number,
   isPastAppointment: boolean,
-): RequestStatus => {
+): AppointmentStatus => {
   const rand = Math.random();
 
   if (isPastAppointment) {
-    return rand < 0.8 ? RequestStatus.APPROVED : RequestStatus.CANCELLED;
+    return rand < 0.8 ? AppointmentStatus.APPROVED : AppointmentStatus.CANCELLED;
   }
 
-  if (rand < 0.3) return RequestStatus.PENDING;
-  if (rand < 0.7) return RequestStatus.APPROVED;
-  if (rand < 0.9) return RequestStatus.EXPIRED;
-  return RequestStatus.CANCELLED;
+  if (rand < 0.3) return AppointmentStatus.PENDING;
+  if (rand < 0.7) return AppointmentStatus.APPROVED;
+  if (rand < 0.9) return AppointmentStatus.EXPIRED;
+  return AppointmentStatus.CANCELLED;
 };
 
 const getAppointmentDate = (
@@ -159,11 +165,11 @@ const createMeetingSessionData = (
 
 const createConsultationAppointment = (
   consultee: UserWithProfiles,
-  consultationPlans: ConsultationPlan[],
-  defaultStatus: RequestStatus,
+  consultationPlans: PlanRead<ConsultationPlan>[],
+  defaultStatus: AppointmentStatus,
   isPastAppointment: boolean,
-  slotStartTimeInUTC: Date,
-  slotEndTimeInUTC: Date,
+  startsAt: Date,
+  endsAt: Date,
   consultantUserId?: string,
 ): Prisma.AppointmentCreateInput => {
   return {
@@ -175,9 +181,9 @@ const createConsultationAppointment = (
             ? [{ id: consultantUserId }, { id: consultee.id }]
             : [{ id: consultee.id }],
         },
-        startsAt: slotStartTimeInUTC,
-        endsAt: slotEndTimeInUTC,
-        isTentative: defaultStatus === RequestStatus.PENDING,
+        startsAt: startsAt,
+        endsAt: endsAt,
+        isTentative: defaultStatus === AppointmentStatus.PENDING,
         meetingSession: createMeetingSessionData(isPastAppointment),
       },
     },
@@ -189,7 +195,7 @@ const createConsultationAppointment = (
           },
         },
         requestedBy: { connect: { id: consultee.consulteeProfile!.id } },
-        requestStatus: defaultStatus,
+        status: defaultStatus,
         requestedAt: new Date(),
         requestNotes: faker.lorem.sentence(),
         bookingSource: faker.helpers.arrayElement([
@@ -212,9 +218,9 @@ const createConsultationAppointment = (
 
 const createSubscriptionAppointment = (
   consultee: UserWithProfiles,
-  subscriptionPlans: SubscriptionPlan[],
+  subscriptionPlans: PlanRead<SubscriptionPlan>[],
   consultantWeeklySlots: SlotOfAvailabilityWeekly[],
-  defaultStatus: RequestStatus,
+  defaultStatus: AppointmentStatus,
   isPastAppointment: boolean,
   startDate: Date,
   endDate: Date,
@@ -300,7 +306,7 @@ const createSubscriptionAppointment = (
             },
             startsAt: slotStart,
             endsAt: slotEnd,
-            isTentative: defaultStatus === RequestStatus.PENDING,
+            isTentative: defaultStatus === AppointmentStatus.PENDING,
             meetingSession: createMeetingSessionData(
               isPastAppointment && slotStart < new Date(),
             ),
@@ -340,7 +346,7 @@ const createSubscriptionAppointment = (
       },
       startsAt: slotStart,
       endsAt: slotEnd,
-      isTentative: defaultStatus === RequestStatus.PENDING,
+      isTentative: defaultStatus === AppointmentStatus.PENDING,
       meetingSession: createMeetingSessionData(isPastAppointment),
     });
   }
@@ -358,7 +364,7 @@ const createSubscriptionAppointment = (
           },
         },
         requestedBy: { connect: { id: consultee.consulteeProfile!.id } },
-        requestStatus: defaultStatus,
+        status: defaultStatus,
         requestedAt: new Date(),
         requestNotes: faker.lorem.sentence(),
         bookingSource: faker.helpers.arrayElement([
@@ -384,11 +390,11 @@ const createSubscriptionAppointment = (
 
 const createWebinarAppointment = async (
   consultee: UserWithProfiles,
-  webinarPlans: WebinarPlan[],
+  webinarPlans: PlanRead<WebinarPlan>[],
   consultees: UserWithProfiles[],
   isPastAppointment: boolean,
-  slotStartTimeInUTC: Date,
-  slotEndTimeInUTC: Date,
+  startsAt: Date,
+  endsAt: Date,
   consultantUserId?: string,
 ): Promise<Prisma.AppointmentCreateInput> => {
   // Limit waitlist size to prevent transaction timeout
@@ -415,8 +421,8 @@ const createWebinarAppointment = async (
             ...additionalParticipants.map((c) => ({ id: c.id })),
           ],
         },
-        startsAt: slotStartTimeInUTC,
-        endsAt: slotEndTimeInUTC,
+        startsAt: startsAt,
+        endsAt: endsAt,
         isTentative: false,
         meetingSession: createMeetingSessionData(isPastAppointment),
       },
@@ -455,7 +461,7 @@ const createWebinarAppointment = async (
 
 const createClassAppointment = async (
   consultee: UserWithProfiles,
-  classPlans: ClassPlan[],
+  classPlans: PlanRead<ClassPlan>[],
   consultees: UserWithProfiles[],
   isPastAppointment: boolean,
   startDate: Date,
@@ -551,10 +557,10 @@ const createClassAppointment = async (
 async function createAppointmentBatch(
   consultees: UserWithProfiles[],
   allSlots: SlotData[],
-  consultationPlans: ConsultationPlan[],
-  subscriptionPlans: SubscriptionPlan[],
-  webinarPlans: WebinarPlan[],
-  classPlans: ClassPlan[],
+  consultationPlans: PlanRead<ConsultationPlan>[],
+  subscriptionPlans: PlanRead<SubscriptionPlan>[],
+  webinarPlans: PlanRead<WebinarPlan>[],
+  classPlans: PlanRead<ClassPlan>[],
   weeklySlots: SlotOfAvailabilityWeekly[],
   startIndex: number,
   batchSize: number,

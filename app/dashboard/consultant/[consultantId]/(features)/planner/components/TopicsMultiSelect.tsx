@@ -75,15 +75,6 @@ export function TopicsMultiSelect({
     };
   }, []);
 
-  // Update parent component when topics change - but avoid the loop
-  useEffect(() => {
-    const handler = setTimeout(() => {
-      onTopicsChange?.(topics);
-    }, 0);
-
-    return () => clearTimeout(handler);
-  }, [topicsKey, onTopicsChange, topics]);
-
   // Update suggestions when input changes
   useEffect(() => {
     if (inputValue.trim() === "") {
@@ -119,14 +110,18 @@ export function TopicsMultiSelect({
 
     if (isDuplicate) return;
 
-    setTopics((prevTopics) => [...prevTopics, topic]);
+    const nextTopics = [...topics, topic];
+    setTopics(nextTopics);
+    onTopicsChange?.(nextTopics);
     setInputValue("");
     setSuggestions([]);
     inputRef.current?.focus();
   };
 
   const removeTopic = (index: number) => {
-    setTopics((prevTopics) => prevTopics.filter((_, i) => i !== index));
+    const nextTopics = topics.filter((_, i) => i !== index);
+    setTopics(nextTopics);
+    onTopicsChange?.(nextTopics);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {

@@ -1,5 +1,6 @@
 "use client";
 
+import * as Sentry from "@sentry/nextjs";
 import { useState, useMemo } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -19,6 +20,7 @@ import {
 import { motion } from "framer-motion";
 import { ArrowUpDown, FolderOpen, RefreshCw } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { PageHeader } from "@/components/ui/page-header";
 import { EventResourceCard, type EventResource } from "./EventResourceCard";
 
 interface ResourcesData {
@@ -95,6 +97,7 @@ export function ResourcesTab({ data, onRefresh }: ResourcesTabProps) {
         });
       }
     } catch (err) {
+      Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "client" } });
       console.error("Error syncing recordings:", err);
       toast({
         title: "Error",
@@ -139,15 +142,15 @@ export function ResourcesTab({ data, onRefresh }: ResourcesTabProps) {
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        className="flex flex-col items-center justify-center min-h-[400px] p-8 bg-white rounded-xl shadow-sm"
+        className="flex flex-col items-center justify-center min-h-[400px] p-8 bg-card rounded-xl shadow-sm"
       >
-        <div className="w-16 h-16 mb-4 text-zinc-300 flex items-center justify-center">
+        <div className="w-16 h-16 mb-4 text-muted-foreground/70 flex items-center justify-center">
           <FolderOpen className="w-12 h-12" />
         </div>
-        <h3 className="text-xl font-semibold text-zinc-900 mb-2">
+        <h3 className="text-xl font-semibold text-foreground mb-2">
           No Resources Yet
         </h3>
-        <p className="text-zinc-500 text-center max-w-md">
+        <p className="text-muted-foreground text-center max-w-md">
           Resources from your enrolled consultations, subscriptions, webinars,
           and classes will appear here. Book a session to get started!
         </p>
@@ -168,43 +171,42 @@ export function ResourcesTab({ data, onRefresh }: ResourcesTabProps) {
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3 }}
     >
-      <div className="mb-6 flex items-start justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-zinc-900">Resources</h1>
-          <p className="text-zinc-500 mt-1">
-            Materials and recordings from your enrolled events
-          </p>
-        </div>
-        <TooltipProvider>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleSync}
-                disabled={isSyncing}
-              >
-                <RefreshCw
-                  className={`h-4 w-4 mr-2 ${isSyncing ? "animate-spin" : ""}`}
-                />
-                {isSyncing ? "Syncing..." : "Sync from Stream"}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom" className="max-w-xs">
-              Re-fetch latest recording links from Stream. Use this if a recent
-              recording doesn&apos;t appear.
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
-      </div>
+      <PageHeader
+        className="mb-6"
+        title="Resources"
+        description="Materials and recordings from your enrolled events"
+        actions={
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleSync}
+                  disabled={isSyncing}
+                >
+                  <RefreshCw
+                    className={`h-4 w-4 mr-2 ${isSyncing ? "animate-spin" : ""}`}
+                  />
+                  {isSyncing ? "Syncing..." : "Sync from Stream"}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="max-w-xs">
+                Re-fetch latest recording links from Stream. Use this if a recent
+                recording doesn&apos;t appear.
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        }
+      />
 
       {/* Filter + Sort controls */}
-      <div className="mb-4 flex items-center gap-3">
+      <div className="mb-4 flex flex-wrap items-center gap-3">
         <Select
           value={resourceFilter}
           onValueChange={(v) => setResourceFilter(v as FilterOption)}
         >
-          <SelectTrigger className="w-[180px]">
+          <SelectTrigger className="w-full sm:w-[180px]">
             <SelectValue placeholder="Filter resources" />
           </SelectTrigger>
           <SelectContent>
@@ -233,7 +235,7 @@ export function ResourcesTab({ data, onRefresh }: ResourcesTabProps) {
               <TabsTrigger key={key} value={key} disabled={total === 0}>
                 {label}
                 {total > 0 && (
-                  <span className="ml-1.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-zinc-200 px-1.5 text-xs font-medium text-zinc-700">
+                  <span className="ml-1.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-muted px-1.5 text-xs font-medium text-muted-foreground">
                     {isFiltered ? `${filtered}/${total}` : total}
                   </span>
                 )}
@@ -249,7 +251,7 @@ export function ResourcesTab({ data, onRefresh }: ResourcesTabProps) {
             <TabsContent key={key} value={key}>
               <div className="space-y-4">
                 {items.length === 0 && total > 0 ? (
-                  <p className="text-sm text-zinc-400 text-center py-8">
+                  <p className="text-sm text-muted-foreground/70 text-center py-8">
                     No resources match the selected filter.
                   </p>
                 ) : (

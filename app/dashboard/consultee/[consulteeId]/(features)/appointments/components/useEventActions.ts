@@ -94,15 +94,18 @@ export function useEventActions({
         throw new Error(data.error || "Failed to request reschedule");
       }
 
-      const slotsAffected =
-        data.slotsAffected ?? slotIds?.length ?? rawSlots.length;
+      // #448 — show the SESSION count, not the slot count: a 1-hour session is
+      // 2 × 30-min slots, so the old slotsAffected label read "2 sessions" for a
+      // single session. sessionsAffected is the distinct-appointment count.
+      const sessionsAffected =
+        data.sessionsAffected ?? data.slotsAffected ?? slotIds?.length ?? 1;
 
       toast({
         title: "Ready to reschedule",
         description:
-          slotsAffected === 1
+          sessionsAffected === 1
             ? `Select a new time for your session.`
-            : `Select new times for your ${slotsAffected} sessions.`,
+            : `Select new times for your ${sessionsAffected} sessions.`,
       });
 
       window.location.reload();

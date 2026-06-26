@@ -1,4 +1,5 @@
 import type { SlotType } from "@/utils/schedule/types";
+import { resolveOvernightStatus } from "@/utils/schedule/overnight";
 
 // Configuration constants
 const VALIDATION_CONFIG = {
@@ -22,10 +23,10 @@ const getMinutes = (time: string): number | null => {
     : null;
 };
 
-// Helper to check if a slot spans midnight
-const isOvernightSlot = (startMinutes: number, endMinutes: number): boolean => {
-  return endMinutes <= startMinutes;
-};
+// Helper to check if a slot spans midnight — #503 item 2, canonical rule
+const isOvernightSlot = (startMinutes: number, endMinutes: number): boolean =>
+  resolveOvernightStatus({ startTimeUtc: startMinutes, endTimeUtc: endMinutes })
+    .isOvernight;
 
 // Calculate slot duration handling overnight slots
 const calculateSlotDuration = (

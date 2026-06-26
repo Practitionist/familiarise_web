@@ -8,9 +8,15 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { NotificationInbox } from "@/components/notifications/NotificationInbox";
+import { OrganizationSwitcher } from "./OrganizationSwitcher";
 import { UserDropdown } from "./UserDropdown";
 import { HelpCircle } from "lucide-react";
 import Link from "next/link";
+
+export interface BreadcrumbItem {
+  label: string;
+  href?: string;
+}
 
 interface DashboardNavbarProps {
   userName?: string | null;
@@ -19,6 +25,7 @@ interface DashboardNavbarProps {
   settingsPath: string;
   profilePath?: string;
   helpPath?: string;
+  breadcrumbs?: BreadcrumbItem[];
 }
 
 export function DashboardNavbar({
@@ -28,14 +35,39 @@ export function DashboardNavbar({
   settingsPath,
   profilePath,
   helpPath,
+  breadcrumbs,
 }: DashboardNavbarProps) {
   return (
     <div
-      className="flex h-16 items-center justify-end gap-2 px-6 border-b border-zinc-200 bg-white"
+      className="flex h-16 items-center justify-end gap-2 px-6 border-b border-border bg-card"
       style={{ overflow: "visible" }}
     >
-      {/* Left spacer - future home for breadcrumbs */}
-      <div className="flex-1" />
+      {/* Breadcrumbs — rendered in the left gutter when provided */}
+      <div className="flex-1 flex items-center gap-1 text-sm min-w-0">
+        {breadcrumbs && breadcrumbs.length > 0 && (
+          <nav className="flex items-center gap-1 min-w-0">
+            {breadcrumbs.map((crumb, i) => (
+              <span key={i} className="flex items-center gap-1 min-w-0">
+                {i > 0 && (
+                  <span className="text-zinc-300 shrink-0">/</span>
+                )}
+                {crumb.href ? (
+                  <Link
+                    href={crumb.href}
+                    className="text-zinc-500 hover:text-zinc-800 transition-colors truncate"
+                  >
+                    {crumb.label}
+                  </Link>
+                ) : (
+                  <span className="text-zinc-700 font-medium truncate">
+                    {crumb.label}
+                  </span>
+                )}
+              </span>
+            ))}
+          </nav>
+        )}
+      </div>
 
       {/* Right actions */}
       <TooltipProvider delayDuration={200}>
@@ -57,6 +89,8 @@ export function DashboardNavbar({
               <TooltipContent>Help & FAQ</TooltipContent>
             </Tooltip>
           )}
+
+          <OrganizationSwitcher />
 
           <NotificationInbox />
 

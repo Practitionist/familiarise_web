@@ -31,12 +31,13 @@ function formatCountdown(diffMs: number): string {
 }
 
 const tierStyles: Record<Tier, string> = {
-  far: "bg-zinc-100 text-zinc-500",
-  soon: "bg-amber-50 text-amber-600",
-  imminent: "bg-orange-50 text-orange-600",
-  now: "bg-green-50 text-green-600 animate-pulse",
-  live: "bg-red-50 text-red-600 animate-pulse",
-  ended: "bg-zinc-100 text-zinc-400",
+  far: "bg-muted text-muted-foreground",
+  soon: "bg-amber-50 text-amber-600 dark:bg-amber-900/30 dark:text-amber-300",
+  imminent:
+    "bg-orange-50 text-orange-600 dark:bg-orange-900/30 dark:text-orange-300",
+  now: "bg-green-50 text-green-600 animate-pulse dark:bg-green-900/30 dark:text-green-300",
+  live: "bg-red-50 text-red-600 animate-pulse dark:bg-red-900/30 dark:text-red-300",
+  ended: "bg-muted text-muted-foreground/70",
 };
 
 export function CountdownBadge({

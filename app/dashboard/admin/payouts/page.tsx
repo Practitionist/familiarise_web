@@ -8,23 +8,24 @@ import {
   TabsTrigger,
 } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PageHeader } from "@/components/ui/page-header";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useMemo } from "react";
-import {
-  BarChart,
-  Bar,
-  CartesianGrid,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
+import dynamic from "next/dynamic";
 
 import PendingPayoutsSection from "./_sections/PendingPayoutsSection";
 import ProcessingPayoutsSection from "./_sections/ProcessingPayoutsSection";
 import CompletedPayoutsSection from "./_sections/CompletedPayoutsSection";
 import EarningsSection from "./_sections/EarningsSection";
+
+// Lazy-load recharts so it stays out of this route's first-load JS.
+const PayoutsChart = dynamic(() => import("./PayoutsChart"), {
+  ssr: false,
+  loading: () => (
+    <div className="h-[200px] w-full animate-pulse rounded-md bg-muted" />
+  ),
+});
 
 type TabKey = "pending" | "processing" | "completed" | "earnings";
 
@@ -137,12 +138,10 @@ export default function AdminPayoutsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold text-gray-900">Payouts</h1>
-        <p className="text-gray-600 mt-1">
-          Manage consultant payouts and earnings
-        </p>
-      </div>
+      <PageHeader
+        title="Payouts"
+        description="Manage consultant payouts and earnings"
+      />
 
       {/* Payout trend chart */}
       <Card>
@@ -153,50 +152,9 @@ export default function AdminPayoutsPage() {
           {trendLoading ? (
             <Skeleton className="h-[200px] w-full" />
           ) : hasAnyTrendData ? (
-            <div style={{ width: "100%", height: 200 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  data={chartData}
-                  margin={{ top: 8, right: 16, left: 0, bottom: 0 }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                  <XAxis
-                    dataKey="label"
-                    stroke="#64748b"
-                    fontSize={12}
-                    tickLine={false}
-                    axisLine={false}
-                  />
-                  <YAxis
-                    stroke="#64748b"
-                    fontSize={12}
-                    tickLine={false}
-                    axisLine={false}
-                    tickFormatter={(value: number) =>
-                      value >= 1000
-                        ? `${(value / 1000).toFixed(1)}k`
-                        : String(value)
-                    }
-                  />
-                  <Tooltip
-                    formatter={(value: number) =>
-                      value.toLocaleString(undefined, {
-                        style: "currency",
-                        currency: "INR",
-                        maximumFractionDigits: 0,
-                      })
-                    }
-                  />
-                  <Bar
-                    dataKey="total"
-                    fill="#6366f1"
-                    radius={[4, 4, 0, 0]}
-                  />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
+            <PayoutsChart data={chartData} />
           ) : (
-            <div className="flex h-[200px] items-center justify-center text-sm text-gray-500">
+            <div className="flex h-[200px] items-center justify-center text-sm text-muted-foreground">
               Analytics coming soon
             </div>
           )}
@@ -205,7 +163,7 @@ export default function AdminPayoutsPage() {
 
       {/* Tabs */}
       <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
-        <TabsList className="grid w-full max-w-xl grid-cols-4">
+        <TabsList className="grid h-auto w-full max-w-xl grid-cols-2 gap-1 sm:h-9 sm:grid-cols-4">
           <TabsTrigger value="pending">Pending</TabsTrigger>
           <TabsTrigger value="processing">Processing</TabsTrigger>
           <TabsTrigger value="completed">Completed</TabsTrigger>

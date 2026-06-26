@@ -2,7 +2,7 @@
 
 import { useCallback, useRef } from "react";
 import { motion } from "framer-motion";
-import { Search } from "lucide-react";
+import { Search, Zap, Building2, Users } from "lucide-react";
 import type { IConsultantCardData } from "@/types/consultant";
 import { useCurrency } from "@/hooks/useCurrency";
 import SectionHeader from "@/app/explore/components/SectionHeader";
@@ -13,11 +13,21 @@ import {
   useInfiniteScroll,
   useExpertFilterChips,
 } from "./hooks";
-import type { IExpertsMetaData } from "./utils";
+import type { IExpertsMetaData, AffiliationType } from "./utils";
 import { FilterPanel } from "./components/FilterPanel";
 import { SearchBar, type SortOption } from "./components/SearchBar";
 import StaticTopRows from "./components/StaticTopRows";
 import ExpertResults from "./components/ExpertResults";
+
+const AFFILIATION_TABS: {
+  value: AffiliationType;
+  label: string;
+  icon: React.ElementType;
+}[] = [
+  { value: null, label: "All Experts", icon: Users },
+  { value: "independent", label: "Independent", icon: Zap },
+  { value: "agency", label: "Agency / Org", icon: Building2 },
+];
 
 interface ExpertsInteractiveContentProps {
   metadata: IExpertsMetaData | null;
@@ -98,6 +108,35 @@ export default function ExpertsInteractiveContent({
             title="Browse Familiarise Experts"
             icon={<Search className="w-5 h-5 text-white" />}
           />
+
+          {/* Affiliation type toggle: All | Independent | Agency/Org */}
+          <motion.div
+            className="mb-6"
+            initial={{ opacity: 0, y: 20 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            transition={{ duration: 0.5, delay: 0.05 }}
+          >
+            <div className="inline-flex items-center gap-1 p-1 bg-muted rounded-xl border border-border">
+              {AFFILIATION_TABS.map(({ value, label, icon: Icon }) => {
+                const isActive = filters.affiliationType === value;
+                return (
+                  <button
+                    key={String(value)}
+                    onClick={() => updateFilters({ affiliationType: value })}
+                    className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                      isActive
+                        ? "bg-card text-foreground shadow-sm border border-border"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    <Icon className="w-4 h-4" />
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          </motion.div>
 
           {/* Filters */}
           <motion.div

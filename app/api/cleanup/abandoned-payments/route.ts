@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
+import { CronLockHeldError } from "@/lib/cron/with-cron-lock";
 import {
   cleanupAbandonedPayments,
   cleanupExpiredApprovalPendingPayments,
   disconnectDatabase,
 } from "@/scripts/payments/cleanup-abandoned-payments";
+import * as Sentry from "@sentry/nextjs";
 
 export async function POST(req: NextRequest) {
   try {
@@ -20,10 +22,17 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    Sentry.logger.info("cron:cleanup-abandoned-payments started");
+
     // Run both cleanup tasks
     const paymentResult = await cleanupAbandonedPayments();
     const consultationResult = await cleanupExpiredApprovalPendingPayments();
     await disconnectDatabase();
+
+    Sentry.logger.info("cron:cleanup-abandoned-payments finished", {
+      paymentSuccess: paymentResult.success,
+      consultationSuccess: consultationResult.success,
+    });
 
     return NextResponse.json({
       paymentCleanup: paymentResult,
@@ -31,6 +40,12 @@ export async function POST(req: NextRequest) {
       overallSuccess: paymentResult.success && consultationResult.success,
     });
   } catch (error) {
+    // #476 — concurrent invocation (schedule overlap / manual re-run)
+    // skips with a 409 instead of double-running.
+    if (error instanceof CronLockHeldError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
+    Sentry.captureException(error, { tags: { subsystem: "cron", job: "cleanup-abandoned-payments" } });
     console.error("Cleanup API route failed:", error);
     return NextResponse.json(
       {

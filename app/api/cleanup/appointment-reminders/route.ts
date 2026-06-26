@@ -9,6 +9,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { sendAppointmentReminders } from "@/scripts/appointments/send-appointment-reminders";
+import { CronLockHeldError } from "@/lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
@@ -22,10 +24,15 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    Sentry.logger.info("cron:appointment-reminders started");
     console.log("⏰ Starting appointment reminders via API...");
 
     const result = await sendAppointmentReminders();
 
+    Sentry.logger.info("cron:appointment-reminders finished", {
+      reminders24h: result.reminders24h,
+      reminders1h: result.reminders1h,
+    });
     console.log("✅ Appointment reminders finished:", {
       reminders24h: result.reminders24h,
       reminders1h: result.reminders1h,
@@ -33,6 +40,12 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
     return NextResponse.json(result, { status: result.success ? 200 : 500 });
   } catch (error) {
+    // #476 — concurrent invocation (schedule overlap / manual re-run)
+    // skips with a 409 instead of double-running.
+    if (error instanceof CronLockHeldError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
+    Sentry.captureException(error, { tags: { subsystem: "cron", job: "appointment-reminders" } });
     console.error("Error in appointment reminders:", error);
     return NextResponse.json(
       {

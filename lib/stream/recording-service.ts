@@ -5,10 +5,12 @@
 
 import { getStreamVideoClient } from "@/lib/stream-client";
 import prisma from "@/lib/prisma";
-import { Prisma, Recording, RecordingStatus } from "@prisma/client";
+import { Prisma, RecordingStatus } from "@prisma/client";
 import { streamLogger } from "@/lib/stream-logger";
+import { isPaymentEntitled } from "@/lib/payments/utils/refund-balance";
 import { generateRecordingTitle } from "@/lib/stream/recording-utils";
 import type {
+  RecordingRow,
   ConsultantRecordingWithDetails,
   ConsulteeRecordingWithDetails,
   RecordingWithAccessControl,
@@ -55,7 +57,7 @@ export class RecordingService {
 
       // Get the call and start recording
       const call = client.video.call(callType, callId);
-      await call.startRecording();
+      await call.startRecording({ recording_type: "default" });
 
       streamLogger.info("Recording started via API", {
         streamCallId: callId,
@@ -90,7 +92,7 @@ export class RecordingService {
         : streamCallId;
 
       const call = client.video.call(callType, callId);
-      await call.stopRecording();
+      await call.stopRecording({ recording_type: "default" });
 
       streamLogger.info("Recording stopped via API", {
         streamCallId: callId,
@@ -145,7 +147,7 @@ export class RecordingService {
    */
   static async getSessionRecordings(
     meetingSessionId: string,
-  ): Promise<Recording[]> {
+  ): Promise<RecordingRow[]> {
     try {
       const recordings = await prisma.recording.findMany({
         where: {
@@ -384,6 +386,8 @@ export class RecordingService {
         },
       },
       select: {
+        amount: true,
+        refunds: { select: { amountPaise: true, status: true } },
         appointment: {
           select: {
             webinar: { select: { webinarPlanId: true } },
@@ -393,16 +397,20 @@ export class RecordingService {
       },
     });
 
+    // #689 — drop fully-refunded purchases before deriving entitled plans; a
+    // SUCCEEDED payment whose refunds cover it no longer grants recording access.
+    const entitled = enrolledAppointments.filter(isPaymentEntitled);
+
     const webinarPlanIds = Array.from(
       new Set(
-        enrolledAppointments
+        entitled
           .map((e) => e.appointment?.webinar?.webinarPlanId)
           .filter((id): id is string => !!id),
       ),
     );
     const classPlanIds = Array.from(
       new Set(
-        enrolledAppointments
+        entitled
           .map((e) => e.appointment?.class?.classPlanId)
           .filter((id): id is string => !!id),
       ),
@@ -524,8 +532,8 @@ export class RecordingService {
   static async updateRecordingStatus(
     recordingId: string,
     status: RecordingStatus,
-    additionalData?: Partial<Recording>,
-  ): Promise<Recording | null> {
+    additionalData?: Partial<RecordingRow>,
+  ): Promise<RecordingRow | null> {
     try {
       const recording = await prisma.recording.update({
         where: { id: recordingId },
@@ -612,7 +620,7 @@ export class RecordingService {
    */
   static async getExpiringRecordings(
     daysBeforeExpiry: number = 3,
-  ): Promise<Recording[]> {
+  ): Promise<RecordingRow[]> {
     const expiryThreshold = new Date();
     expiryThreshold.setDate(expiryThreshold.getDate() + daysBeforeExpiry);
 
@@ -682,8 +690,8 @@ export class RecordingService {
    */
   static async syncRecordingsForConsultant(
     consultantProfileId: string,
-  ): Promise<{ synced: number; recordings: Recording[] }> {
-    const syncedRecordings: Recording[] = [];
+  ): Promise<{ synced: number; recordings: RecordingRow[] }> {
+    const syncedRecordings: RecordingRow[] = [];
 
     try {
       // Define the include for meeting sessions with full appointment details
@@ -874,8 +882,8 @@ export class RecordingService {
   static async syncRecordingsForConsultee(
     consulteeProfileId: string,
     userId?: string,
-  ): Promise<{ synced: number; recordings: Recording[] }> {
-    const syncedRecordings: Recording[] = [];
+  ): Promise<{ synced: number; recordings: RecordingRow[] }> {
+    const syncedRecordings: RecordingRow[] = [];
 
     try {
       // Get the user ID from consultee profile if not provided
@@ -905,6 +913,8 @@ export class RecordingService {
           },
         },
         include: {
+          // #689 — net refunds so a fully-refunded enrollment doesn't re-sync recordings.
+          refunds: { select: { amountPaise: true, status: true } },
           appointment: {
             include: {
               slotsOfAppointment: {
@@ -956,6 +966,7 @@ export class RecordingService {
 
       for (const payment of paidEnrollments) {
         if (!payment.appointment) continue;
+        if (!isPaymentEntitled(payment)) continue; // #689 — skip fully-refunded
         for (const slot of payment.appointment.slotsOfAppointment) {
           if (slot.meetingSession && slot.meetingSession.streamCallId) {
             meetingSessions.push(slot.meetingSession);
@@ -1069,5 +1080,3 @@ export class RecordingService {
     }
   }
 }
-
-export default RecordingService;

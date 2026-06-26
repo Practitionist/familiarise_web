@@ -54,14 +54,14 @@ interface EventPlanInfo {
 }
 
 interface AppointmentConsultation {
-  requestStatus?: string;
+  status?: string;
   consultationPlan?: EventPlanInfo;
   requestedBy?: { user?: { name?: string } };
 }
 
 interface AppointmentSubscription {
   id?: string;
-  requestStatus?: string;
+  status?: string;
   subscriptionPlan?: EventPlanInfo;
   requestedBy?: { user?: { name?: string } };
 }
@@ -76,14 +76,14 @@ interface AppointmentClass {
   classPlan?: EventPlanInfo;
 }
 
-export interface AppointmentSlotRaw {
+interface AppointmentSlotRaw {
   startsAt: string;
   endsAt: string;
   isTentative?: boolean;
   user?: Array<{ name?: string }>;
 }
 
-export interface Appointment {
+interface Appointment {
   id: string;
   appointmentType: string;
   slotsOfAppointment?: AppointmentSlotRaw[];
@@ -93,7 +93,7 @@ export interface Appointment {
   class?: AppointmentClass;
 }
 
-export interface ConsultantData {
+interface ConsultantData {
   id: string;
   name: string;
   // Add other consultant properties as needed
@@ -106,8 +106,8 @@ export interface ConsultantData {
  */
 export interface RawSlotData {
   slotId: string;
-  slotStartTimeInUTC: string;
-  slotEndTimeInUTC: string;
+  startsAt: string;
+  endsAt: string;
   bookingStatus: "available" | "partially-booked" | "fully-booked"; // KEY: Server-calculated status
   type: "WEEKLY" | "CUSTOM";
   dayOfWeek?: string;
@@ -120,7 +120,7 @@ export interface RawSlotData {
  * BEFORE: Confusing mix of isBooked, isConflicting, etc.
  * AFTER: Clear separation: isBookedForDisplay (gray), isPartiallyBooked (yellow)
  */
-export interface SlotStatusResult {
+interface SlotStatusResult {
   isAvailable: boolean;
   isBooked: boolean; // For backwards compatibility
   isBookedForDisplay: boolean; // Fully booked (gray) - FIXED: Clear naming
@@ -139,7 +139,7 @@ export interface SlotStatusResult {
   }>;
 }
 
-export interface CalendarData {
+interface CalendarData {
   consultantDetails: ConsultantData | null;
   availableSlots: TimeSlot[];
   existingAppointments: Appointment[];
@@ -148,6 +148,9 @@ export interface CalendarData {
     custom: RawSlotData[];
   };
   eventSlots: TimeSlot[];
+  // This event's OWN tentative slots (being rescheduled) — rendered as a distinct
+  // "Rescheduling" state, separate from confirmed eventSlots and foreign bookings.
+  eventTentativeSlots: TimeSlot[];
   loading: boolean;
   error: string | null;
 }
@@ -201,6 +204,10 @@ export function useCalendarData(
     Appointment[]
   >([]);
   const [eventSlots, setEventSlots] = useState<TimeSlot[]>([]);
+  // The current event's OWN tentative slots (being rescheduled). Tracked
+  // separately from eventSlots (confirmed) so the calendar can render them as a
+  // distinct "Rescheduling" state instead of mislabeling them as foreign "Booked".
+  const [eventTentativeSlots, setEventTentativeSlots] = useState<TimeSlot[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -212,8 +219,8 @@ export function useCalendarData(
     ];
 
     return allRawSlots.map((slot: RawSlotData) => ({
-      startTime: new Date(slot.slotStartTimeInUTC),
-      endTime: new Date(slot.slotEndTimeInUTC),
+      startTime: new Date(slot.startsAt),
+      endTime: new Date(slot.endsAt),
       isAvailable:
         slot.bookingStatus === "available" ||
         slot.bookingStatus === "partially-booked",
@@ -280,7 +287,7 @@ export function useCalendarData(
       const validatedData = {
         weekly: Array.isArray(data.weekly)
           ? data.weekly.filter((slot: RawSlotData) => {
-              if (!slot || !slot.slotStartTimeInUTC || !slot.slotEndTimeInUTC) {
+              if (!slot || !slot.startsAt || !slot.endsAt) {
                 console.warn(
                   "⚠️ fetchAvailabilitySlots: Filtering out invalid weekly slot",
                 );
@@ -291,7 +298,7 @@ export function useCalendarData(
           : [],
         custom: Array.isArray(data.custom)
           ? data.custom.filter((slot: RawSlotData) => {
-              if (!slot || !slot.slotStartTimeInUTC || !slot.slotEndTimeInUTC) {
+              if (!slot || !slot.startsAt || !slot.endsAt) {
                 console.warn(
                   "⚠️ fetchAvailabilitySlots: Filtering out invalid custom slot",
                 );
@@ -378,13 +385,13 @@ export function useCalendarData(
       const activeAppointments = validatedAppointments.filter((appt: Appointment) => {
         const inactiveRequestStatuses = ["REJECTED", "CANCELLED", "EXPIRED"];
         // Check consultation status
-        if (appt.consultation?.requestStatus) {
-          if (inactiveRequestStatuses.includes(appt.consultation.requestStatus))
+        if (appt.consultation?.status) {
+          if (inactiveRequestStatuses.includes(appt.consultation.status))
             return false;
         }
         // Check subscription status
-        if (appt.subscription?.requestStatus) {
-          if (inactiveRequestStatuses.includes(appt.subscription.requestStatus))
+        if (appt.subscription?.status) {
+          if (inactiveRequestStatuses.includes(appt.subscription.status))
             return false;
         }
         // Check webinar status
@@ -418,6 +425,7 @@ export function useCalendarData(
     // for slots belonging to the current event being viewed
     if (!eventType || !eventId) {
       setEventSlots([]);
+      setEventTentativeSlots([]);
       return;
     }
 
@@ -427,18 +435,18 @@ export function useCalendarData(
       if (data && Array.isArray(data) && data.length > 0) {
         // Filter out cancelled/rejected appointments from event slots
         const activeData = data.filter((appt: Appointment) => {
-          if (appt.consultation?.requestStatus) {
+          if (appt.consultation?.status) {
             if (
               ["REJECTED", "CANCELLED", "EXPIRED"].includes(
-                appt.consultation.requestStatus,
+                appt.consultation.status,
               )
             )
               return false;
           }
-          if (appt.subscription?.requestStatus) {
+          if (appt.subscription?.status) {
             if (
               ["REJECTED", "CANCELLED", "EXPIRED"].includes(
-                appt.subscription.requestStatus,
+                appt.subscription.status,
               )
             )
               return false;
@@ -448,47 +456,53 @@ export function useCalendarData(
           return true;
         });
 
-        // Process ALL appointments, not just the first one
-        // This ensures all sessions of a subscription/class show as "This Event"
-        // FIX: Skip tentative slots — during rescheduling, tentative slots are the OLD
-        // slots being replaced. They should NOT show as "This Event" on the calendar
-        // because the auto-allocate will delete them. Showing them as "This Event"
-        // misleads the consultant into thinking they're confirmed bookings.
-        const slots: TimeSlot[] = activeData.flatMap((appointment: Appointment) =>
-          (appointment.slotsOfAppointment || [])
-            .filter((slot: AppointmentSlotRaw) => !slot.isTentative)
-            .flatMap((slot: AppointmentSlotRaw): TimeSlot[] => {
-              const start = new Date(slot.startsAt);
-              const end = new Date(slot.endsAt);
-              const durationMinutes =
-                (end.getTime() - start.getTime()) / (1000 * 60);
-              const numIntervals = Math.round(durationMinutes / 30);
+        // Process ALL appointments, not just the first one, expanding each
+        // appointment slot into 30-min display intervals.
+        //
+        // Confirmed slots → eventSlots ("This Event", black). Tentative slots
+        // (the OLD slots being replaced during a reschedule) are tracked
+        // SEPARATELY in eventTentativeSlots so the calendar can render them as a
+        // distinct "Rescheduling" state. Previously tentative slots were simply
+        // dropped here, so they fell through to the foreign-booking "Booked"
+        // (gray) style — misleading, since they belong to THIS event.
+        const confirmedSlots: TimeSlot[] = [];
+        const tentativeSlots: TimeSlot[] = [];
+        for (const appointment of activeData) {
+          for (const slot of (appointment.slotsOfAppointment ||
+            []) as AppointmentSlotRaw[]) {
+            const start = new Date(slot.startsAt);
+            const end = new Date(slot.endsAt);
+            const durationMinutes =
+              (end.getTime() - start.getTime()) / (1000 * 60);
+            const numIntervals = Math.round(durationMinutes / 30);
+            const target = slot.isTentative ? tentativeSlots : confirmedSlots;
 
-              const intervalSlots: TimeSlot[] = [];
-              for (let i = 0; i < numIntervals; i++) {
-                const intervalStart = new Date(
-                  start.getTime() + i * 30 * 60 * 1000,
-                );
-                const intervalEnd = new Date(
-                  intervalStart.getTime() + 30 * 60 * 1000,
-                );
-                intervalSlots.push({
-                  startTime: intervalStart,
-                  endTime: intervalEnd,
-                  isAvailable: true,
-                  isBooked: true, // Event slots are considered booked/allocated
-                });
-              }
-              return intervalSlots;
-            }),
-        );
-        setEventSlots(slots);
+            for (let i = 0; i < numIntervals; i++) {
+              const intervalStart = new Date(
+                start.getTime() + i * 30 * 60 * 1000,
+              );
+              const intervalEnd = new Date(
+                intervalStart.getTime() + 30 * 60 * 1000,
+              );
+              target.push({
+                startTime: intervalStart,
+                endTime: intervalEnd,
+                isAvailable: true,
+                isBooked: true, // Event slots are considered booked/allocated
+              });
+            }
+          }
+        }
+        setEventSlots(confirmedSlots);
+        setEventTentativeSlots(tentativeSlots);
       } else {
         setEventSlots([]);
+        setEventTentativeSlots([]);
       }
     } catch (error) {
       console.error("Error fetching event slots:", error);
       setEventSlots([]);
+      setEventTentativeSlots([]);
     }
   }, [eventType, eventId, consultantId]);
 
@@ -566,8 +580,8 @@ export function useCalendarData(
       ...(rawAvailabilitySlots.custom || []),
     ];
     return allRaw.map((slot) => ({
-      start: new Date(slot.slotStartTimeInUTC).getTime(),
-      end: new Date(slot.slotEndTimeInUTC).getTime(),
+      start: new Date(slot.startsAt).getTime(),
+      end: new Date(slot.endsAt).getTime(),
       bookingStatus: slot.bookingStatus || "available",
     }));
   }, [rawAvailabilitySlots]);
@@ -874,6 +888,7 @@ export function useCalendarData(
     existingAppointments,
     rawAvailabilitySlots,
     eventSlots,
+    eventTentativeSlots,
     loading,
     error,
 

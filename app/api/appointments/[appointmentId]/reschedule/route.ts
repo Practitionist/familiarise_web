@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth-server";
@@ -9,7 +10,14 @@ import {
   AppointmentNotFoundError,
 } from "@/utils/errors/RescheduleErrors";
 import { notifyAppointmentRescheduled } from "@/lib/novu/service";
+import { logActivity } from "@/lib/activity/log-activity";
 import { getAppUrl } from "@/lib/url";
+import {
+  CLASS_EVENT_ALLOWED_FROM,
+  EVENT_ALLOWED_FROM,
+  RESCHEDULABLE_FROM,
+  SLOT_RESCHEDULABLE_FROM,
+} from "@/lib/booking/transitions";
 
 const MINIMUM_HOURS_BEFORE_RESCHEDULE = 24;
 
@@ -245,11 +253,14 @@ export async function POST(
           const affectedAppointmentIds = Array.from(
             new Set(slotsToReschedule.map((s) => s.appointmentId)),
           );
+          // From-state guard on every slot flip: a reschedule must never
+          // resurrect COMPLETED/CANCELLED history to RESCHEDULED (#837).
           await tx.slotOfAppointment.updateMany({
             where: {
               appointmentId: { in: affectedAppointmentIds },
+              completionStatus: { in: SLOT_RESCHEDULABLE_FROM },
             },
-            data: { isTentative: true },
+            data: { isTentative: true, completionStatus: "RESCHEDULED" },
           });
         } else if (derivedType === "SUBSCRIPTION" && appointment.subscription) {
           // Entire subscription reschedule - mark ALL slots in ALL appointments
@@ -261,8 +272,11 @@ export async function POST(
           ).map((a) => a.id);
 
           await tx.slotOfAppointment.updateMany({
-            where: { appointmentId: { in: allAppointmentIds } },
-            data: { isTentative: true },
+            where: {
+              appointmentId: { in: allAppointmentIds },
+              completionStatus: { in: SLOT_RESCHEDULABLE_FROM },
+            },
+            data: { isTentative: true, completionStatus: "RESCHEDULED" },
           });
         } else if (derivedType === "CLASS" && appointment.class) {
           // Entire class reschedule - mark ALL slots in ALL appointments
@@ -274,41 +288,88 @@ export async function POST(
           ).map((a) => a.id);
 
           await tx.slotOfAppointment.updateMany({
-            where: { appointmentId: { in: allAppointmentIds } },
-            data: { isTentative: true },
+            where: {
+              appointmentId: { in: allAppointmentIds },
+              completionStatus: { in: SLOT_RESCHEDULABLE_FROM },
+            },
+            data: { isTentative: true, completionStatus: "RESCHEDULED" },
           });
         } else {
           // Non-multi-appointment: mark all slots in the single appointment
           await tx.slotOfAppointment.updateMany({
-            where: { appointmentId },
-            data: { isTentative: true },
+            where: {
+              appointmentId,
+              completionStatus: { in: SLOT_RESCHEDULABLE_FROM },
+            },
+            data: { isTentative: true, completionStatus: "RESCHEDULED" },
           });
         }
 
-        // Update status based on appointment type
+        // Update status based on appointment type — CAS-guarded (B2): a
+        // reschedule racing a cancel/completion must not resurrect the
+        // booking; count 0 means the from-state was terminal → 409. The
+        // set lives in lib/booking/transitions.ts so the map is canonical.
+        let movedStatus = 1; // group events validated below
         if (appointment.consultation) {
-          await tx.consultation.update({
-            where: { id: appointment.consultation.id },
-            data: { requestStatus: "PENDING" },
-          });
+          movedStatus = (
+            await tx.consultation.updateMany({
+              where: {
+                id: appointment.consultation.id,
+                status: { in: [...RESCHEDULABLE_FROM] },
+              },
+              data: { status: "PENDING" },
+            })
+          ).count;
         } else if (appointment.subscription) {
-          await tx.subscription.update({
-            where: { id: appointment.subscription.id },
-            data: { requestStatus: "PENDING" },
-          });
+          movedStatus = (
+            await tx.subscription.updateMany({
+              where: {
+                id: appointment.subscription.id,
+                status: { in: [...RESCHEDULABLE_FROM] },
+              },
+              data: { status: "PENDING" },
+            })
+          ).count;
         } else if (appointment.webinar) {
-          await tx.webinar.update({
-            where: { id: appointment.webinar.id },
-            data: { status: "SCHEDULED" },
-          });
+          // Explicit allowed-from (was notIn) — robust against future enum
+          // additions (#837).
+          movedStatus = (
+            await tx.webinar.updateMany({
+              where: {
+                id: appointment.webinar.id,
+                status: { in: EVENT_ALLOWED_FROM.SCHEDULED },
+              },
+              data: { status: "SCHEDULED" },
+            })
+          ).count;
         } else if (appointment.class) {
-          await tx.class.update({
-            where: { id: appointment.class.id },
-            data: { status: "SCHEDULED" },
-          });
+          movedStatus = (
+            await tx.class.updateMany({
+              where: {
+                id: appointment.class.id,
+                status: { in: CLASS_EVENT_ALLOWED_FROM.SCHEDULED },
+              },
+              data: { status: "SCHEDULED" },
+            })
+          ).count;
+        }
+        if (movedStatus === 0) {
+          throw Object.assign(
+            new Error(
+              "This appointment can no longer be rescheduled (already cancelled or completed).",
+            ),
+            { httpStatus: 409, code: "NOT_RESCHEDULABLE" },
+          );
         }
 
-        // Determine reschedule type for response
+        // #448 — count SESSIONS, not raw slots: one Appointment is one session
+        // (a 1-hour session is 2 × 30-min slots), so a single 1h-session
+        // reschedule must report 1 session, not "2 sessions"/multiple_sessions.
+        const sessionsAffected = new Set(
+          slotsToReschedule.map((s) => s.appointmentId),
+        ).size;
+
+        // Determine reschedule type for response — session-based (#448)
         const getRescheduleType = () => {
           if (
             derivedType !== "SUBSCRIPTION" ||
@@ -317,10 +378,9 @@ export async function POST(
           ) {
             return "entire_booking";
           }
-          if (slotIds.length === 1) {
-            return "individual_session";
-          }
-          return "multiple_sessions";
+          return sessionsAffected === 1
+            ? "individual_session"
+            : "multiple_sessions";
         };
 
         const rescheduleType = getRescheduleType();
@@ -329,11 +389,29 @@ export async function POST(
         return {
           success: true,
           rescheduleType,
+          // #448 — sessionsAffected is the user-facing count (distinct sessions);
+          // slotsAffected stays for back-compat / debugging.
+          sessionsAffected,
           slotsAffected: slotsToReschedule.length,
           message:
             rescheduleType === "entire_booking"
               ? "All sessions marked for rescheduling. Please select new times."
-              : `${slotsToReschedule.length} session(s) marked for rescheduling. Please select new time(s).`,
+              : `${sessionsAffected} session(s) marked for rescheduling. Please select new time(s).`,
+          // B14 — context for the post-tx activity log (appointment is only
+          // in scope inside this callback).
+          logContext: {
+            cpId:
+              appointment.consultation?.consultationPlan?.consultantProfileId ??
+              appointment.subscription?.subscriptionPlan?.consultantProfileId ??
+              appointment.webinar?.webinarPlan?.consultantProfileId ??
+              appointment.class?.classPlan?.consultantProfileId ??
+              null,
+            appointmentType: appointment.appointmentType,
+            consultationId: appointment.consultation?.id,
+            subscriptionId: appointment.subscription?.id,
+            webinarId: appointment.webinar?.id,
+            classId: appointment.class?.id,
+          },
         };
       },
       {
@@ -341,7 +419,24 @@ export async function POST(
       },
     );
 
+    // B14 — reschedule now leaves an activity-log entry (cancel always did).
+    if (result.logContext.cpId) {
+      await logActivity({
+        activityType: "APPOINTMENT_RESCHEDULED",
+        description: `Appointment reschedule requested (${result.logContext.appointmentType.toLowerCase()})`,
+        actorId: session.user.id,
+        actorName: session.user.name || "User",
+        actorImage: session.user.image,
+        consultantProfileId: result.logContext.cpId,
+        consultationId: result.logContext.consultationId,
+        subscriptionId: result.logContext.subscriptionId,
+        webinarId: result.logContext.webinarId,
+        classId: result.logContext.classId,
+      });
+    }
+
     // Fire-and-forget: notify both parties about reschedule
+
     // FIX #624: Include webinar/class so group event participants are also notified.
     try {
       const appointment = await prisma.appointment.findUnique({
@@ -442,8 +537,11 @@ export async function POST(
           }
         }
 
-        // Deduplicate
-        const uniqueUserIds = Array.from(new Set(userIds));
+        // Deduplicate; exclude the initiator — you don't need a notification
+        // about your own reschedule (B15).
+        const uniqueUserIds = Array.from(new Set(userIds)).filter(
+          (id) => id !== session.user.id,
+        );
 
         const appointmentType = consultation
           ? "consultation"
@@ -467,11 +565,27 @@ export async function POST(
         }
       }
     } catch (error) {
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "appointments" } });
       console.error("[reschedule] Failed to send notification:", error);
     }
 
     return NextResponse.json(result);
   } catch (error) {
+    // B2 — the CAS guard's structured 409 (NOT_RESCHEDULABLE).
+    if (error instanceof Error && "httpStatus" in error) {
+      const status =
+        typeof (error as { httpStatus?: number }).httpStatus === "number"
+          ? (error as { httpStatus: number }).httpStatus
+          : 500;
+      const code =
+        "code" in error && typeof (error as { code?: string }).code === "string"
+          ? (error as { code: string }).code
+          : undefined;
+      return NextResponse.json(
+        { error: error.message, ...(code && { code }) },
+        { status },
+      );
+    }
     // Type-safe error handling using custom error classes
     if (error instanceof RescheduleAuthorizationError) {
       return NextResponse.json({ error: error.message }, { status: 403 });
@@ -490,6 +604,7 @@ export async function POST(
     }
 
     // Only log unexpected errors — the known error types above are normal control flow
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "appointments" } });
     console.error("Error requesting reschedule:", error);
     return NextResponse.json(
       { error: "Failed to request reschedule" },

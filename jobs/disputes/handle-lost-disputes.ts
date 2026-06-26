@@ -15,6 +15,8 @@ import {
 } from "../../scripts/disputes/handle-lost-disputes";
 import fs from "fs";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
+import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 /**
  * Output results to GitHub Actions
@@ -55,6 +57,7 @@ function outputToGitHubActions(result: LostDisputeHandlerResult): void {
  */
 async function main(): Promise<void> {
   await abortIfMaintenance("handle-lost-disputes");
+  Sentry.logger.info("job:handle-lost-disputes started");
   console.log("🔄 Starting lost dispute handler job...");
   console.log(`Timestamp: ${new Date().toISOString()}`);
 
@@ -74,6 +77,13 @@ async function main(): Promise<void> {
       result.errors.forEach((e) => console.log(`   - ${e}`));
     }
 
+    Sentry.logger.info("job:handle-lost-disputes finished", {
+      totalProcessed: result.totalProcessed,
+      updatedCount: result.updatedCount,
+      skippedCount: result.skippedCount,
+      alreadyPaidCount: result.alreadyPaidCount,
+      errorCount: result.errorCount,
+    });
     outputToGitHubActions(result);
 
     // Exit with error if we have critical cases
@@ -81,6 +91,15 @@ async function main(): Promise<void> {
       process.exit(1);
     }
   } catch (error) {
+    // #476 — lock held = another run is live; skipping is the correct
+    // outcome (exit 0, no page). CronLockUnavailableError falls through
+    // to exit 1 so the workflow's notify step pages.
+    if (error instanceof CronLockHeldError) {
+      Sentry.logger.info("job:handle-lost-disputes lock held, skipping");
+      console.log(`⏭️  ${error.message}`);
+      return;
+    }
+    Sentry.captureException(error, { tags: { subsystem: "jobs", job: "handle-lost-disputes" } });
     console.error("❌ Fatal error in lost dispute handler:", error);
     process.exit(1);
   } finally {

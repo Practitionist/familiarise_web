@@ -8,12 +8,20 @@
  * Runs every 30 minutes via cleanup API route.
  */
 
+// Why: tsx does not auto-load .env when this script runs outside the
+// Next.js runtime. Without dotenv/config, DATABASE_URL + STREAM_API_KEY
+// are undefined, PrismaClient throws on first query, and the Stream
+// client fails to initialize. See
+// docs/enterprise/50-operations/03-runbooks.md "Running cron jobs locally".
+import "dotenv/config";
 import prisma from "../../lib/prisma";
 import {
   getStreamVideoClient,
   isStreamConfigured,
 } from "../../lib/stream-client";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
+import { withCronLock, CronLockHeldError } from "../../lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 export interface ReconciliationResult {
   processed: number;
@@ -24,7 +32,14 @@ export interface ReconciliationResult {
   details: string[];
 }
 
+// #476 — entry-level cron lock; fail-open (repeat-safe side effects).
 export async function reconcileOrphanedSessions(): Promise<ReconciliationResult> {
+  return withCronLock("reconcile-orphaned-sessions", { failMode: "open" }, () =>
+    reconcileOrphanedSessionsUnlocked(),
+  );
+}
+
+async function reconcileOrphanedSessionsUnlocked(): Promise<ReconciliationResult> {
   const result: ReconciliationResult = {
     processed: 0,
     reconciled: 0,
@@ -146,6 +161,7 @@ export async function disconnectDatabase(): Promise<void> {
 if (require.main === module) {
   (async () => {
     await abortIfMaintenance("reconcile-orphaned-sessions");
+    Sentry.logger.info("job:reconcile-orphaned-sessions started");
     console.log("Starting orphaned session reconciliation...");
 
     try {
@@ -157,8 +173,21 @@ if (require.main === module) {
       console.log(`  Errors: ${result.errors}`);
       console.log(`  Success: ${result.success}`);
 
+      Sentry.logger.info("job:reconcile-orphaned-sessions finished", {
+        processed: result.processed,
+        reconciled: result.reconciled,
+        streamNotFound: result.streamNotFound,
+        errors: result.errors,
+      });
       if (!result.success) process.exit(1);
     } catch (error) {
+      // #476 — lock held = another run is live; skip cleanly (exit 0).
+      if (error instanceof CronLockHeldError) {
+        Sentry.logger.info("job:reconcile-orphaned-sessions lock held, skipping");
+        console.log(`⏭️  ${error.message}`);
+        return;
+      }
+      Sentry.captureException(error, { tags: { subsystem: "jobs", job: "reconcile-orphaned-sessions" } });
       console.error("Fatal error:", error);
       process.exit(1);
     } finally {

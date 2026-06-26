@@ -10,6 +10,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { syncPaymentEarnings } from "@/scripts/earnings/sync-payment-earnings";
+import { CronLockHeldError } from "@/lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
@@ -23,10 +25,17 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    Sentry.logger.info("cron:sync-payment-earnings started");
     console.log("🔄 Starting payment-earning sync via API...");
 
     const result = await syncPaymentEarnings();
 
+    Sentry.logger.info("cron:sync-payment-earnings finished", {
+      totalProcessed: result.totalProcessed,
+      createdCount: result.createdCount,
+      skippedCount: result.skippedCount,
+      errorCount: result.errorCount,
+    });
     console.log("✅ Payment-earning sync completed:", {
       totalProcessed: result.totalProcessed,
       createdCount: result.createdCount,
@@ -36,6 +45,12 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
     return NextResponse.json(result);
   } catch (error) {
+    // #476 — concurrent invocation (schedule overlap / manual re-run)
+    // skips with a 409 instead of double-running.
+    if (error instanceof CronLockHeldError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
+    Sentry.captureException(error, { tags: { subsystem: "cron", job: "sync-payment-earnings" } });
     console.error("Error in payment-earning sync:", error);
     return NextResponse.json(
       {

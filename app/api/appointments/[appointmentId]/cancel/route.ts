@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import { CancellationReason } from "@prisma/client";
@@ -10,6 +11,16 @@ import {
 
 import { getSession } from "@/lib/auth-server";
 import { isPrivileged } from "@/lib/auth-helpers";
+import { refundPayment } from "@/lib/payments/operations/refund";
+import {
+  computeRefundPct,
+  parsePolicySnapshot,
+} from "@/lib/payments/operations/cancellation-policy";
+import {
+  CANCELLABLE_FROM,
+  CLASS_EVENT_ALLOWED_FROM,
+  EVENT_ALLOWED_FROM,
+} from "@/lib/booking/transitions";
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ appointmentId: string }> },
@@ -83,7 +94,17 @@ export async function POST(
             classPlan: true,
           },
         },
-        slotsOfAppointment: { take: 1, select: { startsAt: true } },
+        // Earliest slot decides the refund tier — without orderBy the DB
+        // returns an arbitrary slot (review catch on #844).
+        slotsOfAppointment: {
+          take: 1,
+          orderBy: { startsAt: "asc" },
+          select: { startsAt: true },
+        },
+        // B1 — refund terms frozen at booking + the payment to refund.
+        payment: {
+          select: { id: true, amount: true, paymentStatus: true },
+        },
       },
     });
 
@@ -167,37 +188,75 @@ export async function POST(
 
     // Prepare cancellation data
     const cancellationData = {
-      requestStatus: "CANCELLED" as const,
+      status: "CANCELLED" as const,
       cancellationReason: (validatedData.reason as CancellationReason) || null,
       cancellationNotes: validatedData.notes || null,
       cancelledAt: new Date(),
       cancelledBy: session.user.id,
     };
 
+    // Cancellable from-states: never COMPLETED (history), never CANCELLED
+    // (idempotency — a double-cancel must not re-run refunds), never
+    // REJECTED/EXPIRED (nothing to cancel). The guard rides the WHERE and is
+    // re-evaluated under the row lock (B2/B16 — the #825 CAS doctrine), so a
+    // cancel racing the capture webhook resolves to exactly one winner.
+    // The set lives in lib/booking/transitions.ts so the map is canonical (#836).
+
     // Transaction for critical database operations only (with increased timeout)
     const result = await prisma.$transaction(
       async (tx) => {
-        // Update appointment status based on type
+        // Update appointment status based on type — CAS-guarded.
+        let moved = 0;
         if (appointment.consultation) {
-          await tx.consultation.update({
-            where: { id: appointment.consultation.id },
-            data: cancellationData,
-          });
+          moved = (
+            await tx.consultation.updateMany({
+              where: {
+                id: appointment.consultation.id,
+                status: { in: [...CANCELLABLE_FROM] },
+              },
+              data: cancellationData,
+            })
+          ).count;
         } else if (appointment.subscription) {
-          await tx.subscription.update({
-            where: { id: appointment.subscription.id },
-            data: cancellationData,
-          });
+          moved = (
+            await tx.subscription.updateMany({
+              where: {
+                id: appointment.subscription.id,
+                status: { in: [...CANCELLABLE_FROM] },
+              },
+              data: cancellationData,
+            })
+          ).count;
         } else if (appointment.webinar) {
-          await tx.webinar.update({
-            where: { id: appointment.webinar.id },
-            data: { status: "CANCELLED" },
-          });
+          // Explicit allowed-from (was notIn) — robust against future enum
+          // additions (#837).
+          moved = (
+            await tx.webinar.updateMany({
+              where: {
+                id: appointment.webinar.id,
+                status: { in: EVENT_ALLOWED_FROM.CANCELLED },
+              },
+              data: { status: "CANCELLED" },
+            })
+          ).count;
         } else if (appointment.class) {
-          await tx.class.update({
-            where: { id: appointment.class.id },
-            data: { status: "CANCELLED" },
-          });
+          moved = (
+            await tx.class.updateMany({
+              where: {
+                id: appointment.class.id,
+                status: { in: CLASS_EVENT_ALLOWED_FROM.CANCELLED },
+              },
+              data: { status: "CANCELLED" },
+            })
+          ).count;
+        }
+        if (moved === 0) {
+          throw Object.assign(
+            new Error(
+              "This appointment can no longer be cancelled (already cancelled, completed, or expired).",
+            ),
+            { httpStatus: 409, code: "NOT_CANCELLABLE" },
+          );
         }
 
         // Soft-cancel: mark slots as CANCELLED instead of deleting.
@@ -207,18 +266,22 @@ export async function POST(
           await tx.slotOfAppointment.updateMany({
             where: {
               appointment: { subscriptionId: appointment.subscription.id },
+              completionStatus: "SCHEDULED",
             },
             data: { completionStatus: "CANCELLED" },
           });
         } else if (appointment.class) {
           await tx.slotOfAppointment.updateMany({
-            where: { appointment: { classId: appointment.class.id } },
+            where: {
+              appointment: { classId: appointment.class.id },
+              completionStatus: "SCHEDULED",
+            },
             data: { completionStatus: "CANCELLED" },
           });
         } else {
           // Consultation/webinar/trial — single appointment
           await tx.slotOfAppointment.updateMany({
-            where: { appointmentId },
+            where: { appointmentId, completionStatus: "SCHEDULED" },
             data: { completionStatus: "CANCELLED" },
           });
         }
@@ -236,6 +299,62 @@ export async function POST(
         timeout: 30000, // 30 second transaction timeout (was 5s default)
       },
     );
+
+    // B1 — policy-driven refund, AFTER the cancel tx commits (refundPayment
+    // runs its own Serializable tx; the CAS above guarantees this block runs
+    // at most once per appointment — a second cancel 409s before reaching it).
+    // Scope: consultation/subscription. Webinar/class buyer refunds belong to
+    // the participant-removal flow, not whole-event cancellation.
+    let refund: { amountRefundedPaise: number; refundPct: number } | null =
+      null;
+    const isExclusiveType =
+      !!appointment.consultation || !!appointment.subscription;
+    const paidPayment = appointment.payment?.find(
+      (p) => p.paymentStatus === "SUCCEEDED" && p.amount > 0,
+    );
+    if (isExclusiveType && paidPayment) {
+      const startsAt = appointment.slotsOfAppointment?.[0]?.startsAt;
+      const hoursUntilStart = startsAt
+        ? (startsAt.getTime() - Date.now()) / 3_600_000
+        : -1;
+      const isConsultantInitiated =
+        session.user.consultantProfileId !== null &&
+        session.user.consultantProfileId !== undefined &&
+        session.user.id !== undefined &&
+        consultantUserId === session.user.id;
+      const refundPct = computeRefundPct(
+        parsePolicySnapshot(appointment.cancellationPolicySnapshot),
+        hoursUntilStart,
+        isConsultantInitiated,
+      );
+      const refundAmount = Math.floor(
+        (Number(paidPayment.amount) * refundPct) / 100,
+      );
+      if (refundAmount > 0) {
+        try {
+          const r = await refundPayment({
+            paymentId: paidPayment.id,
+            amountPaise: refundAmount,
+            reason: `cancellation (${refundPct}% per booking-time policy, ${
+              isConsultantInitiated ? "consultant" : "consultee"
+            }-initiated)`,
+            initiatedByUserId: session.user.id,
+          });
+          refund = { amountRefundedPaise: r.amountRefundedPaise, refundPct };
+        } catch (refundErr) {
+          // The cancellation itself stands; a failed refund must be visible,
+          // not silently swallowed — surface for ops + tell the caller.
+          Sentry.captureException(refundErr instanceof Error ? refundErr : new Error(String(refundErr)), { tags: { subsystem: "appointments" } });
+          console.error(
+            `[cancel] refund failed for payment ${paidPayment.id}:`,
+            refundErr,
+          );
+          refund = { amountRefundedPaise: 0, refundPct };
+        }
+      } else {
+        refund = { amountRefundedPaise: 0, refundPct };
+      }
+    }
 
     // Notification metadata (for fire-and-forget notifications after transaction)
     const notificationMeta = {
@@ -313,8 +432,22 @@ export async function POST(
     // Waitlist notifications should only fire when a participant leaves an
     // otherwise-active event (handled in participant removal flow).
 
-    return NextResponse.json(result);
+    return NextResponse.json({ ...result, refund });
   } catch (error) {
+    if (error instanceof Error && "httpStatus" in error) {
+      const status =
+        typeof (error as { httpStatus?: number }).httpStatus === "number"
+          ? (error as { httpStatus: number }).httpStatus
+          : 500;
+      const code =
+        "code" in error && typeof (error as { code?: string }).code === "string"
+          ? (error as { code: string }).code
+          : undefined;
+      return NextResponse.json(
+        { error: error.message, ...(code && { code }) },
+        { status },
+      );
+    }
     if (error instanceof Error && error.message === "Appointment not found") {
       return NextResponse.json(
         { error: "Appointment not found" },
@@ -322,6 +455,7 @@ export async function POST(
       );
     }
 
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "appointments" } });
     console.error("Error canceling appointment:", error);
     return NextResponse.json(
       { error: "Failed to cancel appointment" },

@@ -9,6 +9,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { reconcileSlotAvailability } from "@/scripts/appointments/reconcile-slot-availability";
+import { CronLockHeldError } from "@/lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
@@ -23,10 +25,15 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     }
 
     console.log("🔄 Starting slot availability reconciliation via API...");
+    Sentry.logger.info("cron:reconcile-slot-availability started");
 
     const result = await reconcileSlotAvailability();
 
     console.log("✅ Slot availability reconciliation completed:", {
+      tentativeFlagsCleared: result.tentativeFlagsCleared,
+      doubleBookingsDetected: result.doubleBookingsDetected,
+    });
+    Sentry.logger.info("cron:reconcile-slot-availability finished", {
       tentativeFlagsCleared: result.tentativeFlagsCleared,
       doubleBookingsDetected: result.doubleBookingsDetected,
     });
@@ -38,7 +45,13 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
     return NextResponse.json(result, { status });
   } catch (error) {
+    // #476 — concurrent invocation (schedule overlap / manual re-run)
+    // skips with a 409 instead of double-running.
+    if (error instanceof CronLockHeldError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
     console.error("Error in slot reconciliation:", error);
+    Sentry.captureException(error, { tags: { subsystem: "cron", job: "reconcile-slot-availability" } });
     return NextResponse.json(
       {
         error: "Failed to reconcile slot availability",

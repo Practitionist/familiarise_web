@@ -3,7 +3,7 @@ name: Transfer Expiring Recordings
 on:
   schedule:
     # Run every 6 hours
-    - cron: "0 */6 * * *"
+    - cron: "58 */6 * * *"
   workflow_dispatch: # Allow manual triggering
 
 jobs:
@@ -13,12 +13,17 @@ jobs:
 
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      # #476 cron locks load lib/redis at import — every job entry needs these
+      UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
+      UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
       DIRECT_URL: ${{ secrets.DIRECT_URL }}
       STREAM_API_KEY: ${{ secrets.STREAM_API_KEY }}
       STREAM_API_SECRET: ${{ secrets.STREAM_API_SECRET }}
       NEXT_PUBLIC_STREAM_API_KEY: ${{ secrets.NEXT_PUBLIC_STREAM_API_KEY }}
       NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      # #689 — STREAM_ONLY expiry-warning emails now fire from this cron via Novu.
+      NOVU_SECRET_KEY: ${{ secrets.NOVU_SECRET_KEY }}
 
     steps:
       - name: Checkout code
@@ -41,5 +46,6 @@ jobs:
 
       - name: Notify on failure
         if: failure()
-        run: |
-          echo "Transfer expiring recordings job failed"
+        env:
+          SLACK_OPS_WEBHOOK_URL: ${{ secrets.SLACK_OPS_WEBHOOK_URL }}
+        run: bash scripts/ci/notify-ops-failure.sh "transfer-expiring-recordings"

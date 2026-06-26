@@ -314,7 +314,7 @@ erDiagram
 
     CONSULTATION {
         string id "cons_xyz789"
-        string requestStatus "APPROVED"
+        string status "APPROVED"
         string consultationPlanId "plan_456"
         string requestedById "profile_alice"
         string cancellationReason "null"
@@ -441,7 +441,7 @@ Before the appointment is deleted, we extract everything needed for notification
 
 ```typescript
 const cancellationData = {
-  requestStatus: "CANCELLED",
+  status: "CANCELLED",
   cancellationReason: "SCHEDULE_CONFLICT", // from validatedData
   cancellationNotes: "Have a work meeting that day", // from validatedData
   cancelledAt: new Date(), // 2025-06-15T10:30:00.000Z
@@ -457,7 +457,7 @@ Three operations execute atomically within a 30-second timeout:
 
 ```sql
 UPDATE "Consultation"
-SET "requestStatus" = 'CANCELLED',
+SET "status" = 'CANCELLED',
     "cancellationReason" = 'SCHEDULE_CONFLICT',
     "cancellationNotes" = 'Have a work meeting that day',
     "cancelledAt" = '2025-06-15T10:30:00.000Z',
@@ -527,7 +527,7 @@ Alice receives:
 erDiagram
     CONSULTATION {
         string id "cons_xyz789"
-        string requestStatus "CANCELLED"
+        string status "CANCELLED"
         string consultationPlanId "plan_456"
         string requestedById "profile_alice"
         string cancellationReason "SCHEDULE_CONFLICT"
@@ -587,7 +587,7 @@ flowchart TD
 
     subgraph Consultation["Consultation / Subscription"]
         direction TB
-        C --> C1["Update with full cancellationData:\n- requestStatus = CANCELLED\n- cancellationReason\n- cancellationNotes\n- cancelledAt\n- cancelledBy"]
+        C --> C1["Update with full cancellationData:\n- status = CANCELLED\n- cancellationReason\n- cancellationNotes\n- cancelledAt\n- cancelledBy"]
         D --> D1["Update with full cancellationData:\n(same 5 fields as Consultation)"]
     end
 
@@ -617,7 +617,7 @@ flowchart TD
 | Aspect                           | Consultation    | Subscription    | Webinar   | Class    |
 | -------------------------------- | --------------- | --------------- | --------- | -------- |
 | **Model updated**                | `Consultation`  | `Subscription`  | `Webinar` | `Class`  |
-| **Status field**                 | `requestStatus` | `requestStatus` | `status`  | `status` |
+| **Status field**                 | `status` | `status` | `status`  | `status` |
 | **Audit fields stored**          | Yes (5 fields)  | Yes (5 fields)  | No        | No       |
 | **Cancellation reason on model** | Yes             | Yes             | No        | No       |
 | **Cancelled-by tracking**        | Yes             | Yes             | No        | No       |
@@ -636,7 +636,7 @@ Consultations are one-to-one sessions between a consultant and a consultee. They
 await tx.consultation.update({
   where: { id: appointment.consultation.id },
   data: {
-    requestStatus: "CANCELLED",
+    status: "CANCELLED",
     cancellationReason: validatedData.reason || null, // e.g. "SCHEDULE_CONFLICT"
     cancellationNotes: validatedData.notes || null, // e.g. "Have a work meeting"
     cancelledAt: new Date(), // Precise timestamp
@@ -695,7 +695,7 @@ stateDiagram-v2
 
         state CANCELLED {
             state "Audit Trail" as AT
-            AT: requestStatus = CANCELLED
+            AT: status = CANCELLED
             AT: cancellationReason = enum value
             AT: cancellationNotes = text
             AT: cancelledAt = timestamp
@@ -766,8 +766,8 @@ flowchart TD
 | ------------------------------ | --------------------------------- | -------------------------------------------- | -------------------------------------------------------------------- |
 | `Appointment`                  | Exists with type and foreign keys | **Deleted**                                  | The appointment no longer represents a scheduled event               |
 | `SlotOfAppointment` (all)      | Exist with start/end times        | **Deleted**                                  | Time slots are meaningless without the appointment                   |
-| `Consultation` (if applicable) | `requestStatus = "APPROVED"`      | `requestStatus = "CANCELLED"` + audit fields | Preserved for refund decisions and analytics                         |
-| `Subscription` (if applicable) | `requestStatus = "APPROVED"`      | `requestStatus = "CANCELLED"` + audit fields | Same reasoning as consultation                                       |
+| `Consultation` (if applicable) | `status = "APPROVED"`      | `status = "CANCELLED"` + audit fields | Preserved for refund decisions and analytics                         |
+| `Subscription` (if applicable) | `status = "APPROVED"`      | `status = "CANCELLED"` + audit fields | Same reasoning as consultation                                       |
 | `Webinar` (if applicable)      | `status = "PUBLISHED"`            | `status = "CANCELLED"`                       | Preserved but with minimal state change                              |
 | `Class` (if applicable)        | `status = "PUBLISHED"`            | `status = "CANCELLED"`                       | Same reasoning as webinar                                            |
 | `Payment` / `PaymentOrder`     | Various statuses                  | **Untouched**                                | Refund is a deliberate admin action, not automatic                   |

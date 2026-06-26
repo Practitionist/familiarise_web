@@ -3,13 +3,13 @@
 import React from "react";
 import { Button } from "@/components/ui/button";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+  ResponsiveModal,
+  ResponsiveModalContent,
+  ResponsiveModalDescription,
+  ResponsiveModalFooter,
+  ResponsiveModalHeader,
+  ResponsiveModalTitle,
+} from "@/components/ui/responsive-modal";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -222,7 +222,7 @@ export function MultiSessionEventCard({
       transition={{ duration: 0.2 }}
       className="w-full h-full"
     >
-      <div className="bg-white rounded-xl border border-zinc-200 p-4 hover:border-zinc-300 hover:shadow-md transition-all duration-200 h-full flex flex-col">
+      <div className="bg-card rounded-xl border border-border p-4 hover:border-foreground/20 hover:shadow-md transition-all duration-200 h-full flex flex-col">
         {/* Header */}
         <div className="mb-3">
           <CardHeader
@@ -242,15 +242,16 @@ export function MultiSessionEventCard({
             isTentative={isTentative}
             bookingStatus={bookingStatus}
             waitlistPosition={waitlistPosition}
+            organizationId={appointment?.organizationId}
           />
         </div>
 
         {/* Progress bar */}
         {!isInactive && nonTentativeSlots.length > 0 && (
           <div className="mb-3">
-            <div className="flex items-center justify-between text-xs text-zinc-500 mb-1.5">
+            <div className="flex items-center justify-between text-xs text-muted-foreground mb-1.5">
               <span>Progress</span>
-              <span className="font-medium text-zinc-700">
+              <span className="font-medium text-foreground">
                 {completedCount} of {total}
               </span>
             </div>
@@ -267,8 +268,8 @@ export function MultiSessionEventCard({
               onJoinSlot={(slot) => actions.handleJoinSession(slot)}
             />
           ) : (
-            <div className="bg-zinc-50 rounded-lg p-3 border border-zinc-100">
-              <div className="flex items-center gap-2 text-xs text-zinc-500">
+            <div className="bg-muted rounded-lg p-3 border border-border">
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 <Clock className="h-3.5 w-3.5" />
                 <span>
                   {isTentative
@@ -286,7 +287,7 @@ export function MultiSessionEventCard({
 
         {/* Pay Now for pending payment */}
         {isPendingPayment && pendingPaymentUrl && (
-          <div className="mt-3 pt-3 border-t border-zinc-100">
+          <div className="mt-3 pt-3 border-t border-border">
             <Button
               size="sm"
               onClick={() => {
@@ -301,12 +302,12 @@ export function MultiSessionEventCard({
                   );
                 }
               }}
-              className="w-full h-9 text-sm font-medium bg-amber-500 hover:bg-amber-600 text-white"
+              className="w-full h-9 text-sm font-medium bg-amber-500 hover:bg-amber-600 text-white dark:bg-amber-600 dark:hover:bg-amber-500"
             >
               <CreditCard className="h-4 w-4 mr-2" />
               Pay Now to Confirm
             </Button>
-            <p className="text-xs text-amber-600 text-center mt-2">
+            <p className="text-xs text-amber-600 dark:text-amber-400 text-center mt-2">
               Complete payment to confirm your appointment
             </p>
           </div>
@@ -314,7 +315,7 @@ export function MultiSessionEventCard({
 
         {/* Document upload — full width, subscriptions only */}
         {showDocUpload && (
-          <div className="mt-3 pt-3 border-t border-zinc-100">
+          <div className="mt-3 pt-3 border-t border-border">
             <DocumentUpload
               appointmentId={appointmentId!}
               appointmentTitle={title}
@@ -329,7 +330,7 @@ export function MultiSessionEventCard({
             "flex items-center gap-2",
             showDocUpload && !isInactive
               ? "mt-3"
-              : "mt-3 pt-3 border-t border-zinc-100",
+              : "mt-3 pt-3 border-t border-border",
           )}
         >
           {!isTentative && isApproved && !isInactive ? (
@@ -342,13 +343,13 @@ export function MultiSessionEventCard({
                 actions.setShowRescheduleDialog(true);
               }}
               disabled={actions.isLoading}
-              className="flex-1 h-8 text-xs font-medium border-zinc-200 text-zinc-600 hover:text-zinc-900 hover:bg-zinc-50"
+              className="flex-1 h-8 text-xs font-medium border-border text-muted-foreground hover:text-foreground hover:bg-muted"
             >
               <Clock className="h-3.5 w-3.5 mr-1.5" />
               Reschedule
             </Button>
           ) : !isInactive ? (
-            <div className="flex-1 text-xs text-zinc-400 text-center py-1">
+            <div className="flex-1 text-xs text-muted-foreground/70 text-center py-1">
               {isTentative
                 ? "Awaiting confirmation"
                 : isPendingPayment || bookingStatus === "CONFIRMED"
@@ -356,7 +357,7 @@ export function MultiSessionEventCard({
                   : "Pending approval"}
             </div>
           ) : (
-            <div className="flex-1 text-xs text-zinc-400 text-center py-1">
+            <div className="flex-1 text-xs text-muted-foreground/70 text-center py-1">
               {status}
             </div>
           )}
@@ -390,21 +391,21 @@ export function MultiSessionEventCard({
       )}
 
       {/* Reschedule Dialog for Multi-Session */}
-      <Dialog
+      <ResponsiveModal
         open={actions.showRescheduleDialog}
         onOpenChange={actions.setShowRescheduleDialog}
       >
-        <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto scrollbar-hide">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Clock className="h-5 w-5 text-zinc-600" />
+        <ResponsiveModalContent className="sm:max-w-md max-h-[90vh] overflow-y-auto scrollbar-hide">
+          <ResponsiveModalHeader>
+            <ResponsiveModalTitle className="flex items-center gap-2">
+              <Clock className="h-5 w-5 text-muted-foreground" />
               Reschedule Options
-            </DialogTitle>
-            <DialogDescription>
+            </ResponsiveModalTitle>
+            <ResponsiveModalDescription>
               Choose how you&apos;d like to reschedule your {type.toLowerCase()}{" "}
               sessions.
-            </DialogDescription>
-          </DialogHeader>
+            </ResponsiveModalDescription>
+          </ResponsiveModalHeader>
 
           <div className="py-4 space-y-4">
             <RadioGroup
@@ -435,8 +436,8 @@ export function MultiSessionEventCard({
                 className={cn(
                   "flex items-start space-x-3 p-3 rounded-lg border transition-colors",
                   rescheduleType === "individual"
-                    ? "border-zinc-900 bg-zinc-50"
-                    : "border-zinc-200 hover:border-zinc-300",
+                    ? "border-primary bg-muted"
+                    : "border-border hover:border-foreground/30",
                 )}
               >
                 <RadioGroupItem
@@ -445,11 +446,11 @@ export function MultiSessionEventCard({
                   className="mt-1"
                 />
                 <Label htmlFor="individual" className="flex-1 cursor-pointer">
-                  <div className="flex items-center gap-2 font-medium text-zinc-900">
+                  <div className="flex items-center gap-2 font-medium text-foreground">
                     <CalendarClock className="h-4 w-4" />
                     Reschedule One Session
                   </div>
-                  <p className="text-xs text-zinc-500 mt-1">
+                  <p className="text-xs text-muted-foreground mt-1">
                     Only the selected session will be rescheduled.
                   </p>
                 </Label>
@@ -459,8 +460,8 @@ export function MultiSessionEventCard({
                 className={cn(
                   "flex items-start space-x-3 p-3 rounded-lg border transition-colors",
                   rescheduleType === "multiple"
-                    ? "border-zinc-900 bg-zinc-50"
-                    : "border-zinc-200 hover:border-zinc-300",
+                    ? "border-primary bg-muted"
+                    : "border-border hover:border-foreground/30",
                 )}
               >
                 <RadioGroupItem
@@ -469,11 +470,11 @@ export function MultiSessionEventCard({
                   className="mt-1"
                 />
                 <Label htmlFor="multiple" className="flex-1 cursor-pointer">
-                  <div className="flex items-center gap-2 font-medium text-zinc-900">
+                  <div className="flex items-center gap-2 font-medium text-foreground">
                     <CheckSquare className="h-4 w-4" />
                     Reschedule Multiple Sessions
                   </div>
-                  <p className="text-xs text-zinc-500 mt-1">
+                  <p className="text-xs text-muted-foreground mt-1">
                     Select specific sessions to reschedule.
                   </p>
                 </Label>
@@ -483,17 +484,17 @@ export function MultiSessionEventCard({
                 className={cn(
                   "flex items-start space-x-3 p-3 rounded-lg border transition-colors",
                   rescheduleType === "entire"
-                    ? "border-zinc-900 bg-zinc-50"
-                    : "border-zinc-200 hover:border-zinc-300",
+                    ? "border-primary bg-muted"
+                    : "border-border hover:border-foreground/30",
                 )}
               >
                 <RadioGroupItem value="entire" id="entire" className="mt-1" />
                 <Label htmlFor="entire" className="flex-1 cursor-pointer">
-                  <div className="flex items-center gap-2 font-medium text-zinc-900">
+                  <div className="flex items-center gap-2 font-medium text-foreground">
                     <CalendarRange className="h-4 w-4" />
                     Reschedule Entire {type}
                   </div>
-                  <p className="text-xs text-zinc-500 mt-1">
+                  <p className="text-xs text-muted-foreground mt-1">
                     All {groupedSessions.length} sessions will be released.
                   </p>
                 </Label>
@@ -504,12 +505,12 @@ export function MultiSessionEventCard({
             {(rescheduleType === "individual" ||
               rescheduleType === "multiple") && (
               <div className="mt-4 space-y-2">
-                <Label className="text-sm font-medium text-zinc-700">
+                <Label className="text-sm font-medium text-foreground">
                   {rescheduleType === "individual"
                     ? "Select the session to reschedule:"
                     : "Select sessions to reschedule:"}
                 </Label>
-                <div className="max-h-48 overflow-y-auto space-y-2 rounded-lg border border-zinc-200 p-2">
+                <div className="max-h-48 overflow-y-auto space-y-2 rounded-lg border border-border p-2">
                   {sessionsWithDynamicProps.map((session, sessionIndex) => {
                     const sessionSlotIds = session.slots.map((s) => s.id);
                     const isSelected = sessionSlotIds.every((id) =>
@@ -543,10 +544,10 @@ export function MultiSessionEventCard({
                         className={cn(
                           "w-full flex items-center justify-between p-2.5 rounded-md text-left transition-colors",
                           isSelected
-                            ? "bg-zinc-900 text-white"
+                            ? "bg-primary text-primary-foreground"
                             : session.isWithin24Hours
-                              ? "bg-zinc-100 text-zinc-400 cursor-not-allowed"
-                              : "bg-zinc-50 hover:bg-zinc-100 text-zinc-700",
+                              ? "bg-muted text-muted-foreground/70 cursor-not-allowed"
+                              : "bg-muted hover:bg-muted/80 text-foreground",
                         )}
                       >
                         <div className="flex items-center gap-2">
@@ -555,14 +556,14 @@ export function MultiSessionEventCard({
                               className={cn(
                                 "w-4 h-4 rounded border flex items-center justify-center",
                                 isSelected
-                                  ? "bg-white border-white"
+                                  ? "bg-primary-foreground border-primary-foreground"
                                   : session.isWithin24Hours
-                                    ? "border-zinc-300"
-                                    : "border-zinc-400",
+                                    ? "border-border"
+                                    : "border-muted-foreground",
                               )}
                             >
                               {isSelected && (
-                                <Check className="h-3 w-3 text-zinc-900" />
+                                <Check className="h-3 w-3 text-primary" />
                               )}
                             </div>
                           )}
@@ -573,7 +574,9 @@ export function MultiSessionEventCard({
                             <div
                               className={cn(
                                 "text-xs",
-                                isSelected ? "text-zinc-300" : "text-zinc-500",
+                                isSelected
+                                  ? "text-primary-foreground/70"
+                                  : "text-muted-foreground",
                               )}
                             >
                               {formatSlotTime(session.startTime)} -{" "}
@@ -582,7 +585,7 @@ export function MultiSessionEventCard({
                           </div>
                         </div>
                         {session.isWithin24Hours && (
-                          <span className="text-xs bg-orange-100 text-orange-600 px-2 py-0.5 rounded">
+                          <span className="text-xs bg-orange-100 text-orange-600 dark:bg-orange-900/30 dark:text-orange-300 px-2 py-0.5 rounded">
                             Within 24h
                           </span>
                         )}
@@ -592,7 +595,7 @@ export function MultiSessionEventCard({
                 </div>
                 {rescheduleType === "multiple" &&
                   selectedSlotIds.length > 0 && (
-                    <p className="text-sm text-zinc-600 font-medium">
+                    <p className="text-sm text-muted-foreground font-medium">
                       {selectedSessionCount} session
                       {selectedSessionCount > 1 ? "s" : ""} selected
                     </p>
@@ -600,8 +603,8 @@ export function MultiSessionEventCard({
               </div>
             )}
 
-            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
-              <p className="text-xs text-amber-800">
+            <div className="bg-amber-50 border border-amber-200 dark:bg-amber-900/20 dark:border-amber-900/40 rounded-lg p-3">
+              <p className="text-xs text-amber-800 dark:text-amber-300">
                 <strong>Note:</strong> Sessions cannot be rescheduled within 24
                 hours of the start time. No refunds are provided for
                 rescheduling.
@@ -609,7 +612,7 @@ export function MultiSessionEventCard({
             </div>
           </div>
 
-          <DialogFooter className="gap-2 sm:gap-0">
+          <ResponsiveModalFooter className="gap-2 sm:gap-0">
             <Button
               variant="outline"
               onClick={() => actions.setShowRescheduleDialog(false)}
@@ -625,7 +628,7 @@ export function MultiSessionEventCard({
                   rescheduleType === "multiple") &&
                   selectedSlotIds.length === 0)
               }
-              className="bg-zinc-900 hover:bg-zinc-800"
+              className="bg-primary text-primary-foreground hover:bg-primary/90"
             >
               {actions.isLoading ? (
                 <>
@@ -636,9 +639,9 @@ export function MultiSessionEventCard({
                 "Confirm Reschedule"
               )}
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </ResponsiveModalFooter>
+        </ResponsiveModalContent>
+      </ResponsiveModal>
 
       {/* Reschedule Confirmation (single session fallback) */}
       <AlertDialog
@@ -650,7 +653,7 @@ export function MultiSessionEventCard({
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2">
-              <CalendarClock className="h-5 w-5 text-zinc-600" />
+              <CalendarClock className="h-5 w-5 text-muted-foreground" />
               Reschedule {type}?
             </AlertDialogTitle>
             <AlertDialogDescription asChild>
@@ -660,7 +663,7 @@ export function MultiSessionEventCard({
                   <strong>&quot;{title}&quot;</strong> with{" "}
                   <strong>{consultant}</strong>?
                 </p>
-                <p className="text-zinc-600">
+                <p className="text-muted-foreground">
                   Your current time slots will be released and the{" "}
                   {type.toLowerCase()} status will revert to{" "}
                   <strong>Pending</strong> until new times are allocated.
@@ -678,7 +681,7 @@ export function MultiSessionEventCard({
                 actions.handleReschedule();
               }}
               disabled={actions.isLoading}
-              className="bg-zinc-900 hover:bg-zinc-800"
+              className="bg-primary text-primary-foreground hover:bg-primary/90"
             >
               {actions.isLoading ? (
                 <Loader2 className="h-4 w-4 animate-spin mr-2" />

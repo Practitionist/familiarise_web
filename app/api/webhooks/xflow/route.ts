@@ -1,15 +1,17 @@
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
-import crypto from "crypto";
-import prisma from "@/lib/prisma";
-import { Prisma, PaymentStatus, RequestStatus } from "@prisma/client";
-import { isDbHealthy } from "@/app/api/webhooks/utils";
+import prisma, { type Tx } from "@/lib/prisma";
+import { Prisma, PaymentStatus, AppointmentStatus } from "@prisma/client";
+import {
+  isDbHealthy,
+  verifyHmacWebhookSignature,
+} from "@/app/api/webhooks/utils";
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.text();
-    const signature = req.headers.get("x-xflow-signature");
-
-    if (!process.env.XFLOW_WEBHOOK_SECRET) {
+    // #813 — capture the secret once before verification.
+    const secret = process.env.XFLOW_WEBHOOK_SECRET;
+    if (!secret) {
       console.error("XFLOW_WEBHOOK_SECRET not configured");
       return NextResponse.json(
         { error: "Webhook secret not configured" },
@@ -17,20 +19,21 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Verify webhook signature for XFlow
-    if (signature) {
-      const expectedSignature = crypto
-        .createHmac("sha256", process.env.XFLOW_WEBHOOK_SECRET)
-        .update(body)
-        .digest("hex");
-
-      if (signature !== expectedSignature) {
-        console.error("XFlow webhook signature verification failed");
-        return NextResponse.json(
-          { error: "Invalid signature" },
-          { status: 400 },
-        );
-      }
+    // #813/#812 — shared strict HMAC verify (hex-decode + length-64 gate +
+    // timingSafeEqual). REJECT a missing header (a forged unsigned POST used to
+    // skip verification). XFlow sends the raw hex digest (no prefix).
+    const { isValid, body, missingHeader } = await verifyHmacWebhookSignature(
+      req,
+      secret,
+      { header: "x-xflow-signature" },
+    );
+    if (missingHeader) {
+      console.error("XFlow webhook missing signature header");
+      return NextResponse.json({ error: "Missing signature" }, { status: 401 });
+    }
+    if (!isValid) {
+      console.error("XFlow webhook signature verification failed");
+      return NextResponse.json({ error: "Invalid signature" }, { status: 400 });
     }
 
     // DB health check — return 503 if DB is unreachable so XFlow retries
@@ -43,6 +46,8 @@ export async function POST(req: NextRequest) {
     }
 
     const event = JSON.parse(body);
+
+    Sentry.logger.info("xflow webhook received", { type: String(event.type ?? "unknown") });
 
     // Log webhook events
     console.log(`🌊 XFlow Webhook Event: ${event.type}`, {
@@ -152,6 +157,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ status: "ok" });
   } catch (error) {
     console.error("XFlow webhook error:", error);
+    Sentry.captureException(error, {
+      tags: { subsystem: "payments", provider: "xflow" },
+    });
     return NextResponse.json(
       { error: "Webhook handler failed" },
       { status: 500 },
@@ -245,9 +253,16 @@ async function handleXFlowPaymentFailure(paymentId: string) {
 
 // Helper function to create appointment from payment record
 async function createAppointmentFromPayment(
-  tx: Prisma.TransactionClient,
+  tx: Tx,
   payment: { id: string; userId: string; [key: string]: unknown },
-  metadata: { type?: string; planId?: string; eventId?: string; slotIds?: string; title?: string; description?: string },
+  metadata: {
+    type?: string;
+    planId?: string;
+    eventId?: string;
+    slotIds?: string;
+    title?: string;
+    description?: string;
+  },
 ) {
   // For XFlow, we can use metadata like Stripe to store appointment details
   const { type, planId, eventId, slotIds, title, description } = metadata;
@@ -303,7 +318,7 @@ async function createAppointmentFromPayment(
         data: {
           appointmentId: appointment.id,
           consultationPlanId: planId,
-          requestStatus: RequestStatus.PENDING,
+          status: AppointmentStatus.PENDING,
         } as unknown as Prisma.ConsultationUncheckedCreateInput,
       });
       break;
@@ -315,7 +330,7 @@ async function createAppointmentFromPayment(
         data: {
           appointmentId: appointment.id,
           subscriptionPlanId: planId,
-          requestStatus: RequestStatus.PENDING,
+          status: AppointmentStatus.PENDING,
         } as unknown as Prisma.SubscriptionUncheckedCreateInput,
       });
       break;
@@ -381,7 +396,7 @@ async function createAppointmentFromPayment(
 }
 
 // Helper function to confirm existing appointment
-async function confirmExistingAppointment(tx: Prisma.TransactionClient, appointmentId: string) {
+async function confirmExistingAppointment(tx: Tx, appointmentId: string) {
   // Make slots non-tentative
   await tx.slotOfAppointment.updateMany({
     where: { appointmentId },
@@ -402,14 +417,14 @@ async function confirmExistingAppointment(tx: Prisma.TransactionClient, appointm
   if (appointment?.consultation) {
     await tx.consultation.update({
       where: { id: appointment.consultation.id },
-      data: { requestStatus: RequestStatus.PENDING },
+      data: { status: AppointmentStatus.PENDING },
     });
   }
 
   if (appointment?.subscription) {
     await tx.subscription.update({
       where: { id: appointment.subscription.id },
-      data: { requestStatus: RequestStatus.PENDING },
+      data: { status: AppointmentStatus.PENDING },
     });
   }
 
@@ -429,7 +444,7 @@ async function confirmExistingAppointment(tx: Prisma.TransactionClient, appointm
 }
 
 // Helper function to cleanup failed payment appointments
-async function cleanupFailedPaymentAppointment(tx: Prisma.TransactionClient, appointmentId: string) {
+async function cleanupFailedPaymentAppointment(tx: Tx, appointmentId: string) {
   const appointment = await tx.appointment.findUnique({
     where: { id: appointmentId },
     include: {

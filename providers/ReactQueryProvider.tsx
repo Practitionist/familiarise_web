@@ -1,23 +1,57 @@
 "use client";
 
-import React from "react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import React, { useState } from "react";
+import {
+  QueryClient,
+  QueryClientProvider,
+  defaultShouldDehydrateQuery,
+} from "@tanstack/react-query";
 
-// Create a client
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      staleTime: 60 * 1000, // 1 minute
-      gcTime: 5 * 60 * 1000, // 5 minutes (renamed from cacheTime in v5)
-      retry: 2,
-      // Enable refetch on window focus for real-time payment status updates
-      // Users will see latest approval payment status when returning to dashboard
-      refetchOnWindowFocus: true,
-      refetchOnMount: false,
-      refetchOnReconnect: "always",
+// Factory so every server request gets its OWN client. A module-scope
+// singleton on the server is shared across concurrent requests, so one
+// user's cached query data can hydrate into another user's SSR render.
+function makeQueryClient() {
+  return new QueryClient({
+    defaultOptions: {
+      queries: {
+        staleTime: 60 * 1000, // 1 minute
+        gcTime: 5 * 60 * 1000, // 5 minutes (renamed from cacheTime in v5)
+        retry: 2,
+        // Cache-first navigation (perf RCA): the old global `true` refired
+        // every mounted query on each window focus — returning to the tab
+        // felt like a full reload. Surfaces that genuinely need freshness
+        // keep it explicitly: the admin approval/home pages poll via
+        // refetchInterval, and PendingPaymentsWidget polls with its own
+        // interval — both independent of focus events.
+        refetchOnWindowFocus: false,
+        refetchOnMount: false,
+        refetchOnReconnect: "always",
+      },
+      // Never auto-retry mutations — payment/booking writes must not silently re-fire.
+      mutations: {
+        retry: 0,
+      },
+      // Also dehydrate in-flight queries so RSC-prefetched data hydrates the client.
+      dehydrate: {
+        shouldDehydrateQuery: (query) =>
+          defaultShouldDehydrateQuery(query) ||
+          query.state.status === "pending",
+      },
     },
-  },
-});
+  });
+}
+
+let browserQueryClient: QueryClient | undefined;
+
+function getQueryClient() {
+  if (typeof window === "undefined") {
+    // Server: always a fresh client, never shared across requests.
+    return makeQueryClient();
+  }
+  // Browser: reuse one client so React doesn't recreate it on suspense.
+  if (!browserQueryClient) browserQueryClient = makeQueryClient();
+  return browserQueryClient;
+}
 
 interface ReactQueryProviderProps {
   children: React.ReactNode;
@@ -26,6 +60,8 @@ interface ReactQueryProviderProps {
 export default function ReactQueryProvider({
   children,
 }: ReactQueryProviderProps) {
+  const [queryClient] = useState(getQueryClient);
+
   return (
     <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
   );

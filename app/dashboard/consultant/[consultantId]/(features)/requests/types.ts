@@ -1,7 +1,7 @@
-import { RequestStatus, ScheduleType } from "@prisma/client";
+import { AppointmentStatus } from "@prisma/client";
 
 // --- API Response Type Definitions ---
-export interface UserInfo {
+interface UserInfo {
   id: string;
   name: string;
   image?: string;
@@ -12,12 +12,12 @@ export interface RequestedBy {
   user: UserInfo;
 }
 
-export interface ConsultationPlanInfo {
+interface ConsultationPlanInfo {
   title?: string;
   durationInHours?: number;
 }
 
-export interface SubscriptionPlanInfo {
+interface SubscriptionPlanInfo {
   title?: string;
   callsPerWeek: number;
   durationInMonths: number;
@@ -25,14 +25,14 @@ export interface SubscriptionPlanInfo {
   totalSessions?: number;
 }
 
-export interface AppointmentSlot {
+interface AppointmentSlot {
   id: string;
   startsAt: string;
   endsAt: string;
   isTentative?: boolean; // Indicates if slot needs rescheduling
 }
 
-export interface AppointmentInfo {
+interface AppointmentInfo {
   id: string;
   slotsOfAppointment?: AppointmentSlot[];
 }
@@ -43,7 +43,7 @@ export interface ConsultationApiResponse {
   requestedBy: RequestedBy;
   requestedAt: string;
   appointment?: AppointmentInfo;
-  requestStatus: RequestStatus;
+  status: AppointmentStatus;
   bookingSource?: "DIRECT_CHECKOUT" | "REQUEST_SUBMITTED"; // Booking source enum
 }
 
@@ -53,25 +53,9 @@ export interface SubscriptionApiResponse {
   requestedBy: RequestedBy;
   requestedAt: string;
   appointments?: AppointmentInfo[];
-  requestStatus: RequestStatus;
+  status: AppointmentStatus;
   bookingSource?: "DIRECT_CHECKOUT" | "REQUEST_SUBMITTED"; // Booking source enum
   // Correct field names from Prisma Subscription model
   schedulingPeriodStartsAt?: string;
   schedulingPeriodEndsAt?: string;
-}
-
-export type AvailabilityApiResponse = AppointmentSlot;
-
-export interface ConsultantApiResponse {
-  scheduleType?: ScheduleType;
-  user?: {
-    currentTimezone?: string;
-  };
-}
-
-// Interface used within the component
-export interface SlotInterval {
-  id: string;
-  startsAt: string;
-  endsAt: string;
 }

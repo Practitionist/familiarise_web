@@ -309,5 +309,3 @@ export function RecordingCard({ recording, onTransfer }: RecordingCardProps) {
     </Card>
   );
 }
-
-export default RecordingCard;

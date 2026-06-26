@@ -14,6 +14,7 @@
  *   await abortIfMaintenance("cleanup-abandoned-payments");
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { Redis } from "@upstash/redis";
 
 // Financial jobs that must NOT run even in DEGRADED mode.
@@ -33,6 +34,8 @@ const FINANCIAL_JOB_NAMES = new Set([
   "release-earnings",
   "reconcile-payment-status",
   "sync-payment-earnings",
+  "generate-subscription-invoices",
+  "settle-invoice-accruals",
 ]);
 
 /**
@@ -91,5 +94,6 @@ export async function abortIfMaintenance(jobName: string): Promise<void> {
         error instanceof Error ? error.message : String(error)
       }) — proceeding`,
     );
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "maintenance" } });
   }
 }

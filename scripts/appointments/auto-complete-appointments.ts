@@ -22,11 +22,13 @@ import prisma from "../../lib/prisma";
 import {
   WebinarStatus,
   ClassStatus,
-  RequestStatus,
+  AppointmentStatus,
   TrialSessionStatus,
 } from "@prisma/client";
 import { notifyAppointmentCompleted } from "../../lib/novu/service";
 import { getAppUrl } from "../../lib/url";
+import { withCronLock } from "@/lib/cron/with-cron-lock";
+import { REQUEST_ALLOWED_FROM } from "@/lib/booking/transitions";
 
 // Only complete appointments that ended at least 1 hour ago
 // This gives buffer time for any post-session activities
@@ -216,7 +218,7 @@ async function completeConsultations(): Promise<{
   // Find APPROVED or SCHEDULED consultations where all slots have ended
   const consultationsToComplete = await prisma.consultation.findMany({
     where: {
-      requestStatus: { in: [RequestStatus.APPROVED, RequestStatus.SCHEDULED] },
+      status: { in: [AppointmentStatus.APPROVED, AppointmentStatus.SCHEDULED] },
       appointment: {
         slotsOfAppointment: {
           some: {
@@ -260,15 +262,24 @@ async function completeConsultations(): Promise<{
       const lastSlot = consultation.appointment?.slotsOfAppointment[0];
       console.log(`\nCompleting consultation ${consultation.id}`);
       console.log(`   Title: ${consultation.consultationPlan.title}`);
-      console.log(`   Previous status: ${consultation.requestStatus}`);
+      console.log(`   Previous status: ${consultation.status}`);
       console.log(
         `   Last slot ended: ${lastSlot?.endsAt?.toISOString() || "Unknown"}`,
       );
 
-      await prisma.consultation.update({
-        where: { id: consultation.id },
-        data: { requestStatus: RequestStatus.COMPLETED },
+      // #836 — guard rides the WHERE: a cancel landing between the sweep's
+      // read and this write must not be overwritten by COMPLETED.
+      const moved = await prisma.consultation.updateMany({
+        where: {
+          id: consultation.id,
+          status: { in: REQUEST_ALLOWED_FROM.COMPLETED },
+        },
+        data: { status: AppointmentStatus.COMPLETED },
       });
+      if (moved.count === 0) {
+        console.log(`   ⏭️ Skipped — status changed since sweep read`);
+        continue;
+      }
 
       console.log(`   ✅ Marked as COMPLETED`);
       completed++;
@@ -323,7 +334,7 @@ async function completeSubscriptions(): Promise<{
   // Find APPROVED or SCHEDULED subscriptions where all slots have ended
   const subscriptionsToComplete = await prisma.subscription.findMany({
     where: {
-      requestStatus: { in: [RequestStatus.APPROVED, RequestStatus.SCHEDULED] },
+      status: { in: [AppointmentStatus.APPROVED, AppointmentStatus.SCHEDULED] },
       appointments: {
         some: {
           slotsOfAppointment: {
@@ -381,15 +392,24 @@ async function completeSubscriptions(): Promise<{
 
       console.log(`\nCompleting subscription ${subscription.id}`);
       console.log(`   Title: ${subscription.subscriptionPlan.title}`);
-      console.log(`   Previous status: ${subscription.requestStatus}`);
+      console.log(`   Previous status: ${subscription.status}`);
       console.log(
         `   Last slot ended: ${latestEnd?.toISOString() || "Unknown"}`,
       );
 
-      await prisma.subscription.update({
-        where: { id: subscription.id },
-        data: { requestStatus: RequestStatus.COMPLETED },
+      // #836 — guard rides the WHERE: a cancel landing between the sweep's
+      // read and this write must not be overwritten by COMPLETED.
+      const moved = await prisma.subscription.updateMany({
+        where: {
+          id: subscription.id,
+          status: { in: REQUEST_ALLOWED_FROM.COMPLETED },
+        },
+        data: { status: AppointmentStatus.COMPLETED },
       });
+      if (moved.count === 0) {
+        console.log(`   ⏭️ Skipped — status changed since sweep read`);
+        continue;
+      }
 
       console.log(`   ✅ Marked as COMPLETED`);
       completed++;
@@ -609,7 +629,15 @@ async function completeIndividualSlots(): Promise<{
 /**
  * Main function to auto-complete all eligible appointments
  */
+// #476 — locked at the core so every entry (GH Actions / HTTP) shares one
+// mutual exclusion; fail-open: repeat-safe side effects, lock is belt-and-braces.
 export async function autoCompleteAppointments(): Promise<AutoCompleteResult> {
+  return withCronLock("auto-complete-appointments", { failMode: "open" }, () =>
+    autoCompleteAppointmentsUnlocked(),
+  );
+}
+
+async function autoCompleteAppointmentsUnlocked(): Promise<AutoCompleteResult> {
   const allErrors: string[] = [];
 
   console.log("🔄 Starting auto-complete appointments scan...");

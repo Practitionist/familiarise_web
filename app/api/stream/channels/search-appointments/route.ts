@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import * as Sentry from "@sentry/nextjs";
 import prisma from "lib/prisma";
 import { getSession } from "@/lib/auth-server";
 import { getDmChannelId } from "@/lib/stream-utils";
@@ -62,7 +63,7 @@ export async function GET(request: NextRequest) {
             ],
           },
           {
-            requestStatus: {
+            status: {
               in: [
                 "APPROVED",
                 "APPROVED_PENDING_PAYMENT",
@@ -167,7 +168,7 @@ export async function GET(request: NextRequest) {
             ],
           },
           {
-            requestStatus: {
+            status: {
               in: [
                 "APPROVED",
                 "APPROVED_PENDING_PAYMENT",
@@ -413,6 +414,7 @@ export async function GET(request: NextRequest) {
     // Limit total results
     return NextResponse.json(results.slice(0, 20));
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
     console.error("Error searching appointments:", error);
     return NextResponse.json(
       { error: "Failed to search appointments" },

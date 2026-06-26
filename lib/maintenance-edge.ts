@@ -10,7 +10,15 @@
 
 import { NextRequest } from "next/server";
 
-// Redis key constants
+// Redis key constants. Platform-scoped: the middleware reads the single
+// platform maintenance phase/config on every request (30s-cached below).
+//
+// NOTE for future devs: per-org maintenance windows
+// ("maintenance:phase:org:<orgId>") are NOT implemented. There was previously
+// `orgMaintenanceKeys()` / `platformMaintenanceKeys()` scaffolding here with no
+// consumers — it was removed (#776) as dead code. If/when per-org windows ship,
+// add the org-scoped read here (org key first, fall back to platform) and a
+// matching writer in the admin maintenance route.
 const REDIS_KEYS = {
   PHASE: "maintenance:phase",
   CONFIG: "maintenance:config",
@@ -47,6 +55,14 @@ let cachedState: MaintenanceState | null = null;
 let cacheTimestamp = 0;
 const CACHE_TTL_MS = 30_000; // 30 seconds
 
+// Per-request fail-open budget for the edge Upstash read. This runs in
+// middleware on (almost) every request and falls back to OFF on timeout, so a
+// slow Upstash should give up fast rather than add latency to live traffic.
+const REDIS_FETCH_TIMEOUT_MS = (() => {
+  const v = Number(process.env.REDIS_FETCH_TIMEOUT_MS);
+  return Number.isFinite(v) && v > 0 ? v : 700;
+})();
+
 /**
  * Direct Upstash REST call — edge-safe, no SDK needed.
  */
@@ -58,7 +74,7 @@ async function redisGet(key: string): Promise<string | null> {
   const res = await fetch(`${url}/get/${encodeURIComponent(key)}`, {
     headers: { Authorization: `Bearer ${token}` },
     cache: "no-store",
-    signal: AbortSignal.timeout(1500),
+    signal: AbortSignal.timeout(REDIS_FETCH_TIMEOUT_MS),
   });
 
   if (!res.ok) return null;
@@ -114,9 +130,11 @@ export async function getMaintenanceState(): Promise<MaintenanceState> {
   }
 }
 
-// Matches paths ending with a file extension (e.g. .js, .css, .png, .woff2)
-// More precise than pathname.includes(".") which false-positives on /api/v2.0/foo
-const HAS_FILE_EXTENSION = /\.\w{2,10}$/;
+// Matches paths ending with a file extension (e.g. .js, .css, .png, .woff2).
+// More precise than pathname.includes(".") which false-positives on /api/v2.0/foo.
+// Exported so middleware.ts reuses the exact same rule for its static-asset skip
+// (single source of truth — #776).
+export const HAS_FILE_EXTENSION = /\.\w{2,10}$/;
 
 /**
  * Check if a route is exempt from maintenance mode.
@@ -128,17 +146,17 @@ export function isMaintenanceExempt(pathname: string): boolean {
 
 // Transactional write routes to block during DEGRADED maintenance.
 // Read-only methods (GET, HEAD, OPTIONS) are always allowed.
-// Patterns support a single '*' wildcard segment (e.g. /api/events/*/allocate).
+// Patterns support a single '*' wildcard segment (e.g. /api/bookings/*/allocate).
 const WRITE_BLOCKED_IN_DEGRADED = [
   "/api/checkout",
   "/api/appointments/*/cancel",
   "/api/appointments/*/reschedule",
   "/api/appointments/*/documents",
-  "/api/events/consultations",
-  "/api/events/subscriptions",
-  "/api/events/webinars",
-  "/api/events/classes",
-  "/api/events/*/allocate",
+  "/api/bookings/consultations",
+  "/api/bookings/subscriptions",
+  "/api/bookings/webinars",
+  "/api/bookings/classes",
+  "/api/bookings/*/allocate",
   "/api/trials",
   "/api/plans/*/materials",
   "/api/stream/meetings", // Block new video call creation

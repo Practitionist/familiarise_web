@@ -1,17 +1,15 @@
 "use client";
 
 import React from "react";
+import { Building2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+  ResponsiveTable,
+  type ResponsiveColumn,
+} from "@/components/ui/responsive-table";
+import { PageHeader } from "@/components/ui/page-header";
 import {
   TConsultationWithPlan,
   TSubscriptionWithPlan,
@@ -24,6 +22,7 @@ import {
   getConsultantImage,
   getConsultantInitial,
 } from "../../utils/getMetadata";
+import { useSession } from "@/lib/auth-client";
 
 type EventWithType =
   | (TConsultationWithPlan & { type: "Consultation" })
@@ -39,12 +38,41 @@ interface BookingHistoryTabProps {
   classes: TClassWithPlan[];
 }
 
+// Extract the org-funding marker from any event variant. Single-appointment
+// events (Consultation, Webinar) carry it directly; multi-appointment
+// events (Subscription, Class) take it from the first appointment — all
+// child appointments share the same org context per the checkout flow.
+function getEventOrganizationId(event: EventWithType): string | null {
+  if (event.type === "Consultation" || event.type === "Webinar") {
+    return event.appointment?.organizationId ?? null;
+  }
+  if (event.type === "Subscription") {
+    return event.appointments?.[0]?.organizationId ?? null;
+  }
+  if (event.type === "Class") {
+    return event.appointment?.[0]?.organizationId ?? null;
+  }
+  return null;
+}
+
 export function BookingHistoryTab({
   consultations = [],
   subscriptions = [],
   webinars = [],
   classes = [],
 }: BookingHistoryTabProps) {
+  const { data: session } = useSession();
+  const orgMemberships = session?.user?.organizationMemberships ?? [];
+  const resolveSponsoringOrgName = (
+    orgId: string | null | undefined,
+  ): string | null => {
+    if (!orgId) return null;
+    return (
+      orgMemberships.find((m) => m.organizationId === orgId)?.organizationName ??
+      "the organization"
+    );
+  };
+
   const allEvents: EventWithType[] = [
     ...consultations.map((c) => ({ ...c, type: "Consultation" as const })),
     ...subscriptions.map((s) => ({ ...s, type: "Subscription" as const })),
@@ -58,93 +86,106 @@ export function BookingHistoryTab({
       : 0; // Sort in descending order
   });
 
+  const columns: ResponsiveColumn<EventWithType>[] = [
+    {
+      key: "date",
+      header: "Date",
+      cell: (event) => (
+        <span className="font-medium">{formatDate(getBookingDate(event))}</span>
+      ),
+    },
+    {
+      key: "session",
+      header: "Session",
+      primary: true,
+      cell: (event) => (
+        <div className="flex items-center gap-2 flex-wrap">
+          <Badge className="text-xs font-medium bg-transparent border border-border text-muted-foreground rounded-md">
+            {event.type}
+          </Badge>
+          <span className="font-medium">{getEventTitle(event)}</span>
+          {(() => {
+            const sponsoringOrgName = resolveSponsoringOrgName(
+              getEventOrganizationId(event),
+            );
+            return sponsoringOrgName ? (
+              <Badge
+                className="text-[10px] font-semibold px-2 py-0.5 bg-muted text-muted-foreground border-0 rounded-md inline-flex items-center gap-1 max-w-[200px]"
+                title={`Sponsored by ${sponsoringOrgName}`}
+              >
+                <Building2 className="h-3 w-3 shrink-0" />
+                <span className="truncate">
+                  Sponsored · {sponsoringOrgName}
+                </span>
+              </Badge>
+            ) : null;
+          })()}
+        </div>
+      ),
+    },
+    {
+      key: "expert",
+      header: "Expert",
+      cell: (event) => (
+        <div className="flex items-center gap-2">
+          <Avatar className="h-6 w-6">
+            <AvatarImage
+              src={getConsultantImage(event) ?? "/placeholder.svg"}
+              alt="Consultant"
+            />
+            <AvatarFallback>{getConsultantInitial(event)}</AvatarFallback>
+          </Avatar>
+          <span>{getConsultantName(event)}</span>
+        </div>
+      ),
+    },
+    {
+      key: "status",
+      header: "Status",
+      cell: (event) => (
+        <Badge
+          className={`text-xs font-medium ${getStatusStyle(getEventStatus(event))}`}
+        >
+          {getEventStatus(event).replace(/_/g, " ")}
+        </Badge>
+      ),
+    },
+    {
+      key: "details",
+      header: "Details",
+      className: "text-muted-foreground",
+      cell: (event) => getEventDetails(event),
+    },
+  ];
+
+  const emptyState = (
+    <div className="text-center py-8 text-muted-foreground">
+      No bookings found
+    </div>
+  );
+
   return (
-    <div className="min-h-[calc(100vh-200px)] p-6 bg-gray-50">
-      <div className="bg-white rounded-xl p-8 shadow-sm border border-gray-100 mb-6">
-        <h2 className="text-3xl font-bold text-gray-900">Booking History</h2>
-        <p className="mt-2 text-gray-600">
-          View all your past and upcoming sessions
-        </p>
+    <div className="min-h-[calc(100vh-200px)] p-6 bg-muted">
+      <div className="bg-card rounded-xl p-8 shadow-sm border border-border mb-6">
+        <PageHeader
+          title="Booking History"
+          description="View all your past and upcoming sessions"
+        />
       </div>
 
-      <Card className="bg-white shadow-sm border border-gray-100">
+      <Card className="bg-card shadow-sm border border-border">
         <CardHeader className="p-6">
           <CardTitle className="text-xl font-semibold">
             Your Learning Journey
           </CardTitle>
         </CardHeader>
         <CardContent className="p-6 pt-0">
-          <div className="rounded-lg border">
-            <Table>
-              <TableHeader>
-                <TableRow className="bg-gray-50">
-                  <TableHead className="font-semibold">Date</TableHead>
-                  <TableHead className="font-semibold">Session</TableHead>
-                  <TableHead className="font-semibold">Expert</TableHead>
-                  <TableHead className="font-semibold">Status</TableHead>
-                  <TableHead className="font-semibold">Details</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {allEvents.map((event) => (
-                  <TableRow
-                    key={event.id}
-                    className="hover:bg-gray-50 transition-colors cursor-pointer"
-                  >
-                    <TableCell className="font-medium">
-                      {formatDate(getBookingDate(event))}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <Badge className="text-xs font-medium bg-transparent border border-zinc-300 text-zinc-600 rounded-md">
-                          {event.type}
-                        </Badge>
-                        <span className="font-medium">
-                          {getEventTitle(event)}
-                        </span>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <Avatar className="h-6 w-6">
-                          <AvatarImage
-                            src={
-                              getConsultantImage(event) ?? "/placeholder.svg"
-                            }
-                            alt="Consultant"
-                          />
-                          <AvatarFallback>
-                            {getConsultantInitial(event)}
-                          </AvatarFallback>
-                        </Avatar>
-                        <span>{getConsultantName(event)}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <Badge
-                        className={`text-xs font-medium ${getStatusStyle(getEventStatus(event))}`}
-                      >
-                        {getEventStatus(event).replace(/_/g, " ")}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-gray-600">
-                      {getEventDetails(event)}
-                    </TableCell>
-                  </TableRow>
-                ))}
-                {allEvents.length === 0 && (
-                  <TableRow>
-                    <TableCell
-                      colSpan={5}
-                      className="text-center py-8 text-gray-500"
-                    >
-                      No bookings found
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
-          </div>
+          <ResponsiveTable<EventWithType>
+            columns={columns}
+            rows={allEvents}
+            getRowId={(e) => e.id}
+            empty={emptyState}
+          />
         </CardContent>
       </Card>
     </div>
@@ -154,9 +195,9 @@ export function BookingHistoryTab({
 function getEventStatus(event: EventWithType): string {
   switch (event.type) {
     case "Consultation":
-      return event.requestStatus;
+      return event.status;
     case "Subscription":
-      return event.requestStatus;
+      return event.status;
     case "Webinar":
       return event.status;
     case "Class":
@@ -164,26 +205,27 @@ function getEventStatus(event: EventWithType): string {
   }
 }
 
-// Status styling - refined professional colors
+// Status styling - semantic status colors kept; off-brand indigo/cyan accents
+// (SCHEDULED/IN_PROGRESS) collapsed to neutral monochrome.
 function getStatusStyle(status: string): string {
   const statusUpper = status?.toUpperCase();
   switch (statusUpper) {
     case "APPROVED":
-      return "bg-teal-50 text-teal-600";
+      return "bg-teal-50 text-teal-600 dark:bg-teal-900/30 dark:text-teal-300";
     case "PENDING":
-      return "bg-orange-50 text-orange-600";
+      return "bg-orange-50 text-orange-600 dark:bg-orange-900/30 dark:text-orange-300";
     case "SCHEDULED":
-      return "bg-indigo-50 text-indigo-600";
+      return "bg-muted text-foreground";
     case "IN_PROGRESS":
-      return "bg-cyan-50 text-cyan-600";
+      return "bg-muted text-foreground";
     case "COMPLETED":
-      return "bg-slate-100 text-slate-500";
+      return "bg-muted text-muted-foreground";
     case "CANCELLED":
-      return "bg-stone-100 text-stone-400";
+      return "bg-muted text-muted-foreground/70";
     case "REJECTED":
-      return "bg-red-50 text-red-600";
+      return "bg-red-50 text-red-600 dark:bg-red-900/30 dark:text-red-300";
     default:
-      return "bg-slate-100 text-slate-500";
+      return "bg-muted text-muted-foreground";
   }
 }
 

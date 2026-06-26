@@ -1,3 +1,4 @@
+import type { PrismaLike } from "@/lib/prisma";
 import { PrismaClient, Prisma } from "@prisma/client";
 import { addWeeks, endOfWeek, isWithinInterval } from "date-fns";
 import { SlotCalculationService } from "@/utils/slotAllocation/SlotCalculationService";
@@ -49,9 +50,7 @@ interface SubscriptionValidationResult {
  * - Example: Jan 1 (Mon) to Feb 1 (Thu) = 5 weeks (not 4.33)
  */
 export class SubscriptionValidationService {
-  constructor(
-    private readonly prisma: PrismaClient | Prisma.TransactionClient,
-  ) {}
+  constructor(private readonly prisma: PrismaLike) {}
 
   /**
    * Validates subscription slot allocation based on weekly limits and subscription period
@@ -211,7 +210,7 @@ export class SubscriptionValidationService {
         },
         // FIX Bug #15: Use centralized occupancy statuses for consistency
         subscription: {
-          requestStatus: {
+          status: {
             in: OCCUPIED_REQUEST_STATUSES,
           },
         },

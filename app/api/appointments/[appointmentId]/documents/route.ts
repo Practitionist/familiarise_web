@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
@@ -6,6 +7,8 @@ import {
   uploadAppointmentDocument,
   getManualBucketInstructions,
 } from "@/lib/supabase";
+import { applyRateLimit, documentUploadLimiter } from "@/lib/rate-limit";
+import { isBookingTerminal } from "@/lib/appointments/terminal-status";
 
 // GET - List documents for an appointment
 export async function GET(
@@ -149,6 +152,21 @@ export async function GET(
       );
     }
 
+    // DOC-1 (#694) — block listing once the parent booking is terminal
+    // (cancelled/refunded/rejected/expired); prior code only checked requester
+    // identity, leaving documents visible after a refund.
+    if (isBookingTerminal(appointment)) {
+      return NextResponse.json(
+        {
+          error: "Documents unavailable",
+          message:
+            "This appointment has been cancelled or closed, so its documents are no longer available.",
+          code: "APPOINTMENT_TERMINAL",
+        },
+        { status: 403 },
+      );
+    }
+
     // Get appointment details for better error context
     const appointmentTitle =
       appointment.consultation?.consultationPlan?.title ||
@@ -190,6 +208,7 @@ export async function GET(
       });
     } catch (dbError) {
       console.error("Database error fetching documents:", dbError);
+      Sentry.captureException(dbError instanceof Error ? dbError : new Error(String(dbError)), { tags: { subsystem: "appointments" } });
       // Return empty array instead of failing - documents folder might not exist yet
       return NextResponse.json({
         data: [],
@@ -220,6 +239,7 @@ export async function GET(
     });
   } catch (error) {
     console.error("Error fetching appointment documents:", error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "appointments" } });
 
     // Provide specific error messages based on error type
     if (error instanceof Error) {
@@ -283,6 +303,13 @@ export async function POST(
         { status: 401 },
       );
     }
+
+    // DOC-2 (#694) — throttle uploads per user before any storage/DB work.
+    const rateLimited = await applyRateLimit(
+      documentUploadLimiter,
+      session.user.id,
+    );
+    if (rateLimited) return rateLimited;
 
     const { appointmentId } = await params;
 
@@ -485,6 +512,7 @@ export async function POST(
       });
     } catch (uploadError) {
       console.error("File upload error:", uploadError);
+      Sentry.captureException(uploadError instanceof Error ? uploadError : new Error(String(uploadError)), { tags: { subsystem: "appointments" } });
 
       if (uploadError instanceof Error) {
         if (
@@ -568,6 +596,7 @@ export async function POST(
       });
     } catch (dbError) {
       console.error("Database error saving document:", dbError);
+      Sentry.captureException(dbError instanceof Error ? dbError : new Error(String(dbError)), { tags: { subsystem: "appointments" } });
 
       // Try to clean up uploaded file if database save failed
       try {
@@ -575,6 +604,7 @@ export async function POST(
         await deleteAppointmentDocument(uploadResult.storagePath!);
       } catch (cleanupError) {
         console.error("Failed to cleanup uploaded file:", cleanupError);
+        Sentry.captureException(cleanupError instanceof Error ? cleanupError : new Error(String(cleanupError)), { tags: { subsystem: "appointments" } });
       }
 
       return NextResponse.json(
@@ -612,6 +642,7 @@ export async function POST(
     );
   } catch (error) {
     console.error("Error uploading document:", error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "appointments" } });
 
     // Provide specific error messages based on error type
     if (error instanceof Error) {

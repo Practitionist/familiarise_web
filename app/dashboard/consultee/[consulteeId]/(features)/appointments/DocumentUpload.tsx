@@ -5,14 +5,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
+  ResponsiveModal,
+  ResponsiveModalContent,
+  ResponsiveModalDescription,
+  ResponsiveModalFooter,
+  ResponsiveModalHeader,
+  ResponsiveModalTitle,
+  ResponsiveModalTrigger,
+} from "@/components/ui/responsive-modal";
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
@@ -445,32 +445,32 @@ export function DocumentUpload({
   };
 
   return (
-    <Dialog open={isOpen} onOpenChange={handleOpenChange}>
+    <ResponsiveModal open={isOpen} onOpenChange={handleOpenChange}>
       {!defaultOpen && (
-        <DialogTrigger asChild>
+        <ResponsiveModalTrigger asChild>
           <Button
             variant="outline"
             size="sm"
-            className="w-full bg-blue-50 hover:bg-blue-100 text-blue-700 border-blue-200"
+            className="w-full bg-muted hover:bg-muted/80 text-foreground border-border"
           >
             <Upload className="h-4 w-4 mr-2" />
             Upload Documents
           </Button>
-        </DialogTrigger>
+        </ResponsiveModalTrigger>
       )}
-      <DialogContent className="max-w-[90vw] sm:max-w-[500px] lg:max-w-[600px] max-h-[85vh] overflow-y-auto p-4 sm:p-6">
-        <DialogHeader>
-          <DialogTitle>Upload Documents</DialogTitle>
-          <DialogDescription>
+      <ResponsiveModalContent className="max-w-[90vw] sm:max-w-[500px] lg:max-w-[600px] max-h-[85vh] overflow-y-auto p-4 sm:p-6">
+        <ResponsiveModalHeader>
+          <ResponsiveModalTitle>Upload Documents</ResponsiveModalTitle>
+          <ResponsiveModalDescription>
             Upload documents for review for your {appointmentType.toLowerCase()}
             : {contextInfo.appointmentTitle || appointmentTitle}
             {contextInfo.consultantName && (
-              <span className="block mt-1 text-sm text-gray-500">
+              <span className="block mt-1 text-sm text-muted-foreground">
                 Consultant: {contextInfo.consultantName}
               </span>
             )}
-          </DialogDescription>
-        </DialogHeader>
+          </ResponsiveModalDescription>
+        </ResponsiveModalHeader>
 
         <div className="space-y-4 sm:space-y-6">
           {renderErrorState()}
@@ -500,16 +500,16 @@ export function DocumentUpload({
                 </div>
 
                 {selectedFile && (
-                  <div className="bg-gray-50 p-3 rounded-lg">
+                  <div className="bg-muted p-3 rounded-lg">
                     <div className="flex items-center space-x-3">
-                      <FileText className="h-8 w-8 text-blue-500" />
+                      <FileText className="h-8 w-8 text-muted-foreground" />
                       <div className="flex-1 min-w-0">
-                        <p className="text-xs sm:text-sm font-medium text-gray-900 truncate max-w-[200px] sm:max-w-none">
+                        <p className="text-xs sm:text-sm font-medium text-foreground truncate max-w-[200px] sm:max-w-none">
                           {selectedFile.name.length > 30
                             ? `${selectedFile.name.substring(0, 30)}...`
                             : selectedFile.name}
                         </p>
-                        <p className="text-xs sm:text-sm text-gray-500">
+                        <p className="text-xs sm:text-sm text-muted-foreground">
                           {formatFileSize(selectedFile.size)}
                         </p>
                       </div>
@@ -575,28 +575,28 @@ export function DocumentUpload({
             <CardContent>
               {isLoading ? (
                 <div className="text-center py-8">
-                  <RefreshCw className="h-8 w-8 text-blue-600 mx-auto animate-spin mb-3" />
-                  <p className="text-sm text-gray-500">
+                  <RefreshCw className="h-8 w-8 text-muted-foreground mx-auto animate-spin mb-3" />
+                  <p className="text-sm text-muted-foreground">
                     Loading your documents...
                   </p>
                 </div>
               ) : error && error.code === "NOT_FOUND" ? (
                 <div className="text-center py-8">
-                  <HelpCircle className="h-12 w-12 text-gray-300 mx-auto mb-4" />
-                  <p className="text-sm text-gray-500 mb-2">
+                  <HelpCircle className="h-12 w-12 text-muted-foreground/70 mx-auto mb-4" />
+                  <p className="text-sm text-muted-foreground mb-2">
                     Unable to load documents
                   </p>
-                  <p className="text-xs text-gray-400">
+                  <p className="text-xs text-muted-foreground/70">
                     Please check your appointment details
                   </p>
                 </div>
               ) : documents.length === 0 ? (
                 <div className="text-center py-8">
-                  <FileText className="h-12 w-12 text-gray-300 mx-auto mb-4" />
-                  <p className="text-sm text-gray-500 mb-2">
+                  <FileText className="h-12 w-12 text-muted-foreground/70 mx-auto mb-4" />
+                  <p className="text-sm text-muted-foreground mb-2">
                     No documents uploaded yet
                   </p>
-                  <p className="text-xs text-gray-400">
+                  <p className="text-xs text-muted-foreground/70">
                     Upload your first document to get feedback from{" "}
                     {contextInfo.consultantName || "your consultant"}
                   </p>
@@ -613,14 +613,14 @@ export function DocumentUpload({
                     .map((doc) => (
                       <div
                         key={doc.id}
-                        className="border rounded-lg p-3 sm:p-4 hover:bg-gray-50 transition-colors"
+                        className="border border-border rounded-lg p-3 sm:p-4 hover:bg-muted transition-colors"
                       >
                         <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between space-y-3 sm:space-y-0">
                           <div className="flex items-start space-x-3 flex-1 min-w-0">
-                            <FileText className="h-6 w-6 sm:h-8 sm:w-8 text-gray-400 flex-shrink-0 mt-1" />
+                            <FileText className="h-6 w-6 sm:h-8 sm:w-8 text-muted-foreground/70 flex-shrink-0 mt-1" />
                             <div className="flex-1 min-w-0">
                               <div className="flex flex-wrap items-center gap-2">
-                                <p className="text-xs sm:text-sm font-medium text-gray-900 truncate max-w-[180px] sm:max-w-[250px]">
+                                <p className="text-xs sm:text-sm font-medium text-foreground truncate max-w-[180px] sm:max-w-[250px]">
                                   {doc.originalName.length > 25
                                     ? `${doc.originalName.substring(0, 25)}...`
                                     : doc.originalName}
@@ -636,11 +636,11 @@ export function DocumentUpload({
                                 </div>
                               </div>
                               {doc.description && (
-                                <p className="text-sm text-gray-500 mt-1">
+                                <p className="text-sm text-muted-foreground mt-1">
                                   {doc.description}
                                 </p>
                               )}
-                              <div className="flex items-center space-x-4 mt-2 text-xs text-gray-400">
+                              <div className="flex items-center space-x-4 mt-2 text-xs text-muted-foreground/70">
                                 <span>{formatFileSize(doc.fileSize)}</span>
                                 <span>
                                   Uploaded{" "}
@@ -658,11 +658,11 @@ export function DocumentUpload({
                                 )}
                               </div>
                               {doc.reviewNotes && (
-                                <div className="mt-2 p-2 bg-blue-50 rounded text-sm border border-blue-200">
-                                  <p className="font-medium text-blue-800">
+                                <div className="mt-2 p-2 bg-muted rounded text-sm border border-border">
+                                  <p className="font-medium text-foreground">
                                     Review Notes:
                                   </p>
-                                  <p className="text-blue-700">
+                                  <p className="text-muted-foreground">
                                     {doc.reviewNotes}
                                   </p>
                                 </div>
@@ -702,7 +702,7 @@ export function DocumentUpload({
                                 variant="ghost"
                                 size="sm"
                                 onClick={() => handleDeleteDocument(doc.id)}
-                                className="text-red-600 hover:text-red-800 h-7 w-7 sm:h-9 sm:w-9 p-0"
+                                className="text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 h-7 w-7 sm:h-9 sm:w-9 p-0"
                                 title="Delete document (only available for pending documents)"
                               >
                                 <X className="h-3 w-3 sm:h-4 sm:w-4" />
@@ -714,8 +714,8 @@ export function DocumentUpload({
                         {/* Consultant Response Documents */}
                         {doc.responseDocuments &&
                           doc.responseDocuments.length > 0 && (
-                            <div className="mt-3 pl-4 sm:pl-8 border-l-2 border-purple-200">
-                              <div className="flex items-center gap-2 mb-2 text-xs text-purple-600">
+                            <div className="mt-3 pl-4 sm:pl-8 border-l-2 border-border">
+                              <div className="flex items-center gap-2 mb-2 text-xs text-muted-foreground">
                                 <Reply className="h-3 w-3" />
                                 <span className="font-medium">
                                   Consultant Response
@@ -726,23 +726,23 @@ export function DocumentUpload({
                                 {doc.responseDocuments.map((response) => (
                                   <div
                                     key={response.id}
-                                    className="bg-purple-50 rounded-lg p-2 sm:p-3"
+                                    className="bg-muted rounded-lg p-2 sm:p-3"
                                   >
                                     <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
                                       <div className="flex items-start space-x-2 flex-1 min-w-0">
-                                        <UserCircle className="h-5 w-5 text-purple-500 flex-shrink-0 mt-0.5" />
+                                        <UserCircle className="h-5 w-5 text-muted-foreground flex-shrink-0 mt-0.5" />
                                         <div className="flex-1 min-w-0">
-                                          <p className="text-xs sm:text-sm font-medium text-purple-900 truncate">
+                                          <p className="text-xs sm:text-sm font-medium text-foreground truncate">
                                             {response.originalName.length > 30
                                               ? `${response.originalName.substring(0, 30)}...`
                                               : response.originalName}
                                           </p>
                                           {response.description && (
-                                            <p className="text-xs text-purple-700 mt-0.5">
+                                            <p className="text-xs text-muted-foreground mt-0.5">
                                               {response.description}
                                             </p>
                                           )}
-                                          <div className="flex items-center space-x-3 mt-1 text-xs text-purple-500">
+                                          <div className="flex items-center space-x-3 mt-1 text-xs text-muted-foreground/70">
                                             <span>
                                               {formatFileSize(
                                                 response.fileSize,
@@ -767,7 +767,7 @@ export function DocumentUpload({
                                             )
                                           }
                                           title="View response"
-                                          className="h-7 w-7 p-0 text-purple-600 hover:text-purple-800"
+                                          className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
                                         >
                                           <Eye className="h-3 w-3" />
                                         </Button>
@@ -792,7 +792,7 @@ export function DocumentUpload({
                                             );
                                           }}
                                           title="Download response"
-                                          className="h-7 w-7 p-0 text-purple-600 hover:text-purple-800"
+                                          className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
                                         >
                                           <Download className="h-3 w-3" />
                                         </Button>
@@ -811,12 +811,12 @@ export function DocumentUpload({
           </Card>
         </div>
 
-        <DialogFooter>
+        <ResponsiveModalFooter>
           <Button variant="outline" onClick={() => handleOpenChange(false)}>
             Close
           </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </ResponsiveModalFooter>
+      </ResponsiveModalContent>
+    </ResponsiveModal>
   );
 }

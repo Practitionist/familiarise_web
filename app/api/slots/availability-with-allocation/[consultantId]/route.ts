@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import {
   AppointmentSlot,
@@ -217,8 +218,8 @@ export async function GET(
           return true;
         })
         .map((slot) => ({
-          slotStartTimeInUTC: slot.startsAt,
-          slotEndTimeInUTC: slot.endsAt,
+          startsAt: slot.startsAt,
+          endsAt: slot.endsAt,
         })),
     );
 
@@ -282,9 +283,9 @@ export async function GET(
       .map((slot) => ({
         id: slot.id,
         dayOfWeekforStartTimeInUTC: slot.startDay,
-        slotStartTimeInUTC: minuteUtcToDate(slot.startTimeUtc, referenceDate),
+        startsAt: minuteUtcToDate(slot.startTimeUtc, referenceDate),
         dayOfWeekforEndTimeInUTC: slot.endDay,
-        slotEndTimeInUTC: minuteUtcToDate(slot.endTimeUtc, referenceDate),
+        endsAt: minuteUtcToDate(slot.endTimeUtc, referenceDate),
       }));
 
     const customSlots: CustomSlot[] = consultant.slotsOfAvailabilityCustom
@@ -349,8 +350,8 @@ export async function GET(
       })
       .map((slot) => ({
         id: slot.id,
-        slotStartTimeInUTC: slot.startsAt,
-        slotEndTimeInUTC: slot.endsAt,
+        startsAt: slot.startsAt,
+        endsAt: slot.endsAt,
       }));
 
     // Apply schedule type filtering based on consultant's preference
@@ -371,6 +372,7 @@ export async function GET(
 
     return NextResponse.json({ data: slotsByDate }, { status: 200 });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "scheduling" } });
     console.error("Error fetching availability slots:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching availability slots" },

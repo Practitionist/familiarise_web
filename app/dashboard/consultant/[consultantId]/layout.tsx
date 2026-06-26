@@ -1,6 +1,5 @@
 "use client";
 
-import "@stream-io/video-react-sdk/dist/css/styles.css";
 import { getEffectiveUserId } from "@/utils/auth";
 import { Skeleton } from "@/components/ui/skeleton";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
@@ -12,8 +11,12 @@ import { useNovuSubscriberSync } from "@/hooks/useNovuSubscriberSync";
 import {
   DashboardSidebar,
   type NavSection,
+  type OrgMembershipEntry,
 } from "@/components/dashboard/DashboardSidebar";
-import { DashboardNavbar } from "@/components/dashboard/DashboardNavbar";
+import {
+  DashboardNavbar,
+  type BreadcrumbItem,
+} from "@/components/dashboard/DashboardNavbar";
 import { useSession } from "@/lib/auth-client";
 import { usePathname, useRouter } from "next/navigation";
 import { use, useEffect, useMemo } from "react";
@@ -484,6 +487,31 @@ export default function ConsultantLayout({
     }));
   }, [chatUnreadCount]);
 
+  // Org memberships for the "Teams & Orgs" section in the sidebar
+  const orgMemberships = useMemo((): OrgMembershipEntry[] => {
+    const raw = (session?.user as Record<string, unknown>)
+      ?.organizationMemberships;
+    if (!Array.isArray(raw)) return [];
+    return raw.map((m: Record<string, unknown>) => ({
+      organizationId:   String(m.organizationId ?? ""),
+      organizationName: String(m.organizationName ?? ""),
+      organizationLogo: (m.organizationLogo as string | null) ?? null,
+      role:             String(m.role ?? ""),
+    }));
+  }, [session?.user]);
+
+  // Breadcrumbs derived from the current page segment
+  const breadcrumbs = useMemo((): BreadcrumbItem[] => {
+    const segments = pathname.split("/").filter(Boolean);
+    // Pattern: /dashboard/consultant/[consultantId]/[page][/...]
+    const idIdx = segments.indexOf(consultantId);
+    if (idIdx >= 0 && idIdx + 1 < segments.length) {
+      const page = segments[idIdx + 1];
+      return [{ label: page.charAt(0).toUpperCase() + page.slice(1) }];
+    }
+    return [];
+  }, [pathname, consultantId]);
+
   // Memoize StreamProvider children to prevent re-initialization on tab switches
   // Must be called before any early returns to comply with Rules of Hooks
   const memoizedStreamContent = useMemo(
@@ -585,6 +613,7 @@ export default function ConsultantLayout({
         { name: "Help", path: "help", icon: "help" },
       ]}
       isLoading={isLoading}
+      orgMemberships={orgMemberships}
     />
   );
 
@@ -596,6 +625,7 @@ export default function ConsultantLayout({
       userRole="CONSULTANT"
       settingsPath={`/dashboard/consultant/${consultantId}/settings`}
       helpPath={`/dashboard/consultant/${consultantId}/help`}
+      breadcrumbs={breadcrumbs}
     />
   );
 

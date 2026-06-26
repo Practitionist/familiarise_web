@@ -12,6 +12,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { TrialSessionStatus } from "@prisma/client";
 import prisma from "@/lib/prisma";
+import { withCronLock, CronLockHeldError } from "@/lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
@@ -26,22 +28,31 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
     const now = new Date();
 
-    const result = await prisma.trialSession.updateMany({
-      where: {
-        status: TrialSessionStatus.SCHEDULED,
-        appointment: {
-          slotsOfAppointment: {
-            some: {
-              endsAt: { lt: now },
+    Sentry.logger.info("cron:auto-complete-trials started");
+
+    // #476 — entry-level cron lock; fail-open (idempotent updateMany).
+    const result = await withCronLock(
+      "auto-complete-trials",
+      { failMode: "open" },
+      async () => {
+        return prisma.trialSession.updateMany({
+          where: {
+            status: TrialSessionStatus.SCHEDULED,
+            appointment: {
+              slotsOfAppointment: {
+                some: {
+                  endsAt: { lt: now },
+                },
+              },
             },
           },
-        },
+          data: {
+            status: TrialSessionStatus.COMPLETED,
+            completedAt: now,
+          },
+        });
       },
-      data: {
-        status: TrialSessionStatus.COMPLETED,
-        completedAt: now,
-      },
-    });
+    );
 
     console.log(
       JSON.stringify({
@@ -51,11 +62,19 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       }),
     );
 
+    Sentry.logger.info("cron:auto-complete-trials finished", { trialsCompleted: result.count });
+
     return NextResponse.json({
       success: true,
       trialsCompleted: result.count,
     });
   } catch (error) {
+    // #476 — concurrent invocation (schedule overlap / manual re-run)
+    // skips with a 409 instead of double-running.
+    if (error instanceof CronLockHeldError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
+    Sentry.captureException(error, { tags: { subsystem: "cron", job: "auto-complete-trials" } });
     console.error("Error in auto-complete-trials cleanup:", error);
     return NextResponse.json(
       { success: false, error: "Failed to auto-complete trial sessions" },

@@ -3,6 +3,7 @@
  * Provider-agnostic payout orchestration with admin approval workflow
  */
 
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import {
   PayoutStatus,
@@ -19,16 +20,21 @@ import {
   getStripeConnectService,
   isStripeConnectConfigured,
 } from "./stripe-connect";
+import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
+import { computeMsmePaymentDeadline } from "@/lib/compliance/msme";
 import { randomUUID } from "crypto";
 import { acquireLock, releaseLock } from "@/lib/redis";
 import {
-  calculateTDS,
+  getCurrentFYCumulativePayments,
   getFYDateRange,
   getIndianFinancialYear,
   recordTDSDeduction,
+  TDS_THRESHOLD_PAISE,
 } from "@/lib/payments/tax/tds-service";
+import { computeTdsForPayout } from "@/lib/compliance/tds";
 import { notifyPayoutProcessed } from "@/lib/novu/service";
 import { getAppUrl } from "@/lib/url";
+import { sumPaise } from "@/lib/payments/utils/money";
 
 // ============================================
 // Types
@@ -53,6 +59,12 @@ export interface PayoutResult {
   success: boolean;
   providerPayoutId?: string;
   error?: string;
+  /**
+   * #776 — true when another run's CAS claim won this payout
+   * (APPROVED → PROCESSING matched zero rows). The claiming run owns the
+   * outcome; callers must not count a skipped payout as processed or failed.
+   */
+  skipped?: boolean;
 }
 
 export interface BatchResult {
@@ -81,7 +93,7 @@ export interface ConsultantPayoutEligibility {
  * Get all pending payouts awaiting admin approval
  */
 export async function getPendingPayouts(): Promise<PayoutSummary[]> {
-  const payouts = await prisma.payout.findMany({
+  const payouts = await prisma.consultantPayout.findMany({
     where: { status: PayoutStatus.PENDING },
     include: {
       consultantProfile: {
@@ -113,7 +125,7 @@ export async function getPendingPayouts(): Promise<PayoutSummary[]> {
  * Get payout details by ID
  */
 export async function getPayoutById(payoutId: string) {
-  return prisma.payout.findUnique({
+  return prisma.consultantPayout.findUnique({
     where: { id: payoutId },
     include: {
       consultantProfile: {
@@ -139,7 +151,7 @@ export async function checkPayoutEligibility(
 ): Promise<ConsultantPayoutEligibility> {
   // FIX #617: Subtract refundedShareAmount from payout eligibility.
   // Use aggregate _sum of both fields (efficient DB-side) then subtract in JS.
-  // refundedShareAmount is capped at consultantShare by refundEarnings(), so the
+  // refundedShareAmount is capped at consultantSharePaise by refundEarnings(), so the
   // difference is always >= 0.
   const readyEarningsAgg = await prisma.consultantEarnings.aggregate({
     where: {
@@ -147,12 +159,12 @@ export async function checkPayoutEligibility(
       status: EarningStatus.READY,
       payoutId: null,
     },
-    _sum: { consultantShare: true, refundedShareAmount: true },
+    _sum: { consultantSharePaise: true, refundedShareAmount: true },
   });
 
   const readyAmount =
-    (readyEarningsAgg._sum.consultantShare || 0) -
-    (readyEarningsAgg._sum.refundedShareAmount || 0);
+    sumPaise(readyEarningsAgg._sum.consultantSharePaise) -
+    sumPaise(readyEarningsAgg._sum.refundedShareAmount);
 
   // Get default payout account
   const defaultAccount = await prisma.payoutAccount.findFirst({
@@ -214,9 +226,9 @@ export async function createPayoutBatch(
           : {}),
       },
       orderBy: { consultantProfileId: "asc" },
-      _sum: { consultantShare: true },
+      _sum: { consultantSharePaise: true },
       having: {
-        consultantShare: {
+        consultantSharePaise: {
           _sum: { gte: PAYOUT_CONSTANTS.MINIMUM_PAYOUT_AMOUNT },
         },
       },
@@ -258,6 +270,14 @@ export async function createPayoutBatch(
           method = PayoutMethod.BANK_TRANSFER;
       }
 
+      // MSME 43B(h): the consultant is the supplier on the SELF path, so the
+      // settlement deadline derives from their own status/agreement (not a
+      // buyer org's). #776 — mirrors org-payout-service.
+      const msmeProfile = await prisma.consultantProfile.findUnique({
+        where: { id: consultantProfileId },
+        select: { msmeStatus: true, writtenAgreementWithFamiliarise: true },
+      });
+
       await prisma.$transaction(async (tx) => {
         // Re-query exact READY earnings inside the transaction
         const readyEarnings = await tx.consultantEarnings.findMany({
@@ -266,7 +286,11 @@ export async function createPayoutBatch(
             status: EarningStatus.READY,
             payoutId: null,
           },
-          select: { id: true, consultantShare: true, refundedShareAmount: true },
+          select: {
+            id: true,
+            consultantSharePaise: true,
+            refundedShareAmount: true,
+          },
         });
 
         if (readyEarnings.length === 0) return;
@@ -275,7 +299,7 @@ export async function createPayoutBatch(
         // are paid at the correct (reduced) amount, not the original full share.
         const amount = readyEarnings.reduce(
           (sum, e) =>
-            sum + Math.max(e.consultantShare - e.refundedShareAmount, 0),
+            sum + Math.max(e.consultantSharePaise - e.refundedShareAmount, 0),
           0,
         );
 
@@ -285,7 +309,7 @@ export async function createPayoutBatch(
           amount < PAYOUT_CONSTANTS.AUTO_APPROVE_THRESHOLD;
 
         // Create payout with the exact amount
-        const payout = await tx.payout.create({
+        const payout = await tx.consultantPayout.create({
           data: {
             consultantProfileId,
             provider: account.provider,
@@ -299,6 +323,12 @@ export async function createPayoutBatch(
             idempotencyKey: `payout_${consultantProfileId}_${batchId}`,
             approvedAt: shouldAutoApprove ? new Date() : undefined,
             approvedBy: shouldAutoApprove ? "SYSTEM_AUTO_APPROVE" : undefined,
+            mustPayByDate: computeMsmePaymentDeadline({
+              invoiceDate: new Date(),
+              counterpartyMsmeStatus: msmeProfile?.msmeStatus ?? "NONE",
+              writtenAgreement:
+                msmeProfile?.writtenAgreementWithFamiliarise ?? false,
+            }),
           },
         });
 
@@ -340,7 +370,7 @@ export async function approvePayout(
   payoutId: string,
   adminUserId: string,
 ): Promise<void> {
-  const payout = await prisma.payout.findUnique({
+  const payout = await prisma.consultantPayout.findUnique({
     where: { id: payoutId },
   });
 
@@ -354,7 +384,7 @@ export async function approvePayout(
     );
   }
 
-  await prisma.payout.update({
+  await prisma.consultantPayout.update({
     where: { id: payoutId },
     data: {
       status: PayoutStatus.APPROVED,
@@ -375,7 +405,7 @@ export async function rejectPayout(
   payoutId: string,
   reason: string,
 ): Promise<void> {
-  const payout = await prisma.payout.findUnique({
+  const payout = await prisma.consultantPayout.findUnique({
     where: { id: payoutId },
     include: { earnings: true },
   });
@@ -399,7 +429,7 @@ export async function rejectPayout(
   });
 
   // Cancel the payout
-  await prisma.payout.update({
+  await prisma.consultantPayout.update({
     where: { id: payoutId },
     data: {
       status: PayoutStatus.CANCELLED,
@@ -433,7 +463,7 @@ export async function processApprovedPayouts(): Promise<PayoutResult[]> {
   }
 
   try {
-    const approvedPayouts = await prisma.payout.findMany({
+    const approvedPayouts = await prisma.consultantPayout.findMany({
       where: {
         status: PayoutStatus.APPROVED,
         retryCount: { lt: PAYOUT_CONSTANTS.MAX_RETRY_ATTEMPTS },
@@ -486,12 +516,25 @@ async function processSinglePayout(payout: {
   };
   [key: string]: unknown;
 }): Promise<PayoutResult> {
+  // Declared outside the try so the catch can tell a gateway-accepted payout
+  // (providerPayoutId set) from a pre-gateway failure (#785 task #24).
+  let providerPayoutId: string | undefined;
   try {
-    // Mark as processing
-    await prisma.payout.update({
-      where: { id: payout.id },
+    // #776 — atomic CAS claim (ported from the deleted scripts/payouts copy
+    // in #850): only one runner — GH job, admin route, concurrent invocation
+    // with Redis down — may move APPROVED → PROCESSING. Zero rows means a
+    // concurrent run already claimed it; that run owns the outcome, so this
+    // one must not touch the gateway.
+    const claimed = await prisma.consultantPayout.updateMany({
+      where: { id: payout.id, status: PayoutStatus.APPROVED },
       data: { status: PayoutStatus.PROCESSING },
     });
+    if (claimed.count === 0) {
+      console.warn(
+        `[Payouts] Payout ${payout.id} already claimed by a concurrent run — skipping`,
+      );
+      return { payoutId: payout.id, success: false, skipped: true };
+    }
 
     const account = payout.consultantProfile.payoutAccounts[0];
     if (!account) {
@@ -509,26 +552,86 @@ async function processSinglePayout(payout: {
       );
     }
 
-    // Calculate TDS (Section 194J) — deduct before sending to gateway
-    const tdsResult = await calculateTDS({
-      consultantProfileId: payout.consultantProfileId,
-      payoutAmountPaise: payout.amount,
-    });
+    // #776 — Section 194-O (e-commerce operator) for consultant payouts via the
+    // single canonical engine (compliance/tds.ts), replacing the deprecated 194J
+    // path (#778 §E). 194J at 10% over-withheld ~100× vs 194-O's 0.1%. Mirrors
+    // org-payout-service: PAN-at-rest is encrypted (plaintext decrypt deferred to
+    // Form 26Q filing), so we signal only PAN-on-file presence; a missing PAN takes
+    // the 194-O 5% no-PAN rate. The non-resident guard above already rejects
+    // Section-195 cases, so RESIDENT is safe here.
+    const financialYear = getIndianFinancialYear();
 
-    const payoutAmountAfterTDS = payout.amount - tdsResult.tdsAmount;
+    // #785 — restore the ₹50K FY cumulative threshold dropped when this path
+    // moved 194J→194-O. No withholding until cumulative FY payouts cross
+    // TDS_THRESHOLD_PAISE; the crossing payout is taxed only on the excess.
+    // Without this, sub-threshold consultants who legally owe ₹0 are withheld
+    // from the first rupee. The rate engine (computeTdsForPayout) then applies
+    // the section/PAN/DTAA rate to the taxable portion.
+    //
+    // #778 §E — TDS_ENGINE flag (default LEGACY): LEGACY keeps the ₹50K gate
+    // (the conservative pre-CA-sign-off behavior); 194O drops it and taxes
+    // the full payout under pure Section 194-O semantics (per-FY entity
+    // thresholds move to the TdsRate lookup when the CA confirms in writing).
+    // One env flip at launch, no money-logic redeploy.
+    const pure194O = process.env.TDS_ENGINE === "194O";
+    const cumulativeBeforePayout = await getCurrentFYCumulativePayments(
+      payout.consultantProfileId,
+      financialYear,
+    );
+    const cumulativeAfterPayout = cumulativeBeforePayout + payout.amount;
+    let taxablePaise = 0;
+    if (pure194O) {
+      taxablePaise = payout.amount;
+    } else if (cumulativeAfterPayout > TDS_THRESHOLD_PAISE) {
+      taxablePaise =
+        cumulativeBeforePayout >= TDS_THRESHOLD_PAISE
+          ? payout.amount // already over threshold — whole payout is taxable
+          : cumulativeAfterPayout - TDS_THRESHOLD_PAISE; // crossing — excess only
+    }
 
-    if (tdsResult.tdsAmount > 0) {
+    const tds =
+      taxablePaise > 0
+        ? computeTdsForPayout({
+            grossAmountPaise: taxablePaise,
+            consultant: {
+              // #785 — PAN at rest is encrypted; signal presence via panOnFile
+              // (passing the ciphertext as panNumber fails isValidPan → wrong 5%).
+              panNumber: null,
+              panOnFile: !!consultantTaxInfo?.panEncrypted,
+              residencyStatus: "RESIDENT",
+              tdsSection: null,
+              tdsRateBps: null,
+              tdsLowerRateCert: null,
+              providerCountry: null,
+            },
+          })
+        : {
+            tdsSection: "194O",
+            tdsRate: 0,
+            tdsAmountPaise: 0,
+            dtaaRateApplied: null,
+            fallbackApplied: false,
+            reason: `below ₹50K FY threshold (cumulative=${cumulativeAfterPayout} paise) — no TDS`,
+          };
+
+    const payoutAmountAfterTDS = payout.amount - tds.tdsAmountPaise;
+
+    if (tds.tdsAmountPaise > 0) {
       console.log(
         JSON.stringify({
           event: "tds_deduction",
           payoutId: payout.id,
           consultantProfileId: payout.consultantProfileId,
           grossAmount: payout.amount,
-          tdsAmount: tdsResult.tdsAmount,
-          tdsRate: tdsResult.tdsRate,
+          taxableAmount: taxablePaise,
+          cumulativeBeforePayout,
+          cumulativeAfterPayout,
+          tdsAmount: tds.tdsAmountPaise,
+          tdsRate: tds.tdsRate,
+          tdsSection: tds.tdsSection,
           netAmount: payoutAmountAfterTDS,
-          financialYear: tdsResult.financialYear,
-          cumulativeBeforePayout: tdsResult.cumulativeBeforePayout,
+          financialYear,
+          reason: tds.reason,
           timestamp: new Date().toISOString(),
         }),
       );
@@ -536,8 +639,6 @@ async function processSinglePayout(payout: {
 
     // Use the payout object but with reduced amount for gateway call
     const payoutForGateway = { ...payout, amount: payoutAmountAfterTDS };
-
-    let providerPayoutId: string | undefined;
 
     if (payout.provider === PaymentGateway.RAZORPAY) {
       providerPayoutId = await processRazorpayPayout(payoutForGateway, account);
@@ -548,14 +649,19 @@ async function processSinglePayout(payout: {
     }
 
     // Update payout with provider ID and TDS info
-    await prisma.payout.update({
+    await prisma.consultantPayout.update({
       where: { id: payout.id },
       data: {
         providerPayoutId,
-        tdsDeducted: tdsResult.tdsAmount,
+        tdsDeducted: tds.tdsAmountPaise,
         netAmount: payoutAmountAfterTDS,
-        tdsRateApplied: tdsResult.tdsRate || null,
-        tdsFinancialYear: tdsResult.financialYear,
+        // #781 §C — engine returns a decimal fraction (0.001 = 194-O);
+        // stored as integer bps so two engines can't disagree on units.
+        // Review fix: != null so a legitimate 0% (Sec 197 zero-rate cert)
+        // persists as 0 bps instead of vanishing to null.
+        tdsRateAppliedBps:
+          tds.tdsRate != null ? Math.round(tds.tdsRate * 10_000) : null,
+        tdsFinancialYear: financialYear,
         status: PayoutStatus.PROCESSING, // Will be updated via webhook
       },
     });
@@ -569,8 +675,56 @@ async function processSinglePayout(payout: {
     const errorMessage =
       error instanceof Error ? error.message : "Unknown error";
 
-    // Mark as failed
-    await prisma.payout.update({
+    // #785 — if the gateway ALREADY accepted (providerPayoutId set) but the
+    // post-submit DB write (L585) threw, the money was SENT. FAILing + unlinking
+    // earnings here would re-batch them under a fresh idempotencyKey the gateway
+    // won't dedupe → DOUBLE disbursement. Quarantine PROCESSING with earnings
+    // LINKED instead; the reconcile/stuck-payout job settles it against the
+    // gateway. (#850 — this is now the sole implementation; the scripts/payouts
+    // copy that pioneered the guard is deleted.)
+    if (providerPayoutId) {
+      try {
+        await prisma.consultantPayout.update({
+          where: { id: payout.id },
+          data: {
+            providerPayoutId,
+            status: PayoutStatus.PROCESSING,
+            failureReason:
+              `Gateway accepted (${providerPayoutId}); post-submit DB write failed, awaiting reconcile: ${errorMessage}`.slice(
+                0,
+                500,
+              ),
+          },
+        });
+      } catch (persistErr) {
+        console.error(
+          `[payout-service] CRITICAL: gateway accepted ${providerPayoutId} but DB persist failed twice for payout ${payout.id}; manual reconcile required`,
+          persistErr,
+        );
+        Sentry.captureException(persistErr instanceof Error ? persistErr : new Error(String(persistErr)), {
+          tags: { subsystem: "payments" },
+          level: "fatal",
+          contexts: { payout: { payoutId: payout.id, providerPayoutId } },
+        });
+      }
+      console.error(
+        `⚠️ Payout ${payout.id}: gateway accepted ${providerPayoutId} but DB write failed — quarantined PROCESSING (NOT failed) to avoid double-pay`,
+      );
+      Sentry.captureException(new Error(`gateway-accepted-db-write-failed: payout ${payout.id}`), {
+        tags: { subsystem: "payments" },
+        level: "error",
+        contexts: { payout: { payoutId: payout.id, providerPayoutId } },
+      });
+      return {
+        payoutId: payout.id,
+        success: false,
+        providerPayoutId,
+        error: `gateway-accepted-db-write-failed: ${errorMessage}`,
+      };
+    }
+
+    // Genuine pre-gateway failure (rejected / never submitted) — safe to FAIL.
+    await prisma.consultantPayout.update({
       where: { id: payout.id },
       data: {
         status: PayoutStatus.FAILED,
@@ -578,7 +732,7 @@ async function processSinglePayout(payout: {
         retryCount: { increment: 1 },
         tdsDeducted: 0,
         netAmount: null,
-        tdsRateApplied: null,
+        tdsRateAppliedBps: null,
         tdsFinancialYear: null,
       },
     });
@@ -648,8 +802,11 @@ async function processRazorpayPayout(
     purpose: "payout",
     queueIfLowBalance: true,
     referenceId: payout.id,
+    // #771 P1-6 — use the deterministic key helper (not Date.now(), which
+    // defeats RazorpayX idempotency on retry when payout.idempotencyKey is null).
     idempotencyKey:
-      payout.idempotencyKey || `payout_${payout.id}_${Date.now()}`,
+      payout.idempotencyKey ||
+      razorpayPayouts.generateIdempotencyKey(payout.id),
     notes: {
       payoutId: payout.id,
       source: "familiarise_platform",
@@ -709,8 +866,12 @@ export async function handlePayoutWebhook(
   providerPayoutId: string,
   status: "PENDING" | "PROCESSING" | "COMPLETED" | "FAILED" | "CANCELLED",
   failureReason?: string,
+  // UTR — bank settlement reference the gateway returns on a completed payout
+  // (mirrors the OrganizationPayout branch). Optional + only persisted when
+  // present, so PROCESSING/FAILED deliveries and pre-UTR gateways leave it null.
+  gatewayUtr?: string,
 ): Promise<void> {
-  const payout = await prisma.payout.findFirst({
+  const payout = await prisma.consultantPayout.findFirst({
     where: { providerPayoutId },
     include: { earnings: true },
   });
@@ -742,7 +903,7 @@ export async function handlePayoutWebhook(
   await prisma.$transaction(async (tx) => {
     // Atomic conditional update: only transition if payout is NOT already terminal.
     // Uses updateMany with status filter so concurrent duplicates cannot both succeed.
-    const { count } = await tx.payout.updateMany({
+    const { count } = await tx.consultantPayout.updateMany({
       where: {
         id: payout.id,
         status: { notIn: [PayoutStatus.COMPLETED, PayoutStatus.CANCELLED] },
@@ -752,6 +913,12 @@ export async function handlePayoutWebhook(
         processedAt:
           payoutStatus === PayoutStatus.COMPLETED ? new Date() : undefined,
         failureReason: failureReason,
+        // UTR — persist only on a completing payout that carried one; absent
+        // value leaves the column untouched (idempotent re-drive safe).
+        gatewayUtr:
+          payoutStatus === PayoutStatus.COMPLETED && gatewayUtr
+            ? gatewayUtr
+            : undefined,
       },
     });
 
@@ -766,7 +933,7 @@ export async function handlePayoutWebhook(
     if (payoutStatus === PayoutStatus.COMPLETED) {
       const financialYear = payout.tdsFinancialYear || getIndianFinancialYear();
       const { start, end } = getFYDateRange(financialYear);
-      const previousCompletedPayouts = await tx.payout.aggregate({
+      const previousCompletedPayouts = await tx.consultantPayout.aggregate({
         where: {
           consultantProfileId: payout.consultantProfileId,
           status: PayoutStatus.COMPLETED,
@@ -776,7 +943,7 @@ export async function handlePayoutWebhook(
         _sum: { amount: true },
       });
       const cumulativeCreditedPayments =
-        (previousCompletedPayouts._sum.amount || 0) + payout.amount;
+        sumPaise(previousCompletedPayouts._sum.amount) + payout.amount;
 
       // Update earnings to PAID
       await tx.consultantEarnings.updateMany({
@@ -787,16 +954,43 @@ export async function handlePayoutWebhook(
         },
       });
 
-      // Update consultant stats
-      await tx.consultantProfile.update({
-        where: { id: payout.consultantProfileId },
-        data: {
-          totalRevenue: { increment: payout.amount },
-          pendingRevenue: { decrement: payout.amount },
-        },
-      });
+      // #771 D1/D5 — double-entry (dual-write): clear what we owed the
+      // consultant. payout.amount is the cash that left; tdsDeducted was
+      // withheld and is owed to the government.
+      //   Dr CONSULTANT_PAYABLE (gross)   Cr CASH (paid)   Cr TDS_PAYABLE (withheld)
+      if (payout.amount > 0) {
+        const tdsPaise = payout.tdsDeducted ?? 0;
+        const payoutPostings: Posting[] = [
+          {
+            account: {
+              kind: "CONSULTANT_PAYABLE",
+              consultantProfileId: payout.consultantProfileId,
+            },
+            direction: "DEBIT",
+            amountPaise: payout.amount + tdsPaise,
+          },
+          {
+            account: { kind: "CASH" },
+            direction: "CREDIT",
+            amountPaise: payout.amount,
+          },
+        ];
+        if (tdsPaise > 0) {
+          payoutPostings.push({
+            account: { kind: "TDS_PAYABLE" },
+            direction: "CREDIT",
+            amountPaise: tdsPaise,
+          });
+        }
+        await postLedgerTxn(tx, {
+          idempotencyKey: `payout:${payout.id}`,
+          kind: "PAYOUT",
+          payoutId: payout.id,
+          postings: payoutPostings,
+        });
+      }
 
-      if (payout.tdsDeducted > 0 && payout.tdsRateApplied) {
+      if (payout.tdsDeducted > 0 && payout.tdsRateAppliedBps) {
         await tx.tDSRecord.deleteMany({
           where: { payoutId: payout.id },
         });
@@ -805,9 +999,11 @@ export async function handlePayoutWebhook(
           consultantProfileId: payout.consultantProfileId,
           financialYear,
           tdsDeducted: payout.tdsDeducted,
-          tdsRate: payout.tdsRateApplied,
+          tdsRateBps: payout.tdsRateAppliedBps,
           cumulativeAmountCredited: cumulativeCreditedPayments,
           payoutId: payout.id,
+          // #776 — consultant payouts withhold under Section 194-O (ECO).
+          tdsSection: "194O",
           db: tx,
         });
       }
@@ -831,12 +1027,12 @@ export async function handlePayoutWebhook(
       });
 
       // Reset TDS fields on the payout record
-      await tx.payout.update({
+      await tx.consultantPayout.update({
         where: { id: payout.id },
         data: {
           tdsDeducted: 0,
           netAmount: null,
-          tdsRateApplied: null,
+          tdsRateAppliedBps: null,
           tdsFinancialYear: null,
         },
       });
@@ -855,11 +1051,115 @@ export async function handlePayoutWebhook(
         currency: payout.currency,
         payoutId: payout.id,
         dashboardUrl: `${getAppUrl()}/dashboard`,
-      }).catch((error) =>
-        console.error("[payouts] Failed to send payout notification:", error),
-      );
+      }).catch((error) => {
+        console.error("[payouts] Failed to send payout notification:", error);
+        Sentry.captureException(error instanceof Error ? error : new Error(String(error)), {
+          tags: { subsystem: "payments" },
+          level: "warning",
+        });
+      });
     }
   }
+}
+
+/**
+ * #813/#812 — consultant `payout.reversed` arriving AFTER the payout already
+ * COMPLETED. Mirrors markOrgPayoutReversed: handlePayoutWebhook maps `reversed`
+ * to FAILED and claims `status notIn [COMPLETED, CANCELLED]`, so a bounce on an
+ * already-COMPLETED payout was a SILENT no-op — cash had left (Dr
+ * CONSULTANT_PAYABLE / Cr CASH / Cr TDS_PAYABLE, key `payout:<id>`), earnings
+ * stayed PAID, nothing reversed. This atomically claims COMPLETED → REVERSED,
+ * posts the exact inverse journal, and re-opens the earnings to READY. No-ops via
+ * the claim if the payout is not COMPLETED, so the caller can attempt it first and
+ * still fall through to the FAILED path for a pre-settlement bounce.
+ */
+export async function markConsultantPayoutReversed(
+  providerPayoutId: string,
+  reason: string,
+): Promise<{ wasNoOp: boolean }> {
+  const result = await prisma.$transaction(async (tx) => {
+    const payout = await tx.consultantPayout.findFirst({
+      where: { providerPayoutId },
+      select: {
+        id: true,
+        consultantProfileId: true,
+        amount: true,
+        tdsDeducted: true,
+        currency: true,
+      },
+    });
+    if (!payout) {
+      console.warn(
+        `[payouts] markConsultantPayoutReversed: payout not found for provider ID ${providerPayoutId}`,
+      );
+      return { wasNoOp: true, notify: null };
+    }
+
+    // Atomic claim: only a COMPLETED payout has cash to bring back.
+    const claim = await tx.consultantPayout.updateMany({
+      where: { id: payout.id, status: PayoutStatus.COMPLETED },
+      data: {
+        status: PayoutStatus.REVERSED,
+        failureReason: reason.slice(0, 500),
+      },
+    });
+    if (claim.count === 0) return { wasNoOp: true, notify: null };
+
+    // Re-open the earnings this payout had marked PAID so a future batch re-pays
+    // them — the inverse of the completion path's PAID flip. Unlike the FAILED
+    // path we do NOT delete TDS records (mirrors the org reversal, which only
+    // reverses the TDS_PAYABLE accrual in the journal below).
+    await tx.consultantEarnings.updateMany({
+      where: { payoutId: payout.id, status: EarningStatus.PAID },
+      data: { status: EarningStatus.READY, payoutId: null, paidAt: null },
+    });
+
+    // Exact inverse of the completion posting `payout:<id>`:
+    //   original  Dr CONSULTANT_PAYABLE (gross)  Cr CASH (net)  Cr TDS_PAYABLE (tds)
+    //   reversal  Dr CASH (net)  Cr CONSULTANT_PAYABLE (gross)  Dr TDS_PAYABLE (tds)
+    if (payout.amount > 0) {
+      const tdsPaise = payout.tdsDeducted ?? 0;
+      const reversal: Posting[] = [
+        {
+          account: { kind: "CASH" },
+          direction: "DEBIT",
+          amountPaise: payout.amount,
+        },
+        {
+          account: {
+            kind: "CONSULTANT_PAYABLE",
+            consultantProfileId: payout.consultantProfileId,
+          },
+          direction: "CREDIT",
+          amountPaise: payout.amount + tdsPaise,
+        },
+      ];
+      if (tdsPaise > 0) {
+        reversal.push({
+          account: { kind: "TDS_PAYABLE" },
+          direction: "DEBIT",
+          amountPaise: tdsPaise,
+        });
+      }
+      await postLedgerTxn(tx, {
+        idempotencyKey: `payout-reversal:${payout.id}`,
+        kind: "PAYOUT",
+        payoutId: payout.id,
+        postings: reversal,
+      });
+    }
+
+    // No consultant-scoped audit table (OrgAuditLog is org-only) and no
+    // consultant payout-reversal Novu workflow exists — the structured log is the
+    // mirror of the org path's PAYOUT_REVERSED audit entry.
+    console.log(
+      `↩️  Consultant payout ${payout.id} reversed after completion (provider=${providerPayoutId}): ${reason.slice(0, 200)}`,
+    );
+
+    return { wasNoOp: false, notify: null };
+  });
+
+  return { wasNoOp: result.wasNoOp };
 }
 
 /**
@@ -867,22 +1167,22 @@ export async function handlePayoutWebhook(
  */
 export async function getPayoutStats() {
   const [pending, processing, completed, failed] = await Promise.all([
-    prisma.payout.aggregate({
+    prisma.consultantPayout.aggregate({
       where: { status: PayoutStatus.PENDING },
       _sum: { amount: true },
       _count: true,
     }),
-    prisma.payout.aggregate({
+    prisma.consultantPayout.aggregate({
       where: { status: PayoutStatus.PROCESSING },
       _sum: { amount: true },
       _count: true,
     }),
-    prisma.payout.aggregate({
+    prisma.consultantPayout.aggregate({
       where: { status: PayoutStatus.COMPLETED },
       _sum: { amount: true },
       _count: true,
     }),
-    prisma.payout.aggregate({
+    prisma.consultantPayout.aggregate({
       where: { status: PayoutStatus.FAILED },
       _sum: { amount: true },
       _count: true,
@@ -892,19 +1192,19 @@ export async function getPayoutStats() {
   return {
     pending: {
       count: pending._count,
-      amount: pending._sum.amount || 0,
+      amount: sumPaise(pending._sum.amount),
     },
     processing: {
       count: processing._count,
-      amount: processing._sum.amount || 0,
+      amount: sumPaise(processing._sum.amount),
     },
     completed: {
       count: completed._count,
-      amount: completed._sum.amount || 0,
+      amount: sumPaise(completed._sum.amount),
     },
     failed: {
       count: failed._count,
-      amount: failed._sum.amount || 0,
+      amount: sumPaise(failed._sum.amount),
     },
   };
 }

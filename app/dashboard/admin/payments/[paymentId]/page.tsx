@@ -1,15 +1,11 @@
 "use client";
 
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Textarea } from "@/components/ui/textarea";
-import { useToast } from "@/hooks/use-toast";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
-import { use, useState } from "react";
+import { use } from "react";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import type {
   PaymentDetail,
@@ -17,7 +13,12 @@ import type {
   PaymentDetailDispute,
 } from "@/types/payments";
 
-// Fetch payment details
+// Manual refunds ship with the live checkout/program wiring — the admin
+// refund flow will rebuild on top of `WalletEntry` + `SettlementLedgerEntry`
+// + `OrganizationEarnings.refundedAmountPaise`. Until then this page is
+// read-only: operators can see refund history that the system wrote from
+// automated paths (gateway-originated refunds, dispute resolutions).
+
 async function fetchPaymentDetails(paymentId: string): Promise<PaymentDetail> {
   const response = await fetch(`/api/admin/payments/${paymentId}`);
   if (!response.ok) {
@@ -26,37 +27,12 @@ async function fetchPaymentDetails(paymentId: string): Promise<PaymentDetail> {
   return response.json() as Promise<PaymentDetail>;
 }
 
-// Create refund
-async function createRefund(data: {
-  paymentId: string;
-  amount?: number;
-  reason?: string;
-}) {
-  const response = await fetch("/api/payments/refunds", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data),
-  });
-
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || "Failed to create refund");
-  }
-
-  return response.json();
-}
-
 interface PageProps {
   params: Promise<{ paymentId: string }>;
 }
 
 export default function PaymentDetailsPage({ params }: PageProps) {
   const resolvedParams = use(params);
-  const { toast } = useToast();
-  const queryClient = useQueryClient();
-  const [refundAmount, setRefundAmount] = useState("");
-  const [refundReason, setRefundReason] = useState("");
-  const [showRefundForm, setShowRefundForm] = useState(false);
 
   const {
     data: payment,
@@ -68,46 +44,17 @@ export default function PaymentDetailsPage({ params }: PageProps) {
     staleTime: 30 * 1000,
   });
 
-  const refundMutation = useMutation({
-    mutationFn: createRefund,
-    onSuccess: () => {
-      toast({
-        title: "Refund Created",
-        description: "The refund has been initiated successfully.",
-      });
-      queryClient.invalidateQueries({
-        queryKey: ["admin-payment", resolvedParams.paymentId],
-      });
-      setShowRefundForm(false);
-      setRefundAmount("");
-      setRefundReason("");
-    },
-    onError: (error: Error) => {
-      toast({
-        title: "Refund Failed",
-        description: error.message,
-        variant: "destructive",
-      });
-    },
-  });
-
-  const handleRefund = () => {
-    refundMutation.mutate({
-      paymentId: resolvedParams.paymentId,
-      amount: refundAmount ? parseFloat(refundAmount) : undefined,
-      reason: refundReason || undefined,
-    });
-  };
-
   if (error) {
     return (
       <div className="flex items-center justify-center h-full">
         <Card className="w-full max-w-md">
           <CardHeader>
-            <CardTitle className="text-red-600">Error</CardTitle>
+            <CardTitle className="text-red-600 dark:text-red-400">
+              Error
+            </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-gray-700">
+            <p className="text-muted-foreground">
               {error instanceof Error
                 ? error.message
                 : "Failed to load payment details"}
@@ -143,17 +90,14 @@ export default function PaymentDetailsPage({ params }: PageProps) {
         <div>
           <Link
             href="/dashboard/admin/payments"
-            className="text-sm text-blue-600 hover:text-blue-700 mb-2 inline-block"
+            className="text-sm text-muted-foreground hover:text-foreground mb-2 inline-block"
           >
             ← Back to Payments
           </Link>
-          <h1 className="text-3xl font-bold text-gray-900">Payment Details</h1>
+          <h1 className="text-fluid-3xl font-bold tracking-tight text-foreground">
+            Payment Details
+          </h1>
         </div>
-        {payment.paymentStatus === "SUCCEEDED" && !showRefundForm && (
-          <Button onClick={() => setShowRefundForm(true)} variant="destructive">
-            Issue Refund
-          </Button>
-        )}
       </div>
 
       {/* Payment Info */}
@@ -164,25 +108,27 @@ export default function PaymentDetailsPage({ params }: PageProps) {
           </CardHeader>
           <CardContent className="space-y-4">
             <div>
-              <Label className="text-gray-500">Payment Intent ID</Label>
-              <p className="font-mono text-sm">{payment.paymentIntent}</p>
+              <Label className="text-muted-foreground">Payment Intent ID</Label>
+              <p className="font-mono text-sm text-foreground break-all">
+                {payment.paymentIntent}
+              </p>
             </div>
             <div>
-              <Label className="text-gray-500">Amount</Label>
-              <p className="text-2xl font-bold">
+              <Label className="text-muted-foreground">Amount</Label>
+              <p className="text-2xl font-bold text-foreground">
                 {formatCurrencyAmount(payment.amount, payment.currency)}
               </p>
             </div>
             <div>
-              <Label className="text-gray-500">Status</Label>
+              <Label className="text-muted-foreground">Status</Label>
               <div className="mt-1">
                 <span
                   className={`px-3 py-1 rounded text-sm font-medium ${
                     payment.paymentStatus === "SUCCEEDED"
-                      ? "bg-green-100 text-green-800"
+                      ? "bg-green-100 text-green-800 dark:bg-green-950/40 dark:text-green-400"
                       : payment.paymentStatus === "PENDING"
-                        ? "bg-yellow-100 text-yellow-800"
-                        : "bg-red-100 text-red-800"
+                        ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-950/40 dark:text-yellow-400"
+                        : "bg-red-100 text-red-800 dark:bg-red-950/40 dark:text-red-400"
                   }`}
                 >
                   {payment.paymentStatus}
@@ -190,14 +136,16 @@ export default function PaymentDetailsPage({ params }: PageProps) {
               </div>
             </div>
             <div>
-              <Label className="text-gray-500">Payment Gateway</Label>
-              <p className="font-medium">{payment.paymentGateway}</p>
+              <Label className="text-muted-foreground">Payment Gateway</Label>
+              <p className="font-medium text-foreground">
+                {payment.paymentGateway}
+              </p>
             </div>
             <div>
-              <Label className="text-gray-500">Payment Type</Label>
-              <p className="font-medium">
+              <Label className="text-muted-foreground">Payment Type</Label>
+              <p className="font-medium text-foreground">
                 {payment.isMockPayment ? (
-                  <span className="px-2 py-1 rounded text-sm font-medium bg-purple-100 text-purple-800">
+                  <span className="px-2 py-1 rounded text-sm font-medium bg-muted text-foreground">
                     MOCK PAYMENT
                   </span>
                 ) : (
@@ -206,13 +154,17 @@ export default function PaymentDetailsPage({ params }: PageProps) {
               </p>
             </div>
             <div>
-              <Label className="text-gray-500">Created At</Label>
-              <p>{new Date(payment.createdAt).toLocaleString()}</p>
+              <Label className="text-muted-foreground">Created At</Label>
+              <p className="text-foreground">
+                {new Date(payment.createdAt).toLocaleString()}
+              </p>
             </div>
             {payment.expiresAt && (
               <div>
-                <Label className="text-gray-500">Expires At</Label>
-                <p>{new Date(payment.expiresAt).toLocaleString()}</p>
+                <Label className="text-muted-foreground">Expires At</Label>
+                <p className="text-foreground">
+                  {new Date(payment.expiresAt).toLocaleString()}
+                </p>
               </div>
             )}
           </CardContent>
@@ -226,117 +178,46 @@ export default function PaymentDetailsPage({ params }: PageProps) {
             {payment.appointment ? (
               <>
                 <div>
-                  <Label className="text-gray-500">Appointment Type</Label>
-                  <p className="font-medium">
+                  <Label className="text-muted-foreground">
+                    Appointment Type
+                  </Label>
+                  <p className="font-medium text-foreground">
                     {payment.appointment.appointmentType}
                   </p>
                 </div>
                 <div>
-                  <Label className="text-gray-500">Appointment ID</Label>
-                  <p className="font-mono text-sm">{payment.appointment.id}</p>
+                  <Label className="text-muted-foreground">Appointment ID</Label>
+                  <p className="font-mono text-sm text-foreground break-all">
+                    {payment.appointment.id}
+                  </p>
                 </div>
                 <div>
-                  <Label className="text-gray-500">User</Label>
-                  <p>{payment.user?.name || "N/A"}</p>
-                  <p className="text-sm text-gray-500">{payment.user?.email}</p>
+                  <Label className="text-muted-foreground">User</Label>
+                  <p className="text-foreground">
+                    {payment.user?.name || "N/A"}
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    {payment.user?.email}
+                  </p>
                 </div>
               </>
             ) : (
-              <p className="text-gray-500">No appointment associated yet</p>
+              <p className="text-muted-foreground">
+                No appointment associated yet
+              </p>
             )}
 
             {payment.discountCode && (
               <div>
-                <Label className="text-gray-500">Discount Code</Label>
-                <p className="font-medium">{payment.discountCode.code}</p>
+                <Label className="text-muted-foreground">Discount Code</Label>
+                <p className="font-medium text-foreground">
+                  {payment.discountCode.code}
+                </p>
               </div>
             )}
           </CardContent>
         </Card>
       </div>
-
-      {/* Refund Form */}
-      {showRefundForm && (
-        <Card className="border-red-200">
-          <CardHeader>
-            <CardTitle className="text-red-600">Issue Refund</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div>
-              <Label htmlFor="refundAmount">
-                Refund Amount (leave empty for full refund)
-              </Label>
-              {/* H7 FIX: Calculate remaining refundable balance accounting for
-                  already-processed refunds to prevent over-refunding */}
-              {(() => {
-                const successfulRefunds = (payment.refunds || [])
-                  .filter(
-                    (r: PaymentDetailRefund) =>
-                      r.status === "SUCCEEDED" || r.status === "PENDING",
-                  )
-                  .reduce(
-                    (sum: number, r: PaymentDetailRefund) => sum + r.amount,
-                    0,
-                  );
-                const remainingRefundable = payment.amount - successfulRefunds;
-                return (
-                  <>
-                    <Input
-                      id="refundAmount"
-                      type="number"
-                      placeholder={`Max: ${formatCurrencyAmount(remainingRefundable, payment.currency)}`}
-                      value={refundAmount}
-                      onChange={(e) => setRefundAmount(e.target.value)}
-                      max={remainingRefundable}
-                      min={1}
-                    />
-                    {successfulRefunds > 0 && (
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Already refunded:{" "}
-                        {formatCurrencyAmount(
-                          successfulRefunds,
-                          payment.currency,
-                        )}{" "}
-                        • Remaining:{" "}
-                        {formatCurrencyAmount(
-                          remainingRefundable,
-                          payment.currency,
-                        )}
-                      </p>
-                    )}
-                  </>
-                );
-              })()}
-            </div>
-            <div>
-              <Label htmlFor="refundReason">Reason (optional)</Label>
-              <Textarea
-                id="refundReason"
-                placeholder="Enter refund reason..."
-                value={refundReason}
-                onChange={(e) => setRefundReason(e.target.value)}
-                rows={3}
-              />
-            </div>
-            <div className="flex gap-2">
-              <Button
-                onClick={handleRefund}
-                variant="destructive"
-                disabled={refundMutation.isPending}
-              >
-                {refundMutation.isPending ? "Processing..." : "Confirm Refund"}
-              </Button>
-              <Button
-                onClick={() => setShowRefundForm(false)}
-                variant="outline"
-                disabled={refundMutation.isPending}
-              >
-                Cancel
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      )}
 
       {/* Refunds List */}
       {payment.refunds && payment.refunds.length > 0 && (
@@ -349,27 +230,26 @@ export default function PaymentDetailsPage({ params }: PageProps) {
               {payment.refunds.map((refund: PaymentDetailRefund) => (
                 <div
                   key={refund.id}
-                  className="p-4 border rounded-lg flex justify-between items-start"
+                  className="p-4 border border-border rounded-lg flex justify-between items-start gap-3"
                 >
-                  <div>
-                    <p className="font-medium">
-                      {formatCurrencyAmount(
-                        refund.amount,
-                        refund.currency,
-                      )}
+                  <div className="min-w-0">
+                    <p className="font-medium text-foreground">
+                      {formatCurrencyAmount(refund.amount, refund.currency)}
                     </p>
-                    <p className="text-sm text-gray-500">{refund.reason}</p>
-                    <p className="text-xs text-gray-400 mt-1">
+                    <p className="text-sm text-muted-foreground">
+                      {refund.reason}
+                    </p>
+                    <p className="text-xs text-muted-foreground/70 mt-1">
                       {new Date(refund.createdAt).toLocaleString()}
                     </p>
                   </div>
                   <span
-                    className={`px-2 py-1 rounded text-xs font-medium ${
+                    className={`shrink-0 px-2 py-1 rounded text-xs font-medium ${
                       refund.status === "SUCCEEDED"
-                        ? "bg-green-100 text-green-800"
+                        ? "bg-green-100 text-green-800 dark:bg-green-950/40 dark:text-green-400"
                         : refund.status === "PENDING"
-                          ? "bg-yellow-100 text-yellow-800"
-                          : "bg-red-100 text-red-800"
+                          ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-950/40 dark:text-yellow-400"
+                          : "bg-red-100 text-red-800 dark:bg-red-950/40 dark:text-red-400"
                     }`}
                   >
                     {refund.status}
@@ -383,9 +263,11 @@ export default function PaymentDetailsPage({ params }: PageProps) {
 
       {/* Disputes List */}
       {payment.disputes && payment.disputes.length > 0 && (
-        <Card className="border-red-200">
+        <Card className="border-red-200 dark:border-red-900/60">
           <CardHeader>
-            <CardTitle className="text-red-600">Disputes</CardTitle>
+            <CardTitle className="text-red-600 dark:text-red-400">
+              Disputes
+            </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
@@ -393,25 +275,27 @@ export default function PaymentDetailsPage({ params }: PageProps) {
                 <Link
                   key={dispute.id}
                   href={`/dashboard/admin/disputes/${dispute.id}`}
-                  className="block p-4 border rounded-lg hover:bg-gray-50 transition-colors"
+                  className="block p-4 border border-border rounded-lg hover:bg-muted transition-colors"
                 >
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <p className="font-medium">
+                  <div className="flex justify-between items-start gap-3">
+                    <div className="min-w-0">
+                      <p className="font-medium text-foreground">
                         {formatCurrencyAmount(dispute.amount, dispute.currency)}
                       </p>
-                      <p className="text-sm text-gray-600">{dispute.reason}</p>
-                      <p className="text-xs text-gray-400 mt-1">
+                      <p className="text-sm text-muted-foreground">
+                        {dispute.reason}
+                      </p>
+                      <p className="text-xs text-muted-foreground/70 mt-1">
                         {new Date(dispute.createdAt).toLocaleString()}
                       </p>
                     </div>
                     <span
-                      className={`px-2 py-1 rounded text-xs font-medium ${
+                      className={`shrink-0 px-2 py-1 rounded text-xs font-medium ${
                         dispute.status === "WON"
-                          ? "bg-green-100 text-green-800"
+                          ? "bg-green-100 text-green-800 dark:bg-green-950/40 dark:text-green-400"
                           : dispute.status === "LOST"
-                            ? "bg-red-100 text-red-800"
-                            : "bg-yellow-100 text-yellow-800"
+                            ? "bg-red-100 text-red-800 dark:bg-red-950/40 dark:text-red-400"
+                            : "bg-yellow-100 text-yellow-800 dark:bg-yellow-950/40 dark:text-yellow-400"
                       }`}
                     >
                       {dispute.status}

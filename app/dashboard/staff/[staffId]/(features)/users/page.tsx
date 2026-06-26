@@ -14,13 +14,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+  ResponsiveTable,
+  type ResponsiveColumn,
+} from "@/components/ui/responsive-table";
+import { PageHeader } from "@/components/ui/page-header";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   DropdownMenu,
@@ -176,69 +173,159 @@ export default function UserManagementPage() {
     setSelectedUserId(userId);
   };
 
+  const columns: ResponsiveColumn<UserListItem>[] = [
+    {
+      key: "user",
+      header: "User",
+      primary: true,
+      cell: (user) => (
+        <div className="flex items-center gap-3">
+          <Avatar>
+            <AvatarImage src={user.image || ""} />
+            <AvatarFallback>
+              {(user.name || user.email || "?")
+                .split(" ")
+                .map((n) => n[0])
+                .join("")
+                .toUpperCase()
+                .slice(0, 2)}
+            </AvatarFallback>
+          </Avatar>
+          <div className="min-w-0">
+            <p className="font-medium flex items-center gap-1 text-foreground">
+              {user.name || "Unnamed"}
+              {user.onboardingCompleted && (
+                <CheckCircle className="h-3.5 w-3.5 text-green-500" />
+              )}
+            </p>
+            <p className="text-sm text-muted-foreground">{user.email}</p>
+          </div>
+        </div>
+      ),
+    },
+    {
+      key: "role",
+      header: "Role",
+      cell: (user) => (
+        <Badge className={getRoleColor(user.role)} variant="secondary">
+          {user.role?.toLowerCase() || "unknown"}
+        </Badge>
+      ),
+    },
+    {
+      key: "status",
+      header: "Status",
+      cell: (user) => (
+        <Badge
+          className={getStatusColor(user.onboardingCompleted)}
+          variant="secondary"
+        >
+          {getStatusText(user.onboardingCompleted)}
+        </Badge>
+      ),
+    },
+    {
+      key: "joined",
+      header: "Joined",
+      className: "text-sm text-muted-foreground",
+      cell: (user) => formatDate(user.createdAt),
+    },
+  ];
+
+  const renderRowActions = (user: UserListItem) => (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="icon" className="h-8 w-8">
+          <MoreHorizontal className="h-4 w-4" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem onClick={(e) => handleViewUser(user.id, e)}>
+          <Eye className="h-4 w-4 mr-2" />
+          View Details
+        </DropdownMenuItem>
+        <DropdownMenuItem>
+          <Mail className="h-4 w-4 mr-2" />
+          Send Email
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem>
+          <Flag className="h-4 w-4 mr-2" />
+          Flag Account
+        </DropdownMenuItem>
+        <DropdownMenuItem className="text-red-600 dark:text-red-400">
+          <Ban className="h-4 w-4 mr-2" />
+          Suspend User
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+
+  const emptyState = (
+    <div className="flex flex-col items-center justify-center h-64 text-muted-foreground">
+      <Users className="h-12 w-12 mb-4 text-muted-foreground/40" />
+      <p>No users found</p>
+    </div>
+  );
+
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">
-            User Management
-          </h1>
-          <p className="text-zinc-500 dark:text-zinc-400">
-            View and manage user accounts
-          </p>
-        </div>
-        <Button variant="outline" onClick={fetchUsers} disabled={loading}>
-          <RefreshCw
-            className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`}
-          />
-          Refresh
-        </Button>
-      </div>
+      <PageHeader
+        title="User Management"
+        description="View and manage user accounts"
+        actions={
+          <Button variant="outline" onClick={fetchUsers} disabled={loading}>
+            <RefreshCw
+              className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`}
+            />
+            Refresh
+          </Button>
+        }
+      />
 
       {/* Stats */}
-      <div className="grid gap-4 md:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-4">
         <Card>
           <CardContent className="p-4 flex items-center gap-4">
-            <div className="p-2 rounded-lg bg-blue-50 dark:bg-blue-950">
-              <Users className="h-5 w-5 text-blue-600" />
+            <div className="p-2 rounded-lg bg-muted">
+              <Users className="h-5 w-5 text-muted-foreground" />
             </div>
             <div>
               <p className="text-2xl font-bold">{total}</p>
-              <p className="text-sm text-zinc-500">Total Users</p>
+              <p className="text-sm text-muted-foreground">Total Users</p>
             </div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="p-4 flex items-center gap-4">
-            <div className="p-2 rounded-lg bg-purple-50 dark:bg-purple-950">
-              <Shield className="h-5 w-5 text-purple-600" />
+            <div className="p-2 rounded-lg bg-muted">
+              <Shield className="h-5 w-5 text-muted-foreground" />
             </div>
             <div>
               <p className="text-2xl font-bold">{userCounts.consultants}</p>
-              <p className="text-sm text-zinc-500">Consultants (page)</p>
+              <p className="text-sm text-muted-foreground">Consultants (page)</p>
             </div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="p-4 flex items-center gap-4">
-            <div className="p-2 rounded-lg bg-emerald-50 dark:bg-emerald-950">
-              <UserCheck className="h-5 w-5 text-emerald-600" />
+            <div className="p-2 rounded-lg bg-muted">
+              <UserCheck className="h-5 w-5 text-muted-foreground" />
             </div>
             <div>
               <p className="text-2xl font-bold">{userCounts.consultees}</p>
-              <p className="text-sm text-zinc-500">Consultees (page)</p>
+              <p className="text-sm text-muted-foreground">Consultees (page)</p>
             </div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="p-4 flex items-center gap-4">
-            <div className="p-2 rounded-lg bg-amber-50 dark:bg-amber-950">
-              <UserX className="h-5 w-5 text-amber-600" />
+            <div className="p-2 rounded-lg bg-muted">
+              <UserX className="h-5 w-5 text-muted-foreground" />
             </div>
             <div>
               <p className="text-2xl font-bold">{userCounts.pending}</p>
-              <p className="text-sm text-zinc-500">Pending (page)</p>
+              <p className="text-sm text-muted-foreground">Pending (page)</p>
             </div>
           </CardContent>
         </Card>
@@ -257,7 +344,7 @@ export default function UserManagementPage() {
             {pendingCount > 0 && (
               <Badge
                 variant="secondary"
-                className="ml-1 bg-amber-100 text-amber-700"
+                className="ml-1 bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300"
               >
                 {pendingCount}
               </Badge>
@@ -271,8 +358,8 @@ export default function UserManagementPage() {
           <Card>
             <CardContent className="p-4">
               <div className="flex flex-col sm:flex-row gap-4">
-                <div className="relative flex-1">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
+                <div className="relative min-w-0 flex-1">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground/70" />
                   <Input
                     placeholder="Search by name or email..."
                     className="pl-9"
@@ -304,120 +391,20 @@ export default function UserManagementPage() {
 
           {/* Users Table */}
           <Card>
-            <CardContent className="p-0">
+            <CardContent className="p-4">
               {loading ? (
                 <div className="flex items-center justify-center h-64">
-                  <Loader2 className="h-8 w-8 animate-spin text-zinc-400" />
-                </div>
-              ) : users.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-64 text-zinc-500">
-                  <Users className="h-12 w-12 mb-4 text-zinc-300" />
-                  <p>No users found</p>
+                  <Loader2 className="h-8 w-8 animate-spin text-muted-foreground/70" />
                 </div>
               ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>User</TableHead>
-                      <TableHead>Role</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Joined</TableHead>
-                      <TableHead className="w-12"></TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {users.map((user) => (
-                      <TableRow
-                        key={user.id}
-                        className="cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-900"
-                        onClick={(e) => handleViewUser(user.id, e)}
-                      >
-                        <TableCell>
-                          <div className="flex items-center gap-3">
-                            <Avatar>
-                              <AvatarImage src={user.image || ""} />
-                              <AvatarFallback>
-                                {(user.name || user.email || "?")
-                                  .split(" ")
-                                  .map((n) => n[0])
-                                  .join("")
-                                  .toUpperCase()
-                                  .slice(0, 2)}
-                              </AvatarFallback>
-                            </Avatar>
-                            <div>
-                              <p className="font-medium flex items-center gap-1">
-                                {user.name || "Unnamed"}
-                                {user.onboardingCompleted && (
-                                  <CheckCircle className="h-3.5 w-3.5 text-blue-500" />
-                                )}
-                              </p>
-                              <p className="text-sm text-zinc-500">
-                                {user.email}
-                              </p>
-                            </div>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <Badge
-                            className={getRoleColor(user.role)}
-                            variant="secondary"
-                          >
-                            {user.role?.toLowerCase() || "unknown"}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
-                          <Badge
-                            className={getStatusColor(user.onboardingCompleted)}
-                            variant="secondary"
-                          >
-                            {getStatusText(user.onboardingCompleted)}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-sm text-zinc-500">
-                          {formatDate(user.createdAt)}
-                        </TableCell>
-                        <TableCell>
-                          <DropdownMenu>
-                            <DropdownMenuTrigger
-                              asChild
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8"
-                              >
-                                <MoreHorizontal className="h-4 w-4" />
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                              <DropdownMenuItem
-                                onClick={(e) => handleViewUser(user.id, e)}
-                              >
-                                <Eye className="h-4 w-4 mr-2" />
-                                View Details
-                              </DropdownMenuItem>
-                              <DropdownMenuItem>
-                                <Mail className="h-4 w-4 mr-2" />
-                                Send Email
-                              </DropdownMenuItem>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem>
-                                <Flag className="h-4 w-4 mr-2" />
-                                Flag Account
-                              </DropdownMenuItem>
-                              <DropdownMenuItem className="text-red-600">
-                                <Ban className="h-4 w-4 mr-2" />
-                                Suspend User
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                <ResponsiveTable<UserListItem>
+                  columns={columns}
+                  rows={users}
+                  getRowId={(u) => u.id}
+                  onRowClick={(u) => setSelectedUserId(u.id)}
+                  rowActions={renderRowActions}
+                  empty={emptyState}
+                />
               )}
             </CardContent>
           </Card>
@@ -432,7 +419,7 @@ export default function UserManagementPage() {
               >
                 Previous
               </Button>
-              <span className="flex items-center px-4 text-sm text-zinc-500">
+              <span className="flex items-center px-4 text-sm text-muted-foreground">
                 Page {page} of {totalPages}
               </span>
               <Button

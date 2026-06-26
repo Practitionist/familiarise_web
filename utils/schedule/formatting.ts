@@ -11,6 +11,7 @@ import {
   sortSlotsByTime,
 } from "@/utils/dateTimeUtils";
 import { dateToMinuteUtc } from "@/utils/slotAllocation/slotTimeUtils";
+import { resolveOvernightStatus } from "@/utils/schedule/overnight";
 import { isValidTimeRange } from "@/utils/timeSlotValidation";
 import { DayOfWeek } from "@prisma/client";
 import type { CustomSlot, SlotsType, WeeklySlot } from "./types";
@@ -21,16 +22,16 @@ import type { CustomSlot, SlotsType, WeeklySlot } from "./types";
 export interface WeeklySlotApiFormat {
   dayOfWeekforStartTimeInUTC: string;
   dayOfWeekforEndTimeInUTC: string;
-  slotStartTimeInUTC: string;
-  slotEndTimeInUTC: string;
+  startsAt: string;
+  endsAt: string;
 }
 
 /**
  * API format for custom (date-specific) slots
  */
 export interface CustomSlotApiFormat {
-  slotStartTimeInUTC: string;
-  slotEndTimeInUTC: string;
+  startsAt: string;
+  endsAt: string;
 }
 
 /**
@@ -171,10 +172,12 @@ function formatWeeklySlot(
 
   const baseDate = "1970-01-01";
   const nextDate = "1970-01-02";
-  // Slot is overnight if local times cross midnight OR if it was overnight in
-  // UTC but appears same-day after timezone conversion (isOvernightUTC flag).
-  const overnight =
-    isOvernight(slot.startTime, slot.endTime) || !!slot.isOvernightUTC;
+  // #503 item 2 — canonical resolver replaces the inline OR of two rules.
+  const { isOvernight: overnight } = resolveOvernightStatus({
+    startTime: slot.startTime,
+    endTime: slot.endTime,
+    isOvernightUTC: slot.isOvernightUTC,
+  });
 
   const startUTC = convertTimezoneToUtc(slot.startTime, baseDate, timezone);
   if (!startUTC) return [];
@@ -205,15 +208,18 @@ function formatWeeklySlot(
   }
 
   // Determine if actually overnight in UTC from the minutes
-  const isOvernightInUtc = startMin >= endMin;
+  const isOvernightInUtc = resolveOvernightStatus({
+    startTimeUtc: startMin,
+    endTimeUtc: endMin,
+  }).isOvernight;
 
   if (isOvernightInUtc) {
     return [
       {
         dayOfWeekforStartTimeInUTC: actualStartDay,
         dayOfWeekforEndTimeInUTC: getNextDayOfWeek(actualStartDay),
-        slotStartTimeInUTC: startUTC,
-        slotEndTimeInUTC: endUTC,
+        startsAt: startUTC,
+        endsAt: endUTC,
       },
     ];
   }
@@ -222,8 +228,8 @@ function formatWeeklySlot(
     {
       dayOfWeekforStartTimeInUTC: actualStartDay,
       dayOfWeekforEndTimeInUTC: actualStartDay,
-      slotStartTimeInUTC: startUTC,
-      slotEndTimeInUTC: endUTC,
+      startsAt: startUTC,
+      endsAt: endUTC,
     },
   ];
 }
@@ -263,8 +269,8 @@ function formatCustomSlot(
   }
 
   return {
-    slotStartTimeInUTC: startTimeUtc,
-    slotEndTimeInUTC: endTimeUtc,
+    startsAt: startTimeUtc,
+    endsAt: endTimeUtc,
   };
 }
 

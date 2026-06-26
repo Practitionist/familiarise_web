@@ -9,6 +9,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { alertDisputeDeadlines } from "@/scripts/disputes/alert-dispute-deadlines";
+import { CronLockHeldError } from "@/lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
@@ -23,10 +25,15 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     }
 
     console.log("🔔 Checking dispute deadlines via API...");
+    Sentry.logger.info("cron:alert-dispute-deadlines started");
 
     const result = await alertDisputeDeadlines();
 
     console.log("✅ Dispute deadline check completed:", {
+      urgentCount: result.urgentCount,
+      criticalCount: result.criticalCount,
+    });
+    Sentry.logger.info("cron:alert-dispute-deadlines finished", {
       urgentCount: result.urgentCount,
       criticalCount: result.criticalCount,
     });
@@ -36,6 +43,12 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
     return NextResponse.json(result, { status });
   } catch (error) {
+    // #476 — concurrent invocation (schedule overlap / manual re-run)
+    // skips with a 409 instead of double-running.
+    if (error instanceof CronLockHeldError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
+    Sentry.captureException(error, { tags: { subsystem: "cron", job: "alert-dispute-deadlines" } });
     console.error("Error checking dispute deadlines:", error);
     return NextResponse.json(
       {

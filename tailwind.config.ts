@@ -111,6 +111,42 @@ const config: Config = {
           ring: "hsl(var(--sidebar-ring))",
         },
       },
+      fontSize: {
+        // Fluid type scale — additive keys (text-fluid-*); defaults untouched
+        "fluid-xs": ["var(--fs-xs)", { lineHeight: "1.5" }],
+        "fluid-sm": ["var(--fs-sm)", { lineHeight: "1.5" }],
+        "fluid-base": ["var(--fs-base)", { lineHeight: "1.6" }],
+        "fluid-lg": ["var(--fs-lg)", { lineHeight: "1.5" }],
+        "fluid-xl": [
+          "var(--fs-xl)",
+          { lineHeight: "1.4", letterSpacing: "-0.01em" },
+        ],
+        "fluid-2xl": [
+          "var(--fs-2xl)",
+          { lineHeight: "1.3", letterSpacing: "-0.015em" },
+        ],
+        "fluid-3xl": [
+          "var(--fs-3xl)",
+          { lineHeight: "1.2", letterSpacing: "-0.02em" },
+        ],
+        "fluid-4xl": [
+          "var(--fs-4xl)",
+          { lineHeight: "1.1", letterSpacing: "-0.02em" },
+        ],
+        "fluid-5xl": [
+          "var(--fs-5xl)",
+          { lineHeight: "1.05", letterSpacing: "-0.025em" },
+        ],
+      },
+      boxShadow: {
+        // Dark-mode-aware elevation — additive keys (shadow-elevation-*)
+        "elevation-1":
+          "0 1px 2px -1px hsl(var(--shadow-color) / 0.08), 0 1px 3px hsl(var(--shadow-color) / 0.05)",
+        "elevation-2":
+          "0 2px 4px -2px hsl(var(--shadow-color) / 0.1), 0 4px 8px -2px hsl(var(--shadow-color) / 0.06)",
+        "elevation-3":
+          "0 8px 16px -4px hsl(var(--shadow-color) / 0.12), 0 16px 32px -8px hsl(var(--shadow-color) / 0.08)",
+      },
       keyframes: {
         "accordion-down": {
           from: {

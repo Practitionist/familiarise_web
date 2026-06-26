@@ -14,6 +14,8 @@ import {
 } from "../../scripts/cleanup/cleanup-auth-tokens";
 import fs from "fs";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
+import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 /**
  * Output results to GitHub Actions
@@ -46,6 +48,7 @@ function outputToGitHubActions(result: AuthTokenCleanupResult): void {
  */
 async function main(): Promise<void> {
   await abortIfMaintenance("cleanup-auth-tokens");
+  Sentry.logger.info("job:cleanup-auth-tokens started");
   console.log("🧹 Starting auth token cleanup job...");
   console.log(`Timestamp: ${new Date().toISOString()}`);
 
@@ -68,10 +71,24 @@ async function main(): Promise<void> {
 
     outputToGitHubActions(result);
 
+    Sentry.logger.info("job:cleanup-auth-tokens finished", {
+      verificationTokensDeleted: result.verificationTokensDeleted,
+      sessionsDeleted: result.sessionsDeleted,
+      passwordResetTokensCleared: result.passwordResetTokensCleared,
+      totalCleaned: result.totalCleaned,
+    });
+
     if (!result.success) {
       process.exit(1);
     }
   } catch (error) {
+    // #476 — lock held = another run is live; skip cleanly (exit 0).
+    if (error instanceof CronLockHeldError) {
+      Sentry.logger.info("job:cleanup-auth-tokens skipped — cron lock held");
+      console.log(`⏭️  ${error.message}`);
+      return;
+    }
+    Sentry.captureException(error, { tags: { subsystem: "jobs", job: "cleanup-auth-tokens" } });
     console.error("❌ Fatal error in auth token cleanup:", error);
     process.exit(1);
   } finally {

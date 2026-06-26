@@ -3,8 +3,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { SubscriptionPlanSchema } from "@/schemas/plans";
 import { findOrCreateTopics, transformTopicsToStrings } from "@/lib/topics";
 import { SlotCalculationService } from "@/utils/slotAllocation/SlotCalculationService";
+import { marketplaceVisibilityWhere } from "@/lib/api/plans/visibility";
 
 import { getSession } from "@/lib/auth-server";
+import * as Sentry from "@sentry/nextjs";
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
@@ -13,7 +15,11 @@ export async function GET(request: NextRequest) {
     const limit = parseInt(searchParams.get("limit") || "10");
     const skip = (page - 1) * limit;
 
-    const where = consultantId ? { consultantProfileId: consultantId } : {};
+    // #726 — public marketplace must not surface ORG_ONLY plans.
+    const where = {
+      ...(consultantId ? { consultantProfileId: consultantId } : {}),
+      ...marketplaceVisibilityWhere(),
+    };
 
     const [subscriptionPlans, total] = await Promise.all([
       prisma.subscriptionPlan.findMany({
@@ -48,6 +54,7 @@ export async function GET(request: NextRequest) {
     );
   } catch (error) {
     console.error("Error fetching subscription plans:", error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
     return NextResponse.json(
       { error: "An error occurred while fetching subscription plans" },
       { status: 500 },
@@ -194,6 +201,7 @@ export async function POST(request: NextRequest) {
     );
   } catch (error) {
     console.error("Error creating subscription plan:", error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
     return NextResponse.json(
       { error: "An error occurred while creating the subscription plan" },
       { status: 500 },

@@ -14,6 +14,8 @@ import {
 } from "../../scripts/appointments/auto-complete-appointments";
 import fs from "fs";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
+import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 /**
  * Output results to GitHub Actions
@@ -57,6 +59,7 @@ function outputToGitHubActions(result: AutoCompleteResult): void {
  */
 async function main(): Promise<void> {
   await abortIfMaintenance("auto-complete-appointments");
+  Sentry.logger.info("job:auto-complete-appointments started");
   console.log("⏰ Starting auto-complete appointments job...");
   console.log(`Timestamp: ${new Date().toISOString()}`);
 
@@ -77,10 +80,24 @@ async function main(): Promise<void> {
 
     outputToGitHubActions(result);
 
+    Sentry.logger.info("job:auto-complete-appointments finished", {
+      webinarsCompleted: result.webinarsCompleted,
+      classesCompleted: result.classesCompleted,
+      consultationsCompleted: result.consultationsCompleted,
+      subscriptionsCompleted: result.subscriptionsCompleted,
+    });
+
     if (!result.success) {
       process.exit(1);
     }
   } catch (error) {
+    // #476 — lock held = another run is live; skip cleanly (exit 0).
+    if (error instanceof CronLockHeldError) {
+      Sentry.logger.info("job:auto-complete-appointments skipped — lock held");
+      console.log(`⏭️  ${error.message}`);
+      return;
+    }
+    Sentry.captureException(error, { tags: { subsystem: "jobs", job: "auto-complete-appointments" } });
     console.error("❌ Fatal error in auto-complete appointments:", error);
     process.exit(1);
   } finally {

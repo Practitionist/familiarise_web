@@ -11,6 +11,8 @@
  *   logClassifiedError("Checkout", classified, error);
  */
 
+import * as Sentry from "@sentry/nextjs";
+
 // ============================================================================
 // Error Types — used by both server routes and frontend toast mapping
 // ============================================================================
@@ -23,6 +25,7 @@ export const ErrorTypes = {
   NOT_FOUND: "NOT_FOUND_ERROR",
   REFUND_BLOCKED: "REFUND_BLOCKED_ERROR",
   LOCK_CONTENTION: "LOCK_CONTENTION_ERROR",
+  UNSUPPORTED_CONFIG: "UNSUPPORTED_CONFIG_ERROR",
 
   // Infrastructure failures (unexpected — ops/dev needs to investigate)
   PAYMENT_CONFIG: "PAYMENT_CONFIG_ERROR",
@@ -96,8 +99,19 @@ export const BUSINESS_ERROR_PATTERNS: ReadonlyArray<{
   { pattern: "below the", errorType: ErrorTypes.AVAILABILITY },
   { pattern: "percentage value must be", errorType: ErrorTypes.AVAILABILITY },
 
+  // Org credit pool
+  { pattern: "insufficient credits", errorType: ErrorTypes.AVAILABILITY },
+
   // Lock contention (payout batches, etc.)
   { pattern: "already in progress", errorType: ErrorTypes.LOCK_CONTENTION },
+
+  // Config the schema understands but the runtime doesn't (e.g. PROJECT
+  // funding source reserved for v2 — checkout must reject rather than
+  // silently fall back to TAG_ONLY).
+  {
+    pattern: "funding source is not yet supported",
+    errorType: ErrorTypes.UNSUPPORTED_CONFIG,
+  },
 ] as const;
 
 // ============================================================================
@@ -183,7 +197,12 @@ export function classifyError(
         errorMessage: msg,
         errorType,
         isBusinessError: true,
-        httpStatus: errorType === ErrorTypes.LOCK_CONTENTION ? 409 : 400,
+        httpStatus:
+          errorType === ErrorTypes.LOCK_CONTENTION
+            ? 409
+            : errorType === ErrorTypes.UNSUPPORTED_CONFIG
+              ? 422
+              : 400,
       };
     }
   }
@@ -216,6 +235,7 @@ export function logClassifiedError(
   if (result.isBusinessError) {
     console.warn(`[${tag}] Business rule blocked: ${result.errorMessage}`);
   } else {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "payments" } });
     console.error(`[${tag}] Unexpected error:`, error);
   }
 }

@@ -3,7 +3,7 @@
 import { cn } from "@/utils/tailwind";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Skeleton } from "@/components/ui/skeleton";
-import Link from "next/link";
+import { NavLink } from "@/components/ui/NavLink";
 import { usePathname, useRouter } from "next/navigation";
 import {
   Home,
@@ -78,7 +78,7 @@ const iconMap: Record<string, typeof Home> = {
   gift: Gift,
 };
 
-export interface NavItem {
+interface NavItem {
   name: string;
   path: string;
   icon?: string;
@@ -88,6 +88,13 @@ export interface NavItem {
 export interface NavSection {
   title: string | null;
   items: NavItem[];
+}
+
+export interface OrgMembershipEntry {
+  organizationId: string;
+  organizationName: string;
+  organizationLogo: string | null;
+  role: string;
 }
 
 interface DashboardSidebarProps {
@@ -100,6 +107,8 @@ interface DashboardSidebarProps {
   isLoading?: boolean;
   bottomNavItems?: NavItem[];
   hideBottomActions?: boolean;
+  /** Org memberships for the "Teams & Orgs" section at the bottom of the sidebar. */
+  orgMemberships?: OrgMembershipEntry[];
 }
 
 export function DashboardSidebar({
@@ -159,44 +168,6 @@ export function DashboardSidebar({
         </div>
       </div>
 
-      {/* User Profile */}
-      <div className="border-b border-zinc-800/50 p-4">
-        {isLoading ? (
-          <div className="flex items-center gap-3">
-            <Skeleton className="h-12 w-12 rounded-full bg-zinc-800" />
-            <div className="space-y-2">
-              <Skeleton className="h-4 w-28 bg-zinc-800" />
-              <Skeleton className="h-3 w-20 bg-zinc-800" />
-            </div>
-          </div>
-        ) : (
-          <div className="flex items-center gap-3">
-            <Avatar className="h-12 w-12 ring-2 ring-zinc-700 ring-offset-2 ring-offset-zinc-950">
-              <AvatarImage
-                src={userImage || "/placeholder-user.jpg"}
-                alt={userName || ""}
-              />
-              <AvatarFallback className="bg-zinc-800 text-zinc-300">
-                {userName?.charAt(0) || "?"}
-              </AvatarFallback>
-            </Avatar>
-            <div className="flex-1 min-w-0">
-              <p className="font-medium truncate text-zinc-100">
-                {userName || "User"}
-              </p>
-              <span
-                className={cn(
-                  "inline-flex items-center px-2 py-0.5 rounded text-xs font-medium border",
-                  getRoleColor(),
-                )}
-              >
-                {userRole}
-              </span>
-            </div>
-          </div>
-        )}
-      </div>
-
       {/* Navigation */}
       <nav className="flex-1 overflow-y-auto scrollbar-hide p-3">
         {/* Render sectioned navigation if navSections is provided */}
@@ -217,7 +188,7 @@ export function DashboardSidebar({
 
                     return (
                       <li key={item.path}>
-                        <Link
+                        <NavLink
                           href={`${basePath}/${item.path}`}
                           className={cn(
                             "group flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-150",
@@ -252,7 +223,7 @@ export function DashboardSidebar({
                                 : "opacity-0 group-hover:opacity-50",
                             )}
                           />
-                        </Link>
+                        </NavLink>
                       </li>
                     );
                   })}
@@ -270,7 +241,7 @@ export function DashboardSidebar({
 
               return (
                 <li key={item.path}>
-                  <Link
+                  <NavLink
                     href={`${basePath}/${item.path}`}
                     className={cn(
                       "group flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-150",
@@ -305,7 +276,7 @@ export function DashboardSidebar({
                           : "opacity-0 group-hover:opacity-50",
                       )}
                     />
-                  </Link>
+                  </NavLink>
                 </li>
               );
             })}
@@ -313,7 +284,44 @@ export function DashboardSidebar({
         )}
       </nav>
 
-      {/* Bottom Section removed: Back to Home, Settings, Help, Sign Out */}
+      {/* User identity — boxed, at the bottom-left (mirrors the org sidebar).
+          Org switching/creation lives in the org context switcher, not here. */}
+      <div className="border-t border-zinc-800/50 p-3">
+        {isLoading ? (
+          <div className="flex items-center gap-3 rounded-lg border border-zinc-800 bg-zinc-900/60 p-3">
+            <Skeleton className="h-10 w-10 rounded-full bg-zinc-800" />
+            <div className="flex-1 space-y-2">
+              <Skeleton className="h-4 w-28 bg-zinc-800" />
+              <Skeleton className="h-3 w-20 bg-zinc-800" />
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center gap-3 rounded-lg border border-zinc-800 bg-zinc-900/60 p-3">
+            <Avatar className="h-10 w-10 ring-2 ring-zinc-800 ring-offset-1 ring-offset-zinc-950">
+              <AvatarImage
+                src={userImage || "/placeholder-user.jpg"}
+                alt={userName || ""}
+              />
+              <AvatarFallback className="bg-zinc-800 text-zinc-300">
+                {userName?.charAt(0) || "?"}
+              </AvatarFallback>
+            </Avatar>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-medium text-zinc-100">
+                {userName || "User"}
+              </p>
+              <span
+                className={cn(
+                  "mt-0.5 inline-flex items-center rounded border px-2 py-0.5 text-xs font-medium",
+                  getRoleColor(),
+                )}
+              >
+                {userRole}
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

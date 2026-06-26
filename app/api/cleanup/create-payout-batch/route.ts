@@ -9,6 +9,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createPayoutBatch } from "@/lib/payments/payouts";
+import * as Sentry from "@sentry/nextjs";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
@@ -22,14 +23,17 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    Sentry.logger.info("cron:create-payout-batch started");
     console.log("🔄 Starting payout batch creation via API...");
 
     const batchId = await createPayoutBatch();
 
     console.log(`✅ Payout batch creation completed: ${batchId}`);
+    Sentry.logger.info("cron:create-payout-batch finished", { batchId });
 
     return NextResponse.json({ success: true, batchId });
   } catch (error) {
+    Sentry.captureException(error, { tags: { subsystem: "cron", job: "create-payout-batch" } });
     console.error("Error in payout batch creation:", error);
     return NextResponse.json(
       {

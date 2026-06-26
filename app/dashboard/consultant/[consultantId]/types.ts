@@ -1,3 +1,4 @@
+import type React from "react";
 import { TConsultantProfile } from "@/types/consultant";
 import { TAppointment } from "@/types/appointment";
 
@@ -21,7 +22,7 @@ export interface IDocument {
     | "NEEDS_REVISION";
   reviewNotes: string | null;
   reviewedAt: Date | null;
-  reviewedBy?: string | null;
+  reviewedById?: string | null;
   uploadedAt: Date;
   // Upload role - who uploaded this document
   uploadedByRole: DocumentUploadRole;
@@ -170,6 +171,10 @@ export interface AppointmentsTabProps {
   onUpdate?: () => void;
   unscheduledClasses?: UnscheduledClass[];
   unscheduledWebinars?: UnscheduledWebinar[];
+  /** Optional right-aligned element rendered next to the "All Appointments"
+   *  header — used by the page wrapper to mount the OrgContextFilter
+   *  dropdown inline instead of stacking it above the card. */
+  headerSlot?: React.ReactNode;
 }
 
 export interface RequestsTabProps {
@@ -269,15 +274,6 @@ export const getBadgeStyle = (status: string): string => {
   if (status.startsWith("In ") && status.includes("week"))
     return "bg-green-500 text-white";
   return BADGE_STYLES.default;
-};
-
-// Constants for time calculations
-export const TIME_CONSTANTS = {
-  MINUTES_IN_HOUR: 60,
-  HOURS_IN_DAY: 24,
-  DAYS_IN_WEEK: 7,
-  DAYS_IN_MONTH: 30.44, // Average days in a month
-  DAYS_IN_YEAR: 365.25, // Account for leap years
 };
 
 // Enum for section names

@@ -14,6 +14,8 @@ import {
 } from "../../scripts/appointments/reconcile-slot-availability";
 import fs from "fs";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
+import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 /**
  * Output results to GitHub Actions
@@ -56,6 +58,7 @@ function outputToGitHubActions(result: SlotReconciliationResult): void {
  */
 async function main(): Promise<void> {
   await abortIfMaintenance("reconcile-slot-availability");
+  Sentry.logger.info("job:reconcile-slot-availability started");
   console.log("🔄 Starting slot availability reconciliation job...");
   console.log(`Timestamp: ${new Date().toISOString()}`);
 
@@ -94,6 +97,11 @@ async function main(): Promise<void> {
 
     outputToGitHubActions(result);
 
+    Sentry.logger.info("job:reconcile-slot-availability finished", {
+      tentativeFlagsCleared: result.tentativeFlagsCleared,
+      doubleBookingsDetected: result.doubleBookingsDetected,
+    });
+
     // Exit with error if double bookings found (to trigger alerts)
     if (result.doubleBookingsDetected > 0) {
       process.exit(1);
@@ -103,6 +111,13 @@ async function main(): Promise<void> {
       process.exit(1);
     }
   } catch (error) {
+    // #476 — lock held = another run is live; skip cleanly (exit 0).
+    if (error instanceof CronLockHeldError) {
+      Sentry.logger.info("job:reconcile-slot-availability skipped — lock held");
+      console.log(`⏭️  ${error.message}`);
+      return;
+    }
+    Sentry.captureException(error, { tags: { subsystem: "jobs", job: "reconcile-slot-availability" } });
     console.error("❌ Fatal error in slot reconciliation:", error);
     process.exit(1);
   } finally {

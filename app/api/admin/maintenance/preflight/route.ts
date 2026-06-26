@@ -31,7 +31,7 @@ export async function GET() {
         isTentative: false,
       },
     }),
-    prisma.payout.count({ where: { status: "PENDING" } }),
+    prisma.consultantPayout.count({ where: { status: "PENDING" } }),
     prisma.dispute.count({
       where: {
         status: { in: ["NEEDS_RESPONSE", "WARNING_NEEDS_RESPONSE"] },

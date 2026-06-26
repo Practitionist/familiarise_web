@@ -12,7 +12,7 @@ import type {
  * removal can dispatch off `kind` without parsing — topic ids that contain
  * hyphens (or any other separator) just work.
  */
-export type ProgramChipKey =
+type ProgramChipKey =
   | { kind: "topic"; id: string }
   | { kind: "language" }
   | { kind: "price" }

@@ -10,6 +10,7 @@ import { notifySupportTicketUpdate } from "@/lib/novu";
 import { UpdateSupportTicketSchema } from "@/schemas/support";
 
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import * as Sentry from "@sentry/nextjs";
 interface RouteParams {
   params: Promise<{ ticketId: string }>;
 }
@@ -138,7 +139,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
             where: { id: ticket.refundId },
             select: {
               id: true,
-              amount: true,
+              amountPaise: true,
               currency: true,
               status: true,
               reason: true,
@@ -156,6 +157,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       linkedRefund,
     });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "staff" } });
     console.error("Error fetching support ticket:", error);
     return NextResponse.json(
       { error: "Failed to fetch support ticket" },
@@ -254,6 +256,7 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json(updatedTicket);
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "staff" } });
     console.error("Error updating support ticket:", error);
     return NextResponse.json(
       { error: "Failed to update support ticket" },

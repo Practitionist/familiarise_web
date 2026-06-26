@@ -1,14 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { RequestStatus } from "@prisma/client";
+import { AppointmentStatus } from "@prisma/client";
 import { lockSlotBooking, unlockSlotBooking } from "@/utils/appointmentlock";
 import { SlotLockError } from "@/utils/errors/SlotLockError";
 import { SlotValidationService } from "@/utils/slotAllocation/SlotValidationService";
 import { notifyNewBookingRequest } from "@/lib/novu";
 import { RequestForApprovalSchema } from "@/schemas/slots";
 import { requestApprovalLimiter, applyRateLimit } from "@/lib/rate-limit";
+import { ensureConsulteeProfile } from "@/lib/profiles/ensure-consultee-profile";
 
 import { getSession } from "@/lib/auth-server";
+import * as Sentry from "@sentry/nextjs";
 export async function POST(req: NextRequest) {
   try {
     const session = await getSession();
@@ -34,17 +36,19 @@ export async function POST(req: NextRequest) {
     }
     const {
       consultantProfileId,
-      slotStartTimeInUTC,
-      slotEndTimeInUTC,
+      startsAt,
+      endsAt,
       slotOfAvailabilityWeeklyId,
       slotOfAvailabilityCustomId,
       consultationPlanId,
     } = parseResult.data;
 
-    const startTime = new Date(slotStartTimeInUTC);
-    const endTime = new Date(slotEndTimeInUTC);
+    const startTime = new Date(startsAt);
+    const endTime = new Date(endsAt);
 
-    // Get the consultee profile
+    // Lazy-create ConsulteeProfile on first consumer action — org-workspace
+    // operators and consultants who book approvals will otherwise 404 here.
+    await ensureConsulteeProfile(prisma, session.user.id);
     const consulteeProfile = await prisma.consulteeProfile.findUnique({
       where: { userId: session.user.id },
       include: { user: true },
@@ -90,13 +94,13 @@ export async function POST(req: NextRequest) {
     try {
       // ACQUIRE LOCK for this specific slot
       // Use default 60s TTL (15s was too short for slow database operations)
-      lock = await lockSlotBooking(consultantProfileId, slotStartTimeInUTC);
+      lock = await lockSlotBooking(consultantProfileId, startsAt);
 
       console.log(
         JSON.stringify({
           event: "slot_booking_lock_acquired",
           consultant: consultantProfileId,
-          slot: slotStartTimeInUTC,
+          slot: startsAt,
           user: session.user.id,
           timestamp: new Date().toISOString(),
         }),
@@ -132,7 +136,7 @@ export async function POST(req: NextRequest) {
           JSON.stringify({
             event: "slot_booking_validation_failed",
             consultant: consultantProfileId,
-            slot: slotStartTimeInUTC,
+            slot: startsAt,
             user: session.user.id,
             errors: validation.errors,
             timestamp: new Date().toISOString(),
@@ -152,7 +156,7 @@ export async function POST(req: NextRequest) {
         JSON.stringify({
           event: "slot_booking_validation_passed",
           consultant: consultantProfileId,
-          slot: slotStartTimeInUTC,
+          slot: startsAt,
           user: session.user.id,
           timestamp: new Date().toISOString(),
         }),
@@ -165,6 +169,10 @@ export async function POST(req: NextRequest) {
         startsAt: chunkStart,
         endsAt: new Date(chunkStart.getTime() + SLOT_DURATION_MS),
         isTentative: true, // Mark as tentative since it's pending approval
+        // #440 — the overlap-guard column must be set at CREATE time even on
+        // tentative rows: approval/webhook confirm flips isTentative via
+        // updateMany, so whatever is on the row rides into confirmed state.
+        consultantProfileId,
         user: {
           connect: [
             { id: session.user.id }, // Consultee
@@ -177,7 +185,7 @@ export async function POST(req: NextRequest) {
         data: {
           consultationPlanId: consultationPlanId,
           requestedById: consulteeProfile.id,
-          requestStatus: RequestStatus.PENDING,
+          status: AppointmentStatus.PENDING,
           requestNotes: requestNotes,
           appointment: {
             create: {
@@ -216,7 +224,7 @@ export async function POST(req: NextRequest) {
           event: "slot_booking_success",
           consultationId: consultation.id,
           consultant: consultantProfileId,
-          slot: slotStartTimeInUTC,
+          slot: startsAt,
           user: session.user.id,
           timestamp: new Date().toISOString(),
         }),
@@ -246,7 +254,7 @@ export async function POST(req: NextRequest) {
         JSON.stringify({
           event: "slot_booking_error",
           consultant: consultantProfileId,
-          slot: slotStartTimeInUTC,
+          slot: startsAt,
           user: session.user.id,
           error:
             lockError instanceof Error ? lockError.message : "Unknown error",
@@ -265,6 +273,7 @@ export async function POST(req: NextRequest) {
         );
       }
 
+      Sentry.captureException(lockError instanceof Error ? lockError : new Error(String(lockError)), { tags: { subsystem: "scheduling" } });
       throw lockError; // Re-throw other errors for general error handler
     } finally {
       // ALWAYS release lock (even on error)
@@ -274,7 +283,7 @@ export async function POST(req: NextRequest) {
           JSON.stringify({
             event: "slot_booking_lock_released",
             consultant: consultantProfileId,
-            slot: slotStartTimeInUTC,
+            slot: startsAt,
             user: session.user.id,
             timestamp: new Date().toISOString(),
           }),
@@ -283,6 +292,7 @@ export async function POST(req: NextRequest) {
     }
   } catch (error) {
     console.error("Error creating approval request:", error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "scheduling" } });
     return NextResponse.json(
       { error: "An error occurred while creating the approval request" },
       { status: 500 },

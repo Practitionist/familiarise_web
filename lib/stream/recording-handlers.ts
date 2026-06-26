@@ -275,7 +275,9 @@ export async function handleRecordingReady(
       return;
     }
 
-    // Create recording record
+    // Create recording record. `organizationId` mirrors the parent
+    // appointment's org tag so the org dashboard's recording library
+    // can scope to "events I host" without joining through Appointment.
     const recording = await prisma.recording.create({
       data: {
         title,
@@ -288,6 +290,7 @@ export async function handleRecordingReady(
         status: "READY",
         streamUrlExpiresAt,
         meetingSessionId: meetingSession.id,
+        organizationId: appointment?.organizationId ?? null,
       },
     });
 
@@ -416,7 +419,9 @@ export async function handleRecordingFailed(
       },
     });
 
-    // Create a failed recording record for tracking
+    // Create a failed recording record for tracking. Stamp the parent
+    // appointment's `organizationId` so the failure shows up under the
+    // host org's dashboard rather than orphaning under "personal".
     await prisma.recording.create({
       data: {
         title: "Recording Failed",
@@ -426,6 +431,8 @@ export async function handleRecordingFailed(
         streamCallId,
         status: RecordingStatus.FAILED,
         meetingSessionId: meetingSession.id,
+        organizationId:
+          meetingSession.slotOfAppointment.appointment?.organizationId ?? null,
       },
     });
 

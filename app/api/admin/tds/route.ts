@@ -3,9 +3,11 @@
  * View TDS deduction summaries and manage Form 26Q filing status
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireAdminAuth, requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { ENABLE_TDS_ADMIN_VIEW } from "@/lib/feature-flags";
 import {
   getTDSSummary,
   getConsultantTDSBreakdown,
@@ -13,10 +15,23 @@ import {
   getIndianFinancialYear,
 } from "@/lib/payments/tax/tds-service";
 
+// 404 when the flag is off, mirroring "endpoint doesn't exist" semantics
+// rather than 403 — the Form 26Q filing surface is intentionally hidden
+// pre-launch. Flip ENABLE_TDS_ADMIN_VIEW=true when finance is ready to
+// operate the quarterly filing flow. See lib/feature-flags.ts.
+function notFoundIfGated() {
+  if (!ENABLE_TDS_ADMIN_VIEW) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+  return null;
+}
+
 /**
  * GET /api/admin/tds?fy=2026-27&view=summary|consultants
  */
 export async function GET(req: NextRequest) {
+  const gated = notFoundIfGated();
+  if (gated) return gated;
   try {
     const auth = await requirePrivilegedAuth();
     if (auth.error) return auth.error;
@@ -56,7 +71,8 @@ export async function GET(req: NextRequest) {
         financialYear: r.financialYear,
         quarter: r.quarter,
         tdsDeducted: r.tdsDeducted,
-        tdsRate: r.tdsRate,
+        // 26Q wants a percent column; storage is bps (#781 §C).
+        tdsRatePercent: r.tdsRateBps / 100,
         cumulativeAmountCredited: r.cumulativeAmountCredited,
         isReversal: r.isReversal,
         consultantPAN: r.consultantProfile.taxInfo?.panEncrypted
@@ -71,6 +87,7 @@ export async function GET(req: NextRequest) {
     const summary = await getTDSSummary(fy);
     return NextResponse.json(summary);
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
     console.error("Admin TDS API error:", error);
     return NextResponse.json(
       { error: "Failed to fetch TDS data" },
@@ -90,6 +107,8 @@ export async function GET(req: NextRequest) {
  * and the `view=form26q` GET above which both expose decrypted PAN data.
  */
 export async function POST(req: NextRequest) {
+  const gated = notFoundIfGated();
+  if (gated) return gated;
   try {
     const auth = await requireAdminAuth();
     if (auth.error) return auth.error;
@@ -124,6 +143,7 @@ export async function POST(req: NextRequest) {
       recordsUpdated: result.count,
     });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
     console.error("Admin TDS filing error:", error);
     return NextResponse.json(
       { error: "Failed to update TDS filing status" },

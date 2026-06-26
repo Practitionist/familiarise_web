@@ -9,8 +9,8 @@ import {
   FaInstagram,
   FaYoutube,
   FaLinkedin,
-  FaTwitter,
-} from "react-icons/fa";
+  FaXTwitter,
+} from "react-icons/fa6";
 import { ArrowUpRight, MessageSquare } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -49,6 +49,7 @@ const FOOTER_LINKS: Record<string, FooterLink[]> = {
   resources: [
     { label: "How It Works", href: "/#how-it-works" },
     { label: "Become an Expert", href: "/form/onboarding" },
+    { label: "Explore Organisations", href: "/explore/enterprise/organisations" },
   ],
   legal: [
     { label: "Terms of Service", href: "/terms" },
@@ -59,9 +60,9 @@ const FOOTER_LINKS: Record<string, FooterLink[]> = {
 
 const SOCIAL_LINKS = [
   {
-    icon: FaTwitter,
+    icon: FaXTwitter,
     href: "https://twitter.com/familiarise",
-    label: "Twitter",
+    label: "X",
   },
   {
     icon: FaLinkedin,
@@ -148,7 +149,7 @@ const Footer: React.FC = () => {
               <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-zinc-700 to-zinc-900 flex items-center justify-center mx-auto mb-6 shadow-lg">
                 <MessageSquare className="w-8 h-8 text-white" />
               </div>
-              <h2 className="text-3xl md:text-4xl lg:text-5xl font-bold text-white mb-4">
+              <h2 className="text-fluid-5xl font-bold tracking-tight text-white mb-4">
                 Stay in the <span className="silver-text">loop</span>
               </h2>
               <p className="text-lg text-zinc-500 mb-8">

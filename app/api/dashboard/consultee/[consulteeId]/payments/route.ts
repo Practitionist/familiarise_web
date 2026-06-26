@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import {
@@ -5,6 +6,7 @@ import {
   isPrivileged,
   forbiddenResponse,
 } from "@/lib/auth-helpers";
+import { resolveOrgScope } from "@/lib/api/scope/parse";
 
 export async function GET(
   request: Request,
@@ -16,6 +18,7 @@ export async function GET(
 
   try {
     const { consulteeId } = await params;
+    const { searchParams } = new URL(request.url);
 
     if (
       !isPrivileged(session.user.role) &&
@@ -45,10 +48,37 @@ export async function GET(
 
     const userId = consulteeProfile.userId;
 
+    // #674 org-scope filter. Payment.organizationId is populated by the
+    // backfill so an Acme + Zeta consultee's payment history correctly
+    // splits per org context. Personal scope = pre-org-tagging history.
+    const callerMemberships = await prisma.membership.findMany({
+      where: { userId: session.user.id, status: "ACTIVE" },
+      select: { organizationId: true, status: true },
+    });
+    const scopeResolution = resolveOrgScope({
+      raw: searchParams.get("orgScope"),
+      memberships: callerMemberships,
+      userRole: session.user.role,
+      // Self-scoped consultee endpoint.
+      allowAllForOwner: true,
+    });
+    if (!scopeResolution.ok) {
+      return NextResponse.json(
+        { error: scopeResolution.message, code: scopeResolution.code },
+        { status: scopeResolution.status },
+      );
+    }
+    const orgFilter =
+      scopeResolution.scope.kind === "personal"
+        ? { organizationId: null }
+        : scopeResolution.scope.kind === "org"
+          ? { organizationId: scopeResolution.scope.orgId }
+          : {};
+
     const [payments, invoices, credits, creditUsages] = await Promise.all([
-      // All payments for this user
+      // All payments for this user, scoped to the selected org context
       prisma.payment.findMany({
-        where: { userId },
+        where: { userId, ...orgFilter },
         include: {
           appointment: {
             select: {
@@ -86,23 +116,12 @@ export async function GET(
         orderBy: { createdAt: "desc" },
       }),
 
-      // Invoices for this user's payments
-      prisma.invoice.findMany({
-        where: {
-          payment: { userId },
-        },
-        include: {
-          payment: {
-            select: {
-              id: true,
-              amount: true,
-              currency: true,
-              paymentStatus: true,
-            },
-          },
-        },
-        orderBy: { createdAt: "desc" },
-      }),
+      // Personal-consultee per-Payment invoice surface removed in v0
+      // lockdown (#768). UI now shows OrganizationInvoice rows for
+      // org-funded paths only; PERSONAL consultees can request a
+      // receipt from support until v1.1 re-introduces a per-Payment
+      // invoice flow. Empty array keeps the response shape stable.
+      Promise.resolve([] as const),
 
       // Referral credits
       prisma.referralCredit.findMany({
@@ -149,6 +168,10 @@ export async function GET(
         paymentGateway: p.paymentGateway,
         appointmentType: apt?.appointmentType || null,
         planTitle,
+        // Org-funding marker — drives the "Sponsored · <Org>" badge on
+        // the consultee payments table row. Same convention as the
+        // appointments + home surfaces. Populated by the #674 backfill.
+        organizationId: p.organizationId,
         discount: p.discountCode
           ? {
               code: p.discountCode.code,
@@ -185,6 +208,7 @@ export async function GET(
       success: true,
     });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "dashboard" } });
     console.error("Error fetching consultee payments:", error);
     return NextResponse.json(
       { error: "Failed to fetch payments" },

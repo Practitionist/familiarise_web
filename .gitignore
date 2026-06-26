@@ -45,7 +45,7 @@ migrations/
 
 # Screenshots and feedback (large binaries / local notes)
 highlight-reel-screenshots/
-feedback/
+/feedback/
 
 # dependencies
 /node_modules
@@ -92,3 +92,9 @@ node-payment-main/
 # Local Netlify folder
 .netlify
 *.png
+
+# scratch dir for agent/test scripts — never commit
+/temp/
+
+# Sentry Config File
+.env.sentry-build-plugin

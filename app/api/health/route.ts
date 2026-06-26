@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 
 import { getMaintenanceState } from "@/lib/maintenance";
@@ -73,12 +74,17 @@ export async function GET(request: Request) {
   try {
     let timeoutId: ReturnType<typeof setTimeout>;
     await Promise.race([
-      prisma.$queryRaw`SELECT 1`.finally(() => clearTimeout(timeoutId)),
+      // ORM connectivity probe (no raw SQL) — a cheap LIMIT 1 read proves the
+      // connection is alive; null (empty table) still means "connected".
+      prisma.user
+        .findFirst({ select: { id: true } })
+        .finally(() => clearTimeout(timeoutId)),
       new Promise((_, reject) => {
         timeoutId = setTimeout(() => reject(new Error("DB timeout")), 5000);
       }),
     ]);
-  } catch {
+  } catch (err) {
+    Sentry.logger.warn("DB health probe failed", { tags: { subsystem: "api" }, extra: { message: err instanceof Error ? err.message : String(err) } });
     database = "unreachable";
   }
 

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { Prisma } from "@prisma/client";
+import { Prisma, type OrgPlanVisibility } from "@prisma/client";
+import { MARKETPLACE_VISIBILITY } from "@/lib/api/plans/visibility";
 
 export interface PlanFilterParams {
   consultantId: string | null;
@@ -58,6 +59,7 @@ export interface PlanWhereClause {
   title?: { contains: string; mode: "insensitive" };
   topics?: { some: { id: { in: string[] } } };
   consultantProfile?: { domainId: string };
+  visibility?: { in: OrgPlanVisibility[] };
 }
 
 /**
@@ -68,7 +70,13 @@ export interface PlanWhereClause {
 export function buildPlanWhereClause(
   filters: PlanFilterParams,
 ): PlanWhereClause {
-  const where: PlanWhereClause = {};
+  // #726 — public marketplace must not surface ORG_ONLY plans. The filter
+  // is applied unconditionally here because every caller of this helper
+  // is a public surface; org-internal catalog endpoints have their own
+  // where-builders.
+  const where: PlanWhereClause = {
+    visibility: { in: MARKETPLACE_VISIBILITY },
+  };
 
   if (filters.consultantId) {
     where.consultantProfileId = filters.consultantId;

@@ -70,13 +70,13 @@ function makeParams(appointmentId: string) {
 const FUTURE_DATE = new Date(Date.now() + 48 * 60 * 60 * 1000);
 const NEAR_DATE = new Date(Date.now() + 12 * 60 * 60 * 1000);
 
-function makeSlot(id: string, startsAt: Date) {
+function makeSlot(id: string, startsAt: Date, appointmentId = "apt-1") {
   return {
     id,
     startsAt,
     endsAt: new Date(startsAt.getTime() + 30 * 60 * 1000),
     isTentative: false,
-    appointmentId: "apt-1",
+    appointmentId,
     createdAt: new Date(),
   };
 }
@@ -146,10 +146,26 @@ function makeMockTx(appointmentData: any) {
       findMany: jest.fn().mockResolvedValue([]),
       delete: jest.fn(),
     },
-    consultation: { update: jest.fn() },
-    subscription: { update: jest.fn() },
-    webinar: { update: jest.fn() },
-    class: { update: jest.fn() },
+    consultation: {
+      update: jest.fn(),
+      // B2 — the cancel/reschedule CAS guards use updateMany.
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
+    subscription: {
+      update: jest.fn(),
+      // B2 — the cancel/reschedule CAS guards use updateMany.
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
+    webinar: {
+      update: jest.fn(),
+      // B2 — the cancel/reschedule CAS guards use updateMany.
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
+    class: {
+      update: jest.fn(),
+      // B2 — the cancel/reschedule CAS guards use updateMany.
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
     slotOfAppointment: { updateMany: jest.fn(), deleteMany: jest.fn() },
   };
 }
@@ -486,7 +502,9 @@ describe("Reschedule — Response shape", () => {
     expect(body.slotsAffected).toBe(1);
   });
 
-  it("should return multiple_sessions for multiple slotIds in subscription", async () => {
+  // #448 — a one-hour session is 2 × 30-min slots of the SAME appointment, so
+  // rescheduling it is ONE session (individual_session), not multiple_sessions.
+  it("should return individual_session for a one-hour (2-slot) session — #448", async () => {
     const twoSlots = [
       makeSlot("slot-1", FUTURE_DATE),
       makeSlot("slot-2", new Date(FUTURE_DATE.getTime() + 30 * 60 * 1000)),
@@ -506,7 +524,36 @@ describe("Reschedule — Response shape", () => {
     const res = await rescheduleHandler(req, makeParams("apt-1"));
     const body = await res.json();
 
+    expect(body.rescheduleType).toBe("individual_session");
+    expect(body.sessionsAffected).toBe(1);
+    expect(body.slotsAffected).toBe(2);
+  });
+
+  it("should return multiple_sessions when slots span multiple appointments", async () => {
+    const slotA = makeSlot("slot-1", FUTURE_DATE, "apt-1");
+    const slotB = makeSlot(
+      "slot-2",
+      new Date(FUTURE_DATE.getTime() + 24 * 60 * 60 * 1000),
+      "apt-2",
+    );
+    const appointment = makeSubscriptionAppointment([slotA]);
+    const mockTx = makeMockTx(appointment);
+    mockTx.appointment.findMany.mockResolvedValueOnce([
+      { id: "apt-1", slotsOfAppointment: [slotA] },
+      { id: "apt-2", slotsOfAppointment: [slotB] },
+    ]);
+    (prisma.$transaction as jest.Mock).mockImplementation(
+      async (callback: any) => callback(mockTx),
+    );
+
+    const req = makeRequest("apt-1", "SUBSCRIPTION", {
+      slotIds: ["slot-1", "slot-2"],
+    });
+    const res = await rescheduleHandler(req, makeParams("apt-1"));
+    const body = await res.json();
+
     expect(body.rescheduleType).toBe("multiple_sessions");
+    expect(body.sessionsAffected).toBe(2);
     expect(body.slotsAffected).toBe(2);
   });
 

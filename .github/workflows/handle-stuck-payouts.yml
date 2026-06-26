@@ -3,7 +3,7 @@ name: Handle Stuck Payouts
 on:
   schedule:
     # Run every 4 hours
-    - cron: "0 */4 * * *"
+    - cron: "52 */4 * * *"
   workflow_dispatch: # Allow manual triggering
 
 jobs:
@@ -15,11 +15,18 @@ jobs:
       # Database connection (required for Prisma)
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       DIRECT_URL: ${{ secrets.DIRECT_URL }}
+      # #476 — fail-closed cron lock: without these the job refuses to run.
+      UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
+      UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
 
       # Payment gateway credentials for querying payout status
       STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
       RAZORPAY_KEY_ID: ${{ secrets.RAZORPAY_KEY_ID }}
       RAZORPAY_KEY_SECRET: ${{ secrets.RAZORPAY_KEY_SECRET }}
+      # #850 trap — the Razorpay payouts client reads RAZORPAYX_KEY_SECRET ||
+      # RAZORPAY_SECRET, never RAZORPAY_KEY_SECRET; without this mapping the
+      # job-level credential gate passes while the client gets an empty secret.
+      RAZORPAY_SECRET: ${{ secrets.RAZORPAY_KEY_SECRET }}
 
     steps:
       - name: Checkout code
@@ -42,6 +49,6 @@ jobs:
 
       - name: Notify on failure
         if: failure()
-        run: |
-          echo "Stuck payouts handler failed"
-          # Add notification logic here (Slack, email, etc.)
+        env:
+          SLACK_OPS_WEBHOOK_URL: ${{ secrets.SLACK_OPS_WEBHOOK_URL }}
+        run: bash scripts/ci/notify-ops-failure.sh "handle-stuck-payouts"

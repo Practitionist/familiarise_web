@@ -18,6 +18,7 @@ import {
   TooltipTrigger,
 } from "../ui/tooltip";
 import { getChannelDisplayInfo } from "./utils/channelUtils";
+import { useOrgScope } from "@/hooks/useOrgScope";
 
 // Custom channel item component for the sidebar - memoized for performance
 const ChannelItem = memo(
@@ -148,17 +149,46 @@ ChannelItem.displayName = "ChannelItem";
 export const ChatSidebar = () => {
   const { client, setActiveChannel } = useChatContext();
   const userRole = client?.user?.role as string | undefined;
+  const { scope } = useOrgScope();
   const [teamChannels, setTeamChannels] = useState<Channel[]>([]);
   const [directMessages, setDirectMessages] = useState<Channel[]>([]);
   const [activeChannelId, setActiveChannelId] = useState<string | null>(null);
+  // #248: mirror activeChannelId into a ref so handleChannelDeleted can read the
+  // current selection WITHOUT depending on the state. Without this, every
+  // channel selection changed handleChannelDeleted's identity, which re-ran the
+  // event-listener effect and detached/re-attached the Stream listener on each
+  // click. The listener effect now depends only on `client`.
+  const activeChannelIdRef = useRef<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const initialSelectionDoneRef = useRef(false);
+  // #248 dedupe: guard against overlapping/duplicate channel fetches. The
+  // sidebar effect used to re-run (and refetch) on every channel selection and
+  // on useCallback identity churn, firing the queryChannels storm. We track the
+  // *key* (client+scope) currently in flight, not just a boolean: skipping only
+  // the SAME key means an org-scope switch DURING an in-flight fetch is not
+  // silently dropped (the prior bug left the new scope marked "fetched" while
+  // showing the old scope's data).
+  const inFlightFetchKeyRef = useRef<string | null>(null);
+  // Tracks the client+scope we've SUCCESSFULLY fetched for, so the initial-fetch
+  // effect is a no-op on unrelated re-renders. Recorded only after a request
+  // succeeds (not when a fetch is skipped) so a skipped/failed fetch never
+  // marks a scope as done. Refetch still happens on a genuine client/scope change.
+  const fetchedKeyRef = useRef<string | null>(null);
 
   // Pagination state
   const [hasMoreTeamChannels, setHasMoreTeamChannels] = useState(true);
   const [hasMoreDMChannels, setHasMoreDMChannels] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
+
+  // Stable key for the current (client + org-scope) pair. Both the in-flight
+  // guard and the "already fetched" record key off this so a scope switch is a
+  // genuinely different key (and thus never skipped against an unrelated fetch).
+  const computeFetchKey = useCallback((): string | null => {
+    if (!client?.userID) return null;
+    const scopeKey = scope.kind === "org" ? `org:${scope.orgId}` : scope.kind;
+    return `${client.userID}::${scopeKey}`;
+  }, [client, scope]);
 
   // Function to fetch channels initially and on significant changes
   const fetchChannels = useCallback(async () => {
@@ -167,6 +197,16 @@ export const ChatSidebar = () => {
       // Don't set loading to false here, wait for client
       return;
     }
+
+    const fetchKey = computeFetchKey();
+
+    // #248 dedupe: skip only if the SAME key is already in flight. A different
+    // key (e.g. an org-scope switch mid-fetch) must proceed so the new scope
+    // actually loads instead of inheriting the in-flight scope's result.
+    if (inFlightFetchKeyRef.current === fetchKey) {
+      return;
+    }
+    inFlightFetchKeyRef.current = fetchKey;
 
     setIsLoading(true);
     setError(null);
@@ -178,7 +218,24 @@ export const ChatSidebar = () => {
     );
 
     try {
-      const filter = { members: { $in: [client.userID] } };
+      // #674 org-scope filter — Stream channels created by the
+      // enterprise wiring carry a `custom.organization_id` field.
+      // Without scoping, a consultant in Acme + Zeta sees every chat
+      // cross-tenanted in one inbox. Apply the same three-mode shape
+      // as the server-side resolveOrgScope:
+      //   - personal → channels with no organization_id (legacy/B2C)
+      //   - org:<id> → channels tagged with that org id
+      //   - all     → no scope filter (admin-only)
+      const orgFilter: Record<string, unknown> =
+        scope.kind === "personal"
+          ? { organization_id: { $exists: false } }
+          : scope.kind === "org"
+            ? { organization_id: { $eq: scope.orgId } }
+            : {};
+      const filter = {
+        members: { $in: [client.userID] },
+        ...orgFilter,
+      };
       const sort: { last_message_at: -1 } = { last_message_at: -1 };
       const options = {
         watch: true, // Crucial for real-time updates
@@ -226,12 +283,23 @@ export const ChatSidebar = () => {
         })),
       );
 
+      // Staleness guard: if a newer-keyed fetch (e.g. a scope switch) started
+      // while this request was in flight, drop this late response instead of
+      // overwriting the current scope's channels with the old scope's data.
+      if (inFlightFetchKeyRef.current !== fetchKey) {
+        return;
+      }
+
       setTeamChannels(teamResponse);
       setDirectMessages(dmResponse);
 
       // Update pagination state
       setHasMoreTeamChannels(teamResponse.length === options.limit);
       setHasMoreDMChannels(dmResponse.length === options.limit);
+
+      // Record success: only NOW is this scope's data actually loaded. Marking
+      // it earlier (or on skip) is what let a switched scope show stale data.
+      fetchedKeyRef.current = fetchKey;
 
       // Auto-select the most recent channel on initial load
       if (!initialSelectionDoneRef.current) {
@@ -267,8 +335,19 @@ export const ChatSidebar = () => {
       setError("Failed to load channels. Please try refreshing.");
     } finally {
       setIsLoading(false);
+      // #248: release the in-flight guard only if WE are still the in-flight
+      // fetch. If a newer-keyed fetch started after us, leave its key in place
+      // so it isn't wrongly treated as not-in-flight.
+      if (inFlightFetchKeyRef.current === fetchKey) {
+        inFlightFetchKeyRef.current = null;
+      }
     }
-  }, [client, setActiveChannel]);
+    // Why `scope` is in deps: when the operator toggles the org-context
+    // dropdown (or navigates into /dashboard/organization/<orgId>/...),
+    // useOrgScope's `scope` shifts and we must refetch the channel list
+    // through the new filter. Without this, the inbox keeps showing the
+    // previous tenant's threads until a hard reload.
+  }, [client, setActiveChannel, scope, computeFetchKey]);
 
   // Function to load more channels (pagination)
   const loadMoreChannels = useCallback(
@@ -283,7 +362,19 @@ export const ChatSidebar = () => {
       setIsLoadingMore(true);
 
       try {
-        const filter = { members: { $in: [client.userID] }, type };
+        // Mirror the org-scope filter from `fetchChannels` so the
+        // load-more page stays in the same tenant context.
+        const orgFilter: Record<string, unknown> =
+          scope.kind === "personal"
+            ? { organization_id: { $exists: false } }
+            : scope.kind === "org"
+              ? { organization_id: { $eq: scope.orgId } }
+              : {};
+        const filter = {
+          members: { $in: [client.userID] },
+          type,
+          ...orgFilter,
+        };
         const sort: { last_message_at: -1 } = { last_message_at: -1 };
 
         const offset = currentChannels.length;
@@ -323,6 +414,7 @@ export const ChatSidebar = () => {
       hasMoreTeamChannels,
       hasMoreDMChannels,
       isLoadingMore,
+      scope,
     ],
   );
 
@@ -353,13 +445,15 @@ export const ChatSidebar = () => {
         return filtered;
       });
 
-      // Clear active channel if it was the deleted one
-      if (activeChannelId === deletedChannelId) {
+      // Clear active channel if it was the deleted one. Read the ref (not the
+      // state) so this handler's identity stays stable across selections and the
+      // event-listener effect below isn't re-run on every channel click.
+      if (activeChannelIdRef.current === deletedChannelId) {
         setActiveChannel(undefined);
         setActiveChannelId(null);
       }
     },
-    [activeChannelId, setActiveChannel],
+    [setActiveChannel],
   );
 
   // Handle user being removed from channel
@@ -441,11 +535,39 @@ export const ChatSidebar = () => {
     fetchChannels();
   };
 
-  // Initial fetch and setup listeners
+  // #248: Initial fetch — runs once per (client + org-scope), NOT on every
+  // channel selection. Previously this lived in the same effect as the event
+  // listener, whose deps included `activeChannelId`; selecting a channel
+  // re-ran the effect and refired the full queryChannels pair, producing the
+  // home/chat call-storm. The key guard makes unrelated re-renders a no-op
+  // while still refetching on a real client or scope change.
+  useEffect(() => {
+    if (!client?.userID) {
+      setIsLoading(true);
+      setTeamChannels([]);
+      setDirectMessages([]);
+      fetchedKeyRef.current = null;
+      inFlightFetchKeyRef.current = null;
+      return;
+    }
+
+    const fetchKey = computeFetchKey();
+    if (fetchedKeyRef.current === fetchKey) {
+      return; // already SUCCESSFULLY fetched for this client+scope
+    }
+    // Do NOT pre-mark fetchedKeyRef here — fetchChannels records it only after
+    // its request succeeds, so a skipped (in-flight) or failed fetch can't leave
+    // a scope marked done with another scope's data.
+    // Reset auto-selection so a scope switch can pick a fresh default channel.
+    initialSelectionDoneRef.current = false;
+    fetchChannels();
+  }, [client, scope, fetchChannels, computeFetchKey]);
+
+  // #248: Event listener — attached once per client (not per channel click).
+  // Kept separate from the initial fetch so selecting a channel no longer tears
+  // down/re-attaches the listener or refires queryChannels.
   useEffect(() => {
     if (client) {
-      fetchChannels();
-
       // Listener for events that might require a channel list update
       const handleEvent = (event: Event) => {
         console.log("Stream event received:", event.type, event);
@@ -522,19 +644,11 @@ export const ChatSidebar = () => {
         console.log("Removing Stream event listener");
         client.off("*.**", handleEvent);
       };
-    } else {
-      setIsLoading(true);
-      setTeamChannels([]);
-      setDirectMessages([]);
     }
-  }, [
-    client,
-    fetchChannels,
-    activeChannelId,
-    setActiveChannel,
-    handleChannelDeleted,
-    handleUserRemovedFromChannel,
-  ]); // Add dependencies
+    // #248: deps intentionally exclude `fetchChannels` and `activeChannelId` so
+    // the listener is not re-attached on every channel selection. It re-attaches
+    // only when the client or the channel-mutation handlers genuinely change.
+  }, [client, handleChannelDeleted, handleUserRemovedFromChannel]);
 
   const handleChannelSelect = useCallback(
     (channel: Channel) => {
@@ -555,6 +669,12 @@ export const ChatSidebar = () => {
     },
     [setActiveChannel],
   );
+
+  // #248: keep activeChannelIdRef in lockstep with the state so the stable
+  // handleChannelDeleted handler can read the current selection from the ref.
+  useEffect(() => {
+    activeChannelIdRef.current = activeChannelId;
+  }, [activeChannelId]);
 
   return (
     <div className="w-80 bg-blue-600 text-white flex flex-col h-full">

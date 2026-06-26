@@ -16,7 +16,13 @@
  */
 
 import prisma from "../../lib/prisma";
-import { RequestStatus } from "@prisma/client";
+import { AppointmentStatus } from "@prisma/client";
+import { withCronLock } from "@/lib/cron/with-cron-lock";
+
+// The per-cohort WHERE guards below (PENDING by requestedAt,
+// APPROVED_PENDING_PAYMENT by updatedAt) are deliberate subsets of
+// REQUEST_ALLOWED_FROM.EXPIRED in lib/booking/transitions.ts (#836) —
+// each cohort has its own cutoff, so they are not merged into one sweep.
 
 // Expire requests in PENDING state for more than 30 days
 const PENDING_EXPIRATION_DAYS = 30;
@@ -49,7 +55,7 @@ async function expirePendingConsultations(): Promise<{
     // Find stale PENDING consultations
     const staleConsultations = await prisma.consultation.findMany({
       where: {
-        requestStatus: RequestStatus.PENDING,
+        status: AppointmentStatus.PENDING,
         requestedAt: { lt: expirationDate },
       },
       include: {
@@ -84,11 +90,11 @@ async function expirePendingConsultations(): Promise<{
     // Bulk update to EXPIRED
     const result = await prisma.consultation.updateMany({
       where: {
-        requestStatus: RequestStatus.PENDING,
+        status: AppointmentStatus.PENDING,
         requestedAt: { lt: expirationDate },
       },
       data: {
-        requestStatus: RequestStatus.EXPIRED,
+        status: AppointmentStatus.EXPIRED,
       },
     });
 
@@ -118,7 +124,7 @@ async function expirePendingSubscriptions(): Promise<{
     // Find stale PENDING subscriptions
     const staleSubscriptions = await prisma.subscription.findMany({
       where: {
-        requestStatus: RequestStatus.PENDING,
+        status: AppointmentStatus.PENDING,
         requestedAt: { lt: expirationDate },
       },
       include: {
@@ -153,11 +159,11 @@ async function expirePendingSubscriptions(): Promise<{
     // Bulk update to EXPIRED
     const result = await prisma.subscription.updateMany({
       where: {
-        requestStatus: RequestStatus.PENDING,
+        status: AppointmentStatus.PENDING,
         requestedAt: { lt: expirationDate },
       },
       data: {
-        requestStatus: RequestStatus.EXPIRED,
+        status: AppointmentStatus.EXPIRED,
       },
     });
 
@@ -188,11 +194,11 @@ async function expirePaymentPendingRequests(): Promise<{
     // Expire consultations awaiting payment
     const consultationResult = await prisma.consultation.updateMany({
       where: {
-        requestStatus: RequestStatus.APPROVED_PENDING_PAYMENT,
+        status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
         updatedAt: { lt: expirationDate },
       },
       data: {
-        requestStatus: RequestStatus.EXPIRED,
+        status: AppointmentStatus.EXPIRED,
         pendingPaymentUrl: null, // Clear payment link
       },
     });
@@ -204,11 +210,11 @@ async function expirePaymentPendingRequests(): Promise<{
     // Expire subscriptions awaiting payment
     const subscriptionResult = await prisma.subscription.updateMany({
       where: {
-        requestStatus: RequestStatus.APPROVED_PENDING_PAYMENT,
+        status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
         updatedAt: { lt: expirationDate },
       },
       data: {
-        requestStatus: RequestStatus.EXPIRED,
+        status: AppointmentStatus.EXPIRED,
         pendingPaymentUrl: null, // Clear payment link
       },
     });
@@ -233,7 +239,15 @@ async function expirePaymentPendingRequests(): Promise<{
 /**
  * Main function to expire all stale requests
  */
+// #476 — locked at the core so every entry (GH Actions / HTTP) shares one
+// mutual exclusion; fail-open: repeat-safe side effects, lock is belt-and-braces.
 export async function expireStaleRequests(): Promise<ExpireStaleRequestsResult> {
+  return withCronLock("expire-stale-requests", { failMode: "open" }, () =>
+    expireStaleRequestsUnlocked(),
+  );
+}
+
+async function expireStaleRequestsUnlocked(): Promise<ExpireStaleRequestsResult> {
   const allErrors: string[] = [];
 
   console.log("🕐 Starting stale request expiration...");

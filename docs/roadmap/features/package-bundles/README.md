@@ -288,7 +288,7 @@ export async function bookFromPackage(
       data: {
         consultationPlanId: purchase.package.consultationPlanId,
         consulteeProfileId: await getConsulteeProfileId(userId),
-        requestStatus: "APPROVED_PENDING_PAYMENT", // Skip to approved
+        status: "APPROVED_PENDING_PAYMENT", // Skip to approved
         bookingSource: "PACKAGE_BOOKING",
       },
     });

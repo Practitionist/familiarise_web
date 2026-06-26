@@ -4,6 +4,7 @@
  */
 "use client"; // Mark as a Client Component
 
+import { useToast } from "@/hooks/use-toast";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
@@ -25,6 +26,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { PageHeading } from "@/components/ui/page-header";
 import { NotificationPreferencesPanel } from "@/components/notifications";
 import {
   CookiePreference,
@@ -57,6 +59,7 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false); // To disable buttons during save
+  const { toast } = useToast();
 
   // Fetch data on component mount
   useEffect(() => {
@@ -240,9 +243,10 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
 
       const updatedData: StaffData = await response.json();
       setStaffData(updatedData); // Update state with response data
-      alert(
-        `${section.charAt(0).toUpperCase() + section.slice(1)} settings saved successfully!`,
-      ); // Simple feedback
+      toast({
+        title: "Settings saved",
+        description: `${section.charAt(0).toUpperCase() + section.slice(1)} settings updated.`,
+      });
     } catch (err: unknown) {
       const errorMessage =
         err instanceof Error
@@ -250,7 +254,11 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
           : `An error occurred while saving ${section} settings`;
       setError(errorMessage);
       console.error("Save error:", err);
-      alert(`Error saving ${section} settings: ${errorMessage}`); // Simple feedback
+      toast({
+        title: `Couldn't save ${section} settings`,
+        description: errorMessage,
+        variant: "destructive",
+      });
     } finally {
       setIsSaving(false);
     }
@@ -266,7 +274,7 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
   }
   if (error) {
     return (
-      <div className="flex justify-center items-center min-h-screen text-red-500">
+      <div className="flex justify-center items-center min-h-screen text-red-600 dark:text-red-400">
         Error: {error}
       </div>
     );
@@ -296,11 +304,9 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
               .join("") ?? "ST"}
           </AvatarFallback>
         </Avatar>
-        <div>
-          <h1 className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">
-            Settings
-          </h1>
-          <p className="text-zinc-500 dark:text-zinc-400">
+        <div className="min-w-0 space-y-1">
+          <PageHeading>Settings</PageHeading>
+          <p className="text-fluid-sm text-muted-foreground">
             Manage profile and account settings for{" "}
             {staffData.user.name ?? `Staff ID: ${staffId}`}.
           </p>
