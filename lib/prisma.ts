@@ -37,10 +37,51 @@ function dn<K extends string>(field: K) {
   };
 }
 
+// A saturated Supavisor (txn pooler :6543) made pg hang 5–9.6s on connect
+// (EAUTHTIMEOUT), surfacing to users as "the edge function timed out". The two
+// budgets below fail fast instead, so a stuck pooler can't pin a Netlify
+// function up to its ~10s ceiling. Both env-gated (positive ms wins, else default).
+const pgTimeoutMs = (name: string, fallback: number): number => {
+  const v = Number(process.env[name]);
+  return Number.isFinite(v) && v > 0 ? v : fallback;
+};
+// `next build` statically prerenders DB-backed pages (e.g. /explore/programs),
+// which connect through this same saturated pooler — but at build there is no
+// user and no function ceiling, so the 3s runtime fail-fast wrongly aborts the
+// prerender ("timeout exceeded when trying to connect" → build exit 2). The
+// build phase gets a generous connect budget; runtime keeps the fast fail-fast.
+// Env override (PG_CONNECT_TIMEOUT_MS) still wins in either phase.
+const IS_NEXT_BUILD = process.env.NEXT_PHASE === "phase-production-build";
+// ~3s at runtime (well under the function ceiling, above a normal cold connect);
+// ~30s at build (room for a cold/saturated pooler — pre-#912 had no timeout).
+const PG_CONNECT_TIMEOUT_MS = pgTimeoutMs(
+  "PG_CONNECT_TIMEOUT_MS",
+  IS_NEXT_BUILD ? 30000 : 3000,
+);
+// ~6s query budget — keeps the worst case (3s connect + 6s query = 9s) under
+// Netlify's ~10s function ceiling. query_timeout is CLIENT-SIDE and is the only
+// one that bounds a query *through* the txn pooler — Supavisor silently ignores
+// the statement_timeout startup param (verified: SHOW statement_timeout stays at
+// the 2min server default). statement_timeout is set ~1s BELOW query_timeout
+// below as defense-in-depth for direct session-mode connects (DIRECT_URL :5432):
+// the server then aborts first with a clean error that keeps the pooled
+// connection synchronized/reusable, instead of node-postgres tearing it down on
+// a client-side query_timeout.
+const PG_QUERY_TIMEOUT_MS = pgTimeoutMs("PG_QUERY_TIMEOUT_MS", 6000);
+
 const adapter = new PrismaPg({
   // Use pooled connection (DATABASE_URL) for runtime queries to avoid connection exhaustion
   // DIRECT_URL is only for migrations (handled by prisma.config.ts)
   connectionString: process.env.DATABASE_URL || process.env.DIRECT_URL,
+  connectionTimeoutMillis: PG_CONNECT_TIMEOUT_MS,
+  query_timeout: PG_QUERY_TIMEOUT_MS,
+  // ~1s below query_timeout so the server cancels first on the direct session-mode
+  // path (clean error, connection stays poolable); ignored on the txn pooler. Scales
+  // down for sub-2s budgets so statement_timeout stays strictly below it (#917 review).
+  statement_timeout:
+    PG_QUERY_TIMEOUT_MS > 1000
+      ? PG_QUERY_TIMEOUT_MS - 1000
+      : Math.max(1, Math.floor(PG_QUERY_TIMEOUT_MS * 0.8)),
   // pg.Pool defaults to 10 clients PER function instance; at Netlify's 125
   // concurrent invocations that can dwarf Supavisor's client cap. Set
   // PG_POOL_MAX=1 (or 2) in serverless deploy env; unset = pg default for
