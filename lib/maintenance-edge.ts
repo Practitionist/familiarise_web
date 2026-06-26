@@ -58,7 +58,10 @@ const CACHE_TTL_MS = 30_000; // 30 seconds
 // Per-request fail-open budget for the edge Upstash read. This runs in
 // middleware on (almost) every request and falls back to OFF on timeout, so a
 // slow Upstash should give up fast rather than add latency to live traffic.
-const REDIS_FETCH_TIMEOUT_MS = 700;
+const REDIS_FETCH_TIMEOUT_MS = (() => {
+  const v = Number(process.env.REDIS_FETCH_TIMEOUT_MS);
+  return Number.isFinite(v) && v > 0 ? v : 700;
+})();
 
 /**
  * Direct Upstash REST call — edge-safe, no SDK needed.
