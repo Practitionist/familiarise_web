@@ -45,8 +45,19 @@ const pgTimeoutMs = (name: string, fallback: number): number => {
   const v = Number(process.env[name]);
   return Number.isFinite(v) && v > 0 ? v : fallback;
 };
-// ~3s: well under the function ceiling, comfortably above a normal cold connect.
-const PG_CONNECT_TIMEOUT_MS = pgTimeoutMs("PG_CONNECT_TIMEOUT_MS", 3000);
+// `next build` statically prerenders DB-backed pages (e.g. /explore/programs),
+// which connect through this same saturated pooler — but at build there is no
+// user and no function ceiling, so the 3s runtime fail-fast wrongly aborts the
+// prerender ("timeout exceeded when trying to connect" → build exit 2). The
+// build phase gets a generous connect budget; runtime keeps the fast fail-fast.
+// Env override (PG_CONNECT_TIMEOUT_MS) still wins in either phase.
+const IS_NEXT_BUILD = process.env.NEXT_PHASE === "phase-production-build";
+// ~3s at runtime (well under the function ceiling, above a normal cold connect);
+// ~30s at build (room for a cold/saturated pooler — pre-#912 had no timeout).
+const PG_CONNECT_TIMEOUT_MS = pgTimeoutMs(
+  "PG_CONNECT_TIMEOUT_MS",
+  IS_NEXT_BUILD ? 30000 : 3000,
+);
 // ~8s query budget. query_timeout is CLIENT-SIDE and is the only one that bounds
 // a query *through* the txn pooler — Supavisor silently ignores the
 // statement_timeout startup param (verified: SHOW statement_timeout stays at the
