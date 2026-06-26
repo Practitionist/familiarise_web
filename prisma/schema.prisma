@@ -201,6 +201,7 @@ model SupportResponse {
   updatedAt DateTime @updatedAt
 
   @@index([supportTicketId])
+  @@index([userId])
 }
 
 model SupportTicketAttachment {
@@ -648,6 +649,7 @@ model Organization {
   @@index([canSponsor, canHost])
   @@index([canHost, isPublic, status])
   @@index([dataResidencyRegion])
+  @@index([parentOrganizationId])
   @@map("organizations")
 }
 
@@ -704,6 +706,8 @@ model Invitation {
   // Prisma `partialIndexes` preview (buggy at 7.7.0 — prisma/prisma#29263,
   // #29415) reaches stable.
   @@index([organizationId, email, status])
+  @@index([inviterId])
+  @@index([userId])
   @@map("invitations")
 }
 
@@ -763,6 +767,7 @@ model Membership {
   @@index([consulteeProfileId])
   @@index([consultantProfileId])
   @@index([departmentLabel])
+  @@index([rateCardOverrideId])
 }
 
 /// Per-organization membership role. Every value here is intentionally
@@ -977,6 +982,9 @@ model Contract {
 
   @@index([organizationId, status])
   @@index([effectiveFrom, effectiveTo])
+  @@index([billingAccountId])
+  @@index([purchaseOrderId])
+  @@index([rateCardId])
 }
 
 enum ContractStatus {
@@ -1695,6 +1703,9 @@ model OrganizationInvoice {
   @@index([organizationId, fiscalYear, issuedAt])
   @@index([billingCycleStart, billingCycleEnd])
   @@index([status, dueDate, markedOverdueAt])
+  @@index([billingAccountId])
+  @@index([contractId])
+  @@index([purchaseOrderId])
 }
 
 // Typed line items for OrganizationInvoice — replaces the `items` Json
@@ -1852,6 +1863,7 @@ model OrgDomainClaim {
   verificationToken String?
   verifiedAt        DateTime?
 
+  @@index([organizationId])
   @@map("org_domain_claims")
 }
 
@@ -2307,6 +2319,7 @@ model ConsultantReview {
   // reviews._count; without this the per-profile aggregate seq-scans the
   // whole review table. Also serves the FK join + rating>=4 social-proof reads.
   @@index([consultantProfileId])
+  @@index([consulteeProfileId])
 }
 
 model ConsulteeProfile {
@@ -2615,6 +2628,7 @@ model ConsultationPlan {
 
   @@index([organizationId])
   @@index([visibility, organizationId])
+  @@index([consultantProfileId])
 }
 
 model Consultation {
@@ -2699,6 +2713,7 @@ model SubscriptionPlan {
 
   @@index([organizationId])
   @@index([visibility, organizationId])
+  @@index([consultantProfileId])
 }
 
 model Subscription {
@@ -3647,6 +3662,7 @@ model Payment {
   @@index([billableToOrgInvoiceId])
   @@index([parentPaymentId])
   @@index([discountCodeId])
+  @@index([billingAccountId])
 }
 
 // Stackable funding leg. Each row captures one source contribution to a
@@ -4062,6 +4078,7 @@ model TDSRecord {
   @@index([consultantProfileId, financialYear])
   @@index([financialYear, quarter])
   @@index([reportedInForm26Q])
+  @@index([payoutId])
 }
 
 // #778 §D / #784 — effective-dated TDS rate lookup, law-aware. The Income-tax
@@ -4312,7 +4329,7 @@ model ReferralCode {
   totalReferrals      Int     @default(0)
   successfulReferrals Int     @default(0)
   totalEarned         BigInt  @default(0)
-  maxReferrals        Int     @default(50) // Maximum referrals allowed per code
+  maxReferrals        Int     @default(25) // #880 — tightened from 50 to bound farming/liability
   isActive            Boolean @default(true)
 
   user      User       @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
@@ -4398,6 +4415,21 @@ model ReferralCreditUsage {
   @@index([paymentId])
 }
 
+// #880 — single-row referral-program config (fixed id). Centralizes the
+// conservative-launch controls: the program on/off switch, a monthly budget cap
+// with auto-pause, and the ramped referrer reward. Paise stored as Int (well
+// within range for a referral budget) to keep the gate arithmetic in number.
+model ReferralProgramConfig {
+  id                     String   @id @default("singleton")
+  isActive               Boolean  @default(true)
+  monthlyBudgetPaise     BigInt? // null = unlimited
+  currentPeriod          String   @default("") // "YYYY-MM" of the active budget window
+  currentMonthSpentPaise BigInt   @default(0)
+  referrerRewardPaise    BigInt   @default(30000) // ₹300 launch; ramp to 50000 (₹500)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+}
+
 enum ReferralStatus {
   SIGNED_UP
   QUALIFIED
@@ -4451,6 +4483,7 @@ model Collaborator {
   @@index([webinarPlanId])
   @@index([classPlanId])
   @@index([status])
+  @@index([invitedById])
 }
 
 enum CollaboratorType {
@@ -4832,6 +4865,7 @@ model SsoProvider {
   // refuses. See audit Phase B.4.
   @@unique([providerId])
   @@unique([organizationId, domain])
+  @@index([userId])
   @@map("ssoProvider")
 }
 
@@ -5040,6 +5074,8 @@ model ErasureRequest {
   notes              String?       @db.Text
 
   @@index([status, requestedAt])
+  @@index([processedByAdminId])
+  @@index([userId])
 }
 
 enum ErasureStatus {
@@ -5153,6 +5189,8 @@ model OverageEvent {
   // #781 §D — per-assignment settlement/reconcile scans
   @@index([programAssignmentId, chargeStatus, createdAt])
   @@index([chargeStatus, lastChargeAttemptAt])
+  @@index([invoiceLineItemId])
+  @@index([paymentId])
 }
 
 /// #769 Comment 4 — multi-jurisdiction tax prep. Today every org is IN;

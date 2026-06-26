@@ -176,6 +176,19 @@ export default withSentryConfig(withBundleAnalyzer(nextConfig), {
  // Only print logs for uploading source maps in CI
  silent: !process.env.CI,
 
+ // #900 — the build/deploy must NOT fail because the Sentry source-map upload
+ // failed (e.g. an expired/invalid SENTRY_AUTH_TOKEN on Netlify). With an
+ // errorHandler the Sentry plugin logs and CONTINUES instead of exiting
+ // non-zero; source maps just won't upload until the token is rotated, but the
+ // build always succeeds. (next build succeeds locally — the upload only runs
+ // where the token is set, so this surfaced as a Netlify-only build failure.)
+ errorHandler: (err) => {
+   console.warn(
+     "[sentry] source-map upload step failed (non-fatal):",
+     err?.message ?? err,
+   );
+ },
+
  // For all available options, see:
  // https://docs.sentry.io/platforms/javascript/guides/nextjs/manual-setup/
 

@@ -148,6 +148,9 @@ interface CalendarData {
     custom: RawSlotData[];
   };
   eventSlots: TimeSlot[];
+  // This event's OWN tentative slots (being rescheduled) — rendered as a distinct
+  // "Rescheduling" state, separate from confirmed eventSlots and foreign bookings.
+  eventTentativeSlots: TimeSlot[];
   loading: boolean;
   error: string | null;
 }
@@ -201,6 +204,10 @@ export function useCalendarData(
     Appointment[]
   >([]);
   const [eventSlots, setEventSlots] = useState<TimeSlot[]>([]);
+  // The current event's OWN tentative slots (being rescheduled). Tracked
+  // separately from eventSlots (confirmed) so the calendar can render them as a
+  // distinct "Rescheduling" state instead of mislabeling them as foreign "Booked".
+  const [eventTentativeSlots, setEventTentativeSlots] = useState<TimeSlot[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -418,6 +425,7 @@ export function useCalendarData(
     // for slots belonging to the current event being viewed
     if (!eventType || !eventId) {
       setEventSlots([]);
+      setEventTentativeSlots([]);
       return;
     }
 
@@ -448,47 +456,53 @@ export function useCalendarData(
           return true;
         });
 
-        // Process ALL appointments, not just the first one
-        // This ensures all sessions of a subscription/class show as "This Event"
-        // FIX: Skip tentative slots — during rescheduling, tentative slots are the OLD
-        // slots being replaced. They should NOT show as "This Event" on the calendar
-        // because the auto-allocate will delete them. Showing them as "This Event"
-        // misleads the consultant into thinking they're confirmed bookings.
-        const slots: TimeSlot[] = activeData.flatMap((appointment: Appointment) =>
-          (appointment.slotsOfAppointment || [])
-            .filter((slot: AppointmentSlotRaw) => !slot.isTentative)
-            .flatMap((slot: AppointmentSlotRaw): TimeSlot[] => {
-              const start = new Date(slot.startsAt);
-              const end = new Date(slot.endsAt);
-              const durationMinutes =
-                (end.getTime() - start.getTime()) / (1000 * 60);
-              const numIntervals = Math.round(durationMinutes / 30);
+        // Process ALL appointments, not just the first one, expanding each
+        // appointment slot into 30-min display intervals.
+        //
+        // Confirmed slots → eventSlots ("This Event", black). Tentative slots
+        // (the OLD slots being replaced during a reschedule) are tracked
+        // SEPARATELY in eventTentativeSlots so the calendar can render them as a
+        // distinct "Rescheduling" state. Previously tentative slots were simply
+        // dropped here, so they fell through to the foreign-booking "Booked"
+        // (gray) style — misleading, since they belong to THIS event.
+        const confirmedSlots: TimeSlot[] = [];
+        const tentativeSlots: TimeSlot[] = [];
+        for (const appointment of activeData) {
+          for (const slot of (appointment.slotsOfAppointment ||
+            []) as AppointmentSlotRaw[]) {
+            const start = new Date(slot.startsAt);
+            const end = new Date(slot.endsAt);
+            const durationMinutes =
+              (end.getTime() - start.getTime()) / (1000 * 60);
+            const numIntervals = Math.round(durationMinutes / 30);
+            const target = slot.isTentative ? tentativeSlots : confirmedSlots;
 
-              const intervalSlots: TimeSlot[] = [];
-              for (let i = 0; i < numIntervals; i++) {
-                const intervalStart = new Date(
-                  start.getTime() + i * 30 * 60 * 1000,
-                );
-                const intervalEnd = new Date(
-                  intervalStart.getTime() + 30 * 60 * 1000,
-                );
-                intervalSlots.push({
-                  startTime: intervalStart,
-                  endTime: intervalEnd,
-                  isAvailable: true,
-                  isBooked: true, // Event slots are considered booked/allocated
-                });
-              }
-              return intervalSlots;
-            }),
-        );
-        setEventSlots(slots);
+            for (let i = 0; i < numIntervals; i++) {
+              const intervalStart = new Date(
+                start.getTime() + i * 30 * 60 * 1000,
+              );
+              const intervalEnd = new Date(
+                intervalStart.getTime() + 30 * 60 * 1000,
+              );
+              target.push({
+                startTime: intervalStart,
+                endTime: intervalEnd,
+                isAvailable: true,
+                isBooked: true, // Event slots are considered booked/allocated
+              });
+            }
+          }
+        }
+        setEventSlots(confirmedSlots);
+        setEventTentativeSlots(tentativeSlots);
       } else {
         setEventSlots([]);
+        setEventTentativeSlots([]);
       }
     } catch (error) {
       console.error("Error fetching event slots:", error);
       setEventSlots([]);
+      setEventTentativeSlots([]);
     }
   }, [eventType, eventId, consultantId]);
 
@@ -874,6 +888,7 @@ export function useCalendarData(
     existingAppointments,
     rawAvailabilitySlots,
     eventSlots,
+    eventTentativeSlots,
     loading,
     error,
 

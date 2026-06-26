@@ -501,6 +501,64 @@ describe("validate: consultation event", () => {
 
 // ─── validate: webinar ──────────────────────────────────────────────────────
 
+describe("validate: per-day session cap (#898)", () => {
+  // Class cap is 2 sessions/day (subscription is 1/day). The cap was previously
+  // only enforced at allocation-selection time + the client guard; these cover
+  // the new hard server-side check in validateClass.
+  it("accepts a class at the per-day cap (2 one-hour sessions on one day)", async () => {
+    const result = await service.validate(
+      "class",
+      "class-1",
+      futureSlots(4, "2025-06-02T09:00:00Z"), // 09:00–10:00 + 10:00–11:00, Monday
+      weeklyConsultant,
+      { callsPerWeek: 3, sessionDurationInHours: 1 },
+    );
+    expect(result.errors.some((e) => e.includes("DAILY_LIMIT"))).toBe(false);
+  });
+
+  it("rejects a class over the per-day cap (3 sessions on one day)", async () => {
+    const result = await service.validate(
+      "class",
+      "class-1",
+      futureSlots(6, "2025-06-02T09:00:00Z"), // three 1h sessions, all Monday
+      weeklyConsultant,
+      { callsPerWeek: 3, sessionDurationInHours: 1 },
+    );
+    expect(result.isValid).toBe(false);
+    expect(result.errors.some((e) => e.includes("DAILY_LIMIT"))).toBe(true);
+  });
+
+  it("counts existing same-day sessions toward the cap (partial reschedule)", async () => {
+    // Two confirmed same-day sessions already exist; proposing a third on the
+    // same day pushes Monday to 3 > 2.
+    mockPrisma.appointment.findMany.mockResolvedValue([
+      {
+        id: "existing-1",
+        slotsOfAppointment: [
+          { startsAt: new Date("2025-06-02T09:00:00Z"), isTentative: false },
+          { startsAt: new Date("2025-06-02T09:30:00Z"), isTentative: false },
+        ],
+      },
+      {
+        id: "existing-2",
+        slotsOfAppointment: [
+          { startsAt: new Date("2025-06-02T11:00:00Z"), isTentative: false },
+          { startsAt: new Date("2025-06-02T11:30:00Z"), isTentative: false },
+        ],
+      },
+    ]);
+    const result = await service.validate(
+      "class",
+      "class-1",
+      futureSlots(2, "2025-06-02T14:00:00Z"), // one more session, same Monday
+      weeklyConsultant,
+      { callsPerWeek: 5, sessionDurationInHours: 1 },
+    );
+    expect(result.isValid).toBe(false);
+    expect(result.errors.some((e) => e.includes("DAILY_LIMIT"))).toBe(true);
+  });
+});
+
 describe("validate: webinar event", () => {
   it("should accept correct consecutive slots for 2-hour webinar", async () => {
     const result = await service.validate(

@@ -32,6 +32,26 @@ export function getGlobalVideoClient(): StreamVideoClient | null {
 export function setGlobalVideoClient(client: StreamVideoClient | null): void {
   globalVideoClient = client;
 }
+
+// #248: the video connect is deferred to requestIdleCallback, so the global
+// client may not exist yet at the instant a user clicks Join. Poll briefly for
+// it (the StreamProvider mounted on this route is already connecting) rather
+// than erroring out on the first null read. Resolves null if it never appears
+// within the window so the caller can show a soft "try again" message.
+export async function waitForGlobalVideoClient(
+  timeoutMs = 4000,
+  intervalMs = 150,
+): Promise<ReturnType<typeof getGlobalVideoClient>> {
+  const existing = getGlobalVideoClient();
+  if (existing) return existing;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    const client = getGlobalVideoClient();
+    if (client) return client;
+  }
+  return getGlobalVideoClient();
+}
 export function getCurrentStreamUserId(): string | null {
   return currentUserId;
 }

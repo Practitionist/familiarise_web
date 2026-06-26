@@ -10,7 +10,7 @@ import { useToast } from "@/components/ui/use-toast";
 // lib/meeting (which imports the SDK) here — that would pull the heavy SDK into
 // the dashboard-HOME bundle / critical path. The video client + meeting helper
 // are acquired lazily inside the Join handler (only when a user clicks Join).
-import { getGlobalVideoClient } from "@/lib/stream/disconnect";
+import { waitForGlobalVideoClient } from "@/lib/stream/disconnect";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
@@ -71,26 +71,6 @@ interface HomeTabProps {
   pendingRequestsCount?: number;
   performanceSnapshot?: TPerformanceSnapshot;
   financialSummary?: TFinancialSummary;
-}
-
-// #248: the video connect is deferred to requestIdleCallback, so the global
-// client may not exist yet at the instant a user clicks Join. Poll briefly for
-// it (the StreamProvider mounted on this route is already connecting) rather
-// than erroring out on the first null read. Resolves null if it never appears
-// within the window so the caller can show a soft "try again" message.
-async function waitForGlobalVideoClient(
-  timeoutMs = 4000,
-  intervalMs = 150,
-): Promise<ReturnType<typeof getGlobalVideoClient>> {
-  const existing = getGlobalVideoClient();
-  if (existing) return existing;
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
-    const client = getGlobalVideoClient();
-    if (client) return client;
-  }
-  return getGlobalVideoClient();
 }
 
 const staggerChildren = {
