@@ -4422,10 +4422,10 @@ model ReferralCreditUsage {
 model ReferralProgramConfig {
   id                     String   @id @default("singleton")
   isActive               Boolean  @default(true)
-  monthlyBudgetPaise     Int? // null = unlimited
+  monthlyBudgetPaise     BigInt? // null = unlimited
   currentPeriod          String   @default("") // "YYYY-MM" of the active budget window
-  currentMonthSpentPaise Int      @default(0)
-  referrerRewardPaise    Int      @default(30000) // ₹300 launch; ramp to 50000 (₹500)
+  currentMonthSpentPaise BigInt   @default(0)
+  referrerRewardPaise    BigInt   @default(30000) // ₹300 launch; ramp to 50000 (₹500)
   createdAt              DateTime @default(now())
   updatedAt              DateTime @updatedAt
 }
