@@ -1,5 +1,5 @@
 import { getSessionCookie } from "better-auth/cookies";
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, NextFetchEvent } from "next/server";
 
 import {
   getMaintenanceState,
@@ -42,7 +42,6 @@ import { Ratelimit } from "@upstash/ratelimit";
 
 const URLS = {
   SIGNIN: "/auth/signin",
-  ONBOARDING: "/form/onboarding",
 };
 
 // Route-prefix groups. Prefix matching (startsWith) is used instead of globs for
@@ -121,7 +120,9 @@ function maintenanceRetryAfterHeaders(
   estimatedEnd: string | null,
 ): Record<string, string> {
   if (!estimatedEnd) return {};
-  const secs = Math.ceil((new Date(estimatedEnd).getTime() - Date.now()) / 1000);
+  const secs = Math.ceil(
+    (new Date(estimatedEnd).getTime() - Date.now()) / 1000,
+  );
   return secs > 0 ? { "Retry-After": String(secs) } : {};
 }
 
@@ -331,7 +332,10 @@ async function applyEdgeRateLimits(
  * Cookie-based middleware — no DB hit, no JWT parsing. See the header block above
  * for the auth model and the per-stage rationale.
  */
-export async function middleware(req: NextRequest): Promise<NextResponse> {
+export async function middleware(
+  req: NextRequest,
+  event: NextFetchEvent,
+): Promise<NextResponse> {
   const { pathname } = req.nextUrl;
 
   // 1a. Static assets / Next internals — nothing to gate. (Mostly excluded by
@@ -362,7 +366,7 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
     req.headers.get("Next-Router-Prefetch") === "1" ||
     req.headers.get("RSC") === "1";
   const maintenanceState = isSubNavigation
-    ? getMaintenanceStateCachedOnly()
+    ? getMaintenanceStateCachedOnly(event.waitUntil.bind(event))
     : await getMaintenanceState();
   const maintenance = handleMaintenance(req, pathname, maintenanceState);
   if (maintenance) return maintenance;

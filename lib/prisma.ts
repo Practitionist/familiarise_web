@@ -60,11 +60,7 @@ const adapter = new PrismaPg({
 
 // Slow-query threshold (ms). A query exceeding this is logged via the
 // query-event hook below so hot-path regressions surface in any environment.
-const PARSED_SLOW_QUERY_MS = Number(process.env.PRISMA_SLOW_QUERY_MS);
-const SLOW_QUERY_MS =
-  Number.isFinite(PARSED_SLOW_QUERY_MS) && PARSED_SLOW_QUERY_MS > 0
-    ? PARSED_SLOW_QUERY_MS
-    : 500;
+const SLOW_QUERY_MS = pgTimeoutMs("PRISMA_SLOW_QUERY_MS", 500);
 
 function makeClient() {
   // Emit the `query` event everywhere so the slow-query hook fires in prod too;

@@ -5,8 +5,12 @@ import ExpertsInteractiveContent from "./ExpertsInteractiveContent";
 import {
   getExpertsMetadata,
   getCuratedExperts,
+  EMPTY_EXPERTS_METADATA,
 } from "@/lib/data/explore-experts";
-import { emptyOnTransientDbError } from "@/lib/data/fail-open";
+import {
+  emptyOnTransientDbError,
+  fallbackOnTransientDbError,
+} from "@/lib/data/fail-open";
 
 function HeroSection({
   totalConsultants,
@@ -79,7 +83,9 @@ export default async function ExploreExperts() {
   // the pg query budget) renders an empty row instead of erroring the whole page.
   const [metadata, featuredExperts, trendingExperts, newestExperts] =
     await Promise.all([
-      getExpertsMetadata(),
+      getExpertsMetadata().catch(
+        fallbackOnTransientDbError("experts metadata", EMPTY_EXPERTS_METADATA),
+      ),
       getCuratedExperts("rating", 5).catch(
         emptyOnTransientDbError("featured experts"),
       ),
