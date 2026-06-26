@@ -1,6 +1,6 @@
 /**
  * #780 drift guard — every BigInt column in the schema must appear in the
- * lib/prisma.ts result-extension map. A new money column left out of the map
+ * lib/prisma-extensions.ts result-extension map. A new money column left out of it
  * would leak `bigint` past the JS boundary (JSON.stringify throws, arithmetic
  * silently mixes types). Source-parses both files so the check needs no DB.
  */
@@ -9,7 +9,10 @@ import path from "path";
 
 const root = path.join(__dirname, "..", "..");
 const schema = fs.readFileSync(path.join(root, "prisma", "schema.prisma"), "utf8");
-const client = fs.readFileSync(path.join(root, "lib", "prisma.ts"), "utf8");
+const client = fs.readFileSync(
+  path.join(root, "lib", "prisma-extensions.ts"),
+  "utf8",
+);
 
 function bigIntFields(): Array<{ model: string; field: string }> {
   const out: Array<{ model: string; field: string }> = [];
