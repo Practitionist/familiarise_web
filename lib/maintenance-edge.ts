@@ -139,12 +139,18 @@ export async function getMaintenanceState(): Promise<MaintenanceState> {
  * navigation sits blank until it resolves (the gap before loading.tsx appears).
  * A full document load still does the live read, so a maintenance window is
  * always enforced within one document navigation / the 30s cache window.
+ *
+ * When the cache is stale we kick off a non-blocking refresh (so the NEXT
+ * sub-navigation sees fresh state) and return the last-known state rather than
+ * OFF — otherwise a session that only soft-navigates would bypass an active
+ * window indefinitely once the TTL lapses (#927).
  */
 export function getMaintenanceStateCachedOnly(): MaintenanceState {
   if (cachedState && Date.now() - cacheTimestamp < CACHE_TTL_MS) {
     return cachedState;
   }
-  return OFF_STATE;
+  void getMaintenanceState().catch(() => {});
+  return cachedState ?? OFF_STATE;
 }
 
 // Matches paths ending with a file extension (e.g. .js, .css, .png, .woff2).

@@ -190,6 +190,23 @@ export async function fetchExpertsMetadata() {
 /** Cached wrapper for Server Components. */
 export const getExpertsMetadata = cache(fetchExpertsMetadata);
 
+export type ExpertsMetadata = Awaited<ReturnType<typeof fetchExpertsMetadata>>;
+
+// Safe empty shape so a transient metadata-read timeout degrades to empty
+// filters + the hero's marketing defaults instead of crashing the page (#925).
+export const EMPTY_EXPERTS_METADATA: ExpertsMetadata = {
+  domains: [],
+  subdomains: [],
+  tags: [],
+  consultantMetadata: {
+    totalConsultants: 0,
+    consultantsByDomain: [],
+    averageRating: 0,
+  },
+  availableLanguages: [],
+  availableCompanies: [],
+};
+
 // ---------------------------------------------------------------------------
 // Curated experts (Featured / Trending / Newest rows)
 // ---------------------------------------------------------------------------

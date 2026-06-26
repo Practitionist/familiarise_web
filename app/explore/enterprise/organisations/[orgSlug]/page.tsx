@@ -14,6 +14,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import prisma from "@/lib/prisma";
+import { fallbackOnTransientDbError } from "@/lib/data/fail-open";
 import type { Metadata } from "next";
 
 export const revalidate = 60;
@@ -126,7 +127,15 @@ export async function generateMetadata({
   params: Promise<{ orgSlug: string }>;
 }): Promise<Metadata> {
   const { orgSlug } = await params;
-  const org = await fetchOrgBySlug(orgSlug);
+  // Metadata runs before render with no error boundary — a transient timeout
+  // would 500. Fall back to null (generic title); the page body re-reads and
+  // surfaces any real error. (#925)
+  const org = await fetchOrgBySlug(orgSlug).catch(
+    fallbackOnTransientDbError<Awaited<ReturnType<typeof fetchOrgBySlug>>>(
+      "org metadata",
+      null,
+    ),
+  );
   if (!org) return { title: "Organisation not found" };
   return {
     title: `${org.name} — Familiarise`,
