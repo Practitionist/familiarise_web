@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { notifyGeneralAnnouncement } from "@/lib/novu";
 import { CreateAnnouncementSchema } from "@/schemas/announcements";
-import { isTransientDbError } from "@/lib/data/fail-open";
+import { isTransientDbError, reportTransient } from "@/lib/data/fail-open";
 
 import { getSession } from "@/lib/auth-server";
 import { assertBodySize } from "@/lib/validation/limits";
@@ -39,10 +39,9 @@ export async function GET() {
     // an empty banner, not a 500 + error-noise — report it as a warning and
     // fail open. Real defects still surface as exceptions + 500. (FAMILIARISE_WEB-9)
     if (isTransientDbError(error)) {
-      Sentry.captureMessage(
-        "announcements read failed (transient DB timeout) — empty",
-        { level: "warning", tags: { subsystem: "notifications" } },
-      );
+      reportTransient("announcements read", error, {
+        subsystem: "notifications",
+      });
       return NextResponse.json({ success: true, data: [] });
     }
     Sentry.captureException(
