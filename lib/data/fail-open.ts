@@ -10,7 +10,9 @@
  */
 import * as Sentry from "@sentry/nextjs";
 
-function isTransientDbError(err: unknown): boolean {
+// Exported so non-explore read paths (e.g. the public announcements banner) can
+// share the same transient-class detection and degrade rather than 500 (#929).
+export function isTransientDbError(err: unknown): boolean {
   const code = (err as { code?: string } | null)?.code;
   const msg = err instanceof Error ? err.message : String(err);
   return (
