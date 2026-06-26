@@ -1,6 +1,9 @@
 export default function Loading() {
   return (
-    <div className="mx-auto w-full max-w-7xl space-y-10 px-4 py-8">
+    <div
+      className="mx-auto w-full max-w-7xl space-y-10 px-4 py-8"
+      style={{ paddingTop: "160px" }}
+    >
       <div className="h-64 w-full animate-pulse rounded-2xl bg-muted" />
       <div className="space-y-3">
         <div className="h-6 w-40 animate-pulse rounded-md bg-muted" />
