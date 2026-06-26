@@ -9,6 +9,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { sweepStuckWebhookEvents } from "@/scripts/cleanup/sweep-stuck-webhook-events";
 import { CronLockHeldError } from "@/lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
@@ -21,8 +22,14 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    Sentry.logger.info("cron:sweep-stuck-webhook-events started");
     const result = await sweepStuckWebhookEvents();
 
+    Sentry.logger.info("cron:sweep-stuck-webhook-events finished", {
+      scanned: result.scanned,
+      recovered: result.recovered,
+      stillFailing: result.stillFailing,
+    });
     console.log("✅ Stuck-webhook sweep completed:", {
       scanned: result.scanned,
       recovered: result.recovered,
@@ -38,6 +45,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     if (error instanceof CronLockHeldError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
     }
+    Sentry.captureException(error, { tags: { subsystem: "cron", job: "sweep-stuck-webhook-events" } });
     console.error("Error in stuck-webhook sweep:", error);
     return NextResponse.json(
       {

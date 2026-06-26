@@ -9,6 +9,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { performStreamUserSync } from "@/scripts/stream/stream-sync";
+import * as Sentry from "@sentry/nextjs";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
@@ -25,6 +26,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     // Check for dry-run query param
     const dryRun = req.nextUrl.searchParams.get("dry-run") === "true";
 
+    Sentry.logger.info("cron:stream-sync started");
     console.log("🔄 Starting Stream user sync via API...");
     if (dryRun) {
       console.log("   Mode: DRY RUN");
@@ -32,6 +34,12 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
     const result = await performStreamUserSync({ dryRun });
 
+    Sentry.logger.info("cron:stream-sync finished", {
+      totalStreamUsersProcessed: result.totalStreamUsersProcessed,
+      totalStaleUsersIdentified: result.totalStaleUsersIdentified,
+      totalStaleUsersDeleted: result.totalStaleUsersDeleted,
+      totalFailedDeletions: result.totalFailedDeletions,
+    });
     console.log("✅ Stream user sync finished:", {
       usersProcessed: result.totalStreamUsersProcessed,
       staleIdentified: result.totalStaleUsersIdentified,
@@ -41,6 +49,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
     return NextResponse.json(result, { status: result.success ? 200 : 500 });
   } catch (error) {
+    Sentry.captureException(error, { tags: { subsystem: "cron", job: "stream-sync" } });
     console.error("Error in stream sync:", error);
     return NextResponse.json(
       {

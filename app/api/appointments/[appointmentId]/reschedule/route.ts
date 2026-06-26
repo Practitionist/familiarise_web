@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth-server";
@@ -361,7 +362,14 @@ export async function POST(
           );
         }
 
-        // Determine reschedule type for response
+        // #448 — count SESSIONS, not raw slots: one Appointment is one session
+        // (a 1-hour session is 2 × 30-min slots), so a single 1h-session
+        // reschedule must report 1 session, not "2 sessions"/multiple_sessions.
+        const sessionsAffected = new Set(
+          slotsToReschedule.map((s) => s.appointmentId),
+        ).size;
+
+        // Determine reschedule type for response — session-based (#448)
         const getRescheduleType = () => {
           if (
             derivedType !== "SUBSCRIPTION" ||
@@ -370,10 +378,9 @@ export async function POST(
           ) {
             return "entire_booking";
           }
-          if (slotIds.length === 1) {
-            return "individual_session";
-          }
-          return "multiple_sessions";
+          return sessionsAffected === 1
+            ? "individual_session"
+            : "multiple_sessions";
         };
 
         const rescheduleType = getRescheduleType();
@@ -382,11 +389,14 @@ export async function POST(
         return {
           success: true,
           rescheduleType,
+          // #448 — sessionsAffected is the user-facing count (distinct sessions);
+          // slotsAffected stays for back-compat / debugging.
+          sessionsAffected,
           slotsAffected: slotsToReschedule.length,
           message:
             rescheduleType === "entire_booking"
               ? "All sessions marked for rescheduling. Please select new times."
-              : `${slotsToReschedule.length} session(s) marked for rescheduling. Please select new time(s).`,
+              : `${sessionsAffected} session(s) marked for rescheduling. Please select new time(s).`,
           // B14 — context for the post-tx activity log (appointment is only
           // in scope inside this callback).
           logContext: {
@@ -555,6 +565,7 @@ export async function POST(
         }
       }
     } catch (error) {
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "appointments" } });
       console.error("[reschedule] Failed to send notification:", error);
     }
 
@@ -593,6 +604,7 @@ export async function POST(
     }
 
     // Only log unexpected errors — the known error types above are normal control flow
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "appointments" } });
     console.error("Error requesting reschedule:", error);
     return NextResponse.json(
       { error: "Failed to request reschedule" },

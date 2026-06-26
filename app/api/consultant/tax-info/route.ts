@@ -3,6 +3,7 @@
  * Manage PAN, GSTIN, and other tax-related info for consultants
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
@@ -49,6 +50,7 @@ export async function GET() {
       isIndianResident: taxInfo?.isIndianResident ?? true,
     });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "consultant" } });
     console.error("Tax info GET error:", error);
     return NextResponse.json(
       { error: "Failed to fetch tax info" },
@@ -136,6 +138,7 @@ export async function PUT(req: NextRequest) {
         { status: 400 },
       );
     }
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "consultant" } });
     console.error("Tax info PUT error:", error);
     return NextResponse.json(
       { error: "Failed to update tax info" },

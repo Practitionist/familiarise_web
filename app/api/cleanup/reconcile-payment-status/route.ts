@@ -10,6 +10,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { reconcilePaymentStatus } from "@/scripts/payments/reconcile-payment-status";
 import { CronLockHeldError } from "@/lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
@@ -24,10 +25,17 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     }
 
     console.log("🔄 Starting payment status reconciliation via API...");
+    Sentry.logger.info("cron:reconcile-payment-status started");
 
     const result = await reconcilePaymentStatus();
 
     console.log("✅ Payment reconciliation completed:", {
+      totalProcessed: result.totalProcessed,
+      reconciledCount: result.reconciledCount,
+      succeededCount: result.succeededCount,
+      failedCount: result.failedCount,
+    });
+    Sentry.logger.info("cron:reconcile-payment-status finished", {
       totalProcessed: result.totalProcessed,
       reconciledCount: result.reconciledCount,
       succeededCount: result.succeededCount,
@@ -44,6 +52,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     if (error instanceof CronLockHeldError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
     }
+    Sentry.captureException(error, { tags: { subsystem: "cron", job: "reconcile-payment-status" } });
     console.error("Error in payment reconciliation:", error);
     return NextResponse.json(
       {

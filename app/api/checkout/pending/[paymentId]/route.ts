@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
@@ -88,6 +89,7 @@ export async function DELETE(
         { status: 409 },
       );
     }
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "checkout" } });
     console.error(
       JSON.stringify({
         event: "cancel_pending_failed",

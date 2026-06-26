@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
@@ -336,6 +337,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
     return NextResponse.json(
       { error: "An error occurred while creating the webinar" },
       { status: 500 },
@@ -865,6 +867,7 @@ export async function PATCH(request: NextRequest) {
           "Failed to notify waitlist after capacity increase:",
           waitlistError,
         );
+        Sentry.captureException(waitlistError instanceof Error ? waitlistError : new Error(String(waitlistError)), { tags: { subsystem: "bookings" } });
       }
     }
 
@@ -908,6 +911,7 @@ export async function PATCH(request: NextRequest) {
 
     console.error("Error updating webinar with plan:", error);
 
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
     return NextResponse.json(
       { error: "An error occurred while updating the webinar" },
       { status: 500 },

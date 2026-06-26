@@ -3,6 +3,7 @@
  * List and create moderation reports
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
@@ -117,6 +118,7 @@ export async function GET(req: NextRequest) {
       },
     });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "staff" } });
     console.error("Error fetching moderation reports:", error);
     return NextResponse.json(
       { error: "Failed to fetch moderation reports" },

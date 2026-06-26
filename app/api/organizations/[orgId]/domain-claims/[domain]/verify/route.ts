@@ -21,6 +21,7 @@
  *   - 502: DNS resolution itself failed (transient — retryable)
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { promises as dns } from "node:dns";
 import prisma from "@/lib/prisma";
@@ -95,6 +96,7 @@ export async function POST(
         { status: 422 },
       );
     }
+    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "organizations" } });
     console.error(
       JSON.stringify({
         event: "domain_verify_dns_resolve_failed",

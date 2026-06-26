@@ -1,5 +1,6 @@
 "use client";
 
+import * as Sentry from "@sentry/nextjs";
 import React from "react";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
@@ -241,6 +242,7 @@ export function EventCarousel({
       setShowDeleteDialog(false);
       setEventToDelete(null);
     } catch (error) {
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
       console.error(`Error deleting ${eventType}:`, error);
     } finally {
       setIsDeleting(false);

@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { AppointmentStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
@@ -116,6 +117,7 @@ export async function GET(request: NextRequest) {
       },
     });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
     console.error("Error fetching consultations:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching consultations" },
@@ -227,6 +229,7 @@ export async function PATCH(request: NextRequest) {
         { status: error.httpStatus },
       );
     }
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
     console.error("Error updating consultation:", error);
     return NextResponse.json(
       { error: "An error occurred while updating consultation" },

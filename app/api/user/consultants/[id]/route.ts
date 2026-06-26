@@ -12,6 +12,7 @@ import { experienceValidation } from "@/schemas/shared";
 import { checkActiveAppointments } from "../utils/consultant-appointments";
 import { getSession } from "@/lib/auth-server";
 import { apiError } from "@/lib/errors";
+import * as Sentry from "@sentry/nextjs";
 import {
   dateToMinuteUtc,
   validateWeeklySlotTimeOrder,
@@ -237,6 +238,7 @@ export async function GET(
       },
     );
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
     return apiError({ tag: "[Consultant.GET]", error });
   }
 }
@@ -552,6 +554,7 @@ export async function PUT(
 
     return NextResponse.json({ data: updatedConsultant });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
     return apiError({ tag: "[Consultant.PUT]", error });
   }
 }
@@ -654,6 +657,7 @@ export async function DELETE(
 
     return NextResponse.json({ message: "Consultant deleted successfully" });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
     return apiError({ tag: "[Consultant.DELETE]", error });
   }
 }

@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth-server";
 import prisma from "@/lib/prisma";
@@ -31,6 +32,7 @@ export async function GET(
 
     return NextResponse.json({ data: result.data });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "collaborations" } });
     console.error("Error fetching class collaborators:", error);
     return NextResponse.json(
       { error: "Failed to fetch collaborators" },
@@ -128,6 +130,7 @@ export async function POST(
 
     return NextResponse.json({ data: collab });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "collaborations" } });
     console.error("Error inviting class collaborator:", error);
     return NextResponse.json(
       { error: "Failed to invite collaborator" },

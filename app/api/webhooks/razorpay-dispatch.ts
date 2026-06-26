@@ -8,6 +8,7 @@
  * import it without pulling the Next runtime. All handlers it calls are
  * idempotent (ledger idempotency keys + status guards), so a replay is safe.
  */
+import * as Sentry from "@sentry/nextjs";
 import {
   handlePaymentFailure,
   handlePaymentSuccess,
@@ -88,6 +89,7 @@ export async function processRazorpayWebhookEvent(
     eventId,
     payload: scrubWebhookPayload(event.payload),
   });
+  Sentry.logger.info(Sentry.logger.fmt`razorpay dispatch: handling ${eventType}`, { eventId });
 
   let processingError: string | undefined;
   // #813/#812 — set when a handler DEFERS (event valid but its row not yet
@@ -119,6 +121,7 @@ export async function processRazorpayWebhookEvent(
           await handlePaymentSuccess(
             capturedEvent.payload.payment.entity.order_id,
             capturedNotes,
+            capturedEvent.payload.payment.entity.amount,
           );
         }
         break;
@@ -138,6 +141,7 @@ export async function processRazorpayWebhookEvent(
           await handlePaymentSuccess(
             paidEvent.payload.order.entity.id,
             paidNotes,
+            paidEvent.payload.order.entity.amount,
           );
         }
         break;
@@ -187,6 +191,11 @@ export async function processRazorpayWebhookEvent(
               `Failed to resolve Razorpay payment_id ${refundEvent.payment_id} to order_id:`,
               lookupError,
             );
+            Sentry.captureException(lookupError, {
+              tags: { subsystem: "payments", provider: "razorpay" },
+              contexts: { refund: { refundId: refundEvent.id, paymentId: refundEvent.payment_id } },
+              level: "warning",
+            });
           }
         }
 
@@ -227,6 +236,11 @@ export async function processRazorpayWebhookEvent(
               `Failed to resolve Razorpay payment_id ${failedRefundEvent.payment_id} to order_id:`,
               lookupError,
             );
+            Sentry.captureException(lookupError, {
+              tags: { subsystem: "payments", provider: "razorpay" },
+              contexts: { refund: { refundId: failedRefundEvent.id, paymentId: failedRefundEvent.payment_id } },
+              level: "warning",
+            });
           }
         }
 
@@ -348,6 +362,7 @@ export async function processRazorpayWebhookEvent(
       default:
         console.log(`📄 Unhandled Razorpay event type: ${eventType}`);
     }
+    Sentry.logger.info(Sentry.logger.fmt`razorpay dispatch: done ${eventType}`, { eventId, deferred });
   } catch (handlerError) {
     processingError =
       handlerError instanceof Error
@@ -357,6 +372,10 @@ export async function processRazorpayWebhookEvent(
       `Razorpay webhook processing error for ${eventId}:`,
       handlerError,
     );
+    Sentry.captureException(handlerError, {
+      tags: { subsystem: "payments", provider: "razorpay" },
+      contexts: { dispatch: { eventType, eventId } },
+    });
   } finally {
     // #813/#812 — on a defer, leave the row processed=false/error=null so the
     // stuck-event sweeper re-drives it once the awaited payment lands.

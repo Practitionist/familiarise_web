@@ -11,6 +11,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cascadeRefundToEarnings } from "@/scripts/refunds/cascade-refund-earnings";
 import { CronLockHeldError } from "@/lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
@@ -24,10 +25,17 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    Sentry.logger.info("cron:cascade-refund-earnings started");
     console.log("🔄 Starting refund-earning cascade via API...");
 
     const result = await cascadeRefundToEarnings();
 
+    Sentry.logger.info("cron:cascade-refund-earnings finished", {
+      totalProcessed: result.totalProcessed,
+      updatedCount: result.updatedCount,
+      skippedCount: result.skippedCount,
+      errorCount: result.errorCount,
+    });
     console.log("✅ Refund-earning cascade completed:", {
       totalProcessed: result.totalProcessed,
       updatedCount: result.updatedCount,
@@ -42,6 +50,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     if (error instanceof CronLockHeldError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
     }
+    Sentry.captureException(error, { tags: { subsystem: "cron", job: "cascade-refund-earnings" } });
     console.error("Error in refund-earning cascade:", error);
     return NextResponse.json(
       {

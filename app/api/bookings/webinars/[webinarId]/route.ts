@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
@@ -55,6 +56,7 @@ export async function GET(
     ) {
       return NextResponse.json({ error: "Webinar not found" }, { status: 404 });
     }
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
     console.error("Error fetching webinar:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching the webinar" },
@@ -132,6 +134,7 @@ export async function PUT(
     ) {
       return NextResponse.json({ error: "Webinar not found" }, { status: 404 });
     }
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
     console.error("Error updating webinar:", error);
     return NextResponse.json(
       { error: "An error occurred while updating the webinar" },
@@ -235,6 +238,7 @@ export async function DELETE(
     ) {
       return NextResponse.json({ error: "Webinar not found" }, { status: 404 });
     }
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
     console.error("Error deleting webinar:", error);
     return NextResponse.json(
       { error: "An error occurred while deleting the webinar" },

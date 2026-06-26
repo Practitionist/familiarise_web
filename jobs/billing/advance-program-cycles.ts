@@ -38,6 +38,7 @@ import {
 } from "@/lib/enterprise/cycle-engine";
 import { Prisma } from "@prisma/client";
 import { withCronLock, CronLockHeldError, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 // Bounded scan — one batch per run; the next tick drains the remainder.
 const BATCH_SIZE = 500;
@@ -204,6 +205,7 @@ export async function runAdvanceProgramCycles(): Promise<AdvanceStats> {
         `[advance-program-cycles] Failed for assignment ${a.id}:`,
         err,
       );
+      Sentry.captureException(err, { tags: { subsystem: "jobs", job: "advance-program-cycles" } });
       stats.skipped += 1;
     }
   }
@@ -215,11 +217,18 @@ async function main() {
   console.log(
     `[advance-program-cycles] Starting at ${new Date().toISOString()}`,
   );
+  Sentry.logger.info("job:advance-program-cycles started");
   const stats = await withCronLock(
     "advance-program-cycles",
     { failMode: "closed", ttlMs: LONG_JOB_TTL_MS },
     () => runAdvanceProgramCycles(),
   );
+  Sentry.logger.info("job:advance-program-cycles finished", {
+    scanned: stats.scanned,
+    rolled: stats.rolled,
+    closed: stats.closed,
+    skipped: stats.skipped,
+  });
   console.log(
     `[advance-program-cycles] Done. scanned=${stats.scanned} rolled=${stats.rolled} closed=${stats.closed} skipped=${stats.skipped}`,
   );
@@ -231,6 +240,7 @@ if (require.main === module) {
     .catch((err) => {
       // #476 — lock held = another run is live; skip cleanly (exit 0).
       if (err instanceof CronLockHeldError) {
+        Sentry.logger.info("job:advance-program-cycles skipped — lock held by another replica");
         console.log(`⏭️  ${err.message}`);
         return;
       }

@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { betterAuth } from "better-auth";
 import { APIError } from "better-auth/api";
 import { prismaAdapter } from "better-auth/adapters/prisma";
@@ -17,6 +18,7 @@ import { syncSubscriber } from "@/lib/novu/subscriber";
 import { shouldRejectSession, lookupEnforcedOrg } from "@/lib/sso/enforce-session";
 import { applyMembershipRoleEffects } from "@/lib/api/organizations/membership-transitions";
 import { buildConsentArtifact } from "@/lib/compliance/dpdp";
+import { PURPOSE_CODES } from "@/lib/compliance/purpose-codes";
 
 export const auth = betterAuth({
   secret: process.env.BETTER_AUTH_SECRET,
@@ -239,15 +241,15 @@ export const auth = betterAuth({
             // DPDP Act 2023: stamp a ConsentArtifact for the essential
             // purposes covered by the signup action (account creation
             // requires data processing for service delivery + video/chat
-            // handoff to Stream.io). MARKETING_COMMS / analytics consent
+            // handoff to Stream.io). MARKETING_COMMS / ANALYTICS consent
             // is not stamped here — those require an explicit checkbox
             // on the signup form (P1 follow-up; see #701). When a user
             // hits the in-app withdrawal flow (/api/.../consent), this
             // artifact is superseded and `checkConsent` fails closed.
             try {
               for (const purposeCode of [
-                "PRIMARY_PROCESSING",
-                "STREAM_DATA_PROCESSING",
+                PURPOSE_CODES.PRIMARY_PROCESSING,
+                PURPOSE_CODES.STREAM_DATA_PROCESSING,
               ] as const) {
                 const draft = buildConsentArtifact({
                   userId: user.id,
@@ -264,15 +266,23 @@ export const auth = betterAuth({
               // shouldn't sink a signup over an audit-trail glitch. The
               // /consent backfill cron (#701) re-creates missing rows.
               console.error("[AUTH_HOOK] DPDP consent stamp error:", consentError);
+              Sentry.captureException(
+                consentError instanceof Error ? consentError : new Error(String(consentError)),
+                { tags: { subsystem: "auth" }, level: "warning" },
+              );
             }
 
             // Send welcome email (fire and forget)
             sendWelcomeEmail({
               email: user.email,
               name: user.name || "User",
-            }).catch((err) =>
-              console.error("[AUTH_HOOK] Welcome email error:", err),
-            );
+            }).catch((err) => {
+              console.error("[AUTH_HOOK] Welcome email error:", err);
+              Sentry.captureException(
+                err instanceof Error ? err : new Error(String(err)),
+                { tags: { subsystem: "auth" }, level: "warning" },
+              );
+            });
 
             // Sync Novu subscriber (fire and forget with error logging)
             const nameParts = (user.name || "User").split(" ");
@@ -281,11 +291,19 @@ export const auth = betterAuth({
               email: user.email,
               firstName: nameParts[0],
               lastName: nameParts.slice(1).join(" ") || undefined,
-            }).catch((err) =>
-              console.error("[AUTH_HOOK] Novu subscriber sync error:", err),
-            );
+            }).catch((err) => {
+              console.error("[AUTH_HOOK] Novu subscriber sync error:", err);
+              Sentry.captureException(
+                err instanceof Error ? err : new Error(String(err)),
+                { tags: { subsystem: "auth" }, level: "warning" },
+              );
+            });
           } catch (error) {
             console.error("[AUTH_HOOK] user.create.after error:", error);
+            Sentry.captureException(
+              error instanceof Error ? error : new Error(String(error)),
+              { tags: { subsystem: "auth" } },
+            );
           }
         },
       },
@@ -353,12 +371,20 @@ export const auth = betterAuth({
                   email: user.email,
                   name: user.name || "User",
                   provider: account.providerId,
-                }).catch((err) =>
-                  console.error("[AUTH_HOOK] Account linked email error:", err),
-                );
+                }).catch((err) => {
+                  console.error("[AUTH_HOOK] Account linked email error:", err);
+                  Sentry.captureException(
+                    err instanceof Error ? err : new Error(String(err)),
+                    { tags: { subsystem: "auth" }, level: "warning" },
+                  );
+                });
               }
             } catch (error) {
               console.error("[AUTH_HOOK] account.create.after error:", error);
+              Sentry.captureException(
+                error instanceof Error ? error : new Error(String(error)),
+                { tags: { subsystem: "auth" } },
+              );
             }
           }
         },

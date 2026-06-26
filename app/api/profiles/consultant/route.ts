@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 
 /**
@@ -48,6 +49,7 @@ export async function GET(request: NextRequest) {
       data: consultantProfile,
     });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
     console.error("Error fetching consultant profile:", error);
     return NextResponse.json(
       {

@@ -18,6 +18,7 @@ import {
 
 import fs from "fs";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
+import * as Sentry from "@sentry/nextjs";
 
 /**
  * Output results to GitHub Actions using environment files
@@ -53,6 +54,7 @@ function outputToGitHubActions(result: BatchResult): void {
  */
 async function main(): Promise<void> {
   await abortIfMaintenance("create-payout-batch");
+  Sentry.logger.info("job:create-payout-batch started");
   const startTime = Date.now();
   console.log(
     `🚀 Starting payout batch creation job at ${new Date().toISOString()}`,
@@ -80,6 +82,13 @@ async function main(): Promise<void> {
     outputToGitHubActions(result);
 
     if (result.success) {
+      Sentry.logger.info("job:create-payout-batch finished", {
+        payoutsCreated: result.payoutsCreated,
+        totalAmount: result.totalAmount,
+        autoApproved: result.autoApproved,
+        pendingApproval: result.pendingApproval,
+        skippedNoAccount: result.skippedNoAccount,
+      });
       console.log("🎉 Payout batch creation job completed successfully");
       process.exit(0);
     } else {
@@ -89,6 +98,7 @@ async function main(): Promise<void> {
   } catch (error) {
     const errorMessage =
       error instanceof Error ? error.message : "Unknown error";
+    Sentry.captureException(error, { tags: { subsystem: "jobs", job: "create-payout-batch" } });
     console.error("💥 Payout batch creation job failed:", errorMessage);
 
     if (process.env.GITHUB_ACTIONS) {

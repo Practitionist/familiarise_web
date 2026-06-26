@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import {
@@ -29,6 +30,7 @@ export async function GET(
 
     return NextResponse.json(review, { status: 200 });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
     console.error("Error getting review:", error);
     return NextResponse.json(
       { error: "Internal Server Error" },
@@ -85,6 +87,7 @@ export async function PUT(
 
     return NextResponse.json(updatedReview, { status: 200 });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
     console.error("Error updating review:", error);
     return NextResponse.json(
       { error: "Internal Server Error" },
@@ -135,6 +138,7 @@ export async function DELETE(
       { status: 200 },
     );
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
     console.error("Error deleting review:", error);
     return NextResponse.json(
       { error: "Internal Server Error" },

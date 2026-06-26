@@ -14,6 +14,7 @@
  * cleanup route — the Authorization header must carry the bearer token.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { cleanupAbandonedOrgTopUps } from "@/scripts/cleanup/cleanup-abandoned-org-top-ups";
 import { CronLockHeldError } from "@/lib/cron/with-cron-lock";
@@ -37,9 +38,15 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   try {
     console.log("🧹 Starting abandoned org top-up cleanup via API...");
+    Sentry.logger.info("cron:cleanup-abandoned-org-top-ups started");
     const result = await cleanupAbandonedOrgTopUps();
 
     console.log("✅ Abandoned org top-up cleanup completed:", {
+      reaped: result.reaped,
+      graceHours: result.graceHours,
+      success: result.success,
+    });
+    Sentry.logger.info("cron:cleanup-abandoned-org-top-ups finished", {
       reaped: result.reaped,
       graceHours: result.graceHours,
       success: result.success,
@@ -53,6 +60,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: error.message }, { status: 409 });
     }
     console.error("[cleanup/abandoned-org-top-ups] failed:", error);
+    Sentry.captureException(error, {
+      tags: { subsystem: "cron", job: "cleanup-abandoned-org-top-ups" },
+    });
     return NextResponse.json(
       {
         error: "Cleanup failed",

@@ -15,6 +15,7 @@ import {
 import fs from "fs";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
 import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
+import * as Sentry from "@sentry/nextjs";
 
 /**
  * Output results to GitHub Actions
@@ -51,6 +52,7 @@ function outputToGitHubActions(result: StalePendingConsultationsResult): void {
  */
 async function main(): Promise<void> {
   await abortIfMaintenance("cleanup-stale-pending-consultations");
+  Sentry.logger.info("job:cleanup-stale-pending-consultations started");
   console.log("🧹 Starting stale pending consultations cleanup job...");
   console.log(`Timestamp: ${new Date().toISOString()}`);
 
@@ -69,15 +71,22 @@ async function main(): Promise<void> {
 
     outputToGitHubActions(result);
 
+    Sentry.logger.info("job:cleanup-stale-pending-consultations finished", {
+      consultationsCancelled: result.consultationsCancelled,
+      slotsReleased: result.slotsReleased,
+    });
+
     if (!result.success) {
       process.exit(1);
     }
   } catch (error) {
     // #476 — lock held = another run is live; skip cleanly (exit 0).
     if (error instanceof CronLockHeldError) {
+      Sentry.logger.info("job:cleanup-stale-pending-consultations lock held, skipping");
       console.log(`⏭️  ${error.message}`);
       return;
     }
+    Sentry.captureException(error, { tags: { subsystem: "jobs", job: "cleanup-stale-pending-consultations" } });
     console.error("❌ Fatal error in stale consultation cleanup:", error);
     process.exit(1);
   } finally {

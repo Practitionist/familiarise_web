@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
@@ -159,6 +160,7 @@ export async function GET(request: NextRequest) {
 
     return paginatedResponse(webinarPlans, total, page, limit);
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
     console.error("Error fetching webinar plans:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching webinar plans" },
@@ -264,6 +266,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ data: newWebinarPlan }, { status: 201 });
   } catch (error) {
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
     console.error("Error creating webinar plan:", error);
     return NextResponse.json(
       { error: "An error occurred while creating the webinar plan" },

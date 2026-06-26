@@ -1,5 +1,6 @@
 "use client";
 
+import * as Sentry from "@sentry/nextjs";
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -126,6 +127,7 @@ export default function AdminUsersPage() {
       setTotalPages(data.totalPages);
       setTotal(data.total);
     } catch (error) {
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
       console.error("Error fetching users:", error);
       toast({
         title: "Error",
@@ -145,6 +147,7 @@ export default function AdminUsersPage() {
         setPendingCount(data.pendingProfiles || 0);
       }
     } catch (error) {
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
       console.error("Error fetching pending count:", error);
     }
   }, []);
