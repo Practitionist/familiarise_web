@@ -395,7 +395,7 @@ export function UnifiedCalendar({
     availableSlots,
     existingAppointments,
     eventSlots,
-    eventTentativeSlots,
+    eventTentativeSlots = [],
     loading,
     error,
     refetch,

@@ -119,4 +119,10 @@ jobs:
         run: npm run test
 
       - name: Build
+        # Raise the V8 heap so `next build` (+ Sentry source-map generation) does
+        # not flaky-OOM on the runner — mirrors netlify.toml's NODE_OPTIONS. The
+        # default heap sits right at the build's peak, so it intermittently exits
+        # 134 (heap out of memory) on otherwise-identical builds.
         run: npm run build
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
