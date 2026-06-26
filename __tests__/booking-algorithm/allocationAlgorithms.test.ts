@@ -402,6 +402,60 @@ describe("AllocationAlgorithms.autoAllocate", () => {
         expect(result.strategy).toBe("optimal-distribution");
       }
     });
+
+    // Finding #1: auto-allocate must honor the per-day cap the manual path enforces
+    // (subscription 1/day). Monday has two well-separated slots (09:00 + 14:00, >2h
+    // apart, so spacing alone would NOT block a 2nd same-day call); Tuesday has one.
+    it("caps subscriptions at 1 call/day and spreads across days, not clustering", async () => {
+      const monMorning = makeFutureConsecutiveSlots("2025-06-02T09:00:00Z", 1);
+      const monAfternoon = makeFutureConsecutiveSlots("2025-06-02T14:00:00Z", 1);
+      const tueMorning = makeFutureConsecutiveSlots("2025-06-03T09:00:00Z", 1);
+      const allSlots = [...monMorning, ...monAfternoon, ...tueMorning];
+
+      const result = await AllocationAlgorithms.autoAllocate(allSlots as any, {
+        eventType: "subscription",
+        eventId: "event-1",
+        sessionDurationInHours: 0.5, // slotsPerCall = 1
+        callsPerWeek: 2,
+        totalSessions: 2,
+        startDate: new Date("2025-06-02T00:00:00Z"),
+        endDate: new Date("2025-06-08T00:00:00Z"),
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.selectedSlots).toHaveLength(2);
+      const days = new Set(
+        result.selectedSlots.map(
+          (s) => s.startTime.toISOString().split("T")[0],
+        ),
+      );
+      expect(days.size).toBe(2); // 1 call/day across 2 days, not 2 on Monday
+    });
+
+    it("allows classes 2 sessions on the same day", async () => {
+      const monMorning = makeFutureConsecutiveSlots("2025-06-02T09:00:00Z", 1);
+      const monAfternoon = makeFutureConsecutiveSlots("2025-06-02T14:00:00Z", 1);
+      const allSlots = [...monMorning, ...monAfternoon];
+
+      const result = await AllocationAlgorithms.autoAllocate(allSlots as any, {
+        eventType: "class",
+        eventId: "event-1",
+        sessionDurationInHours: 0.5,
+        callsPerWeek: 2,
+        totalSessions: 2,
+        startDate: new Date("2025-06-02T00:00:00Z"),
+        endDate: new Date("2025-06-08T00:00:00Z"),
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.selectedSlots).toHaveLength(2);
+      const days = new Set(
+        result.selectedSlots.map(
+          (s) => s.startTime.toISOString().split("T")[0],
+        ),
+      );
+      expect(days.size).toBe(1); // classes may place both on Monday (2/day)
+    });
   });
 
   describe("preference filtering", () => {

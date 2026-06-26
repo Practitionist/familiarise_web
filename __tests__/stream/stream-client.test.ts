@@ -18,10 +18,19 @@ jest.mock("@stream-io/node-sdk", () => ({
 }));
 
 // #473 — stream-client now imports withCircuitBreaker from lib/redis. Mock it
-// (the real module pulls in the un-transformed @upstash/redis ESM) with a
-// pass-through so closed-breaker behaviour is exercised: operation runs as-is.
+// (the real module pulls in the un-transformed @upstash/redis ESM). A mutable
+// delegate lets the breaker-behaviour tests below override per-case; default is
+// a pass-through so closed-breaker behaviour is exercised (operation runs as-is).
+let mockWithCircuitBreaker: jest.Mock = jest.fn((op: () => unknown) => op());
 jest.mock("../../lib/redis", () => ({
-  withCircuitBreaker: jest.fn((op: () => unknown) => op()),
+  withCircuitBreaker: (...args: unknown[]) => mockWithCircuitBreaker(...args),
+}));
+
+// #899 — spy on Sentry so we can assert expected "channel not found" misses are
+// NOT reported while genuine Stream errors are.
+const mockCaptureException = jest.fn();
+jest.mock("@sentry/nextjs", () => ({
+  captureException: (...args: unknown[]) => mockCaptureException(...args),
 }));
 
 describe("Stream Client Module", () => {
@@ -37,6 +46,9 @@ describe("Stream Client Module", () => {
       NEXT_PUBLIC_STREAM_API_KEY: mockApiKey,
       STREAM_API_SECRET: mockApiSecret,
     };
+    // Restore the default pass-through breaker between tests.
+    mockWithCircuitBreaker = jest.fn((op: () => unknown) => op());
+    mockCaptureException.mockClear();
   });
 
   afterEach(() => {
@@ -269,6 +281,116 @@ describe("Stream Client Module", () => {
       // Reset and check
       resetClients();
       expect(isClientInitialized()).toBe(false);
+    });
+  });
+
+  // #899 — a Stream "channel not found" (code 16 / HTTP 404) is the EXPECTED
+  // lazy create-or-join miss; it must not trip the breaker nor reach Sentry.
+  describe("isExpectedStreamError", () => {
+    it.each([
+      ["code 16 (channel not found)", { code: 16 }, true],
+      ["HTTP 404", { status: 404 }, true],
+      ["code 16 + 404", { code: 16, status: 404 }, true],
+      ["other Stream error code", { code: 4, status: 400 }, false],
+      ["generic error (no code/status)", {}, false],
+    ])("classifies %s", async (_label, props, expected) => {
+      const { isExpectedStreamError } = await import("@/lib/stream-client");
+      expect(isExpectedStreamError(Object.assign(new Error("boom"), props))).toBe(
+        expected,
+      );
+    });
+
+    it("returns false for non-Error values", async () => {
+      const { isExpectedStreamError } = await import("@/lib/stream-client");
+      expect(isExpectedStreamError("nope")).toBe(false);
+      expect(isExpectedStreamError(null)).toBe(false);
+    });
+  });
+
+  describe("withStreamCircuitBreaker", () => {
+    const channelNotFound = () =>
+      Object.assign(
+        new Error('StreamChat error code 16: UpdateChannel failed: "Can\'t find channel"'),
+        { code: 16, status: 404 },
+      );
+
+    it("rethrows an expected 'channel not found' miss WITHOUT capturing it to Sentry", async () => {
+      const { withStreamCircuitBreaker } = await import("@/lib/stream-client");
+      const err = channelNotFound();
+
+      await expect(
+        withStreamCircuitBreaker(() => Promise.reject(err)),
+      ).rejects.toBe(err);
+
+      // #899 — the core fix: expected misses are not error-reported.
+      expect(mockCaptureException).not.toHaveBeenCalled();
+    });
+
+    it("passes a shouldTrip predicate that excludes expected misses but trips on real errors", async () => {
+      let shouldTrip: ((e: unknown) => boolean) | undefined;
+      mockWithCircuitBreaker = jest.fn(
+        (op: () => unknown, _fb: unknown, st: (e: unknown) => boolean) => {
+          shouldTrip = st;
+          return op();
+        },
+      );
+
+      const { withStreamCircuitBreaker } = await import("@/lib/stream-client");
+      await withStreamCircuitBreaker(() => Promise.resolve("ok"));
+
+      expect(shouldTrip).toBeDefined();
+      // Expected misses must NOT trip the breaker...
+      expect(shouldTrip!(channelNotFound())).toBe(false);
+      expect(shouldTrip!(Object.assign(new Error("x"), { status: 404 }))).toBe(
+        false,
+      );
+      // ...genuine outages must.
+      expect(shouldTrip!(new Error("ECONNREFUSED"))).toBe(true);
+    });
+
+    it("captures a genuine Stream error to Sentry and rethrows it", async () => {
+      const { withStreamCircuitBreaker } = await import("@/lib/stream-client");
+      const err = Object.assign(new Error("Stream 500"), { code: 500, status: 500 });
+
+      await expect(
+        withStreamCircuitBreaker(() => Promise.reject(err)),
+      ).rejects.toBe(err);
+      expect(mockCaptureException).toHaveBeenCalledWith(
+        err,
+        expect.objectContaining({ tags: { subsystem: "stream" } }),
+      );
+    });
+
+    it("throws StreamUnavailableError (and reports it) when the breaker is OPEN with no fallback", async () => {
+      mockWithCircuitBreaker = jest.fn(() =>
+        Promise.reject(new Error("Redis circuit breaker is OPEN - service unavailable")),
+      );
+
+      const { withStreamCircuitBreaker, StreamUnavailableError } =
+        await import("@/lib/stream-client");
+
+      await expect(
+        withStreamCircuitBreaker(() => Promise.resolve("never")),
+      ).rejects.toBeInstanceOf(StreamUnavailableError);
+      expect(mockCaptureException).toHaveBeenCalledWith(
+        expect.any(StreamUnavailableError),
+        expect.objectContaining({ level: "warning" }),
+      );
+    });
+
+    it("runs the fallback (no throw, no Sentry) when the breaker is OPEN", async () => {
+      mockWithCircuitBreaker = jest.fn(() =>
+        Promise.reject(new Error("Redis circuit breaker is OPEN - service unavailable")),
+      );
+
+      const { withStreamCircuitBreaker } = await import("@/lib/stream-client");
+      const result = await withStreamCircuitBreaker(
+        () => Promise.resolve("never"),
+        () => "degraded",
+      );
+
+      expect(result).toBe("degraded");
+      expect(mockCaptureException).not.toHaveBeenCalled();
     });
   });
 });

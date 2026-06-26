@@ -95,11 +95,16 @@ const CIRCUIT_CONFIG = {
  *
  * @param operation - The Redis operation to execute
  * @param fallback - Optional fallback value if circuit is open
+ * @param shouldTrip - Optional predicate; when it returns false for a thrown
+ *   error, that error is rethrown WITHOUT counting toward the breaker (an
+ *   expected/application-level failure is not an outage). Defaults to "trip on
+ *   any error".
  * @returns Result of operation or fallback
  */
 export async function withCircuitBreaker<T>(
   operation: () => Promise<T>,
   fallback?: () => T,
+  shouldTrip?: (error: unknown) => boolean,
 ): Promise<T> {
   // Check circuit state
   if (circuitBreaker.state === "OPEN") {
@@ -163,6 +168,12 @@ export async function withCircuitBreaker<T>(
 
     return result;
   } catch (error) {
+    // #899 — a caller-classified expected error (e.g. Stream "channel not
+    // found") proves the backend is up; rethrow without touching breaker state
+    // so 404-style misses don't dilute the outage signal and trip the shared
+    // breaker for everyone.
+    if (shouldTrip && !shouldTrip(error)) throw error;
+
     // Failure handling
     circuitBreaker.failures++;
     circuitBreaker.lastFailure = Date.now();

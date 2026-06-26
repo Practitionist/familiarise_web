@@ -121,6 +121,7 @@ export async function processRazorpayWebhookEvent(
           await handlePaymentSuccess(
             capturedEvent.payload.payment.entity.order_id,
             capturedNotes,
+            capturedEvent.payload.payment.entity.amount,
           );
         }
         break;
@@ -140,6 +141,7 @@ export async function processRazorpayWebhookEvent(
           await handlePaymentSuccess(
             paidEvent.payload.order.entity.id,
             paidNotes,
+            paidEvent.payload.order.entity.amount,
           );
         }
         break;

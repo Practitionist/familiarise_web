@@ -35,6 +35,11 @@ jest.mock("../../utils/appointmentlock", () => ({
     .fn()
     .mockResolvedValue({ key: "mock-key", value: "mock-value" }),
   unlockAutoAllocate: jest.fn().mockResolvedValue(undefined),
+  // #898 follow-up — consultee-scoped lock used in the allocate paths.
+  lockConsulteeBooking: jest
+    .fn()
+    .mockResolvedValue({ key: "mock-consultee-key", value: "mock-value" }),
+  unlockConsulteeBooking: jest.fn().mockResolvedValue(undefined),
 }));
 
 // Mock SlotValidationService to isolate unit under test.
@@ -89,9 +94,19 @@ function makeMockTx() {
         id: "apt-1",
         slotsOfAppointment: [],
       }),
+      // #898 — REUSE path: createAppointments updates the preserved 1:1
+      // (consultation/webinar) appointment instead of creating a second row.
+      update: jest.fn().mockResolvedValue({
+        id: "reused-apt",
+        slotsOfAppointment: [],
+      }),
       delete: jest.fn(),
     },
-    slotOfAppointment: { updateMany: jest.fn(), deleteMany: jest.fn() },
+    slotOfAppointment: {
+      update: jest.fn(),
+      updateMany: jest.fn(),
+      deleteMany: jest.fn(),
+    },
   };
 }
 
@@ -812,6 +827,60 @@ describe("Auto allocation", () => {
     expect(mockTx.appointment.create).toHaveBeenCalledTimes(1);
   });
 
+  // #898 follow-up — auto-allocate selection is consultee-aware: it folds the
+  // consultee's existing bookings (with ANY consultant) into bookedSlots, so it
+  // picks slots free for BOTH parties instead of consultant-free ones that then
+  // fail the consultee-conflict validation.
+  it("#898: skips a consultee-busy block and picks the next mutually-free one", async () => {
+    // Consultant is free all Monday 9–11 (two 1h blocks: 09:00 and 10:00).
+    mockTx.consultation.findUnique.mockResolvedValue(
+      makeConsultationEvent({
+        consultationPlan: {
+          durationInHours: 1,
+          consultantProfile: makeConsultantProfile({
+            slotsOfAvailabilityWeekly: [
+              makeWeeklyAvailabilitySlot(DayOfWeek.MONDAY, 9, 10),
+              makeWeeklyAvailabilitySlot(DayOfWeek.TUESDAY, 9, 10),
+            ],
+          }),
+        },
+        requestedBy: { user: { id: "consultee-1" } },
+      }),
+    );
+
+    // The CONSULTEE is already booked (with another consultant) every Monday
+    // 09:00 in the search window → auto-allocate must skip Monday and pick the
+    // mutually-free Tuesday block.
+    const consulteeBusy: any[] = [];
+    for (let week = 0; week < 8; week++) {
+      const d = new Date("2025-01-06T09:00:00Z");
+      d.setUTCDate(d.getUTCDate() + week * 7);
+      consulteeBusy.push({ startsAt: new Date(d) });
+    }
+
+    mockTx.appointment.findMany
+      .mockResolvedValueOnce([]) // reschedule check
+      .mockResolvedValueOnce([]) // consultant booked slots — none
+      .mockResolvedValueOnce([{ slotsOfAppointment: consulteeBusy }]) // #898 consultee-busy query
+      .mockResolvedValue([]); // delete
+
+    const result = await SlotAllocationService.allocate({
+      eventType: "consultation",
+      eventId: "consult-1",
+      mode: "auto",
+    });
+
+    expect(result.success).toBe(true);
+    const createCall = mockTx.appointment.create.mock.calls[0][0];
+    const starts = createCall.data.slotsOfAppointment.create.map((s: any) =>
+      new Date(s.startsAt).toISOString(),
+    );
+    // Booked the mutually-free Tuesday block, not a consultant-free Monday slot
+    // that would have failed the consultee-conflict validation (#898). Without
+    // the consultee-aware selection, auto-allocate would have picked Monday.
+    expect(starts.every((t: string) => t.startsWith("2025-01-07"))).toBe(true);
+  });
+
   it("should fail auto-allocation when all slots are booked", async () => {
     // Consultant has only 1-hour availability (2 blocks: 9:00, 9:30)
     mockTx.consultation.findUnique.mockResolvedValue(
@@ -1502,6 +1571,118 @@ describe("deleteExistingAppointments", () => {
     });
   });
 
+  // ── Enrolled learners must survive a tentative-path reschedule ─────────────
+  // Scheduling a class created via crud-with-plan runs the onlyTentative path
+  // (its placeholder slots are tentative). The enrolled learner lives only on
+  // the slot↔user M2M, so deleteExistingAppointments must capture them and
+  // reconnectEnrolledUsers must re-link them to the new slots — otherwise the
+  // paid learner silently loses the class.
+  it("reconnects enrolled learners after a class tentative reschedule", async () => {
+    mockTx.class.findUnique.mockResolvedValue(makeClassEvent());
+
+    // One tentative session (2 slots for a 1h class) the learner is enrolled in.
+    const tentativeClassAppt = {
+      id: "class-apt-1",
+      slotsOfAppointment: [
+        {
+          id: "ts1",
+          isTentative: true,
+          user: [{ id: "consultant-1" }, { id: "learner-1" }],
+          startsAt: new Date("2025-01-06T10:00:00Z"),
+          endsAt: new Date("2025-01-06T10:30:00Z"),
+        },
+        {
+          id: "ts2",
+          isTentative: true,
+          user: [{ id: "consultant-1" }, { id: "learner-1" }],
+          startsAt: new Date("2025-01-06T10:30:00Z"),
+          endsAt: new Date("2025-01-06T11:00:00Z"),
+        },
+      ],
+      _count: { payment: 0 },
+    };
+    mockTx.appointment.findMany.mockResolvedValue([tentativeClassAppt]);
+    // New appointment must expose BOTH slots (a 1h class session = 2×30-min
+    // slots) so reconnect re-links the learner to every new slot (#898 #6).
+    mockTx.appointment.create.mockResolvedValue({
+      id: "new-class-apt",
+      slotsOfAppointment: [{ id: "new-slot-1" }, { id: "new-slot-1b" }],
+    });
+
+    const result = await SlotAllocationService.allocate({
+      eventType: "class",
+      eventId: "class-1",
+      mode: "manual",
+      slots: ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"],
+    });
+
+    expect(result.success).toBe(true);
+    // The enrolled learner is reconnected to BOTH new slots...
+    for (const slotId of ["new-slot-1", "new-slot-1b"]) {
+      expect(mockTx.slotOfAppointment.update).toHaveBeenCalledWith({
+        where: { id: slotId },
+        data: { user: { connect: [{ id: "learner-1" }] } },
+      });
+    }
+    // ...and the consultant is NOT in the reconnect set (already connected).
+    const reconnectCalls = mockTx.slotOfAppointment.update.mock.calls;
+    const connectedIds = reconnectCalls.flatMap((c: any[]) =>
+      (c[0]?.data?.user?.connect ?? []).map((u: { id: string }) => u.id),
+    );
+    expect(connectedIds).not.toContain("consultant-1");
+  });
+
+  // Same hazard via the full-delete branch: re-scheduling a CONFIRMED,
+  // not-yet-started class (no tentative slots, no past sessions) deletes its
+  // session appointments and recreates them — enrolled learners must be
+  // captured and reconnected here too.
+  it("reconnects enrolled learners when a confirmed class is re-scheduled (full-delete)", async () => {
+    mockTx.class.findUnique.mockResolvedValue(makeClassEvent());
+
+    // One confirmed (non-tentative), future session the learner is enrolled in.
+    const confirmedClassAppt = {
+      id: "confirmed-class-apt",
+      slotsOfAppointment: [
+        {
+          id: "cs1",
+          isTentative: false,
+          user: [{ id: "consultant-1" }, { id: "learner-1" }],
+          startsAt: new Date("2025-01-06T10:00:00Z"),
+          endsAt: new Date("2025-01-06T10:30:00Z"),
+        },
+        {
+          id: "cs2",
+          isTentative: false,
+          user: [{ id: "consultant-1" }, { id: "learner-1" }],
+          startsAt: new Date("2025-01-06T10:30:00Z"),
+          endsAt: new Date("2025-01-06T11:00:00Z"),
+        },
+      ],
+      _count: { payment: 0 },
+    };
+    mockTx.appointment.findMany.mockResolvedValue([confirmedClassAppt]);
+    mockTx.appointment.create.mockResolvedValue({
+      id: "new-class-apt-2",
+      slotsOfAppointment: [{ id: "new-slot-2" }, { id: "new-slot-2b" }],
+    });
+
+    const result = await SlotAllocationService.allocate({
+      eventType: "class",
+      eventId: "class-1",
+      mode: "manual",
+      slots: ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"],
+    });
+
+    expect(result.success).toBe(true);
+    // Both new slots (1h session = 2×30-min) re-link the learner (#898 #6).
+    for (const slotId of ["new-slot-2", "new-slot-2b"]) {
+      expect(mockTx.slotOfAppointment.update).toHaveBeenCalledWith({
+        where: { id: slotId },
+        data: { user: { connect: [{ id: "learner-1" }] } },
+      });
+    }
+  });
+
   it("AE-4: returns an empty deletedAppointmentIds on a non-reschedule allocation", async () => {
     mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
     mockTx.appointment.findMany.mockResolvedValue([]);
@@ -1515,6 +1696,312 @@ describe("deleteExistingAppointments", () => {
 
     expect(result.success).toBe(true);
     expect(result.deletedAppointmentIds).toEqual([]);
+  });
+
+  // ── B8: full-delete must NOT delete payment-bearing appointments ───────────
+  // Deleting one cascades to its Payment, which is Restrict-referenced by
+  // ConsultantEarnings → FK violation. This is the real subscription bug: the
+  // checkout placeholder (zero slots, signup Payment) reaches full-delete on
+  // initial allocation. Preserve it; just strip its slots. Subscription is 1:N
+  // (subscriptionId not @unique), so createAppointments adds a fresh row — no
+  // REUSE (contrast the consultation/webinar REUSE tests below). #898 moved
+  // this off the consultation fixture, which now exercises REUSE instead.
+  it("B8: preserves a payment-bearing subscription placeholder on full-delete, deletes only its slots", async () => {
+    mockTx.subscription.findUnique.mockResolvedValue(makeSubscriptionEvent());
+
+    // Placeholder: zero slots, carries the signup Payment.
+    mockTx.appointment.findMany.mockResolvedValue([
+      { id: "placeholder-apt", slotsOfAppointment: [], _count: { payment: 1 } },
+    ]);
+
+    const result = await SlotAllocationService.allocate({
+      eventType: "subscription",
+      eventId: "sub-1",
+      mode: "manual",
+      slots: ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"],
+    });
+
+    expect(result.success).toBe(true);
+    // The placeholder Appointment (and its Payment + ConsultantEarnings) survives.
+    expect(mockTx.appointment.delete).not.toHaveBeenCalledWith({
+      where: { id: "placeholder-apt" },
+    });
+    // Its slots are freed via deleteMany scoped to the appointment id.
+    expect(mockTx.slotOfAppointment.deleteMany).toHaveBeenCalledWith({
+      where: { appointmentId: "placeholder-apt" },
+    });
+    // 1:N event → a fresh appointment row is created (no REUSE).
+    expect(mockTx.appointment.create).toHaveBeenCalled();
+    expect(mockTx.appointment.update).not.toHaveBeenCalled();
+  });
+
+  it("B8: still hard-deletes a non-payment appointment on full-delete", async () => {
+    mockTx.subscription.findUnique.mockResolvedValue(makeSubscriptionEvent());
+
+    mockTx.appointment.findMany.mockResolvedValue([
+      { id: "no-pay-1", slotsOfAppointment: [], _count: { payment: 0 } },
+    ]);
+
+    const result = await SlotAllocationService.allocate({
+      eventType: "subscription",
+      eventId: "sub-1",
+      mode: "manual",
+      slots: ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"],
+    });
+
+    expect(result.success).toBe(true);
+    expect(mockTx.appointment.delete).toHaveBeenCalledWith({
+      where: { id: "no-pay-1" },
+    });
+  });
+
+  // ── #898: 1:1 events must REUSE the preserved payment-bearing appointment ───
+  // For consultation/webinar (consultationId/webinarId @unique) the kept
+  // appointment still holds the unique event FK, so createAppointments must
+  // UPDATE it (attach new slots) rather than CREATE a second row — a fresh
+  // create P2002s and rolls back the reschedule. (Gemini critical + CodeRabbit
+  // major; both bots' literal suggestions were wrong — see PR triage.)
+  it("#898: REUSEs a payment-bearing consultation appointment on full-delete (update, not create)", async () => {
+    mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
+
+    // Paid consultation appointment (slots already stripped) reaches full-delete.
+    mockTx.appointment.findMany.mockResolvedValue([
+      { id: "paid-consult-apt", slotsOfAppointment: [], _count: { payment: 1 } },
+    ]);
+    mockTx.appointment.update.mockResolvedValue({
+      id: "paid-consult-apt",
+      slotsOfAppointment: [{ id: "reused-slot-1" }, { id: "reused-slot-2" }],
+    });
+
+    const result = await SlotAllocationService.allocate({
+      eventType: "consultation",
+      eventId: "consult-1",
+      mode: "manual",
+      slots: ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"],
+    });
+
+    expect(result.success).toBe(true);
+    // New slots attach to the SAME appointment (REUSE)...
+    expect(mockTx.appointment.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "paid-consult-apt" } }),
+    );
+    // ...and NO second row is created on the @unique consultationId (no P2002).
+    expect(mockTx.appointment.create).not.toHaveBeenCalled();
+    // The appointment is preserved (slots stripped), never hard-deleted.
+    expect(mockTx.slotOfAppointment.deleteMany).toHaveBeenCalledWith({
+      where: { appointmentId: "paid-consult-apt" },
+    });
+    expect(mockTx.appointment.delete).not.toHaveBeenCalledWith({
+      where: { id: "paid-consult-apt" },
+    });
+  });
+
+  // The realistic consultation/webinar reschedule marks slots tentative first,
+  // so it re-allocates through the onlyTentative branch — which carries the same
+  // 1:1 P2002 hazard (#898 decision A: fix BOTH branches). Webinar also moves
+  // its paid attendees to the new slots (notify-only; re-confirm/refund deferred).
+  it("#898: REUSEs a payment-bearing webinar appointment on the tentative path and re-links attendees", async () => {
+    mockTx.webinar.findUnique.mockResolvedValue(makeWebinarEvent());
+
+    // One webinar appointment, all-tentative slots (a reschedule in flight),
+    // carrying multiple attendee payments and two enrolled attendees.
+    mockTx.appointment.findMany.mockResolvedValue([
+      {
+        id: "paid-webinar-apt",
+        slotsOfAppointment: [
+          {
+            id: "ws1",
+            isTentative: true,
+            user: [
+              { id: "consultant-1" },
+              { id: "attendee-1" },
+              { id: "attendee-2" },
+            ],
+            startsAt: new Date("2025-01-06T10:00:00Z"),
+            endsAt: new Date("2025-01-06T10:30:00Z"),
+          },
+          {
+            id: "ws2",
+            isTentative: true,
+            user: [
+              { id: "consultant-1" },
+              { id: "attendee-1" },
+              { id: "attendee-2" },
+            ],
+            startsAt: new Date("2025-01-06T10:30:00Z"),
+            endsAt: new Date("2025-01-06T11:00:00Z"),
+          },
+        ],
+        _count: { payment: 3 },
+      },
+    ]);
+    mockTx.appointment.update.mockResolvedValue({
+      id: "paid-webinar-apt",
+      slotsOfAppointment: [{ id: "reused-ws-1" }, { id: "reused-ws-2" }],
+    });
+
+    const result = await SlotAllocationService.allocate({
+      eventType: "webinar",
+      eventId: "webinar-1",
+      mode: "manual",
+      slots: ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"],
+    });
+
+    expect(result.success).toBe(true);
+    // REUSE the one appointment (no P2002 on the @unique webinarId).
+    expect(mockTx.appointment.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "paid-webinar-apt" } }),
+    );
+    expect(mockTx.appointment.create).not.toHaveBeenCalled();
+    // Both paid attendees are re-linked to the new slots; the consultant is not
+    // re-added (already connected).
+    for (const slotId of ["reused-ws-1", "reused-ws-2"]) {
+      const call = mockTx.slotOfAppointment.update.mock.calls.find(
+        (c: any[]) => c[0]?.where?.id === slotId,
+      );
+      expect(call).toBeDefined();
+      const connectedIds = (
+        call![0].data.user.connect as { id: string }[]
+      ).map((u) => u.id);
+      expect(connectedIds).toEqual(
+        expect.arrayContaining(["attendee-1", "attendee-2"]),
+      );
+      expect(connectedIds).not.toContain("consultant-1");
+    }
+  });
+
+  // #898 decision C: preservePastSlots must not hard-delete a payment-bearing
+  // appointment either. A sibling past session makes isInProgressReallocation
+  // true, routing the zero-slot paid placeholder through this branch; without
+  // the guard its unconditional delete would trip the same Payment→
+  // ConsultantEarnings FK rollback as B8.
+  it("#898: preservePastSlots preserves a payment-bearing placeholder (defense-in-depth)", async () => {
+    mockTx.subscription.findUnique.mockResolvedValue(
+      makeSubscriptionEvent({
+        schedulingPeriodEndsAt: new Date("2025-01-17T00:00:00Z"), // 2 weeks → 4 slots
+      }),
+    );
+
+    // A sibling appointment with a completed (past) session → in-progress
+    // reallocation; plus the paid zero-slot placeholder that must survive.
+    mockTx.appointment.findMany.mockResolvedValue([
+      {
+        id: "past-session-apt",
+        slotsOfAppointment: [
+          {
+            id: "past-1",
+            isTentative: false,
+            user: [{ id: "consultant-1" }, { id: "consultee-1" }],
+            startsAt: new Date("2024-12-30T10:00:00Z"),
+            endsAt: new Date("2024-12-30T10:30:00Z"),
+          },
+          {
+            id: "past-2",
+            isTentative: false,
+            user: [{ id: "consultant-1" }, { id: "consultee-1" }],
+            startsAt: new Date("2024-12-30T10:30:00Z"),
+            endsAt: new Date("2024-12-30T11:00:00Z"),
+          },
+        ],
+        _count: { payment: 0 },
+      },
+      {
+        id: "paid-placeholder",
+        slotsOfAppointment: [],
+        _count: { payment: 1 },
+      },
+    ]);
+
+    const result = await SlotAllocationService.allocate({
+      eventType: "subscription",
+      eventId: "sub-1",
+      mode: "manual",
+      slots: ["2025-01-13T10:00:00Z", "2025-01-13T10:30:00Z"],
+    });
+
+    expect(result.success).toBe(true);
+    // The paid placeholder reaches preservePastSlots with no slots left, but the
+    // guard keeps it (an unconditional delete would FK-rollback the tx).
+    expect(mockTx.appointment.delete).not.toHaveBeenCalledWith({
+      where: { id: "paid-placeholder" },
+    });
+    // The past session is preserved too (its past slots remain).
+    expect(mockTx.appointment.delete).not.toHaveBeenCalledWith({
+      where: { id: "past-session-apt" },
+    });
+  });
+});
+
+// ─── Partial reschedule slot count (bug #2) ──────────────────────────────────
+// A reschedule's expected slot count must be the number of SESSIONS being
+// rescheduled (tentative appointments × slotsPerCall), NOT the full session
+// total. Commit 2b6be4c1 used calculateRequiredSlots (the full total), which
+// wrongly rejected partial reschedules (e.g. 2 of 10 sessions).
+describe("partial reschedule slot count", () => {
+  // 0.5h subscription (slotsPerCall = 1) with 10 total sessions; only 2 of its
+  // appointments carry tentative slots → a partial reschedule of 2 sessions.
+  const partialReschedSub = () =>
+    makeSubscriptionEvent({
+      subscriptionPlan: {
+        durationInMonths: 1,
+        callsPerWeek: 2,
+        sessionDurationInHours: 0.5,
+        totalSessions: 10,
+        consultantProfile: makeConsultantProfile(),
+      },
+    });
+  const twoTentativeAppointments = [
+    {
+      id: "resched-1",
+      slotsOfAppointment: [
+        { id: "ts1", isTentative: true, startsAt: new Date(), endsAt: new Date() },
+      ],
+      _count: { payment: 0 },
+    },
+    {
+      id: "resched-2",
+      slotsOfAppointment: [
+        { id: "ts2", isTentative: true, startsAt: new Date(), endsAt: new Date() },
+      ],
+      _count: { payment: 0 },
+    },
+  ];
+
+  it("expects the rescheduled-session count (2), not the full total (10)", async () => {
+    mockTx.subscription.findUnique.mockResolvedValue(partialReschedSub());
+    mockTx.appointment.findMany.mockResolvedValue(twoTentativeAppointments);
+
+    // Provide the WRONG count (3). The error must reference the PARTIAL expected
+    // count (2), proving it no longer demands the full session total (10).
+    const result = await SlotAllocationService.allocate({
+      eventType: "subscription",
+      eventId: "sub-1",
+      mode: "manual",
+      slots: [
+        "2025-01-06T09:00:00Z",
+        "2025-01-06T09:30:00Z",
+        "2025-01-06T10:00:00Z",
+      ],
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("requires exactly 2 slots");
+    expect(result.error).not.toContain("exactly 10");
+  });
+
+  it("accepts exactly the rescheduled-session count for a partial reschedule", async () => {
+    mockTx.subscription.findUnique.mockResolvedValue(partialReschedSub());
+    mockTx.appointment.findMany.mockResolvedValue(twoTentativeAppointments);
+
+    // Provide the correct partial count (2) → no longer rejected.
+    const result = await SlotAllocationService.allocate({
+      eventType: "subscription",
+      eventId: "sub-1",
+      mode: "manual",
+      slots: ["2025-01-06T09:00:00Z", "2025-01-06T09:30:00Z"],
+    });
+
+    expect(result.success).toBe(true);
   });
 });
 
@@ -1731,6 +2218,62 @@ describe("Manual allocation - distributed lock", () => {
     expect(result.success).toBe(false);
     expect(result.httpStatus).toBe(409);
     expect(result.errorCode).toBe("LOCK_CONTENTION");
+  });
+
+  // #898 follow-up — the consultee-scoped lock serializes the consultee-conflict
+  // check → write so one person can't be booked across two consultants at once.
+  it("#898: acquires + releases the consultee lock around the allocation", async () => {
+    const {
+      lockConsulteeBooking,
+      unlockConsulteeBooking,
+    } = require("../../utils/appointmentlock");
+
+    // getConsulteeUserId reads requestedBy.user.id off the same findUnique mock.
+    (prisma.consultation.findUnique as jest.Mock).mockResolvedValue({
+      consultationPlan: { consultantProfileId: "consultant-profile-1" },
+      requestedBy: { user: { id: "consultee-9" } },
+    });
+    mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
+
+    await SlotAllocationService.allocate({
+      eventType: "consultation",
+      eventId: "consult-1",
+      mode: "manual",
+      slots: ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"],
+    });
+
+    expect(lockConsulteeBooking).toHaveBeenCalledWith("consultee-9");
+    expect(unlockConsulteeBooking).toHaveBeenCalled();
+  });
+
+  it("#898: fails closed when the consultee lock can't be acquired", async () => {
+    const {
+      lockConsulteeBooking,
+      unlockAutoAllocate,
+    } = require("../../utils/appointmentlock");
+
+    (prisma.consultation.findUnique as jest.Mock).mockResolvedValue({
+      consultationPlan: { consultantProfileId: "consultant-profile-1" },
+      requestedBy: { user: { id: "consultee-9" } },
+    });
+    mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
+    lockConsulteeBooking.mockRejectedValueOnce(
+      new Error(
+        "Lock contention: Another booking is in progress for this account.",
+      ),
+    );
+
+    const result = await SlotAllocationService.allocate({
+      eventType: "consultation",
+      eventId: "consult-1",
+      mode: "manual",
+      slots: ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"],
+    });
+
+    // Fails closed (no booking on contention) and still releases the consultant
+    // lock acquired before it.
+    expect(result.success).toBe(false);
+    expect(unlockAutoAllocate).toHaveBeenCalled();
   });
 });
 
