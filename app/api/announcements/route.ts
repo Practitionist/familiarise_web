@@ -1,21 +1,24 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { unstable_cache, revalidateTag } from "next/cache";
 import prisma from "@/lib/prisma";
 import { notifyGeneralAnnouncement } from "@/lib/novu";
 import { CreateAnnouncementSchema } from "@/schemas/announcements";
+import { ANNOUNCEMENTS_TAG } from "@/lib/cache-tags";
 import { isTransientDbError, reportTransient } from "@/lib/data/fail-open";
 
 import { getSession } from "@/lib/auth-server";
 import { assertBodySize } from "@/lib/validation/limits";
-/**
- * GET /api/announcements
- * Public endpoint to get active announcements
- */
-export async function GET() {
-  try {
-    const now = new Date();
 
-    const announcements = await prisma.announcement.findMany({
+// Cache the active-announcements read. The banner is polled frequently and the
+// data only changes on the admin writes below (which revalidate the tag), so this
+// keeps the high-frequency GET off the cross-region pooler hot path (#932). `now`
+// is computed inside the cached fn — not in the key — so the active-window filter
+// is re-evaluated on each revalidation rather than frozen at first call.
+const getActiveAnnouncements = unstable_cache(
+  async () => {
+    const now = new Date();
+    return prisma.announcement.findMany({
       where: {
         isActive: true,
         OR: [
@@ -28,6 +31,18 @@ export async function GET() {
       orderBy: { createdAt: "desc" },
       take: 5,
     });
+  },
+  ["active-announcements"],
+  { revalidate: 60, tags: [ANNOUNCEMENTS_TAG] },
+);
+
+/**
+ * GET /api/announcements
+ * Public endpoint to get active announcements
+ */
+export async function GET() {
+  try {
+    const announcements = await getActiveAnnouncements();
 
     return NextResponse.json({
       success: true,
@@ -112,6 +127,9 @@ export async function POST(request: NextRequest) {
         createdBy: session.user.id,
       },
     });
+
+    // Invalidate the cached banner read so the new announcement shows immediately.
+    revalidateTag(ANNOUNCEMENTS_TAG);
 
     // Fire-and-forget: broadcast announcement to all subscribers via Novu
     void notifyGeneralAnnouncement({
