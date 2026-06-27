@@ -3,8 +3,12 @@ import {
   getTopicsWithCount,
 } from "@/lib/data/explore-programs";
 import { emptyOnTransientDbError } from "@/lib/data/fail-open";
+import { unstable_cache } from "next/cache";
 import prisma from "@/lib/prisma";
 import ProgramsInteractiveContent from "./ProgramsInteractiveContent";
+
+// Stream behind the static layout's instant skeleton; don't prerender at build (#932).
+export const dynamic = "force-dynamic";
 
 /**
  * Server-fetch the trending / newest curated rows, the topic list, and the
@@ -41,6 +45,20 @@ export default async function ExplorePrograms() {
   );
 }
 
+// Marketing counts change slowly (a few plans/day) — cache cross-request for an
+// hour rather than re-running two aggregates on every explore visit (#932 perf).
+const getCachedProgramCounts = unstable_cache(
+  async () => {
+    const [classCount, webinarCount] = await Promise.all([
+      prisma.classPlan.count(),
+      prisma.webinarPlan.count(),
+    ]);
+    return { classCount, webinarCount };
+  },
+  ["program-stats"],
+  { revalidate: 3600, tags: ["programs"] },
+);
+
 /** Counts of class plans + webinar plans for the hero stats strip.
  *  Returns null on failure so the client falls back to the marketing
  *  numbers — same fail-open behavior the old client `useEffect` had. */
@@ -49,11 +67,7 @@ async function fetchProgramStats(): Promise<{
   webinarCount: number;
 } | null> {
   try {
-    const [classCount, webinarCount] = await Promise.all([
-      prisma.classPlan.count(),
-      prisma.webinarPlan.count(),
-    ]);
-    return { classCount, webinarCount };
+    return await getCachedProgramCounts();
   } catch {
     return null;
   }
