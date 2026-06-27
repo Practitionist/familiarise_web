@@ -12,6 +12,9 @@ import {
   fallbackOnTransientDbError,
 } from "@/lib/data/fail-open";
 
+// Stream behind the static layout's instant skeleton; don't prerender at build (#932).
+export const dynamic = "force-dynamic";
+
 function HeroSection({
   totalConsultants,
   averageRating,

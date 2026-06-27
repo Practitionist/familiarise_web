@@ -6,7 +6,9 @@ import Link from "next/link";
 import prisma from "@/lib/prisma";
 import { emptyOnTransientDbError } from "@/lib/data/fail-open";
 
-export const revalidate = 60;
+// Stream behind the static layout's instant skeleton; don't prerender at build (#932).
+// (Replaces the prior `revalidate = 60`, which was inert while the layout forced dynamic.)
+export const dynamic = "force-dynamic";
 
 async function fetchPublicOrgs(industry?: string) {
   const rows = await prisma.organization.findMany({
@@ -15,7 +17,11 @@ async function fetchPublicOrgs(industry?: string) {
       canHost: true,
       status: "ACTIVE",
       ...(industry
-        ? { brandingProfile: { industry: { equals: industry, mode: "insensitive" } } }
+        ? {
+            brandingProfile: {
+              industry: { equals: industry, mode: "insensitive" },
+            },
+          }
         : {}),
     },
     select: {
@@ -119,7 +125,9 @@ function OrgCard({
               {org.name}
             </h3>
             {org.industry && (
-              <p className="text-xs text-muted-foreground truncate">{org.industry}</p>
+              <p className="text-xs text-muted-foreground truncate">
+                {org.industry}
+              </p>
             )}
           </div>
         </div>
@@ -143,7 +151,10 @@ function OrgCard({
           </div>
           <div className="flex items-center gap-1 text-xs text-muted-foreground">
             <Users className="w-3.5 h-3.5" />
-            <span>{org._count.memberships} expert{org._count.memberships !== 1 ? "s" : ""}</span>
+            <span>
+              {org._count.memberships} expert
+              {org._count.memberships !== 1 ? "s" : ""}
+            </span>
           </div>
         </div>
       </div>
@@ -182,11 +193,16 @@ async function OrgsGrid({ industry }: { industry?: string }) {
       <div className="flex flex-col items-center justify-center py-24 text-center">
         <Building2 className="w-12 h-12 text-muted-foreground/70 mb-4" />
         <p className="text-muted-foreground text-lg font-medium">
-          {industry ? `No agencies in ${industry} yet` : "No agencies listed yet"}
+          {industry
+            ? `No agencies in ${industry} yet`
+            : "No agencies listed yet"}
         </p>
         <p className="text-muted-foreground/70 text-sm mt-1">
           {industry ? (
-            <Link href="/explore/enterprise/organisations" className="underline hover:text-foreground">
+            <Link
+              href="/explore/enterprise/organisations"
+              className="underline hover:text-foreground"
+            >
               View all industries
             </Link>
           ) : (
@@ -240,8 +256,8 @@ export default async function ExploreOrganisationsPage({
               Explore <span className="silver-text">Organisations</span>
             </h1>
             <p className="text-lg text-zinc-300 max-w-xl mx-auto">
-              Discover expert networks, consulting agencies, and learning institutions
-              on Familiarise. Book their curated experts directly.
+              Discover expert networks, consulting agencies, and learning
+              institutions on Familiarise. Book their curated experts directly.
             </p>
           </div>
         </div>
