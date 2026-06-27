@@ -62,6 +62,20 @@ const adapter = new PrismaPg({
 // query-event hook below so hot-path regressions surface in any environment.
 const SLOW_QUERY_MS = pgTimeoutMs("PRISMA_SLOW_QUERY_MS", 500);
 
+// #908 — the allocation write transaction. Heavy read/search/validate now runs
+// OUTSIDE this txn (under the per-consultant lock), so the txn is writes-only:
+// a longer maxWait can't pile up (lock + rate-limiter bound concurrency) and a
+// much smaller timeout suffices than the old 120s catch-all. Env-gated so the
+// serverless deploy can tune them without a code change.
+export const ALLOCATION_TX_MAX_WAIT_MS = pgTimeoutMs(
+  "ALLOCATION_TX_MAX_WAIT_MS",
+  8000,
+);
+export const ALLOCATION_TX_TIMEOUT_MS = pgTimeoutMs(
+  "ALLOCATION_TX_TIMEOUT_MS",
+  30000,
+);
+
 function makeClient() {
   // Emit the `query` event everywhere so the slow-query hook fires in prod too;
   // keep the verbose error/warn → stdout fan-out gated to development.
