@@ -15,13 +15,16 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import prisma from "@/lib/prisma";
 import { fallbackOnTransientDbError } from "@/lib/data/fail-open";
+import { cache } from "react";
 import type { Metadata } from "next";
 
 // Stream behind the static layout's instant skeleton; don't prerender at build (#932).
 // (Replaces the prior `revalidate = 60`, inert while the layout forced dynamic.)
 export const dynamic = "force-dynamic";
 
-async function fetchOrgBySlug(slug: string) {
+// React.cache so generateMetadata() and the page body share one query per request
+// instead of running this heavy org read twice (more visible now it's per-request).
+const fetchOrgBySlug = cache(async (slug: string) => {
   const row = await prisma.organization.findFirst({
     where: { slug, isPublic: true, canHost: true, status: "ACTIVE" },
     select: {
@@ -140,7 +143,7 @@ async function fetchOrgBySlug(slug: string) {
     industry: row.brandingProfile?.industry ?? null,
     website: row.brandingProfile?.website ?? null,
   };
-}
+});
 
 type OrgData = NonNullable<Awaited<ReturnType<typeof fetchOrgBySlug>>>;
 

@@ -227,10 +227,11 @@ export const EMPTY_EXPERTS_METADATA: ExpertsMetadata = {
 // Recent reviews (for testimonial sections)
 // ---------------------------------------------------------------------------
 
-/** Recent high-quality reviews for social-proof sections (public landing). Cached
- *  cross-request — testimonials change slowly and staleness is invisible. (#932) */
-export const getRecentReviews = unstable_cache(
-  async (limit: number = 6) => {
+// `limit` must be an explicit arg of the cached fn (not a default) — unstable_cache
+// keys on the args passed, so getRecentReviews() and getRecentReviews(6) would
+// otherwise create two entries for the same data. The default lives on the wrapper.
+const getCachedRecentReviews = unstable_cache(
+  async (limit: number) => {
     return prisma.consultantReview.findMany({
       // #781 §B — soft-deleted profiles leave public surfaces
       where: { rating: { gte: 4 }, consultantProfile: { deletedAt: null } },
@@ -253,6 +254,11 @@ export const getRecentReviews = unstable_cache(
   ["recent-reviews"],
   { revalidate: 120, tags: ["reviews"] },
 );
+
+/** Recent high-quality reviews for social-proof sections (public landing). Cached
+ *  cross-request — testimonials change slowly and staleness is invisible. (#932) */
+export const getRecentReviews = (limit: number = 6) =>
+  getCachedRecentReviews(limit);
 
 // ---------------------------------------------------------------------------
 // Curated experts (Featured / Trending / Newest rows)
