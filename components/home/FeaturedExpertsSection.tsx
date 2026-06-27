@@ -1,6 +1,3 @@
-"use client";
-
-import { motion } from "framer-motion";
 import { ChevronRight, Star } from "lucide-react";
 import Link from "next/link";
 
@@ -8,6 +5,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Reveal } from "@/components/ui/reveal";
 import type { IConsultantCardData } from "@/types/consultant";
 
 function ExpertCard({ expert }: { expert: IConsultantCardData }) {
@@ -90,13 +88,7 @@ export function FeaturedExpertsSection({
       <div className="absolute inset-0 dot-pattern-light opacity-60" />
 
       <div className="container mx-auto px-4 md:px-6 mb-12 relative z-10">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5 }}
-          viewport={{ once: true }}
-          className="flex flex-col md:flex-row md:items-end md:justify-between gap-6"
-        >
+        <Reveal className="flex flex-col md:flex-row md:items-end md:justify-between gap-6">
           <div>
             <Badge
               variant="secondary"
@@ -121,7 +113,7 @@ export function FeaturedExpertsSection({
               <ChevronRight className="ml-1 w-4 h-4 group-hover:translate-x-1 transition-transform" />
             </Button>
           </Link>
-        </motion.div>
+        </Reveal>
       </div>
 
       {/* Marquee */}

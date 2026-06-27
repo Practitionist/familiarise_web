@@ -1,12 +1,12 @@
 "use client";
 
 import { useMemo } from "react";
-import { motion } from "framer-motion";
 import { Star } from "lucide-react";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import { Reveal } from "@/components/ui/reveal";
 import type { ReviewWithProfiles } from "@/types/review";
 
 function TestimonialCard({ review }: { review: ReviewWithProfiles }) {
@@ -81,13 +81,7 @@ export function TestimonialsSection({
       <div className="absolute top-1/2 right-0 w-96 h-96 bg-zinc-600/15 rounded-full blur-[150px] -translate-y-1/2" />
 
       <div className="container mx-auto px-4 md:px-6 mb-12 relative z-10">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5 }}
-          viewport={{ once: true }}
-          className="text-center"
-        >
+        <Reveal className="text-center">
           <Badge
             variant="secondary"
             className="mb-4 bg-zinc-800 text-zinc-300 hover:bg-zinc-800 border-zinc-700"
@@ -100,7 +94,7 @@ export function TestimonialsSection({
           <p className="text-lg text-zinc-500 max-w-2xl mx-auto">
             See what our community has to say about their experience
           </p>
-        </motion.div>
+        </Reveal>
       </div>
 
       {/* First marquee row - left to right */}

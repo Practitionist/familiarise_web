@@ -1,11 +1,9 @@
-"use client";
-
-import { motion } from "framer-motion";
 import { ArrowRight } from "lucide-react";
 import Link from "next/link";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Reveal } from "@/components/ui/reveal";
 import { HOW_IT_WORKS } from "./data";
 
 function HowItWorksStep({
@@ -18,13 +16,7 @@ function HowItWorksStep({
   isLast: boolean;
 }) {
   return (
-    <motion.div
-      initial={{ opacity: 0, x: -20 }}
-      whileInView={{ opacity: 1, x: 0 }}
-      transition={{ duration: 0.5, delay: index * 0.15 }}
-      viewport={{ once: true }}
-      className="relative"
-    >
+    <Reveal className="relative" delay={index * 0.15}>
       <div className="flex gap-6">
         <div className="flex flex-col items-center">
           <div className="w-12 h-12 rounded-full bg-gradient-to-br from-zinc-100 to-zinc-300 flex items-center justify-center text-zinc-900 font-bold text-lg shadow-elevation-2 border border-border">
@@ -43,7 +35,7 @@ function HowItWorksStep({
           </p>
         </div>
       </div>
-    </motion.div>
+    </Reveal>
   );
 }
 
@@ -61,13 +53,7 @@ export function HowItWorksSection() {
 
       <div className="container mx-auto px-4 md:px-6 relative z-10">
         <div className="grid lg:grid-cols-2 gap-16 items-start">
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5 }}
-            viewport={{ once: true }}
-            className="lg:sticky lg:top-32"
-          >
+          <Reveal className="lg:sticky lg:top-32">
             <Badge
               variant="secondary"
               className="mb-4 bg-secondary text-secondary-foreground hover:bg-secondary border-0"
@@ -90,7 +76,7 @@ export function HowItWorksSection() {
                 <ArrowRight className="ml-2 w-5 h-5" />
               </Button>
             </Link>
-          </motion.div>
+          </Reveal>
 
           <div>
             {HOW_IT_WORKS.map((step, index) => (

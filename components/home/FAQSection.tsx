@@ -1,7 +1,3 @@
-"use client";
-
-import { motion } from "framer-motion";
-
 import {
   Accordion,
   AccordionContent,
@@ -9,19 +5,14 @@ import {
   AccordionTrigger,
 } from "@/components/ui/accordion";
 import { Badge } from "@/components/ui/badge";
+import { Reveal } from "@/components/ui/reveal";
 import { FAQ_ITEMS } from "./data";
 
 export function FAQSection() {
   return (
     <section className="py-20 md:py-32 bg-background relative">
       <div className="container mx-auto px-4 md:px-6">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5 }}
-          viewport={{ once: true }}
-          className="text-center mb-12"
-        >
+        <Reveal className="text-center mb-12">
           <Badge
             variant="secondary"
             className="mb-4 bg-secondary text-secondary-foreground hover:bg-secondary border-0"
@@ -34,15 +25,9 @@ export function FAQSection() {
           <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
             Everything you need to know about getting started
           </p>
-        </motion.div>
+        </Reveal>
 
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.1 }}
-          viewport={{ once: true }}
-          className="max-w-3xl mx-auto"
-        >
+        <Reveal className="max-w-3xl mx-auto" delay={0.1}>
           <Accordion type="single" collapsible className="space-y-4">
             {FAQ_ITEMS.map((item, index) => (
               <AccordionItem
@@ -61,7 +46,7 @@ export function FAQSection() {
               </AccordionItem>
             ))}
           </Accordion>
-        </motion.div>
+        </Reveal>
       </div>
     </section>
   );

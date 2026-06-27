@@ -295,6 +295,49 @@
   }
 }
 
+/* On-load entrance (above-the-fold, e.g. hero) — pure CSS, no JS/observer. The
+   `both` fill-mode shows the start frame during a staggered animation-delay so a
+   delayed element doesn't flash visible→hidden before it animates. (#932) */
+.animate-rise {
+  animation: slideUp 0.5s ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-rise {
+    animation: none;
+  }
+}
+
+/* Scroll-in reveal driven by <Reveal> (components/ui/reveal.tsx) — the CSS
+   replacement for framer-motion's whileInView fade+slide. (#932) */
+[data-reveal="hidden"] {
+  opacity: 0;
+}
+
+[data-reveal="visible"] {
+  animation: revealUp 0.5s ease-out forwards;
+}
+
+@keyframes revealUp {
+  from {
+    opacity: 0;
+    transform: translateY(30px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-reveal] {
+    opacity: 1 !important;
+    transform: none !important;
+    animation: none !important;
+  }
+}
+
 /* Scrollbar customization for WebKit browsers */
 .custom-scrollbar::-webkit-scrollbar {
   width: 4px;

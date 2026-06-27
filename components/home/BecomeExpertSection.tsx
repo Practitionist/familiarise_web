@@ -1,11 +1,9 @@
-"use client";
-
-import { motion } from "framer-motion";
 import { ArrowRight, Clock, Mic, Target } from "lucide-react";
 import Link from "next/link";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Reveal } from "@/components/ui/reveal";
 
 const EXPERT_BENEFITS = [
   { icon: Target, label: "Set Your Rates" },
@@ -23,13 +21,7 @@ export function BecomeExpertSection() {
       <div className="absolute inset-0 dot-pattern-light opacity-40" />
 
       <div className="container mx-auto px-4 md:px-6 relative z-10">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5 }}
-          viewport={{ once: true }}
-          className="max-w-3xl mx-auto text-center"
-        >
+        <Reveal className="max-w-3xl mx-auto text-center">
           <Badge
             variant="secondary"
             className="mb-4 bg-primary text-primary-foreground hover:bg-primary"
@@ -48,17 +40,14 @@ export function BecomeExpertSection() {
           {/* Expert benefits */}
           <div className="grid sm:grid-cols-3 gap-6 mb-10">
             {EXPERT_BENEFITS.map((item, i) => (
-              <motion.div
+              <Reveal
                 key={item.label}
-                initial={{ opacity: 0, y: 20 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.4, delay: i * 0.1 }}
-                viewport={{ once: true }}
                 className="flex items-center justify-center gap-2 text-foreground"
+                delay={i * 0.1}
               >
                 <item.icon className="w-5 h-5" />
                 <span className="font-medium">{item.label}</span>
-              </motion.div>
+              </Reveal>
             ))}
           </div>
 
@@ -80,7 +69,7 @@ export function BecomeExpertSection() {
               Learn More
             </Button>
           </div>
-        </motion.div>
+        </Reveal>
       </div>
     </section>
   );

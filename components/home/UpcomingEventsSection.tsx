@@ -1,6 +1,3 @@
-"use client";
-
-import { motion } from "framer-motion";
 import { Calendar, ChevronRight, Clock, Star } from "lucide-react";
 import Link from "next/link";
 
@@ -8,6 +5,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Reveal } from "@/components/ui/reveal";
 import type { ReviewWithProfiles } from "@/types/review";
 import { UPCOMING_EVENTS } from "./data";
 
@@ -19,12 +17,7 @@ function EventCard({
   index: number;
 }) {
   return (
-    <motion.div
-      initial={{ opacity: 0, x: 20 }}
-      whileInView={{ opacity: 1, x: 0 }}
-      transition={{ duration: 0.4, delay: index * 0.1 }}
-      viewport={{ once: true }}
-    >
+    <Reveal delay={index * 0.1}>
       <Card className="border border-zinc-800 bg-zinc-900/50 hover:bg-zinc-900 transition-colors group">
         <CardContent className="p-5">
           <div className="flex items-start justify-between mb-3">
@@ -54,7 +47,7 @@ function EventCard({
           </div>
         </CardContent>
       </Card>
-    </motion.div>
+    </Reveal>
   );
 }
 
@@ -77,13 +70,7 @@ export function UpcomingEventsSection({ reviews }: UpcomingEventsSectionProps) {
         <div className="grid lg:grid-cols-2 gap-16">
           {/* Testimonials Column */}
           <div>
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5 }}
-              viewport={{ once: true }}
-              className="mb-8"
-            >
+            <Reveal className="mb-8">
               <Badge
                 variant="secondary"
                 className="mb-4 bg-zinc-800 text-zinc-300 hover:bg-zinc-800 border-zinc-700"
@@ -93,17 +80,11 @@ export function UpcomingEventsSection({ reviews }: UpcomingEventsSectionProps) {
               <h2 className="text-fluid-3xl font-bold text-white mb-4 tracking-tight">
                 What our users say
               </h2>
-            </motion.div>
+            </Reveal>
 
             <div className="space-y-4">
               {slicedReviews.map((review, i) => (
-                <motion.div
-                  key={review.id}
-                  initial={{ opacity: 0, x: -20 }}
-                  whileInView={{ opacity: 1, x: 0 }}
-                  transition={{ duration: 0.4, delay: i * 0.1 }}
-                  viewport={{ once: true }}
-                >
+                <Reveal key={review.id} delay={i * 0.1}>
                   <Card className="border border-zinc-800 bg-zinc-900/50 backdrop-blur-sm">
                     <CardContent className="p-5">
                       <div className="flex items-center gap-1 mb-3">
@@ -134,20 +115,14 @@ export function UpcomingEventsSection({ reviews }: UpcomingEventsSectionProps) {
                       </div>
                     </CardContent>
                   </Card>
-                </motion.div>
+                </Reveal>
               ))}
             </div>
           </div>
 
           {/* Upcoming Events Column */}
           <div>
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5 }}
-              viewport={{ once: true }}
-              className="mb-8"
-            >
+            <Reveal className="mb-8">
               <Badge
                 variant="secondary"
                 className="mb-4 bg-zinc-800 text-zinc-300 hover:bg-zinc-800 border-zinc-700"
@@ -157,7 +132,7 @@ export function UpcomingEventsSection({ reviews }: UpcomingEventsSectionProps) {
               <h2 className="text-fluid-3xl font-bold text-white mb-4 tracking-tight">
                 Upcoming events
               </h2>
-            </motion.div>
+            </Reveal>
 
             <div className="space-y-4">
               {UPCOMING_EVENTS.map((event, index) => (
@@ -165,20 +140,14 @@ export function UpcomingEventsSection({ reviews }: UpcomingEventsSectionProps) {
               ))}
             </div>
 
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5, delay: 0.3 }}
-              viewport={{ once: true }}
-              className="mt-6"
-            >
+            <Reveal className="mt-6" delay={0.3}>
               <Link href="/explore/programs">
                 <Button className="w-full bg-white text-zinc-900 hover:bg-zinc-200 font-medium">
                   View All Events
                   <ChevronRight className="ml-2 w-4 h-4" />
                 </Button>
               </Link>
-            </motion.div>
+            </Reveal>
           </div>
         </div>
       </div>

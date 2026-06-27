@@ -1,9 +1,7 @@
-"use client";
-
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
-import { motion } from "framer-motion";
 import { Quote, Star } from "lucide-react";
 import Image from "next/image";
+import { Reveal } from "@/components/ui/reveal";
 
 const TESTIMONIALS = [
   {
@@ -50,13 +48,7 @@ export function SatisfiedTestimonial() {
 
       <div className="max-w-[1600px] mx-auto px-4 md:px-8 lg:px-12 relative z-10">
         {/* Section Header */}
-        <motion.div
-          className="text-center mb-16"
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true }}
-          transition={{ duration: 0.5 }}
-        >
+        <Reveal className="text-center mb-16">
           <div className="inline-flex items-center gap-2 px-4 py-2 bg-zinc-800/50 backdrop-blur-sm border border-zinc-700/50 rounded-full mb-6">
             <Quote className="w-4 h-4 text-white" />
             <span className="text-sm font-medium text-zinc-300">
@@ -70,18 +62,15 @@ export function SatisfiedTestimonial() {
             Hear from professionals who&apos;ve transformed their careers with
             expert mentors on Familiarise
           </p>
-        </motion.div>
+        </Reveal>
 
         {/* Testimonials Grid */}
         <div className="grid md:grid-cols-3 gap-6 max-w-6xl mx-auto">
           {TESTIMONIALS.map((testimonial, index) => (
-            <motion.div
+            <Reveal
               key={testimonial.id}
               className="relative"
-              initial={{ opacity: 0, y: 30 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true }}
-              transition={{ duration: 0.5, delay: index * 0.1 }}
+              delay={index * 0.1}
             >
               <div className="h-full bg-zinc-900/50 backdrop-blur-sm border border-zinc-800 rounded-2xl p-6 hover:border-zinc-700 transition-colors">
                 {/* Quote Icon */}
@@ -138,7 +127,7 @@ export function SatisfiedTestimonial() {
                   </span>
                 </div>
               </div>
-            </motion.div>
+            </Reveal>
           ))}
         </div>
       </div>

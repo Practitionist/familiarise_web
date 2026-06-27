@@ -1,10 +1,8 @@
-"use client";
-
-import { motion } from "framer-motion";
 import { LucideIcon } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import { Reveal } from "@/components/ui/reveal";
 import { FEATURES } from "./data";
 
 function FeatureCard({
@@ -22,12 +20,7 @@ function FeatureCard({
   const Icon = feature.icon;
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 30 }}
-      whileInView={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.5, delay: index * 0.1 }}
-      viewport={{ once: true }}
-    >
+    <Reveal delay={index * 0.1}>
       <Card className="feature-card-dark h-full border-0 bg-zinc-900/80 backdrop-blur-sm overflow-hidden group relative">
         <div className="absolute inset-0 bg-gradient-to-br from-white/[0.02] to-transparent" />
         <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 bg-gradient-to-br from-white/[0.05] to-transparent" />
@@ -43,7 +36,7 @@ function FeatureCard({
           <p className="text-zinc-400 leading-relaxed">{feature.description}</p>
         </CardContent>
       </Card>
-    </motion.div>
+    </Reveal>
   );
 }
 
@@ -56,13 +49,7 @@ export function FeaturesSection() {
       <div className="absolute top-0 right-0 w-1/2 h-1/2 bg-gradient-to-bl from-zinc-800/30 to-transparent blur-[100px]" />
 
       <div className="container mx-auto px-4 md:px-6 relative z-10">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5 }}
-          viewport={{ once: true }}
-          className="text-center mb-16"
-        >
+        <Reveal className="text-center mb-16">
           <Badge
             variant="secondary"
             className="mb-4 bg-zinc-800 text-zinc-300 hover:bg-zinc-800 border-zinc-700"
@@ -76,7 +63,7 @@ export function FeaturesSection() {
             Choose the format that works best for your learning style and
             schedule
           </p>
-        </motion.div>
+        </Reveal>
 
         <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
           {FEATURES.map((feature, index) => (

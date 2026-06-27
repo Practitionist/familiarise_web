@@ -1,11 +1,9 @@
-"use client";
-
-import { motion } from "framer-motion";
 import { Rocket } from "lucide-react";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import { Reveal } from "@/components/ui/reveal";
 import { SUCCESS_STORIES } from "./data";
 
 function SuccessStoryCard({
@@ -16,12 +14,7 @@ function SuccessStoryCard({
   index: number;
 }) {
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 30 }}
-      whileInView={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.5, delay: index * 0.1 }}
-      viewport={{ once: true }}
-    >
+    <Reveal delay={index * 0.1}>
       <Card className="h-full border border-zinc-800 bg-gradient-to-br from-zinc-900 to-zinc-950 overflow-hidden group">
         <CardContent className="p-6 md:p-8">
           <div className="flex items-center gap-4 mb-6">
@@ -46,7 +39,7 @@ function SuccessStoryCard({
           </div>
         </CardContent>
       </Card>
-    </motion.div>
+    </Reveal>
   );
 }
 
@@ -59,13 +52,7 @@ export function SuccessStoriesSection() {
       <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-zinc-600/15 rounded-full blur-[150px]" />
 
       <div className="container mx-auto px-4 md:px-6 relative z-10">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5 }}
-          viewport={{ once: true }}
-          className="text-center mb-16"
-        >
+        <Reveal className="text-center mb-16">
           <Badge
             variant="secondary"
             className="mb-4 bg-zinc-800 text-zinc-300 hover:bg-zinc-800 border-zinc-700"
@@ -79,7 +66,7 @@ export function SuccessStoriesSection() {
           <p className="text-lg text-zinc-500 max-w-2xl mx-auto">
             See how our mentees have achieved their career goals
           </p>
-        </motion.div>
+        </Reveal>
 
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
           {SUCCESS_STORIES.map((story, index) => (

@@ -1,9 +1,7 @@
-"use client";
-
-import { motion } from "framer-motion";
 import { CheckCircle2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
+import { Reveal } from "@/components/ui/reveal";
 import { renderLCPImage } from "@/utils/image";
 import type { SupabaseImageFile } from "@/lib/supabase";
 import { BENEFITS } from "./data";
@@ -23,12 +21,7 @@ export function BenefitsSection({ images }: BenefitsSectionProps) {
 
       <div className="container mx-auto px-4 md:px-6 relative z-10">
         <div className="grid lg:grid-cols-2 gap-16 items-center">
-          <motion.div
-            initial={{ opacity: 0, x: -30 }}
-            whileInView={{ opacity: 1, x: 0 }}
-            transition={{ duration: 0.6 }}
-            viewport={{ once: true }}
-          >
+          <Reveal>
             <Badge
               variant="secondary"
               className="mb-4 bg-secondary text-secondary-foreground hover:bg-secondary border-0"
@@ -46,12 +39,9 @@ export function BenefitsSection({ images }: BenefitsSectionProps) {
 
             <div className="space-y-6">
               {BENEFITS.map((benefit, index) => (
-                <motion.div
+                <Reveal
                   key={benefit.title}
-                  initial={{ opacity: 0, x: -20 }}
-                  whileInView={{ opacity: 1, x: 0 }}
-                  transition={{ duration: 0.5, delay: index * 0.1 }}
-                  viewport={{ once: true }}
+                  delay={index * 0.1}
                   className="flex gap-4 group"
                 >
                   <div className="w-12 h-12 rounded-xl bg-primary flex items-center justify-center flex-shrink-0 group-hover:scale-110 transition-transform shadow-elevation-2">
@@ -65,18 +55,12 @@ export function BenefitsSection({ images }: BenefitsSectionProps) {
                       {benefit.description}
                     </p>
                   </div>
-                </motion.div>
+                </Reveal>
               ))}
             </div>
-          </motion.div>
+          </Reveal>
 
-          <motion.div
-            initial={{ opacity: 0, x: 30 }}
-            whileInView={{ opacity: 1, x: 0 }}
-            transition={{ duration: 0.6 }}
-            viewport={{ once: true }}
-            className="relative"
-          >
+          <Reveal className="relative">
             <div className="relative rounded-2xl overflow-hidden shadow-elevation-3 border border-border">
               {renderLCPImage(images, 0, "/placeholder.svg", 600, 400)}
             </div>
@@ -96,7 +80,7 @@ export function BenefitsSection({ images }: BenefitsSectionProps) {
                 </div>
               </div>
             </div>
-          </motion.div>
+          </Reveal>
         </div>
       </div>
     </section>

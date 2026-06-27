@@ -1,12 +1,11 @@
 "use client";
 
-import { useCallback } from "react";
-import { motion, useInView } from "framer-motion";
+import { useCallback, useState, useEffect } from "react";
 import { ArrowRight, Play, Sparkles } from "lucide-react";
 import Link from "next/link";
-import { useRef, useState, useEffect } from "react";
 
 import { Button } from "@/components/ui/button";
+import { useInViewOnce } from "@/components/ui/reveal";
 import { STATS } from "./data";
 
 function AnimatedNumber({
@@ -16,8 +15,7 @@ function AnimatedNumber({
   value: number;
   suffix: string;
 }) {
-  const ref = useRef(null);
-  const isInView = useInView(ref, { once: true });
+  const [ref, isInView] = useInViewOnce<HTMLSpanElement>();
   const [displayValue, setDisplayValue] = useState(0);
 
   const animate = useCallback(() => {
@@ -44,7 +42,7 @@ function AnimatedNumber({
   }, [isInView, animate]);
 
   return (
-    <motion.span
+    <span
       ref={ref}
       className="text-4xl md:text-5xl font-bold text-white tabular-nums"
     >
@@ -52,7 +50,7 @@ function AnimatedNumber({
         ? displayValue.toFixed(1)
         : displayValue.toLocaleString()}
       {suffix}
-    </motion.span>
+    </span>
   );
 }
 
@@ -75,22 +73,15 @@ export function HeroSection() {
       <div className="container mx-auto px-4 md:px-6 relative z-10 py-20 md:py-32">
         <div className="max-w-4xl mx-auto text-center">
           {/* Badge */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5 }}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/5 backdrop-blur-sm border border-white/10 text-zinc-400 text-sm mb-8"
-          >
+          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/5 backdrop-blur-sm border border-white/10 text-zinc-400 text-sm mb-8 animate-rise">
             <Sparkles className="w-4 h-4 text-zinc-300" />
             <span>Trusted by 10,000+ professionals worldwide</span>
-          </motion.div>
+          </div>
 
           {/* Main headline */}
-          <motion.h1
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6, delay: 0.1 }}
-            className="text-fluid-5xl font-bold text-white mb-6 leading-tight tracking-tight"
+          <h1
+            className="text-fluid-5xl font-bold text-white mb-6 leading-tight tracking-tight animate-rise"
+            style={{ animationDelay: "0.1s" }}
           >
             Learn from the{" "}
             <span className="relative inline-block">
@@ -98,26 +89,22 @@ export function HeroSection() {
             </span>
             <br />
             <span className="text-zinc-400">in your industry</span>
-          </motion.h1>
+          </h1>
 
           {/* Subheadline */}
-          <motion.p
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6, delay: 0.2 }}
-            className="text-lg md:text-xl text-zinc-500 mb-10 max-w-2xl mx-auto leading-relaxed"
+          <p
+            className="text-lg md:text-xl text-zinc-500 mb-10 max-w-2xl mx-auto leading-relaxed animate-rise"
+            style={{ animationDelay: "0.2s" }}
           >
             Connect with world-class experts for personalized 1-on-1 sessions,
             interactive classes, and live webinars. Your career transformation
             starts here.
-          </motion.p>
+          </p>
 
           {/* CTAs */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6, delay: 0.3 }}
-            className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-16"
+          <div
+            className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-16 animate-rise"
+            style={{ animationDelay: "0.3s" }}
           >
             <Link href="/explore/experts">
               <Button
@@ -136,14 +123,12 @@ export function HeroSection() {
               <Play className="mr-2 w-5 h-5" />
               Watch Demo
             </Button>
-          </motion.div>
+          </div>
 
           {/* Stats with animated counters */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6, delay: 0.4 }}
-            className="grid grid-cols-2 md:grid-cols-4 gap-8 md:gap-12 pt-8 border-t border-zinc-800"
+          <div
+            className="grid grid-cols-2 md:grid-cols-4 gap-8 md:gap-12 pt-8 border-t border-zinc-800 animate-rise"
+            style={{ animationDelay: "0.4s" }}
           >
             {STATS.map((stat, i) => (
               <div key={i} className="text-center">
@@ -151,7 +136,7 @@ export function HeroSection() {
                 <div className="text-zinc-600 text-sm mt-1">{stat.label}</div>
               </div>
             ))}
-          </motion.div>
+          </div>
         </div>
       </div>
 
