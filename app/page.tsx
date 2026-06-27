@@ -37,6 +37,10 @@ async function FeaturedExpertsLoader() {
   const experts = await getHomeExperts().catch(
     emptyOnTransientDbError("home experts"),
   );
+  // Hide the section rather than render an empty marquee under its headers when
+  // there's nothing to show — whether a transient timeout degraded it or the
+  // platform genuinely has no featured experts yet. (#934 review.)
+  if (experts.length === 0) return null;
   return <FeaturedExpertsSection experts={experts} isLoading={false} />;
 }
 
@@ -44,6 +48,7 @@ async function ReviewsLoader() {
   const reviews = await getHomeReviews().catch(
     emptyOnTransientDbError("home reviews"),
   );
+  if (reviews.length === 0) return null;
   return (
     <>
       <TestimonialsSection reviews={reviews} isLoading={false} />
