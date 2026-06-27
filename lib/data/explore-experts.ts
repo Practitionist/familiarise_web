@@ -1,4 +1,5 @@
 import { cache } from "react";
+import { unstable_cache } from "next/cache";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 
@@ -7,7 +8,8 @@ import { Prisma } from "@prisma/client";
  *
  * Exports two flavors of each function:
  *  - Raw (e.g. fetchExpertsMetadata) — pure Prisma, no cache. Used by API routes.
- *  - Cached (e.g. getExpertsMetadata)  — React.cache() wrapper. Used by Server Components.
+ *  - Cached (e.g. getExpertsMetadata) — unstable_cache wrapper (cross-request Next
+ *    data cache, #932). Used by Server Components.
  */
 
 /**
@@ -158,17 +160,22 @@ export async function fetchExpertsMetadata() {
         Array.from(new Set(rows.flatMap((r) => r.languages))).sort(),
       ),
     // Available companies (from verified consultants' work experiences)
-    prisma.workExperience.findMany({
-      where: {
-        company: { not: "" },
-        user: {
-          consultantProfile: { verificationStatus: "VERIFIED", deletedAt: null },
+    prisma.workExperience
+      .findMany({
+        where: {
+          company: { not: "" },
+          user: {
+            consultantProfile: {
+              verificationStatus: "VERIFIED",
+              deletedAt: null,
+            },
+          },
         },
-      },
-      select: { company: true },
-      distinct: ["company"],
-      orderBy: { company: "asc" },
-    }).then((result) => result.map((r) => r.company)),
+        select: { company: true },
+        distinct: ["company"],
+        orderBy: { company: "asc" },
+      })
+      .then((result) => result.map((r) => r.company)),
   ]);
 
   return {
@@ -187,8 +194,14 @@ export async function fetchExpertsMetadata() {
   };
 }
 
-/** Cached wrapper for Server Components. */
-export const getExpertsMetadata = cache(fetchExpertsMetadata);
+// Cross-request cached wrapper for Server Components: the filter metadata
+// (domains, tags, counts) changes slowly, so serve it from the Next data cache
+// rather than opening a cross-region pooled connection per request (#932).
+export const getExpertsMetadata = unstable_cache(
+  fetchExpertsMetadata,
+  ["experts-metadata"],
+  { revalidate: 300, tags: ["experts"] },
+);
 
 export type ExpertsMetadata = Awaited<ReturnType<typeof fetchExpertsMetadata>>;
 
@@ -241,8 +254,10 @@ export const getRecentReviews = cache(async (limit: number = 6) => {
 // Curated experts (Featured / Trending / Newest rows)
 // ---------------------------------------------------------------------------
 
-/** Cached wrapper for Server Components. */
-export const getCuratedExperts = cache(
+// Cross-request cached: each (sort, limit) pair is keyed separately by
+// unstable_cache, so the three curated rows share one short-lived cache entry
+// apiece instead of re-querying the pooler on every explore load (#932).
+export const getCuratedExperts = unstable_cache(
   async (sort: "rating" | "trending" | "newest", limit: number = 8) => {
     let orderBy: Record<string, unknown>;
     switch (sort) {
@@ -307,4 +322,6 @@ export const getCuratedExperts = cache(
       };
     });
   },
+  ["curated-experts"],
+  { revalidate: 120, tags: ["experts"] },
 );

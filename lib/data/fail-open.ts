@@ -22,24 +22,27 @@ export function isTransientDbError(err: unknown): boolean {
   );
 }
 
-// Report a degraded read without re-raising it: a console line for local/server
-// log visibility + a structured Sentry warning carrying the underlying error
-// message, so the fail-open path stays observable rather than silent. Shared by
-// the explore reads and other public read paths (e.g. announcements). (#929, #931.)
+// Report a degraded read without re-raising it: a server-log line plus a Sentry
+// breadcrumb — NOT a captured event. The transient pooler-timeout class is a
+// known, tracked condition (cross-region latency, #932), so firing a Sentry
+// warning *issue* per degradation only floods the dashboard (and multiplies as
+// more read paths adopt fail-open). The breadcrumb keeps the context attached to
+// any *real* error captured later in the same request. (#929, #931, #934.)
 export function reportTransient(
   context: string,
   err: unknown,
   tags?: Record<string, string>,
 ): void {
-  const msg = err instanceof Error ? err.message : String(err);
+  const message = err instanceof Error ? err.message : String(err);
   console.warn(
     `[fail-open] ${context} (transient DB timeout) — degrading:`,
-    msg,
+    message,
   );
-  Sentry.captureMessage(`fail-open: ${context} (transient DB timeout)`, {
+  Sentry.addBreadcrumb({
+    category: "fail-open",
     level: "warning",
-    extra: { context, message: msg },
-    ...(tags ? { tags } : {}),
+    message: `${context} (transient DB timeout)`,
+    data: { context, message, ...tags },
   });
 }
 
