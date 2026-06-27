@@ -16,24 +16,34 @@ import { BecomeExpertSection } from "@/components/home/BecomeExpertSection";
 import { FAQSection } from "@/components/home/FAQSection";
 import { SatisfiedTestimonial } from "@/app/explore/experts/components/SatisfiedTestimonial";
 import { getHomeExperts, getHomeReviews, getHomeImages } from "@/lib/data/home";
+import { emptyOnTransientDbError } from "@/lib/data/fail-open";
 import {
   BenefitsSkeleton,
   FeaturedExpertsSkeleton,
   TestimonialsSkeleton,
 } from "@/components/home/HomeSectionSkeletons";
 
+// Each section reads independently; a transient pooler timeout (cross-region cold
+// connect, #932) in any one degrades that section to empty rather than throwing
+// past its Suspense boundary and crashing the whole landing page. (FAMILIARISE_WEB-A)
 async function BenefitsLoader() {
-  const images = await getHomeImages();
+  const images = await getHomeImages().catch(
+    emptyOnTransientDbError("home images"),
+  );
   return <BenefitsSection images={images} />;
 }
 
 async function FeaturedExpertsLoader() {
-  const experts = await getHomeExperts();
+  const experts = await getHomeExperts().catch(
+    emptyOnTransientDbError("home experts"),
+  );
   return <FeaturedExpertsSection experts={experts} isLoading={false} />;
 }
 
 async function ReviewsLoader() {
-  const reviews = await getHomeReviews();
+  const reviews = await getHomeReviews().catch(
+    emptyOnTransientDbError("home reviews"),
+  );
   return (
     <>
       <TestimonialsSection reviews={reviews} isLoading={false} />
