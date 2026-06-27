@@ -79,6 +79,13 @@ const securityHeaders = [
 ];
 
 const nextConfig = {
+  // Only the Netlify deploy build OOM'd at the 4GB heap re-running ESLint + tsc.
+  // Skip them THERE (NETLIFY=true is set in Netlify's build env) to drop that memory
+  // hog — CI gates both independently anyway (ci.yaml runs `npx tsc --noEmit` +
+  // `npx eslint .` as their own steps). Local `npm run build` and CI's own build keep
+  // the checks on, so nothing loses its safety net off-Netlify. (#932)
+  eslint: { ignoreDuringBuilds: !!process.env.NETLIFY },
+  typescript: { ignoreBuildErrors: !!process.env.NETLIFY },
   // Reduce Webpack memory usage during builds (Next.js 15+, low-risk experimental)
   experimental: {
     webpackMemoryOptimizations: true,
