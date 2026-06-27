@@ -1,4 +1,3 @@
-import { cache } from "react";
 import { unstable_cache } from "next/cache";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
@@ -228,27 +227,32 @@ export const EMPTY_EXPERTS_METADATA: ExpertsMetadata = {
 // Recent reviews (for testimonial sections)
 // ---------------------------------------------------------------------------
 
-/** Fetch recent high-quality reviews for social proof sections. */
-export const getRecentReviews = cache(async (limit: number = 6) => {
-  return prisma.consultantReview.findMany({
-    // #781 §B — soft-deleted profiles leave public surfaces
-    where: { rating: { gte: 4 }, consultantProfile: { deletedAt: null } },
-    orderBy: { createdAt: "desc" },
-    take: limit,
-    include: {
-      consultantProfile: {
-        include: {
-          user: { select: { name: true } },
+/** Recent high-quality reviews for social-proof sections (public landing). Cached
+ *  cross-request — testimonials change slowly and staleness is invisible. (#932) */
+export const getRecentReviews = unstable_cache(
+  async (limit: number = 6) => {
+    return prisma.consultantReview.findMany({
+      // #781 §B — soft-deleted profiles leave public surfaces
+      where: { rating: { gte: 4 }, consultantProfile: { deletedAt: null } },
+      orderBy: { createdAt: "desc" },
+      take: limit,
+      include: {
+        consultantProfile: {
+          include: {
+            user: { select: { name: true } },
+          },
+        },
+        consulteeProfile: {
+          include: {
+            user: { select: { name: true, image: true } },
+          },
         },
       },
-      consulteeProfile: {
-        include: {
-          user: { select: { name: true, image: true } },
-        },
-      },
-    },
-  });
-});
+    });
+  },
+  ["recent-reviews"],
+  { revalidate: 120, tags: ["reviews"] },
+);
 
 // ---------------------------------------------------------------------------
 // Curated experts (Featured / Trending / Newest rows)

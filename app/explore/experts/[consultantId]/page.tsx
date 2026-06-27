@@ -8,6 +8,10 @@ import { TUserWithProfessionalBackground } from "@/types/user";
 import { ExpertProfileClient } from "./ExpertProfileClient";
 import { ConsultantSkeletonLoader } from "./components/ConsultantSkeletonLoader";
 
+// Per-visitor detail page: stream behind the static layout's instant skeleton,
+// never prerender at build (#932).
+export const dynamic = "force-dynamic";
+
 type Params = Promise<{ consultantId: string }>;
 
 export default async function ExpertProfile({

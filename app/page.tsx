@@ -23,6 +23,11 @@ import {
   TestimonialsSkeleton,
 } from "@/components/home/HomeSectionSkeletons";
 
+// Stream behind the (now static) layout's instant skeleton instead of prerendering
+// at build — the static layout makes loading.tsx prefetchable, and force-dynamic
+// keeps the curated data fresh + off the build-time cross-region DB connect. (#932)
+export const dynamic = "force-dynamic";
+
 // Each section reads independently; a transient pooler timeout (cross-region cold
 // connect, #932) in any one degrades that section to empty rather than throwing
 // past its Suspense boundary and crashing the whole landing page. (FAMILIARISE_WEB-A)
