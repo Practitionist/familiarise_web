@@ -421,6 +421,16 @@ export class SlotAllocationService {
           : fullRequired;
       }
 
+      // #939 review — the in-progress guard above already rejects the
+      // fully-confirmed case, but assert locally so requiredSlots can never
+      // reach findAvailableSlots as <= 0 (which would leave selectedSlots[0]
+      // undefined in updateEventStatus).
+      if (requiredSlots <= 0) {
+        throw new AllocationValidationError(
+          "No new slots need to be allocated; all required sessions are already confirmed.",
+        );
+      }
+
       // Find available slots (read-only; runs out-of-txn under the locks)
       // Pass appointmentIdsToExclude so their slots are excluded from bookedSlots
       // Pass existingAppointments so callsPerWeek is scoped to this event only
