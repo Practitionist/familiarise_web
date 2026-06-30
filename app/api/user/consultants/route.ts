@@ -4,15 +4,17 @@ import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { consultantListInclude, orgMembershipInclude } from "@/lib/data/explore-experts";
 import { apiError } from "@/lib/errors";
+import { isTransientDbError, reportTransient } from "@/lib/data/fail-open";
 
 export async function GET(request: NextRequest) {
+  // Hoisted out of the try so the fail-open branch can echo them back in `meta`.
+  const searchParams = request.nextUrl.searchParams;
+  const page = Math.max(1, parseInt(searchParams.get("page") || "1") || 1);
+  const limit = Math.min(
+    Math.max(1, parseInt(searchParams.get("limit") || "10") || 10),
+    100,
+  );
   try {
-    const searchParams = request.nextUrl.searchParams;
-    const page = Math.max(1, parseInt(searchParams.get("page") || "1") || 1);
-    const limit = Math.min(
-      Math.max(1, parseInt(searchParams.get("limit") || "10") || 10),
-      100,
-    );
     const domain = searchParams.get("domain");
     const subdomain = searchParams.get("subdomain");
     const tags = searchParams.get("tags")?.split(",");
@@ -227,6 +229,21 @@ export async function GET(request: NextRequest) {
       },
     );
   } catch (error) {
+    // Cross-region pooler cold-connect timeouts (#932, FAMILIARISE_WEB-9) are a
+    // known, tracked transient — degrade this public list to empty rather than a
+    // 500 + captured error. Real defects still capture + surface. Mirrors the
+    // announcements route (#931) and lib/data/fail-open.
+    if (isTransientDbError(error)) {
+      reportTransient("consultants list read", error, { subsystem: "auth" });
+      return NextResponse.json(
+        { data: [], meta: { total: 0, page, limit, totalPages: 0 } },
+        {
+          headers: {
+            "Cache-Control": "public, s-maxage=60, stale-while-revalidate=300",
+          },
+        },
+      );
+    }
     Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
     return apiError({ tag: "[Consultants.GET]", error });
   }
