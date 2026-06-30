@@ -23,24 +23,25 @@ const withBundleAnalyzer =
  *
  * Allow-list rationale
  * --------------------
- *   - `script-src` includes Razorpay's checkout CDN + Stream.io +
- *     Sentry + Supabase + 'unsafe-inline'/'unsafe-eval' (Next.js still
- *     emits inline runtime chunks; Next 15 hashing lands in 16).
+ *   - `script-src` includes Razorpay's checkout CDN + Stripe.js +
+ *     Stream.io + Sentry + Supabase + 'unsafe-inline'/'unsafe-eval'
+ *     (Next.js still emits inline runtime chunks; Next 15 hashing
+ *     lands in 16).
  *   - `connect-src` opens WSS for Stream + HTTPS for the four payment
  *     gateways + Sentry + Resend + Upstash. Anything new must be
  *     added here AND in the matching client.
- *   - `frame-src` allows Razorpay's checkout iframe.
+ *   - `frame-src` allows Razorpay's + Stripe's checkout iframes.
  *   - `media-src` is the load-bearing entry for Stream call audio /
  *     video / recording playback (`blob:` + getstream.io).
  */
 const CSP_DIRECTIVES = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://checkout.razorpay.com https://*.sentry.io https://*.getstream.io https://*.supabase.co",
-  "connect-src 'self' https://*.getstream.io wss://*.getstream.io https://*.supabase.co https://*.upstash.io https://api.razorpay.com https://*.sentry.io https://api.resend.com https://*.novu.co wss://*.novu.co",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://checkout.razorpay.com https://js.stripe.com https://*.sentry.io https://*.getstream.io https://*.supabase.co",
+  "connect-src 'self' https://*.getstream.io wss://*.getstream.io https://*.supabase.co https://*.upstash.io https://api.razorpay.com https://api.stripe.com https://*.sentry.io https://api.resend.com https://*.novu.co wss://*.novu.co",
   "img-src 'self' data: https: blob:",
   "media-src 'self' blob: https://*.getstream.io",
   "style-src 'self' 'unsafe-inline'",
-  "frame-src 'self' https://checkout.razorpay.com",
+  "frame-src 'self' https://checkout.razorpay.com https://js.stripe.com https://hooks.stripe.com",
   "font-src 'self' data:",
   "report-uri /api/csp-report",
 ].join("; ");
@@ -200,12 +201,6 @@ export default withSentryConfig(withBundleAnalyzer(nextConfig), {
   // tunnelRoute: "/monitoring",
 
   webpack: {
-    // Enables automatic instrumentation of Vercel Cron Monitors. (Does not yet work with App Router route handlers.)
-    // See the following for more information:
-    // https://docs.sentry.io/product/crons/
-    // https://vercel.com/docs/cron-jobs
-    automaticVercelMonitors: true,
-
     // Tree-shaking options for reducing bundle size
     treeshake: {
       // Automatically tree-shake Sentry logger statements to reduce bundle size
