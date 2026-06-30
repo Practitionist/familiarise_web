@@ -1,6 +1,7 @@
+import "server-only";
 import * as Sentry from "@sentry/nextjs";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
-import type { FileObject } from "@supabase/storage-js"; // Import FileObject type
+import type { FileObject, SearchOptions } from "@supabase/storage-js"; // Import FileObject type
 
 // Define types for image transformation and the enhanced file object
 interface TransformOptions {
@@ -16,7 +17,7 @@ export interface SupabaseImageFile extends FileObject {
   transformedUrl: string; // Transformed URL (will be same as url if no transformOptions)
 }
 
-// Document upload types
+// Rich result for document-style uploads (signed/public, carries file metadata).
 interface DocumentUploadResult {
   success: boolean;
   fileUrl?: string;
@@ -27,11 +28,12 @@ interface DocumentUploadResult {
   error?: string;
 }
 
-interface DocumentUploadOptions {
-  appointmentId: string;
-  consulteeId: string;
-  description?: string;
-  file: File;
+// Slim result for image-style uploads (success + url + path only).
+interface AssetUploadResult {
+  success: boolean;
+  fileUrl?: string;
+  storagePath?: string;
+  error?: string;
 }
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -92,7 +94,7 @@ const supabaseAdmin: SupabaseClient | null = supabaseAdminInstance;
  * Used by generateStorageFileName() to derive extensions from MIME types
  * instead of user-controlled file.name values.
  */
-export const MIME_TO_EXT: Record<string, string> = {
+const MIME_TO_EXT: Record<string, string> = {
   // Images
   "image/jpeg": "jpg",
   "image/jpg": "jpg",
@@ -139,14 +141,21 @@ interface BucketOptions {
   fileSizeLimit?: number;
 }
 
+// Buckets proven to exist this process — skip the existence round-trip once seen.
+const knownBuckets = new Set<string>();
+
 /**
  * Ensure a storage bucket exists, create it if it doesn't.
  * Pass options to customize bucket settings per use case.
+ * Memoized per process: a bucket confirmed once is never re-probed.
  */
 const ensureBucketExists = async (
   bucketName: string,
   options?: BucketOptions,
 ): Promise<boolean> => {
+  if (knownBuckets.has(bucketName)) {
+    return true;
+  }
   try {
     // First check if bucket exists by trying to list files
     const { data: _files, error: listError } = await supabase.storage
@@ -155,6 +164,7 @@ const ensureBucketExists = async (
 
     // If no error, bucket exists
     if (!listError) {
+      knownBuckets.add(bucketName);
       return true;
     }
 
@@ -195,6 +205,7 @@ const ensureBucketExists = async (
       }
 
       console.log(`Successfully created bucket: ${bucketName}`);
+      knownBuckets.add(bucketName);
       return true;
     }
 
@@ -207,35 +218,253 @@ const ensureBucketExists = async (
   }
 };
 
-/**
- * @deprecated Supabase auto-creates folder structure on file upload.
- * This function makes a storage `.list()` call but always returns `true` regardless of the result.
- * All upload functions now skip this call. Kept for backward compatibility with tests.
- */
-const ensureFolderExists = async (
-  bucketName: string,
-  folderPath: string,
+// ---------------------------------------------------------------------------
+// Generic storage core
+//
+// One validate-size → validate-MIME → ensureBucket → [pre-delete] → upload →
+// URL/sign pipeline, shared by every upload family. Per-family differences
+// (bucket, folder template, size cap, MIME list, public-vs-signed, signing
+// client, upsert, folder-replace, error copy) are passed in as options.
+// ---------------------------------------------------------------------------
+
+// List files in a folder (thin wrapper; default opts == omit).
+const listAssets = (bucket: string, folder: string, opts?: SearchOptions) =>
+  supabase.storage.from(bucket).list(folder, opts);
+
+// Public CDN URL for an object, optionally transformed.
+const getPublicAssetUrl = (
+  bucket: string,
+  path: string,
+  transform?: TransformOptions,
+): string => {
+  const { data } = supabase.storage
+    .from(bucket)
+    .getPublicUrl(path, transform ? { transform } : undefined);
+  return data.publicUrl;
+};
+
+// Signed URL for a private object. Defaults to the admin client (RLS bypass).
+const getSignedAssetUrl = (
+  bucket: string,
+  path: string,
+  ttl = 3600,
+  client: SupabaseClient = supabaseAdmin ?? supabase,
+) => client.storage.from(bucket).createSignedUrl(path, ttl);
+
+// Remove a single object. Returns false on any error (never throws).
+const deleteAsset = async (
+  bucket: string,
+  storagePath: string,
 ): Promise<boolean> => {
   try {
-    // Check if folder has any files (which means it exists)
-    const { data: _files, error: listError } = await supabase.storage
-      .from(bucketName)
-      .list(folderPath, { limit: 1 });
-
-    // If we can list without error and there are files, folder "exists"
-    if (!listError) {
-      return true;
+    const { error } = await supabase.storage.from(bucket).remove([storagePath]);
+    if (error) {
+      console.error("Error deleting from storage:", error);
+      return false;
     }
-
-    // If folder doesn't exist, we don't need to create it explicitly
-    // Supabase will create the folder structure when we upload the first file
-    // So we just return true here
     return true;
   } catch (error) {
-    console.error(`Error ensuring folder exists ${folderPath}:`, error);
+    console.error("Error deleting from storage:", error);
     return false;
   }
 };
+
+// Remove every object under a folder. Returns false on list/remove error,
+// true when the folder is already empty or fully cleared.
+const deleteAssetFolder = async (
+  bucket: string,
+  folder: string,
+): Promise<boolean> => {
+  try {
+    const { data: files, error: listError } = await listAssets(bucket, folder);
+    if (listError) {
+      console.error("Error listing storage folder:", listError);
+      return false;
+    }
+    if (!files || files.length === 0) {
+      return true;
+    }
+    const filesToDelete = files.map((f) => `${folder}/${f.name}`);
+    const { error: deleteError } = await supabase.storage
+      .from(bucket)
+      .remove(filesToDelete);
+    if (deleteError) {
+      console.error("Error deleting storage folder:", deleteError);
+      return false;
+    }
+    return true;
+  } catch (error) {
+    console.error("Error deleting storage folder:", error);
+    return false;
+  }
+};
+
+interface UploadAssetErrors {
+  // type may interpolate the rejected MIME; evaluated only after the file is
+  // present + over the type gate, so a null file never reaches it.
+  size?: string;
+  type?: string | ((fileType: string) => string);
+  bucketNotReady?: string;
+  signFailed?: string;
+}
+
+interface UploadAssetOptions {
+  bucket: string;
+  folder: string;
+  file: File;
+  maxBytes: number;
+  allowedMime: string[];
+  access: "public" | "signed";
+  signedTtl?: number;
+  upsert?: boolean;
+  replaceFolder?: boolean;
+  cacheControl?: string;
+  ensureBucket?: BucketOptions;
+  fileNameFor?: (mimeType: string) => string;
+  signWith?: SupabaseClient;
+  errors?: UploadAssetErrors;
+}
+
+/**
+ * Validate, (optionally clear the folder), upload, and resolve a URL for a file.
+ * Returns the rich DocumentUploadResult; image callers narrow it to the slim shape.
+ */
+const uploadAsset = async (
+  opts: UploadAssetOptions,
+): Promise<DocumentUploadResult> => {
+  const {
+    bucket,
+    folder,
+    file,
+    maxBytes,
+    allowedMime,
+    access,
+    signedTtl = 3600,
+    upsert = false,
+    replaceFolder = false,
+    cacheControl = "3600",
+    ensureBucket,
+    fileNameFor = generateStorageFileName,
+    signWith,
+    errors,
+  } = opts;
+
+  try {
+    if (!file) {
+      return { success: false, error: "No file provided" };
+    }
+
+    if (file.size > maxBytes) {
+      return {
+        success: false,
+        error:
+          errors?.size ??
+          `File size exceeds ${Math.round(maxBytes / 1048576)}MB limit`,
+      };
+    }
+
+    if (!allowedMime.includes(file.type)) {
+      const typeErr = errors?.type;
+      return {
+        success: false,
+        error:
+          typeof typeErr === "function"
+            ? typeErr(file.type)
+            : (typeErr ?? "File type not supported"),
+      };
+    }
+
+    const bucketReady = await ensureBucketExists(bucket, ensureBucket);
+    if (!bucketReady) {
+      return {
+        success: false,
+        error:
+          errors?.bucketNotReady ?? `Storage bucket '${bucket}' not found.`,
+      };
+    }
+
+    const fileName = fileNameFor(file.type);
+    const storagePath = `${folder}/${fileName}`;
+
+    // Folder-replace: best-effort clear of prior assets so the folder holds a
+    // single current file. Errors are swallowed — a failed cleanup must not
+    // block the new upload.
+    if (replaceFolder) {
+      try {
+        const { data: existingFiles } = await listAssets(bucket, folder);
+        if (existingFiles && existingFiles.length > 0) {
+          const filesToDelete = existingFiles.map((f) => `${folder}/${f.name}`);
+          await supabase.storage.from(bucket).remove(filesToDelete);
+        }
+      } catch {
+        // Ignore errors when cleaning up old files
+      }
+    }
+
+    const { error: uploadError } = await supabase.storage
+      .from(bucket)
+      .upload(storagePath, file, { cacheControl, upsert });
+
+    if (uploadError) {
+      console.error("Supabase upload error:", uploadError);
+      Sentry.captureException(new Error(uploadError.message), {
+        tags: { subsystem: "storage" },
+      });
+      return { success: false, error: uploadError.message };
+    }
+
+    let fileUrl: string;
+    if (access === "signed") {
+      const { data: signedUrlData, error: signedUrlError } =
+        await getSignedAssetUrl(bucket, storagePath, signedTtl, signWith);
+      if (signedUrlError || !signedUrlData?.signedUrl) {
+        console.error("Failed to create signed URL:", signedUrlError);
+        Sentry.captureException(
+          signedUrlError instanceof Error
+            ? signedUrlError
+            : new Error("Failed to create signed URL"),
+          { tags: { subsystem: "storage" } },
+        );
+        return {
+          success: false,
+          error: errors?.signFailed ?? "Failed to generate document URL",
+        };
+      }
+      fileUrl = signedUrlData.signedUrl;
+    } else {
+      fileUrl = getPublicAssetUrl(bucket, storagePath);
+    }
+
+    return {
+      success: true,
+      fileUrl,
+      storagePath,
+      fileName,
+      fileSize: file.size,
+      mimeType: file.type,
+    };
+  } catch (error) {
+    console.error("Error uploading asset:", error);
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "storage" } },
+    );
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Upload failed",
+    };
+  }
+};
+
+// Narrow the rich upload result down to the slim image shape.
+const toAssetResult = (result: DocumentUploadResult): AssetUploadResult =>
+  result.success
+    ? {
+        success: true,
+        fileUrl: result.fileUrl,
+        storagePath: result.storagePath,
+      }
+    : { success: false, error: result.error };
 
 const fetchImagesFromSupabaseStorage = async (
   bucket: string,
@@ -292,174 +521,7 @@ const fetchImagesFromSupabaseStorage = async (
   }
 };
 
-/**
- * Upload document to Supabase storage with organized folder structure
- * Structure: appointments/{appointmentId}/consultee-{consulteeId}/{filename}
- */
-const uploadAppointmentDocument = async (
-  options: DocumentUploadOptions,
-): Promise<DocumentUploadResult> => {
-  try {
-    const { appointmentId, consulteeId, file } = options;
-
-    // Validate file
-    if (!file) {
-      return { success: false, error: "No file provided" };
-    }
-
-    // Check file size (max 10MB)
-    const maxSize = 10 * 1024 * 1024; // 10MB
-    if (file.size > maxSize) {
-      return { success: false, error: "File size exceeds 10MB limit" };
-    }
-
-    // Validate file type (common document types)
-    const allowedTypes = [
-      "application/pdf",
-      "application/msword",
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      "image/jpeg",
-      "image/png",
-      "image/gif",
-      "text/plain",
-    ];
-
-    if (!allowedTypes.includes(file.type)) {
-      return { success: false, error: "File type not supported" };
-    }
-
-    // Ensure the documents bucket exists (create if it doesn't)
-    const bucketReady = await ensureBucketExists("documents", { public: false });
-    if (!bucketReady) {
-      return {
-        success: false,
-        error:
-          "Document storage bucket not found. Please create a 'documents' bucket in your Supabase dashboard (private), or add SUPABASE_SERVICE_ROLE_KEY to your environment variables for automatic bucket creation.",
-      };
-    }
-
-    // Generate unique filename using UUID + MIME-derived extension
-    const fileName = generateStorageFileName(file.type);
-
-    // Create folder structure: appointments/{appointmentId}/consultee-{consulteeId}/
-    const folderPath = `appointments/${appointmentId}/consultee-${consulteeId}`;
-    const storagePath = `${folderPath}/${fileName}`;
-
-    // Upload file to Supabase storage
-    const { data: _uploadData, error: uploadError } = await supabase.storage
-      .from("documents")
-      .upload(storagePath, file, {
-        cacheControl: "3600",
-        upsert: false,
-      });
-
-    if (uploadError) {
-      console.error("Supabase upload error:", uploadError);
-      Sentry.captureException(new Error(uploadError.message), { tags: { subsystem: "storage" } });
-      return { success: false, error: uploadError.message };
-    }
-
-    // Generate a signed URL (1 hour expiry) for private bucket — use admin client
-    const signingClient = supabaseAdmin || supabase;
-    const { data: signedUrlData, error: signedUrlError } =
-      await signingClient.storage
-        .from("documents")
-        .createSignedUrl(storagePath, 3600);
-
-    if (signedUrlError || !signedUrlData?.signedUrl) {
-      console.error("Failed to create signed URL:", signedUrlError);
-      Sentry.captureException(signedUrlError instanceof Error ? signedUrlError : new Error("Failed to create signed URL"), { tags: { subsystem: "storage" } });
-      return { success: false, error: "Failed to generate document URL" };
-    }
-
-    return {
-      success: true,
-      fileUrl: signedUrlData.signedUrl,
-      storagePath,
-      fileName,
-      fileSize: file.size,
-      mimeType: file.type,
-    };
-  } catch (error) {
-    console.error("Error uploading document:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "storage" } });
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : "Upload failed",
-    };
-  }
-};
-
-/**
- * Delete document from Supabase storage
- */
-const deleteAppointmentDocument = async (
-  storagePath: string,
-): Promise<boolean> => {
-  try {
-    const { error } = await supabase.storage
-      .from("documents")
-      .remove([storagePath]);
-
-    if (error) {
-      console.error("Error deleting document:", error);
-      return false;
-    }
-
-    return true;
-  } catch (error) {
-    console.error("Error deleting document:", error);
-    return false;
-  }
-};
-
-/**
- * List documents in a folder
- */
-const listAppointmentDocuments = async (
-  folderPath: string,
-): Promise<FileObject[]> => {
-  try {
-    const { data: files, error } = await supabase.storage
-      .from("documents")
-      .list(folderPath, {
-        limit: 100,
-        offset: 0,
-        sortBy: { column: "created_at", order: "desc" },
-      });
-
-    if (error) {
-      console.error("Error listing documents:", error);
-      return [];
-    }
-
-    return files || [];
-  } catch (error) {
-    console.error("Error listing documents:", error);
-    return [];
-  }
-};
-
-// Plan material upload types
-export type PlanType = "consultation" | "subscription" | "webinar" | "class";
-
-interface PlanMaterialUploadOptions {
-  planType: PlanType;
-  planId: string;
-  file: File;
-  description?: string;
-}
-
-// Consultant document upload types (for response documents)
-interface ConsultantDocumentUploadOptions {
-  appointmentId: string;
-  consultantId: string;
-  file: File;
-  responseToDocumentId?: string;
-  description?: string;
-}
-
-// Allowed MIME types for documents (shared across all document uploads)
+// Allowed MIME types for documents (shared across plan-material + consultant uploads)
 const ALLOWED_DOCUMENT_TYPES = [
   "application/pdf",
   "application/msword",
@@ -480,234 +542,131 @@ const ALLOWED_DOCUMENT_TYPES = [
   "application/x-rar-compressed",
 ];
 
+// Shared "File type '<x>' not supported" copy for plan-material + consultant.
+const documentTypeError = (fileType: string): string =>
+  `File type '${fileType}' not supported. Allowed types: PDF, Word, Excel, PowerPoint, images, text files, and archives.`;
+
+// Document upload types
+interface DocumentUploadOptions {
+  appointmentId: string;
+  consulteeId: string;
+  description?: string;
+  file: File;
+}
+
 /**
- * Upload plan material to Supabase storage
- * Structure: plans/{planType}-plans/{planId}/{filename}
+ * Upload document to Supabase storage with organized folder structure.
+ * Structure: appointments/{appointmentId}/consultee-{consulteeId}/{filename}
+ * Signed URL via admin client (falls back to anon).
  */
-const uploadPlanMaterial = async (
+const uploadAppointmentDocument = (
+  options: DocumentUploadOptions,
+): Promise<DocumentUploadResult> => {
+  const { appointmentId, consulteeId, file } = options;
+  return uploadAsset({
+    bucket: "documents",
+    folder: `appointments/${appointmentId}/consultee-${consulteeId}`,
+    file,
+    maxBytes: 10 * 1024 * 1024,
+    allowedMime: [
+      "application/pdf",
+      "application/msword",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "image/jpeg",
+      "image/png",
+      "image/gif",
+      "text/plain",
+    ],
+    access: "signed",
+    ensureBucket: { public: false },
+    errors: {
+      bucketNotReady:
+        "Document storage bucket not found. Please create a 'documents' bucket in your Supabase dashboard (private), or add SUPABASE_SERVICE_ROLE_KEY to your environment variables for automatic bucket creation.",
+    },
+  });
+};
+
+/**
+ * Delete document from Supabase storage
+ */
+const deleteAppointmentDocument = (storagePath: string): Promise<boolean> =>
+  deleteAsset("documents", storagePath);
+
+// Plan material upload types
+export type PlanType = "consultation" | "subscription" | "webinar" | "class";
+
+interface PlanMaterialUploadOptions {
+  planType: PlanType;
+  planId: string;
+  file: File;
+  description?: string;
+}
+
+// Consultant document upload types (for response documents)
+interface ConsultantDocumentUploadOptions {
+  appointmentId: string;
+  consultantId: string;
+  file: File;
+  responseToDocumentId?: string;
+  description?: string;
+}
+
+/**
+ * Upload plan material to Supabase storage.
+ * Structure: plans/{planType}-plans/{planId}/{filename}
+ * Signed URL via anon client only.
+ */
+const uploadPlanMaterial = (
   options: PlanMaterialUploadOptions,
 ): Promise<DocumentUploadResult> => {
-  try {
-    const { planType, planId, file } = options;
-
-    // Validate file
-    if (!file) {
-      return { success: false, error: "No file provided" };
-    }
-
-    // Check file size (max 10MB)
-    const maxSize = 10 * 1024 * 1024; // 10MB
-    if (file.size > maxSize) {
-      return { success: false, error: "File size exceeds 10MB limit" };
-    }
-
-    // Validate file type
-    if (!ALLOWED_DOCUMENT_TYPES.includes(file.type)) {
-      return {
-        success: false,
-        error: `File type '${file.type}' not supported. Allowed types: PDF, Word, Excel, PowerPoint, images, text files, and archives.`,
-      };
-    }
-
-    // Ensure the documents bucket exists
-    const bucketReady = await ensureBucketExists("documents", { public: false });
-    if (!bucketReady) {
-      return {
-        success: false,
-        error:
-          "Document storage bucket not found. Please create a 'documents' bucket in your Supabase dashboard.",
-      };
-    }
-
-    // Generate unique filename using UUID + MIME-derived extension
-    const fileName = generateStorageFileName(file.type);
-
-    // Create folder structure: plans/{planType}-plans/{planId}/
-    const folderPath = `plans/${planType}-plans/${planId}`;
-    const storagePath = `${folderPath}/${fileName}`;
-
-    // Upload file to Supabase storage
-    const { error: uploadError } = await supabase.storage
-      .from("documents")
-      .upload(storagePath, file, {
-        cacheControl: "3600",
-        upsert: false,
-      });
-
-    if (uploadError) {
-      console.error("Supabase upload error:", uploadError);
-      Sentry.captureException(new Error(uploadError.message), { tags: { subsystem: "storage" } });
-      return { success: false, error: uploadError.message };
-    }
-
-    // Generate a signed URL for private bucket access (1 hour expiry)
-    const { data: signedUrlData, error: signedUrlError } =
-      await supabase.storage
-        .from("documents")
-        .createSignedUrl(storagePath, 3600);
-
-    if (signedUrlError || !signedUrlData?.signedUrl) {
-      console.error("Failed to create signed URL:", signedUrlError);
-      Sentry.captureException(signedUrlError instanceof Error ? signedUrlError : new Error("Failed to create signed URL"), { tags: { subsystem: "storage" } });
-      return { success: false, error: "Failed to generate document URL" };
-    }
-
-    return {
-      success: true,
-      fileUrl: signedUrlData.signedUrl,
-      storagePath,
-      fileName,
-      fileSize: file.size,
-      mimeType: file.type,
-    };
-  } catch (error) {
-    console.error("Error uploading plan material:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "storage" } });
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : "Upload failed",
-    };
-  }
+  const { planType, planId, file } = options;
+  return uploadAsset({
+    bucket: "documents",
+    folder: `plans/${planType}-plans/${planId}`,
+    file,
+    maxBytes: 10 * 1024 * 1024,
+    allowedMime: ALLOWED_DOCUMENT_TYPES,
+    access: "signed",
+    signWith: supabase, // anon-only signing (preserve)
+    ensureBucket: { public: false },
+    errors: {
+      type: documentTypeError,
+      bucketNotReady:
+        "Document storage bucket not found. Please create a 'documents' bucket in your Supabase dashboard.",
+    },
+  });
 };
 
 /**
  * Delete plan material from Supabase storage
  */
-const deletePlanMaterial = async (storagePath: string): Promise<boolean> => {
-  try {
-    const { error } = await supabase.storage
-      .from("documents")
-      .remove([storagePath]);
-
-    if (error) {
-      console.error("Error deleting plan material:", error);
-      return false;
-    }
-
-    return true;
-  } catch (error) {
-    console.error("Error deleting plan material:", error);
-    return false;
-  }
-};
+const deletePlanMaterial = (storagePath: string): Promise<boolean> =>
+  deleteAsset("documents", storagePath);
 
 /**
- * List plan materials in a folder
- */
-const listPlanMaterials = async (
-  planType: PlanType,
-  planId: string,
-): Promise<FileObject[]> => {
-  try {
-    const folderPath = `plans/${planType}-plans/${planId}`;
-    const { data: files, error } = await supabase.storage
-      .from("documents")
-      .list(folderPath, {
-        limit: 100,
-        offset: 0,
-        sortBy: { column: "created_at", order: "desc" },
-      });
-
-    if (error) {
-      console.error("Error listing plan materials:", error);
-      return [];
-    }
-
-    return files || [];
-  } catch (error) {
-    console.error("Error listing plan materials:", error);
-    return [];
-  }
-};
-
-/**
- * Upload consultant document (response document) to Supabase storage
+ * Upload consultant document (response document) to Supabase storage.
  * Structure: appointments/{appointmentId}/consultant-{consultantId}/{filename}
+ * Signed URL via anon client only.
  */
-const uploadConsultantDocument = async (
+const uploadConsultantDocument = (
   options: ConsultantDocumentUploadOptions,
 ): Promise<DocumentUploadResult> => {
-  try {
-    const { appointmentId, consultantId, file } = options;
-
-    // Validate file
-    if (!file) {
-      return { success: false, error: "No file provided" };
-    }
-
-    // Check file size (max 10MB)
-    const maxSize = 10 * 1024 * 1024; // 10MB
-    if (file.size > maxSize) {
-      return { success: false, error: "File size exceeds 10MB limit" };
-    }
-
-    // Validate file type
-    if (!ALLOWED_DOCUMENT_TYPES.includes(file.type)) {
-      return {
-        success: false,
-        error: `File type '${file.type}' not supported. Allowed types: PDF, Word, Excel, PowerPoint, images, text files, and archives.`,
-      };
-    }
-
-    // Ensure the documents bucket exists
-    const bucketReady = await ensureBucketExists("documents", { public: false });
-    if (!bucketReady) {
-      return {
-        success: false,
-        error:
-          "Document storage bucket not found. Please create a 'documents' bucket in your Supabase dashboard.",
-      };
-    }
-
-    // Generate unique filename using UUID + MIME-derived extension
-    const fileName = generateStorageFileName(file.type);
-
-    // Create folder structure: appointments/{appointmentId}/consultant-{consultantId}/
-    const folderPath = `appointments/${appointmentId}/consultant-${consultantId}`;
-    const storagePath = `${folderPath}/${fileName}`;
-
-    // Upload file to Supabase storage
-    const { error: uploadError } = await supabase.storage
-      .from("documents")
-      .upload(storagePath, file, {
-        cacheControl: "3600",
-        upsert: false,
-      });
-
-    if (uploadError) {
-      console.error("Supabase upload error:", uploadError);
-      Sentry.captureException(new Error(uploadError.message), { tags: { subsystem: "storage" } });
-      return { success: false, error: uploadError.message };
-    }
-
-    // Generate a signed URL for private bucket access (1 hour expiry)
-    const { data: signedUrlData, error: signedUrlError } =
-      await supabase.storage
-        .from("documents")
-        .createSignedUrl(storagePath, 3600);
-
-    if (signedUrlError || !signedUrlData?.signedUrl) {
-      console.error("Failed to create signed URL:", signedUrlError);
-      Sentry.captureException(signedUrlError instanceof Error ? signedUrlError : new Error("Failed to create signed URL"), { tags: { subsystem: "storage" } });
-      return { success: false, error: "Failed to generate document URL" };
-    }
-
-    return {
-      success: true,
-      fileUrl: signedUrlData.signedUrl,
-      storagePath,
-      fileName,
-      fileSize: file.size,
-      mimeType: file.type,
-    };
-  } catch (error) {
-    console.error("Error uploading consultant document:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "storage" } });
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : "Upload failed",
-    };
-  }
+  const { appointmentId, consultantId, file } = options;
+  return uploadAsset({
+    bucket: "documents",
+    folder: `appointments/${appointmentId}/consultant-${consultantId}`,
+    file,
+    maxBytes: 10 * 1024 * 1024,
+    allowedMime: ALLOWED_DOCUMENT_TYPES,
+    access: "signed",
+    signWith: supabase, // anon-only signing (preserve)
+    ensureBucket: { public: false },
+    errors: {
+      type: documentTypeError,
+      bucketNotReady:
+        "Document storage bucket not found. Please create a 'documents' bucket in your Supabase dashboard.",
+    },
+  });
 };
 
 // Support ticket attachment types
@@ -717,27 +676,18 @@ interface SupportAttachmentUploadOptions {
 }
 
 /**
- * Upload support ticket attachment to Supabase storage
+ * Upload support ticket attachment to Supabase storage (public URL).
  */
-const uploadSupportTicketAttachment = async (
+const uploadSupportTicketAttachment = (
   options: SupportAttachmentUploadOptions,
 ): Promise<DocumentUploadResult> => {
-  try {
-    const { ticketId, file } = options;
-
-    // Validate file
-    if (!file) {
-      return { success: false, error: "No file provided" };
-    }
-
-    // Check file size (max 10MB)
-    const maxSize = 10 * 1024 * 1024; // 10MB
-    if (file.size > maxSize) {
-      return { success: false, error: "File size exceeds 10MB limit" };
-    }
-
-    // Validate file type (common document types + images)
-    const allowedTypes = [
+  const { ticketId, file } = options;
+  return uploadAsset({
+    bucket: "support-attachments",
+    folder: `support-tickets/${ticketId}`,
+    file,
+    maxBytes: 10 * 1024 * 1024,
+    allowedMime: [
       "application/pdf",
       "application/msword",
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -746,88 +696,20 @@ const uploadSupportTicketAttachment = async (
       "image/gif",
       "image/webp",
       "text/plain",
-    ];
-
-    if (!allowedTypes.includes(file.type)) {
-      return { success: false, error: "File type not supported" };
-    }
-
-    // Ensure the support-attachments bucket exists
-    const bucketReady = await ensureBucketExists("support-attachments");
-    if (!bucketReady) {
-      return {
-        success: false,
-        error:
-          "Support attachments storage bucket not found. Please create a 'support-attachments' bucket in your Supabase dashboard with public access enabled.",
-      };
-    }
-
-    // Generate unique filename using UUID + MIME-derived extension
-    const fileName = generateStorageFileName(file.type);
-
-    // Create folder structure: support-tickets/{ticketId}/
-    const folderPath = `support-tickets/${ticketId}`;
-    const storagePath = `${folderPath}/${fileName}`;
-
-    // Upload file to Supabase storage
-    const { data: _uploadData, error: uploadError } = await supabase.storage
-      .from("support-attachments")
-      .upload(storagePath, file, {
-        cacheControl: "3600",
-        upsert: false,
-      });
-
-    if (uploadError) {
-      console.error("Supabase upload error:", uploadError);
-      Sentry.captureException(new Error(uploadError.message), { tags: { subsystem: "storage" } });
-      return { success: false, error: uploadError.message };
-    }
-
-    // Get public URL
-    const { data: urlData } = supabase.storage
-      .from("support-attachments")
-      .getPublicUrl(storagePath);
-
-    return {
-      success: true,
-      fileUrl: urlData.publicUrl,
-      storagePath,
-      fileName,
-      fileSize: file.size,
-      mimeType: file.type,
-    };
-  } catch (error) {
-    console.error("Error uploading support attachment:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "storage" } });
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : "Upload failed",
-    };
-  }
+    ],
+    access: "public",
+    errors: {
+      bucketNotReady:
+        "Support attachments storage bucket not found. Please create a 'support-attachments' bucket in your Supabase dashboard with public access enabled.",
+    },
+  });
 };
 
 /**
  * Delete support ticket attachment from Supabase storage
  */
-const deleteSupportTicketAttachment = async (
-  storagePath: string,
-): Promise<boolean> => {
-  try {
-    const { error } = await supabase.storage
-      .from("support-attachments")
-      .remove([storagePath]);
-
-    if (error) {
-      console.error("Error deleting support attachment:", error);
-      return false;
-    }
-
-    return true;
-  } catch (error) {
-    console.error("Error deleting support attachment:", error);
-    return false;
-  }
-};
+const deleteSupportTicketAttachment = (storagePath: string): Promise<boolean> =>
+  deleteAsset("support-attachments", storagePath);
 
 /**
  * Get manual bucket creation instructions
@@ -860,174 +742,45 @@ interface IPlanImageUploadOptions {
   file: File;
 }
 
-const PLAN_IMAGE_MAX_SIZE = 5 * 1024 * 1024; // 5MB
-const ALLOWED_PLAN_IMAGE_TYPES = [
-  "image/jpeg",
-  "image/jpg",
-  "image/png",
-  "image/webp",
-];
-
 /**
- * Upload plan cover image to Supabase storage
- * Structure: plan-images/{planType}/{planId}/cover.{ext}
+ * Upload plan cover image to Supabase storage (public URL, upsert-single-file).
+ * Structure: plan-images/{planType}/{planId}/{filename}
  */
 const uploadPlanImage = async (
   options: IPlanImageUploadOptions,
-): Promise<CoverImageUploadResult> => {
-  try {
-    const { planType, planId, file } = options;
-
-    if (!file) {
-      return { success: false, error: "No file provided" };
-    }
-
-    if (file.size > PLAN_IMAGE_MAX_SIZE) {
-      return { success: false, error: "File size exceeds 5MB limit" };
-    }
-
-    if (!ALLOWED_PLAN_IMAGE_TYPES.includes(file.type)) {
-      return {
-        success: false,
-        error: "File type not supported. Please use JPEG, PNG, or WebP.",
-      };
-    }
-
-    const bucketReady = await ensureBucketExists("plan-images");
-    if (!bucketReady) {
-      return {
-        success: false,
-        error:
-          "Plan images storage bucket not found. Please create a 'plan-images' bucket in your Supabase dashboard.",
-      };
-    }
-
-    const fileName = generateStorageFileName(file.type);
-    const folderPath = `${planType}/${planId}`;
-    const storagePath = `${folderPath}/${fileName}`;
-
-    // Delete any existing cover images for this plan first
-    try {
-      const { data: existingFiles } = await supabase.storage
-        .from("plan-images")
-        .list(folderPath);
-
-      if (existingFiles && existingFiles.length > 0) {
-        const filesToDelete = existingFiles.map(
-          (f) => `${folderPath}/${f.name}`,
-        );
-        await supabase.storage.from("plan-images").remove(filesToDelete);
-      }
-    } catch {
-      // Ignore errors when cleaning up old files
-    }
-
-    const { error: uploadError } = await supabase.storage
-      .from("plan-images")
-      .upload(storagePath, file, {
-        cacheControl: "3600",
-        upsert: true,
-      });
-
-    if (uploadError) {
-      console.error("Supabase plan image upload error:", uploadError);
-      Sentry.captureException(new Error(uploadError.message), { tags: { subsystem: "storage" } });
-      return { success: false, error: uploadError.message };
-    }
-
-    const { data: urlData } = supabase.storage
-      .from("plan-images")
-      .getPublicUrl(storagePath);
-
-    return {
-      success: true,
-      fileUrl: urlData.publicUrl,
-      storagePath,
-    };
-  } catch (error) {
-    console.error("Error uploading plan image:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "storage" } });
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : "Upload failed",
-    };
-  }
+): Promise<AssetUploadResult> => {
+  const { planType, planId, file } = options;
+  const result = await uploadAsset({
+    bucket: "plan-images",
+    folder: `${planType}/${planId}`,
+    file,
+    maxBytes: 5 * 1024 * 1024,
+    allowedMime: ["image/jpeg", "image/jpg", "image/png", "image/webp"],
+    access: "public",
+    upsert: true,
+    replaceFolder: true,
+    errors: {
+      type: "File type not supported. Please use JPEG, PNG, or WebP.",
+      bucketNotReady:
+        "Plan images storage bucket not found. Please create a 'plan-images' bucket in your Supabase dashboard.",
+    },
+  });
+  return toAssetResult(result);
 };
 
 /**
  * Delete plan cover image from Supabase storage
  */
-const deletePlanImage = async (
+const deletePlanImage = (
   planType: TPlanImageType,
   planId: string,
-): Promise<boolean> => {
-  try {
-    const folderPath = `${planType}/${planId}`;
-
-    const { data: files, error: listError } = await supabase.storage
-      .from("plan-images")
-      .list(folderPath);
-
-    if (listError) {
-      console.error("Error listing plan images:", listError);
-      return false;
-    }
-
-    if (!files || files.length === 0) {
-      return true; // No files to delete
-    }
-
-    const filesToDelete = files.map((f) => `${folderPath}/${f.name}`);
-    const { error: deleteError } = await supabase.storage
-      .from("plan-images")
-      .remove(filesToDelete);
-
-    if (deleteError) {
-      console.error("Error deleting plan images:", deleteError);
-      return false;
-    }
-
-    return true;
-  } catch (error) {
-    console.error("Error deleting plan image:", error);
-    return false;
-  }
-};
-
-// Cover image upload types
-interface CoverImageUploadOptions {
-  userId: string;
-  file: File;
-}
-
-interface CoverImageUploadResult {
-  success: boolean;
-  fileUrl?: string;
-  storagePath?: string;
-  error?: string;
-}
-
-// Allowed MIME types for cover images
-const ALLOWED_COVER_IMAGE_TYPES = [
-  "image/jpeg",
-  "image/jpg",
-  "image/png",
-  "image/webp",
-];
-
-const COVER_IMAGE_MAX_SIZE = 5 * 1024 * 1024; // 5MB
+): Promise<boolean> =>
+  deleteAssetFolder("plan-images", `${planType}/${planId}`);
 
 // Profile display image upload types (square image for Explore Experts page)
 interface ProfileDisplayImageUploadOptions {
   userId: string;
   file: File;
-}
-
-interface ProfileDisplayImageUploadResult {
-  success: boolean;
-  fileUrl?: string;
-  storagePath?: string;
-  error?: string;
 }
 
 // Allowed MIME types for profile display images
@@ -1041,290 +794,36 @@ const ALLOWED_PROFILE_DISPLAY_IMAGE_TYPES = [
 const PROFILE_DISPLAY_IMAGE_MAX_SIZE = 2 * 1024 * 1024; // 2MB
 
 /**
- * Upload cover image to Supabase storage
- * Structure: profile-images/covers/{userId}/{filename}
- */
-const uploadCoverImage = async (
-  options: CoverImageUploadOptions,
-): Promise<CoverImageUploadResult> => {
-  try {
-    const { userId, file } = options;
-
-    // Validate file
-    if (!file) {
-      return { success: false, error: "No file provided" };
-    }
-
-    // Check file size (max 5MB)
-    if (file.size > COVER_IMAGE_MAX_SIZE) {
-      return { success: false, error: "File size exceeds 5MB limit" };
-    }
-
-    // Validate file type
-    if (!ALLOWED_COVER_IMAGE_TYPES.includes(file.type)) {
-      return {
-        success: false,
-        error: "File type not supported. Please use JPEG, PNG, or WebP.",
-      };
-    }
-
-    // Ensure the profile-images bucket exists
-    const bucketReady = await ensureBucketExists("profile-images");
-    if (!bucketReady) {
-      return {
-        success: false,
-        error:
-          "Profile images storage bucket not found. Please create a 'profile-images' bucket in your Supabase dashboard.",
-      };
-    }
-
-    // Generate unique filename using UUID + MIME-derived extension
-    const fileName = generateStorageFileName(file.type);
-
-    // Create folder structure: covers/{userId}/
-    const folderPath = `covers/${userId}`;
-    const storagePath = `${folderPath}/${fileName}`;
-
-    // Delete any existing cover images for this user first
-    try {
-      const { data: existingFiles } = await supabase.storage
-        .from("profile-images")
-        .list(folderPath);
-
-      if (existingFiles && existingFiles.length > 0) {
-        const filesToDelete = existingFiles.map(
-          (f) => `${folderPath}/${f.name}`,
-        );
-        await supabase.storage.from("profile-images").remove(filesToDelete);
-      }
-    } catch {
-      // Ignore errors when cleaning up old files
-    }
-
-    // Upload file to Supabase storage
-    const { error: uploadError } = await supabase.storage
-      .from("profile-images")
-      .upload(storagePath, file, {
-        cacheControl: "3600",
-        upsert: true,
-      });
-
-    if (uploadError) {
-      console.error("Supabase upload error:", uploadError);
-      Sentry.captureException(new Error(uploadError.message), { tags: { subsystem: "storage" } });
-      return { success: false, error: uploadError.message };
-    }
-
-    // Get public URL
-    const { data: urlData } = supabase.storage
-      .from("profile-images")
-      .getPublicUrl(storagePath);
-
-    return {
-      success: true,
-      fileUrl: urlData.publicUrl,
-      storagePath,
-    };
-  } catch (error) {
-    console.error("Error uploading cover image:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "storage" } });
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : "Upload failed",
-    };
-  }
-};
-
-/**
- * Delete cover image from Supabase storage
- */
-const deleteCoverImage = async (userId: string): Promise<boolean> => {
-  try {
-    const folderPath = `covers/${userId}`;
-
-    // List all files in the user's cover folder
-    const { data: files, error: listError } = await supabase.storage
-      .from("profile-images")
-      .list(folderPath);
-
-    if (listError) {
-      console.error("Error listing cover images:", listError);
-      return false;
-    }
-
-    if (!files || files.length === 0) {
-      return true; // No files to delete
-    }
-
-    // Delete all files in the folder
-    const filesToDelete = files.map((f) => `${folderPath}/${f.name}`);
-    const { error: deleteError } = await supabase.storage
-      .from("profile-images")
-      .remove(filesToDelete);
-
-    if (deleteError) {
-      console.error("Error deleting cover images:", deleteError);
-      return false;
-    }
-
-    return true;
-  } catch (error) {
-    console.error("Error deleting cover image:", error);
-    return false;
-  }
-};
-
-/**
- * Get cover image URL with optional transformations
- */
-const getCoverImageUrl = (
-  storagePath: string,
-  transformOptions?: TransformOptions,
-): string => {
-  if (!storagePath) return "";
-
-  const { data } = supabase.storage
-    .from("profile-images")
-    .getPublicUrl(storagePath, {
-      transform: transformOptions,
-    });
-
-  return data.publicUrl;
-};
-
-/**
- * Upload profile display image to Supabase storage (square image for Explore Experts)
+ * Upload profile display image to Supabase storage (square image for Explore Experts).
  * Structure: profile-images/display/{userId}/{filename}
  */
 const uploadProfileDisplayImage = async (
   options: ProfileDisplayImageUploadOptions,
-): Promise<ProfileDisplayImageUploadResult> => {
-  try {
-    const { userId, file } = options;
-
-    // Validate file
-    if (!file) {
-      return { success: false, error: "No file provided" };
-    }
-
-    // Check file size (max 2MB)
-    if (file.size > PROFILE_DISPLAY_IMAGE_MAX_SIZE) {
-      return { success: false, error: "File size exceeds 2MB limit" };
-    }
-
-    // Validate file type
-    if (!ALLOWED_PROFILE_DISPLAY_IMAGE_TYPES.includes(file.type)) {
-      return {
-        success: false,
-        error: "File type not supported. Please use JPEG, PNG, or WebP.",
-      };
-    }
-
-    // Ensure the profile-images bucket exists
-    const bucketReady = await ensureBucketExists("profile-images");
-    if (!bucketReady) {
-      return {
-        success: false,
-        error:
-          "Profile images storage bucket not found. Please create a 'profile-images' bucket in your Supabase dashboard.",
-      };
-    }
-
-    // Generate unique filename using UUID + MIME-derived extension
-    const fileName = generateStorageFileName(file.type);
-
-    // Create folder structure: display/{userId}/
-    const folderPath = `display/${userId}`;
-    const storagePath = `${folderPath}/${fileName}`;
-
-    // Delete any existing profile display images for this user first
-    try {
-      const { data: existingFiles } = await supabase.storage
-        .from("profile-images")
-        .list(folderPath);
-
-      if (existingFiles && existingFiles.length > 0) {
-        const filesToDelete = existingFiles.map(
-          (f) => `${folderPath}/${f.name}`,
-        );
-        await supabase.storage.from("profile-images").remove(filesToDelete);
-      }
-    } catch {
-      // Ignore errors when cleaning up old files
-    }
-
-    // Upload file to Supabase storage
-    const { error: uploadError } = await supabase.storage
-      .from("profile-images")
-      .upload(storagePath, file, {
-        cacheControl: "3600",
-        upsert: true,
-      });
-
-    if (uploadError) {
-      console.error("Supabase upload error:", uploadError);
-      Sentry.captureException(new Error(uploadError.message), { tags: { subsystem: "storage" } });
-      return { success: false, error: uploadError.message };
-    }
-
-    // Get public URL
-    const { data: urlData } = supabase.storage
-      .from("profile-images")
-      .getPublicUrl(storagePath);
-
-    return {
-      success: true,
-      fileUrl: urlData.publicUrl,
-      storagePath,
-    };
-  } catch (error) {
-    console.error("Error uploading profile display image:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "storage" } });
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : "Upload failed",
-    };
-  }
+): Promise<AssetUploadResult> => {
+  const { userId, file } = options;
+  const result = await uploadAsset({
+    bucket: "profile-images",
+    folder: `display/${userId}`,
+    file,
+    maxBytes: PROFILE_DISPLAY_IMAGE_MAX_SIZE,
+    allowedMime: ALLOWED_PROFILE_DISPLAY_IMAGE_TYPES,
+    access: "public",
+    upsert: true,
+    replaceFolder: true,
+    errors: {
+      type: "File type not supported. Please use JPEG, PNG, or WebP.",
+      bucketNotReady:
+        "Profile images storage bucket not found. Please create a 'profile-images' bucket in your Supabase dashboard.",
+    },
+  });
+  return toAssetResult(result);
 };
 
 /**
  * Delete profile display image from Supabase storage
  */
-const deleteProfileDisplayImage = async (userId: string): Promise<boolean> => {
-  try {
-    const folderPath = `display/${userId}`;
-
-    // List all files in the user's display folder
-    const { data: files, error: listError } = await supabase.storage
-      .from("profile-images")
-      .list(folderPath);
-
-    if (listError) {
-      console.error("Error listing profile display images:", listError);
-      return false;
-    }
-
-    if (!files || files.length === 0) {
-      return true; // No files to delete
-    }
-
-    // Delete all files in the folder
-    const filesToDelete = files.map((f) => `${folderPath}/${f.name}`);
-    const { error: deleteError } = await supabase.storage
-      .from("profile-images")
-      .remove(filesToDelete);
-
-    if (deleteError) {
-      console.error("Error deleting profile display images:", deleteError);
-      return false;
-    }
-
-    return true;
-  } catch (error) {
-    console.error("Error deleting profile display image:", error);
-    return false;
-  }
-};
+const deleteProfileDisplayImage = (userId: string): Promise<boolean> =>
+  deleteAssetFolder("profile-images", `display/${userId}`);
 
 // Allowed MIME types and max size for profile avatar images
 const ALLOWED_PROFILE_IMAGE_TYPES = [
@@ -1337,146 +836,42 @@ const ALLOWED_PROFILE_IMAGE_TYPES = [
 const PROFILE_IMAGE_MAX_SIZE = 2 * 1024 * 1024; // 2MB
 
 /**
- * Upload profile avatar image to Supabase storage (general avatar for Navbar/session)
+ * Upload profile avatar image to Supabase storage (general avatar for Navbar/session).
  * Structure: profile-images/avatars/{userId}/{filename}
  */
 const uploadProfileImage = async (options: {
   userId: string;
   file: File;
-}): Promise<{
-  success: boolean;
-  fileUrl?: string;
-  storagePath?: string;
-  error?: string;
-}> => {
-  try {
-    const { userId, file } = options;
-
-    if (!file) {
-      return { success: false, error: "No file provided" };
-    }
-
-    if (file.size > PROFILE_IMAGE_MAX_SIZE) {
-      return { success: false, error: "File size exceeds 2MB limit" };
-    }
-
-    if (!ALLOWED_PROFILE_IMAGE_TYPES.includes(file.type)) {
-      return {
-        success: false,
-        error: "File type not supported. Please use JPEG, PNG, or WebP.",
-      };
-    }
-
-    const bucketReady = await ensureBucketExists("profile-images");
-    if (!bucketReady) {
-      return {
-        success: false,
-        error:
-          "Profile images storage bucket not found. Please create a 'profile-images' bucket in your Supabase dashboard.",
-      };
-    }
-
-    // Generate unique filename using UUID + MIME-derived extension
-    const fileName = generateStorageFileName(file.type);
-    const folderPath = `avatars/${userId}`;
-    const storagePath = `${folderPath}/${fileName}`;
-
-    // Delete any existing avatar images for this user first
-    try {
-      const { data: existingFiles } = await supabase.storage
-        .from("profile-images")
-        .list(folderPath);
-
-      if (existingFiles && existingFiles.length > 0) {
-        const filesToDelete = existingFiles.map(
-          (f) => `${folderPath}/${f.name}`,
-        );
-        await supabase.storage.from("profile-images").remove(filesToDelete);
-      }
-    } catch {
-      // Ignore errors when cleaning up old files
-    }
-
-    const { error: uploadError } = await supabase.storage
-      .from("profile-images")
-      .upload(storagePath, file, {
-        cacheControl: "3600",
-        upsert: true,
-      });
-
-    if (uploadError) {
-      console.error("Supabase upload error:", uploadError);
-      Sentry.captureException(new Error(uploadError.message), { tags: { subsystem: "storage" } });
-      return { success: false, error: uploadError.message };
-    }
-
-    const { data: urlData } = supabase.storage
-      .from("profile-images")
-      .getPublicUrl(storagePath);
-
-    return {
-      success: true,
-      fileUrl: urlData.publicUrl,
-      storagePath,
-    };
-  } catch (error) {
-    console.error("Error uploading profile image:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "storage" } });
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : "Upload failed",
-    };
-  }
+}): Promise<AssetUploadResult> => {
+  const { userId, file } = options;
+  const result = await uploadAsset({
+    bucket: "profile-images",
+    folder: `avatars/${userId}`,
+    file,
+    maxBytes: PROFILE_IMAGE_MAX_SIZE,
+    allowedMime: ALLOWED_PROFILE_IMAGE_TYPES,
+    access: "public",
+    upsert: true,
+    replaceFolder: true,
+    errors: {
+      type: "File type not supported. Please use JPEG, PNG, or WebP.",
+      bucketNotReady:
+        "Profile images storage bucket not found. Please create a 'profile-images' bucket in your Supabase dashboard.",
+    },
+  });
+  return toAssetResult(result);
 };
 
 /**
  * Delete profile avatar image from Supabase storage
  */
-const deleteProfileImage = async (userId: string): Promise<boolean> => {
-  try {
-    const folderPath = `avatars/${userId}`;
-
-    const { data: files, error: listError } = await supabase.storage
-      .from("profile-images")
-      .list(folderPath);
-
-    if (listError) {
-      console.error("Error listing profile images:", listError);
-      return false;
-    }
-
-    if (!files || files.length === 0) {
-      return true;
-    }
-
-    const filesToDelete = files.map((f) => `${folderPath}/${f.name}`);
-    const { error: deleteError } = await supabase.storage
-      .from("profile-images")
-      .remove(filesToDelete);
-
-    if (deleteError) {
-      console.error("Error deleting profile images:", deleteError);
-      return false;
-    }
-
-    return true;
-  } catch (error) {
-    console.error("Error deleting profile image:", error);
-    return false;
-  }
-};
+const deleteProfileImage = (userId: string): Promise<boolean> =>
+  deleteAssetFolder("profile-images", `avatars/${userId}`);
 
 // Organization branding image upload types (logo + banner)
 interface OrganizationBrandingUploadOptions {
   organizationId: string;
   file: File;
-}
-
-interface OrganizationBrandingUploadResult {
-  success: boolean;
-  fileUrl?: string;
-  storagePath?: string;
-  error?: string;
 }
 
 // Allowed MIME types for organization branding images.
@@ -1509,189 +904,68 @@ const buildOrgBrandingFileName = (mimeType: string): string => {
   return generateStorageFileName(mimeType);
 };
 
+const uploadOrganizationBrandingImage = async (
+  options: OrganizationBrandingUploadOptions,
+  kind: "logo" | "banner",
+): Promise<AssetUploadResult> => {
+  const { organizationId, file } = options;
+  const result = await uploadAsset({
+    bucket: ORG_BRANDING_BUCKET,
+    folder:
+      kind === "logo" ? `logos/${organizationId}` : `banners/${organizationId}`,
+    file,
+    maxBytes: kind === "logo" ? ORG_LOGO_MAX_SIZE : ORG_BANNER_MAX_SIZE,
+    allowedMime: ALLOWED_ORG_BRANDING_IMAGE_TYPES,
+    access: "public",
+    upsert: true,
+    replaceFolder: true,
+    fileNameFor: buildOrgBrandingFileName,
+    ensureBucket: {
+      public: true,
+      allowedMimeTypes: ALLOWED_ORG_BRANDING_IMAGE_TYPES,
+      fileSizeLimit: ORG_BANNER_MAX_SIZE,
+    },
+    errors: {
+      type: "File type not supported. Please use JPEG, PNG, WebP, or SVG.",
+      bucketNotReady: `Organization images storage bucket not found. Please create an '${ORG_BRANDING_BUCKET}' bucket in your Supabase dashboard.`,
+    },
+  });
+  return toAssetResult(result);
+};
+
 /**
  * Upload organization logo image to Supabase storage.
  * Structure: organization-images/logos/{organizationId}/{filename}
  */
-const uploadOrganizationLogo = async (
+const uploadOrganizationLogo = (
   options: OrganizationBrandingUploadOptions,
-): Promise<OrganizationBrandingUploadResult> => {
-  return uploadOrganizationBrandingImage(options, "logo");
-};
+): Promise<AssetUploadResult> =>
+  uploadOrganizationBrandingImage(options, "logo");
 
 /**
  * Upload organization banner image to Supabase storage.
  * Structure: organization-images/banners/{organizationId}/{filename}
  */
-const uploadOrganizationBanner = async (
+const uploadOrganizationBanner = (
   options: OrganizationBrandingUploadOptions,
-): Promise<OrganizationBrandingUploadResult> => {
-  return uploadOrganizationBrandingImage(options, "banner");
-};
-
-const uploadOrganizationBrandingImage = async (
-  options: OrganizationBrandingUploadOptions,
-  kind: "logo" | "banner",
-): Promise<OrganizationBrandingUploadResult> => {
-  try {
-    const { organizationId, file } = options;
-
-    if (!file) {
-      return { success: false, error: "No file provided" };
-    }
-
-    const maxSize =
-      kind === "logo" ? ORG_LOGO_MAX_SIZE : ORG_BANNER_MAX_SIZE;
-    if (file.size > maxSize) {
-      const limitMb = Math.round(maxSize / (1024 * 1024));
-      return {
-        success: false,
-        error: `File size exceeds ${limitMb}MB limit`,
-      };
-    }
-
-    if (!ALLOWED_ORG_BRANDING_IMAGE_TYPES.includes(file.type)) {
-      return {
-        success: false,
-        error:
-          "File type not supported. Please use JPEG, PNG, WebP, or SVG.",
-      };
-    }
-
-    const bucketReady = await ensureBucketExists(ORG_BRANDING_BUCKET, {
-      public: true,
-      allowedMimeTypes: ALLOWED_ORG_BRANDING_IMAGE_TYPES,
-      fileSizeLimit: ORG_BANNER_MAX_SIZE,
-    });
-    if (!bucketReady) {
-      return {
-        success: false,
-        error: `Organization images storage bucket not found. Please create an '${ORG_BRANDING_BUCKET}' bucket in your Supabase dashboard.`,
-      };
-    }
-
-    const folderPath =
-      kind === "logo"
-        ? `logos/${organizationId}`
-        : `banners/${organizationId}`;
-    const fileName = buildOrgBrandingFileName(file.type);
-    const storagePath = `${folderPath}/${fileName}`;
-
-    // Upsert-single-file pattern: clear out any prior asset so the folder
-    // never accumulates orphaned uploads (mirrors uploadProfileImage).
-    try {
-      const { data: existingFiles } = await supabase.storage
-        .from(ORG_BRANDING_BUCKET)
-        .list(folderPath);
-
-      if (existingFiles && existingFiles.length > 0) {
-        const filesToDelete = existingFiles.map(
-          (f) => `${folderPath}/${f.name}`,
-        );
-        await supabase.storage
-          .from(ORG_BRANDING_BUCKET)
-          .remove(filesToDelete);
-      }
-    } catch {
-      // Ignore errors when cleaning up old files
-    }
-
-    const { error: uploadError } = await supabase.storage
-      .from(ORG_BRANDING_BUCKET)
-      .upload(storagePath, file, {
-        cacheControl: "3600",
-        upsert: true,
-      });
-
-    if (uploadError) {
-      console.error(
-        `Supabase organization ${kind} upload error:`,
-        uploadError,
-      );
-      Sentry.captureException(new Error(uploadError.message), { tags: { subsystem: "storage" } });
-      return { success: false, error: uploadError.message };
-    }
-
-    const { data: urlData } = supabase.storage
-      .from(ORG_BRANDING_BUCKET)
-      .getPublicUrl(storagePath);
-
-    return {
-      success: true,
-      fileUrl: urlData.publicUrl,
-      storagePath,
-    };
-  } catch (error) {
-    console.error(`Error uploading organization ${kind}:`, error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "storage" } });
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : "Upload failed",
-    };
-  }
-};
+): Promise<AssetUploadResult> =>
+  uploadOrganizationBrandingImage(options, "banner");
 
 /**
  * Delete organization logo image from Supabase storage.
  */
-const deleteOrganizationLogo = async (
-  organizationId: string,
-): Promise<boolean> => {
-  return deleteOrganizationBrandingImage(organizationId, "logo");
-};
+const deleteOrganizationLogo = (organizationId: string): Promise<boolean> =>
+  deleteAssetFolder(ORG_BRANDING_BUCKET, `logos/${organizationId}`);
 
 /**
  * Delete organization banner image from Supabase storage.
  */
-const deleteOrganizationBanner = async (
-  organizationId: string,
-): Promise<boolean> => {
-  return deleteOrganizationBrandingImage(organizationId, "banner");
-};
-
-const deleteOrganizationBrandingImage = async (
-  organizationId: string,
-  kind: "logo" | "banner",
-): Promise<boolean> => {
-  try {
-    const folderPath =
-      kind === "logo"
-        ? `logos/${organizationId}`
-        : `banners/${organizationId}`;
-
-    const { data: files, error: listError } = await supabase.storage
-      .from(ORG_BRANDING_BUCKET)
-      .list(folderPath);
-
-    if (listError) {
-      console.error(`Error listing organization ${kind} images:`, listError);
-      return false;
-    }
-
-    if (!files || files.length === 0) {
-      return true;
-    }
-
-    const filesToDelete = files.map((f) => `${folderPath}/${f.name}`);
-    const { error: deleteError } = await supabase.storage
-      .from(ORG_BRANDING_BUCKET)
-      .remove(filesToDelete);
-
-    if (deleteError) {
-      console.error(`Error deleting organization ${kind} images:`, deleteError);
-      return false;
-    }
-
-    return true;
-  } catch (error) {
-    console.error(`Error deleting organization ${kind}:`, error);
-    return false;
-  }
-};
+const deleteOrganizationBanner = (organizationId: string): Promise<boolean> =>
+  deleteAssetFolder(ORG_BRANDING_BUCKET, `banners/${organizationId}`);
 
 /**
- * Generic upload to Supabase storage
- * Returns { url, error } - url is the public URL if successful
+ * Generic upload to Supabase storage (Buffer-based, explicit contentType).
+ * Returns { url, error } - url is the signed (private) or public URL if successful.
  */
 const uploadToSupabase = async (
   storagePath: string,
@@ -1724,36 +998,39 @@ const uploadToSupabase = async (
 
     if (uploadError) {
       console.error("Supabase upload error:", uploadError);
-      Sentry.captureException(new Error(uploadError.message), { tags: { subsystem: "storage" } });
+      Sentry.captureException(new Error(uploadError.message), {
+        tags: { subsystem: "storage" },
+      });
       return { url: null, error: uploadError.message };
     }
 
     // Private buckets: generate a signed URL via admin client
     // Public buckets: use getPublicUrl for permanent, CDN-friendly links
     if (isPrivateBucket) {
-      const signingClient = supabaseAdmin || supabase;
       const { data: signedUrlData, error: signedUrlError } =
-        await signingClient.storage
-          .from(bucketName)
-          .createSignedUrl(storagePath, 3600);
+        await getSignedAssetUrl(bucketName, storagePath);
 
       if (signedUrlError || !signedUrlData?.signedUrl) {
         console.error("Failed to create signed URL:", signedUrlError);
-        Sentry.captureException(signedUrlError instanceof Error ? signedUrlError : new Error("Failed to create signed URL"), { tags: { subsystem: "storage" } });
+        Sentry.captureException(
+          signedUrlError instanceof Error
+            ? signedUrlError
+            : new Error("Failed to create signed URL"),
+          { tags: { subsystem: "storage" } },
+        );
         return { url: null, error: "Failed to generate document URL" };
       }
 
       return { url: signedUrlData.signedUrl, error: null };
     }
 
-    const { data: urlData } = supabase.storage
-      .from(bucketName)
-      .getPublicUrl(storagePath);
-
-    return { url: urlData.publicUrl, error: null };
+    return { url: getPublicAssetUrl(bucketName, storagePath), error: null };
   } catch (error) {
     console.error("Error in uploadToSupabase:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "storage" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "storage" } },
+    );
     return {
       url: null,
       error: error instanceof Error ? error.message : "Upload failed",
@@ -1775,14 +1052,19 @@ const deleteFromSupabase = async (
 
     if (error) {
       console.error("Error deleting from Supabase:", error);
-      Sentry.captureException(new Error(error.message), { tags: { subsystem: "storage" } });
+      Sentry.captureException(new Error(error.message), {
+        tags: { subsystem: "storage" },
+      });
       return false;
     }
 
     return true;
   } catch (error) {
     console.error("Error in deleteFromSupabase:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "storage" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "storage" } },
+    );
     return false;
   }
 };
@@ -1792,11 +1074,9 @@ export {
   fetchImagesFromSupabaseStorage,
   uploadAppointmentDocument,
   deleteAppointmentDocument,
-  listAppointmentDocuments,
   // Plan materials
   uploadPlanMaterial,
   deletePlanMaterial,
-  listPlanMaterials,
   // Consultant documents (response documents)
   uploadConsultantDocument,
   // Support ticket attachments
@@ -1805,14 +1085,6 @@ export {
   // Plan images
   uploadPlanImage,
   deletePlanImage,
-  ALLOWED_PLAN_IMAGE_TYPES,
-  PLAN_IMAGE_MAX_SIZE,
-  // Cover image
-  uploadCoverImage,
-  deleteCoverImage,
-  getCoverImageUrl,
-  ALLOWED_COVER_IMAGE_TYPES,
-  COVER_IMAGE_MAX_SIZE,
   // Profile display image (square image for Explore Experts)
   uploadProfileDisplayImage,
   deleteProfileDisplayImage,
@@ -1836,9 +1108,6 @@ export {
   deleteFromSupabase,
   // Utility functions
   ensureBucketExists,
-  ensureFolderExists,
   getManualBucketInstructions,
   supabaseAdmin,
-  // Constants
-  ALLOWED_DOCUMENT_TYPES,
 };

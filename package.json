@@ -30,8 +30,6 @@
     "scripts:analyze": "npm run build:analyze && ts-node -P tsconfig.scripts.json scripts/analyze-bundle.ts",
     "scripts:cleanup-empty-folders": "npx tsx scripts/utils/cleanup-empty-folders.ts",
     "scripts:cleanup-empty-folders:dev": "tsx scripts/utils/cleanup-empty-folders.ts",
-    "scripts:test-storage": "npx ts-node tests/typescript/test-storage-setup.ts",
-    "scripts:test-storage:dev": "npx tsx tests/typescript/test-storage-setup.ts",
     "scripts:test-bucket": "npx tsx tests/typescript/test-bucket-creation.ts",
     "scripts:create-bucket": "npx tsx scripts/create-documents-bucket.ts",
     "scripts:find-unused-imports": "ts-node -P tsconfig.scripts.json scripts/find-unused-imports.ts",
