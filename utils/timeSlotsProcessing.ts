@@ -1,6 +1,6 @@
 import { DayOfWeek } from "@prisma/client";
 import { addDays, endOfDay, isBefore, startOfDay } from "date-fns";
-import { format, formatInTimeZone, toZonedTime, fromZonedTime } from "date-fns-tz";
+import { toZonedTime, fromZonedTime } from "date-fns-tz";
 import { TSlotTiming } from "@/types/slots";
 
 // Booking status constants and types
@@ -54,6 +54,112 @@ export interface CustomSlot {
 export interface AppointmentSlot {
   startsAt: Date;
   endsAt: Date;
+}
+
+// #907 — the availability pipeline checks each 30-min window against the booked
+// slots; scanning the full appointment array per window is O(windows × appts)
+// and dominated cold wall-clock for wide ranges. Bucket booked slots by 30-min
+// interval once so each window only compares against the handful that can
+// actually overlap it. Every SlotOfAppointment is exactly 30 min and 30-min
+// aligned, so a 30-min bucket is exact; the multi-bucket span below keeps it
+// correct even for legacy/longer rows.
+const THIRTY_MIN_MS = 30 * 60 * 1000;
+export type AppointmentIndex = Map<number, AppointmentSlot[]>;
+
+export function buildAppointmentIndex(
+  appointmentSlots: AppointmentSlot[],
+): AppointmentIndex {
+  const index: AppointmentIndex = new Map();
+  if (!Array.isArray(appointmentSlots)) return index;
+  for (const slot of appointmentSlots) {
+    if (!slot || !slot.startsAt || !slot.endsAt) continue;
+    const startMs = new Date(slot.startsAt).getTime();
+    const endMs = new Date(slot.endsAt).getTime();
+    if (isNaN(startMs) || isNaN(endMs) || endMs <= startMs) continue;
+    const firstBucket = Math.floor(startMs / THIRTY_MIN_MS);
+    const lastBucket = Math.floor((endMs - 1) / THIRTY_MIN_MS);
+    for (let b = firstBucket; b <= lastBucket; b++) {
+      const bucket = index.get(b);
+      if (bucket) bucket.push(slot);
+      else index.set(b, [slot]);
+    }
+  }
+  return index;
+}
+
+// Booked slots that can overlap [startMs, endMs). De-duped because a >30-min row
+// lands in multiple buckets.
+function candidatesFor(
+  index: AppointmentIndex,
+  startMs: number,
+  endMs: number,
+): AppointmentSlot[] {
+  const firstBucket = Math.floor(startMs / THIRTY_MIN_MS);
+  const lastBucket = Math.floor((endMs - 1) / THIRTY_MIN_MS);
+  if (lastBucket <= firstBucket) return index.get(firstBucket) ?? [];
+  const seen = new Set<AppointmentSlot>();
+  const out: AppointmentSlot[] = [];
+  for (let b = firstBucket; b <= lastBucket; b++) {
+    const bucket = index.get(b);
+    if (!bucket) continue;
+    for (const slot of bucket) {
+      if (!seen.has(slot)) {
+        seen.add(slot);
+        out.push(slot);
+      }
+    }
+  }
+  return out;
+}
+
+// #907 — the cold-time hotspot was re-constructing an Intl.DateTimeFormat on
+// every per-window formatInTimeZone/toZonedTime call (tens of thousands for a
+// month-wide range). Building each formatter ONCE per timezone and reusing it
+// via formatToParts removes that construction cost while staying per-instant
+// exact (incl. DST transition days, which a day-cached arithmetic offset gets
+// wrong). `timeP` reassembles the parts with a normal space so it matches
+// date-fns "p" (en-US "h:mm a") byte-for-byte — Intl alone uses a narrow no-break
+// space (U+202F) on newer ICU, which would silently change the API response.
+const WEEKDAY_TO_INDEX: Record<string, number> = {
+  Sun: 0,
+  Mon: 1,
+  Tue: 2,
+  Wed: 3,
+  Thu: 4,
+  Fri: 5,
+  Sat: 6,
+};
+
+function makeLocalizer(timezone: string) {
+  const timeFmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
+  const dateFmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  const weekdayFmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    weekday: "short",
+  });
+  const partVal = (parts: Intl.DateTimeFormatPart[], type: string): string =>
+    parts.find((p) => p.type === type)?.value ?? "";
+  return {
+    timeP: (d: Date): string => {
+      const parts = timeFmt.formatToParts(d);
+      return `${partVal(parts, "hour")}:${partVal(parts, "minute")} ${partVal(parts, "dayPeriod")}`;
+    },
+    dateKey: (d: Date): string => {
+      const parts = dateFmt.formatToParts(d);
+      return `${partVal(parts, "year")}-${partVal(parts, "month")}-${partVal(parts, "day")}`;
+    },
+    dayIndex: (d: Date): number => WEEKDAY_TO_INDEX[weekdayFmt.format(d)] ?? 0,
+  };
 }
 
 export interface ProcessedSlot {
@@ -315,8 +421,14 @@ export function isSlotAllocated(
   slotStart: Date,
   slotEnd: Date,
   appointmentSlots: AppointmentSlot[],
+  // #907 — when provided, only the booked slots that can overlap this window are
+  // compared (O(1) for 30-min windows) instead of the whole array.
+  index?: AppointmentIndex,
 ): boolean {
-  return appointmentSlots.some((apptSlot) =>
+  const candidates = index
+    ? candidatesFor(index, slotStart.getTime(), slotEnd.getTime())
+    : appointmentSlots;
+  return candidates.some((apptSlot) =>
     hasTimeOverlap(
       slotStart,
       slotEnd,
@@ -333,6 +445,8 @@ export function getSlotBookingStatus(
   slotStart: Date,
   slotEnd: Date,
   appointmentSlots: AppointmentSlot[],
+  // #907 — see isSlotAllocated; bounds the per-window overlap scan.
+  index?: AppointmentIndex,
 ): BookingStatus {
   // Defensive: Validate input parameters
   if (
@@ -357,8 +471,14 @@ export function getSlotBookingStatus(
 
   const slotDuration = slotEnd.getTime() - slotStart.getTime();
 
+  // #907 — narrow to the booked slots that can overlap this window before the
+  // defensive filter + coverage merge below.
+  const searchSpace = index
+    ? candidatesFor(index, slotStart.getTime(), slotEnd.getTime())
+    : appointmentSlots;
+
   // Find all appointments that overlap with this slot (with defensive filtering)
-  const overlappingAppointments = appointmentSlots.filter((apptSlot) => {
+  const overlappingAppointments = searchSpace.filter((apptSlot) => {
     // Defensive: Skip invalid appointment slots
     if (
       !apptSlot ||
@@ -432,29 +552,35 @@ export function convertToSlotTimings(
   processedSlots: ProcessedSlot[],
   appointmentSlots: AppointmentSlot[],
   timezone: string,
+  // #907 — optional pre-built index to bound the per-slot overlap scan.
+  index?: AppointmentIndex,
+  // #907 — in the processAvailabilitySlots pipeline these results are discarded
+  // (breakDownSlotsByDuration recomputes per sub-window), so skip the whole
+  // O(slots × appts) status pass there. Defaults true for standalone callers.
+  computeStatus: boolean = true,
 ): (TSlotTiming & {
   isAllocated: boolean;
   bookingStatus: BookingStatus;
 })[] {
+  const loc = makeLocalizer(timezone);
   const slotTimings = processedSlots.map((slot) => {
-    const isAllocated = isSlotAllocated(slot.start, slot.end, appointmentSlots);
-    const bookingStatus = getSlotBookingStatus(
-      slot.start,
-      slot.end,
-      appointmentSlots,
-    );
-    const zonedStart = toZonedTime(slot.start, timezone);
+    const isAllocated = computeStatus
+      ? isSlotAllocated(slot.start, slot.end, appointmentSlots, index)
+      : false;
+    const bookingStatus = computeStatus
+      ? getSlotBookingStatus(slot.start, slot.end, appointmentSlots, index)
+      : BOOKING_STATUS.AVAILABLE;
 
     return {
       slotId: `${slot.availabilityId}-${slot.start.toISOString()}`,
       dateInISO: slot.start.toISOString(),
-      dayOfWeek: dayMap[zonedStart.getDay()],
+      dayOfWeek: dayMap[loc.dayIndex(slot.start)],
       startsAt: slot.start.toISOString(),
       endsAt: slot.end.toISOString(),
       slotOfAvailabilityId: slot.availabilityId,
       slotOfAppointmentId: "",
-      localStartTime: formatInTimeZone(slot.start, timezone, "p"),
-      localEndTime: formatInTimeZone(slot.end, timezone, "p"),
+      localStartTime: loc.timeP(slot.start),
+      localEndTime: loc.timeP(slot.end),
       type: slot.type, // Explicitly set the type field
       isAllocated,
       bookingStatus,
@@ -556,6 +682,9 @@ export function breakDownSlotsByDuration(
   durationInHours: number,
   appointmentSlots: AppointmentSlot[],
   timezone: string,
+  // #907 — optional pre-built index; built lazily from appointmentSlots if
+  // omitted so existing callers (e.g. TrialScheduleCalendar) stay unchanged.
+  index?: AppointmentIndex,
 ): (TSlotTiming & {
   isAllocated: boolean;
   bookingStatus: BookingStatus;
@@ -566,6 +695,9 @@ export function breakDownSlotsByDuration(
   })[] = [];
 
   if (!slots || slots.length === 0) return brokenDownSlots;
+
+  const apptIndex = index ?? buildAppointmentIndex(appointmentSlots);
+  const loc = makeLocalizer(timezone);
 
   // Define sliding window interval (30 minutes)
   const slidingIntervalMinutes = 30;
@@ -589,6 +721,7 @@ export function breakDownSlotsByDuration(
         currentStart,
         currentEnd,
         appointmentSlots,
+        apptIndex,
       );
 
       // Calculate booking status for this specific segment
@@ -596,6 +729,7 @@ export function breakDownSlotsByDuration(
         currentStart,
         currentEnd,
         appointmentSlots,
+        apptIndex,
       );
 
       brokenDownSlots.push({
@@ -603,8 +737,8 @@ export function breakDownSlotsByDuration(
         slotId: `${slot.slotOfAvailabilityId}-${currentStart.getTime()}`,
         startsAt: currentStart.toISOString(),
         endsAt: currentEnd.toISOString(),
-        localStartTime: formatInTimeZone(currentStart, timezone, "p"),
-        localEndTime: formatInTimeZone(currentEnd, timezone, "p"),
+        localStartTime: loc.timeP(currentStart),
+        localEndTime: loc.timeP(currentEnd),
         isAllocated: isSegmentAllocated,
         bookingStatus: segmentBookingStatus,
       });
@@ -640,12 +774,10 @@ export function groupSlotsByDate(
     bookingStatus: BookingStatus;
   })[]
 > {
+  const loc = makeLocalizer(timezone);
   const slotsByDate = slotTimings.reduce(
     (acc, slot) => {
-      const dateKey = format(
-        toZonedTime(new Date(slot.startsAt), timezone),
-        "yyyy-MM-dd",
-      );
+      const dateKey = loc.dateKey(new Date(slot.startsAt));
       if (!acc[dateKey]) {
         acc[dateKey] = [];
       }
@@ -714,11 +846,18 @@ export function processAvailabilitySlots(
   // Split slots that cross midnight
   const splitSlots = splitSlotsByDay(allSlots, timezone);
 
-  // Convert to slot timings with allocation detection
+  // #907 — bucket booked slots once and share the index across both passes.
+  const apptIndex = buildAppointmentIndex(appointmentSlots);
+
+  // Convert to slot timings. computeStatus=false: the per-block status below is
+  // discarded by breakDownSlotsByDuration (which recomputes per sub-window), so
+  // skip the redundant O(slots × appts) pass entirely.
   const slotTimings = convertToSlotTimings(
     splitSlots,
     appointmentSlots,
     timezone,
+    apptIndex,
+    false,
   );
 
   // FIX: Break down into smaller intervals (default 30 min) with per-interval booking status
@@ -729,6 +868,7 @@ export function processAvailabilitySlots(
     durationInHours,
     appointmentSlots,
     timezone,
+    apptIndex,
   );
 
   // Group by date
@@ -755,6 +895,7 @@ export function breakDownSlotsPreservingStatus(
 })[] {
   if (!apiSlots || apiSlots.length === 0) return [];
 
+  const loc = makeLocalizer(timezone);
   const slidingIntervalMillis = 30 * 60 * 1000;
   const durationInMillis = durationInHours * 60 * 60 * 1000;
 
@@ -812,8 +953,8 @@ export function breakDownSlotsPreservingStatus(
         slotId: `${slot.slotOfAvailabilityId}-${windowStart}`,
         startsAt: windowStartDate.toISOString(),
         endsAt: windowEndDate.toISOString(),
-        localStartTime: formatInTimeZone(windowStartDate, timezone, "p"),
-        localEndTime: formatInTimeZone(windowEndDate, timezone, "p"),
+        localStartTime: loc.timeP(windowStartDate),
+        localEndTime: loc.timeP(windowEndDate),
         isAllocated: windowAllocated,
         bookingStatus: windowStatus,
       });

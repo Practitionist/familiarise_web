@@ -18,6 +18,9 @@ import "./setup";
 // ─── Module Mocks ───────────────────────────────────────────────────────────
 
 // Mock prisma (relative path required — @/ aliases fail in jest.mock)
+// #908 — read/validate now run on the BASE client outside the write txn, so the
+// base mock carries appointment.findMany too. beforeEach points these read fns
+// at the same mockTx instances so existing per-test wiring still drives them.
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
@@ -26,7 +29,10 @@ jest.mock("../../lib/prisma", () => ({
     subscription: { findUnique: jest.fn() },
     webinar: { findUnique: jest.fn() },
     class: { findUnique: jest.fn() },
+    appointment: { findMany: jest.fn() },
   },
+  ALLOCATION_TX_MAX_WAIT_MS: 8000,
+  ALLOCATION_TX_TIMEOUT_MS: 30000,
 }));
 
 // Mock appointmentlock to avoid @upstash/redis ESM import issues in Jest
@@ -46,10 +52,13 @@ jest.mock("../../utils/appointmentlock", () => ({
 // RV-2 — keep the real isOccupiedByLiveAppointment export; the allocator imports
 // it from this module and findAvailableSlots calls it to drop expired holds.
 const mockValidateFn = jest.fn();
+// #908 — the short write txn re-checks conflicts via revalidateConflicts.
+const mockRevalidateConflictsFn = jest.fn();
 jest.mock("../../utils/slotAllocation/SlotValidationService", () => ({
   ...jest.requireActual("../../utils/slotAllocation/SlotValidationService"),
   SlotValidationService: jest.fn().mockImplementation(() => ({
     validate: mockValidateFn,
+    revalidateConflicts: mockRevalidateConflictsFn,
   })),
 }));
 
@@ -128,6 +137,7 @@ function makeConsultationEvent(overrides: any = {}) {
   return {
     id: "consult-1",
     consultationPlan: {
+      consultantProfileId: "consultant-profile-1",
       durationInHours: 1,
       consultantProfile: makeConsultantProfile(),
     },
@@ -141,6 +151,7 @@ function makeSubscriptionEvent(overrides: any = {}) {
   return {
     id: "sub-1",
     subscriptionPlan: {
+      consultantProfileId: "consultant-profile-1",
       durationInMonths: 1,
       callsPerWeek: 1,
       sessionDurationInHours: 1,
@@ -158,6 +169,7 @@ function makeWebinarEvent(overrides: any = {}) {
   return {
     id: "webinar-1",
     webinarPlan: {
+      consultantProfileId: "consultant-profile-1",
       durationInHours: 1,
       consultantProfile: makeConsultantProfile(),
     },
@@ -169,6 +181,7 @@ function makeClassEvent(overrides: any = {}) {
   return {
     id: "class-1",
     classPlan: {
+      consultantProfileId: "consultant-profile-1",
       durationInMonths: 1,
       meetingsPerWeek: 1,
       sessionDurationInHours: 1,
@@ -195,24 +208,34 @@ beforeEach(() => {
     callback(mockTx),
   );
 
-  // Setup top-level prisma mocks for getConsultantProfileId() pre-fetch
-  // (runs outside the transaction to acquire consultant-level lock)
-  const consultantProfileId = "consultant-profile-1";
-  (prisma.consultation.findUnique as jest.Mock).mockResolvedValue({
-    consultationPlan: { consultantProfileId },
-  });
-  (prisma.subscription.findUnique as jest.Mock).mockResolvedValue({
-    subscriptionPlan: { consultantProfileId },
-  });
-  (prisma.webinar.findUnique as jest.Mock).mockResolvedValue({
-    webinarPlan: { consultantProfileId },
-  });
-  (prisma.class.findUnique as jest.Mock).mockResolvedValue({
-    classPlan: { consultantProfileId },
-  });
+  // #908 — reads (lock pre-fetches, fetchEventData, existing-appts,
+  // findAvailableSlots) now run on the BASE client OUTSIDE the write txn. Point
+  // the base client's read fns at the same mockTx instances so existing
+  // per-test `mockTx.<type>.findUnique` / `mockTx.appointment.findMany` wiring
+  // keeps driving them; writes still go through the txn's mockTx.
+  (prisma as any).appointment = mockTx.appointment;
+  (prisma as any).consultation.findUnique = mockTx.consultation.findUnique;
+  (prisma as any).subscription.findUnique = mockTx.subscription.findUnique;
+  (prisma as any).webinar.findUnique = mockTx.webinar.findUnique;
+  (prisma as any).class.findUnique = mockTx.class.findUnique;
+
+  // Default full-event reads so getConsultantProfileId / getConsulteeUserId /
+  // fetchEventData all resolve from one mock (factories carry the scalar
+  // consultantProfileId + requestedBy.user.id those pre-fetches read). Tests
+  // override per type as needed (including null for not-found cases).
+  mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
+  mockTx.subscription.findUnique.mockResolvedValue(makeSubscriptionEvent());
+  mockTx.webinar.findUnique.mockResolvedValue(makeWebinarEvent());
+  mockTx.class.findUnique.mockResolvedValue(makeClassEvent());
 
   mockValidateFn.mockReset();
   mockValidateFn.mockResolvedValue({
+    isValid: true,
+    errors: [],
+    warnings: [],
+  });
+  mockRevalidateConflictsFn.mockReset();
+  mockRevalidateConflictsFn.mockResolvedValue({
     isValid: true,
     errors: [],
     warnings: [],
@@ -277,13 +300,15 @@ describe("allocate() - Mode routing", () => {
   });
 
   it("should handle non-Error throws gracefully", async () => {
+    // #908 — slot parse/validate now runs before the write txn, so use a valid
+    // slot count (2 = one 1h call) to reach the txn that rejects with a non-Error.
     (prisma.$transaction as jest.Mock).mockRejectedValue("string error");
 
     const result = await SlotAllocationService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "manual",
-      slots: ["2025-01-06T10:00:00Z"],
+      slots: ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"],
     });
 
     expect(result.success).toBe(false);
@@ -779,6 +804,7 @@ describe("Auto allocation", () => {
     mockTx.consultation.findUnique.mockResolvedValue(
       makeConsultationEvent({
         consultationPlan: {
+          consultantProfileId: "consultant-profile-1",
           durationInHours: 1,
           consultantProfile: makeConsultantProfile({
             slotsOfAvailabilityWeekly: [],
@@ -836,6 +862,7 @@ describe("Auto allocation", () => {
     mockTx.consultation.findUnique.mockResolvedValue(
       makeConsultationEvent({
         consultationPlan: {
+          consultantProfileId: "consultant-profile-1",
           durationInHours: 1,
           consultantProfile: makeConsultantProfile({
             slotsOfAvailabilityWeekly: [
@@ -886,6 +913,7 @@ describe("Auto allocation", () => {
     mockTx.consultation.findUnique.mockResolvedValue(
       makeConsultationEvent({
         consultationPlan: {
+          consultantProfileId: "consultant-profile-1",
           durationInHours: 1,
           consultantProfile: makeConsultantProfile({
             slotsOfAvailabilityWeekly: [
@@ -926,6 +954,7 @@ describe("Auto allocation", () => {
     mockTx.consultation.findUnique.mockResolvedValue(
       makeConsultationEvent({
         consultationPlan: {
+          consultantProfileId: "consultant-profile-1",
           durationInHours: 1,
           consultantProfile: makeConsultantProfile({
             slotsOfAvailabilityWeekly: [
@@ -976,6 +1005,7 @@ describe("Auto allocation", () => {
     mockTx.consultation.findUnique.mockResolvedValue(
       makeConsultationEvent({
         consultationPlan: {
+          consultantProfileId: "consultant-profile-1",
           durationInHours: 1,
           consultantProfile: makeConsultantProfile({
             slotsOfAvailabilityWeekly: [
@@ -1069,6 +1099,7 @@ describe("Auto allocation", () => {
         schedulingPeriodStartsAt: new Date("2024-01-06T00:00:00Z"),
         schedulingPeriodEndsAt: new Date("2024-02-02T23:59:59Z"),
         subscriptionPlan: {
+          consultantProfileId: "consultant-profile-1",
           durationInMonths: 1,
           callsPerWeek: 1,
           sessionDurationInHours: 1,
@@ -1129,6 +1160,7 @@ describe("fetchEventData - config extraction", () => {
     mockTx.consultation.findUnique.mockResolvedValue({
       id: "consult-1",
       consultationPlan: {
+        consultantProfileId: "consultant-profile-1",
         durationInHours: 1,
         consultantProfile: null, // missing!
       },
@@ -1171,6 +1203,7 @@ describe("fetchEventData - config extraction", () => {
     mockTx.consultation.findUnique.mockResolvedValue(
       makeConsultationEvent({
         consultationPlan: {
+          consultantProfileId: "consultant-profile-1",
           durationInHours: 1.5, // 3 slots needed
           consultantProfile: makeConsultantProfile(),
         },
@@ -1244,6 +1277,7 @@ describe("fetchEventData - config extraction", () => {
     mockTx.class.findUnique.mockResolvedValue(
       makeClassEvent({
         classPlan: {
+          consultantProfileId: "consultant-profile-1",
           durationInMonths: 2,
           meetingsPerWeek: 2,
           sessionDurationInHours: 1.5,
@@ -1317,6 +1351,7 @@ describe("updateEventStatus", () => {
         schedulingPeriodStartsAt: null,
         schedulingPeriodEndsAt: null,
         subscriptionPlan: {
+          consultantProfileId: "consultant-profile-1",
           durationInMonths: 1,
           callsPerWeek: 1,
           sessionDurationInHours: 1,
@@ -1415,6 +1450,7 @@ describe("createAppointments - grouping and validation", () => {
     mockTx.subscription.findUnique.mockResolvedValue(
       makeSubscriptionEvent({
         subscriptionPlan: {
+          consultantProfileId: "consultant-profile-1",
           durationInMonths: 1,
           callsPerWeek: 1,
           sessionDurationInHours: 1.5, // 3 slots per call
@@ -1943,6 +1979,7 @@ describe("partial reschedule slot count", () => {
   const partialReschedSub = () =>
     makeSubscriptionEvent({
       subscriptionPlan: {
+        consultantProfileId: "consultant-profile-1",
         durationInMonths: 1,
         callsPerWeek: 2,
         sessionDurationInHours: 0.5,
@@ -2012,6 +2049,7 @@ describe("Edge cases", () => {
     mockTx.consultation.findUnique.mockResolvedValue(
       makeConsultationEvent({
         consultationPlan: {
+          consultantProfileId: "consultant-profile-1",
           durationInHours: 0.5,
           consultantProfile: makeConsultantProfile(),
         },
@@ -2035,6 +2073,7 @@ describe("Edge cases", () => {
     mockTx.webinar.findUnique.mockResolvedValue(
       makeWebinarEvent({
         webinarPlan: {
+          consultantProfileId: "consultant-profile-1",
           durationInHours: 2,
           consultantProfile: makeConsultantProfile(),
         },
@@ -2091,6 +2130,7 @@ describe("Edge cases", () => {
     mockTx.consultation.findUnique.mockResolvedValue(
       makeConsultationEvent({
         consultationPlan: {
+          consultantProfileId: "consultant-profile-1",
           durationInHours: 1,
           consultantProfile: customConsultant,
         },
@@ -2126,7 +2166,9 @@ describe("Edge cases", () => {
         class: makeClassEvent,
       };
 
-      freshTx[eventType].findUnique.mockResolvedValue(
+      // #908 — fetchEventData reads the BASE client (out of txn); writes go to
+      // freshTx. Set the read on base prisma and assert the write on freshTx.
+      (prisma as any)[eventType].findUnique.mockResolvedValue(
         eventFactories[eventType](),
       );
 
@@ -2139,8 +2181,8 @@ describe("Edge cases", () => {
         slots,
       });
 
-      // Correct model was queried
-      expect(freshTx[eventType].findUnique).toHaveBeenCalled();
+      // Correct model was queried (read runs on the base client now)
+      expect((prisma as any)[eventType].findUnique).toHaveBeenCalled();
       // Correct model was updated — consultation/subscription go through
       // the #836 CAS transition helpers (updateMany); webinar/class still
       // use a plain update in updateEventStatus.
@@ -2228,12 +2270,11 @@ describe("Manual allocation - distributed lock", () => {
       unlockConsulteeBooking,
     } = require("../../utils/appointmentlock");
 
-    // getConsulteeUserId reads requestedBy.user.id off the same findUnique mock.
-    (prisma.consultation.findUnique as jest.Mock).mockResolvedValue({
-      consultationPlan: { consultantProfileId: "consultant-profile-1" },
-      requestedBy: { user: { id: "consultee-9" } },
-    });
-    mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
+    // #908 — pre-fetch + fetchEventData share one base-client read now; one
+    // full event carries both consultantProfileId and requestedBy.user.id.
+    mockTx.consultation.findUnique.mockResolvedValue(
+      makeConsultationEvent({ requestedBy: { user: { id: "consultee-9" } } }),
+    );
 
     await SlotAllocationService.allocate({
       eventType: "consultation",
@@ -2288,6 +2329,7 @@ describe("Auto allocation - timezone day shift", () => {
     mockTx.consultation.findUnique.mockResolvedValue(
       makeConsultationEvent({
         consultationPlan: {
+          consultantProfileId: "consultant-profile-1",
           durationInHours: 1,
           consultantProfile: makeConsultantProfile({
             user: { id: "consultant-1", timezone: "Asia/Kolkata" },

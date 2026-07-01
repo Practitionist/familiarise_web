@@ -1,6 +1,7 @@
 import { cache } from "react";
 import prisma from "@/lib/prisma";
 import { toPlain } from "@/lib/data/serialize";
+import { consultantPublicScalars } from "@/lib/data/consultant-public";
 
 /**
  * Server-side data access for webinar and class detail pages.
@@ -28,7 +29,8 @@ export async function fetchWebinarPlanDetail(webinarPlanId: string) {
     },
     include: {
       consultantProfile: {
-        include: {
+        select: {
+          ...consultantPublicScalars,
           user: {
             select: {
               id: true,
@@ -74,7 +76,8 @@ export async function fetchWebinarPlanDetail(webinarPlanId: string) {
         where: { status: "ACCEPTED" as const },
         include: {
           consultantProfile: {
-            include: {
+            select: {
+              ...consultantPublicScalars,
               user: {
                 select: { id: true, name: true, image: true },
               },
@@ -109,7 +112,8 @@ export async function fetchClassPlanDetail(classPlanId: string) {
     },
     include: {
       consultantProfile: {
-        include: {
+        select: {
+          ...consultantPublicScalars,
           user: {
             select: {
               id: true,
@@ -156,7 +160,8 @@ export async function fetchClassPlanDetail(classPlanId: string) {
         where: { status: "ACCEPTED" as const },
         include: {
           consultantProfile: {
-            include: {
+            select: {
+              ...consultantPublicScalars,
               user: {
                 select: { id: true, name: true, image: true },
               },

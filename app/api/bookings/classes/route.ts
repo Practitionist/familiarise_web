@@ -9,6 +9,7 @@ import {
   forbiddenResponse,
 } from "@/lib/auth-helpers";
 import { resolveOrgScope } from "@/lib/api/scope/parse";
+import { consultantPublicScalars } from "@/lib/data/consultant-public";
 
 export async function GET(request: NextRequest) {
   // Require authentication (middleware already enforces cookie presence for /api/bookings/)
@@ -139,7 +140,8 @@ export async function GET(request: NextRequest) {
           classPlan: {
             include: {
               consultantProfile: {
-                include: {
+                select: {
+                  ...consultantPublicScalars,
                   user: {
                     select: {
                       id: true,
@@ -210,7 +212,7 @@ export async function GET(request: NextRequest) {
         include: {
           classPlan: {
             include: {
-              consultantProfile: true,
+              consultantProfile: { select: consultantPublicScalars },
               topics: true,
               classContents: {
                 orderBy: {

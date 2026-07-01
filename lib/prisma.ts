@@ -39,7 +39,7 @@ const PG_QUERY_TIMEOUT_MS = pgTimeoutMs("PG_QUERY_TIMEOUT_MS", 6000);
 const adapter = new PrismaPg({
   // Use pooled connection (DATABASE_URL) for runtime queries to avoid connection exhaustion
   // DIRECT_URL is only for migrations (handled by prisma.config.ts)
-  connectionString: process.env.DATABASE_URL || process.env.DIRECT_URL,
+  connectionString: process.env.DATABASE_URL,
   connectionTimeoutMillis: PG_CONNECT_TIMEOUT_MS,
   query_timeout: PG_QUERY_TIMEOUT_MS,
   // ~1s below query_timeout so the server cancels first on the direct session-mode
@@ -61,6 +61,20 @@ const adapter = new PrismaPg({
 // Slow-query threshold (ms). A query exceeding this is logged via the
 // query-event hook below so hot-path regressions surface in any environment.
 const SLOW_QUERY_MS = pgTimeoutMs("PRISMA_SLOW_QUERY_MS", 500);
+
+// #908 — the allocation write transaction. Heavy read/search/validate now runs
+// OUTSIDE this txn (under the per-consultant lock), so the txn is writes-only:
+// a longer maxWait can't pile up (lock + rate-limiter bound concurrency) and a
+// much smaller timeout suffices than the old 120s catch-all. Env-gated so the
+// serverless deploy can tune them without a code change.
+export const ALLOCATION_TX_MAX_WAIT_MS = pgTimeoutMs(
+  "ALLOCATION_TX_MAX_WAIT_MS",
+  8000,
+);
+export const ALLOCATION_TX_TIMEOUT_MS = pgTimeoutMs(
+  "ALLOCATION_TX_TIMEOUT_MS",
+  30000,
+);
 
 function makeClient() {
   // Emit the `query` event everywhere so the slow-query hook fires in prod too;

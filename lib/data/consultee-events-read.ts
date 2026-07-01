@@ -18,6 +18,7 @@ import prisma from "@/lib/prisma";
 import { WaitlistStatus, type Prisma } from "@prisma/client";
 import type { Scope } from "@/lib/api/scope/parse";
 import { toPlain } from "@/lib/data/serialize";
+import { consultantPublicScalars } from "@/lib/data/consultant-public";
 import type { TConsulteeEventsResponse } from "@/types/consultee-events";
 
 /** Thrown when the consulteeId has no profile — route maps to 404. */
@@ -96,7 +97,8 @@ export async function readConsulteeEvents(
           consultationPlan: {
             include: {
               consultantProfile: {
-                include: {
+                select: {
+                  ...consultantPublicScalars,
                   user: {
                     select: {
                       id: true,
@@ -138,7 +140,8 @@ export async function readConsulteeEvents(
           subscriptionPlan: {
             include: {
               consultantProfile: {
-                include: {
+                select: {
+                  ...consultantPublicScalars,
                   user: {
                     select: {
                       id: true,
@@ -204,7 +207,8 @@ export async function readConsulteeEvents(
           webinarPlan: {
             include: {
               consultantProfile: {
-                include: {
+                select: {
+                  ...consultantPublicScalars,
                   user: {
                     select: {
                       id: true,
@@ -219,7 +223,8 @@ export async function readConsulteeEvents(
                 where: { status: "ACCEPTED" },
                 include: {
                   consultantProfile: {
-                    include: {
+                    select: {
+                      ...consultantPublicScalars,
                       user: {
                         select: {
                           id: true,
@@ -291,7 +296,8 @@ export async function readConsulteeEvents(
           classPlan: {
             include: {
               consultantProfile: {
-                include: {
+                select: {
+                  ...consultantPublicScalars,
                   user: {
                     select: {
                       id: true,
@@ -306,7 +312,8 @@ export async function readConsulteeEvents(
                 where: { status: "ACCEPTED" },
                 include: {
                   consultantProfile: {
-                    include: {
+                    select: {
+                      ...consultantPublicScalars,
                       user: {
                         select: {
                           id: true,
@@ -354,7 +361,8 @@ export async function readConsulteeEvents(
           subscriptionPlan: {
             include: {
               consultantProfile: {
-                include: {
+                select: {
+                  ...consultantPublicScalars,
                   user: {
                     select: {
                       id: true,
