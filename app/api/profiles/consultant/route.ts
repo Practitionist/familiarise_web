@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
+import {
+  consultantPublicScalars,
+  consultantPublicApiSchema,
+} from "@/lib/data/consultant-public";
 
 /**
  * GET /api/profiles/consultant
@@ -20,9 +24,11 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const consultantProfile = await prisma.consultantProfile.findUnique({
-      where: { userId },
-      include: {
+    const consultantProfile = await prisma.consultantProfile.findFirst({
+      // Public endpoint — gate to verified, non-deleted profiles (#946)
+      where: { userId, verificationStatus: "VERIFIED", deletedAt: null },
+      select: {
+        ...consultantPublicScalars,
         user: {
           select: {
             id: true,
@@ -46,7 +52,9 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      data: consultantProfile,
+      // Zod output contract: passes the row through, but FAILS CLOSED (throws) if
+      // any statutory-PII key is ever present — defense-in-depth over the select. (#946)
+      data: consultantPublicApiSchema.parse(consultantProfile),
     });
   } catch (error) {
     Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });

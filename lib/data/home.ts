@@ -1,6 +1,7 @@
 import { unstable_cache } from "next/cache";
 import prisma from "@/lib/prisma";
 import { toPlain } from "@/lib/data/serialize";
+import { consultantPublicScalars } from "@/lib/data/consultant-public";
 import { fetchImagesFromSupabaseStorage } from "@/lib/supabase";
 
 /**
@@ -21,7 +22,8 @@ export const getHomeExperts = unstable_cache(
       where: { verificationStatus: "VERIFIED", deletedAt: null },
       orderBy: { rating: "desc" },
       take: 10,
-      include: {
+      select: {
+        ...consultantPublicScalars,
         user: {
           select: {
             id: true,
@@ -69,7 +71,8 @@ export const getHomeReviews = unstable_cache(
       take: 20,
       include: {
         consultantProfile: {
-          include: {
+          select: {
+            ...consultantPublicScalars,
             user: { select: { name: true } },
           },
         },

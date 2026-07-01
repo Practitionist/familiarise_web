@@ -19,6 +19,7 @@ import {
 import { UpdateTrialSchema } from "@/schemas/trials";
 import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
 import { buildOccupiedAppointmentFilter } from "@/utils/slotAllocation/occupancyPolicy";
+import { consultantPublicScalars } from "@/lib/data/consultant-public";
 
 interface RouteContext {
   params: Promise<{ trialId: string }>;
@@ -68,7 +69,8 @@ export async function GET(request: NextRequest, context: RouteContext) {
           },
         },
         consultantProfile: {
-          include: {
+          select: {
+            ...consultantPublicScalars,
             user: {
               select: {
                 id: true,
@@ -376,7 +378,8 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
                   },
                 },
                 consultantProfile: {
-                  include: {
+                  select: {
+                    ...consultantPublicScalars,
                     user: {
                       select: {
                         id: true,
@@ -604,7 +607,8 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           },
         },
         consultantProfile: {
-          include: {
+          select: {
+            ...consultantPublicScalars,
             user: {
               select: {
                 id: true,

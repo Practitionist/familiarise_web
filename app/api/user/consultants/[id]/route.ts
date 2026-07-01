@@ -1,5 +1,9 @@
 import prisma from "@/lib/prisma";
 import {
+  consultantPublicScalars,
+  consultantPublicApiSchema,
+} from "@/lib/data/consultant-public";
+import {
   DayOfWeek,
   type OrgPlanVisibility,
   Prisma,
@@ -161,7 +165,8 @@ export async function GET(
     // Fetch consultant with appropriate user data
     const consultant = await prisma.consultantProfile.findUnique({
       where: { id },
-      include: {
+      select: {
+        ...consultantPublicScalars,
         user: isPrivilegedAccess
           ? {
               // Full user data for own profile or admin
@@ -230,7 +235,9 @@ export async function GET(
     });
 
     return NextResponse.json(
-      { data: consultant },
+      // Zod output contract: fails closed if any statutory-PII key ever appears —
+      // defense-in-depth over the select allowlist. (#946)
+      { data: consultant ? consultantPublicApiSchema.parse(consultant) : null },
       {
         headers: {
           "Cache-Control": "public, s-maxage=60, stale-while-revalidate=300",
