@@ -7,6 +7,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { calculatePosition, leaveWaitlist } from "@/lib/waitlist";
+import { consultantPublicScalars } from "@/lib/data/consultant-public";
 
 import { getSession } from "@/lib/auth-server";
 import * as Sentry from "@sentry/nextjs";
@@ -46,7 +47,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
             webinarPlan: {
               include: {
                 consultantProfile: {
-                  include: {
+                  select: {
+                    ...consultantPublicScalars,
                     user: {
                       select: {
                         name: true,
@@ -71,7 +73,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
             classPlan: {
               include: {
                 consultantProfile: {
-                  include: {
+                  select: {
+                    ...consultantPublicScalars,
                     user: {
                       select: {
                         name: true,

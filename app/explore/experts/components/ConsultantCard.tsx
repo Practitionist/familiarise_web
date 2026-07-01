@@ -105,13 +105,14 @@ const SubscriptionPlanCard = ({
         {plan.callsPerWeek !== null &&
           plan.callsPerWeek !== undefined &&
           plan.callsPerWeek > 0 && (
-          <div className="flex items-center gap-2 text-sm">
-            <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-            <span className="text-muted-foreground">
-              {plan.callsPerWeek} {plan.callsPerWeek === 1 ? "call" : "calls"}/week
-            </span>
-          </div>
-        )}
+            <div className="flex items-center gap-2 text-sm">
+              <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+              <span className="text-muted-foreground">
+                {plan.callsPerWeek} {plan.callsPerWeek === 1 ? "call" : "calls"}
+                /week
+              </span>
+            </div>
+          )}
         {plan.emailSupport && (
           <div className="flex items-center gap-2 text-sm">
             <CheckCircle2 className="w-4 h-4 text-emerald-500" />
@@ -123,14 +124,14 @@ const SubscriptionPlanCard = ({
         {plan.totalSessions !== null &&
           plan.totalSessions !== undefined &&
           plan.totalSessions > 0 && (
-          <div className="flex items-center gap-2 text-sm">
-            <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-            <span className="text-muted-foreground">
-              {plan.totalSessions}{" "}
-              {plan.totalSessions === 1 ? "session" : "sessions"} total
-            </span>
-          </div>
-        )}
+            <div className="flex items-center gap-2 text-sm">
+              <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+              <span className="text-muted-foreground">
+                {plan.totalSessions}{" "}
+                {plan.totalSessions === 1 ? "session" : "sessions"} total
+              </span>
+            </div>
+          )}
       </div>
     </div>
   );
@@ -189,6 +190,8 @@ export const ConsultantCard = memo(function ConsultantCard({
                 className="rounded-2xl object-cover ring-2 ring-muted"
                 src={consultant.user.image || "/placeholder-user.jpg"}
                 fill
+                // 80×80 slot — without sizes, `fill` fetches a 100vw image (#932 perf).
+                sizes="80px"
               />
               {/* TODO: Add real presence indicator when online tracking is implemented */}
             </div>

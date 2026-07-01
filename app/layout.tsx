@@ -10,7 +10,6 @@ import { AnnouncementBarProvider } from "@/providers/AnnouncementBarProvider";
 import AuthSyncProvider from "@/providers/AuthSyncProvider";
 import { MaintenanceProvider } from "@/providers/MaintenanceProvider";
 import ReactQueryProvider from "@/providers/ReactQueryProvider";
-import { getSession } from "@/lib/auth-server";
 import type { Metadata, Viewport } from "next";
 import { Sora } from "next/font/google";
 
@@ -65,22 +64,19 @@ export const metadata: Metadata = {
   },
 };
 
-export default async function RootLayout({
+// Intentionally NO server-side session read here. Calling getSession() invokes
+// headers(), which forces the ENTIRE app to render dynamically — so even the
+// loading.tsx skeletons had to wait on a (cold) server render, which is why a
+// soft navigation sat blank for ~20-30s before the skeleton appeared. Keeping
+// the root layout static lets the shell + loading skeletons prefetch and paint
+// instantly; the Navbar hydrates the session client-side via useSession(), and
+// AuthSyncProvider keeps it live. The brief first-paint unknown state is shown
+// as a neutral placeholder in the Navbar rather than a signed-out flash. (#932)
+export default function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  // Resolve the session on the server so the Navbar renders the correct auth
-  // state on first paint (no signed-out flash). Cheap via the 5-min cookie
-  // cache; useSession() takes over client-side for live updates. Fail open: a
-  // transient auth/DB error must not 500 the whole app, including public pages.
-  let initialSession: Awaited<ReturnType<typeof getSession>> = null;
-  try {
-    initialSession = await getSession();
-  } catch {
-    initialSession = null;
-  }
-
   return (
     <html lang="en" className={sora.variable} suppressHydrationWarning>
       <body
@@ -95,7 +91,7 @@ export default async function RootLayout({
               <Toaster />
               <MaintenanceBanner />
               <AnnouncementBar />
-              <Navbar initialSession={initialSession} />
+              <Navbar />
               <HeaderSpacer />
               <div className="flex-1 w-full">{children}</div>
               <Footer />

@@ -88,6 +88,28 @@ export class SlotValidationService {
   }
 
   /**
+   * #908 — conflict-only re-check run INSIDE the short write transaction after
+   * the heavy read/validate was hoisted out (and run under the distributed
+   * locks). Converts the common race (a slot taken between the out-of-txn read
+   * and the write) into a clean typed conflict instead of a raw #440 GiST
+   * constraint throw. Unlike {@link checkSlotAvailability}, it forwards the
+   * exclude set and the consultee so the in-txn check matches the out-of-txn one.
+   */
+  async revalidateConflicts(
+    slots: Date[],
+    consultantUserId: string,
+    excludeAppointmentIds?: string[],
+    consulteeUserId?: string,
+  ): Promise<ValidationResult> {
+    return await this.validateNoConflicts(
+      slots,
+      consultantUserId,
+      excludeAppointmentIds,
+      consulteeUserId,
+    );
+  }
+
+  /**
    * Main validation entry point
    * Routes to appropriate validator based on event type
    *

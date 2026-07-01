@@ -1,4 +1,3 @@
-import { cache } from "react";
 import { unstable_cache } from "next/cache";
 import prisma from "@/lib/prisma";
 import { toPlain } from "@/lib/data/serialize";
@@ -158,7 +157,7 @@ const getTrendingWebinarPlanIds = unstable_cache(
  * Fetch curated programs for server-rendered sections.
  * Combines class plans + webinar plans, normalizes into Program[].
  */
-export const getCuratedPrograms = cache(
+export const getCuratedPrograms = unstable_cache(
   async (
     programType: ProgramType,
     sort: "trending" | "newest",
@@ -221,12 +220,7 @@ export const getCuratedPrograms = cache(
             ...plan,
             classes: plan.classes || [],
             type: "class",
-            imageUrl: generateProgramImageUrl(
-              plan.id,
-              600,
-              400,
-              plan.imageUrl,
-            ),
+            imageUrl: generateProgramImageUrl(plan.id, 600, 400, plan.imageUrl),
           }),
         ),
       );
@@ -275,12 +269,7 @@ export const getCuratedPrograms = cache(
             ...plan,
             webinars: [],
             type: "webinar",
-            imageUrl: generateProgramImageUrl(
-              plan.id,
-              600,
-              400,
-              plan.imageUrl,
-            ),
+            imageUrl: generateProgramImageUrl(plan.id, 600, 400, plan.imageUrl),
           }),
         ),
       );
@@ -297,13 +286,15 @@ export const getCuratedPrograms = cache(
     // toPlain — extended plan rows carry an inspect symbol (see serialize.ts)
     return toPlain(programs.slice(0, limit));
   },
+  ["curated-programs"],
+  { revalidate: 120, tags: ["programs"] },
 );
 
 // ---------------------------------------------------------------------------
 // Topics with program counts (for category grid)
 // ---------------------------------------------------------------------------
 
-export const getTopicsWithCount = cache(
+export const getTopicsWithCount = unstable_cache(
   async (planType: ProgramType = "all"): Promise<TopicWithCount[]> => {
     const topics = await prisma.topic.findMany({
       include: {
@@ -353,4 +344,6 @@ export const getTopicsWithCount = cache(
       .filter((t) => t.programCount > 0)
       .sort((a, b) => b.programCount - a.programCount);
   },
+  ["topics-with-count"],
+  { revalidate: 300, tags: ["programs"] },
 );

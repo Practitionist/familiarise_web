@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { headers } from "next/headers";
 import type { UserRole } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
 
@@ -50,6 +51,29 @@ export async function requireAuth() {
 }
 
 /**
+ * Build the onboarding redirect target, preserving the intended destination
+ * (the path middleware stashed in `x-pathname`) as `?callbackUrl=` so that
+ * finishing onboarding returns the user to where they were headed rather than
+ * the dashboard. Never loops back to onboarding itself.
+ */
+async function onboardingRedirectTarget(
+  extraParams?: Record<string, string>,
+): Promise<string> {
+  const params = new URLSearchParams(extraParams);
+  const current = (await headers()).get("x-pathname");
+  if (
+    current &&
+    current.startsWith("/") &&
+    !current.startsWith("//") &&
+    !current.startsWith("/form/onboarding")
+  ) {
+    params.set("callbackUrl", current);
+  }
+  const query = params.toString();
+  return query ? `/form/onboarding?${query}` : "/form/onboarding";
+}
+
+/**
  * Require an authenticated AND fully onboarded user.
  * Redirects to sign-in if no session, to onboarding if not completed or
  * profile is missing. Uses disableCookieCache to avoid stale values.
@@ -60,10 +84,10 @@ export async function requireOnboarded() {
     redirectWithCookieCleanup();
   }
   if (!session.user.onboardingCompleted) {
-    redirect("/form/onboarding");
+    redirect(await onboardingRedirectTarget());
   }
   if (!hasRequiredProfile(session.user)) {
-    redirect("/form/onboarding?error=missing_profile");
+    redirect(await onboardingRedirectTarget({ error: "missing_profile" }));
   }
   return session;
 }

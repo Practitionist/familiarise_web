@@ -6,7 +6,8 @@
 [build.environment]
   # Node version
   NODE_VERSION = "22"
-  # Increase heap size to prevent OOM during lint/type-check step
+  # Heap headroom for the webpack build. Lint + tsc are now skipped in `next build`
+  # (next.config.mjs) since CI gates them, so this no longer has to cover that step. #932
   NODE_OPTIONS = "--max-old-space-size=4096"
 
 # Skip builds for Dependabot PRs
@@ -17,21 +18,13 @@
       echo "Skipping deploy preview for Dependabot branch: $HEAD"
       exit 0
     fi
-    
+
     # Check if the commit author is Dependabot
     if git log --format="%an" -n 1 | grep -q "dependabot"; then
       echo "Skipping deploy preview for Dependabot commit"
       exit 0
     fi
-    
+
     # Continue with normal build for non-Dependabot PRs
     exit 1
   """
-
-# Production builds (main/prod branch)
-[context.production]
-  command = "npm run build"
-
-# Development builds (dev branch)  
-[context.dev]
-  command = "npm run build"

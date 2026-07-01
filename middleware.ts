@@ -1,8 +1,9 @@
 import { getSessionCookie } from "better-auth/cookies";
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, NextFetchEvent } from "next/server";
 
 import {
   getMaintenanceState,
+  getMaintenanceStateCachedOnly,
   isMaintenanceExempt,
   validateBypass,
   isWriteBlockedInDegraded,
@@ -41,7 +42,6 @@ import { Ratelimit } from "@upstash/ratelimit";
 
 const URLS = {
   SIGNIN: "/auth/signin",
-  ONBOARDING: "/form/onboarding",
 };
 
 // Route-prefix groups. Prefix matching (startsWith) is used instead of globs for
@@ -120,7 +120,9 @@ function maintenanceRetryAfterHeaders(
   estimatedEnd: string | null,
 ): Record<string, string> {
   if (!estimatedEnd) return {};
-  const secs = Math.ceil((new Date(estimatedEnd).getTime() - Date.now()) / 1000);
+  const secs = Math.ceil(
+    (new Date(estimatedEnd).getTime() - Date.now()) / 1000,
+  );
   return secs > 0 ? { "Retry-After": String(secs) } : {};
 }
 
@@ -330,7 +332,10 @@ async function applyEdgeRateLimits(
  * Cookie-based middleware — no DB hit, no JWT parsing. See the header block above
  * for the auth model and the per-stage rationale.
  */
-export async function middleware(req: NextRequest): Promise<NextResponse> {
+export async function middleware(
+  req: NextRequest,
+  event: NextFetchEvent,
+): Promise<NextResponse> {
   const { pathname } = req.nextUrl;
 
   // 1a. Static assets / Next internals — nothing to gate. (Mostly excluded by
@@ -352,12 +357,18 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
     return NextResponse.next();
   }
 
-  // 2. Maintenance gate (fail-open; 30s-cached read).
-  const maintenance = handleMaintenance(
-    req,
-    pathname,
-    await getMaintenanceState(),
-  );
+  // 2. Maintenance gate (fail-open; 30s-cached read). RSC/prefetch sub-navigation
+  // fetches use the cached value only — no blocking Upstash round-trip — so a soft
+  // navigation can't sit blank before its loading.tsx streams. A full document
+  // load still does the live read, so a maintenance window is enforced within one
+  // navigation / the 30s cache window.
+  const isSubNavigation =
+    req.headers.get("Next-Router-Prefetch") === "1" ||
+    req.headers.get("RSC") === "1";
+  const maintenanceState = isSubNavigation
+    ? getMaintenanceStateCachedOnly(event.waitUntil.bind(event))
+    : await getMaintenanceState();
+  const maintenance = handleMaintenance(req, pathname, maintenanceState);
   if (maintenance) return maintenance;
 
   // 3. Edge rate limiting.
@@ -402,7 +413,12 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
       signInUrl.searchParams.set("callbackUrl", pathname + req.nextUrl.search);
       return NextResponse.redirect(signInUrl);
     }
-    return NextResponse.next();
+    // Expose the resolved path so server guards (requireOnboarded) can send an
+    // authenticated-but-not-onboarded user back to their intended destination
+    // after onboarding, instead of dropping them on the dashboard.
+    const requestHeaders = new Headers(req.headers);
+    requestHeaders.set("x-pathname", pathname + req.nextUrl.search);
+    return NextResponse.next({ request: { headers: requestHeaders } });
   }
 
   // Everything else (public pages) — allow.

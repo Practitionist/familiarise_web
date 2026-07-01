@@ -12,12 +12,7 @@ import { MaintenancePhase } from "@prisma/client";
 
 import prisma from "@/lib/prisma";
 import redis, { withCircuitBreaker } from "@/lib/redis";
-
-// Redis key constants
-const REDIS_KEYS = {
-  PHASE: "maintenance:phase",
-  CONFIG: "maintenance:config",
-} as const;
+import { REDIS_KEYS } from "@/lib/maintenance-keys";
 
 export interface MaintenanceState {
   phase: MaintenancePhase;

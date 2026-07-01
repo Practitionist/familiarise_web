@@ -14,11 +14,17 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import prisma from "@/lib/prisma";
+import { fallbackOnTransientDbError } from "@/lib/data/fail-open";
+import { cache } from "react";
 import type { Metadata } from "next";
 
-export const revalidate = 60;
+// Stream behind the static layout's instant skeleton; don't prerender at build (#932).
+// (Replaces the prior `revalidate = 60`, inert while the layout forced dynamic.)
+export const dynamic = "force-dynamic";
 
-async function fetchOrgBySlug(slug: string) {
+// React.cache so generateMetadata() and the page body share one query per request
+// instead of running this heavy org read twice (more visible now it's per-request).
+const fetchOrgBySlug = cache(async (slug: string) => {
   const row = await prisma.organization.findFirst({
     where: { slug, isPublic: true, canHost: true, status: "ACTIVE" },
     select: {
@@ -41,22 +47,46 @@ async function fetchOrgBySlug(slug: string) {
       // OrganizationPlan model was collapsed into these (one bookable shape).
       consultationPlans: {
         where: { visibility: { in: ["PUBLIC", "ORG_AND_PUBLIC"] } },
-        select: { id: true, title: true, description: true, price: true, priceCurrency: true },
+        select: {
+          id: true,
+          title: true,
+          description: true,
+          price: true,
+          priceCurrency: true,
+        },
         take: 6,
       },
       subscriptionPlans: {
         where: { visibility: { in: ["PUBLIC", "ORG_AND_PUBLIC"] } },
-        select: { id: true, title: true, description: true, price: true, priceCurrency: true },
+        select: {
+          id: true,
+          title: true,
+          description: true,
+          price: true,
+          priceCurrency: true,
+        },
         take: 6,
       },
       webinarPlans: {
         where: { visibility: { in: ["PUBLIC", "ORG_AND_PUBLIC"] } },
-        select: { id: true, title: true, description: true, price: true, priceCurrency: true },
+        select: {
+          id: true,
+          title: true,
+          description: true,
+          price: true,
+          priceCurrency: true,
+        },
         take: 6,
       },
       classPlans: {
         where: { visibility: { in: ["PUBLIC", "ORG_AND_PUBLIC"] } },
-        select: { id: true, title: true, description: true, price: true, priceCurrency: true },
+        select: {
+          id: true,
+          title: true,
+          description: true,
+          price: true,
+          priceCurrency: true,
+        },
         take: 6,
       },
       memberships: {
@@ -91,8 +121,14 @@ async function fetchOrgBySlug(slug: string) {
   // Normalize the four org-owned per-type plan lists into one catalog array,
   // tagged with planType, so the sidebar render is unchanged.
   const organizationPlans = [
-    ...row.consultationPlans.map((p) => ({ ...p, planType: "CONSULTATION" as const })),
-    ...row.subscriptionPlans.map((p) => ({ ...p, planType: "SUBSCRIPTION" as const })),
+    ...row.consultationPlans.map((p) => ({
+      ...p,
+      planType: "CONSULTATION" as const,
+    })),
+    ...row.subscriptionPlans.map((p) => ({
+      ...p,
+      planType: "SUBSCRIPTION" as const,
+    })),
     ...row.webinarPlans.map((p) => ({ ...p, planType: "WEBINAR" as const })),
     ...row.classPlans.map((p) => ({ ...p, planType: "CLASS" as const })),
   ].slice(0, 6);
@@ -107,13 +143,16 @@ async function fetchOrgBySlug(slug: string) {
     industry: row.brandingProfile?.industry ?? null,
     website: row.brandingProfile?.website ?? null,
   };
-}
+});
 
 type OrgData = NonNullable<Awaited<ReturnType<typeof fetchOrgBySlug>>>;
 
 // #777 §E — plan family → checkout route segment (lowercase). Booking a plan
 // from the public org page deep-links into the shared checkout flow.
-const CHECKOUT_FAMILY: Record<OrgData["organizationPlans"][number]["planType"], string> = {
+const CHECKOUT_FAMILY: Record<
+  OrgData["organizationPlans"][number]["planType"],
+  string
+> = {
   CONSULTATION: "consultation",
   SUBSCRIPTION: "subscription",
   WEBINAR: "webinar",
@@ -126,7 +165,15 @@ export async function generateMetadata({
   params: Promise<{ orgSlug: string }>;
 }): Promise<Metadata> {
   const { orgSlug } = await params;
-  const org = await fetchOrgBySlug(orgSlug);
+  // Metadata runs before render with no error boundary — a transient timeout
+  // would 500. Fall back to null (generic title); the page body re-reads and
+  // surfaces any real error. (#925)
+  const org = await fetchOrgBySlug(orgSlug).catch(
+    fallbackOnTransientDbError<Awaited<ReturnType<typeof fetchOrgBySlug>>>(
+      "org metadata",
+      null,
+    ),
+  );
   if (!org) return { title: "Organisation not found" };
   return {
     title: `${org.name} — Familiarise`,
@@ -146,7 +193,11 @@ function ExpertMiniCard({
     >
       <div className="relative w-12 h-12 flex-shrink-0">
         <Image
-          src={expert.user.profileDisplayImage ?? expert.user.image ?? "/placeholder-user.jpg"}
+          src={
+            expert.user.profileDisplayImage ??
+            expert.user.image ??
+            "/placeholder-user.jpg"
+          }
           alt={expert.user.name}
           fill
           className="rounded-xl object-cover"
@@ -162,7 +213,9 @@ function ExpertMiniCard({
           )}
         </div>
         {expert.headline && (
-          <p className="text-xs text-muted-foreground truncate">{expert.headline}</p>
+          <p className="text-xs text-muted-foreground truncate">
+            {expert.headline}
+          </p>
         )}
         <div className="flex items-center gap-2 mt-0.5">
           <div className="flex items-center gap-0.5">
@@ -172,7 +225,9 @@ function ExpertMiniCard({
             </span>
           </div>
           {expert.domain && (
-            <span className="text-xs text-muted-foreground/70">{expert.domain.name}</span>
+            <span className="text-xs text-muted-foreground/70">
+              {expert.domain.name}
+            </span>
           )}
         </div>
       </div>
@@ -190,7 +245,8 @@ export default async function OrgProfilePage({
 
   if (!org) notFound();
 
-  const capabilityLabel = org.canSponsor && org.canHost ? "Hybrid" : "Host Agency";
+  const capabilityLabel =
+    org.canSponsor && org.canHost ? "Hybrid" : "Host Agency";
   // Binary categorical badge, no dark: variants — monochrome (filled vs muted).
   const capabilityClass =
     org.canSponsor && org.canHost
@@ -199,7 +255,9 @@ export default async function OrgProfilePage({
 
   const exclusiveExperts = org.memberships
     .map((m) => m.consultantProfile)
-    .filter(Boolean) as NonNullable<OrgData["memberships"][number]["consultantProfile"]>[];
+    .filter(Boolean) as NonNullable<
+    OrgData["memberships"][number]["consultantProfile"]
+  >[];
 
   return (
     <main className="min-h-screen bg-muted">
@@ -261,7 +319,9 @@ export default async function OrgProfilePage({
               </div>
 
               {org.industry && (
-                <p className="text-muted-foreground text-sm mb-3">{org.industry}</p>
+                <p className="text-muted-foreground text-sm mb-3">
+                  {org.industry}
+                </p>
               )}
 
               {org.description && (
@@ -312,7 +372,9 @@ export default async function OrgProfilePage({
             ) : (
               <div className="flex flex-col items-center justify-center py-16 text-center bg-card rounded-2xl border border-border">
                 <Users className="w-10 h-10 text-muted-foreground/70 mb-3" />
-                <p className="text-muted-foreground">No exclusive experts listed yet</p>
+                <p className="text-muted-foreground">
+                  No exclusive experts listed yet
+                </p>
               </div>
             )}
           </div>
@@ -375,7 +437,9 @@ export default async function OrgProfilePage({
                 asChild
                 className="w-full bg-card text-foreground hover:bg-muted font-medium rounded-xl"
               >
-                <Link href={`/explore/enterprise/organisations/${org.slug}#experts`}>
+                <Link
+                  href={`/explore/enterprise/organisations/${org.slug}#experts`}
+                >
                   Browse Experts
                 </Link>
               </Button>

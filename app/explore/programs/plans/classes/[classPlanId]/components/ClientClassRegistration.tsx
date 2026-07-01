@@ -73,11 +73,15 @@ export function ClientClassRegistration({
   const isOnWaitlist = !!userWaitlistEntry;
 
   const handleRegistration = () => {
+    const checkoutUrl = `/checkout/plans/class/${classId}`;
     if (!isLoggedIn) {
-      window.location.href = `/auth/signin?callbackUrl=${encodeURIComponent(window.location.href)}`;
+      // Preserve the checkout destination as a RELATIVE callbackUrl (the sign-in
+      // page drops absolute URLs) so a first-timer lands on checkout after auth +
+      // onboarding.
+      window.location.href = `/auth/signin?callbackUrl=${encodeURIComponent(checkoutUrl)}`;
       return;
     }
-    window.location.href = `/checkout/plans/class/${classId}`;
+    window.location.href = checkoutUrl;
   };
 
   if (!isLoggedIn) {

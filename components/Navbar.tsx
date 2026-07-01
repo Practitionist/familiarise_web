@@ -22,6 +22,7 @@ import { signOut, useSession } from "@/lib/auth-client";
 // Import the logout helper from the SDK-free module (not @/providers/StreamProvider)
 // so the root navbar no longer statically links the Stream video/chat SDK. #248
 import { disconnectStreamClients } from "@/lib/stream/disconnect";
+import { Skeleton } from "@/components/ui/skeleton";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -316,16 +317,13 @@ function DesktopNavItem({
 
 // ─── Main Navbar ─────────────────────────────────────────────────────────────
 
-type NavbarSession = ReturnType<typeof useSession>["data"];
-
-const Navbar = ({ initialSession }: { initialSession?: NavbarSession }) => {
+const Navbar = () => {
   const router = useRouter();
   const pathname = usePathname();
-  const { data, isPending } = useSession();
-  // Seed from the server-fetched session so the first paint shows the correct
-  // auth state instead of flashing the signed-out CTA until the client-side
-  // /get-session resolves. useSession takes over once it loads.
-  const session = isPending ? (data ?? initialSession ?? null) : data;
+  // The root layout is static (#932), so the session hydrates client-side here.
+  // While it resolves, `isPending` drives a neutral auth-area placeholder so a
+  // logged-in user doesn't flash the signed-out CTA on first paint.
+  const { data: session, isPending } = useSession();
   const [isOpen, setIsOpen] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
   const { currency, symbol, setCurrency } = useCurrency();
@@ -490,7 +488,12 @@ const Navbar = ({ initialSession }: { initialSession?: NavbarSession }) => {
                 </DropdownMenuContent>
               </DropdownMenu>
 
-              {session?.user ? (
+              {isPending ? (
+                <div className="flex items-center gap-3">
+                  <Skeleton className="h-9 w-9 rounded-full" />
+                  <Skeleton className="h-9 w-28 rounded-md" />
+                </div>
+              ) : session?.user ? (
                 <div className="flex items-center gap-3">
                   <Link href="/profile">
                     <Avatar className="h-9 w-9 border-2 border-zinc-200 hover:border-zinc-400 transition-colors cursor-pointer">
@@ -704,7 +707,12 @@ const Navbar = ({ initialSession }: { initialSession?: NavbarSession }) => {
 
               {/* User Section */}
               <div className="absolute bottom-0 left-0 right-0 p-5 border-t border-zinc-800 bg-zinc-900 safe-bottom">
-                {session?.user ? (
+                {isPending ? (
+                  <div className="flex items-center gap-3">
+                    <Skeleton className="h-10 w-10 rounded-full" />
+                    <Skeleton className="h-4 w-32 rounded" />
+                  </div>
+                ) : session?.user ? (
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
                       <Avatar className="h-10 w-10 border border-zinc-700">

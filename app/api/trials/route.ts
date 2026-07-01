@@ -7,6 +7,7 @@ import { CreateTrialSchema } from "@/schemas/trials";
 import { getSession } from "@/lib/auth-server";
 import { trialRequestLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { resolveOrgScope } from "@/lib/api/scope/parse";
+import { consultantPublicScalars } from "@/lib/data/consultant-public";
 
 /**
  * GET /api/trials
@@ -168,7 +169,8 @@ export async function GET(request: NextRequest) {
             },
           },
           consultantProfile: {
-            include: {
+            select: {
+              ...consultantPublicScalars,
               user: {
                 select: {
                   id: true,
@@ -381,7 +383,8 @@ export async function POST(request: NextRequest) {
           },
         },
         consultantProfile: {
-          include: {
+          select: {
+            ...consultantPublicScalars,
             user: {
               select: {
                 id: true,

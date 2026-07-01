@@ -85,9 +85,12 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     const { searchParams } = new URL(request.url);
     const action = searchParams.get("action")?.toUpperCase();
 
-    // If not logged in, redirect to login with callback
+    // If not logged in, redirect to login with callback. Use a RELATIVE path —
+    // the sign-in page only honours relative callbackUrls, so the absolute
+    // request.url would be dropped and the accept/decline deep-link lost.
     if (!session?.user?.id) {
-      const loginUrl = `/auth/signin?callbackUrl=${encodeURIComponent(request.url)}`;
+      const returnTo = new URL(request.url);
+      const loginUrl = `/auth/signin?callbackUrl=${encodeURIComponent(returnTo.pathname + returnTo.search)}`;
       return NextResponse.redirect(new URL(loginUrl, request.url));
     }
 
