@@ -292,7 +292,9 @@ function SignInContent() {
             ? "Redirecting to your destination..."
             : "Redirecting to dashboard...",
         });
-        router.push(callbackUrl || "/dashboard");
+        // Defer the redirect to the useSession-driven effect above so it honours
+        // onboarding status — a non-onboarded user signing in from a booking/trial
+        // callback must go through onboarding first, not straight to callbackUrl.
       }
     } catch (error) {
       Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });

@@ -40,8 +40,9 @@ export function JoinWaitlistButton({
 
   const handleJoinWaitlist = async () => {
     if (!session?.user) {
-      // Redirect to login with callback
-      window.location.href = `/auth/signin?callbackUrl=${encodeURIComponent(window.location.href)}`;
+      // Redirect to login with a RELATIVE callback (the sign-in page drops
+      // absolute URLs) so the user returns to this event page after signing in.
+      window.location.href = `/auth/signin?callbackUrl=${encodeURIComponent(window.location.pathname + window.location.search)}`;
       return;
     }
 

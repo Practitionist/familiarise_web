@@ -26,7 +26,9 @@ export async function GET(request: NextRequest) {
     const subdomain = searchParams.get("subdomain");
     // Repeated params (?tags=a&tags=b), matching the client writers, so a literal
     // comma in a tag/company name can't split one value into two filter terms.
-    const tags = searchParams.getAll("tags");
+    // filter(Boolean) drops an empty ?tags= (mirrors companies) so it reads as
+    // "no filter" rather than name IN [""] → zero results.
+    const tags = searchParams.getAll("tags").filter(Boolean);
     const experience = parseInt(searchParams.get("experience") || "0");
     const search = searchParams.get("search");
     const language = searchParams.get("language");

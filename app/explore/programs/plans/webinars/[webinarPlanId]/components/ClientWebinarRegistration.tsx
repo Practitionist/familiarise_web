@@ -81,9 +81,11 @@ export function ClientWebinarRegistration({
   const isOnWaitlist = !!userWaitlistEntry;
 
   const handleRegistration = () => {
-    // Only checkout-able when the session is upcoming AND a webinar instance exists.
+    // Only checkout-able when the session is upcoming, a webinar instance exists,
+    // and there's still room — a full webinar must fall back to the page so the
+    // signed-in user lands on the waitlist UI, not checkout.
     const checkoutUrl =
-      sessionStatus === "Upcoming" && webinarId
+      sessionStatus === "Upcoming" && webinarId && !isFull
         ? `/checkout/plans/webinar/${webinarPlanId}?eventId=${webinarId}`
         : null;
     if (!isLoggedIn) {
