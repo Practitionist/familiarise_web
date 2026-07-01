@@ -1,5 +1,6 @@
 import { cache } from "react";
 import prisma from "@/lib/prisma";
+import { consultantPublicScalars } from "@/lib/data/consultant-public";
 
 /**
  * Server-side data access for the expert detail page.
@@ -107,7 +108,10 @@ export const getConsultantReviews = cache(
       take: 20,
       include: {
         consultantProfile: {
-          include: { user: { select: { name: true } } },
+          select: {
+            ...consultantPublicScalars,
+            user: { select: { name: true } },
+          },
         },
         consulteeProfile: {
           include: { user: { select: { name: true, image: true } } },

@@ -5,6 +5,7 @@ import type {
   SlotOfAppointment as PrismaSlotOfAppointment,
 } from "@prisma/client";
 import type { ICollaboratorInfo } from "../../types";
+import type { ConsultantPublicScalars } from "@/lib/data/consultant-public";
 
 type TClassSessionWithSchedule = PrismaClass & {
   appointments: (PrismaAppointment & {
@@ -19,7 +20,7 @@ export type TClassPlanDetailsData = Omit<
   Prisma.ClassPlanGetPayload<{
     include: {
       consultantProfile: {
-        include: {
+        select: ConsultantPublicScalars & {
           user: { select: { id: true; name: true; email: true; image: true } };
           domain: true;
           subDomains: true;

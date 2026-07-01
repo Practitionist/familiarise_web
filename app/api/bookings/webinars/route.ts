@@ -10,6 +10,7 @@ import {
 } from "@/lib/auth-helpers";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 import { resolveOrgScope } from "@/lib/api/scope/parse";
+import { consultantPublicScalars } from "@/lib/data/consultant-public";
 
 export async function GET(request: NextRequest) {
   // Require authentication (middleware already enforces cookie presence for /api/bookings/)
@@ -145,7 +146,8 @@ export async function GET(request: NextRequest) {
           webinarPlan: {
             include: {
               consultantProfile: {
-                include: {
+                select: {
+                  ...consultantPublicScalars,
                   user: {
                     select: {
                       id: true,
@@ -225,7 +227,7 @@ export async function GET(request: NextRequest) {
         include: {
           webinarPlan: {
             include: {
-              consultantProfile: true,
+              consultantProfile: { select: consultantPublicScalars },
               topics: true,
             },
           },
@@ -250,7 +252,7 @@ export async function GET(request: NextRequest) {
         include: {
           webinarPlan: {
             include: {
-              consultantProfile: true,
+              consultantProfile: { select: consultantPublicScalars },
               topics: true,
             },
           },
