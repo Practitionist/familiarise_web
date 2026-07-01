@@ -57,7 +57,7 @@ export function ConsultantAvailability({
         const endDateInUtc = endOfDay(addDays(windowStart, 6));
 
         const response = await fetch(
-          `/api/slots/availability-with-allocation/${consultantDetails.id}?startDateInUtc=${startDateInUtc.toISOString()}&endDateInUtc=${endDateInUtc.toISOString()}&timezone=${timezone}`,
+          `/api/slots/availability-with-allocation/${consultantDetails.id}?startDateInUtc=${startDateInUtc.toISOString()}&endDateInUtc=${endDateInUtc.toISOString()}&timezone=${encodeURIComponent(timezone)}`,
         );
 
         if (!response.ok) {

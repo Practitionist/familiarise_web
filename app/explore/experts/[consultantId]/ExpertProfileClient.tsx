@@ -74,7 +74,7 @@ export function ExpertProfileClient({
         const response = await fetch(
           `/api/slots/availability-with-allocation/${
             consultantDetails.id
-          }?startDateInUtc=${startDateInUtc.toISOString()}&endDateInUtc=${endDateInUtc.toISOString()}&timezone=${timezone}`,
+          }?startDateInUtc=${startDateInUtc.toISOString()}&endDateInUtc=${endDateInUtc.toISOString()}&timezone=${encodeURIComponent(timezone)}`,
         );
 
         if (!response.ok) {

@@ -24,11 +24,15 @@ export async function GET(request: NextRequest) {
   try {
     const domain = searchParams.get("domain");
     const subdomain = searchParams.get("subdomain");
-    const tags = searchParams.get("tags")?.split(",");
+    // Repeated params (?tags=a&tags=b), matching the client writers, so a literal
+    // comma in a tag/company name can't split one value into two filter terms.
+    // filter(Boolean) drops an empty ?tags= (mirrors companies) so it reads as
+    // "no filter" rather than name IN [""] → zero results.
+    const tags = searchParams.getAll("tags").filter(Boolean);
     const experience = parseInt(searchParams.get("experience") || "0");
     const search = searchParams.get("search");
     const language = searchParams.get("language");
-    const companies = searchParams.get("companies")?.split(",").filter(Boolean);
+    const companies = searchParams.getAll("companies").filter(Boolean);
     const affiliationType = searchParams.get("affiliationType");
 
     const rawMinPrice = searchParams.get("minPrice");
@@ -51,12 +55,12 @@ export async function GET(request: NextRequest) {
       !includeUnverified &&
       !domain &&
       !subdomain &&
-      !(tags && tags.length > 0) &&
+      tags.length === 0 &&
       experience <= 0 &&
       minPrice === undefined &&
       maxPrice === undefined &&
       minRating === undefined &&
-      !(companies && companies.length > 0) &&
+      companies.length === 0 &&
       !language &&
       !affiliationType &&
       !search;
@@ -84,7 +88,7 @@ export async function GET(request: NextRequest) {
     if (subdomain) {
       conditions.push({ subDomains: { some: { id: subdomain } } });
     }
-    if (tags && tags.length > 0) {
+    if (tags.length > 0) {
       conditions.push({ tags: { some: { name: { in: tags } } } });
     }
     if (experience > 0) {
@@ -103,7 +107,7 @@ export async function GET(request: NextRequest) {
     if (minRating !== undefined && !isNaN(minRating)) {
       conditions.push({ rating: { gte: minRating } });
     }
-    if (companies && companies.length > 0) {
+    if (companies.length > 0) {
       conditions.push({
         user: { workExperiences: { some: { company: { in: companies } } } },
       });
