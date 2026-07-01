@@ -53,16 +53,27 @@ function SignInContent() {
     }
   }, [searchParams]);
 
+  // Thread the validated callbackUrl through the onboarding + sign-up hand-offs
+  // so a first-timer who came here to book/buy returns to their destination
+  // after finishing onboarding, instead of being dropped on the dashboard
+  // (mirrors the sign-up page, which already does this).
+  const onboardingUrl = callbackUrl
+    ? `/form/onboarding?callbackUrl=${encodeURIComponent(callbackUrl)}`
+    : "/form/onboarding";
+  const signUpUrl = callbackUrl
+    ? `/auth/signup?callbackUrl=${encodeURIComponent(callbackUrl)}`
+    : "/auth/signup";
+
   // Redirect authenticated users based on onboarding status
   useEffect(() => {
     if (!isPending && session?.user) {
       if (session.user.onboardingCompleted) {
         router.push(callbackUrl || "/dashboard");
       } else {
-        router.push("/form/onboarding");
+        router.push(onboardingUrl);
       }
     }
-  }, [session, isPending, router, callbackUrl]);
+  }, [session, isPending, router, callbackUrl, onboardingUrl]);
 
   // Show loading while checking session status (fallback for when middleware doesn't catch)
   if (isPending) {
@@ -424,7 +435,7 @@ function SignInContent() {
               </div>
               <SocialLoginButtons
                 callbackURL={callbackUrl || "/dashboard"}
-                newUserCallbackURL="/form/onboarding"
+                newUserCallbackURL={onboardingUrl}
                 isLoading={isLoading}
                 ssoEnforced={false}
                 onSSOClick={handleManualSSOClick}
@@ -435,7 +446,7 @@ function SignInContent() {
           <p className="mt-6 text-xs text-zinc-400">
             Don't have an account?{" "}
             <Link
-              href="/auth/signup"
+              href={signUpUrl}
               className="font-medium text-white underline-offset-4 hover:underline"
             >
               Sign up

@@ -81,13 +81,22 @@ export function ClientWebinarRegistration({
   const isOnWaitlist = !!userWaitlistEntry;
 
   const handleRegistration = () => {
+    // Only checkout-able when the session is upcoming AND a webinar instance exists.
+    const checkoutUrl =
+      sessionStatus === "Upcoming" && webinarId
+        ? `/checkout/plans/webinar/${webinarPlanId}?eventId=${webinarId}`
+        : null;
     if (!isLoggedIn) {
-      window.location.href = `/auth/signin?callbackUrl=${encodeURIComponent(window.location.href)}`;
+      // Preserve the next step as a RELATIVE callbackUrl (the sign-in page drops
+      // absolute URLs) — checkout when registerable, else this page — so a
+      // first-timer lands there after auth + onboarding.
+      const returnTo =
+        checkoutUrl ?? window.location.pathname + window.location.search;
+      window.location.href = `/auth/signin?callbackUrl=${encodeURIComponent(returnTo)}`;
       return;
     }
-    // Ensure we only redirect to checkout if the session is upcoming AND we have a webinar instance ID
-    if (sessionStatus === "Upcoming" && webinarId) {
-      window.location.href = `/checkout/plans/webinar/${webinarPlanId}?eventId=${webinarId}`;
+    if (checkoutUrl) {
+      window.location.href = checkoutUrl;
     }
   };
 
