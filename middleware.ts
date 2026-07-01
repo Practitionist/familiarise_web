@@ -413,7 +413,12 @@ export async function middleware(
       signInUrl.searchParams.set("callbackUrl", pathname + req.nextUrl.search);
       return NextResponse.redirect(signInUrl);
     }
-    return NextResponse.next();
+    // Expose the resolved path so server guards (requireOnboarded) can send an
+    // authenticated-but-not-onboarded user back to their intended destination
+    // after onboarding, instead of dropping them on the dashboard.
+    const requestHeaders = new Headers(req.headers);
+    requestHeaders.set("x-pathname", pathname + req.nextUrl.search);
+    return NextResponse.next({ request: { headers: requestHeaders } });
   }
 
   // Everything else (public pages) — allow.

@@ -44,9 +44,17 @@ export function TrialBookingModal({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
 
+  // Send an unauthenticated visitor to sign-in, preserving the trial intent so
+  // that after auth + onboarding they land back on this expert with the trial
+  // modal auto-opened (the expert page honours ?action=trial).
+  const redirectToSignIn = () => {
+    const returnTo = `${window.location.pathname}?action=trial`;
+    router.push(`/auth/signin?callbackUrl=${encodeURIComponent(returnTo)}`);
+  };
+
   const handleSubmit = async () => {
     if (!session?.user?.id) {
-      router.push("/auth/signin");
+      redirectToSignIn();
       return;
     }
 
@@ -148,7 +156,7 @@ export function TrialBookingModal({
             <p className="text-muted-foreground mb-4">
               Please sign in to request a free trial with {consultantName}
             </p>
-            <Button onClick={() => router.push("/auth/signin")}>
+            <Button onClick={redirectToSignIn}>
               Sign In to Continue
             </Button>
           </div>

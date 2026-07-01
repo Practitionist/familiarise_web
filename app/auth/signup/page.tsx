@@ -68,6 +68,12 @@ function SignUpContent() {
     ? `/auth/verify-email?callbackUrl=${encodeURIComponent(safeCallbackUrl)}`
     : "/auth/verify-email";
 
+  // Thread it back to sign-in too, so toggling sign-up ↔ sign-in preserves the
+  // destination in both directions (only the org-invite deep-link set it before).
+  const signInUrl = safeCallbackUrl
+    ? `/auth/signin?callbackUrl=${encodeURIComponent(safeCallbackUrl)}`
+    : "/auth/signin";
+
   // Redirect authenticated users based on onboarding status
   useEffect(() => {
     if (!isPending && session?.user) {
@@ -151,7 +157,7 @@ function SignUpContent() {
           <p className="mt-4 text-xs text-zinc-400">
             Already verified?{" "}
             <Link
-              href="/auth/signin"
+              href={signInUrl}
               className="font-medium text-zinc-300 underline-offset-4 hover:text-white hover:underline"
             >
               Sign in
@@ -444,7 +450,7 @@ function SignUpContent() {
           <p className="mt-6 text-xs text-zinc-400">
             Already have an account?{" "}
             <Link
-              href="/auth/signin"
+              href={signInUrl}
               className="font-medium text-white underline-offset-4 hover:underline"
             >
               Sign in
