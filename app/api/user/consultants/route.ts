@@ -2,7 +2,12 @@ import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
-import { consultantListInclude, orgMembershipInclude } from "@/lib/data/explore-experts";
+import {
+  consultantCardInclude,
+  toConsultantCard,
+  orderByForSort,
+  getDefaultConsultantsPage,
+} from "@/lib/data/explore-experts";
 import { apiError } from "@/lib/errors";
 import { isTransientDbError, reportTransient } from "@/lib/data/fail-open";
 
@@ -14,30 +19,56 @@ export async function GET(request: NextRequest) {
     Math.max(1, parseInt(searchParams.get("limit") || "10") || 10),
     100,
   );
+  const sort = searchParams.get("sort") || "nameAsc";
+
   try {
     const domain = searchParams.get("domain");
     const subdomain = searchParams.get("subdomain");
     const tags = searchParams.get("tags")?.split(",");
     const experience = parseInt(searchParams.get("experience") || "0");
     const search = searchParams.get("search");
-    const sort = searchParams.get("sort") || "nameAsc";
+    const language = searchParams.get("language");
+    const companies = searchParams.get("companies")?.split(",").filter(Boolean);
+    const affiliationType = searchParams.get("affiliationType");
 
-    // New filter params with NaN guards
     const rawMinPrice = searchParams.get("minPrice");
     const rawMaxPrice = searchParams.get("maxPrice");
-    const language = searchParams.get("language");
     const rawMinRating = searchParams.get("minRating");
-    const companies = searchParams.get("companies")?.split(",").filter(Boolean);
-
     const minPrice = rawMinPrice ? parseFloat(rawMinPrice) : undefined;
     const maxPrice = rawMaxPrice ? parseFloat(rawMaxPrice) : undefined;
     const minRating = rawMinRating ? parseFloat(rawMinRating) : undefined;
 
-    // Calculate offset
-    const skip = (page - 1) * limit;
+    // Admin/staff can list unverified; public listings are verified-only.
+    const includeUnverified =
+      searchParams.get("includeUnverified") === "true";
 
-    // Check if this is an admin/staff request (can see all) or public (only verified)
-    const includeUnverified = searchParams.get("includeUnverified") === "true";
+    // The unfiltered first page is the explore landing's default view — serve it
+    // from the Next data cache (getDefaultConsultantsPage) so it doesn't open a
+    // cross-region pooled connection on every load. Anything filtered/searched or
+    // beyond page 1 falls through to a live query. (#945, #932)
+    const isDefaultView =
+      page === 1 &&
+      !includeUnverified &&
+      !domain &&
+      !subdomain &&
+      !(tags && tags.length > 0) &&
+      experience <= 0 &&
+      minPrice === undefined &&
+      maxPrice === undefined &&
+      minRating === undefined &&
+      !(companies && companies.length > 0) &&
+      !language &&
+      !affiliationType &&
+      !search;
+
+    if (isDefaultView) {
+      const result = await getDefaultConsultantsPage(sort, limit);
+      return NextResponse.json(result, {
+        headers: {
+          "Cache-Control": "public, s-maxage=60, stale-while-revalidate=300",
+        },
+      });
+    }
 
     // Build where clause using an explicit conditions array
     const conditions: Prisma.ConsultantProfileWhereInput[] = [];
@@ -46,50 +77,19 @@ export async function GET(request: NextRequest) {
     if (!includeUnverified) {
       conditions.push({ verificationStatus: "VERIFIED" });
     }
-
-    // #781 §B — soft-deleted profiles leave public surfaces (this route is
-    // unauthenticated; admin surfaces read soft-deleted rows elsewhere)
+    // #781 §B — soft-deleted profiles leave public surfaces
     conditions.push({ deletedAt: null });
 
-    // Domain filter
-    if (domain) {
-      conditions.push({ domainId: domain });
-    }
-
-    // Subdomain filter
+    if (domain) conditions.push({ domainId: domain });
     if (subdomain) {
-      conditions.push({
-        subDomains: {
-          some: {
-            id: subdomain,
-          },
-        },
-      });
+      conditions.push({ subDomains: { some: { id: subdomain } } });
     }
-
-    // Tags filter
     if (tags && tags.length > 0) {
-      conditions.push({
-        tags: {
-          some: {
-            name: {
-              in: tags,
-            },
-          },
-        },
-      });
+      conditions.push({ tags: { some: { name: { in: tags } } } });
     }
-
-    // Experience filter
     if (experience > 0) {
-      conditions.push({
-        experience: {
-          gte: experience,
-        },
-      });
+      conditions.push({ experience: { gte: experience } });
     }
-
-    // Price filter (via subscription plans)
     if (minPrice !== undefined && !isNaN(minPrice)) {
       conditions.push({
         subscriptionPlans: { some: { price: { gte: minPrice } } },
@@ -100,38 +100,23 @@ export async function GET(request: NextRequest) {
         subscriptionPlans: { some: { price: { lte: maxPrice } } },
       });
     }
-
-    // Rating filter
     if (minRating !== undefined && !isNaN(minRating)) {
       conditions.push({ rating: { gte: minRating } });
     }
-
-    // Company filter (multi-select — values come from pre-fetched list, exact match)
     if (companies && companies.length > 0) {
       conditions.push({
-        user: {
-          workExperiences: {
-            some: { company: { in: companies } },
-          },
-        },
+        user: { workExperiences: { some: { company: { in: companies } } } },
       });
     }
-
-    // Language filter
     if (language) {
       conditions.push({ languages: { has: language } });
     }
-
-    // Affiliation type filter: independent (isIndependent=true) or agency
-    // (isIndependent=false). When null/absent, show all verified consultants.
-    const affiliationType = searchParams.get("affiliationType");
+    // Affiliation type: independent (isIndependent=true) or agency (false).
     if (affiliationType === "independent") {
       conditions.push({ isIndependent: true });
     } else if (affiliationType === "agency") {
       conditions.push({ isIndependent: false });
     }
-
-    // Search filter
     if (search) {
       conditions.push({
         OR: [
@@ -145,76 +130,31 @@ export async function GET(request: NextRequest) {
               some: { name: { contains: search, mode: "insensitive" } },
             },
           },
-          {
-            tags: { some: { name: { contains: search, mode: "insensitive" } } },
-          },
+          { tags: { some: { name: { contains: search, mode: "insensitive" } } } },
         ],
       });
     }
 
-    // Build final where clause — only add AND if there are conditions
     const where: Prisma.ConsultantProfileWhereInput =
       conditions.length > 0 ? { AND: conditions } : {};
 
-    // Build orderBy clause
-    let orderBy: Prisma.ConsultantProfileOrderByWithRelationInput = {};
-    switch (sort) {
-      case "nameAsc":
-        orderBy = { user: { name: "asc" } };
-        break;
-      case "nameDesc":
-        orderBy = { user: { name: "desc" } };
-        break;
-      case "reviewCount":
-        orderBy = { reviews: { _count: "desc" } };
-        break;
-      case "rating":
-        orderBy = { rating: "desc" };
-        break;
-      case "trending":
-        orderBy = { reviews: { _count: "desc" } };
-        break;
-      case "newest":
-        orderBy = { createdAt: "desc" };
-        break;
-      default:
-        orderBy = { user: { name: "asc" } };
-    }
+    const [consultants, total] = await Promise.all([
+      prisma.consultantProfile.findMany({
+        where,
+        orderBy: orderByForSort(sort),
+        skip: (page - 1) * limit,
+        take: limit,
+        include: consultantCardInclude,
+      }),
+      prisma.consultantProfile.count({ where }),
+    ]);
 
-    // Fetch consultants with pagination
-    const consultants = await prisma.consultantProfile.findMany({
-      where,
-      orderBy,
-      skip,
-      take: limit,
-      include: { ...consultantListInclude, ...orgMembershipInclude },
-    });
-
-    // Get total count for pagination
-    const total = await prisma.consultantProfile.count({ where });
-
-    // Map memberships -> organizationBadge for frontend.
-    // Arch 4-Modified: the include pulls `memberships[0].organization`
-    // for the first ACTIVE EXPERT membership at a canHost org.
-    // `c` is typed via Prisma's payload inference from the include shape —
-    // no explicit type annotation or narrowing cast needed.
-    const mappedConsultants = consultants.map(({ memberships, ...rest }) => {
-      const firstOrg = memberships[0]?.organization ?? null;
-      return {
-        ...rest,
-        organizationBadge: firstOrg
-          ? {
-              name: firstOrg.name,
-              slug: firstOrg.slug,
-              logo: firstOrg.brandingProfile?.logo ?? null,
-            }
-          : null,
-      };
-    });
-
+    // toConsultantCard is an explicit allowlist — NEVER spread the row: it carries
+    // statutory PII (PAN, bank/SWIFT, TDS, residency, MSME) that must not leak on
+    // this public endpoint. (#945)
     return NextResponse.json(
       {
-        data: mappedConsultants,
+        data: consultants.map(toConsultantCard),
         meta: {
           total,
           page,
@@ -234,17 +174,23 @@ export async function GET(request: NextRequest) {
     // 500 + captured error. Real defects still capture + surface. Mirrors the
     // announcements route (#931) and lib/data/fail-open.
     if (isTransientDbError(error)) {
-      reportTransient("consultants list read", error, { subsystem: "auth" });
+      reportTransient("consultants list read", error, {
+        subsystem: "consultants",
+      });
+      // `no-store`: the degraded EMPTY result must NEVER be cached. With a shared
+      // s-maxage, a single transient timeout would pin "No experts found" at the
+      // CDN/browser for minutes after the DB recovers (the explore page renders
+      // this list). The success path keeps its own cache header; only this
+      // fail-open branch opts out so the next request retries immediately. (#945)
       return NextResponse.json(
         { data: [], meta: { total: 0, page, limit, totalPages: 0 } },
-        {
-          headers: {
-            "Cache-Control": "public, s-maxage=60, stale-while-revalidate=300",
-          },
-        },
+        { headers: { "Cache-Control": "no-store" } },
       );
     }
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "consultants" } },
+    );
     return apiError({ tag: "[Consultants.GET]", error });
   }
 }

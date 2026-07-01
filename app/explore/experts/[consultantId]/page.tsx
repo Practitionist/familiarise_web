@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import { notFound } from "next/navigation";
+import { notFound, unstable_rethrow } from "next/navigation";
 import {
   getConsultantDetail,
   getConsultantReviews,
@@ -42,9 +42,12 @@ export default async function ExpertProfile({
       </Suspense>
     );
   } catch (error) {
-    // notFound()'s control-flow signal and any real defect rethrow to error.tsx;
-    // only the known cross-region cold-connect transient (#932) degrades here, so
-    // it never escapes render to be captured by onRequestError. (FAMILIARISE_WEB-A)
+    // Re-throw Next.js internal control-flow signals (notFound/redirect) FIRST via
+    // the official guard, so the timeout regex can never accidentally swallow one.
+    // Then degrade the known cross-region cold-connect transient (#932) inside
+    // render so it never escapes to onRequestError; any real defect rethrows to
+    // error.tsx. (FAMILIARISE_WEB-A, #945 review)
+    unstable_rethrow(error);
     if (!isTransientDbError(error)) throw error;
     reportTransient("consultant detail page", error, { consultantId });
     return <ConsultantUnavailable />;

@@ -419,6 +419,9 @@ const uploadAsset = async (
         await getSignedAssetUrl(bucket, storagePath, signedTtl, signWith);
       if (signedUrlError || !signedUrlData?.signedUrl) {
         console.error("Failed to create signed URL:", signedUrlError);
+        // Upload succeeded but signing failed — best-effort remove the now-orphaned
+        // object so a failed upload doesn't leave a dangling file. (#945 review)
+        await deleteAsset(bucket, storagePath);
         Sentry.captureException(
           signedUrlError instanceof Error
             ? signedUrlError
@@ -1012,6 +1015,9 @@ const uploadToSupabase = async (
 
       if (signedUrlError || !signedUrlData?.signedUrl) {
         console.error("Failed to create signed URL:", signedUrlError);
+        // Upload succeeded but signing failed — best-effort remove the now-orphaned
+        // object so a failed upload doesn't leave a dangling file. (#945 review)
+        await deleteAsset(bucketName, storagePath);
         Sentry.captureException(
           signedUrlError instanceof Error
             ? signedUrlError
