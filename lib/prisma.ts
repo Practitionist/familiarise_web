@@ -39,7 +39,7 @@ const PG_QUERY_TIMEOUT_MS = pgTimeoutMs("PG_QUERY_TIMEOUT_MS", 6000);
 const adapter = new PrismaPg({
   // Use pooled connection (DATABASE_URL) for runtime queries to avoid connection exhaustion
   // DIRECT_URL is only for migrations (handled by prisma.config.ts)
-  connectionString: process.env.DATABASE_URL || process.env.DIRECT_URL,
+  connectionString: process.env.DATABASE_URL,
   connectionTimeoutMillis: PG_CONNECT_TIMEOUT_MS,
   query_timeout: PG_QUERY_TIMEOUT_MS,
   // ~1s below query_timeout so the server cancels first on the direct session-mode

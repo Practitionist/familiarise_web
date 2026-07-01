@@ -1,6 +1,7 @@
 import { unstable_cache } from "next/cache";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
+import type { IConsultantCardData } from "@/types/consultant";
 
 /**
  * Server-side data access for the explore experts page.
@@ -83,6 +84,89 @@ export const orgMembershipInclude = {
     take: 1,
   },
 } satisfies Prisma.ConsultantProfileInclude;
+
+// Merged include for the public card-shaped reads (explore list route + curated
+// rows). Returning the raw row would carry the consultant's statutory PII scalars
+// (panNumber, ibanOrAccount, swiftBic, TDS/residency/MSME, ...) — so EVERY caller
+// must project through `toConsultantCard`, never spread the row. (#945)
+export const consultantCardInclude = {
+  ...consultantListInclude,
+  ...orgMembershipInclude,
+} satisfies Prisma.ConsultantProfileInclude;
+
+// Derived from the EXTENDED prisma delegate via Prisma.Result, NOT a vanilla
+// GetPayload: the money result-extension (lib/prisma.ts) changes the payload type,
+// so GetPayload wouldn't match what the extended findMany actually returns.
+type ConsultantCardRow = Prisma.Result<
+  typeof prisma.consultantProfile,
+  { include: typeof consultantCardInclude },
+  "findMany"
+>[number];
+
+/**
+ * Project a consultant row to the PUBLIC card shape. This is an explicit
+ * allowlist on purpose: the row carries India statutory PII (PAN, bank/SWIFT,
+ * TDS, residency, MSME) that must NEVER reach a public response or the
+ * Server→Client boundary. Add a field here only if a card actually renders it.
+ */
+export function toConsultantCard(row: ConsultantCardRow): IConsultantCardData {
+  const { memberships, ...c } = row;
+  const firstOrg = memberships[0]?.organization ?? null;
+  return {
+    id: c.id,
+    rating: c.rating,
+    headline: c.headline,
+    experience: c.experience,
+    description: c.description,
+    createdAt: c.createdAt,
+    isVerified: c.isVerified,
+    languages: c.languages,
+    user: c.user,
+    domain: c.domain,
+    subDomains: c.subDomains,
+    tags: c.tags,
+    reviews: c.reviews,
+    subscriptionPlans: c.subscriptionPlans.map((p) => ({
+      id: p.id,
+      title: p.title,
+      // BigInt (paise) → Number for serialization; fits Number.MAX_SAFE_INTEGER.
+      price: Number(p.price),
+      priceCurrency: p.priceCurrency,
+      durationInMonths: p.durationInMonths,
+      callsPerWeek: p.callsPerWeek,
+      emailSupport: p.emailSupport,
+      totalSessions: p.totalSessions,
+    })),
+    organizationBadge: firstOrg
+      ? {
+          name: firstOrg.name,
+          slug: firstOrg.slug,
+          logo: firstOrg.brandingProfile?.logo ?? null,
+        }
+      : null,
+  };
+}
+
+// Shared sort → orderBy for the consultants list (the API route + the cached
+// default page below). Unknown/absent sort falls back to name A→Z.
+export function orderByForSort(
+  sort: string,
+): Prisma.ConsultantProfileOrderByWithRelationInput {
+  switch (sort) {
+    case "nameDesc":
+      return { user: { name: "desc" } };
+    case "reviewCount":
+    case "trending":
+      return { reviews: { _count: "desc" } };
+    case "rating":
+      return { rating: "desc" };
+    case "newest":
+      return { createdAt: "desc" };
+    case "nameAsc":
+    default:
+      return { user: { name: "asc" } };
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Experts metadata (filters, domain grid, language list)
@@ -269,69 +353,48 @@ export const getRecentReviews = (limit: number = 6) =>
 // apiece instead of re-querying the pooler on every explore load (#932).
 export const getCuratedExperts = unstable_cache(
   async (sort: "rating" | "trending" | "newest", limit: number = 8) => {
-    let orderBy: Record<string, unknown>;
-    switch (sort) {
-      case "rating":
-        orderBy = { rating: "desc" };
-        break;
-      case "trending":
-        orderBy = { reviews: { _count: "desc" } };
-        break;
-      case "newest":
-        orderBy = { createdAt: "desc" };
-        break;
-    }
-
     const rows = await prisma.consultantProfile.findMany({
       // #781 §B — soft-deleted profiles leave public surfaces
       where: { verificationStatus: "VERIFIED", deletedAt: null },
-      orderBy,
+      orderBy: orderByForSort(sort),
       take: limit,
-      include: { ...consultantListInclude, ...orgMembershipInclude },
+      include: consultantCardInclude,
     });
-
-    // Explicitly map to IConsultantCardData so that Prisma Decimal fields
-    // (e.g. tdsRate) are never included in the payload passed to Client
-    // Components. Spreading the full row crosses the Server→Client boundary
-    // with non-serializable Decimal objects, which Next.js rejects.
-    return rows.map(({ memberships, ...c }) => {
-      const firstOrg = memberships[0]?.organization ?? null;
-      return {
-        id: c.id,
-        rating: c.rating,
-        headline: c.headline,
-        experience: c.experience,
-        description: c.description,
-        createdAt: c.createdAt,
-        isVerified: c.isVerified,
-        languages: c.languages,
-        user: c.user,
-        domain: c.domain,
-        subDomains: c.subDomains,
-        tags: c.tags,
-        reviews: c.reviews,
-        subscriptionPlans: c.subscriptionPlans.map((p) => ({
-          id: p.id,
-          title: p.title,
-          // BigInt (paise) is non-serializable across Server→Client.
-          // Paise comfortably fits Number.MAX_SAFE_INTEGER.
-          price: Number(p.price),
-          priceCurrency: p.priceCurrency,
-          durationInMonths: p.durationInMonths,
-          callsPerWeek: p.callsPerWeek,
-          emailSupport: p.emailSupport,
-          totalSessions: p.totalSessions,
-        })),
-        organizationBadge: firstOrg
-          ? {
-              name: firstOrg.name,
-              slug: firstOrg.slug,
-              logo: firstOrg.brandingProfile?.logo ?? null,
-            }
-          : null,
-      };
-    });
+    // Project through the allowlist — never spread the row (statutory PII +
+    // non-serializable Decimals must not cross the Server→Client boundary).
+    return rows.map(toConsultantCard);
   },
   ["curated-experts"],
   { revalidate: 120, tags: ["experts"] },
+);
+
+// Cached default consultants page — the explore landing's most common read
+// (unfiltered, verified, page 1). Keyed per (sort, limit) so the handful of
+// default sort/limit combos each get one short-lived entry, served from the Next
+// data cache instead of opening a cross-region pooled connection on every load.
+// Tagged "experts" (same as getCuratedExperts) so a future revalidateTag("experts")
+// can clear it; until one is wired on consultant verify/edit, the 60s revalidate
+// bounds staleness. (#945 — pairs with the route's no-store fail-open; #932 caching.)
+export const getDefaultConsultantsPage = unstable_cache(
+  async (sort: string, limit: number) => {
+    const where: Prisma.ConsultantProfileWhereInput = {
+      verificationStatus: "VERIFIED",
+      deletedAt: null,
+    };
+    const [rows, total] = await Promise.all([
+      prisma.consultantProfile.findMany({
+        where,
+        orderBy: orderByForSort(sort),
+        take: limit,
+        include: consultantCardInclude,
+      }),
+      prisma.consultantProfile.count({ where }),
+    ]);
+    return {
+      data: rows.map(toConsultantCard),
+      meta: { total, page: 1, limit, totalPages: Math.ceil(total / limit) },
+    };
+  },
+  ["default-consultants-page"],
+  { revalidate: 60, tags: ["experts"] },
 );

@@ -440,12 +440,37 @@ export const auth = betterAuth({
       // Audit Phase B.7 — for users in 10 SSO orgs this is the
       // difference between 10 extra `users.findUnique` round-trips on
       // every session lookup and zero.
+      // One round-trip for the gen marker, the profile FKs, AND the bare-member
+      // backlog. This used to be two separate queries (`user.findUnique` + a
+      // standalone `member.findMany`); folding the bare-member lookup into the
+      // same `findUnique` via the `members` relation drops a cross-region
+      // pooler round-trip from every session resolution without changing
+      // anything else — same rows, same shape, and this path runs under
+      // disableCookieCache so nothing here is cached. (#932)
       const currentUserRow = await prisma.user.findUnique({
         where: { id: user.id },
         select: {
           sessionGeneration: true,
           consulteeProfileId: true,
           consultantProfileId: true,
+          // SSO membership sync: BetterAuth auto-provisioning creates a
+          // BetterAuth Member row; we need a typed Membership sibling. Pull the
+          // unrepaired ones (no Membership yet) so the loop below auto-creates
+          // them and SSO-provisioned users get access on first session load.
+          members: {
+            where: { membership: null },
+            select: {
+              id: true,
+              organizationId: true,
+              role: true,
+              organization: {
+                select: {
+                  id: true,
+                  ssoSettings: { select: { defaultRoleForAutoJoin: true } },
+                },
+              },
+            },
+          },
         },
       });
       const liveSessionGeneration =
@@ -457,24 +482,7 @@ export const auth = betterAuth({
           }
         : undefined;
 
-      // SSO membership sync: BetterAuth auto-provisioning creates a BetterAuth
-      // Member row; we need a typed Membership sibling. Auto-repair any
-      // missing Membership rows so SSO-provisioned users get access on first
-      // session load.
-      const bareMembers = await prisma.member.findMany({
-        where: { userId: user.id, membership: null },
-        select: {
-          id: true,
-          organizationId: true,
-          role: true,
-          organization: {
-            select: {
-              id: true,
-              ssoSettings: { select: { defaultRoleForAutoJoin: true } },
-            },
-          },
-        },
-      });
+      const bareMembers = currentUserRow?.members ?? [];
       for (const bm of bareMembers) {
         if (!bm.organization) continue;
         const defaultRole = bm.organization.ssoSettings?.defaultRoleForAutoJoin ?? "LEARNER";
