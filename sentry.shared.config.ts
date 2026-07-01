@@ -28,5 +28,26 @@ export function initSentry(): void {
 
     // Never attach PII to events.
     sendDefaultPii: false,
+
+    // Drop non-actionable third-party noise before it reaches the dashboard.
+    // - "Connection closed." — RSC flight-stream abort when a client navigates
+    //   away mid-stream (react-server-dom-webpack). (FAMILIARISE_WEB-E)
+    // - "func ... not found" / inpage.js — injected browser wallet extensions
+    //   throwing inside their own provider bridge on our pages. (FAMILIARISE_WEB-F)
+    // Do NOT add the Prisma pooler-timeout strings here: route-level fail-open
+    // already degrades them to breadcrumbs, and they must stay visible so a NEW
+    // unprotected route surfacing them is still detectable. (#932)
+    ignoreErrors: ["Connection closed.", /func .* not found/, /inpage\.js/],
+
+    // Events whose top stack frame originates in an injected extension script
+    // are never our code — drop them regardless of message.
+    denyUrls: [
+      /inpage\.js/,
+      /extensions\//i,
+      /^chrome-extension:\/\//i,
+      /^moz-extension:\/\//i,
+      /^safari-extension:\/\//i,
+      /^safari-web-extension:\/\//i,
+    ],
   });
 }
