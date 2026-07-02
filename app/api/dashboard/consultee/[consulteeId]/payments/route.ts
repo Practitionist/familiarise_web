@@ -75,7 +75,9 @@ export async function GET(
           ? { organizationId: scopeResolution.scope.orgId }
           : {};
 
-    const [payments, invoices, credits, creditUsages] = await Promise.all([
+    // Per-Payment invoices stay out of this response since the v0 lockdown
+    // (#768) — v1.1 re-introduces a per-Payment invoice flow.
+    const [payments, credits, creditUsages] = await Promise.all([
       // All payments for this user, scoped to the selected org context
       prisma.payment.findMany({
         where: { userId, ...orgFilter },
@@ -112,16 +114,22 @@ export async function GET(
               discountValue: true,
             },
           },
+          // #776 — refund visibility. Without this a cancelled-with-refund
+          // booking reads "SUCCEEDED" in the payment history forever.
+          refunds: {
+            where: { deletedAt: null },
+            select: {
+              id: true,
+              amountPaise: true,
+              status: true,
+              reason: true,
+              createdAt: true,
+            },
+            orderBy: { createdAt: "desc" },
+          },
         },
         orderBy: { createdAt: "desc" },
       }),
-
-      // Personal-consultee per-Payment invoice surface removed in v0
-      // lockdown (#768). UI now shows OrganizationInvoice rows for
-      // org-funded paths only; PERSONAL consultees can request a
-      // receipt from support until v1.1 re-introduces a per-Payment
-      // invoice flow. Empty array keeps the response shape stable.
-      Promise.resolve([] as const),
 
       // Referral credits
       prisma.referralCredit.findMany({
@@ -157,6 +165,29 @@ export async function GET(
         apt?.class?.classPlan?.title ??
         "Payment";
 
+      // BigInt → Number at the serialization boundary; refund amounts are
+      // paise like Payment.amount.
+      const refunds = p.refunds.map((r) => ({
+        id: r.id,
+        amountPaise: Number(r.amountPaise),
+        status: r.status,
+        reason: r.reason,
+        createdAt: r.createdAt,
+      }));
+      const refundedPaise = refunds
+        .filter((r) => r.status === "SUCCEEDED")
+        .reduce((sum, r) => sum + r.amountPaise, 0);
+      // Derived display status — the PaymentStatus enum has no REFUNDED
+      // value (refunds live on the relation), so the UI-facing status is
+      // computed here: full refund wins over partial, and only SUCCEEDED
+      // payments can read as refunded.
+      const displayStatus =
+        p.paymentStatus === "SUCCEEDED" && refundedPaise > 0
+          ? refundedPaise >= Number(p.amount)
+            ? "REFUNDED"
+            : "PARTIALLY_REFUNDED"
+          : p.paymentStatus;
+
       return {
         id: p.id,
         amount: p.amount,
@@ -179,6 +210,9 @@ export async function GET(
               value: p.discountCode.discountValue,
             }
           : null,
+        refunds,
+        refundedPaise,
+        displayStatus,
         receiptUrl: p.receiptUrl,
         expiresAt: p.expiresAt,
         createdAt: p.createdAt,
@@ -196,7 +230,6 @@ export async function GET(
     return NextResponse.json({
       data: {
         payments: transformedPayments,
-        invoices,
         credits,
         creditUsages,
         creditSummary: {

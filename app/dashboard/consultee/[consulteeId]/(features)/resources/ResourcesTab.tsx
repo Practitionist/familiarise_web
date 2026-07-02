@@ -20,7 +20,7 @@ import {
 import { motion } from "framer-motion";
 import { ArrowUpDown, FolderOpen, RefreshCw } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { PageHeader } from "@/components/ui/page-header";
+import { DashboardHeader } from "@/components/dashboard/DashboardShell";
 import { EventResourceCard, type EventResource } from "./EventResourceCard";
 
 interface ResourcesData {
@@ -28,6 +28,7 @@ interface ResourcesData {
   subscriptions: EventResource[];
   webinars: EventResource[];
   classes: EventResource[];
+  trials?: EventResource[];
 }
 
 interface ResourcesTabProps {
@@ -40,6 +41,7 @@ const EVENT_TYPES = [
   { key: "subscriptions", label: "Subscriptions" },
   { key: "webinars", label: "Webinars" },
   { key: "classes", label: "Classes" },
+  { key: "trials", label: "Trials" },
 ] as const;
 
 type FilterOption = "all" | "with_recordings" | "with_materials" | "completed";
@@ -126,6 +128,10 @@ export function ResourcesTab({ data, onRefresh }: ResourcesTabProps) {
         sortDir,
       ),
       classes: sortEvents(filterEvents(data.classes, resourceFilter), sortDir),
+      trials: sortEvents(
+        filterEvents(data.trials ?? [], resourceFilter),
+        sortDir,
+      ),
     };
   }, [data, resourceFilter, sortDir]);
 
@@ -135,7 +141,8 @@ export function ResourcesTab({ data, onRefresh }: ResourcesTabProps) {
     data.consultations.length +
     data.subscriptions.length +
     data.webinars.length +
-    data.classes.length;
+    data.classes.length +
+    (data.trials ?? []).length;
 
   if (totalResources === 0) {
     return (
@@ -162,7 +169,7 @@ export function ResourcesTab({ data, onRefresh }: ResourcesTabProps) {
 
   // Find the first tab that has events (based on unfiltered data)
   const defaultTab =
-    EVENT_TYPES.find((t) => data[t.key as keyof ResourcesData].length > 0)
+    EVENT_TYPES.find((t) => (data[t.key as keyof ResourcesData] ?? []).length > 0)
       ?.key || "consultations";
 
   return (
@@ -171,10 +178,9 @@ export function ResourcesTab({ data, onRefresh }: ResourcesTabProps) {
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3 }}
     >
-      <PageHeader
-        className="mb-6"
+      <DashboardHeader
         title="Resources"
-        description="Materials and recordings from your enrolled events"
+        subtitle="Materials and recordings from your enrolled events"
         actions={
           <TooltipProvider>
             <Tooltip>
@@ -229,8 +235,8 @@ export function ResourcesTab({ data, onRefresh }: ResourcesTabProps) {
       <Tabs defaultValue={defaultTab} className="space-y-6">
         <TabsList>
           {EVENT_TYPES.map(({ key, label }) => {
-            const total = data[key as keyof ResourcesData].length;
-            const filtered = filteredData[key as keyof ResourcesData].length;
+            const total = (data[key as keyof ResourcesData] ?? []).length;
+            const filtered = (filteredData[key as keyof ResourcesData] ?? []).length;
             return (
               <TabsTrigger key={key} value={key} disabled={total === 0}>
                 {label}
@@ -245,8 +251,8 @@ export function ResourcesTab({ data, onRefresh }: ResourcesTabProps) {
         </TabsList>
 
         {EVENT_TYPES.map(({ key }) => {
-          const total = data[key as keyof ResourcesData].length;
-          const items = filteredData[key as keyof ResourcesData];
+          const total = (data[key as keyof ResourcesData] ?? []).length;
+          const items = filteredData[key as keyof ResourcesData] ?? [];
           return (
             <TabsContent key={key} value={key}>
               <div className="space-y-4">
