@@ -1,170 +1,18 @@
 "use client";
 
 import { cn } from "@/utils/tailwind";
-import { motion, AnimatePresence } from "framer-motion";
-import { ReactNode, useState, createContext, useContext } from "react";
-import { Menu, X } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { ReactNode } from "react";
 
-// Context for mobile sidebar state
-interface MobileSidebarContextType {
-  isOpen: boolean;
-  setIsOpen: (open: boolean) => void;
-  toggle: () => void;
-}
-
-const MobileSidebarContext = createContext<MobileSidebarContextType | null>(
-  null,
-);
-
-export function useMobileSidebar() {
-  const context = useContext(MobileSidebarContext);
-  if (!context) {
-    throw new Error("useMobileSidebar must be used within DashboardShell");
-  }
-  return context;
-}
-
-interface DashboardShellProps {
-  children: ReactNode;
-  sidebar: ReactNode;
-  className?: string;
-  headerActions?: ReactNode;
-  navbar?: ReactNode;
-  mobileHeaderActions?: ReactNode;
-}
-
-export function DashboardShell({
-  children,
-  sidebar,
-  className,
-  headerActions,
-  navbar,
-  mobileHeaderActions,
-}: DashboardShellProps) {
-  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
-
-  const contextValue: MobileSidebarContextType = {
-    isOpen: isMobileSidebarOpen,
-    setIsOpen: setIsMobileSidebarOpen,
-    toggle: () => setIsMobileSidebarOpen((prev) => !prev),
-  };
-
-  return (
-    <MobileSidebarContext.Provider value={contextValue}>
-      <div className={cn("flex min-h-screen bg-zinc-100", className)}>
-        {/* Desktop Sidebar */}
-        <aside className="fixed left-0 top-maintenance h-screen-maintenance z-40 hidden w-64 lg:block">
-          {sidebar}
-        </aside>
-
-        {/* Mobile Sidebar Overlay */}
-        <AnimatePresence>
-          {isMobileSidebarOpen && (
-            <>
-              {/* Backdrop */}
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.2 }}
-                className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm lg:hidden"
-                onClick={() => setIsMobileSidebarOpen(false)}
-              />
-
-              {/* Mobile Sidebar Drawer */}
-              <motion.aside
-                initial={{ x: "-100%" }}
-                animate={{ x: 0 }}
-                exit={{ x: "-100%" }}
-                transition={{ type: "spring", damping: 25, stiffness: 300 }}
-                className="fixed left-0 top-0 h-screen z-[60] w-72 lg:hidden"
-              >
-                {/* Close button */}
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => setIsMobileSidebarOpen(false)}
-                  className="absolute right-3 top-3 z-10 h-8 w-8 rounded-full bg-white/10 text-white hover:bg-white/20"
-                >
-                  <X className="h-5 w-5" />
-                </Button>
-                {sidebar}
-              </motion.aside>
-            </>
-          )}
-        </AnimatePresence>
-
-        {/* Main Content */}
-        <main className="flex-1 lg:ml-64 min-h-screen bg-muted overflow-x-clip">
-          {/* Mobile Header Bar */}
-          <div className="sticky top-maintenance z-50 overflow-visible flex items-center gap-3 px-4 py-3 bg-card border-b border-border lg:hidden">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setIsMobileSidebarOpen(true)}
-              className="h-9 w-9 shrink-0"
-            >
-              <Menu className="h-5 w-5" />
-              <span className="sr-only">Open menu</span>
-            </Button>
-            <span className="font-semibold text-foreground flex-1">
-              Familiarise
-            </span>
-            {(mobileHeaderActions || headerActions) && (
-              <div
-                className="flex items-center gap-2 shrink-0"
-                style={{ overflow: "visible" }}
-              >
-                {mobileHeaderActions || headerActions}
-              </div>
-            )}
-          </div>
-
-          {/* Desktop header - full navbar or simple header actions */}
-          {navbar ? (
-            <div className="hidden lg:block sticky top-0 z-50 overflow-visible">
-              {navbar}
-            </div>
-          ) : headerActions ? (
-            <div className="hidden lg:flex items-center justify-end gap-2 px-6 py-2 border-b border-border bg-card relative z-50 overflow-visible">
-              {headerActions}
-            </div>
-          ) : null}
-
-          <AnimatePresence mode="wait">
-            <motion.div
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -8 }}
-              transition={{ duration: 0.2, ease: "easeOut" }}
-              className="min-h-0 p-4 sm:p-6 lg:p-8 bg-muted"
-            >
-              {children}
-            </motion.div>
-          </AnimatePresence>
-        </main>
-      </div>
-    </MobileSidebarContext.Provider>
-  );
-}
-
-// Mobile menu button component for use in headers
-export function MobileMenuButton({ className }: { className?: string }) {
-  const { toggle } = useMobileSidebar();
-
-  return (
-    <Button
-      variant="ghost"
-      size="icon"
-      onClick={toggle}
-      className={cn("lg:hidden h-9 w-9 shrink-0", className)}
-    >
-      <Menu className="h-5 w-5" />
-      <span className="sr-only">Toggle menu</span>
-    </Button>
-  );
-}
+/**
+ * Page-scaffold primitives shared by every dashboard role (org, staff,
+ * admin, consultant, consultee): a page header band, a padded content
+ * region, and a responsive KPI grid.
+ *
+ * The legacy `DashboardShell` layout wrapper (fixed sidebar + mobile
+ * drawer) that used to live here died with the shared-shell redesign —
+ * all dashboards now compose `PersonalDashboardShell` / the org layout's
+ * CollapsibleSidebar chrome instead.
+ */
 
 interface DashboardHeaderProps {
   title: string;
