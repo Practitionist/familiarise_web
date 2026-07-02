@@ -24,7 +24,7 @@ import {
 } from "@/components/ui/responsive-modal";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { PageHeader } from "@/components/ui/page-header";
+import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Search,
@@ -220,9 +220,9 @@ export default function AppointmentsPageClient() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <PageHeader
+      <DashboardHeader
         title="Appointments Management"
-        description="Monitor and manage all scheduled appointments"
+        subtitle="Monitor and manage all scheduled appointments"
         actions={
           <Button
             variant="outline"

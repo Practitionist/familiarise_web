@@ -7,7 +7,7 @@ import {
   DashboardHeader,
   DashboardContent,
   DashboardGrid,
-} from "@/components/dashboard/DashboardShell";
+} from "@/components/dashboard/PageScaffold";
 import { StatCard, StatCardSkeleton } from "@/components/dashboard/StatCard";
 import { DataCard, EmptyState } from "@/components/dashboard/DataCard";
 import {

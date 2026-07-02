@@ -23,7 +23,7 @@ import { Loader2 } from "lucide-react";
 import {
   DashboardContent,
   DashboardHeader,
-} from "@/components/dashboard/DashboardShell";
+} from "@/components/dashboard/PageScaffold";
 import {
   Card,
   CardContent,

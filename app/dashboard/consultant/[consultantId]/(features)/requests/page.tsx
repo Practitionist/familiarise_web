@@ -1,7 +1,7 @@
 "use client";
 
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
-import { DashboardHeader } from "@/components/dashboard/DashboardShell";
+import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 import { useOrgScope } from "@/hooks/useOrgScope";
 import {
   OrgContextFilter,

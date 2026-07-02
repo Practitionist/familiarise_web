@@ -10,7 +10,7 @@ import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
-import { DashboardHeader } from "@/components/dashboard/DashboardShell";
+import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 import { useParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { ParticipantUser } from "@/types/participants";

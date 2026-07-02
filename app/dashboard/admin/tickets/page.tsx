@@ -19,7 +19,7 @@ import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
-import { PageHeader } from "@/components/ui/page-header";
+import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 import {
   ResponsiveModal,
   ResponsiveModalContent,
@@ -439,9 +439,9 @@ export default function AdminSupportTicketsPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
+      <DashboardHeader
         title="Support Tickets"
-        description="Manage all customer support tickets"
+        subtitle="Manage all customer support tickets"
         actions={
           <Button onClick={fetchTickets} variant="outline" size="sm">
             <RefreshCw

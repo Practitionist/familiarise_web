@@ -6,7 +6,7 @@ import {
   DashboardHeader,
   DashboardContent,
   DashboardGrid,
-} from "@/components/dashboard/DashboardShell";
+} from "@/components/dashboard/PageScaffold";
 import { StatCard } from "@/components/dashboard/StatCard";
 import { Users, Gift, IndianRupee, Copy, Check, Mail } from "lucide-react";
 import { Button } from "@/components/ui/button";

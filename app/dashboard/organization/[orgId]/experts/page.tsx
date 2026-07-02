@@ -6,7 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import {
   DashboardHeader,
   DashboardContent,
-} from "@/components/dashboard/DashboardShell";
+} from "@/components/dashboard/PageScaffold";
 import { Badge } from "@/components/ui/badge";
 import {
   Card,

@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { PageHeader } from "@/components/ui/page-header";
+import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 import { useQuery } from "@tanstack/react-query";
 import { Clock, AlertCircle, ExternalLink, RefreshCcw } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
@@ -85,9 +85,9 @@ export default function ApprovalPaymentsPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
+      <DashboardHeader
         title="Approval Payments Monitor"
-        description="Track consultations and subscriptions awaiting payment after approval"
+        subtitle="Track consultations and subscriptions awaiting payment after approval"
         actions={
           <Button
             variant="outline"

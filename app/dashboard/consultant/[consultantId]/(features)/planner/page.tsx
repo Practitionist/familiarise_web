@@ -9,7 +9,7 @@ import { PlannerSkeleton } from "@/components/dashboard/DashboardSkeletons";
 import {
   DashboardHeader,
   DashboardContent,
-} from "@/components/dashboard/DashboardShell";
+} from "@/components/dashboard/PageScaffold";
 import { EmptyState } from "@/components/dashboard/DataCard";
 import { createConsultantQueries } from "@/lib/dashboard-queries";
 import { useOrgScope } from "@/hooks/useOrgScope";

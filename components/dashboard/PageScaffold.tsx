@@ -4,14 +4,15 @@ import { cn } from "@/utils/tailwind";
 import { ReactNode } from "react";
 
 /**
- * Page-scaffold primitives shared by every dashboard role (org, staff,
- * admin, consultant, consultee): a page header band, a padded content
- * region, and a responsive KPI grid.
+ * PageScaffold — page-scaffold primitives shared by every dashboard role
+ * (org, staff, admin, consultant, consultee): a page header band, a padded
+ * content region, and a responsive KPI grid.
  *
- * The legacy `DashboardShell` layout wrapper (fixed sidebar + mobile
- * drawer) that used to live here died with the shared-shell redesign —
- * all dashboards now compose `PersonalDashboardShell` / the org layout's
- * CollapsibleSidebar chrome instead.
+ * Formerly DashboardShell.tsx; renamed when the legacy `DashboardShell`
+ * layout wrapper (fixed sidebar + mobile drawer) died with the
+ * shared-shell redesign — all dashboards now compose
+ * `PersonalDashboardShell` / the org layout's CollapsibleSidebar chrome
+ * instead, and only these scaffold primitives remain.
  */
 
 interface DashboardHeaderProps {

@@ -26,7 +26,6 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { PageHeading } from "@/components/ui/page-header";
 import { NotificationPreferencesPanel } from "@/components/notifications";
 import {
   CookiePreference,
@@ -305,7 +304,9 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
           </AvatarFallback>
         </Avatar>
         <div className="min-w-0 space-y-1">
-          <PageHeading>Settings</PageHeading>
+          <h1 className="text-fluid-2xl font-semibold tracking-tight text-foreground">
+            Settings
+          </h1>
           <p className="text-fluid-sm text-muted-foreground">
             Manage profile and account settings for{" "}
             {staffData.user.name ?? `Staff ID: ${staffId}`}.
