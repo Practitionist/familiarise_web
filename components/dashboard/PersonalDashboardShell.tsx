@@ -1,7 +1,7 @@
 "use client";
 
-import Link from "next/link";
-import type { LucideIcon } from "lucide-react";
+import Link, { useLinkStatus } from "next/link";
+import { Loader2, type LucideIcon } from "lucide-react";
 import {
   CollapsibleSidebar,
   CollapsibleSidebarSkeleton,
@@ -19,6 +19,27 @@ export interface PersonalDashboardMobileTab {
   label: string;
   path: string;
   Icon: LucideIcon;
+}
+
+/**
+ * Tab icon that flips to a spinner the moment its Link's navigation starts —
+ * instant acknowledgement on cold routes where the app-router blocks before
+ * the destination's loading.tsx can render (same pattern as the sidebar's
+ * NavPendingIcon).
+ */
+export function TabPendingIcon({
+  Icon,
+  className,
+}: {
+  Icon: LucideIcon;
+  className: string;
+}) {
+  const { pending } = useLinkStatus();
+  return pending ? (
+    <Loader2 className={`${className} animate-spin`} aria-hidden />
+  ) : (
+    <Icon className={className} />
+  );
 }
 
 export interface PersonalDashboardShellProps {
@@ -126,7 +147,8 @@ export function PersonalDashboardShell({
                     : "text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
                 }`}
               >
-                <Icon
+                <TabPendingIcon
+                  Icon={Icon}
                   className={`h-5 w-5 ${isActive ? "text-zinc-900 dark:text-zinc-100" : "text-zinc-400 dark:text-zinc-500"}`}
                 />
                 {label}

@@ -38,6 +38,29 @@ interface AvailabilitySectionProps {
 }
 
 /**
+ * Compact stand-in for the schedule type that is NOT selected. Editing is
+ * per-type; rendering the inactive editor in full (even faded) doubled the
+ * page height — with 40+ custom dates it produced screens of washed-out
+ * rows that read as endless empty space.
+ */
+function InactiveScheduleNote({
+  label,
+  summary,
+}: {
+  label: string;
+  summary: string;
+}) {
+  return (
+    <div className="rounded-lg border border-dashed border-zinc-300 bg-zinc-50 p-4 text-sm text-zinc-500">
+      <p className="font-medium text-zinc-600">{label} is inactive</p>
+      <p className="mt-1">
+        {summary}. Select this schedule type above to view and edit.
+      </p>
+    </div>
+  );
+}
+
+/**
  * Availability tab of the consultant settings form. Presentational only —
  * all slot state, validation, and the WEEKLY↔CUSTOM switch lock live in
  * SettingsTab so the combined settings PUT payload stays exactly as it was
@@ -141,21 +164,33 @@ export function AvailabilitySection({
             </Label>
             <RadioGroupItem id="WEEKLY" value={ScheduleType.WEEKLY} />
           </div>
-          <div
-            className={`space-y-4 transition-opacity ${scheduleType !== ScheduleType.WEEKLY ? "opacity-40 pointer-events-none" : ""}`}
-          >
-            {DAYS_OF_WEEK.map((day) => (
-              <AvailabilityGrid
-                key={day}
-                dayKey={day.toLowerCase()}
-                label={formatDayDisplay(day)}
-                slots={weeklySlots[day.toLowerCase()]}
-                onAddSlot={onAddSlot}
-                onUpdateSlot={onUpdateSlot}
-                onDeleteSlot={onDeleteSlot}
-              />
-            ))}
-          </div>
+          {/* Only the ACTIVE schedule type renders its full editor. The old
+              opacity-40 treatment still rendered the inactive editor at full
+              height — with a season of custom dates that meant screens of
+              washed-out rows that read as endless empty space. */}
+          {scheduleType === ScheduleType.WEEKLY ? (
+            <div className="space-y-4">
+              {DAYS_OF_WEEK.map((day) => (
+                <AvailabilityGrid
+                  key={day}
+                  dayKey={day.toLowerCase()}
+                  label={formatDayDisplay(day)}
+                  slots={weeklySlots[day.toLowerCase()]}
+                  onAddSlot={onAddSlot}
+                  onUpdateSlot={onUpdateSlot}
+                  onDeleteSlot={onDeleteSlot}
+                />
+              ))}
+            </div>
+          ) : (
+            <InactiveScheduleNote
+              label="Weekly Recurring"
+              summary={`${Object.values(weeklySlots).reduce(
+                (n, s) => n + (s?.length ?? 0),
+                0,
+              )} recurring slot(s) configured`}
+            />
+          )}
         </div>
 
         {/* Custom Schedule */}
@@ -170,9 +205,13 @@ export function AvailabilitySection({
             </Label>
             <RadioGroupItem id="CUSTOM" value={ScheduleType.CUSTOM} />
           </div>
-          <div
-            className={`space-y-4 transition-opacity ${scheduleType !== ScheduleType.CUSTOM ? "opacity-40 pointer-events-none" : ""}`}
-          >
+          {scheduleType !== ScheduleType.CUSTOM ? (
+            <InactiveScheduleNote
+              label="Custom Schedule"
+              summary={`${Object.keys(customSlots).length} date(s) configured`}
+            />
+          ) : (
+          <div className="space-y-4">
             <div className="calendar-container bg-card border p-4 rounded-lg">
               <div className="flex justify-between items-center mb-4">
                 <button
@@ -205,31 +244,41 @@ export function AvailabilitySection({
               </div>
             </div>
 
-            {Object.keys(customSlots)
-              .sort((a, b) => a.localeCompare(b))
-              .map((dateString) => {
-                // Parse YYYY-MM-DD as a LOCAL date — new Date("YYYY-MM-DD")
-                // is UTC midnight, which renders as the PREVIOUS day for
-                // users in timezones behind UTC.
-                const [year, month, day] = dateString.split("-").map(Number);
-                const date = new Date(year, month - 1, day);
-                return (
-                  <AvailabilityGrid
-                    key={dateString}
-                    dayKey={dateString}
-                    label={date.toLocaleDateString("en-US", {
-                      weekday: "long",
-                      month: "long",
-                      day: "numeric",
-                    })}
-                    slots={customSlots[dateString]}
-                    onAddSlot={onAddSlot}
-                    onUpdateSlot={onUpdateSlot}
-                    onDeleteSlot={onDeleteSlot}
-                  />
-                );
-              })}
+            {/* A season of custom dates can run 40+ entries — contain them in
+                their own scroll region instead of stretching the page. */}
+            {Object.keys(customSlots).length > 0 && (
+              <p className="text-xs text-zinc-500">
+                {Object.keys(customSlots).length} date(s) configured
+              </p>
+            )}
+            <div className="max-h-[560px] overflow-y-auto pr-2 space-y-4">
+              {Object.keys(customSlots)
+                .sort((a, b) => a.localeCompare(b))
+                .map((dateString) => {
+                  // Parse YYYY-MM-DD as a LOCAL date — new Date("YYYY-MM-DD")
+                  // is UTC midnight, which renders as the PREVIOUS day for
+                  // users in timezones behind UTC.
+                  const [year, month, day] = dateString.split("-").map(Number);
+                  const date = new Date(year, month - 1, day);
+                  return (
+                    <AvailabilityGrid
+                      key={dateString}
+                      dayKey={dateString}
+                      label={date.toLocaleDateString("en-US", {
+                        weekday: "long",
+                        month: "long",
+                        day: "numeric",
+                      })}
+                      slots={customSlots[dateString]}
+                      onAddSlot={onAddSlot}
+                      onUpdateSlot={onUpdateSlot}
+                      onDeleteSlot={onDeleteSlot}
+                    />
+                  );
+                })}
+            </div>
           </div>
+          )}
         </div>
       </RadioGroup>
 

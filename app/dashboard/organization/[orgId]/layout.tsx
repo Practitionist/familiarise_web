@@ -55,6 +55,7 @@ import {
   type CollapsibleSidebarGroup,
 } from "@/components/dashboard/CollapsibleSidebar";
 import { DashboardContextBar } from "@/components/dashboard/DashboardContextBar";
+import { TabPendingIcon } from "@/components/dashboard/PersonalDashboardShell";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { useSession } from "@/lib/auth-client";
 import { signOutEverywhere } from "@/lib/auth/sign-out";
@@ -676,7 +677,8 @@ export default function OrgLayout({
                     : "text-zinc-500 hover:text-zinc-700"
                 }`}
               >
-                <Icon
+                <TabPendingIcon
+                  Icon={Icon}
                   className={`h-5 w-5 ${isActive ? "text-zinc-900" : "text-zinc-400"}`}
                 />
                 {label}
