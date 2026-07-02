@@ -26,6 +26,7 @@ import type { TConsultantProfile } from "types/consultant";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { verificationStatusBadge } from "@/lib/labels/session-labels";
 import { useVerificationStatus } from "../../../hooks/useVerificationStatus";
+import { useSession } from "@/lib/auth-client";
 
 interface VerificationDocument {
   id?: string;
@@ -109,9 +110,16 @@ export function VerificationSection({
   consultant,
 }: Readonly<{ consultant: TConsultantProfile }>) {
   const { toast } = useToast();
+  const { data: session } = useSession();
   const status = consultant.verificationStatus as ConsultantVerificationStatus;
+  // The endpoint reads the SIGNED-IN user's verification record, so fetch
+  // only when the viewer owns this profile (an admin/staff viewing someone
+  // else's settings would get their own, mismatched record) — same gating
+  // as the dashboard layout's banner.
+  const viewerUserId = session?.user?.id;
+  const isOwnProfile = !!viewerUserId && viewerUserId === consultant.userId;
   const { data: verification, isLoading: isLoadingVerification } =
-    useVerificationStatus(!!status);
+    useVerificationStatus(viewerUserId, !!status && isOwnProfile);
   const [showDetails, setShowDetails] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isResubmitting, setIsResubmitting] = useState(false);
