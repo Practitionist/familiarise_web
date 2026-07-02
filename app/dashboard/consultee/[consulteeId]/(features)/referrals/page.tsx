@@ -101,6 +101,7 @@ export default function ConsulteeReferralsPage({
   const {
     data: creditsData,
     isLoading: creditsLoading,
+    isError: creditsError,
     refetch: refetchCredits,
   } = useQuery<{ data: CreditData }>({
     queryKey: ["referral-credits"],
@@ -339,7 +340,7 @@ export default function ConsulteeReferralsPage({
             </h3>
           </div>
           <div className="p-2 sm:p-3">
-            {referralsError ? (
+            {referralsError || creditsError ? (
               <EmptyState
                 icon={Users}
                 title="Couldn't load referrals"

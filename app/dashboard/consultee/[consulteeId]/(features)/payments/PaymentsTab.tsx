@@ -213,15 +213,15 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
   // / home surfaces.
   const orgMemberships = session?.user?.organizationMemberships ?? [];
 
-  // Successful spend grouped per currency — a USD payment must never be
-  // summed into an INR total.
+  // Net successful spend grouped per currency — a USD payment must never be
+  // summed into an INR total, and refunded amounts don't count as spend.
   const totalsByCurrency = useMemo(() => {
     const map = new Map<string, { total: number; count: number }>();
     for (const p of data?.payments ?? []) {
       if (p.status !== "SUCCEEDED") continue;
       const currency = p.currency || "INR";
       const entry = map.get(currency) ?? { total: 0, count: 0 };
-      entry.total += p.amount;
+      entry.total += p.amount - (p.refundedPaise ?? 0);
       entry.count += 1;
       map.set(currency, entry);
     }
@@ -533,7 +533,7 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
               </TooltipTrigger>
               <TooltipContent>
                 <p>
-                  Only includes successful payments. Multi-currency spend is
+                  Successful payments net of refunds. Multi-currency spend is
                   totalled per currency, never converted.
                 </p>
               </TooltipContent>
