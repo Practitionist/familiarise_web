@@ -15,7 +15,7 @@ import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
-import { PageHeader } from "@/components/ui/page-header";
+import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { useState } from "react";
@@ -192,9 +192,9 @@ export default function AdminPaymentsPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
+      <DashboardHeader
         title="Payments"
-        description="Manage and view all platform payments"
+        subtitle="Manage and view all platform payments"
       />
 
       {/* Filters */}

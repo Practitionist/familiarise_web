@@ -12,7 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import {
   DashboardHeader,
   DashboardContent,
-} from "@/components/dashboard/DashboardShell";
+} from "@/components/dashboard/PageScaffold";
 import {
   ScopedListTable,
   type Column,

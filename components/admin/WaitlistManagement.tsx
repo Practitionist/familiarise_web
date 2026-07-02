@@ -14,7 +14,7 @@ import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
-import { PageHeader } from "@/components/ui/page-header";
+import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -426,7 +426,7 @@ export function WaitlistManagement() {
   if (error) {
     return (
       <div className="space-y-6">
-        <PageHeader title="Waitlist Management" />
+        <DashboardHeader title="Waitlist Management" />
         <Card>
           <CardContent className="py-8">
             <p className="text-center text-red-500 dark:text-red-400">
@@ -440,9 +440,9 @@ export function WaitlistManagement() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
+      <DashboardHeader
         title="Waitlist Management"
-        description="View and manage all waitlist entries across webinars and classes"
+        subtitle="View and manage all waitlist entries across webinars and classes"
       />
 
       {/* Key Stats */}

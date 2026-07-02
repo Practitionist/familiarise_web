@@ -21,7 +21,7 @@ import {
 } from "@/components/ui/responsive-modal";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { PageHeader } from "@/components/ui/page-header";
+import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Search,
@@ -339,9 +339,9 @@ export default function ContentModerationPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <PageHeader
+      <DashboardHeader
         title="Content Moderation"
-        description="Review and moderate platform content"
+        subtitle="Review and moderate platform content"
         actions={
           <Button
             variant="ghost"

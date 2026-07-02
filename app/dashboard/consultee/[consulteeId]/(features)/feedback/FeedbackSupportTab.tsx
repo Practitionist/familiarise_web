@@ -20,7 +20,7 @@ import {
   SupportTicketStatus,
   SupportIssueType,
 } from "@prisma/client";
-import { DashboardHeader } from "@/components/dashboard/DashboardShell";
+import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 import { useFeedbackSupport, type SupportTicketWithResponses } from "./useFeedbackSupport";
 import {
   MessageSquare,

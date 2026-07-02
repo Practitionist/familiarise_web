@@ -3,7 +3,7 @@
 import { Loader2 } from "lucide-react";
 import { ChatLayout } from "@/components/chat/ChatLayout";
 import { ChatUnavailable } from "@/components/chat/ChatUnavailable";
-import { DashboardHeader } from "@/components/dashboard/DashboardShell";
+import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 import { useStreamConnection } from "@/providers/StreamProvider";
 
 export default function MessagesTab() {

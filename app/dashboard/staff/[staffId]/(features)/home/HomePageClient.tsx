@@ -11,7 +11,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { PageHeader } from "@/components/ui/page-header";
+import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 import {
   Ticket,
   Users,
@@ -136,9 +136,9 @@ export default function HomePageClient({
   if (isError && !stats) {
     return (
       <div className="space-y-6">
-        <PageHeader
+        <DashboardHeader
           title="Dashboard"
-          description="Welcome back! Here's what's happening today."
+          subtitle="Welcome back! Here's what's happening today."
         />
         <Card>
           <CardContent className="p-6">
@@ -193,9 +193,9 @@ export default function HomePageClient({
   return (
     <div className="space-y-6">
       {/* Header */}
-      <PageHeader
+      <DashboardHeader
         title="Dashboard"
-        description="Welcome back! Here's what's happening today."
+        subtitle="Welcome back! Here's what's happening today."
         actions={
           <>
             <Button

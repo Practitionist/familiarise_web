@@ -24,7 +24,7 @@ import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
-import { DashboardHeader } from "@/components/dashboard/DashboardShell";
+import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { documentReviewStatusBadge } from "@/lib/labels/session-labels";
 import {

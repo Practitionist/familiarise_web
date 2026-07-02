@@ -20,7 +20,7 @@ import {
 import { motion } from "framer-motion";
 import { ArrowUpDown, FolderOpen, RefreshCw } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { DashboardHeader } from "@/components/dashboard/DashboardShell";
+import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 import { EventResourceCard, type EventResource } from "./EventResourceCard";
 
 interface ResourcesData {

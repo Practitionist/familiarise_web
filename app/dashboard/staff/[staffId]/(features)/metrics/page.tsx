@@ -4,7 +4,7 @@ import * as Sentry from "@sentry/nextjs";
 import { useCallback, useEffect, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { PageHeader } from "@/components/ui/page-header";
+import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   RefreshCw,
@@ -83,9 +83,9 @@ export default function StaffMetricsPage() {
   if (!metrics) {
     return (
       <div className="space-y-6">
-        <PageHeader
+        <DashboardHeader
           title="Metrics"
-          description="Operational metrics and insights"
+          subtitle="Operational metrics and insights"
         />
         <Card>
           <CardContent className="flex flex-col items-center justify-center h-64 text-muted-foreground">
@@ -104,9 +104,9 @@ export default function StaffMetricsPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <PageHeader
+      <DashboardHeader
         title="Metrics"
-        description="Operational metrics and insights"
+        subtitle="Operational metrics and insights"
         actions={
           <Button variant="outline" onClick={fetchMetrics} disabled={loading}>
             <RefreshCw

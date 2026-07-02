@@ -2,7 +2,7 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { PageHeader } from "@/components/ui/page-header";
+import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 import { useQuery } from "@tanstack/react-query";
 
 async function fetchAnalytics() {
@@ -23,7 +23,7 @@ export default function AdminAnalyticsPage() {
   if (isLoading) {
     return (
       <div className="space-y-6">
-        <PageHeader title="Analytics" />
+        <DashboardHeader title="Analytics" />
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
           {[1, 2, 3, 4].map((i) => (
             <Card key={i}>
@@ -43,7 +43,7 @@ export default function AdminAnalyticsPage() {
   if (error) {
     return (
       <div className="space-y-6">
-        <PageHeader title="Analytics" />
+        <DashboardHeader title="Analytics" />
         <Card>
           <CardContent className="py-8">
             <p className="text-center text-red-500 dark:text-red-400">
@@ -57,7 +57,7 @@ export default function AdminAnalyticsPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Analytics" description="Platform usage and growth metrics" />
+      <DashboardHeader title="Analytics" subtitle="Platform usage and growth metrics" />
 
       {/* User Stats */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">

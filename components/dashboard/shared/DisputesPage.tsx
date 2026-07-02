@@ -17,7 +17,7 @@ import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
-import { PageHeader } from "@/components/ui/page-header";
+import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   Search,
@@ -265,9 +265,9 @@ export function DisputesPage({
   return (
     <div className="space-y-6">
       {/* Header */}
-      <PageHeader
+      <DashboardHeader
         title={title}
-        description={description}
+        subtitle={description}
         actions={
           <Button variant="outline" onClick={fetchDisputes} disabled={loading}>
             <RefreshCw
