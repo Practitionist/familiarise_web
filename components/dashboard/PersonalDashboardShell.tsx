@@ -13,6 +13,7 @@ import {
   type DashboardContextBarProps,
 } from "@/components/dashboard/DashboardContextBar";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
+import { isActiveRoute } from "@/components/dashboard/route-active";
 
 export interface PersonalDashboardMobileTab {
   label: string;
@@ -112,21 +113,21 @@ export function PersonalDashboardShell({
         </main>
 
         {/* Mobile bottom tab bar — only visible below md breakpoint */}
-        <nav className="md:hidden fixed bottom-0 left-0 right-0 z-20 bg-white border-t border-zinc-200 flex">
+        <nav className="md:hidden fixed bottom-0 left-0 right-0 z-20 bg-white dark:bg-zinc-900 border-t border-zinc-200 dark:border-zinc-800 flex">
           {mobileTabs.map(({ label, path, Icon }) => {
-            const isActive = pathname.includes(`${basePath}/${path}`);
+            const isActive = isActiveRoute(pathname, basePath, path);
             return (
               <Link
                 key={path}
                 href={`${basePath}/${path}`}
                 className={`flex-1 flex flex-col items-center gap-0.5 py-2.5 text-[10px] font-medium transition-colors ${
                   isActive
-                    ? "text-zinc-900"
-                    : "text-zinc-500 hover:text-zinc-700"
+                    ? "text-zinc-900 dark:text-zinc-100"
+                    : "text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
                 }`}
               >
                 <Icon
-                  className={`h-5 w-5 ${isActive ? "text-zinc-900" : "text-zinc-400"}`}
+                  className={`h-5 w-5 ${isActive ? "text-zinc-900 dark:text-zinc-100" : "text-zinc-400 dark:text-zinc-500"}`}
                 />
                 {label}
               </Link>

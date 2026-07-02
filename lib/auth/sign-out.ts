@@ -19,6 +19,12 @@ export async function signOutEverywhere(redirectTo = "/auth/signin") {
       onSuccess: () => {
         window.location.href = redirectTo;
       },
+      onError: () => {
+        // Even if the server call fails, don't strand the user on an
+        // authenticated-looking page with torn-down Stream sockets — the
+        // sign-in page will re-establish or reject the session honestly.
+        window.location.href = redirectTo;
+      },
     },
   });
 }

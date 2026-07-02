@@ -65,11 +65,11 @@ export function DashboardContextBar({
   const FallbackIcon = identity.FallbackIcon ?? Building2;
 
   return (
-    <div className="sticky top-0 z-10 flex items-center gap-3 h-14 px-4 bg-white border-b border-zinc-200 text-sm min-w-0">
+    <div className="sticky top-0 z-10 flex items-center gap-3 h-14 px-4 bg-white dark:bg-zinc-900 border-b border-zinc-200 dark:border-zinc-800 text-sm min-w-0">
       {leftLink && (
         <Link
           href={leftLink.href}
-          className="text-xs text-zinc-500 hover:text-zinc-900 flex items-center gap-1 shrink-0 border-r border-zinc-200 pr-3 mr-1"
+          className="text-xs text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100 flex items-center gap-1 shrink-0 border-r border-zinc-200 dark:border-zinc-800 pr-3 mr-1"
         >
           <ArrowLeft className="h-3.5 w-3.5" />
           {leftLink.label}
@@ -77,7 +77,7 @@ export function DashboardContextBar({
       )}
 
       <div className="flex items-center gap-2 min-w-0">
-        <div className="w-6 h-6 rounded-md bg-zinc-100 flex items-center justify-center overflow-hidden shrink-0">
+        <div className="w-6 h-6 rounded-md bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center overflow-hidden shrink-0">
           {identity.image ? (
             <Image
               src={identity.image}
@@ -90,7 +90,7 @@ export function DashboardContextBar({
             <FallbackIcon className="w-3.5 h-3.5 text-zinc-500" />
           )}
         </div>
-        <span className="md:hidden font-medium text-zinc-800 truncate">
+        <span className="md:hidden font-medium text-zinc-800 dark:text-zinc-100 truncate">
           {identity.name}
         </span>
       </div>
@@ -117,12 +117,12 @@ export function DashboardContextBar({
             const isLast = i === breadcrumbs.length - 1;
             return (
               <span key={i} className="flex items-center gap-1 min-w-0">
-                <ChevronRight className="h-3.5 w-3.5 text-zinc-300 shrink-0" />
+                <ChevronRight className="h-3.5 w-3.5 text-zinc-300 dark:text-zinc-600 shrink-0" />
                 <span
                   className={
                     isLast
-                      ? "text-zinc-900 font-semibold truncate"
-                      : "text-zinc-500 truncate"
+                      ? "text-zinc-900 dark:text-zinc-100 font-semibold truncate"
+                      : "text-zinc-500 dark:text-zinc-400 truncate"
                   }
                   aria-current={isLast ? "page" : undefined}
                 >

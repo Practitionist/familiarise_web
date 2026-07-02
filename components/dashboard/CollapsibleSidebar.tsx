@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Skeleton } from "@/components/ui/skeleton";
+import { isActiveRoute } from "@/components/dashboard/route-active";
 
 export interface CollapsibleSidebarItem {
   name: string;
@@ -167,7 +168,7 @@ export function CollapsibleSidebar({
     },
   );
 
-  const isActive = (path: string) => pathname.includes(`${basePath}/${path}`);
+  const isActive = (path: string) => isActiveRoute(pathname, basePath, path);
 
   const fallbackChar =
     avatarFallback ??
