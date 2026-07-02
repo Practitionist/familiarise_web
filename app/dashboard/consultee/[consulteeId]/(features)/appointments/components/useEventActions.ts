@@ -39,6 +39,9 @@ export function useEventActions({
   // the full-page reload that used to nuke the react-query cache and SPA
   // state after cancel/reschedule.
   const invalidateBookingData = () => {
+    // Outside the consultee route the param is absent; an undefined key
+    // segment would silently match nothing — bail instead.
+    if (!consulteeId) return;
     void queryClient.invalidateQueries({
       queryKey: ["consultee-events", consulteeId],
     });

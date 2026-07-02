@@ -124,6 +124,11 @@ export default function WaitlistsPage() {
 
   const [selectedNotifiedEntry, setSelectedNotifiedEntry] =
     useState<WaitlistEntry | null>(null);
+  // Entry ids whose "Slot Available" modal has already been surfaced this
+  // visit — without this, every background refetch (refetchOnWindowFocus +
+  // short staleTime) re-finds the same NOTIFIED entry and re-opens a modal
+  // the user already dismissed.
+  const [seenNotifiedIds, setSeenNotifiedIds] = useState<string[]>([]);
   const [leaveConfirmEntry, setLeaveConfirmEntry] =
     useState<WaitlistEntry | null>(null);
   const [filterType, setFilterType] = useState<"all" | "webinar" | "class">(
@@ -149,15 +154,16 @@ export default function WaitlistsPage() {
     [data],
   );
 
-  // Surface the booking modal once when a NOTIFIED entry arrives.
+  // Surface the booking modal once per NOTIFIED entry.
   useEffect(() => {
     const notifiedEntry = [...entries.webinars, ...entries.classes].find(
       (e) => e.status === "NOTIFIED",
     );
-    if (notifiedEntry) {
+    if (notifiedEntry && !seenNotifiedIds.includes(notifiedEntry.id)) {
       setSelectedNotifiedEntry(notifiedEntry);
+      setSeenNotifiedIds((prev) => [...prev, notifiedEntry.id]);
     }
-  }, [entries]);
+  }, [entries, seenNotifiedIds]);
 
   const leaveMutation = useMutation({
     mutationFn: async (waitlistId: string) => {
