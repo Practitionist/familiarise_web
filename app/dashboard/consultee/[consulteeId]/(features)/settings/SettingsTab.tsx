@@ -1,20 +1,22 @@
 "use client";
 
 import * as Sentry from "@sentry/nextjs";
-import { Button } from "components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "components/ui/card";
-import { Input } from "components/ui/input";
-import { Label } from "components/ui/label";
-import { Textarea } from "components/ui/textarea";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "components/ui/select";
+} from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { NotificationPreferencesPanel } from "@/components/notifications";
+import { EmptyState } from "@/components/dashboard/DataCard";
+import { Settings as SettingsIcon } from "lucide-react";
 import React, { useEffect, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { createConsulteeQueries } from "@/lib/dashboard-queries";
@@ -198,7 +200,15 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
           }),
         });
         if (!bgResponse.ok) {
-          console.error("Failed to update education/work experience");
+          // Profile saved but background details didn't — say so instead of
+          // reporting blanket success; the form stays dirty for a retry.
+          toast({
+            title: "Partially saved",
+            description:
+              "Your profile was saved, but education/work experience failed to update. Please try saving again.",
+            variant: "destructive",
+          });
+          return;
         }
       }
 
@@ -247,6 +257,23 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
           </CardContent>
         </Card>
       </div>
+    );
+  }
+
+  // In-page error state — the old toast-only path left a form rendering
+  // nulls after a failed load, which read like empty settings.
+  if (error && !consulteeData) {
+    return (
+      <EmptyState
+        icon={SettingsIcon}
+        title="Couldn't load your settings"
+        description="Something went wrong while fetching your profile."
+        action={
+          <Button variant="outline" onClick={() => refetch()}>
+            Retry
+          </Button>
+        }
+      />
     );
   }
 

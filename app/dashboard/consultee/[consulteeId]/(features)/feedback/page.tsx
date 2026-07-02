@@ -6,6 +6,9 @@ import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { PageSkeleton } from "@/components/dashboard/DashboardSkeletons";
 import { createConsulteeQueries } from "@/lib/dashboard-queries";
 import FeedbackSupportTab from "./FeedbackSupportTab";
+import { EmptyState } from "@/components/dashboard/DataCard";
+import { Button } from "@/components/ui/button";
+import { LifeBuoy } from "lucide-react";
 
 type PageProps = {
   params: Promise<{ consulteeId: string }>;
@@ -15,18 +18,19 @@ type PageProps = {
 export default function FeedbackPage({ params }: Readonly<PageProps>) {
   const { consulteeId } = use(params);
 
-  // Use the centralized query configurations
+  // These are the SAME query configs useFeedbackSupport consumes inside the
+  // tab — one fetch pair per page load, shared through the query cache.
   const consulteeQueries = createConsulteeQueries(consulteeId);
   const {
-    data: _feedbacks,
     isLoading: feedbackLoading,
     error: feedbackError,
+    refetch: refetchFeedback,
   } = useQuery(consulteeQueries.feedback);
 
   const {
-    data: _tickets,
     isLoading: ticketsLoading,
     error: ticketsError,
+    refetch: refetchTickets,
   } = useQuery(consulteeQueries.supportTickets);
 
   const isLoading = feedbackLoading || ticketsLoading;
@@ -38,23 +42,24 @@ export default function FeedbackPage({ params }: Readonly<PageProps>) {
 
   if (error) {
     return (
-      <DashboardErrorBoundary>
-        <div className="flex items-center justify-center min-h-[400px]">
-          <div className="p-4 bg-red-50 text-red-600 rounded-lg max-w-md text-center">
-            <h3 className="font-semibold mb-2">Error Loading Feedback</h3>
-            <p className="text-sm">
-              {error.message ||
-                "Failed to load feedback data. Please try again."}
-            </p>
-            <button
-              onClick={() => window.location.reload()}
-              className="mt-4 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
-            >
-              Retry
-            </button>
-          </div>
-        </div>
-      </DashboardErrorBoundary>
+      <EmptyState
+        icon={LifeBuoy}
+        title="Couldn't load feedback & support"
+        description={
+          error.message || "Failed to load feedback data. Please try again."
+        }
+        action={
+          <Button
+            variant="outline"
+            onClick={() => {
+              void refetchFeedback();
+              void refetchTickets();
+            }}
+          >
+            Retry
+          </Button>
+        }
+      />
     );
   }
 
