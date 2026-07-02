@@ -75,6 +75,9 @@ export async function GET(
                 },
               },
             },
+            // Cancel affordance keys on the Appointment record id
+            // (POST /api/appointments/[appointmentId]/cancel).
+            appointment: { select: { id: true } },
           },
           orderBy: { updatedAt: "desc" },
         }),
@@ -95,6 +98,9 @@ export async function GET(
                 },
               },
             },
+            // Any one appointment id suffices — the cancel route resolves
+            // the parent subscription from it and transitions the whole row.
+            appointments: { select: { id: true }, take: 1 },
           },
           orderBy: { updatedAt: "desc" },
         }),
@@ -148,6 +154,7 @@ export async function GET(
 
         return {
           id: consultation.id,
+          appointmentId: consultation.appointment?.id ?? null,
           type: "consultation" as const,
           title: consultation.consultationPlan?.title || "Consultation",
           consultantName:
@@ -171,6 +178,7 @@ export async function GET(
 
         return {
           id: subscription.id,
+          appointmentId: subscription.appointments[0]?.id ?? null,
           type: "subscription" as const,
           title: subscription.subscriptionPlan?.title || "Subscription",
           consultantName:
