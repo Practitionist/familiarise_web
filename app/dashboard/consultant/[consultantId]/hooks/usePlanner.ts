@@ -2,21 +2,7 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
-import {
-  PlannerWebinarEvent,
-  PlannerClassEvent,
-  ConsultationPlanEvent,
-  SubscriptionPlanEvent,
-} from "../(features)/planner/types/event";
 import { ConsultationPlan, SubscriptionPlan } from "@/schemas/plans";
-
-interface PlannerData {
-  webinars: PlannerWebinarEvent[];
-  classes: PlannerClassEvent[];
-  consultationPlans: ConsultationPlanEvent[];
-  subscriptionPlans: SubscriptionPlanEvent[];
-  participantCounts: Record<string, number>;
-}
 
 // Types for mutation inputs
 type ConsultationPlanInput =
@@ -41,30 +27,11 @@ type SubscriptionPlanUpdateInput = {
   [key: string]: unknown;
 };
 
-// Main planner data hook
-async function fetchPlannerData(consultantId: string): Promise<PlannerData> {
-  const response = await fetch(
-    `/api/dashboard/consultant/${consultantId}/planner`,
-  );
-
-  if (!response.ok) {
-    throw new Error(`Failed to fetch planner data: ${response.statusText}`);
-  }
-
-  const data = await response.json();
-  return data.data;
-}
-
-export function usePlanner(consultantId: string) {
-  return useQuery({
-    queryKey: ["planner", consultantId],
-    queryFn: () => fetchPlannerData(consultantId),
-    staleTime: 2 * 60 * 1000, // 2 minutes - events change frequently
-    gcTime: 5 * 60 * 1000, // 5 minutes
-    refetchOnWindowFocus: false,
-    retry: 2,
-  });
-}
+// The planner READ lives in createConsultantQueries(...).planner
+// (queryKey ["consultant-planner", consultantId, scopeKey]) — the mutation
+// hooks below invalidate that key by prefix. A previous local usePlanner()
+// hook with its own ["planner", ...] key was queried by nobody while every
+// mutation invalidated it, so planner mutations never refreshed the page.
 
 // Webinar mutation hooks
 export function useWebinarMutations(consultantId: string) {
@@ -91,7 +58,7 @@ export function useWebinarMutations(consultantId: string) {
     },
     onSuccess: (result) => {
       // Invalidate and refetch planner data
-      queryClient.invalidateQueries({ queryKey: ["planner", consultantId] });
+      queryClient.invalidateQueries({ queryKey: ["consultant-planner", consultantId] });
       toast({
         title: "Success",
         description: result.message || "Webinar deleted successfully.",
@@ -134,7 +101,7 @@ export function useClassMutations(consultantId: string) {
     },
     onSuccess: (result) => {
       // Invalidate and refetch planner data
-      queryClient.invalidateQueries({ queryKey: ["planner", consultantId] });
+      queryClient.invalidateQueries({ queryKey: ["consultant-planner", consultantId] });
       toast({
         title: "Success",
         description: result.message || "Class deleted successfully.",
@@ -199,7 +166,7 @@ export function useConsultationPlanMutations(consultantId: string) {
       queryClient.invalidateQueries({
         queryKey: ["consultationPlans", consultantId],
       });
-      queryClient.invalidateQueries({ queryKey: ["planner", consultantId] });
+      queryClient.invalidateQueries({ queryKey: ["consultant-planner", consultantId] });
       toast({
         title: "Success",
         description: "Consultation plan created successfully",
@@ -233,7 +200,7 @@ export function useConsultationPlanMutations(consultantId: string) {
       queryClient.invalidateQueries({
         queryKey: ["consultationPlans", consultantId],
       });
-      queryClient.invalidateQueries({ queryKey: ["planner", consultantId] });
+      queryClient.invalidateQueries({ queryKey: ["consultant-planner", consultantId] });
       toast({
         title: "Success",
         description: "Consultation plan updated successfully",
@@ -265,7 +232,7 @@ export function useConsultationPlanMutations(consultantId: string) {
       queryClient.invalidateQueries({
         queryKey: ["consultationPlans", consultantId],
       });
-      queryClient.invalidateQueries({ queryKey: ["planner", consultantId] });
+      queryClient.invalidateQueries({ queryKey: ["consultant-planner", consultantId] });
       toast({
         title: "Success",
         description: "Consultation plan deleted successfully",
@@ -334,7 +301,7 @@ export function useSubscriptionPlanMutations(consultantId: string) {
       queryClient.invalidateQueries({
         queryKey: ["subscriptionPlans", consultantId],
       });
-      queryClient.invalidateQueries({ queryKey: ["planner", consultantId] });
+      queryClient.invalidateQueries({ queryKey: ["consultant-planner", consultantId] });
       toast({
         title: "Success",
         description: "Subscription plan created successfully",
@@ -368,7 +335,7 @@ export function useSubscriptionPlanMutations(consultantId: string) {
       queryClient.invalidateQueries({
         queryKey: ["subscriptionPlans", consultantId],
       });
-      queryClient.invalidateQueries({ queryKey: ["planner", consultantId] });
+      queryClient.invalidateQueries({ queryKey: ["consultant-planner", consultantId] });
       toast({
         title: "Success",
         description: "Subscription plan updated successfully",
@@ -400,7 +367,7 @@ export function useSubscriptionPlanMutations(consultantId: string) {
       queryClient.invalidateQueries({
         queryKey: ["subscriptionPlans", consultantId],
       });
-      queryClient.invalidateQueries({ queryKey: ["planner", consultantId] });
+      queryClient.invalidateQueries({ queryKey: ["consultant-planner", consultantId] });
       toast({
         title: "Success",
         description: "Subscription plan deleted successfully",
@@ -427,7 +394,7 @@ export function usePlannerRefresh(consultantId: string) {
   const queryClient = useQueryClient();
 
   const refreshPlanner = () => {
-    queryClient.invalidateQueries({ queryKey: ["planner", consultantId] });
+    queryClient.invalidateQueries({ queryKey: ["consultant-planner", consultantId] });
     queryClient.invalidateQueries({
       queryKey: ["consultationPlans", consultantId],
     });
