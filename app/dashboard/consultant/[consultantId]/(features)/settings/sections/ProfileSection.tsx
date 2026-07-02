@@ -13,7 +13,7 @@ import {
 } from "components/ui/select";
 import { Separator } from "components/ui/separator";
 import { Textarea } from "components/ui/textarea";
-import type { Dispatch, SetStateAction } from "react";
+import { useState, useEffect, type Dispatch, type SetStateAction } from "react";
 import { MultiSelect } from "../../../components/MultiSelect";
 import type { Domain, FormData } from "../settings";
 
@@ -53,6 +53,22 @@ export function ProfileSection({
   onSubDomainChange,
   onTagChange,
 }: ProfileSectionProps) {
+  // Local raw-text state for the comma-separated inputs: binding the joined
+  // array directly made typing a comma impossible (split+filter on every
+  // keystroke deleted it). Parent state commits on blur.
+  const [languagesInput, setLanguagesInput] = useState(() =>
+    (formData.languages || []).join(", "),
+  );
+  const [toolsInput, setToolsInput] = useState(() =>
+    (formData.toolsAndTechnologies || []).join(", "),
+  );
+  useEffect(() => {
+    setLanguagesInput((formData.languages || []).join(", "));
+  }, [formData.languages]);
+  useEffect(() => {
+    setToolsInput((formData.toolsAndTechnologies || []).join(", "));
+  }, [formData.toolsAndTechnologies]);
+
   return (
     <>
       {/* Professional Profile */}
@@ -335,9 +351,10 @@ export function ProfileSection({
                     Languages Spoken
                   </Label>
                   <Input
-                    value={(formData.languages || []).join(", ")}
-                    onChange={(e) => {
-                      const languages = e.target.value
+                    value={languagesInput}
+                    onChange={(e) => setLanguagesInput(e.target.value)}
+                    onBlur={() => {
+                      const languages = languagesInput
                         .split(",")
                         .map((l) => l.trim())
                         .filter(Boolean);
@@ -353,9 +370,10 @@ export function ProfileSection({
                     Tools & Technologies
                   </Label>
                   <Input
-                    value={(formData.toolsAndTechnologies || []).join(", ")}
-                    onChange={(e) => {
-                      const toolsAndTechnologies = e.target.value
+                    value={toolsInput}
+                    onChange={(e) => setToolsInput(e.target.value)}
+                    onBlur={() => {
+                      const toolsAndTechnologies = toolsInput
                         .split(",")
                         .map((t) => t.trim())
                         .filter(Boolean);
