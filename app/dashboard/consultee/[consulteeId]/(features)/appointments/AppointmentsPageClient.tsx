@@ -13,7 +13,7 @@ import {
 } from "@/components/dashboard/OrgContextFilter";
 import { Overview } from "./Overview";
 import { Calendar } from "./Calendar";
-import { BookingHistoryTab } from "../history/BookingHistoryTab";
+import { BookingHistoryTab } from "./components/BookingHistoryTab";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { motion } from "framer-motion";
 
@@ -186,6 +186,7 @@ export default function AppointmentsPageClient({
             subscriptions={subscriptions}
             webinars={webinars}
             classes={classes}
+            trials={trials}
           />
         </TabsContent>
       </Tabs>

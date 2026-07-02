@@ -10,7 +10,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { PageHeader } from "@/components/ui/page-header";
+import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 import {
   ResponsiveTable,
   type ResponsiveColumn,
@@ -206,9 +206,9 @@ export default function StaffPayoutsPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
+      <DashboardHeader
         title="Payouts"
-        description="View consultant payout status and history"
+        subtitle="View consultant payout status and history"
       />
 
       {/* Stats Cards */}

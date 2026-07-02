@@ -21,7 +21,7 @@ import { useRequireFinanceSurface } from "../../useOrgRole";
 import {
   DashboardHeader,
   DashboardContent,
-} from "@/components/dashboard/DashboardShell";
+} from "@/components/dashboard/PageScaffold";
 import {
   Card,
   CardContent,

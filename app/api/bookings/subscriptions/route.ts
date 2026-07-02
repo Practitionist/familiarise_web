@@ -17,6 +17,7 @@ import {
 import { transitionSubscriptionRequest } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
+import { resolveOrgScope } from "@/lib/api/scope/parse";
 
 export async function GET(request: NextRequest) {
   // Require authentication
@@ -69,6 +70,44 @@ export async function GET(request: NextRequest) {
 
     if (status) {
       whereClause.status = status;
+    }
+
+    // Personal-vs-org scope filter (same mechanism as /api/slots/appointments:
+    // the denormalized Appointment.organizationId, here through the
+    // subscription's to-many `appointments`). ADDITIVE: when the param is
+    // absent, behavior is unchanged (unfiltered union). A subscription whose
+    // appointments carry no org stamp — including one with zero appointment
+    // rows — is definitionally personal.
+    const rawOrgScope = searchParams.get("orgScope");
+    if (rawOrgScope) {
+      const memberships = await prisma.membership.findMany({
+        where: { userId: session.user.id, status: "ACTIVE" },
+        select: { organizationId: true, status: true },
+      });
+      const scopeResolution = resolveOrgScope({
+        raw: rawOrgScope,
+        memberships,
+        userRole: session.user.role,
+        // Self-scoped: the ownership filter above already locks non-admin
+        // callers to their own rows, so "all" just means "all of MY data".
+        allowAllForOwner: true,
+      });
+      if (!scopeResolution.ok) {
+        return NextResponse.json(
+          { error: scopeResolution.message, code: scopeResolution.code },
+          { status: scopeResolution.status },
+        );
+      }
+      if (scopeResolution.scope.kind === "personal") {
+        whereClause.appointments = {
+          none: { organizationId: { not: null } },
+        };
+      } else if (scopeResolution.scope.kind === "org") {
+        whereClause.appointments = {
+          some: { organizationId: scopeResolution.scope.orgId },
+        };
+      }
+      // kind === "all": no additional filter
     }
 
     const [subscriptions, total] = await Promise.all([

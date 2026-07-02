@@ -6,7 +6,7 @@ import {
   DashboardHeader,
   DashboardContent,
   DashboardGrid,
-} from "@/components/dashboard/DashboardShell";
+} from "@/components/dashboard/PageScaffold";
 import { StatCard } from "@/components/dashboard/StatCard";
 import { Users, Gift, IndianRupee, Copy, Check, Mail } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -16,11 +16,12 @@ import {
 } from "@/components/ui/responsive-table";
 import { useToast } from "@/hooks/use-toast";
 import { WhatsAppIcon } from "@/components/icons/WhatsAppIcon";
-import {
-  QUALIFICATION_WINDOW_DAYS,
-  CREDIT_EXPIRY_DAYS,
-} from "@/lib/referrals/constants";
+import { QUALIFICATION_WINDOW_DAYS } from "@/lib/referrals/constants";
 import { useCurrency } from "@/hooks/useCurrency";
+import { StatCardSkeleton } from "@/components/dashboard/StatCard";
+import { EmptyState } from "@/components/dashboard/DataCard";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { referralStatusBadge } from "@/lib/labels/session-labels";
 
 interface ReferralCode {
   id: string;
@@ -67,7 +68,12 @@ export default function ConsulteeReferralsPage({
   const { formatPrice } = useCurrency();
   const [copied, setCopied] = useState(false);
 
-  const { data: codeData } = useQuery<{ data: ReferralCode }>({
+  const {
+    data: codeData,
+    isLoading: codeLoading,
+    isError: codeError,
+    refetch: refetchCode,
+  } = useQuery<{ data: ReferralCode }>({
     queryKey: ["referral-code"],
     queryFn: async () => {
       const res = await fetch("/api/referrals/code", { method: "POST" });
@@ -77,7 +83,12 @@ export default function ConsulteeReferralsPage({
     staleTime: 60_000,
   });
 
-  const { data: referralsData } = useQuery<{ data: Referral[] }>({
+  const {
+    data: referralsData,
+    isLoading: referralsLoading,
+    isError: referralsError,
+    refetch: refetchReferrals,
+  } = useQuery<{ data: Referral[] }>({
     queryKey: ["referrals"],
     queryFn: async () => {
       const res = await fetch("/api/referrals");
@@ -87,7 +98,12 @@ export default function ConsulteeReferralsPage({
     staleTime: 30_000,
   });
 
-  const { data: creditsData } = useQuery<{ data: CreditData }>({
+  const {
+    data: creditsData,
+    isLoading: creditsLoading,
+    isError: creditsError,
+    refetch: refetchCredits,
+  } = useQuery<{ data: CreditData }>({
     queryKey: ["referral-credits"],
     queryFn: async () => {
       const res = await fetch("/api/referrals/credits");
@@ -96,6 +112,8 @@ export default function ConsulteeReferralsPage({
     },
     staleTime: 30_000,
   });
+
+  const isLoading = codeLoading || referralsLoading || creditsLoading;
 
   const code = codeData?.data;
   const referrals = referralsData?.data ?? [];
@@ -137,19 +155,7 @@ export default function ConsulteeReferralsPage({
     {
       key: "status",
       header: "Status",
-      cell: (ref) => (
-        <span
-          className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ${
-            ref.status === "REWARDED"
-              ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300"
-              : ref.status === "SIGNED_UP"
-                ? "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300"
-                : "bg-muted text-muted-foreground"
-          }`}
-        >
-          {ref.status}
-        </span>
-      ),
+      cell: (ref) => <StatusBadge {...referralStatusBadge(ref.status)} />,
     },
     {
       key: "signedUp",
@@ -207,6 +213,24 @@ export default function ConsulteeReferralsPage({
       },
     ];
 
+  if (isLoading) {
+    return (
+      <>
+        <DashboardHeader
+          title="Referrals"
+          subtitle="Invite friends and earn credits towards your next booking"
+        />
+        <DashboardContent>
+          <DashboardGrid columns={3}>
+            <StatCardSkeleton />
+            <StatCardSkeleton />
+            <StatCardSkeleton />
+          </DashboardGrid>
+        </DashboardContent>
+      </>
+    );
+  }
+
   return (
     <>
       <DashboardHeader
@@ -248,11 +272,23 @@ export default function ConsulteeReferralsPage({
               their first booking!
             </div>
           )}
+          {codeError && (
+            <div className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">
+              <span>Couldn&apos;t generate your referral link.</span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => refetchCode()}
+              >
+                Retry
+              </Button>
+            </div>
+          )}
           <div className="flex gap-2">
             <div className="min-w-0 flex-1 flex items-center rounded-md border border-border bg-muted px-3 py-2 font-mono text-sm text-foreground select-all truncate">
               {referralLink || (
                 <span className="text-muted-foreground/70 italic font-sans">
-                  Generating link...
+                  {codeError ? "Link unavailable" : "Generating link..."}
                 </span>
               )}
             </div>
@@ -296,30 +332,6 @@ export default function ConsulteeReferralsPage({
           </div>
         </div>
 
-        {/* TODO: Program Details - hidden for now
-        <div className="mt-6 bg-white rounded-xl border border-zinc-200 p-6">
-          <h3 className="text-sm font-medium text-zinc-900 mb-3">
-            Program Details
-          </h3>
-          <div className="grid grid-cols-3 gap-4 text-sm">
-            <div className="rounded-lg bg-zinc-50 px-4 py-3">
-              <p className="text-zinc-500">Qualification Window</p>
-              <p className="mt-1 font-medium text-zinc-900">{QUALIFICATION_WINDOW_DAYS} days</p>
-            </div>
-            <div className="rounded-lg bg-zinc-50 px-4 py-3">
-              <p className="text-zinc-500">Credit Expiry</p>
-              <p className="mt-1 font-medium text-zinc-900">{CREDIT_EXPIRY_DAYS} days</p>
-            </div>
-            <div className="rounded-lg bg-zinc-50 px-4 py-3">
-              <p className="text-zinc-500">Max Referrals</p>
-              <p className="mt-1 font-medium text-zinc-900">
-                {code?.maxReferrals ?? 25}
-              </p>
-            </div>
-          </div>
-        </div>
-        */}
-
         {/* Referrals List */}
         <div className="mt-6 bg-card rounded-xl border border-border overflow-hidden">
           <div className="px-6 py-4 border-b border-border">
@@ -328,16 +340,34 @@ export default function ConsulteeReferralsPage({
             </h3>
           </div>
           <div className="p-2 sm:p-3">
-            <ResponsiveTable<Referral>
-              columns={referralColumns}
-              rows={referrals}
-              getRowId={(r) => r.id}
-              empty={
-                <div className="px-6 py-12 text-center text-muted-foreground text-sm">
-                  No referrals yet. Share your link to get started!
-                </div>
-              }
-            />
+            {referralsError || creditsError ? (
+              <EmptyState
+                icon={Users}
+                title="Couldn't load referrals"
+                action={
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      void refetchReferrals();
+                      void refetchCredits();
+                    }}
+                  >
+                    Retry
+                  </Button>
+                }
+              />
+            ) : (
+              <ResponsiveTable<Referral>
+                columns={referralColumns}
+                rows={referrals}
+                getRowId={(r) => r.id}
+                empty={
+                  <div className="px-6 py-12 text-center text-muted-foreground text-sm">
+                    No referrals yet. Share your link to get started!
+                  </div>
+                }
+              />
+            )}
           </div>
         </div>
 

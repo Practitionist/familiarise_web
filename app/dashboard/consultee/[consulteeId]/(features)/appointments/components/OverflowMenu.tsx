@@ -67,7 +67,12 @@ export function OverflowMenu({
           <AlertCircle className="h-4 w-4 mr-2" />
           Report Issue
         </DropdownMenuItem>
-        {isActive && !isPendingPayment && (
+        {/* Cancel is available for pending-payment bookings too — the API
+            has always allowed it (CANCELLABLE_FROM includes
+            APPROVED_PENDING_PAYMENT) and nothing has been charged yet.
+            Hiding it here used to strand users with pay-or-wait-for-expiry
+            as their only options. */}
+        {isActive && (
           <>
             <DropdownMenuSeparator />
             <DropdownMenuItem
@@ -76,7 +81,7 @@ export function OverflowMenu({
               className="text-red-600 focus:text-red-600 dark:text-red-400 dark:focus:text-red-400"
             >
               <X className="h-4 w-4 mr-2" />
-              Cancel
+              {isPendingPayment ? "Cancel request" : "Cancel"}
             </DropdownMenuItem>
           </>
         )}

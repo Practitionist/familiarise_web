@@ -163,14 +163,28 @@ export interface UnscheduledWebinar {
   appointment: null | undefined;
 }
 
+/**
+ * Loading/error state for an auxiliary section fed by its own query
+ * (trials / unscheduled classes / unscheduled webinars). Each section
+ * renders its own skeleton and inline retry so one slow or failed query
+ * can't blank the whole appointments page.
+ */
+export interface SectionQueryState {
+  isLoading: boolean;
+  isError: boolean;
+  onRetry: () => void;
+}
+
 export interface AppointmentsTabProps {
   appointments: TAppointment[];
-  badgeStyles: BadgeStyleMap;
   scheduledTrials?: ScheduledTrial[];
+  trialsState?: SectionQueryState;
   consultantId?: string;
   onUpdate?: () => void;
   unscheduledClasses?: UnscheduledClass[];
+  unscheduledClassesState?: SectionQueryState;
   unscheduledWebinars?: UnscheduledWebinar[];
+  unscheduledWebinarsState?: SectionQueryState;
   /** Optional right-aligned element rendered next to the "All Appointments"
    *  header — used by the page wrapper to mount the OrgContextFilter
    *  dropdown inline instead of stacking it above the card. */
@@ -246,20 +260,27 @@ export interface ClientActivityProps {
 // Utility type for badge styles
 export type BadgeStyleMap = { [key: string]: string };
 
-// Constants for badge styles
+// Badge styles for the DERIVED timing statuses produced by
+// getAppointmentStatus() ("Today", "Starting soon", "In 3 days", …).
+// These are relative-proximity labels, not AppointmentStatus enum values,
+// so they can't live in lib/labels/session-labels.ts — but they wear the
+// same pill conventions (bg-*-100 text-*-900 border-*-200) so every badge
+// across the dashboard reads as one system. Proximity ladder: red (now) →
+// orange (imminent / needs action) → amber (today-ish) → emerald (soon) →
+// zinc (far / terminal).
 export const BADGE_STYLES: BadgeStyleMap = {
-  Completed: "bg-gray-400 text-white",
-  Cancelled: "bg-stone-400 text-white",
-  "In Progress": "bg-emerald-600 text-white",
-  "Starting soon": "bg-amber-500 text-white",
-  "Meeting in 5 min": "bg-red-500 text-white",
-  Today: "bg-blue-600 text-white",
-  Tomorrow: "bg-purple-500 text-white",
-  "In week": "bg-green-500 text-white",
-  "In month": "bg-yellow-500 text-white",
-  "In year": "bg-orange-500 text-white",
-  "Not Scheduled": "bg-orange-600 text-white",
-  default: "bg-gray-500 text-white",
+  Completed: "bg-green-100 text-green-900 border-green-200",
+  Cancelled: "bg-zinc-100 text-zinc-600 border-zinc-200",
+  "In Progress": "bg-blue-100 text-blue-900 border-blue-200",
+  "Starting soon": "bg-orange-100 text-orange-900 border-orange-200",
+  "Meeting in 5 min": "bg-red-100 text-red-900 border-red-200",
+  Today: "bg-amber-100 text-amber-900 border-amber-200",
+  Tomorrow: "bg-emerald-100 text-emerald-900 border-emerald-200",
+  "In week": "bg-emerald-100 text-emerald-900 border-emerald-200",
+  "In month": "bg-zinc-100 text-zinc-700 border-zinc-200",
+  "In year": "bg-zinc-100 text-zinc-700 border-zinc-200",
+  "Not Scheduled": "bg-orange-100 text-orange-900 border-orange-200",
+  default: "bg-zinc-100 text-zinc-600 border-zinc-200",
 };
 
 /**
@@ -270,9 +291,9 @@ export const BADGE_STYLES: BadgeStyleMap = {
 export const getBadgeStyle = (status: string): string => {
   if (BADGE_STYLES[status]) return BADGE_STYLES[status];
   if (status.startsWith("In ") && status.includes("day"))
-    return "bg-green-500 text-white";
+    return "bg-emerald-100 text-emerald-900 border-emerald-200";
   if (status.startsWith("In ") && status.includes("week"))
-    return "bg-green-500 text-white";
+    return "bg-emerald-100 text-emerald-900 border-emerald-200";
   return BADGE_STYLES.default;
 };
 

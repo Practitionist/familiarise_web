@@ -18,7 +18,7 @@ import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
-import { PageHeader } from "@/components/ui/page-header";
+import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   DropdownMenu,
@@ -273,9 +273,9 @@ export default function AdminUsersPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
+      <DashboardHeader
         title="User Management"
-        description="View and manage user accounts"
+        subtitle="View and manage user accounts"
         actions={
           <Button variant="outline" onClick={fetchUsers} disabled={loading}>
             <RefreshCw

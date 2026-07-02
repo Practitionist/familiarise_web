@@ -84,6 +84,12 @@ type RequestType = "all" | "consultation" | "subscription";
 interface RequestSlotAllocationTabProps {
   type: RequestType;
   onUpdate: () => void;
+  /**
+   * Personal-vs-org scope ("personal" | "all" | orgId) threaded into the
+   * /api/bookings/* fetches as ?orgScope=. Provided by the page's
+   * OrgContextFilter; omitted = server returns the unfiltered union.
+   */
+  orgScope?: string;
 }
 
 // Helper function to fetch and process data
@@ -135,6 +141,7 @@ async function fetchDataFromApi<T>(
 export function RequestSlotAllocationTab({
   type,
   onUpdate,
+  orgScope,
 }: RequestSlotAllocationTabProps) {
   const params = useParams();
   const consultantId = params.consultantId as string;
@@ -154,13 +161,17 @@ export function RequestSlotAllocationTab({
     setError(null);
 
     try {
-      // Fetch data in parallel (only PENDING requests)
+      // Fetch data in parallel (only PENDING requests). orgScope filters
+      // server-side via the denormalized Appointment.organizationId.
+      const orgScopeQs = orgScope
+        ? `&orgScope=${encodeURIComponent(orgScope)}`
+        : "";
       const [consultationsResult, subscriptionsResult] = await Promise.all([
         fetchDataFromApi<ConsultationApiResponse[]>(
-          `/api/bookings/consultations?consultantProfileId=${consultantId}&status=PENDING`,
+          `/api/bookings/consultations?consultantProfileId=${consultantId}&status=PENDING${orgScopeQs}`,
         ),
         fetchDataFromApi<SubscriptionApiResponse[]>(
-          `/api/bookings/subscriptions?consultantProfileId=${consultantId}&status=PENDING`,
+          `/api/bookings/subscriptions?consultantProfileId=${consultantId}&status=PENDING${orgScopeQs}`,
         ),
       ]);
 
@@ -324,7 +335,7 @@ export function RequestSlotAllocationTab({
         setLoading(false);
       }
     }
-  }, [consultantId, type, error]);
+  }, [consultantId, type, error, orgScope]);
 
   useEffect(() => {
     fetchData();

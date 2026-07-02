@@ -12,10 +12,8 @@ import {
   Video,
 } from "lucide-react";
 import { cn } from "@/utils/tailwind";
-import {
-  formatStatusLabel,
-  getStatusStyle,
-} from "@/app/dashboard/consultee/[consulteeId]/utils/statusConfig";
+import { eventUnionStatusBadge } from "../appointments/utils/status-guards";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
 
 export interface EventResource {
   id: string;
@@ -113,17 +111,7 @@ export function EventResourceCard({ event }: { event: EventResource }) {
         </div>
 
         <div className="flex items-center gap-3 shrink-0">
-          <span
-            className={cn(
-              "inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium",
-              (() => {
-                const s = getStatusStyle(event.status);
-                return `${s.bg} ${s.text}`;
-              })(),
-            )}
-          >
-            {formatStatusLabel(event.status)}
-          </span>
+          <StatusBadge {...eventUnionStatusBadge(event.status)} size="sm" />
           {totalItems > 0 && (
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               {event.materials.length > 0 && (

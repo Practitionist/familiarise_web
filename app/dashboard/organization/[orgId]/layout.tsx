@@ -54,17 +54,24 @@ import {
   CollapsibleSidebarSkeleton,
   type CollapsibleSidebarGroup,
 } from "@/components/dashboard/CollapsibleSidebar";
-import { OrgContextBar } from "@/components/dashboard/OrgContextBar";
+import { DashboardContextBar } from "@/components/dashboard/DashboardContextBar";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
-import { signOut, useSession } from "@/lib/auth-client";
+import { useSession } from "@/lib/auth-client";
+import { signOutEverywhere } from "@/lib/auth/sign-out";
 import {
   isAtLeastRole,
   canSeeOperatorSurface,
   canSeeFinanceSurface,
 } from "@/lib/auth/role-ranks";
-import { MEMBER_ROLE_LABEL } from "@/lib/labels/org-labels";
+import {
+  MEMBER_ROLE_LABEL,
+  deriveCapabilityKind,
+  CAPABILITY_LABEL,
+  CAPABILITY_BADGE_CLASS,
+  FUNDING_SOURCE_LABEL,
+  FUNDING_SOURCE_BADGE_CLASS,
+} from "@/lib/labels/org-labels";
 import { resolvePersonalDashboardHref } from "@/lib/labels/personal-dashboard";
-import { disconnectStreamClients } from "@/providers/StreamProvider";
 import type { MemberRole, OrgStatus } from "@prisma/client";
 import {
   fetchOrgDetails,
@@ -440,19 +447,8 @@ export default function OrgLayout({
     }
   }, [org, pathname, orgId, router]);
 
-  const handleSignOut = async () => {
-    try {
-      await disconnectStreamClients();
-    } catch {
-      // ignore
-    }
-    signOut({
-      fetchOptions: {
-        onSuccess: () => {
-          window.location.href = "/auth/signin";
-        },
-      },
-    });
+  const handleSignOut = () => {
+    void signOutEverywhere();
   };
 
   if (!session?.user?.id && !isSessionLoading) {
@@ -617,17 +613,42 @@ export default function OrgLayout({
       {/* Right panel: context bar + page content */}
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
         {/* Sticky context bar — always shows org identity + back link */}
-        {org && (
-          <OrgContextBar
-            orgName={org.organization.name}
-            orgLogo={org.organization.logo}
-            canSponsor={org.organization.canSponsor}
-            canHost={org.organization.canHost}
-            fundingSource={org.organization.fundingSource}
-            breadcrumbs={breadcrumbs}
-            personalHref={personalHref}
-          />
-        )}
+        {org &&
+          (() => {
+            const capability = deriveCapabilityKind(
+              org.organization.canSponsor,
+              org.organization.canHost,
+            );
+            const fundingSource = org.organization.fundingSource;
+            return (
+              <DashboardContextBar
+                identity={{
+                  name: org.organization.name,
+                  image: org.organization.logo,
+                }}
+                badges={[
+                  {
+                    label: CAPABILITY_LABEL[capability],
+                    className: CAPABILITY_BADGE_CLASS[capability],
+                  },
+                  ...(fundingSource
+                    ? [
+                        {
+                          label: FUNDING_SOURCE_LABEL[fundingSource],
+                          className: FUNDING_SOURCE_BADGE_CLASS[fundingSource],
+                        },
+                      ]
+                    : []),
+                ]}
+                breadcrumbs={breadcrumbs}
+                leftLink={
+                  personalHref
+                    ? { href: personalHref, label: "Personal" }
+                    : null
+                }
+              />
+            );
+          })()}
 
         {org && org.organization.status !== "ACTIVE" && (
           <OrgStatusBanner status={org.organization.status} />

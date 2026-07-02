@@ -17,7 +17,7 @@ import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
-import { PageHeader } from "@/components/ui/page-header";
+import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 import {
   ResponsiveModal,
   ResponsiveModalContent,
@@ -452,9 +452,9 @@ export default function SupportTicketsPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
+      <DashboardHeader
         title="Support Tickets"
-        description="Manage and respond to user support requests"
+        subtitle="Manage and respond to user support requests"
         actions={
           <Button variant="outline" onClick={fetchTickets} disabled={loading}>
             <RefreshCw

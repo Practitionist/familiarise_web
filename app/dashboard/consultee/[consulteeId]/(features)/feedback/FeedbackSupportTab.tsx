@@ -1,25 +1,26 @@
 "use client";
 
 import React from "react";
-import { Card, CardContent } from "components/ui/card";
-import { Button } from "components/ui/button";
-import { Input } from "components/ui/input";
-import { Label } from "components/ui/label";
-import { Textarea } from "components/ui/textarea";
-import { Badge } from "components/ui/badge";
+import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "components/ui/select";
+} from "@/components/ui/select";
 import {
   FeedbackStatus,
   SupportPriority,
   SupportTicketStatus,
   SupportIssueType,
 } from "@prisma/client";
+import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 import { useFeedbackSupport, type SupportTicketWithResponses } from "./useFeedbackSupport";
 import {
   MessageSquare,
@@ -31,7 +32,6 @@ import {
   AlertCircle,
   Loader2,
   ChevronRight,
-  Sparkles,
   Link2,
 } from "lucide-react";
 import {
@@ -45,7 +45,7 @@ interface FeedbackSupportTabProps {
 }
 
 export default function FeedbackSupportTab({
-  consulteeId: _consulteeId,
+  consulteeId,
 }: FeedbackSupportTabProps) {
   const {
     isLoading,
@@ -64,7 +64,7 @@ export default function FeedbackSupportTab({
     handleFeedbackSubmit,
     handleTicketSubmit,
     handleResponseSubmit,
-  } = useFeedbackSupport();
+  } = useFeedbackSupport(consulteeId);
 
   // Semantic status colors kept (amber=in progress, green=resolved); the
   // off-brand blue OPEN/PENDING accent collapses to neutral monochrome.
@@ -122,24 +122,10 @@ export default function FeedbackSupportTab({
 
   return (
     <div className="space-y-8">
-      {/* Header */}
-      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-zinc-900 to-zinc-800 p-8">
-        <div className="absolute inset-0 bg-grid-white/5 [mask-image:linear-gradient(0deg,transparent,black)]" />
-        <div className="relative">
-          <div className="flex items-center gap-3 mb-2">
-            <div className="p-2 rounded-lg bg-white/10">
-              <Sparkles className="h-5 w-5 text-white" />
-            </div>
-            <h2 className="text-fluid-2xl font-semibold tracking-tight text-white">
-              Feedback & Support
-            </h2>
-          </div>
-          <p className="text-zinc-400 max-w-lg">
-            Share your experience or get help with any issues. We&apos;re here
-            to assist you.
-          </p>
-        </div>
-      </div>
+      <DashboardHeader
+        title="Feedback & Support"
+        subtitle="Share your experience or get help with any issues. We're here to assist you."
+      />
 
       {/* Tab Navigation */}
       <div className="flex w-full gap-2 p-1 rounded-xl bg-muted dark:bg-zinc-800 sm:w-fit">

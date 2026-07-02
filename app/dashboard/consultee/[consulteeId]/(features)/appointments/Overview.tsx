@@ -48,7 +48,6 @@ interface CollaboratorInfo {
 interface DashboardCardProps {
   title: string;
   icon: typeof Calendar;
-  accentColor: string;
   itemCount: number;
   children: React.ReactNode;
   emptySubtext?: string;
@@ -273,7 +272,6 @@ export function Overview({
         <DashboardCard
           title="Consultations"
           icon={Video}
-          accentColor="blue"
           itemCount={sortedConsultations.length}
           emptySubtext={emptySubtext("Consultations")}
         >
@@ -318,7 +316,6 @@ export function Overview({
         <DashboardCard
           title="Subscriptions"
           icon={Calendar}
-          accentColor="violet"
           itemCount={sortedSubsAndTrials.length}
           emptySubtext={emptySubtext("Subscriptions")}
         >
@@ -399,7 +396,6 @@ export function Overview({
         <DashboardCard
           title="Webinars"
           icon={Users}
-          accentColor="amber"
           itemCount={sortedWebinars.length}
           emptySubtext={emptySubtext("Webinars")}
         >
@@ -462,7 +458,6 @@ export function Overview({
         <DashboardCard
           title="Classes"
           icon={BookOpen}
-          accentColor="emerald"
           itemCount={sortedClasses.length}
           emptySubtext={emptySubtext("Classes")}
         >
@@ -535,7 +530,6 @@ export function Overview({
 function DashboardCard({
   title,
   icon: Icon,
-  accentColor,
   itemCount,
   children,
   emptySubtext,
@@ -547,40 +541,6 @@ function DashboardCard({
 
   const SCROLL_AMOUNT = 320;
 
-  // Section icon chips are monochrome — the accentColor prop is kept so callers
-  // need no change, but every variant resolves to the same neutral token set.
-  const accentStyles: Record<
-    string,
-    { bg: string; text: string; border: string }
-  > = {
-    blue: {
-      bg: "bg-muted",
-      text: "text-muted-foreground",
-      border: "border-border",
-    },
-    violet: {
-      bg: "bg-muted",
-      text: "text-muted-foreground",
-      border: "border-border",
-    },
-    amber: {
-      bg: "bg-muted",
-      text: "text-muted-foreground",
-      border: "border-border",
-    },
-    emerald: {
-      bg: "bg-muted",
-      text: "text-muted-foreground",
-      border: "border-border",
-    },
-    rose: {
-      bg: "bg-muted",
-      text: "text-muted-foreground",
-      border: "border-border",
-    },
-  };
-
-  const accent = accentStyles[accentColor] || accentStyles.blue;
 
   useEffect(() => {
     const checkMobile = () => {
@@ -648,9 +608,9 @@ function DashboardCard({
       <div className="bg-card rounded-2xl border border-border shadow-sm overflow-hidden">
         <div className="flex items-center gap-3 px-6 py-4 border-b border-border">
           <div
-            className={`h-9 w-9 rounded-xl ${accent.bg} flex items-center justify-center`}
+            className="h-9 w-9 rounded-xl bg-muted flex items-center justify-center"
           >
-            <Icon className={`h-5 w-5 ${accent.text}`} />
+            <Icon className="h-5 w-5 text-muted-foreground" />
           </div>
           <h2 className="font-semibold text-foreground text-lg">{title}</h2>
         </div>
@@ -678,9 +638,9 @@ function DashboardCard({
       <div className="flex items-center justify-between px-6 py-4 border-b border-border">
         <div className="flex items-center gap-3">
           <div
-            className={`h-9 w-9 rounded-xl ${accent.bg} flex items-center justify-center`}
+            className="h-9 w-9 rounded-xl bg-muted flex items-center justify-center"
           >
-            <Icon className={`h-5 w-5 ${accent.text}`} />
+            <Icon className="h-5 w-5 text-muted-foreground" />
           </div>
           <h2 className="font-semibold text-foreground text-lg">{title}</h2>
           <span className="text-sm text-muted-foreground/70 font-medium">

@@ -26,6 +26,12 @@ import type { TAppointment } from "@/types/appointment";
 import type { SlotOfAppointment } from "@prisma/client";
 import type { BookingStatus } from "@/components/ui/waitlist-status-badge";
 
+import {
+  isApprovedStatus,
+  isConfirmedStatus,
+  isInactiveStatus,
+  isPendingPaymentStatus,
+} from "../utils/status-guards";
 import { CardHeader } from "./CardHeader";
 import { StatusBadgeGroup } from "./StatusBadgeGroup";
 import { CountdownBadge } from "./CountdownBadge";
@@ -93,20 +99,13 @@ export function OneOffEventCard({
     type,
   });
 
-  const isInactive =
-    status?.toLowerCase() === "cancelled" ||
-    status?.toLowerCase() === "rejected" ||
-    status?.toLowerCase() === "completed" ||
-    status?.toLowerCase() === "expired";
-
-  const isPendingPayment = status?.toUpperCase() === "APPROVED_PENDING_PAYMENT";
-  const isApproved = status?.toUpperCase() === "APPROVED";
+  const isInactive = isInactiveStatus(status);
+  const isPendingPayment = isPendingPaymentStatus(status);
+  const isApproved = isApprovedStatus(status);
   const isDev = process.env.NEXT_PUBLIC_ENABLE_DEV_TOOLS === "true";
   const canDevJoin = isDev && rawSlots.length > 0 && !!appointment;
 
-  const isConfirmed = ["APPROVED", "SCHEDULED", "IN_PROGRESS"].includes(
-    status?.toUpperCase(),
-  );
+  const isConfirmed = isConfirmedStatus(status);
   const showDocUpload =
     (type === "Consultation" || type === "Trial") &&
     !!appointmentId &&
@@ -375,6 +374,7 @@ export function OneOffEventCard({
         consultant={consultant}
         appointmentType={type}
         isLoading={actions.isLoading}
+        isPendingPayment={isPendingPayment}
       />
     </motion.div>
   );
