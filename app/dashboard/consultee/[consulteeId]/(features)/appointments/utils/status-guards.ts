@@ -14,8 +14,15 @@ const TERMINAL_STATUSES = new Set([
   "REJECTED",
   "COMPLETED",
   "EXPIRED",
+  // TrialSessionStatus terminal: the consultee subscribed after the trial —
+  // nothing further can happen on the trial booking itself.
+  "CONVERTED",
 ]);
 
+// "APPROVED" appears here AND in isApprovedStatus deliberately: approved is
+// both a locked-in state (uploads/joining enabled — isConfirmedStatus) and a
+// distinct pre-scheduling phase some surfaces branch on (isApprovedStatus is
+// a strict subset check of isConfirmedStatus).
 const CONFIRMED_STATUSES = new Set(["APPROVED", "SCHEDULED", "IN_PROGRESS"]);
 
 const normalize = (status: string | null | undefined) =>
