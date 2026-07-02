@@ -43,6 +43,12 @@ import {
   type SlotWithMeetingSession,
 } from "../types";
 
+import {
+  isApprovedStatus,
+  isConfirmedStatus,
+  isInactiveStatus,
+  isPendingPaymentStatus,
+} from "../utils/status-guards";
 import { CardHeader } from "./CardHeader";
 import { StatusBadgeGroup } from "./StatusBadgeGroup";
 import { SessionTimeline } from "./SessionTimeline";
@@ -119,19 +125,12 @@ export function MultiSessionEventCard({
   >("entire");
   const [selectedSlotIds, setSelectedSlotIds] = React.useState<string[]>([]);
 
-  const isInactive =
-    status?.toLowerCase() === "cancelled" ||
-    status?.toLowerCase() === "rejected" ||
-    status?.toLowerCase() === "completed" ||
-    status?.toLowerCase() === "expired";
-
-  const isPendingPayment = status?.toUpperCase() === "APPROVED_PENDING_PAYMENT";
-  const isApproved = status?.toUpperCase() === "APPROVED";
+  const isInactive = isInactiveStatus(status);
+  const isPendingPayment = isPendingPaymentStatus(status);
+  const isApproved = isApprovedStatus(status);
   const isDev = process.env.NEXT_PUBLIC_ENABLE_DEV_TOOLS === "true";
   const canDevJoin = isDev && rawSlots.length > 0 && !!appointment;
-  const isConfirmed = ["APPROVED", "SCHEDULED", "IN_PROGRESS"].includes(
-    status?.toUpperCase(),
-  );
+  const isConfirmed = isConfirmedStatus(status);
   const showDocUpload =
     type === "Subscription" && !!appointmentId && isConfirmed;
 
@@ -699,6 +698,7 @@ export function MultiSessionEventCard({
         onConfirm={actions.handleCancelConfirm}
         onCancel={() => actions.setShowCancelDialog(false)}
         title={title}
+        isPendingPayment={isPendingPayment}
         consultant={consultant}
         appointmentType={type}
         isLoading={actions.isLoading}

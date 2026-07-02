@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { useToast } from "@/hooks/use-toast";
-import { useRouter } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import { useStreamVideoClient } from "@stream-io/video-react-sdk";
 import { getOrCreateAppointmentMeeting } from "@/lib/meeting";
 import type { TAppointment } from "@/types/appointment";
@@ -29,6 +30,22 @@ export function useEventActions({
   const { toast } = useToast();
   const router = useRouter();
   const client = useStreamVideoClient();
+  const queryClient = useQueryClient();
+  const params = useParams<{ consulteeId: string }>();
+  const consulteeId = params?.consulteeId;
+
+  // Refresh every surface that renders this booking (events across all org
+  // scopes via prefix match, plus the home pending-payments widget) without
+  // the full-page reload that used to nuke the react-query cache and SPA
+  // state after cancel/reschedule.
+  const invalidateBookingData = () => {
+    void queryClient.invalidateQueries({
+      queryKey: ["consultee-events", consulteeId],
+    });
+    void queryClient.invalidateQueries({
+      queryKey: ["pending-payments", consulteeId],
+    });
+  };
 
   const [isLoading, setIsLoading] = useState(false);
   const [isJoining, setIsJoining] = useState(false);
@@ -108,7 +125,7 @@ export function useEventActions({
             : `Select new times for your ${sessionsAffected} sessions.`,
       });
 
-      window.location.reload();
+      invalidateBookingData();
     } catch (error) {
       console.error("Error requesting reschedule:", error);
       toast({
@@ -145,6 +162,19 @@ export function useEventActions({
       );
       const data = await response.json();
       if (!response.ok) {
+        // 409 = the CAS transition guard matched zero rows: the booking
+        // already changed state (double-cancel, consultant approved a
+        // stale tab, …). The list refresh IS the answer — not an error.
+        if (response.status === 409) {
+          toast({
+            title: "Booking already updated",
+            description:
+              "This booking changed state in the meantime — refreshing.",
+          });
+          setShowCancelDialog(false);
+          invalidateBookingData();
+          return;
+        }
         throw new Error(data.error || "Failed to cancel appointment");
       }
       toast({
@@ -152,7 +182,7 @@ export function useEventActions({
         description: `Your ${type.toLowerCase()} "${title}" has been cancelled successfully.`,
       });
       setShowCancelDialog(false);
-      window.location.reload();
+      invalidateBookingData();
     } catch (error) {
       console.error("Error cancelling appointment:", error);
       toast({

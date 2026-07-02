@@ -1,8 +1,8 @@
 "use client";
 
-import * as Sentry from "@sentry/nextjs";
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import {
   Card,
@@ -39,10 +39,17 @@ import {
 import { WaitlistBadge } from "@/components/waitlist/WaitlistBadge";
 import { SlotAvailableModal } from "@/components/waitlist/SlotAvailableModal";
 import { format, formatDistanceToNow } from "date-fns";
+import type { WaitlistStatus } from "@prisma/client";
+import { createConsulteeQueries } from "@/lib/dashboard-queries";
+import { waitlistStatusBadge } from "@/lib/labels/session-labels";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { EmptyState } from "@/components/dashboard/DataCard";
+import { Skeleton } from "@/components/ui/skeleton";
 
 interface WaitlistEntry {
   id: string;
-  status: "WAITING" | "NOTIFIED";
+  /** Full enum — the API is not limited to the waiting states. */
+  status: WaitlistStatus;
   position: number | null;
   totalWaiting?: number;
   joinedAt: string;
@@ -111,12 +118,10 @@ const getScheduledDate = (entry: WaitlistEntry): Date | null => {
 export default function WaitlistsPage() {
   const router = useRouter();
   const { toast } = useToast();
-  const [isLoading, setIsLoading] = useState(true);
-  const [entries, setEntries] = useState<{
-    webinars: WaitlistEntry[];
-    classes: WaitlistEntry[];
-  }>({ webinars: [], classes: [] });
-  const [leavingId, setLeavingId] = useState<string | null>(null);
+  const queryClient = useQueryClient();
+  const params = useParams<{ consulteeId: string }>();
+  const consulteeId = params?.consulteeId ?? "";
+
   const [selectedNotifiedEntry, setSelectedNotifiedEntry] =
     useState<WaitlistEntry | null>(null);
   const [leaveConfirmEntry, setLeaveConfirmEntry] =
@@ -128,39 +133,65 @@ export default function WaitlistsPage() {
     "soonest",
   );
 
+  const waitlistsQuery = createConsulteeQueries(consulteeId).waitlists;
+  const {
+    data,
+    isLoading,
+    isError,
+    refetch,
+  } = useQuery(waitlistsQuery);
+
+  const entries = useMemo(
+    () => ({
+      webinars: (data?.webinars ?? []) as unknown as WaitlistEntry[],
+      classes: (data?.classes ?? []) as unknown as WaitlistEntry[],
+    }),
+    [data],
+  );
+
+  // Surface the booking modal once when a NOTIFIED entry arrives.
   useEffect(() => {
-    const fetchWaitlists = async () => {
-      try {
-        const response = await fetch("/api/waitlist");
-        const result = await response.json();
+    const notifiedEntry = [...entries.webinars, ...entries.classes].find(
+      (e) => e.status === "NOTIFIED",
+    );
+    if (notifiedEntry) {
+      setSelectedNotifiedEntry(notifiedEntry);
+    }
+  }, [entries]);
 
-        if (result.success) {
-          setEntries(result.data);
-
-          // Check for any NOTIFIED entries and show modal
-          const notifiedEntry = [
-            ...result.data.webinars,
-            ...result.data.classes,
-          ].find((e: WaitlistEntry) => e.status === "NOTIFIED");
-          if (notifiedEntry) {
-            setSelectedNotifiedEntry(notifiedEntry);
-          }
-        }
-      } catch (error) {
-        Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
-        console.error("Error fetching waitlists:", error);
-        toast({
-          title: "Error",
-          description: "Failed to load your waitlists",
-          variant: "destructive",
-        });
-      } finally {
-        setIsLoading(false);
+  const leaveMutation = useMutation({
+    mutationFn: async (waitlistId: string) => {
+      const response = await fetch(`/api/waitlist/${waitlistId}`, {
+        method: "DELETE",
+      });
+      const result = await response.json();
+      if (!result.success) {
+        throw new Error(result.error || "Failed to leave waitlist");
       }
-    };
-
-    fetchWaitlists();
-  }, [toast]);
+      return waitlistId;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: ["consultee-waitlists", consulteeId],
+      });
+      toast({
+        title: "Left waitlist",
+        description: "You have been removed from the waitlist",
+        variant: "success",
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "Error",
+        description:
+          error instanceof Error ? error.message : "Failed to leave waitlist",
+        variant: "destructive",
+      });
+    },
+  });
+  const leavingId = leaveMutation.isPending
+    ? leaveMutation.variables
+    : null;
 
   // Step 1 — Split into upcoming vs ended, sorted by date or position
   const { upcomingWebinars, endedWebinars, upcomingClasses, endedClasses } =
@@ -208,43 +239,8 @@ export default function WaitlistsPage() {
       };
     }, [entries, sortOrder]);
 
-  const handleLeaveWaitlist = async (waitlistId: string) => {
-    setLeavingId(waitlistId);
-
-    try {
-      const response = await fetch(`/api/waitlist/${waitlistId}`, {
-        method: "DELETE",
-      });
-
-      const result = await response.json();
-
-      if (result.success) {
-        // Remove from local state
-        setEntries((prev) => ({
-          webinars: prev.webinars.filter((e) => e.id !== waitlistId),
-          classes: prev.classes.filter((e) => e.id !== waitlistId),
-        }));
-        toast({
-          title: "Left waitlist",
-          description: "You have been removed from the waitlist",
-          variant: "success",
-        });
-      } else {
-        toast({
-          title: "Error",
-          description: result.error || "Failed to leave waitlist",
-          variant: "destructive",
-        });
-      }
-    } catch {
-      toast({
-        title: "Error",
-        description: "Failed to leave waitlist",
-        variant: "destructive",
-      });
-    } finally {
-      setLeavingId(null);
-    }
+  const handleLeaveWaitlist = (waitlistId: string) => {
+    leaveMutation.mutate(waitlistId);
   };
 
   const renderEntry = (
@@ -312,7 +308,11 @@ export default function WaitlistsPage() {
                         <Bell className="h-3 w-3 mr-1" />
                         Spot Available!
                       </Badge>
-                    ) : (
+                    ) : entry.status === "WAITING" ? (
+                      // Only the WAITING state carries a queue position —
+                      // BOOKED/EXPIRED/CANCELLED/SKIPPED render their own
+                      // pill (previously they fell through here and showed
+                      // a position badge with a possibly-null position).
                       <div className="flex items-center gap-1.5">
                         <WaitlistBadge
                           position={entry.position}
@@ -324,6 +324,12 @@ export default function WaitlistsPage() {
                           </span>
                         )}
                       </div>
+                    ) : (
+                      <StatusBadge
+                        {...waitlistStatusBadge(entry.status)}
+                        withDot
+                        size="sm"
+                      />
                     )}
                   </div>
                 </div>
@@ -476,9 +482,27 @@ export default function WaitlistsPage() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground/70" />
+      <div className="space-y-4">
+        <Skeleton className="h-24 w-full rounded-xl" />
+        {[1, 2, 3].map((i) => (
+          <Skeleton key={i} className="h-36 w-full rounded-xl" />
+        ))}
       </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <EmptyState
+        icon={Users}
+        title="Couldn't load your waitlists"
+        description="Something went wrong while fetching your waitlist entries."
+        action={
+          <Button variant="outline" onClick={() => refetch()}>
+            Retry
+          </Button>
+        }
+      />
     );
   }
 
