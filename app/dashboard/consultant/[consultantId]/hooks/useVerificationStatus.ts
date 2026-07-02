@@ -33,7 +33,7 @@ export interface VerificationStatusData {
   } | null;
 }
 
-async function fetchVerificationStatus(): Promise<VerificationStatusData> {
+async function fetchVerificationStatus(): Promise<VerificationStatusData | null> {
   const res = await fetch("/api/verification/status");
   if (!res.ok) throw new Error("Failed to fetch verification status");
   const json = await res.json();
@@ -41,6 +41,9 @@ async function fetchVerificationStatus(): Promise<VerificationStatusData> {
     throw new Error(json.error ?? "Failed to fetch verification status");
   }
   const data = json.data;
+  // A consultant who has never submitted (or a payload without data) must
+  // resolve to null, not crash on data.latestRequest.
+  if (!data) return null;
   return {
     ...data,
     latestRequest: data.latestRequest
@@ -76,11 +79,17 @@ async function fetchVerificationStatus(): Promise<VerificationStatusData> {
  * fetched them). The Settings verification section consumes the same query,
  * so the two surfaces can never disagree again.
  */
-export function useVerificationStatus(enabled = true) {
+export function useVerificationStatus(
+  userId: string | null | undefined,
+  enabled = true,
+) {
   return useQuery({
-    queryKey: ["verification-status"],
+    // userId in the key: the endpoint reads the SIGNED-IN user, so a static
+    // key would serve one user's cached verification to the next account
+    // signing in on the same device.
+    queryKey: ["verification-status", userId],
     queryFn: fetchVerificationStatus,
-    enabled,
+    enabled: enabled && !!userId,
     staleTime: 60_000,
     retry: 2,
   });

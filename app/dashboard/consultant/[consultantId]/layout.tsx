@@ -409,8 +409,17 @@ export default function ConsultantLayout({
   const verificationStatus = consultantData?.verificationStatus as
     | VerificationStatus
     | undefined;
+  // ADMIN/STAFF inspecting someone's dashboard must never be gated (and
+  // /api/verification/status reads the SIGNED-IN user, which would be the
+  // admin's own — mismatched — record). Gate + fetch only for the owner.
+  const isOwnDashboard =
+    userDetails?.role === "CONSULTANT" &&
+    userDetails?.consultantProfileId === consultantId;
   const { data: verification } = useVerificationStatus(
-    !!verificationStatus && verificationStatus !== "VERIFIED",
+    userId,
+    !!verificationStatus &&
+      verificationStatus !== "VERIFIED" &&
+      !!isOwnDashboard,
   );
 
   // Unread badge count for the Chats nav item
@@ -562,11 +571,12 @@ export default function ConsultantLayout({
   // in. Settings stays reachable in every state (it hosts the fix).
   const isSettingsPage = pathname.includes("/settings");
   const showRejectedGate =
-    verificationStatus === "REJECTED" && !isSettingsPage;
+    verificationStatus === "REJECTED" && !isSettingsPage && !!isOwnDashboard;
   const showVerificationBanner =
     (verificationStatus === "PENDING_VERIFICATION" ||
       verificationStatus === "UNDER_REVIEW") &&
-    !isSettingsPage;
+    !isSettingsPage &&
+    !!isOwnDashboard;
 
   return (
     <NovuProvider>
