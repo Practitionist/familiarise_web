@@ -208,7 +208,11 @@ export function AvailabilitySection({
             {Object.keys(customSlots)
               .sort((a, b) => a.localeCompare(b))
               .map((dateString) => {
-                const date = new Date(dateString);
+                // Parse YYYY-MM-DD as a LOCAL date — new Date("YYYY-MM-DD")
+                // is UTC midnight, which renders as the PREVIOUS day for
+                // users in timezones behind UTC.
+                const [year, month, day] = dateString.split("-").map(Number);
+                const date = new Date(year, month - 1, day);
                 return (
                   <AvailabilityGrid
                     key={dateString}
