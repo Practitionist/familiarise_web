@@ -18,7 +18,7 @@ import {
 import {
   ScopedListTable,
   type Column,
-} from "@/components/enterprise/ScopedListTable";
+} from "@/components/dashboard/ScopedListTable";
 
 interface TrialRow {
   id: string;

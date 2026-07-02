@@ -1,11 +1,12 @@
 "use client";
 
 /**
- * ScopedListTable — generic table wrapper used by all 5 org dashboard
- * list pages introduced for #674 / B1-hybrid (appointments, waitlist,
- * trials, documents, recordings). Each consumer passes its own column
- * config + row renderer; this component handles the loading state,
- * empty state, pagination, and pages-of-X count.
+ * ScopedListTable — generic table wrapper shared by dashboard list pages
+ * (originally the org list pages from #674 / B1-hybrid: appointments,
+ * waitlist, trials, documents, recordings; now also the personal
+ * dashboards). Each consumer passes its own column config + row renderer;
+ * this component handles the loading state, empty state, pagination, and
+ * pages-of-X count.
  *
  * Deliberately minimal — no virtualization, no sorting in v1. Org
  * dashboards rarely have >a few thousand rows; we ship pagination via

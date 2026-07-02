@@ -178,8 +178,8 @@ export function CollapsibleSidebar({
       )}
     >
       {/* Header: single-row layout, fixed h-14 to pixel-match the
-          OrgContextBar's h-14 so the sidebar / top-bar border intersection
-          lines up cleanly at the crossroad. */}
+          DashboardContextBar's h-14 so the sidebar / top-bar border
+          intersection lines up cleanly at the crossroad. */}
       <div className="border-b border-border">
         <div
           className={cn(
