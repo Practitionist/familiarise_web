@@ -46,13 +46,10 @@ import {
 } from "@/components/ui/tooltip";
 import Link from "next/link";
 import { cn } from "@/utils/tailwind";
-import { useRouter } from "next/navigation";
-import { useStreamVideoClient } from "@stream-io/video-react-sdk";
-import {
-  getOrCreateAppointmentMeeting,
-  type MeetingAppointment,
-  type MeetingSlot,
-} from "@/lib/meeting";
+// #248: no static Stream SDK / lib/meeting import — the shared hook
+// lazy-loads both at click time. Type-only imports are erased.
+import type { MeetingSlot } from "@/lib/meeting";
+import { useLazyJoinMeeting } from "../shared/hooks/useLazyJoinMeeting";
 import {
   TrialScheduleCalendar,
   SelectedSlot,
@@ -135,8 +132,7 @@ export function TrialsTab() {
   const params = useParams();
   const consultantId = params.consultantId as string;
   const { toast } = useToast();
-  const router = useRouter();
-  const client = useStreamVideoClient();
+  const joinMeeting = useLazyJoinMeeting();
 
   const [trials, setTrials] = useState<TrialSession[]>([]);
   const [loading, setLoading] = useState(true);
@@ -420,16 +416,6 @@ export function TrialsTab() {
   };
 
   const handleJoinMeeting = async (trial: TrialSession) => {
-    if (!client) {
-      toast({
-        title: "Not signed in",
-        description:
-          "Video client not initialized. Please sign in to join the meeting.",
-        variant: "destructive",
-      });
-      return;
-    }
-
     if (!trial.appointment?.slotsOfAppointment?.[0]) {
       toast({
         title: "Unable to join",
@@ -440,37 +426,18 @@ export function TrialsTab() {
     }
 
     setIsJoining(trial.id);
-    try {
-      const slot = trial.appointment.slotsOfAppointment[0];
-      // Create a minimal appointment object for the meeting helper
-      const appointmentForMeeting: MeetingAppointment = {
+    const slot = trial.appointment.slotsOfAppointment[0];
+    // Minimal appointment shape for the meeting helper; the shared hook
+    // lazy-loads the Stream SDK at click time (#248).
+    const navigating = await joinMeeting(
+      {
         id: trial.appointment.id,
         appointmentType: "TRIAL",
         slotsOfAppointment: trial.appointment.slotsOfAppointment,
-      };
-
-      const meetingId = await getOrCreateAppointmentMeeting(
-        client,
-        appointmentForMeeting,
-        slot as MeetingSlot,
-      );
-
-      toast({
-        title: "Joining meeting",
-        description: "You will now be redirected to the meeting room.",
-      });
-
-      router.push(`/meetings/${meetingId}`);
-    } catch (error) {
-      console.error("Error joining meeting:", error);
-      toast({
-        title: "Error joining meeting",
-        description:
-          error instanceof Error ? error.message : "Unknown error occurred",
-        variant: "destructive",
-      });
-      setIsJoining(null);
-    }
+      },
+      slot as MeetingSlot,
+    );
+    if (!navigating) setIsJoining(null);
   };
 
   const handleRefresh = async () => {

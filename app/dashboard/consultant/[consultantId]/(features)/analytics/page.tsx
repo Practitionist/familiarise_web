@@ -1,27 +1,49 @@
-"use client";
+import {
+  HydrationBoundary,
+  QueryClient,
+  dehydrate,
+} from "@tanstack/react-query";
+import AnalyticsPageClient from "./AnalyticsPageClient";
+import { getConsultantAppointments } from "@/lib/data/consultant-appointments";
+import { buildConsultantEarningsPayload } from "@/lib/data/consultant-earnings-analytics";
 
-import { BarChart3 } from "lucide-react";
+type PageProps = {
+  params: Promise<{ consultantId: string }>;
+};
 
-export default function AnalyticsPage() {
+export default async function AnalyticsPage({ params }: Readonly<PageProps>) {
+  const { consultantId } = await params;
+  const queryClient = new QueryClient();
+
+  // SSR prefetch both analytics reads (org home-page pattern). Keys MUST
+  // match AnalyticsPageClient's useQuery keys exactly or hydration won't
+  // apply. Payload parity is guaranteed structurally: the earnings payload
+  // comes from the same buildConsultantEarningsPayload assembler the API
+  // route serves, and the appointments read reuses the #890 prefetch
+  // (personal scope — deterministic, session-independent). allSettled so a
+  // failed read degrades to a client-side fetch rather than crashing.
+  await Promise.allSettled([
+    queryClient.prefetchQuery({
+      queryKey: ["consultant-earnings-analytics", consultantId],
+      queryFn: () =>
+        buildConsultantEarningsPayload(consultantId, {
+          limit: 1,
+          includeMonthly: true,
+        }),
+    }),
+    queryClient.prefetchQuery({
+      queryKey: ["consultant-appointments", consultantId, "personal"],
+      queryFn: () =>
+        getConsultantAppointments({
+          consultantProfileId: consultantId,
+          orgScopeFilter: { organizationId: null },
+        }),
+    }),
+  ]);
+
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-zinc-900">Analytics</h1>
-        <p className="text-sm text-zinc-500 mt-1">
-          Track your performance and insights.
-        </p>
-      </div>
-
-      <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-zinc-300 bg-white p-16 text-center">
-        <div className="flex h-14 w-14 items-center justify-center rounded-full bg-zinc-100 mb-4">
-          <BarChart3 className="h-7 w-7 text-zinc-400" />
-        </div>
-        <h2 className="text-lg font-semibold text-zinc-900">Coming Soon</h2>
-        <p className="mt-2 max-w-sm text-sm text-zinc-500">
-          Analytics and insights for your consultations, earnings, and audience
-          engagement will be available here.
-        </p>
-      </div>
-    </div>
+    <HydrationBoundary state={dehydrate(queryClient)}>
+      <AnalyticsPageClient consultantId={consultantId} />
+    </HydrationBoundary>
   );
 }

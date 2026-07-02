@@ -4,13 +4,13 @@ import * as Sentry from "@sentry/nextjs";
 import React from "react";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
-import { PageHeader } from "@/components/ui/page-header";
+import { DashboardHeader } from "@/components/dashboard/DashboardShell";
 import { useParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { ParticipantUser } from "@/types/participants";
@@ -142,25 +142,23 @@ export default function SubscriptionParticipantsPage() {
   );
 
   return (
-    <div className="container mx-auto py-8">
-      <Card>
-        <CardHeader>
+    <>
+      <DashboardHeader
+        title={`${subscription.subscriptionPlan.title} — Participants`}
+        subtitle={`${participants.length}/2 participants (1-on-1 subscription)`}
+        actions={
           <Link
             href={`/dashboard/consultant/${params.consultantId}/appointments`}
             passHref
-            className="mb-4"
           >
             <Button variant="outline" size="sm">
               <ArrowLeft className="mr-2 h-4 w-4" /> Back to Appointments
             </Button>
           </Link>
-          <PageHeader
-            headingAs="h1"
-            title={`${subscription.subscriptionPlan.title} - Participants`}
-            description={`${participants.length}/2 participants (1-on-1 subscription)`}
-          />
-        </CardHeader>
-        <CardContent>
+        }
+      />
+      <Card className="mt-6">
+        <CardContent className="pt-6">
           <ResponsiveTable<ParticipantUser>
             columns={columns}
             rows={participants}
@@ -170,6 +168,6 @@ export default function SubscriptionParticipantsPage() {
           />
         </CardContent>
       </Card>
-    </div>
+    </>
   );
 }

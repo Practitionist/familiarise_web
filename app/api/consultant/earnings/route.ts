@@ -8,11 +8,7 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { EarningStatus } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
-import {
-  getConsultantEarningsSummary,
-  getConsultantEarnings,
-  checkPayoutEligibility,
-} from "@/lib/payments/payouts";
+import { buildConsultantEarningsPayload } from "@/lib/data/consultant-earnings-analytics";
 
 /**
  * GET /api/consultant/earnings
@@ -42,34 +38,18 @@ export async function GET(req: NextRequest) {
     const status = searchParams.get("status") as EarningStatus | null;
     const limit = parseInt(searchParams.get("limit") || "20");
     const offset = parseInt(searchParams.get("offset") || "0");
+    // Additive: ?includeMonthly=1 appends trailing-6-month buckets for the
+    // analytics page. Absent param = response unchanged.
+    const includeMonthly = searchParams.get("includeMonthly") === "1";
 
-    // Get earnings summary
-    const summary = await getConsultantEarningsSummary(consultantProfile.id);
-
-    // Get payout eligibility
-    const eligibility = await checkPayoutEligibility(consultantProfile.id);
-
-    // Get earnings history
-    const { earnings, total, hasMore } = await getConsultantEarnings(
-      consultantProfile.id,
-      {
-        status: status || undefined,
-        limit,
-        offset,
-      },
-    );
-
-    return NextResponse.json({
-      summary,
-      eligibility,
-      earnings,
-      pagination: {
-        total,
-        limit,
-        offset,
-        hasMore,
-      },
+    const payload = await buildConsultantEarningsPayload(consultantProfile.id, {
+      status: status || undefined,
+      limit,
+      offset,
+      includeMonthly,
     });
+
+    return NextResponse.json(payload);
   } catch (error) {
     Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "consultant" } });
     console.error("Error fetching earnings:", error);

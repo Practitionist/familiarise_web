@@ -1,6 +1,7 @@
 "use client";
 
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
+import { DashboardHeader } from "@/components/dashboard/DashboardShell";
 import { useOrgScope } from "@/hooks/useOrgScope";
 import {
   OrgContextFilter,
@@ -24,15 +25,20 @@ import { RequestSlotAllocationTab } from "./RequestSlotAllocationTab";
  * removing the double loading phase.
  */
 export default function RequestsPage() {
-  // S1 (B1-personal-retrofit): the OrgContextFilter dropdown lets a
-  // consultant who works for multiple orgs toggle between "Personal" /
-  // "<org>" / "All" (drives the ?orgScope= URL param via useOrgScope).
-  // Self-hides for consultants with zero org memberships. Note: the tab's
-  // /api/bookings/* fetches don't consume orgScope yet — wiring the scope
-  // into those endpoints is tracked follow-up work, not a regression of
-  // this page (the deleted query was the only thing that ever read it,
-  // and its data went nowhere).
-  const { scope, setScope } = useOrgScope();
+  // The OrgContextFilter dropdown lets a consultant who works for multiple
+  // orgs toggle between "Personal" / "<org>" / "All". The resolved scope is
+  // threaded into the tab's /api/bookings/* fetches as ?orgScope= (filtered
+  // server-side via the denormalized Appointment.organizationId) — the
+  // dropdown used to be a documented no-op here. Org members default to
+  // "All activity" so panel experts land on the union view, matching the
+  // appointments page.
+  const { scope, setScope } = useOrgScope({ defaultForOrgMember: "all" });
+  const orgScopeParam =
+    scope.kind === "personal"
+      ? "personal"
+      : scope.kind === "all"
+        ? "all"
+        : scope.orgId;
 
   const filterValue: OrgContextFilterValue =
     scope.kind === "personal"
@@ -52,10 +58,20 @@ export default function RequestsPage() {
 
   return (
     <DashboardErrorBoundary>
-      <div className="mb-4 flex justify-end">
-        <OrgContextFilter value={filterValue} onChange={handleFilterChange} />
+      <DashboardHeader
+        title="Requests"
+        subtitle="Pending booking requests awaiting slot allocation"
+        actions={
+          <OrgContextFilter value={filterValue} onChange={handleFilterChange} />
+        }
+      />
+      <div className="pt-6">
+        <RequestSlotAllocationTab
+          type="all"
+          onUpdate={handleUpdate}
+          orgScope={orgScopeParam}
+        />
       </div>
-      <RequestSlotAllocationTab type="all" onUpdate={handleUpdate} />
     </DashboardErrorBoundary>
   );
 }
