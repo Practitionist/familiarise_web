@@ -28,6 +28,7 @@ import {
   Building2,
 } from "lucide-react";
 import { useSession } from "@/lib/auth-client";
+import { resolveSponsoringOrgName as resolveSponsoringOrgNameShared } from "@/lib/labels/session-labels";
 import {
   Tooltip,
   TooltipContent,
@@ -99,17 +100,11 @@ export function HomeTab({
   const { data: session } = useSession();
   // Sponsoring-org lookup for the indigo "Sponsored · <Org>" badge —
   // shows on org-funded appointments only, mirroring the consultee
-  // dashboard convention.
+  // dashboard convention. Resolution lives in session-labels so every
+  // surface renders the same name.
   const orgMemberships = session?.user?.organizationMemberships ?? [];
-  const resolveSponsoringOrgName = (
-    orgId: string | null | undefined,
-  ): string | null => {
-    if (!orgId) return null;
-    return (
-      orgMemberships.find((m) => m.organizationId === orgId)?.organizationName ??
-      "the organization"
-    );
-  };
+  const resolveSponsoringOrgName = (orgId: string | null | undefined) =>
+    resolveSponsoringOrgNameShared(orgId, orgMemberships);
 
   const handleJoinMeeting = async (
     appointment: TAppointment,

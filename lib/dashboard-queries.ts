@@ -22,6 +22,7 @@ import type {
   PlannerWebinarEvent,
   PlannerClassEvent,
 } from "@/app/dashboard/consultant/[consultantId]/(features)/planner/types/event";
+import type { RecordingData } from "@/app/dashboard/consultant/[consultantId]/(features)/recordings/components/RecordingCard";
 
 // =============================================================================
 // Types
@@ -31,6 +32,19 @@ interface PlannerData {
   webinars: PlannerWebinarEvent[];
   classes: PlannerClassEvent[];
   participantCounts: Record<string, number>;
+}
+
+export interface ConsultantRecordingsParams {
+  type?: "webinar" | "class" | null;
+  page?: number;
+  limit?: number;
+  search?: string;
+}
+
+interface ConsultantRecordingsResponse {
+  recordings: RecordingData[];
+  totalPages?: number;
+  total?: number;
 }
 
 // =============================================================================
@@ -86,6 +100,21 @@ export const consultantFetchers = {
         : `/api/dashboard/consultant/${consultantId}/documents`,
       "Documents fetch failed",
     ),
+
+  recordings: (
+    consultantId: string,
+    { type, page = 1, limit = 12, search }: ConsultantRecordingsParams = {},
+  ) => {
+    const params = new URLSearchParams();
+    if (type) params.set("type", type);
+    params.set("page", String(page));
+    params.set("limit", String(limit));
+    if (search) params.set("search", search);
+    return fetchWithErrorHandling<ConsultantRecordingsResponse>(
+      `/api/consultants/${consultantId}/recordings?${params.toString()}`,
+      "Recordings fetch failed",
+    );
+  },
 };
 
 // Consultee fetchers
@@ -218,6 +247,24 @@ export function createConsultantQueries(
       gcTime: GC_TIME,
       retry: 2,
     },
+
+    // Recordings (server-paginated). Unlike its static siblings this entry
+    // is a function: page/type/search come from component state, and each
+    // combination must be its own cache entry. The recordings endpoint has
+    // no org-scope support, so scopeKey is deliberately absent from the key.
+    recordings: (params: ConsultantRecordingsParams = {}) => ({
+      queryKey: [
+        "consultant-recordings",
+        consultantId,
+        params.type ?? "all",
+        params.page ?? 1,
+        params.search ?? "",
+      ] as const,
+      queryFn: () => consultantFetchers.recordings(consultantId, params),
+      staleTime: STALE_TIMES.SHORT,
+      gcTime: GC_TIME,
+      retry: 2,
+    }),
   };
 }
 

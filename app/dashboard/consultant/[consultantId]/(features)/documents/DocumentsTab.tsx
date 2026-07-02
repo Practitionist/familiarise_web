@@ -24,7 +24,9 @@ import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
-import { PageHeader } from "@/components/ui/page-header";
+import { DashboardHeader } from "@/components/dashboard/DashboardShell";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { documentReviewStatusBadge } from "@/lib/labels/session-labels";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -48,8 +50,6 @@ import {
 import { ConsultantResponseUpload } from "./ConsultantResponseUpload";
 import {
   formatFileSize,
-  getStatusColor,
-  getStatusLabel,
   getDocumentTypeIcon,
 } from "@/app/dashboard/shared/utils/document-utils";
 
@@ -59,7 +59,7 @@ import {
 const APPOINTMENT_TYPES = ["Consultation", "Subscription"] as const;
 
 // The reviewable document statuses, single-sourced so the status filter and the
-// single + bulk review dialogs can't drift. Labels come from getStatusLabel().
+// single + bulk review dialogs can't drift. Labels come from session-labels.
 const REVIEW_STATUSES = [
   "PENDING",
   "IN_REVIEW",
@@ -229,7 +229,7 @@ export function DocumentsTab({
         title: "Bulk Review Complete",
         description: failed
           ? `${updated} updated, ${failed} not updated`
-          : `${updated} document${updated !== 1 ? "s" : ""} updated to ${getStatusLabel(newStatus)}`,
+          : `${updated} document${updated !== 1 ? "s" : ""} updated to ${documentReviewStatusBadge(newStatus).label}`,
         variant: failed ? "destructive" : "default",
       });
 
@@ -292,7 +292,7 @@ export function DocumentsTab({
 
       toast({
         title: "Review Updated",
-        description: `Document review status updated to ${getStatusLabel(reviewStatus)}`,
+        description: `Document review status updated to ${documentReviewStatusBadge(reviewStatus).label}`,
       });
 
       setReviewDialogOpen(false);
@@ -450,12 +450,7 @@ export function DocumentsTab({
       header: "Status",
       cell: (document) => (
         <div>
-          <Badge
-            variant="secondary"
-            className={getStatusColor(document.reviewStatus)}
-          >
-            {getStatusLabel(document.reviewStatus)}
-          </Badge>
+          <StatusBadge {...documentReviewStatusBadge(document.reviewStatus)} />
           {document.reviewedAt && (
             <div className="mt-1 text-xs text-muted-foreground">
               Reviewed {format(new Date(document.reviewedAt), "MMM d, yyyy")}
@@ -496,12 +491,11 @@ export function DocumentsTab({
   );
 
   return (
-    <div className="overflow-hidden bg-card p-4 text-card-foreground sm:p-6">
-      <PageHeader
-        className="mb-6"
+    <>
+      <DashboardHeader
         title="Documents For Review"
-        description="Review documents submitted by your consultees and subscribers"
-        badge={
+        subtitle="Review documents submitted by your consultees and subscribers"
+        actions={
           <Badge variant="secondary" className="text-sm">
             {debouncedSearch && filteredDocuments.length !== documents.length
               ? `${filteredDocuments.length} / ${totalCount}`
@@ -510,6 +504,7 @@ export function DocumentsTab({
         }
       />
 
+      <div className="overflow-hidden bg-card p-4 text-card-foreground sm:p-6">
       {/* Search bar and filter dropdowns — stack full-width on phones */}
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <div className="relative w-full min-w-0 sm:w-auto sm:max-w-sm sm:flex-1">
@@ -537,7 +532,7 @@ export function DocumentsTab({
             <SelectItem value="all">All Statuses</SelectItem>
             {REVIEW_STATUSES.map((s) => (
               <SelectItem key={s} value={s}>
-                {getStatusLabel(s)}
+                {documentReviewStatusBadge(s).label}
               </SelectItem>
             ))}
           </SelectContent>
@@ -677,7 +672,7 @@ export function DocumentsTab({
                 <SelectContent>
                   {REVIEW_STATUSES.map((s) => (
                     <SelectItem key={s} value={s}>
-                      {getStatusLabel(s)}
+                      {documentReviewStatusBadge(s).label}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -760,7 +755,7 @@ export function DocumentsTab({
                 <SelectContent>
                   {REVIEW_STATUSES.map((s) => (
                     <SelectItem key={s} value={s}>
-                      {getStatusLabel(s)}
+                      {documentReviewStatusBadge(s).label}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -791,12 +786,10 @@ export function DocumentsTab({
                       className="flex items-center justify-between text-sm py-1"
                     >
                       <span className="truncate mr-2">{doc.originalName}</span>
-                      <Badge
-                        variant="secondary"
-                        className={`shrink-0 ${getStatusColor(doc.reviewStatus)}`}
-                      >
-                        {getStatusLabel(doc.reviewStatus)}
-                      </Badge>
+                      <StatusBadge
+                        {...documentReviewStatusBadge(doc.reviewStatus)}
+                        size="sm"
+                      />
                     </div>
                   ))}
               </div>
@@ -835,6 +828,7 @@ export function DocumentsTab({
           onSuccess={onRefresh}
         />
       )}
-    </div>
+      </div>
+    </>
   );
 }
