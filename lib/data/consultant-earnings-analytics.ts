@@ -28,7 +28,11 @@ export async function getConsultantMonthlyEarnings(
   consultantProfileId: string,
   months = 6,
 ): Promise<MonthlyEarning[]> {
-  const since = startOfMonth(subMonths(new Date(), months - 1));
+  // One clock read for the whole computation — repeated new Date() calls
+  // could straddle a month rollover and misalign the buckets vs the query
+  // window.
+  const now = new Date();
+  const since = startOfMonth(subMonths(now, months - 1));
   const rows = await prisma.consultantEarnings.findMany({
     where: { consultantProfileId, createdAt: { gte: since } },
     select: { createdAt: true, consultantSharePaise: true },
@@ -36,7 +40,7 @@ export async function getConsultantMonthlyEarnings(
 
   const buckets = new Map<string, { totalPaise: number; count: number }>();
   for (let i = months - 1; i >= 0; i--) {
-    buckets.set(format(subMonths(new Date(), i), "yyyy-MM"), {
+    buckets.set(format(subMonths(now, i), "yyyy-MM"), {
       totalPaise: 0,
       count: 0,
     });
@@ -45,7 +49,9 @@ export async function getConsultantMonthlyEarnings(
     const bucket = buckets.get(format(row.createdAt, "yyyy-MM"));
     if (!bucket) continue;
     // consultantSharePaise is BigInt — convert before JSON serialization.
-    bucket.totalPaise += Number(row.consultantSharePaise ?? 0);
+    // BigInt fallback keeps the ?? branch type-consistent (0n literal needs
+    // ES2020 target, which this tsconfig doesn't set).
+    bucket.totalPaise += Number(row.consultantSharePaise ?? BigInt(0));
     bucket.count += 1;
   }
 

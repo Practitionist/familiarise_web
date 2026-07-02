@@ -34,6 +34,7 @@ import { DataCard, EmptyState } from "@/components/dashboard/DataCard";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { createConsultantQueries } from "@/lib/dashboard-queries";
+import { useSession } from "@/lib/auth-client";
 import { getAppointmentStatus } from "../../utils/appointmentHelpers";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import type { MonthlyEarning } from "@/lib/data/consultant-earnings-analytics";
@@ -58,6 +59,17 @@ const monthLabel = (month: string) =>
 export default function AnalyticsPageClient({
   consultantId,
 }: Readonly<{ consultantId: string }>) {
+  const { data: session } = useSession();
+  // GET /api/consultant/earnings is strictly session-scoped (it resolves
+  // the profile from the signed-in user), while the SSR prefetch keys this
+  // cache entry by the URL's consultantId. For a privileged viewer
+  // (ADMIN/STAFF on someone else's dashboard) a client refetch would fetch
+  // the WRONG record — so refetching is gated to the profile owner and
+  // non-owners render the server-prefetched data only.
+  const isOwnDashboard =
+    (session?.user as { consultantProfileId?: string } | undefined)
+      ?.consultantProfileId === consultantId;
+
   // queryKey MUST match the server prefetch in ./page.tsx.
   const {
     data: earningsData,
@@ -75,7 +87,15 @@ export default function AnalyticsPageClient({
     },
     staleTime: 60_000,
     retry: 2,
+    enabled: isOwnDashboard,
   });
+
+  // react-query's refetch() bypasses `enabled`, so the Retry buttons must
+  // re-apply the owner gate — otherwise a privileged viewer's retry would
+  // fetch THEIR session-scoped earnings under this consultant's cache key.
+  const retryEarnings = () => {
+    if (isOwnDashboard) void refetchEarnings();
+  };
 
   // Personal-scope appointments — same key + payload as the appointments
   // page's #890 SSR prefetch, so the two pages share one cache entry.
@@ -146,7 +166,7 @@ export default function AnalyticsPageClient({
               <Button
                 variant="outline"
                 onClick={() => {
-                  void refetchEarnings();
+                  retryEarnings();
                   void refetchAppointments();
                 }}
               >
@@ -210,11 +230,7 @@ export default function AnalyticsPageClient({
                 icon={BarChart3}
                 title="Couldn't load earnings trend"
                 action={
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => void refetchEarnings()}
-                  >
+                  <Button variant="outline" size="sm" onClick={retryEarnings}>
                     Retry
                   </Button>
                 }
@@ -252,12 +268,17 @@ export default function AnalyticsPageClient({
                       }
                     />
                     <Tooltip
-                      formatter={(value: number) =>
-                        value.toLocaleString(undefined, {
-                          style: "currency",
-                          currency: "INR",
-                          maximumFractionDigits: 0,
-                        })
+                      formatter={(value) =>
+                        // Recharts can hand the formatter undefined/arrays
+                        // on empty data points — never call toLocaleString
+                        // on a non-number.
+                        typeof value === "number"
+                          ? value.toLocaleString(undefined, {
+                              style: "currency",
+                              currency: "INR",
+                              maximumFractionDigits: 0,
+                            })
+                          : ""
                       }
                     />
                     <Bar
@@ -283,7 +304,9 @@ export default function AnalyticsPageClient({
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => void refetchEarnings()}
+                    // Session trend derives from the appointments query —
+                    // the earnings refetch was the wrong retry target.
+                    onClick={() => void refetchAppointments()}
                   >
                     Retry
                   </Button>
