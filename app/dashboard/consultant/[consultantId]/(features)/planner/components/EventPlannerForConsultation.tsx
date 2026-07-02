@@ -14,13 +14,13 @@ import {
 
 import { Button } from "@/components/ui/button";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+  ResponsiveModal,
+  ResponsiveModalContent,
+  ResponsiveModalDescription,
+  ResponsiveModalFooter,
+  ResponsiveModalHeader,
+  ResponsiveModalTitle,
+} from "@/components/ui/responsive-modal";
 import {
   Form,
   FormControl,
@@ -236,18 +236,18 @@ export function EventPlannerForConsultation({
 
   return (
     <>
-      <Dialog
+      <ResponsiveModal
         open={isOpen}
         onOpenChange={(open) => {
           if (!open) onClose();
         }}
       >
-        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="text-xl">
+        <ResponsiveModalContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+          <ResponsiveModalHeader>
+            <ResponsiveModalTitle className="text-xl">
               {initialData ? "Edit" : "Create New"} Consultation Plan
-            </DialogTitle>
-            <DialogDescription asChild>
+            </ResponsiveModalTitle>
+            <ResponsiveModalDescription asChild>
               <div className="text-sm text-muted-foreground">
                 <p>
                   {initialData
@@ -261,8 +261,8 @@ export function EventPlannerForConsultation({
                   </div>
                 )}
               </div>
-            </DialogDescription>
-          </DialogHeader>
+            </ResponsiveModalDescription>
+          </ResponsiveModalHeader>
 
           <Form {...form}>
             <form onSubmit={handleFormSubmit} className="space-y-6 py-4">
@@ -469,7 +469,7 @@ export function EventPlannerForConsultation({
                 </FormSection>
               )}
 
-              <DialogFooter className="pt-6 border-t">
+              <ResponsiveModalFooter className="pt-6 border-t">
                 <Button
                   type="button"
                   variant="outline"
@@ -481,13 +481,13 @@ export function EventPlannerForConsultation({
                 <SubmitButton isLoading={isSaving}>
                   {initialData ? "Update Plan" : "Create Plan"}
                 </SubmitButton>
-              </DialogFooter>
+              </ResponsiveModalFooter>
             </form>
           </Form>
-        </DialogContent>
-      </Dialog>
+        </ResponsiveModalContent>
+      </ResponsiveModal>
 
-      {/* Materials Upload Dialog */}
+      {/* Materials Upload ResponsiveModal */}
       {initialData?.id && (
         <PlanMaterialsUpload
           planType="consultation"

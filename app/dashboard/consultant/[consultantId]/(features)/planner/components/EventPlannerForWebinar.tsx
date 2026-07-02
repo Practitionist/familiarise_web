@@ -17,13 +17,13 @@ import {
 
 import { Button } from "@/components/ui/button";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+  ResponsiveModal,
+  ResponsiveModalContent,
+  ResponsiveModalDescription,
+  ResponsiveModalFooter,
+  ResponsiveModalHeader,
+  ResponsiveModalTitle,
+} from "@/components/ui/responsive-modal";
 import {
   Form,
   FormControl,
@@ -331,23 +331,23 @@ export function EventPlannerForWebinar({
 
   return (
     <>
-      <Dialog
+      <ResponsiveModal
         open={isOpen}
         onOpenChange={(open) => {
           if (!open) onClose();
         }}
       >
-        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="text-xl">
+        <ResponsiveModalContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+          <ResponsiveModalHeader>
+            <ResponsiveModalTitle className="text-xl">
               {initialData ? "Edit" : "Create New"} Webinar
-            </DialogTitle>
-            <DialogDescription>
+            </ResponsiveModalTitle>
+            <ResponsiveModalDescription>
               {initialData
                 ? "Update the details of your webinar."
                 : "Schedule a live group session for your audience."}
-            </DialogDescription>
-          </DialogHeader>
+            </ResponsiveModalDescription>
+          </ResponsiveModalHeader>
 
           <Form {...form}>
             <form onSubmit={handleFormSubmit} className="space-y-6 py-4">
@@ -756,7 +756,7 @@ export function EventPlannerForWebinar({
                 )}
               </FormSection>
 
-              <DialogFooter className="pt-6 border-t">
+              <ResponsiveModalFooter className="pt-6 border-t">
                 <Button
                   type="button"
                   variant="outline"
@@ -768,13 +768,13 @@ export function EventPlannerForWebinar({
                 <SubmitButton isLoading={isSaving}>
                   {initialData ? "Update Webinar" : "Create Webinar"}
                 </SubmitButton>
-              </DialogFooter>
+              </ResponsiveModalFooter>
             </form>
           </Form>
-        </DialogContent>
-      </Dialog>
+        </ResponsiveModalContent>
+      </ResponsiveModal>
 
-      {/* Materials Upload Dialog */}
+      {/* Materials Upload ResponsiveModal */}
       {initialData?.id && (
         <PlanMaterialsUpload
           planType="webinar"
