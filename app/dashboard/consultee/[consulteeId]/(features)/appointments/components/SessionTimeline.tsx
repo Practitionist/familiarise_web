@@ -134,14 +134,15 @@ export function SessionTimeline({
   // made multi-session cards read as a congested wall — the full timeline
   // is one click away behind the expander, and the card's progress bar
   // already summarises completion.
-  const focusSession =
-    sessions.find(
-      (s) => sessionStatuses.get(s.appointmentId) === "joinable",
-    ) ??
-    sessions.find(
-      (s) => sessionStatuses.get(s.appointmentId) === "upcoming",
-    ) ??
-    sessions[sessions.length - 1];
+  const focusSession = (() => {
+    let upcoming: SessionGroup | undefined;
+    for (const s of sessions) {
+      const status = sessionStatuses.get(s.appointmentId);
+      if (status === "joinable") return s;
+      if (status === "upcoming" && !upcoming) upcoming = s;
+    }
+    return upcoming ?? sessions[sessions.length - 1];
+  })();
 
   const visibleSessions =
     showExpand && !expanded && focusSession ? [focusSession] : sessions;
