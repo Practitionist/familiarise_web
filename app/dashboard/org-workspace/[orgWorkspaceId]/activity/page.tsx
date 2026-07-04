@@ -24,6 +24,9 @@ import {
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import { EmptyState } from "@/components/dashboard/DataCard";
+import { formatDistanceToNow } from "date-fns";
 
 interface ActivityRow {
   id: string;
@@ -74,19 +77,18 @@ const CATEGORY_LABEL: Record<string, string> = {
 };
 
 function timeAgo(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
-  const mins = Math.floor(diff / 60_000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 30) return `${days}d ago`;
-  return new Date(iso).toLocaleDateString("en-IN", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
+  const date = new Date(iso);
+  // Beyond 30 days a relative label ("2 months ago") loses the precision an
+  // audit feed wants — fall back to an absolute date there.
+  const days = (Date.now() - date.getTime()) / 86_400_000;
+  if (days > 30) {
+    return date.toLocaleDateString("en-IN", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    });
+  }
+  return formatDistanceToNow(date, { addSuffix: true });
 }
 
 export default function OrgWorkspaceActivityPage({
@@ -115,7 +117,37 @@ export default function OrgWorkspaceActivityPage({
       />
       <DashboardContent>
         {query.isLoading ? (
-          <p className="text-sm text-zinc-500">Loading activity…</p>
+          <Card>
+            <CardContent className="p-0">
+              <ul className="divide-y">
+                {[1, 2, 3, 4, 5].map((i) => (
+                  <li key={i} className="p-4">
+                    <Skeleton className="h-4 w-40" />
+                    <Skeleton className="mt-2 h-4 w-3/4" />
+                  </li>
+                ))}
+              </ul>
+            </CardContent>
+          </Card>
+        ) : query.isError ? (
+          <Card>
+            <CardContent className="py-10">
+              <EmptyState
+                icon={ActivityIcon}
+                title="Couldn't load activity"
+                description="We hit an error fetching your cross-org activity feed."
+                action={
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => query.refetch()}
+                  >
+                    Retry
+                  </Button>
+                }
+              />
+            </CardContent>
+          </Card>
         ) : rows.length === 0 ? (
           <Card>
             <CardContent className="py-10 text-center">

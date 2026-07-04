@@ -30,6 +30,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 
 import { DefaultLandingOrgSection } from "./components/DefaultLandingOrgSection";
 import { LocaleAndCurrencySection } from "./components/LocaleAndCurrencySection";
@@ -70,9 +71,18 @@ export default function OrgWorkspaceSettingsPage({
                 Couldn’t load preferences
               </CardTitle>
             </CardHeader>
-            <CardContent className="text-sm text-zinc-600">
-              Try refreshing the page. If the problem persists, contact
-              support — the workspace profile row may be missing.
+            <CardContent className="space-y-3 text-sm text-zinc-600">
+              <p>
+                If the problem persists, contact support — the workspace
+                profile row may be missing.
+              </p>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => settings.refetch()}
+              >
+                Retry
+              </Button>
             </CardContent>
           </Card>
         ) : (
