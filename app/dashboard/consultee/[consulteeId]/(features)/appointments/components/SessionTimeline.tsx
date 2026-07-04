@@ -101,8 +101,18 @@ export function SessionTimeline({
 }: SessionTimelineProps) {
   const [expanded, setExpanded] = useState(false);
 
-  const nonTentativeSlots = slots.filter((s) => !s.isTentative);
-  const sessions = groupSlotsBySession(nonTentativeSlots);
+  // Whole derivation chain is memoized so the session status / focus-row
+  // computations below don't recompute (and reallocate) on every unrelated
+  // render — e.g. the per-second CountdownBadge tick. Each link is keyed on
+  // the previous so a new `slots` prop cascades once.
+  const nonTentativeSlots = useMemo(
+    () => slots.filter((s) => !s.isTentative),
+    [slots],
+  );
+  const sessions = useMemo(
+    () => groupSlotsBySession(nonTentativeSlots),
+    [nonTentativeSlots],
+  );
   const showExpand = sessions.length > 1;
 
   // Pre-compute session statuses once to avoid repeated getSlotStatus calls
@@ -134,7 +144,7 @@ export function SessionTimeline({
   // made multi-session cards read as a congested wall — the full timeline
   // is one click away behind the expander, and the card's progress bar
   // already summarises completion.
-  const focusSession = (() => {
+  const focusSession = useMemo(() => {
     let upcoming: SessionGroup | undefined;
     for (const s of sessions) {
       const status = sessionStatuses.get(s.appointmentId);
@@ -142,7 +152,7 @@ export function SessionTimeline({
       if (status === "upcoming" && !upcoming) upcoming = s;
     }
     return upcoming ?? sessions[sessions.length - 1];
-  })();
+  }, [sessions, sessionStatuses]);
 
   const visibleSessions =
     showExpand && !expanded && focusSession ? [focusSession] : sessions;
