@@ -3,41 +3,35 @@
 /**
  * Client-side shell for the org-workspace (operator) dashboard. Sits inside
  * the server-side layout that runs the IDOR guard and resolves the user
- * identity props on the server (so the sidebar's displayed name is
- * the same on the server-rendered HTML and the first client render —
- * no hydration mismatch).
+ * identity props on the server (so the sidebar's displayed name is the same
+ * on the server-rendered HTML and the first client render — no hydration
+ * mismatch).
  *
- * Renders the same CollapsibleSidebar pattern as /dashboard/admin and
- * /dashboard/staff, with a top context bar carrying OrganizationSwitcher
- * + NotificationInbox.
+ * Same chrome contract as the other role dashboards: a collapsible sidebar
+ * (md+), a sticky h-14 DashboardContextBar, and a mobile bottom tab bar
+ * (<md) so the w-64 aside never crushes the content column on a phone.
  *
- * Visual differentiation from the per-org dashboard:
- *   - Sidebar carries a silver/dark-grey gradient (via the new
- *     `className` prop on CollapsibleSidebar) — this is the agreed
- *     accent location, NOT the page background.
- *   - Sidebar subtitle reads "Cross-org dashboard" so the title +
- *     subtitle pair (Operator / Cross-org dashboard) names the scope.
- *   - Page body stays on flat zinc-50 — content cards keep their
- *     existing visual weight.
- *
- * Sidebar items are intentionally lean (Overview / Activity / Billing /
- * Settings). Per-org operator surfaces (members, programs, payouts) live
- * one level deeper at /dashboard/organization/[orgId]/* and have their
- * own sidebar — this dashboard is the *cross-org* operator view.
+ * Visual differentiation from the per-org dashboard: the sidebar carries a
+ * jet-black gradient accent (via CollapsibleSidebar's `className` prop, with
+ * `dark` scoped to the aside) — the one cue that says "cross-org operator",
+ * not "inside a single org". Per-org operator surfaces (members, programs,
+ * payouts) live one level deeper at /dashboard/organization/[orgId]/*.
  */
 
+import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Activity, CreditCard, Home, Settings } from "lucide-react";
+import { Activity, CreditCard, Home, Settings, UserRound } from "lucide-react";
 
 import {
   CollapsibleSidebar,
   type CollapsibleSidebarItem,
 } from "@/components/dashboard/CollapsibleSidebar";
+import { DashboardContextBar } from "@/components/dashboard/DashboardContextBar";
+import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
+import { isActiveRoute } from "@/components/dashboard/route-active";
 import { OrganizationSwitcher } from "@/components/dashboard/OrganizationSwitcher";
 import { NotificationInbox } from "@/components/notifications/NotificationInbox";
-import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
-import { signOut } from "@/lib/auth-client";
-import { disconnectStreamClients } from "@/providers/StreamProvider";
+import { signOutEverywhere } from "@/lib/auth/sign-out";
 
 const sidebarItems: CollapsibleSidebarItem[] = [
   { name: "Overview", icon: Home, path: "home" },
@@ -45,6 +39,15 @@ const sidebarItems: CollapsibleSidebarItem[] = [
   { name: "Billing", icon: CreditCard, path: "billing" },
   { name: "Settings", icon: Settings, path: "settings" },
 ];
+
+/** Breadcrumb labels per first path segment (mirrors the sidebar + /create). */
+const PAGE_LABELS: Record<string, string> = {
+  home: "Overview",
+  activity: "Activity",
+  billing: "Billing",
+  settings: "Settings",
+  create: "New organization",
+};
 
 export function OrgWorkspaceShell({
   orgWorkspaceId,
@@ -60,57 +63,86 @@ export function OrgWorkspaceShell({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
-
-  const handleSignOut = async () => {
-    try {
-      await disconnectStreamClients();
-    } catch {
-      // Stream cleanup is best-effort.
-    }
-    signOut({
-      fetchOptions: {
-        onSuccess: () => {
-          window.location.href = "/auth/signin";
-        },
-      },
-    });
-  };
+  const basePath = `/dashboard/org-workspace/${orgWorkspaceId}`;
 
   const displayName = userName ?? "Operator";
   const avatarFallback = displayName.charAt(0).toUpperCase();
 
+  // Active page label for the context-bar breadcrumb trail. The segment is
+  // the first path part after the workspace id (defaults to the overview).
+  const segment =
+    pathname.slice(basePath.length).split("/").filter(Boolean)[0] ?? "home";
+  const pageLabel = PAGE_LABELS[segment] ?? "Overview";
+
   return (
     <div className="flex h-screen-maintenance bg-zinc-50 dark:bg-zinc-950">
-      <CollapsibleSidebar
-        items={sidebarItems}
-        basePath={`/dashboard/org-workspace/${orgWorkspaceId}`}
-        title="Operator"
-        avatarFallback={avatarFallback}
-        userName={displayName}
-        userEmail={userEmail ?? undefined}
-        userImage={userImage}
-        userSubtitle="Cross-org dashboard"
-        pathname={pathname}
-        onSignOut={handleSignOut}
-        // Jet-black sidebar accent — applied via the new className
-        // prop on CollapsibleSidebar. The shared component's text +
-        // icons are styled with `text-zinc-900 dark:text-zinc-100`
-        // pairs, so we scope `dark` mode to this aside (Tailwind uses
-        // class strategy per tailwind.config.ts:4) — every descendant's
-        // `dark:*` variants kick in, flipping copy and icons to light
-        // without affecting any other surface in the app.
-        className="dark bg-gradient-to-b from-black via-zinc-900 to-black"
-      />
+      {/* Sidebar — hidden on mobile, visible md+ */}
+      <div className="hidden md:block shrink-0">
+        <CollapsibleSidebar
+          items={sidebarItems}
+          basePath={basePath}
+          title="Operator"
+          avatarFallback={avatarFallback}
+          userName={displayName}
+          userEmail={userEmail ?? undefined}
+          userImage={userImage}
+          userSubtitle="Cross-org dashboard"
+          pathname={pathname}
+          onSignOut={() => void signOutEverywhere()}
+          // Jet-black sidebar accent via the shared className prop. The
+          // component's text/icons use `text-zinc-900 dark:text-zinc-100`
+          // pairs, so scoping `dark` to this aside (Tailwind class strategy)
+          // flips copy + icons to light without touching any other surface.
+          className="dark bg-gradient-to-b from-black via-zinc-900 to-black"
+        />
+      </div>
 
-      <main className="flex-1 overflow-y-auto">
-        <div className="sticky top-0 z-30 flex items-center justify-end gap-2 px-6 py-2 border-b border-zinc-200/50 bg-white/80 dark:bg-zinc-900/80 backdrop-blur-xl">
-          <OrganizationSwitcher />
-          <NotificationInbox />
-        </div>
-        <div className="p-6">
-          <DashboardErrorBoundary>{children}</DashboardErrorBoundary>
-        </div>
-      </main>
+      {/* Right panel: context bar + page content + mobile tabs */}
+      <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
+        <DashboardContextBar
+          identity={{
+            name: displayName,
+            image: userImage,
+            FallbackIcon: UserRound,
+          }}
+          breadcrumbs={["Operator", pageLabel]}
+          rightSlot={
+            <div className="flex items-center gap-2">
+              <OrganizationSwitcher />
+              <NotificationInbox />
+            </div>
+          }
+        />
+
+        <main className="flex-1 overflow-y-auto pb-16 md:pb-0">
+          <div className="p-6">
+            <DashboardErrorBoundary>{children}</DashboardErrorBoundary>
+          </div>
+        </main>
+
+        {/* Mobile bottom tab bar — only visible below md breakpoint */}
+        <nav className="md:hidden fixed bottom-0 left-0 right-0 z-20 bg-white dark:bg-zinc-900 border-t border-zinc-200 dark:border-zinc-800 flex">
+          {sidebarItems.map(({ name, icon: Icon, path }) => {
+            const isActive = isActiveRoute(pathname, basePath, path);
+            return (
+              <Link
+                key={path}
+                href={`${basePath}/${path}`}
+                className={`flex-1 flex flex-col items-center gap-0.5 py-2.5 text-[10px] font-medium transition-colors ${
+                  isActive
+                    ? "text-zinc-900 dark:text-zinc-100"
+                    : "text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
+                }`}
+              >
+                <Icon
+                  className={`h-5 w-5 ${isActive ? "text-zinc-900 dark:text-zinc-100" : "text-zinc-400 dark:text-zinc-500"}`}
+                />
+                {name}
+              </Link>
+            );
+          })}
+        </nav>
+      </div>
     </div>
   );
 }
