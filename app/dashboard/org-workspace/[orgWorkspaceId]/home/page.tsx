@@ -140,12 +140,12 @@ export default function OrgWorkspaceHomePage({
               <>
                 <StatCard
                   title="Organisations"
-                  value={summary?.orgsOwned.toString() ?? "0"}
+                  value={summary?.orgsOwned?.toString() ?? "0"}
                   icon={Building2}
                 />
                 <StatCard
                   title="Active members"
-                  value={summary?.totalActiveMembers.toLocaleString("en-IN") ?? "0"}
+                  value={summary?.totalActiveMembers?.toLocaleString("en-IN") ?? "0"}
                   icon={Users}
                 />
                 <StatCard

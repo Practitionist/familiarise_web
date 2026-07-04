@@ -78,6 +78,9 @@ const CATEGORY_LABEL: Record<string, string> = {
 
 function timeAgo(iso: string): string {
   const date = new Date(iso);
+  // Guard a malformed timestamp — formatDistanceToNow throws a RangeError on an
+  // Invalid Date instead of degrading gracefully.
+  if (Number.isNaN(date.getTime())) return "—";
   // Beyond 30 days a relative label ("2 months ago") loses the precision an
   // audit feed wants — fall back to an absolute date there.
   const days = (Date.now() - date.getTime()) / 86_400_000;
