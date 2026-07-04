@@ -2,7 +2,7 @@
 
 import React from "react";
 import Link, { useLinkStatus } from "next/link";
-import { Loader2 } from "lucide-react";
+import { Loader2, type LucideIcon } from "lucide-react";
 import { cn } from "@/utils/tailwind";
 
 /**
@@ -25,6 +25,32 @@ function PendingIndicator({ className }: { className?: string }) {
         className,
       )}
     />
+  );
+}
+
+/**
+ * Icon-swap variant of the pending affordance for icon-led nav items
+ * (sidebar rows, mobile tab bars): the item's own icon flips to a spinner
+ * while its enclosing Link's navigation is in flight. Same #15.5 contract —
+ * MUST be a descendant of the <Link> it reports on. Single shared
+ * implementation for every dashboard shell (sidebar, personal mobile tabs,
+ * org mobile tabs) so the subtle useLinkStatus contract can't drift.
+ */
+export function LinkPendingIcon({
+  Icon,
+  className = "h-5 w-5 flex-shrink-0",
+}: {
+  Icon: LucideIcon;
+  className?: string;
+}) {
+  const { pending } = useLinkStatus();
+  return pending ? (
+    <Loader2
+      className={cn(className, "animate-spin motion-reduce:animate-none")}
+      aria-hidden
+    />
+  ) : (
+    <Icon className={className} />
   );
 }
 

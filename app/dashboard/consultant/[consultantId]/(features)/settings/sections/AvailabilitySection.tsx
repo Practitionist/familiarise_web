@@ -51,7 +51,10 @@ function InactiveScheduleNote({
   summary: string;
 }) {
   return (
-    <div className="rounded-lg border border-dashed border-zinc-300 bg-zinc-50 p-4 text-sm text-zinc-500">
+    <div
+      aria-live="polite"
+      className="rounded-lg border border-dashed border-zinc-300 bg-zinc-50 p-4 text-sm text-zinc-500"
+    >
       <p className="font-medium text-zinc-600">{label} is inactive</p>
       <p className="mt-1">
         {summary}. Select this schedule type above to view and edit.

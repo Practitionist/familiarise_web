@@ -1,10 +1,11 @@
 "use client";
 
 import { cn } from "@/utils/tailwind";
-import { ChevronLeft, ChevronRight, ChevronDown, ChevronsUpDown, Loader2, LogOut, type LucideIcon } from "lucide-react";
-import Link, { useLinkStatus } from "next/link";
+import { ChevronLeft, ChevronRight, ChevronDown, ChevronsUpDown, LogOut, type LucideIcon } from "lucide-react";
+import Link from "next/link";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { LinkPendingIcon } from "@/components/ui/NavLink";
 import {
   Tooltip,
   TooltipContent,
@@ -124,23 +125,6 @@ export interface CollapsibleSidebarProps {
    * wins over the default `bg-white`.
    */
   className?: string;
-}
-
-/**
- * Nav item icon that flips to a spinner the moment its enclosing Link's
- * navigation starts. On a cold route (dev compile, slow RSC fetch) the
- * app-router blocks BEFORE the destination's loading.tsx can render —
- * without this, a click looks dead for seconds and then switches abruptly.
- * The spinner is the instant acknowledgement; the route skeleton takes
- * over once the segment mounts.
- */
-function NavPendingIcon({ Icon }: { Icon: LucideIcon }) {
-  const { pending } = useLinkStatus();
-  return pending ? (
-    <Loader2 className="h-5 w-5 flex-shrink-0 animate-spin" aria-hidden />
-  ) : (
-    <Icon className="h-5 w-5 flex-shrink-0" />
-  );
 }
 
 /**
@@ -387,7 +371,7 @@ export function CollapsibleSidebar({
                                       : "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:text-zinc-100 dark:hover:bg-zinc-800",
                                   )}
                                 >
-                                  <NavPendingIcon Icon={item.icon} />
+                                  <LinkPendingIcon Icon={item.icon} />
                                   {collapsed ? (
                                     <span className="sr-only">{item.name}</span>
                                   ) : (
@@ -439,7 +423,7 @@ export function CollapsibleSidebar({
                             : "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:text-zinc-100 dark:hover:bg-zinc-800",
                         )}
                       >
-                        <NavPendingIcon Icon={item.icon} />
+                        <LinkPendingIcon Icon={item.icon} />
                         {collapsed ? (
                           <span className="sr-only">{item.name}</span>
                         ) : (
