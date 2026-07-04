@@ -5,6 +5,7 @@ import { ChevronLeft, ChevronRight, ChevronDown, ChevronsUpDown, LogOut, type Lu
 import Link from "next/link";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { LinkPendingIcon } from "@/components/ui/NavLink";
 import {
   Tooltip,
   TooltipContent,
@@ -370,7 +371,7 @@ export function CollapsibleSidebar({
                                       : "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:text-zinc-100 dark:hover:bg-zinc-800",
                                   )}
                                 >
-                                  <item.icon className="h-5 w-5 flex-shrink-0" />
+                                  <LinkPendingIcon Icon={item.icon} />
                                   {collapsed ? (
                                     <span className="sr-only">{item.name}</span>
                                   ) : (
@@ -422,7 +423,7 @@ export function CollapsibleSidebar({
                             : "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:text-zinc-100 dark:hover:bg-zinc-800",
                         )}
                       >
-                        <item.icon className="h-5 w-5 flex-shrink-0" />
+                        <LinkPendingIcon Icon={item.icon} />
                         {collapsed ? (
                           <span className="sr-only">{item.name}</span>
                         ) : (
