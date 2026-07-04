@@ -29,6 +29,7 @@ import {
 import { DashboardContextBar } from "@/components/dashboard/DashboardContextBar";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { isActiveRoute } from "@/components/dashboard/route-active";
+import { LinkPendingIcon } from "@/components/ui/NavLink";
 import { OrganizationSwitcher } from "@/components/dashboard/OrganizationSwitcher";
 import { NotificationInbox } from "@/components/notifications/NotificationInbox";
 import { signOutEverywhere } from "@/lib/auth/sign-out";
@@ -64,8 +65,16 @@ export function OrgWorkspaceShell({
 }) {
   // usePathname() returns the URL-encoded path, while orgWorkspaceId (from
   // route params) is decoded — decode so basePath.slice + isActiveRoute compare
-  // like-for-like even for ids that need encoding. `?? ""` guards a null path.
-  const pathname = decodeURIComponent(usePathname() ?? "");
+  // like-for-like even for ids that need encoding. `?? ""` guards a null path;
+  // the try/catch guards a malformed %-sequence (decodeURIComponent throws a
+  // URIError) — fall back to the raw path so a bad URL never blanks the shell.
+  const rawPathname = usePathname() ?? "";
+  let pathname = rawPathname;
+  try {
+    pathname = decodeURIComponent(rawPathname);
+  } catch {
+    pathname = rawPathname;
+  }
   const basePath = `/dashboard/org-workspace/${orgWorkspaceId}`;
 
   const displayName = userName ?? "Operator";
@@ -138,7 +147,8 @@ export function OrgWorkspaceShell({
                     : "text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
                 }`}
               >
-                <Icon
+                <LinkPendingIcon
+                  Icon={Icon}
                   className={`h-5 w-5 ${isActive ? "text-zinc-900 dark:text-zinc-100" : "text-zinc-400 dark:text-zinc-500"}`}
                 />
                 {name}
