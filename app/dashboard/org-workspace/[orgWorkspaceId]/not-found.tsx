@@ -23,11 +23,9 @@ export default function OrgWorkspaceNotFound() {
           doesn&apos;t have access to it.
         </p>
       </div>
-      <Link href="/dashboard">
-        <Button variant="outline" size="sm">
-          Back to dashboard
-        </Button>
-      </Link>
+      <Button variant="outline" size="sm" asChild>
+        <Link href="/dashboard">Back to dashboard</Link>
+      </Button>
     </div>
   );
 }
