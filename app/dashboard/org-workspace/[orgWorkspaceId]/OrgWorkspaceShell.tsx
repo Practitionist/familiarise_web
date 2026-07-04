@@ -141,6 +141,7 @@ export function OrgWorkspaceShell({
               <Link
                 key={path}
                 href={`${basePath}/${path}`}
+                aria-current={isActive ? "page" : undefined}
                 className={`flex-1 flex flex-col items-center gap-0.5 py-2.5 text-[10px] font-medium transition-colors ${
                   isActive
                     ? "text-zinc-900 dark:text-zinc-100"
