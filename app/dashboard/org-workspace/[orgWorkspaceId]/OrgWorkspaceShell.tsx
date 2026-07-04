@@ -62,7 +62,10 @@ export function OrgWorkspaceShell({
   userImage: string | null;
   children: React.ReactNode;
 }) {
-  const pathname = usePathname();
+  // usePathname() returns the URL-encoded path, while orgWorkspaceId (from
+  // route params) is decoded — decode so basePath.slice + isActiveRoute compare
+  // like-for-like even for ids that need encoding. `?? ""` guards a null path.
+  const pathname = decodeURIComponent(usePathname() ?? "");
   const basePath = `/dashboard/org-workspace/${orgWorkspaceId}`;
 
   const displayName = userName ?? "Operator";
@@ -114,14 +117,15 @@ export function OrgWorkspaceShell({
           }
         />
 
-        <main className="flex-1 overflow-y-auto pb-16 md:pb-0">
+        <main className="flex-1 overflow-y-auto pb-[calc(4rem+env(safe-area-inset-bottom))] md:pb-0">
           <div className="p-6">
             <DashboardErrorBoundary>{children}</DashboardErrorBoundary>
           </div>
         </main>
 
-        {/* Mobile bottom tab bar — only visible below md breakpoint */}
-        <nav className="md:hidden fixed bottom-0 left-0 right-0 z-20 bg-white dark:bg-zinc-900 border-t border-zinc-200 dark:border-zinc-800 flex">
+        {/* Mobile bottom tab bar — only visible below md breakpoint. The
+            safe-area inset keeps the tabs clear of the iPhone home indicator. */}
+        <nav className="md:hidden fixed bottom-0 left-0 right-0 z-20 bg-white dark:bg-zinc-900 border-t border-zinc-200 dark:border-zinc-800 flex pb-[env(safe-area-inset-bottom)]">
           {sidebarItems.map(({ name, icon: Icon, path }) => {
             const isActive = isActiveRoute(pathname, basePath, path);
             return (
