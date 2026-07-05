@@ -311,17 +311,25 @@ export default function SupportTicketsPage() {
       action: string;
     }) => {
       if (action === "close") {
-        await fetch(`/api/staff/support-tickets/${ticketId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status: "CLOSED" }),
-        });
+        const response = await fetch(
+          `/api/staff/support-tickets/${ticketId}`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ status: "CLOSED" }),
+          },
+        );
+        if (!response.ok) throw new Error("Failed to close ticket");
       } else if (action === "resolve") {
-        await fetch(`/api/staff/support-tickets/${ticketId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status: "RESOLVED" }),
-        });
+        const response = await fetch(
+          `/api/staff/support-tickets/${ticketId}`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ status: "RESOLVED" }),
+          },
+        );
+        if (!response.ok) throw new Error("Failed to resolve ticket");
       }
       return action;
     },

@@ -84,10 +84,12 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
   // Local editable form state, seeded from the query result.
   const [staffData, setStaffData] = useState<StaffData | null>(null);
 
-  // Seed / reset the form whenever fresh settings data arrives.
+  // Seed the form once, on initial load. Later refetches (e.g. the invalidation
+  // after a successful save) must NOT clobber in-progress edits — the save's own
+  // onSuccess updates staffData explicitly with the server response.
   useEffect(() => {
-    if (data) setStaffData(data);
-  }, [data]);
+    if (data && !staffData) setStaffData(data);
+  }, [data, staffData]);
 
   // Handle input changes for user fields (name, email, phone, address, image)
   const handleUserInputChange = (

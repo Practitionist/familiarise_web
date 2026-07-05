@@ -106,7 +106,7 @@ export function OperatorDashboardShell({
 
   return (
     <NovuProvider>
-      <div className="flex h-screen-maintenance bg-zinc-50 dark:bg-zinc-950">
+      <div className="flex h-screen-maintenance bg-background">
         <CollapsibleSidebar
           items={sidebarItems}
           basePath={basePath}

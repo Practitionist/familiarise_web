@@ -47,7 +47,6 @@ import {
 import { UserDetailModal } from "@/components/admin/UserDetailModal";
 import { VerificationQueue } from "@/components/admin/VerificationQueue";
 import type { UserListItem, UserListResponse } from "@/types/admin-users";
-import type { ModerationStats } from "@/types/moderation";
 
 const getRoleColor = (role: string) => {
   switch (role) {
@@ -127,13 +126,17 @@ export default function AdminUsersPage() {
 
   const { data: moderationStats } = useQuery({
     queryKey: ["admin-moderation-stats"],
-    queryFn: async (): Promise<ModerationStats | null> => {
+    queryFn: async (): Promise<{
+      stats: { pendingVerifications: number };
+    } | null> => {
       const response = await fetch("/api/staff/moderation/stats");
       if (!response.ok) return null;
       return response.json();
     },
   });
-  const pendingCount = moderationStats?.pendingProfiles ?? 0;
+  // The endpoint nests counts under `stats` and names this one
+  // `pendingVerifications` — reading a flat `pendingProfiles` left it stuck at 0.
+  const pendingCount = moderationStats?.stats.pendingVerifications ?? 0;
 
   // Calculate user counts from current data
   const userCounts = useMemo(
