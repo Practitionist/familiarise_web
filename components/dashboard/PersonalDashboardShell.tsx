@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import type { LucideIcon } from "lucide-react";
+import { type LucideIcon } from "lucide-react";
 import {
   CollapsibleSidebar,
   CollapsibleSidebarSkeleton,
@@ -14,6 +14,7 @@ import {
 } from "@/components/dashboard/DashboardContextBar";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { isActiveRoute } from "@/components/dashboard/route-active";
+import { LinkPendingIcon } from "@/components/ui/NavLink";
 
 export interface PersonalDashboardMobileTab {
   label: string;
@@ -126,7 +127,8 @@ export function PersonalDashboardShell({
                     : "text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
                 }`}
               >
-                <Icon
+                <LinkPendingIcon
+                  Icon={Icon}
                   className={`h-5 w-5 ${isActive ? "text-zinc-900 dark:text-zinc-100" : "text-zinc-400 dark:text-zinc-500"}`}
                 />
                 {label}
