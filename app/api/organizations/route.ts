@@ -23,6 +23,7 @@ import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth-helpers";
+import { getOperatorOrganizations } from "@/lib/data/org-workspace";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { isValidGstin } from "@/lib/compliance/gst";
 import { isValidPan } from "@/lib/compliance/tds";
@@ -131,46 +132,10 @@ export async function GET() {
   const auth = await requireApiAuth();
   if (auth.error) return auth.error;
 
-  const userId = auth.session.user.id;
-  const memberships = await prisma.membership.findMany({
-    where: { userId, status: "ACTIVE" },
-    include: {
-      organization: {
-        select: {
-          id: true,
-          name: true,
-          slug: true,
-          status: true,
-          canSponsor: true,
-          canHost: true,
-          brandingProfile: { select: { logo: true } },
-          billingAccount: {
-            select: { fundingSource: true, walletBalance: true, currency: true },
-          },
-        },
-      },
-    },
-    orderBy: { createdAt: "asc" },
-  });
-
-  return NextResponse.json({
-    data: memberships.map((m) => ({
-      membershipId: m.id,
-      role: m.role,
-      status: m.status,
-      organization: {
-        id: m.organization.id,
-        name: m.organization.name,
-        slug: m.organization.slug,
-        status: m.organization.status,
-        canSponsor: m.organization.canSponsor,
-        canHost: m.organization.canHost,
-        // Flatten brandingProfile.logo so the UI sees the same shape as before.
-        logo: m.organization.brandingProfile?.logo ?? null,
-        billingAccount: m.organization.billingAccount,
-      },
-    })),
-  });
+  // Body extracted to lib/data/org-workspace so the workspace home page's
+  // SSR prefetch reads through the same code path (no SSR/CSR drift).
+  const result = await getOperatorOrganizations(auth.session.user.id);
+  return NextResponse.json(result);
 }
 
 export async function POST(req: NextRequest) {

@@ -32,6 +32,7 @@ import { z } from "zod";
 import { NotificationRoutingMode } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth-helpers";
+import { getWorkspaceSettings } from "@/lib/data/org-workspace";
 
 const PatchBodySchema = z
   .object({
@@ -77,50 +78,21 @@ export async function GET(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const profile = await prisma.orgWorkspaceProfile.findUnique({
-    where: { id: orgWorkspaceId },
-    select: {
-      id: true,
-      defaultLandingOrganizationId: true,
-      notificationRoutingMode: true,
-      locale: true,
-      currencyDisplayCode: true,
-      updatedAt: true,
-    },
-  });
-
-  if (!profile) {
+  // Body extracted to lib/data/org-workspace so the settings page's SSR
+  // prefetch reads through the same code path. The lib fn throws when the
+  // profile row is absent — preserve the route's original 404 for that.
+  try {
+    const result = await getWorkspaceSettings(
+      auth.session.user.id,
+      orgWorkspaceId,
+    );
+    return NextResponse.json(result);
+  } catch {
     return NextResponse.json(
       { error: "OrgWorkspaceProfile not found" },
       { status: 404 },
     );
   }
-
-  // List the caller's ACTIVE OWNER memberships so the UI can render a
-  // pick-list for `defaultLandingOrganizationId`. Keeping this on the
-  // settings GET (rather than asking the UI to call /organizations
-  // separately) keeps the page first-paint cheap.
-  const ownedOrgs = await prisma.membership.findMany({
-    where: {
-      userId: auth.session.user.id,
-      role: "OWNER",
-      status: "ACTIVE",
-    },
-    select: {
-      organization: {
-        select: { id: true, name: true, status: true },
-      },
-    },
-    orderBy: { createdAt: "desc" },
-  });
-
-  // Filter DEACTIVATED orgs out of the picklist — the operator
-  // shouldn't pin a tombstoned org as their landing target.
-  const candidateOrgs = ownedOrgs
-    .map((m) => m.organization)
-    .filter((o) => o.status !== "DEACTIVATED");
-
-  return NextResponse.json({ profile, candidateOrgs });
 }
 
 export async function PATCH(

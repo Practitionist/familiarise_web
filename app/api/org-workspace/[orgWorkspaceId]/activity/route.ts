@@ -22,8 +22,8 @@
 
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
-import prisma from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth-helpers";
+import { getWorkspaceActivity } from "@/lib/data/org-workspace";
 
 const QuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
@@ -56,84 +56,13 @@ export async function GET(
   }
   const q = parsed.data;
 
-  const ownedOrgs = await prisma.membership.findMany({
-    where: {
-      userId: auth.session.user.id,
-      role: "OWNER",
-      status: "ACTIVE",
-    },
-    select: {
-      organizationId: true,
-      organization: { select: { id: true, name: true, slug: true } },
-    },
-  });
-  const orgIds = ownedOrgs.map((o) => o.organizationId);
-  const orgById = new Map(ownedOrgs.map((o) => [o.organizationId, o.organization]));
-
-  if (orgIds.length === 0) {
-    return NextResponse.json({
-      data: [],
-      pagination: { hasMore: false, nextCursor: null, limit: q.limit },
-    });
-  }
-
-  const rows = await prisma.orgAuditLog.findMany({
-    where: { organizationId: { in: orgIds } },
-    orderBy: { createdAt: "desc" },
-    take: q.limit + 1,
-    ...(q.cursor && { cursor: { id: q.cursor }, skip: 1 }),
-    select: {
-      id: true,
-      organizationId: true,
-      actorMembershipId: true,
-      category: true,
-      action: true,
-      description: true,
-      createdAt: true,
-    },
-  });
-
-  const hasMore = rows.length > q.limit;
-  const slice = hasMore ? rows.slice(0, q.limit) : rows;
-  const nextCursor = hasMore ? slice[slice.length - 1]?.id ?? null : null;
-
-  // Actor names — OrgAuditLog has no Prisma relation back to Membership
-  // (the FK column is bare), so a single batched lookup keyed on the
-  // distinct actorMembershipIds beats N+1 round-trips.
-  const actorIds = Array.from(
-    new Set(slice.map((r) => r.actorMembershipId).filter((v): v is string => !!v)),
+  // Body extracted to lib/data/org-workspace so the activity page's SSR
+  // prefetchInfiniteQuery reads through the same code path. The feed is
+  // scoped to the orgs the caller OWNS (not the workspace id).
+  const result = await getWorkspaceActivity(
+    auth.session.user.id,
+    q.cursor ?? null,
+    q.limit,
   );
-  const actors = actorIds.length
-    ? await prisma.membership.findMany({
-        where: { id: { in: actorIds } },
-        select: {
-          id: true,
-          user: { select: { name: true, email: true } },
-        },
-      })
-    : [];
-  const actorById = new Map(actors.map((a) => [a.id, a]));
-
-  const data = slice.map((r) => {
-    const org = orgById.get(r.organizationId);
-    const actor = r.actorMembershipId
-      ? actorById.get(r.actorMembershipId)
-      : undefined;
-    return {
-      id: r.id,
-      organizationId: r.organizationId,
-      organizationName: org?.name ?? null,
-      organizationSlug: org?.slug ?? null,
-      category: r.category,
-      action: r.action,
-      description: r.description,
-      createdAt: r.createdAt,
-      actorName: actor?.user?.name ?? actor?.user?.email ?? null,
-    };
-  });
-
-  return NextResponse.json({
-    data,
-    pagination: { hasMore, nextCursor, limit: q.limit },
-  });
+  return NextResponse.json(result);
 }
