@@ -69,7 +69,7 @@ const getStatusColor = (status: string) => {
     case "APPROVED":
       return "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300";
     default:
-      return "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300";
+      return "bg-muted text-muted-foreground";
   }
 };
 
@@ -84,7 +84,7 @@ const getTypeColor = (type: string) => {
     case "CLASS":
       return "bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300";
     default:
-      return "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300";
+      return "bg-muted text-muted-foreground";
   }
 };
 

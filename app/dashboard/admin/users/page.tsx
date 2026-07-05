@@ -60,7 +60,7 @@ const getRoleColor = (role: string) => {
     case "STAFF":
       return "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300";
     default:
-      return "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300";
+      return "bg-muted text-muted-foreground";
   }
 };
 
@@ -70,7 +70,7 @@ const getStatusColor = (onboardingCompleted: boolean | null) => {
   } else if (onboardingCompleted === false) {
     return "bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300";
   }
-  return "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400";
+  return "bg-muted text-muted-foreground";
 };
 
 const getStatusText = (onboardingCompleted: boolean | null) => {
