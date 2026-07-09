@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -30,8 +31,6 @@ import {
   XCircle,
   Eye,
 } from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
-
 import type { Dispute, DisputeListResponse } from "@/types/disputes";
 
 const getStatusColor = (status: string) => {
@@ -46,7 +45,7 @@ const getStatusColor = (status: string) => {
     case "UNDER_REVIEW":
       return "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300";
     default:
-      return "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300";
+      return "bg-muted text-muted-foreground";
   }
 };
 
@@ -111,19 +110,12 @@ export function DisputesPage({
   title = "Disputes",
   description = "View and track payment disputes",
 }: DisputesPageProps) {
-  const { toast } = useToast();
   const router = useRouter();
 
-  const [disputes, setDisputes] = useState<Dispute[]>([]);
-  const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [gatewayFilter, setGatewayFilter] = useState("all");
   const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
-  const [total, setTotal] = useState(0);
-  const [urgentCount, setUrgentCount] = useState(0);
-
   const [debouncedSearch, setDebouncedSearch] = useState("");
 
   useEffect(() => {
@@ -134,9 +126,16 @@ export function DisputesPage({
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
-  const fetchDisputes = useCallback(async () => {
-    setLoading(true);
-    try {
+  const { data, isPending, isFetching, isError, refetch } = useQuery({
+    queryKey: [
+      "admin-disputes",
+      apiEndpoint,
+      page,
+      debouncedSearch,
+      statusFilter,
+      gatewayFilter,
+    ],
+    queryFn: async (): Promise<DisputeListResponse> => {
       const params = new URLSearchParams();
       params.set("page", page.toString());
       params.set("limit", "20");
@@ -146,27 +145,16 @@ export function DisputesPage({
 
       const response = await fetch(`${apiEndpoint}?${params}`);
       if (!response.ok) throw new Error("Failed to fetch disputes");
+      return response.json();
+    },
+    // Keep the current page on screen while the next one loads.
+    placeholderData: keepPreviousData,
+  });
 
-      const data: DisputeListResponse = await response.json();
-      setDisputes(data.disputes);
-      setTotalPages(data.totalPages);
-      setTotal(data.total);
-      setUrgentCount(data.urgentDisputes);
-    } catch (error) {
-      console.error("Error fetching disputes:", error);
-      toast({
-        title: "Error",
-        description: "Failed to load disputes",
-        variant: "destructive",
-      });
-    } finally {
-      setLoading(false);
-    }
-  }, [page, debouncedSearch, statusFilter, gatewayFilter, toast, apiEndpoint]);
-
-  useEffect(() => {
-    fetchDisputes();
-  }, [fetchDisputes]);
+  const disputes = data?.disputes ?? [];
+  const totalPages = data?.totalPages ?? 1;
+  const total = data?.total ?? 0;
+  const urgentCount = data?.urgentDisputes ?? 0;
 
   const handleViewDispute = (disputeId: string) => {
     router.push(`${basePath}/disputes/${disputeId}`);
@@ -269,9 +257,13 @@ export function DisputesPage({
         title={title}
         subtitle={description}
         actions={
-          <Button variant="outline" onClick={fetchDisputes} disabled={loading}>
+          <Button
+            variant="outline"
+            onClick={() => refetch()}
+            disabled={isFetching}
+          >
             <RefreshCw
-              className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`}
+              className={`h-4 w-4 mr-2 ${isFetching ? "animate-spin" : ""}`}
             />
             Refresh
           </Button>
@@ -414,7 +406,23 @@ export function DisputesPage({
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0 sm:p-6 sm:pt-0">
-          {loading ? (
+          {isError && !data ? (
+            <div className="flex flex-col items-center justify-center h-64 gap-3 text-center">
+              <div className="flex items-center gap-2 text-destructive">
+                <AlertTriangle className="h-5 w-5" />
+                <span>Failed to load disputes.</span>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-2"
+                onClick={() => refetch()}
+              >
+                <RefreshCw className="h-4 w-4" />
+                Retry
+              </Button>
+            </div>
+          ) : isPending ? (
             <div className="flex items-center justify-center h-64">
               <Loader2 className="h-8 w-8 animate-spin text-muted-foreground/70" />
             </div>

@@ -1,7 +1,7 @@
 "use client";
 
 import * as Sentry from "@sentry/nextjs";
-import { useCallback, useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { DashboardHeader } from "@/components/dashboard/PageScaffold";
@@ -20,7 +20,6 @@ import {
   TrendingUp,
   Info,
 } from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
 
 interface StaffMetrics {
   supportMetrics: {
@@ -43,36 +42,27 @@ interface StaffMetrics {
 }
 
 export default function StaffMetricsPage() {
-  const { toast } = useToast();
-  const [metrics, setMetrics] = useState<StaffMetrics | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { data, isPending, isFetching, isError, refetch } =
+    useQuery<StaffMetrics>({
+      queryKey: ["staff-metrics"],
+      queryFn: async (): Promise<StaffMetrics> => {
+        try {
+          const response = await fetch("/api/staff/metrics");
+          if (!response.ok) throw new Error("Failed to fetch metrics");
+          return response.json();
+        } catch (error) {
+          Sentry.captureException(
+            error instanceof Error ? error : new Error(String(error)),
+            { tags: { subsystem: "client" } },
+          );
+          throw error;
+        }
+      },
+    });
 
-  const fetchMetrics = useCallback(async () => {
-    setLoading(true);
-    try {
-      const response = await fetch("/api/staff/metrics");
-      if (!response.ok) throw new Error("Failed to fetch metrics");
+  const metrics = data;
 
-      const data = await response.json();
-      setMetrics(data);
-    } catch (error) {
-      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
-      console.error("Error fetching metrics:", error);
-      toast({
-        title: "Error",
-        description: "Failed to load metrics",
-        variant: "destructive",
-      });
-    } finally {
-      setLoading(false);
-    }
-  }, [toast]);
-
-  useEffect(() => {
-    fetchMetrics();
-  }, [fetchMetrics]);
-
-  if (loading) {
+  if (isPending) {
     return (
       <div className="flex items-center justify-center h-64">
         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
@@ -80,7 +70,7 @@ export default function StaffMetricsPage() {
     );
   }
 
-  if (!metrics) {
+  if (isError && !metrics) {
     return (
       <div className="space-y-6">
         <DashboardHeader
@@ -91,7 +81,11 @@ export default function StaffMetricsPage() {
           <CardContent className="flex flex-col items-center justify-center h-64 text-muted-foreground">
             <BarChart3 className="h-12 w-12 mb-4 text-muted-foreground/40" />
             <p>Unable to load metrics</p>
-            <Button variant="outline" onClick={fetchMetrics} className="mt-4">
+            <Button
+              variant="outline"
+              onClick={() => refetch()}
+              className="mt-4"
+            >
               <RefreshCw className="h-4 w-4 mr-2" />
               Retry
             </Button>
@@ -101,6 +95,10 @@ export default function StaffMetricsPage() {
     );
   }
 
+  if (!metrics) {
+    return null;
+  }
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -108,9 +106,13 @@ export default function StaffMetricsPage() {
         title="Metrics"
         subtitle="Operational metrics and insights"
         actions={
-          <Button variant="outline" onClick={fetchMetrics} disabled={loading}>
+          <Button
+            variant="outline"
+            onClick={() => refetch()}
+            disabled={isFetching}
+          >
             <RefreshCw
-              className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`}
+              className={`h-4 w-4 mr-2 ${isFetching ? "animate-spin" : ""}`}
             />
             Refresh
           </Button>
