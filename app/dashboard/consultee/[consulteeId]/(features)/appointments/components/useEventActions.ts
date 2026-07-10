@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import * as Sentry from "@sentry/nextjs";
 import { useToast } from "@/hooks/use-toast";
 import { useParams, useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
@@ -122,6 +123,10 @@ export function useEventActions({
 
       invalidateBookingData();
     } catch (error) {
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "client" } },
+      );
       console.error("Error requesting reschedule:", error);
       toast({
         title: "Error",
@@ -179,6 +184,10 @@ export function useEventActions({
       setShowCancelDialog(false);
       invalidateBookingData();
     } catch (error) {
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "client" } },
+      );
       console.error("Error cancelling appointment:", error);
       toast({
         title: "Error",
@@ -228,6 +237,10 @@ export function useEventActions({
       });
       router.push(`/meetings/${meetingId}`);
     } catch (error) {
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "client" } },
+      );
       console.error("Error joining meeting:", error);
       toast({
         title: "Error joining meeting",
