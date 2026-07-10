@@ -130,7 +130,9 @@ export function getProximityLabel(
   if (diffMinutes < 60) return `in ${Math.max(diffMinutes, 1)} min`;
 
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const dayDiff = Math.floor(
+  // Math.round, not floor: across a DST boundary a "day" between local
+  // midnights is 23/25h and floor would undercount it.
+  const dayDiff = Math.round(
     (new Date(
       anchor.getFullYear(),
       anchor.getMonth(),

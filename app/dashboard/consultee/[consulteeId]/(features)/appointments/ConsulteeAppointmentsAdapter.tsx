@@ -124,10 +124,18 @@ export function useConsulteeAppointmentsAdapter(): AppointmentActionAdapter {
     }
     setJoiningId(vm.id);
     try {
+      // MeetingSlot is Date|string tolerant by design — pass the slot
+      // honestly instead of asserting a Prisma type it isn't.
       const meetingId = await getOrCreateAppointmentMeeting(
         client,
         appointment,
-        slot as SlotOfAppointment,
+        {
+          id: slot.id,
+          startsAt: slot.startsAt,
+          endsAt: slot.endsAt ?? null,
+          isTentative: slot.isTentative,
+          appointmentId: slot.appointmentId ?? null,
+        },
       );
       toast({
         title: "Joining meeting",
