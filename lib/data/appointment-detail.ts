@@ -105,7 +105,17 @@ export async function readAppointmentDetail(appointmentId: string) {
           },
         },
       },
-      payment: true,
+      // Display-fields allowlist (#946 pattern) — the counterpart to the
+      // booking must not receive gateway ids / tax internals.
+      payment: {
+        select: {
+          id: true,
+          amount: true,
+          currency: true,
+          paymentStatus: true,
+          createdAt: true,
+        },
+      },
       organization: { select: { id: true, name: true } },
       slotsOfAppointment: slotsInclude,
     },

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import * as Sentry from "@sentry/nextjs";
+import { z } from "zod";
 import { getSession } from "@/lib/auth-server";
 import { isPrivileged } from "@/lib/auth-helpers";
 import {
@@ -49,7 +50,16 @@ export async function GET(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const { appointmentId } = await params;
+    const parsed = z
+      .object({ appointmentId: z.string().uuid() })
+      .safeParse(await params);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: "Invalid appointment id" },
+        { status: 400 },
+      );
+    }
+    const { appointmentId } = parsed.data;
     const detail = await readAppointmentDetail(appointmentId);
     if (!detail) {
       return NextResponse.json(
