@@ -114,7 +114,7 @@ export async function GET(request: NextRequest) {
         reason: !isEligible
           ? existingTrial
             ? "You have already requested or completed a trial with this consultant"
-            : "This plan does not offer free trials"
+            : "This plan does not offer trials"
           : null,
       },
     });

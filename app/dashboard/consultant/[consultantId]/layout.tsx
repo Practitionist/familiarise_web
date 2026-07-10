@@ -67,7 +67,7 @@ const NAV_GROUPS: CollapsibleSidebarGroup[] = [
       { name: "Event Planner", icon: CalendarRange, path: "planner" },
       { name: "Requests", icon: Inbox, path: "requests" },
       { name: "Collaborations", icon: Users, path: "collaborations" },
-      { name: "Free Trials", icon: Sparkles, path: "trials" },
+      { name: "Trials", icon: Sparkles, path: "trials" },
     ],
   },
   {
@@ -110,7 +110,7 @@ const PAGE_LABELS: Record<string, string> = {
   planner: "Event Planner",
   requests: "Requests",
   collaborations: "Collaborations",
-  trials: "Free Trials",
+  trials: "Trials",
   recordings: "Recordings",
   documents: "Documents",
   earnings: "Earnings",

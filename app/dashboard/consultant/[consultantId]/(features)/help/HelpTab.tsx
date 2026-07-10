@@ -88,7 +88,7 @@ const categoryConfig: Record<
     color: "text-teal-600",
     bgColor: "bg-teal-50",
   },
-  "Free Trials": {
+  Trials: {
     icon: Gift,
     color: "text-pink-600",
     bgColor: "bg-pink-50",

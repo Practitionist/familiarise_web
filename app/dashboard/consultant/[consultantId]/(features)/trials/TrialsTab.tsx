@@ -479,7 +479,7 @@ export function TrialsTab() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-zinc-900">
-            Free Trial Requests
+            Trial Requests
           </h1>
           <p className="text-zinc-600 mt-1">
             Manage trial session requests from potential subscribers
@@ -630,7 +630,7 @@ export function TrialsTab() {
             <p className="text-zinc-600">
               {statusFilter !== "all" || planFilter !== "all" || debouncedSearch
                 ? "No trial requests match your filters"
-                : "You don't have any trial requests yet. Enable free trials on your subscription plans to start receiving requests."}
+                : "You don't have any trial requests yet. Enable trials on your subscription plans to start receiving requests."}
             </p>
             {(statusFilter !== "all" ||
               planFilter !== "all" ||

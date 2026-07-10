@@ -405,7 +405,7 @@ export async function GET(
         await Promise.all(
           trials.map(async (t: TrialWithResources) => ({
             id: t.id,
-            planTitle: `Free Trial: ${t.subscriptionPlan.title}`,
+            planTitle: `Trial: ${t.subscriptionPlan.title}`,
             consultantName:
               t.subscriptionPlan.consultantProfile?.user.name ?? null,
             consultantImage:
