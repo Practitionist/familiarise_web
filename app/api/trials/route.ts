@@ -308,6 +308,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Paid-trial checkout isn't wired yet (createApprovalPaymentIntent must
+    // accept TRIAL first) — fail closed rather than booking an uncollected
+    // paid trial. The wiring PR removes this gate.
+    if (subscriptionPlan.trialPriceInPaise > 0) {
+      return NextResponse.json(
+        { error: "Paid trials are not yet available. Please check back soon." },
+        { status: 400 },
+      );
+    }
+
     // Get consultee info for activity log
     const consulteeProfile = await prisma.consulteeProfile.findUnique({
       where: { id: consulteeProfileId },

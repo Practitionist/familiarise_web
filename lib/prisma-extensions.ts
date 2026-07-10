@@ -157,6 +157,9 @@ export const moneyResultExtensions = {
     currentMonthSpentPaise: f("currentMonthSpentPaise"),
     referrerRewardPaise: f("referrerRewardPaise"),
   },
+  platformPricingConfig: {
+    minTrialPriceInPaise: f("minTrialPriceInPaise"),
+  },
   referralCode: {
     referrerReward: fn("referrerReward"),
     refereeReward: fn("refereeReward"),
