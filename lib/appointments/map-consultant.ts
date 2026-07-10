@@ -10,6 +10,7 @@ import type { TAppointment } from "@/types/appointment";
 import { deriveBucket } from "./bucket";
 import { getAnchorTime, isSessionOver } from "./slots";
 import { normalizeStatus } from "./status";
+import { trialMeta } from "./trial-labels";
 import {
   sortSessions,
   toDate,
@@ -30,7 +31,11 @@ export interface ConsultantTrialLike {
     id: string;
     user: { id: string; name: string; image: string | null };
   };
-  subscriptionPlan: { id: string; title: string };
+  subscriptionPlan: {
+    id: string;
+    title: string;
+    trialPriceInPaise?: number | null;
+  };
   appointment: {
     id: string;
     slotsOfAppointment: Array<{
@@ -292,7 +297,7 @@ function mapTrial(t: ConsultantTrialLike, now: Date): AppointmentVM {
     nextAt: getAnchorTime(sessions, now),
     sessions,
     group: null,
-    meta: "Free trial",
+    meta: trialMeta(t.subscriptionPlan.trialPriceInPaise ?? null, null),
     organizationId: null,
     pendingPaymentUrl: null,
     waitlist: null,

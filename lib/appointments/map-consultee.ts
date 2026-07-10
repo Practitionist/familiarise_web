@@ -18,6 +18,7 @@ import type {
 import { deriveBucket } from "./bucket";
 import { getAnchorTime, isSessionOver } from "./slots";
 import { normalizeStatus } from "./status";
+import { trialMeta } from "./trial-labels";
 import {
   sortSessions,
   toDate,
@@ -271,9 +272,10 @@ function mapTrial(t: TTrialWithPlan, now: Date): AppointmentVM {
     nextAt: getAnchorTime(sessions, now),
     sessions,
     group: null,
-    meta: t.subscriptionPlan.trialDurationMinutes
-      ? `Free trial · ${t.subscriptionPlan.trialDurationMinutes} min`
-      : "Free trial",
+    meta: trialMeta(
+      t.subscriptionPlan.trialPriceInPaise,
+      t.subscriptionPlan.trialDurationMinutes,
+    ),
     organizationId: t.appointment?.organizationId ?? null,
     pendingPaymentUrl: null,
     waitlist: null,

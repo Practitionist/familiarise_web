@@ -45,6 +45,7 @@ export type TTrialWithPlan = {
     id: string;
     title: string;
     trialDurationMinutes: number;
+    trialPriceInPaise: number;
     consultantProfile: {
       id: string;
       user: {
