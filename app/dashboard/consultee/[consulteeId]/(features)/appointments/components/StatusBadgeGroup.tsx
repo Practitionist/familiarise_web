@@ -6,11 +6,9 @@ import {
   WaitlistStatusBadge,
   type BookingStatus,
 } from "@/components/ui/waitlist-status-badge";
-import {
-  STATUS_CONFIG,
-  formatStatusLabel,
-} from "../../../utils/statusConfig";
-import { cn } from "@/utils/tailwind";
+import { eventUnionStatusBadge } from "../utils/status-guards";
+import { resolveSponsoringOrgName } from "@/lib/labels/session-labels";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { useSession } from "@/lib/auth-client";
 
 interface StatusBadgeGroupProps {
@@ -36,15 +34,15 @@ export function StatusBadgeGroup({
   organizationId,
 }: StatusBadgeGroupProps) {
   const { data: session } = useSession();
-  const sponsoringOrgName = organizationId
-    ? (session?.user?.organizationMemberships?.find(
-        (m) => m.organizationId === organizationId,
-      )?.organizationName ?? "your organization")
-    : null;
-  const statusStyle =
-    STATUS_CONFIG[status?.toUpperCase()] || STATUS_CONFIG.PENDING;
-  const displayStatus = isTentative ? "PENDING" : status?.toUpperCase();
-  const displayStatusStyle = isTentative ? STATUS_CONFIG.PENDING : statusStyle;
+  const sponsoringOrgName = resolveSponsoringOrgName(
+    organizationId,
+    session?.user?.organizationMemberships,
+  );
+  // Tentative slots read as PENDING regardless of the row status — the
+  // consultant hasn't locked the time in yet.
+  const displayStatusStyle = eventUnionStatusBadge(
+    isTentative ? "PENDING" : status,
+  );
 
   const isTerminal = ["cancelled", "rejected", "completed", "expired"].includes(
     status?.toLowerCase(),
@@ -83,18 +81,7 @@ export function StatusBadgeGroup({
           showIcon={false}
         />
       ) : (
-        <Badge
-          className={cn(
-            "text-[10px] font-semibold px-2 py-0.5 border-0 flex items-center gap-1",
-            displayStatusStyle.bg,
-            displayStatusStyle.text,
-          )}
-        >
-          <span
-            className={cn("h-1.5 w-1.5 rounded-full", displayStatusStyle.dot)}
-          />
-          {formatStatusLabel(displayStatus ?? "")}
-        </Badge>
+        <StatusBadge {...displayStatusStyle} withDot size="sm" />
       )}
     </div>
   );

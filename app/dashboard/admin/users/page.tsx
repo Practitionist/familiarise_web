@@ -1,7 +1,7 @@
 "use client";
 
-import * as Sentry from "@sentry/nextjs";
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useMemo } from "react";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -18,7 +18,7 @@ import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
-import { PageHeader } from "@/components/ui/page-header";
+import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   DropdownMenu,
@@ -42,12 +42,11 @@ import {
   Loader2,
   RefreshCw,
   ShieldCheck,
+  AlertTriangle,
 } from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
 import { UserDetailModal } from "@/components/admin/UserDetailModal";
 import { VerificationQueue } from "@/components/admin/VerificationQueue";
 import type { UserListItem, UserListResponse } from "@/types/admin-users";
-import type { ModerationStats } from "@/types/moderation";
 
 const getRoleColor = (role: string) => {
   switch (role) {
@@ -60,7 +59,7 @@ const getRoleColor = (role: string) => {
     case "STAFF":
       return "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300";
     default:
-      return "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300";
+      return "bg-muted text-muted-foreground";
   }
 };
 
@@ -70,7 +69,7 @@ const getStatusColor = (onboardingCompleted: boolean | null) => {
   } else if (onboardingCompleted === false) {
     return "bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300";
   }
-  return "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400";
+  return "bg-muted text-muted-foreground";
 };
 
 const getStatusText = (onboardingCompleted: boolean | null) => {
@@ -88,17 +87,11 @@ const formatDate = (dateString: string) => {
 };
 
 export default function AdminUsersPage() {
-  const { toast } = useToast();
   const [activeTab, setActiveTab] = useState("all-users");
-  const [users, setUsers] = useState<UserListItem[]>([]);
-  const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [roleFilter, setRoleFilter] = useState("all");
   const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
-  const [total, setTotal] = useState(0);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
-  const [pendingCount, setPendingCount] = useState(0);
 
   // Debounced search
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -111,9 +104,9 @@ export default function AdminUsersPage() {
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
-  const fetchUsers = useCallback(async () => {
-    setLoading(true);
-    try {
+  const { data, isPending, isFetching, isError, refetch } = useQuery({
+    queryKey: ["admin-users", page, debouncedSearch, roleFilter],
+    queryFn: async (): Promise<UserListResponse> => {
       const params = new URLSearchParams();
       params.set("page", page.toString());
       if (debouncedSearch) params.set("search", debouncedSearch);
@@ -121,44 +114,29 @@ export default function AdminUsersPage() {
 
       const response = await fetch(`/api/admin/users?${params}`);
       if (!response.ok) throw new Error("Failed to fetch users");
+      return response.json();
+    },
+    // Keep the current page on screen while the next one loads.
+    placeholderData: keepPreviousData,
+  });
 
-      const data: UserListResponse = await response.json();
-      setUsers(data.users);
-      setTotalPages(data.totalPages);
-      setTotal(data.total);
-    } catch (error) {
-      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
-      console.error("Error fetching users:", error);
-      toast({
-        title: "Error",
-        description: "Failed to load users",
-        variant: "destructive",
-      });
-    } finally {
-      setLoading(false);
-    }
-  }, [page, debouncedSearch, roleFilter, toast]);
+  const users = useMemo(() => data?.users ?? [], [data]);
+  const totalPages = data?.totalPages ?? 1;
+  const total = data?.total ?? 0;
 
-  const fetchPendingCount = useCallback(async () => {
-    try {
+  const { data: moderationStats } = useQuery({
+    queryKey: ["admin-moderation-stats"],
+    queryFn: async (): Promise<{
+      stats: { pendingVerifications: number };
+    } | null> => {
       const response = await fetch("/api/staff/moderation/stats");
-      if (response.ok) {
-        const data: ModerationStats = await response.json();
-        setPendingCount(data.pendingProfiles || 0);
-      }
-    } catch (error) {
-      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
-      console.error("Error fetching pending count:", error);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchUsers();
-  }, [fetchUsers]);
-
-  useEffect(() => {
-    fetchPendingCount();
-  }, [fetchPendingCount]);
+      if (!response.ok) return null;
+      return response.json();
+    },
+  });
+  // The endpoint nests counts under `stats` and names this one
+  // `pendingVerifications` — reading a flat `pendingProfiles` left it stuck at 0.
+  const pendingCount = moderationStats?.stats.pendingVerifications ?? 0;
 
   // Calculate user counts from current data
   const userCounts = useMemo(
@@ -273,13 +251,17 @@ export default function AdminUsersPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
+      <DashboardHeader
         title="User Management"
-        description="View and manage user accounts"
+        subtitle="View and manage user accounts"
         actions={
-          <Button variant="outline" onClick={fetchUsers} disabled={loading}>
+          <Button
+            variant="outline"
+            onClick={() => refetch()}
+            disabled={isFetching}
+          >
             <RefreshCw
-              className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`}
+              className={`h-4 w-4 mr-2 ${isFetching ? "animate-spin" : ""}`}
             />
             Refresh
           </Button>
@@ -395,7 +377,23 @@ export default function AdminUsersPage() {
           {/* Users Table */}
           <Card>
             <CardContent className="p-4">
-              {loading ? (
+              {isError && !data ? (
+                <div className="flex flex-col items-center justify-center h-64 gap-3 text-center">
+                  <div className="flex items-center gap-2 text-destructive">
+                    <AlertTriangle className="h-5 w-5" />
+                    <span>Failed to load users.</span>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-2"
+                    onClick={() => refetch()}
+                  >
+                    <RefreshCw className="h-4 w-4" />
+                    Retry
+                  </Button>
+                </div>
+              ) : isPending ? (
                 <div className="flex items-center justify-center h-64">
                   <Loader2 className="h-8 w-8 animate-spin text-muted-foreground/70" />
                 </div>

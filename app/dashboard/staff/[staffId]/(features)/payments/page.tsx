@@ -27,7 +27,7 @@ import {
   ResponsiveModalHeader,
   ResponsiveModalTitle,
 } from "@/components/ui/responsive-modal";
-import { PageHeader } from "@/components/ui/page-header";
+import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -69,7 +69,7 @@ const getStatusColor = (status: string) => {
     case "APPROVED":
       return "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300";
     default:
-      return "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300";
+      return "bg-muted text-muted-foreground";
   }
 };
 
@@ -84,7 +84,7 @@ const getTypeColor = (type: string) => {
     case "CLASS":
       return "bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300";
     default:
-      return "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300";
+      return "bg-muted text-muted-foreground";
   }
 };
 
@@ -262,9 +262,9 @@ export default function PaymentsAssistancePage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
+      <DashboardHeader
         title="Payments Assistance"
-        description="View payment issues and process refund requests"
+        subtitle="View payment issues and process refund requests"
         actions={
           <Button
             variant="outline"

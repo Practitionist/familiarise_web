@@ -94,8 +94,6 @@ const statusLabel: Record<SessionStatus, string> = {
   upcoming: "upcoming",
 };
 
-const COLLAPSED_LIMIT = 5;
-
 export function SessionTimeline({
   slots,
   isJoining,
@@ -103,9 +101,19 @@ export function SessionTimeline({
 }: SessionTimelineProps) {
   const [expanded, setExpanded] = useState(false);
 
-  const nonTentativeSlots = slots.filter((s) => !s.isTentative);
-  const sessions = groupSlotsBySession(nonTentativeSlots);
-  const showExpand = sessions.length > COLLAPSED_LIMIT;
+  // Whole derivation chain is memoized so the session status / focus-row
+  // computations below don't recompute (and reallocate) on every unrelated
+  // render — e.g. the per-second CountdownBadge tick. Each link is keyed on
+  // the previous so a new `slots` prop cascades once.
+  const nonTentativeSlots = useMemo(
+    () => slots.filter((s) => !s.isTentative),
+    [slots],
+  );
+  const sessions = useMemo(
+    () => groupSlotsBySession(nonTentativeSlots),
+    [nonTentativeSlots],
+  );
+  const showExpand = sessions.length > 1;
 
   // Pre-compute session statuses once to avoid repeated getSlotStatus calls
   const sessionStatuses = useMemo(
@@ -131,48 +139,41 @@ export function SessionTimeline({
     return null;
   }, [sessions, sessionStatuses]);
 
-  // When collapsed and > COLLAPSED_LIMIT: show dot summary + next upcoming/joinable sessions
+  // Collapsed = ONE focus row: the live/joinable session, else the next
+  // upcoming one, else the most recent past one. Listing every slot inline
+  // made multi-session cards read as a congested wall — the full timeline
+  // is one click away behind the expander, and the card's progress bar
+  // already summarises completion.
+  const focusSession = useMemo(() => {
+    let upcoming: SessionGroup | undefined;
+    for (const s of sessions) {
+      const status = sessionStatuses.get(s.appointmentId);
+      if (status === "joinable") return s;
+      if (status === "upcoming" && !upcoming) upcoming = s;
+    }
+    return upcoming ?? sessions[sessions.length - 1];
+  }, [sessions, sessionStatuses]);
+
   const visibleSessions =
-    showExpand && !expanded
-      ? (() => {
-          const firstUpcomingIdx = sessions.findIndex((session) => {
-            const status = sessionStatuses.get(session.appointmentId)!;
-            return status === "upcoming" || status === "joinable";
-          });
+    showExpand && !expanded && focusSession ? [focusSession] : sessions;
 
-          if (firstUpcomingIdx === -1) {
-            return sessions.slice(-3);
-          }
-
-          const startIdx = Math.max(0, firstUpcomingIdx - 1);
-          return sessions.slice(startIdx, startIdx + 3);
-        })()
-      : sessions;
-
-  // Dot summary for collapsed view (one dot per session)
-  const dotSummary =
-    showExpand && !expanded
-      ? sessions.map((session) => {
-          const st = sessionStatuses.get(session.appointmentId)!;
-          if (st === "completed") return "\u2705";
-          if (st === "noRecord") return "\u26A0\uFE0F";
-          if (st === "joinable") return "\u25C9";
-          return "\u25CB";
-        })
-      : null;
+  const focusStatus = focusSession
+    ? sessionStatuses.get(focusSession.appointmentId)
+    : undefined;
+  const collapsedCaption =
+    focusStatus === "joinable"
+      ? "Live now"
+      : focusStatus === "upcoming"
+        ? "Next session"
+        : "Last session";
 
   return (
     <div className="space-y-1">
-      {/* Dot summary when collapsed */}
-      {dotSummary && dotSummary.length > 0 && (
-        <div className="flex items-center gap-0.5 px-1 py-1 text-xs">
-          <span className="text-muted-foreground/70 mr-1">Sessions:</span>
-          {dotSummary.map((dot, i) => (
-            <span key={i} className="text-[10px]">
-              {dot}
-            </span>
-          ))}
-        </div>
+      {/* Focus-row caption when collapsed */}
+      {showExpand && !expanded && (
+        <p className="px-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+          {collapsedCaption}
+        </p>
       )}
 
       {/* Session rows (one row per appointment group) */}

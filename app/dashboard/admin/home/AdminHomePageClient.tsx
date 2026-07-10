@@ -7,7 +7,7 @@ import {
   DashboardHeader,
   DashboardContent,
   DashboardGrid,
-} from "@/components/dashboard/DashboardShell";
+} from "@/components/dashboard/PageScaffold";
 import { StatCard, StatCardSkeleton } from "@/components/dashboard/StatCard";
 import { DataCard, EmptyState } from "@/components/dashboard/DataCard";
 import {
@@ -83,7 +83,7 @@ export default function AdminHomePageClient() {
               <button
                 type="button"
                 onClick={() => refetch()}
-                className="inline-flex items-center gap-2 rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-zinc-800"
+                className="inline-flex items-center gap-2 rounded-lg bg-foreground px-4 py-2 text-sm font-medium text-background transition-colors hover:bg-foreground/90"
               >
                 <RefreshCw className="h-4 w-4" />
                 Retry

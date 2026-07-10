@@ -1,68 +1,127 @@
 "use client";
 
-import { getEffectiveUserId } from "@/utils/auth";
-import { Skeleton } from "@/components/ui/skeleton";
-import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
-import StreamProvider from "@/providers/StreamProvider";
-import { DashboardShell } from "@/components/dashboard/DashboardShell";
-import NovuProvider from "@/providers/NovuProvider";
-import { NotificationInbox } from "@/components/notifications/NotificationInbox";
-import { useNovuSubscriberSync } from "@/hooks/useNovuSubscriberSync";
-import {
-  DashboardSidebar,
-  type NavSection,
-  type OrgMembershipEntry,
-} from "@/components/dashboard/DashboardSidebar";
-import {
-  DashboardNavbar,
-  type BreadcrumbItem,
-} from "@/components/dashboard/DashboardNavbar";
-import { useSession } from "@/lib/auth-client";
 import { usePathname, useRouter } from "next/navigation";
 import { use, useEffect, useMemo } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { consultantFetchers, schedulePrefetch } from "@/lib/dashboard-queries";
-import { useChatUnreadCount } from "@/hooks/useChatUnreadCount";
+import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { VerificationPendingOverlay } from "@/components/verification/VerificationPendingOverlay";
-import type { VerificationStatus } from "@/components/verification/VerificationStatusBadge";
+import {
+  Home,
+  MessageSquare,
+  CalendarCheck,
+  CalendarRange,
+  Inbox,
+  Users,
+  Sparkles,
+  Video,
+  FileText,
+  Wallet,
+  BarChart3,
+  Gift,
+  Settings,
+  HelpCircle,
+  Building2,
+  UserRound,
+  UserX,
+  Lock,
+  WifiOff,
+  AlertTriangle,
+  type LucideIcon,
+} from "lucide-react";
 
-// Navigation configuration - grouped sections
-const NAV_SECTIONS: NavSection[] = [
+import {
+  PersonalDashboardShell,
+  PersonalDashboardShellSkeleton,
+} from "@/components/dashboard/PersonalDashboardShell";
+import type { CollapsibleSidebarGroup } from "@/components/dashboard/CollapsibleSidebar";
+import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
+import StreamProvider from "@/providers/StreamProvider";
+import NovuProvider from "@/providers/NovuProvider";
+import { useNovuSubscriberSync } from "@/hooks/useNovuSubscriberSync";
+import { useChatUnreadCount } from "@/hooks/useChatUnreadCount";
+import { useSession } from "@/lib/auth-client";
+import { signOutEverywhere } from "@/lib/auth/sign-out";
+import { getEffectiveUserId } from "@/utils/auth";
+import { consultantFetchers, schedulePrefetch } from "@/lib/dashboard-queries";
+import { verificationStatusBadge } from "@/lib/labels/session-labels";
+import {
+  VerificationPendingOverlay,
+  VerificationBanner,
+} from "@/components/verification/VerificationPendingOverlay";
+import type { VerificationStatus } from "@/components/verification/VerificationStatusBadge";
+import { useVerificationStatus } from "./hooks/useVerificationStatus";
+
+// Grouped sidebar nav — same IA as before the shell swap (Services /
+// Content / Finance), now rendered by the shared CollapsibleSidebar.
+// Analytics is live (built as part of the redesign, was a hidden TODO).
+const NAV_GROUPS: CollapsibleSidebarGroup[] = [
   {
-    title: null,
     items: [
-      { name: "Home", path: "home", icon: "home" },
-      { name: "Chats", path: "chats", icon: "chats" },
-      { name: "Appointments", path: "appointments", icon: "appointments" },
+      { name: "Home", icon: Home, path: "home" },
+      { name: "Chats", icon: MessageSquare, path: "chats" },
+      { name: "Appointments", icon: CalendarCheck, path: "appointments" },
     ],
   },
   {
-    title: "Services",
+    label: "Services",
     items: [
-      { name: "Event Planner", path: "planner", icon: "planner" },
-      { name: "Requests", path: "requests", icon: "requests" },
-      { name: "Collaborations", path: "collaborations", icon: "users" },
-      { name: "Free Trials", path: "trials", icon: "trials" },
+      { name: "Event Planner", icon: CalendarRange, path: "planner" },
+      { name: "Requests", icon: Inbox, path: "requests" },
+      { name: "Collaborations", icon: Users, path: "collaborations" },
+      { name: "Free Trials", icon: Sparkles, path: "trials" },
     ],
   },
   {
-    title: "Content",
+    label: "Content",
     items: [
-      { name: "Recordings", path: "recordings", icon: "recordings" },
-      { name: "Documents", path: "documents", icon: "documents" },
+      { name: "Recordings", icon: Video, path: "recordings" },
+      { name: "Documents", icon: FileText, path: "documents" },
     ],
   },
   {
-    title: "Finance",
+    label: "Finance",
     items: [
-      { name: "Earnings", path: "earnings", icon: "wallet" },
-      // TODO: Unhide when Analytics page is implemented
-      // { name: "Analytics", path: "analytics", icon: "analytics" },
-      { name: "Referrals", path: "referrals", icon: "gift" },
+      { name: "Earnings", icon: Wallet, path: "earnings" },
+      { name: "Analytics", icon: BarChart3, path: "analytics" },
+      { name: "Referrals", icon: Gift, path: "referrals" },
     ],
   },
 ];
+
+// Mobile bottom-tab configuration — 5 most-accessed consultant pages.
+const MOBILE_TABS: { label: string; path: string; Icon: LucideIcon }[] = [
+  { label: "Home", path: "home", Icon: Home },
+  { label: "Appointments", path: "appointments", Icon: CalendarCheck },
+  { label: "Requests", path: "requests", Icon: Inbox },
+  { label: "Earnings", path: "earnings", Icon: Wallet },
+  { label: "Settings", path: "settings", Icon: Settings },
+];
+
+// Map URL segments to human-readable page names so the breadcrumbs match
+// the heading the user actually sees on the page.
+const PAGE_LABELS: Record<string, string> = {
+  home: "Home",
+  chats: "Chats",
+  appointments: "Appointments",
+  participants: "Participants",
+  classes: "Class",
+  consultations: "Consultation",
+  subscriptions: "Subscription",
+  webinars: "Webinar",
+  planner: "Event Planner",
+  requests: "Requests",
+  collaborations: "Collaborations",
+  trials: "Free Trials",
+  recordings: "Recordings",
+  documents: "Documents",
+  earnings: "Earnings",
+  analytics: "Analytics",
+  referrals: "Referrals",
+  settings: "Settings",
+  help: "Help",
+};
+
+// Opaque record ids (cuids) in nested routes carry no meaning as crumbs.
+const looksLikeRecordId = (segment: string) => /^[a-z0-9]{20,}$/i.test(segment);
 
 interface PageProps {
   children: React.ReactNode;
@@ -73,7 +132,6 @@ interface PageProps {
 type ErrorType =
   | "not-found"
   | "session-expired"
-  | "no-profile"
   | "network"
   | "unknown";
 
@@ -87,7 +145,6 @@ function getErrorConfig(errorMessage: string): {
 } {
   const lowerMessage = errorMessage.toLowerCase();
 
-  // Profile not found - user might not have a consultant profile
   if (lowerMessage.includes("not found") || lowerMessage.includes("404")) {
     return {
       type: "not-found",
@@ -104,7 +161,6 @@ function getErrorConfig(errorMessage: string): {
     };
   }
 
-  // Session expired or unauthorized
   if (
     lowerMessage.includes("unauthorized") ||
     lowerMessage.includes("401") ||
@@ -123,7 +179,6 @@ function getErrorConfig(errorMessage: string): {
     };
   }
 
-  // Network or server error
   if (
     lowerMessage.includes("network") ||
     lowerMessage.includes("fetch") ||
@@ -142,7 +197,6 @@ function getErrorConfig(errorMessage: string): {
     };
   }
 
-  // Default/unknown error
   return {
     type: "unknown",
     title: "Something Went Wrong",
@@ -157,19 +211,19 @@ function getErrorConfig(errorMessage: string): {
   };
 }
 
-// Error display component
+const ERROR_ICONS: Record<
+  ErrorType,
+  { Icon: LucideIcon; bg: string; color: string }
+> = {
+  "not-found": { Icon: UserX, bg: "bg-amber-100", color: "text-amber-600" },
+  "session-expired": { Icon: Lock, bg: "bg-blue-100", color: "text-blue-600" },
+  network: { Icon: WifiOff, bg: "bg-orange-100", color: "text-orange-600" },
+  unknown: { Icon: AlertTriangle, bg: "bg-red-100", color: "text-red-600" },
+};
+
 function ErrorDisplay({ message }: { message: string }) {
   const config = getErrorConfig(message);
-
-  const iconColors = {
-    "not-found": { bg: "bg-amber-100", icon: "text-amber-600" },
-    "session-expired": { bg: "bg-blue-100", icon: "text-blue-600" },
-    "no-profile": { bg: "bg-purple-100", icon: "text-purple-600" },
-    network: { bg: "bg-orange-100", icon: "text-orange-600" },
-    unknown: { bg: "bg-red-100", icon: "text-red-600" },
-  };
-
-  const colors = iconColors[config.type];
+  const { Icon, bg, color } = ERROR_ICONS[config.type];
 
   return (
     <div className="flex items-center justify-center min-h-screen bg-zinc-100">
@@ -179,65 +233,9 @@ function ErrorDisplay({ message }: { message: string }) {
         className="bg-white p-8 rounded-2xl shadow-xl border border-zinc-200 max-w-md text-center mx-4"
       >
         <div
-          className={`w-16 h-16 mx-auto mb-4 rounded-full ${colors.bg} flex items-center justify-center`}
+          className={`w-16 h-16 mx-auto mb-4 rounded-full ${bg} flex items-center justify-center`}
         >
-          {config.type === "not-found" || config.type === "no-profile" ? (
-            <svg
-              className={`w-8 h-8 ${colors.icon}`}
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
-              />
-            </svg>
-          ) : config.type === "session-expired" ? (
-            <svg
-              className={`w-8 h-8 ${colors.icon}`}
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
-              />
-            </svg>
-          ) : config.type === "network" ? (
-            <svg
-              className={`w-8 h-8 ${colors.icon}`}
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.141 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0"
-              />
-            </svg>
-          ) : (
-            <svg
-              className={`w-8 h-8 ${colors.icon}`}
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-              />
-            </svg>
-          )}
+          <Icon className={`w-8 h-8 ${color}`} />
         </div>
 
         <h2 className="text-xl font-bold text-zinc-900 mb-2">{config.title}</h2>
@@ -283,8 +281,15 @@ function ErrorDisplay({ message }: { message: string }) {
   );
 }
 
-// Auth required component
-function AuthRequired() {
+function AccessCard({
+  Icon,
+  title,
+  children,
+}: {
+  Icon: LucideIcon;
+  title: string;
+  children: React.ReactNode;
+}) {
   return (
     <div className="flex items-center justify-center min-h-screen bg-zinc-100">
       <motion.div
@@ -293,98 +298,25 @@ function AuthRequired() {
         className="bg-white p-8 rounded-2xl shadow-xl border border-zinc-200 max-w-md text-center"
       >
         <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-amber-100 flex items-center justify-center">
-          <svg
-            className="w-8 h-8 text-amber-600"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
-            />
-          </svg>
+          <Icon className="w-8 h-8 text-amber-600" />
         </div>
-        <h2 className="text-xl font-bold text-zinc-900 mb-2">
-          Authentication Required
-        </h2>
-        <p className="text-zinc-600">
-          Please sign in to access your dashboard.
-        </p>
-        <a
-          href="/auth/signin"
-          className="inline-block mt-6 px-6 py-2.5 bg-zinc-900 text-white rounded-lg font-medium hover:bg-zinc-800 transition-colors"
-        >
-          Sign In
-        </a>
+        <h2 className="text-xl font-bold text-zinc-900 mb-2">{title}</h2>
+        {children}
       </motion.div>
     </div>
   );
 }
 
-// Loading skeleton for initial load
-function DashboardSkeleton() {
-  return (
-    <div className="flex min-h-screen bg-zinc-100">
-      {/* Sidebar skeleton */}
-      <aside className="fixed left-0 top-0 z-40 hidden h-screen w-64 bg-zinc-950 lg:block">
-        <div className="flex h-16 items-center gap-3 border-b border-zinc-800/50 px-6">
-          <Skeleton className="h-9 w-9 rounded-lg bg-zinc-800" />
-          <Skeleton className="h-5 w-24 bg-zinc-800" />
-        </div>
-        <div className="border-b border-zinc-800/50 p-4">
-          <div className="flex items-center gap-3">
-            <Skeleton className="h-12 w-12 rounded-full bg-zinc-800" />
-            <div className="space-y-2">
-              <Skeleton className="h-4 w-28 bg-zinc-800" />
-              <Skeleton className="h-3 w-20 bg-zinc-800" />
-            </div>
-          </div>
-        </div>
-        <div className="p-3 space-y-1">
-          {[1, 2, 3, 4, 5, 6, 7].map((i) => (
-            <Skeleton key={i} className="h-11 w-full rounded-lg bg-zinc-800" />
-          ))}
-        </div>
-      </aside>
-
-      {/* Main content skeleton */}
-      <main className="flex-1 lg:ml-64 p-8">
-        <div className="space-y-6">
-          <div className="flex items-center justify-between">
-            <div className="space-y-2">
-              <Skeleton className="h-8 w-48 bg-zinc-200" />
-              <Skeleton className="h-4 w-64 bg-zinc-200" />
-            </div>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            {[1, 2, 3, 4].map((i) => (
-              <Skeleton key={i} className="h-32 rounded-xl bg-white" />
-            ))}
-          </div>
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <Skeleton className="lg:col-span-2 h-96 rounded-xl bg-white" />
-            <Skeleton className="h-96 rounded-xl bg-white" />
-          </div>
-        </div>
-      </main>
-    </div>
-  );
-}
-
-// Main layout component
 export default function ConsultantLayout({
   children,
   params,
 }: Readonly<PageProps>) {
   const resolvedParams = use(params);
   const consultantId = resolvedParams.consultantId;
+  const basePath = `/dashboard/consultant/${consultantId}`;
   const pathname = usePathname();
   const { data: session, isPending: isSessionLoading } = useSession();
   const router = useRouter();
-  const _queryClient = useQueryClient();
 
   const userId = getEffectiveUserId(session);
 
@@ -406,7 +338,7 @@ export default function ConsultantLayout({
     retry: 2,
   });
 
-  // Fetch consultant data with React Query and placeholderData to prevent loading flashes
+  // Fetch consultant data with placeholderData to prevent loading flashes
   const {
     data: consultantData,
     error,
@@ -418,7 +350,7 @@ export default function ConsultantLayout({
     staleTime: 5 * 60 * 1000,
     gcTime: 10 * 60 * 1000,
     retry: 2,
-    placeholderData: (previousData) => previousData, // Keep showing previous data while refetching
+    placeholderData: (previousData) => previousData,
   });
 
   // Check if user has access to this consultant dashboard:
@@ -437,9 +369,7 @@ export default function ConsultantLayout({
     if (isLoadingUserDetails || isSessionLoading || !userId) return;
 
     if (userDetails && !hasConsultantAccess) {
-      // User doesn't have access - redirect based on their role
       if (userDetails.consultantProfileId) {
-        // Consultant trying to access another consultant's dashboard - redirect to their own
         router.replace(
           `/dashboard/consultant/${userDetails.consultantProfileId}/home`,
         );
@@ -465,55 +395,75 @@ export default function ConsultantLayout({
     if (!userId || !consultantId || !hasConsultantAccess) return;
 
     schedulePrefetch(() => {
-      // Prefetch home route if not there
       if (!pathname.includes("/home")) {
-        router.prefetch(`/dashboard/consultant/${consultantId}/home`);
+        router.prefetch(`${basePath}/home`);
       }
-      // Prefetch appointments (commonly accessed)
-      router.prefetch(`/dashboard/consultant/${consultantId}/appointments`);
+      router.prefetch(`${basePath}/appointments`);
     }, 3000);
-  }, [userId, consultantId, pathname, router, hasConsultantAccess]);
+  }, [userId, consultantId, pathname, router, hasConsultantAccess, basePath]);
 
-  // Unread badge count for Chats nav item
+  // Verification state + reviewer feedback. The consultant-data payload
+  // carries the coarse status; the verification query adds the latest
+  // submission's rejectionReason / feedbackDetails / per-document feedback
+  // so the REJECTED gate can finally show WHY.
+  const verificationStatus = consultantData?.verificationStatus as
+    | VerificationStatus
+    | undefined;
+  // ADMIN/STAFF inspecting someone's dashboard must never be gated (and
+  // /api/verification/status reads the SIGNED-IN user, which would be the
+  // admin's own — mismatched — record). Gate + fetch only for the owner.
+  const isOwnDashboard =
+    userDetails?.role === "CONSULTANT" &&
+    userDetails?.consultantProfileId === consultantId;
+  const { data: verification } = useVerificationStatus(
+    userId,
+    !!verificationStatus &&
+      verificationStatus !== "VERIFIED" &&
+      !!isOwnDashboard,
+  );
+
+  // Unread badge count for the Chats nav item
   const chatUnreadCount = useChatUnreadCount();
-  const navSections = useMemo(() => {
-    return NAV_SECTIONS.map((section) => ({
-      ...section,
-      items: section.items.map((item) =>
-        item.path === "chats" && chatUnreadCount > 0
-          ? { ...item, badge: chatUnreadCount > 99 ? "99+" : chatUnreadCount }
-          : item,
-      ),
-    }));
-  }, [chatUnreadCount]);
+  const navGroups = useMemo(
+    () =>
+      NAV_GROUPS.map((group) => ({
+        ...group,
+        items: group.items.map((item) =>
+          item.path === "chats" && chatUnreadCount > 0
+            ? {
+                ...item,
+                badge: chatUnreadCount > 99 ? "99+" : chatUnreadCount,
+              }
+            : item,
+        ),
+      })),
+    [chatUnreadCount],
+  );
 
-  // Org memberships for the "Teams & Orgs" section in the sidebar
-  const orgMemberships = useMemo((): OrgMembershipEntry[] => {
-    const raw = (session?.user as Record<string, unknown>)
+  // Org memberships for the bottom chip's "Switch to organization" section
+  const orgMemberships = useMemo(() => {
+    const raw = (session?.user as Record<string, unknown> | undefined)
       ?.organizationMemberships;
     if (!Array.isArray(raw)) return [];
     return raw.map((m: Record<string, unknown>) => ({
-      organizationId:   String(m.organizationId ?? ""),
+      organizationId: String(m.organizationId ?? ""),
       organizationName: String(m.organizationName ?? ""),
-      organizationLogo: (m.organizationLogo as string | null) ?? null,
-      role:             String(m.role ?? ""),
     }));
   }, [session?.user]);
 
-  // Breadcrumbs derived from the current page segment
-  const breadcrumbs = useMemo((): BreadcrumbItem[] => {
-    const segments = pathname.split("/").filter(Boolean);
-    // Pattern: /dashboard/consultant/[consultantId]/[page][/...]
-    const idIdx = segments.indexOf(consultantId);
-    if (idIdx >= 0 && idIdx + 1 < segments.length) {
-      const page = segments[idIdx + 1];
-      return [{ label: page.charAt(0).toUpperCase() + page.slice(1) }];
-    }
-    return [];
-  }, [pathname, consultantId]);
+  // Full breadcrumb trail — every URL segment after the consultant id
+  // becomes a crumb; opaque record ids are dropped.
+  const breadcrumbs = useMemo(() => {
+    return pathname
+      .replace(basePath, "")
+      .split("/")
+      .filter(Boolean)
+      .filter((seg) => !looksLikeRecordId(seg))
+      .map((seg) => PAGE_LABELS[seg] ?? seg);
+  }, [pathname, basePath]);
 
-  // Memoize StreamProvider children to prevent re-initialization on tab switches
-  // Must be called before any early returns to comply with Rules of Hooks
+  // Memoize StreamProvider children to prevent re-initialization on tab
+  // switches. Must be called before any early returns (Rules of Hooks).
   const memoizedStreamContent = useMemo(
     () =>
       consultantData?.user?.id ? (
@@ -537,55 +487,42 @@ export default function ConsultantLayout({
     !session?.user?.id &&
     !isSessionLoading
   ) {
-    return <AuthRequired />;
-  }
-
-  // ACCESS DENIED CHECK - BEFORE skeleton to avoid showing skeleton for unauthorized users
-  // If we have user details but no access, show redirect message immediately
-  if (userDetails && !hasConsultantAccess) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-zinc-100">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="bg-white p-8 rounded-2xl shadow-xl border border-zinc-200 max-w-md text-center"
+      <AccessCard Icon={Lock} title="Authentication Required">
+        <p className="text-zinc-600">
+          Please sign in to access your dashboard.
+        </p>
+        <a
+          href="/auth/signin"
+          className="inline-block mt-6 px-6 py-2.5 bg-zinc-900 text-white rounded-lg font-medium hover:bg-zinc-800 transition-colors"
         >
-          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-amber-100 flex items-center justify-center">
-            <svg
-              className="w-8 h-8 text-amber-600"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
-              />
-            </svg>
-          </div>
-          <h2 className="text-xl font-bold text-zinc-900 mb-2">
-            Access Denied
-          </h2>
-          <p className="text-zinc-600">
-            You don&apos;t have permission to access this Consultant Dashboard.
-          </p>
-          <p className="text-sm text-zinc-500 mt-2">
-            Redirecting to your dashboard...
-          </p>
-        </motion.div>
-      </div>
+          Sign In
+        </a>
+      </AccessCard>
     );
   }
 
-  // Initial loading state - only show if we don't have userDetails yet (still determining access)
+  // Access denied — before the skeleton so unauthorized users never see it
+  if (userDetails && !hasConsultantAccess) {
+    return (
+      <AccessCard Icon={Lock} title="Access Denied">
+        <p className="text-zinc-600">
+          You don&apos;t have permission to access this Consultant Dashboard.
+        </p>
+        <p className="text-sm text-zinc-500 mt-2">
+          Redirecting to your dashboard...
+        </p>
+      </AccessCard>
+    );
+  }
+
+  // Initial loading — only while access is still being determined
   if (
     (isLoading || isLoadingUserDetails || isSessionLoading) &&
     !consultantData &&
     !userDetails
   ) {
-    return <DashboardSkeleton />;
+    return <PersonalDashboardShellSkeleton />;
   }
 
   // Error state
@@ -599,60 +536,106 @@ export default function ConsultantLayout({
     );
   }
 
-  // Build sidebar
-  const sidebar = (
-    <DashboardSidebar
-      userImage={consultantData?.user?.image}
-      userName={consultantData?.user?.name}
-      userRole="CONSULTANT"
-      basePath={`/dashboard/consultant/${consultantId}`}
-      navSections={navSections}
-      hideBottomActions={false}
-      bottomNavItems={[
-        { name: "Settings", path: "settings", icon: "settings" },
-        { name: "Help", path: "help", icon: "help" },
-      ]}
-      isLoading={isLoading}
-      orgMemberships={orgMemberships}
-    />
-  );
+  const userName = consultantData?.user?.name ?? session?.user?.name ?? null;
+  const userImage = consultantData?.user?.image ?? session?.user?.image ?? null;
+  const settingsHref = `${basePath}/settings`;
+  const verificationHref = `${settingsHref}?tab=verification`;
 
-  // Build top navbar
-  const navbar = (
-    <DashboardNavbar
-      userName={consultantData?.user?.name}
-      userImage={consultantData?.user?.image}
-      userRole="CONSULTANT"
-      settingsPath={`/dashboard/consultant/${consultantId}/settings`}
-      helpPath={`/dashboard/consultant/${consultantId}/help`}
-      breadcrumbs={breadcrumbs}
-    />
-  );
+  // Bottom chip dropdown — account pages + org context switching. This is
+  // where Settings/Help live (they left the main nav, matching the org
+  // shell's IA); Sign Out renders as the standalone red button below.
+  const bottomUserChipActions = [
+    {
+      type: "item" as const,
+      label: "Settings",
+      href: settingsHref,
+      icon: Settings,
+    },
+    { type: "item" as const, label: "Help", href: `${basePath}/help`, icon: HelpCircle },
+    ...(orgMemberships.length > 0
+      ? [
+          { type: "separator" as const },
+          { type: "label" as const, label: "Switch to organization" },
+          ...orgMemberships.map((m) => ({
+            type: "item" as const,
+            label: m.organizationName,
+            href: `/dashboard/organization/${m.organizationId}/home`,
+            icon: Building2,
+          })),
+        ]
+      : []),
+  ];
 
-  // Check verification status - don't block settings page
+  // Gating policy: waiting states get a browsable dashboard + banner;
+  // REJECTED gets the full-screen gate with the reviewer feedback threaded
+  // in. Settings stays reachable in every state (it hosts the fix).
   const isSettingsPage = pathname.includes("/settings");
-  const verificationStatus = consultantData?.verificationStatus as
-    | VerificationStatus
-    | undefined;
-  const isVerified = verificationStatus === "VERIFIED";
-  const showVerificationOverlay =
-    !isVerified && verificationStatus && !isSettingsPage;
+  const showRejectedGate =
+    verificationStatus === "REJECTED" && !isSettingsPage && !!isOwnDashboard;
+  const showVerificationBanner =
+    (verificationStatus === "PENDING_VERIFICATION" ||
+      verificationStatus === "UNDER_REVIEW") &&
+    !isSettingsPage &&
+    !!isOwnDashboard;
 
   return (
     <NovuProvider>
-      {showVerificationOverlay && (
+      {showRejectedGate && (
         <VerificationPendingOverlay
-          status={verificationStatus}
-          resubmitUrl={`/dashboard/consultant/${consultantId}/settings`}
+          status="REJECTED"
+          rejectionReason={
+            verification?.latestRequest?.rejectionReason ?? undefined
+          }
+          feedbackDetails={
+            verification?.latestRequest?.feedbackDetails ?? undefined
+          }
+          documentFeedback={verification?.latestRequest?.documentFeedback}
+          resubmitUrl={verificationHref}
         />
       )}
-      <DashboardShell
-        sidebar={sidebar}
-        navbar={navbar}
-        headerActions={<NotificationInbox />}
+      <PersonalDashboardShell
+        groups={navGroups}
+        basePath={basePath}
+        title="Consultant Dashboard"
+        subtitle={userName}
+        headerImage={userImage}
+        bottomUserChip={{
+          name: userName,
+          image: userImage,
+          role: "Consultant",
+        }}
+        bottomUserChipActions={bottomUserChipActions}
+        contextBar={{
+          identity: {
+            name: userName ?? "Consultant",
+            image: userImage,
+            FallbackIcon: UserRound,
+          },
+          badges: verificationStatus
+            ? [
+                {
+                  label: verificationStatusBadge(verificationStatus).label,
+                  className:
+                    verificationStatusBadge(verificationStatus).className,
+                },
+              ]
+            : [],
+          breadcrumbs,
+        }}
+        mobileTabs={MOBILE_TABS}
+        banner={
+          showVerificationBanner && verificationStatus ? (
+            <VerificationBanner
+              status={verificationStatus}
+              resubmitUrl={verificationHref}
+            />
+          ) : undefined
+        }
+        pathname={pathname}
+        onSignOut={() => void signOutEverywhere()}
       >
         {memoizedStreamContent}
-      </DashboardShell>
+      </PersonalDashboardShell>
     </NovuProvider>
   );
 }

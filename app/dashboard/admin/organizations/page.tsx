@@ -27,7 +27,7 @@ import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
-import { PageHeader } from "@/components/ui/page-header";
+import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 import {
   Select,
   SelectContent,
@@ -386,9 +386,9 @@ export default function AdminOrganizationsPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
+      <DashboardHeader
         title="Organizations"
-        description="Review pending organizations and manage their lifecycle status."
+        subtitle="Review pending organizations and manage their lifecycle status."
       />
 
       {/* Filters */}

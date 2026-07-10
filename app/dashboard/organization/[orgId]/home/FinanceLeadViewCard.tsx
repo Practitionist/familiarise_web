@@ -37,7 +37,7 @@ import {
 } from "@/components/ui/card";
 import { StatCard } from "@/components/dashboard/StatCard";
 import { Button } from "@/components/ui/button";
-import { DashboardGrid } from "@/components/dashboard/DashboardShell";
+import { DashboardGrid } from "@/components/dashboard/PageScaffold";
 import { formatCurrencyAmount } from "@/utils/formatting";
 
 /**

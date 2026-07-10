@@ -170,7 +170,7 @@ export function HelpTab({ faqs: initialFaqs }: Readonly<HelpTabProps>) {
   }, [filteredFaqs]);
 
   return (
-    <div className="min-h-screen bg-white">
+    <div className="min-h-full">
       <div className="w-full px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
         {/* Page Header */}
         <motion.div

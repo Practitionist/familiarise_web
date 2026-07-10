@@ -37,8 +37,25 @@ import {
   groupSlotsIntoSessions,
 } from "./event-processor";
 import { WaitlistStatusBadge } from "@/components/ui/waitlist-status-badge";
-import { getStatusStyle } from "../../utils/statusConfig";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import {
+  appointmentStatusBadge,
+  eventStatusBadge,
+  resolveSponsoringOrgName,
+} from "@/lib/labels/session-labels";
+import {
+  isInactiveStatus,
+  isApprovedStatus,
+} from "../appointments/utils/status-guards";
 import { DEFAULT_MEETING_DURATION_MS } from "../appointments/types";
+
+// Webinars/classes carry WebinarStatus/ClassStatus; consultations and
+// subscriptions carry AppointmentStatus. One resolver so both card
+// variants render the same shared pills.
+const processedEventBadge = (event: ProcessedEvent) =>
+  event.type === "webinar" || event.type === "class"
+    ? eventStatusBadge(event.status?.toUpperCase())
+    : appointmentStatusBadge(event.status?.toUpperCase());
 
 interface HomeTabProps {
   userDetails: {
@@ -86,7 +103,9 @@ function getTimeAway(date: Date): { text: string; urgent: boolean } {
   return { text: `${daysAway} days away`, urgent: false };
 }
 
-// Session Card for horizontal scroll - Modern dark theme with FIXED heights for consistency
+// Session card for the horizontal scroller. Light Card treatment matching
+// the zinc-50 canvas (the old dark zinc-900 gradient island was the one
+// off-token surface on the page); fixed 340x180 geometry for scroll rhythm.
 function UpcomingSessionCard({
   event,
   onClick,
@@ -100,25 +119,18 @@ function UpcomingSessionCard({
 }) {
   const timeAway = getTimeAway(event.startsAt);
   const { data: session } = useSession();
-  const sponsoringOrgName = event.organizationId
-    ? (session?.user?.organizationMemberships?.find(
-        (m) => m.organizationId === event.organizationId,
-      )?.organizationName ?? "your organization")
-    : null;
+  const sponsoringOrgName = resolveSponsoringOrgName(
+    event.organizationId,
+    session?.user?.organizationMemberships,
+  );
 
-  // Match Appointments tab guards (OneOffEventCard.tsx:96-103)
-  const statusUpper = event.status?.toUpperCase();
-  const isInactive =
-    statusUpper === "CANCELLED" ||
-    statusUpper === "REJECTED" ||
-    statusUpper === "COMPLETED" ||
-    statusUpper === "EXPIRED";
-  const isApproved = (() => {
-    if (event.type === "webinar" || event.type === "class") {
-      return event.bookingStatus === "CONFIRMED";
-    }
-    return statusUpper === "APPROVED";
-  })();
+  // Shared guards (appointments/utils/status-guards.ts) — same semantics
+  // as the Appointments tab cards.
+  const isInactive = isInactiveStatus(event.status);
+  const isApproved =
+    event.type === "webinar" || event.type === "class"
+      ? event.bookingStatus === "CONFIRMED"
+      : isApprovedStatus(event.status);
   const isTentative = event.joinableSlot?.isTentative ?? true;
   const canShowJoin = !isTentative && isApproved && !isInactive;
 
@@ -143,23 +155,22 @@ function UpcomingSessionCard({
   };
 
   const typeLabel = typeLabels[event.type] || "EVENT";
-  const statusStyle = getStatusStyle(event.status, "dark");
 
   return (
     <motion.div
       whileHover={{ y: -2 }}
       onClick={onClick}
-      className="flex-shrink-0 w-[340px] h-[180px] bg-gradient-to-br from-zinc-900 via-zinc-900 to-zinc-800 rounded-xl border border-zinc-800 p-4 hover:border-zinc-700 transition-all duration-200 shadow-lg flex flex-col"
+      className="flex-shrink-0 w-[340px] h-[180px] bg-card rounded-xl border border-border p-4 hover:border-zinc-300 dark:hover:border-zinc-700 transition-all duration-200 shadow-sm hover:shadow-md flex flex-col"
     >
       {/* Row 1: Avatar + Title/Name + Time Badge - Fixed height 48px */}
       <div className="flex items-center gap-3 h-12 shrink-0">
         <div className="flex items-center -space-x-1.5 shrink-0">
-          <Avatar className="h-10 w-10 ring-2 ring-zinc-800 z-10">
+          <Avatar className="h-10 w-10 ring-2 ring-card z-10">
             <AvatarImage
               src={event.consultantImage ?? undefined}
               alt={event.consultantName}
             />
-            <AvatarFallback className="bg-zinc-700 text-zinc-300 text-xs font-semibold">
+            <AvatarFallback className="bg-muted text-muted-foreground text-xs font-semibold">
               {event.consultantName
                 .split(" ")
                 .map((n) => n[0])
@@ -170,11 +181,11 @@ function UpcomingSessionCard({
           {event.collaborators?.slice(0, 1).map((collab, idx) => (
             <Avatar
               key={idx}
-              className="h-7 w-7 ring-2 ring-zinc-800 z-0"
+              className="h-7 w-7 ring-2 ring-card z-0"
               title={collab.name}
             >
               <AvatarImage src={collab.image ?? undefined} alt={collab.name} />
-              <AvatarFallback className="bg-zinc-700 text-zinc-300 text-[9px] font-semibold">
+              <AvatarFallback className="bg-muted text-muted-foreground text-[9px] font-semibold">
                 {collab.name
                   .split(" ")
                   .map((n) => n[0])
@@ -184,16 +195,16 @@ function UpcomingSessionCard({
             </Avatar>
           ))}
           {(event.collaborators?.length ?? 0) > 1 && (
-            <div className="h-7 w-7 rounded-full bg-zinc-700 ring-2 ring-zinc-800 flex items-center justify-center text-[9px] font-semibold text-zinc-300 z-0">
+            <div className="h-7 w-7 rounded-full bg-muted ring-2 ring-card flex items-center justify-center text-[9px] font-semibold text-muted-foreground z-0">
               +{(event.collaborators?.length ?? 0) - 1}
             </div>
           )}
         </div>
         <div className="flex-1 min-w-0 overflow-hidden">
-          <h4 className="font-semibold text-white text-sm leading-tight truncate">
+          <h4 className="font-semibold text-foreground text-sm leading-tight truncate">
             {event.title}
           </h4>
-          <p className="text-xs text-zinc-400 truncate">
+          <p className="text-xs text-muted-foreground truncate">
             {event.collaborators && event.collaborators.length > 0
               ? event.collaborators.length === 1
                 ? `${event.consultantName} & ${event.collaborators[0].name}`
@@ -205,8 +216,8 @@ function UpcomingSessionCard({
           className={cn(
             "shrink-0 text-[10px] font-medium px-2 py-0.5 border-0 whitespace-nowrap",
             timeAway.urgent
-              ? "bg-rose-500/20 text-rose-400"
-              : "bg-zinc-700 text-zinc-300",
+              ? "bg-rose-50 text-rose-600 dark:bg-rose-900/30 dark:text-rose-300"
+              : "bg-muted text-muted-foreground",
           )}
         >
           {timeAway.text}
@@ -214,12 +225,12 @@ function UpcomingSessionCard({
       </div>
 
       {/* Row 2: Date and time - Fixed height with top margin */}
-      <div className="flex items-center gap-1.5 text-xs text-zinc-400 mt-3 h-5 shrink-0 overflow-hidden">
+      <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-3 h-5 shrink-0 overflow-hidden">
         <Calendar className="h-3.5 w-3.5 shrink-0" />
         <span className="truncate">
           {format(event.startsAt, "EEE, d MMM yyyy")}
         </span>
-        <span className="text-zinc-600 shrink-0">•</span>
+        <span className="text-muted-foreground/50 shrink-0">•</span>
         <span className="shrink-0">{format(event.startsAt, "h:mm a")}</span>
       </div>
 
@@ -228,7 +239,7 @@ function UpcomingSessionCard({
       {sponsoringOrgName && (
         <div className="flex items-center mt-1.5 h-5 shrink-0">
           <span
-            className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 bg-zinc-700 text-zinc-300 rounded-md max-w-full"
+            className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 bg-muted text-muted-foreground rounded-md max-w-full"
             title={`Sponsored by ${sponsoringOrgName}`}
           >
             <Building2 className="h-3 w-3 shrink-0" />
@@ -243,7 +254,7 @@ function UpcomingSessionCard({
       {/* Row 3: Badges and action - Fixed at bottom */}
       <div className="flex items-center justify-between gap-2 h-8 shrink-0">
         <div className="flex items-center gap-1.5 overflow-hidden">
-          <Badge className="text-[10px] font-medium px-2 py-0.5 bg-transparent border border-zinc-600 text-zinc-300 shrink-0 rounded-md">
+          <Badge className="text-[10px] font-medium px-2 py-0.5 bg-transparent border border-border text-muted-foreground shrink-0 rounded-md">
             {typeLabel}
           </Badge>
           {/* Show booking status badge for webinars and classes */}
@@ -262,21 +273,17 @@ function UpcomingSessionCard({
             (event.type === "webinar" || event.type === "class") &&
             event.bookingStatus
           ) && (
-            <Badge
-              className={cn(
-                "text-[10px] font-semibold px-2 py-0.5 border-0 shrink-0",
-                statusStyle.bg,
-                statusStyle.text,
-              )}
-            >
-              {event.status.replace(/_/g, " ")}
-            </Badge>
+            <StatusBadge
+              {...processedEventBadge(event)}
+              withDot
+              size="sm"
+            />
           )}
         </div>
         {canShowJoin && (
           <Button
             size="sm"
-            className="h-7 px-3 text-xs bg-white hover:bg-zinc-100 text-zinc-900 font-semibold rounded-md shrink-0"
+            className="h-7 px-3 text-xs font-semibold rounded-md shrink-0"
             onClick={(e) => {
               e.stopPropagation();
               onJoin?.();
@@ -309,11 +316,10 @@ function MonthlyEventItem({
   onToggle: () => void;
 }) {
   const { data: session } = useSession();
-  const sponsoringOrgName = event.organizationId
-    ? (session?.user?.organizationMemberships?.find(
-        (m) => m.organizationId === event.organizationId,
-      )?.organizationName ?? "your organization")
-    : null;
+  const sponsoringOrgName = resolveSponsoringOrgName(
+    event.organizationId,
+    session?.user?.organizationMemberships,
+  );
 
   // Type labels - border style
   const typeLabels: Record<string, string> = {
@@ -324,7 +330,6 @@ function MonthlyEventItem({
   };
 
   const typeLabel = typeLabels[event.type] || "Event";
-  const statusStyle = getStatusStyle(event.status, "light");
 
   return (
     <div className="border-b border-border last:border-0">
@@ -411,17 +416,7 @@ function MonthlyEventItem({
               {!(
                 (event.type === "webinar" || event.type === "class") &&
                 event.bookingStatus
-              ) && (
-                <Badge
-                  className={cn(
-                    "text-[10px] font-medium border-0",
-                    statusStyle.bg,
-                    statusStyle.text,
-                  )}
-                >
-                  {event.status.replace(/_/g, " ")}
-                </Badge>
-              )}
+              ) && <StatusBadge {...processedEventBadge(event)} size="sm" />}
               <ChevronRight
                 className={cn(
                   "h-4 w-4 text-muted-foreground/70 transition-transform duration-200",
@@ -481,17 +476,7 @@ function MonthlyEventItem({
               {!(
                 (event.type === "webinar" || event.type === "class") &&
                 event.bookingStatus
-              ) && (
-                <Badge
-                  className={cn(
-                    "text-[10px] font-medium border-0",
-                    statusStyle.bg,
-                    statusStyle.text,
-                  )}
-                >
-                  {event.status.replace(/_/g, " ")}
-                </Badge>
-              )}
+              ) && <StatusBadge {...processedEventBadge(event)} size="sm" />}
             </div>
           </div>
         </div>

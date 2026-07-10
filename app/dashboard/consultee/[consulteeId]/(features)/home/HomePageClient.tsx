@@ -1,8 +1,11 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { CalendarX2 } from "lucide-react";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
-import { ConsulteeDashboardSkeleton } from "@/components/ui/dashboard-skeleton";
+import { HomeSkeleton } from "@/components/dashboard/DashboardSkeletons";
+import { EmptyState } from "@/components/dashboard/DataCard";
+import { Button } from "@/components/ui/button";
 import { createConsulteeQueries } from "@/lib/dashboard-queries";
 import { useOrgScope } from "@/hooks/useOrgScope";
 import HomeTab from "./HomeTab";
@@ -34,42 +37,29 @@ export default function HomePageClient({
     staleTime: 0,
     refetchOnWindowFocus: false,
   };
-  const { data: eventsData, isLoading, error } = useQuery(eventsQuery);
+  const { data: eventsData, isLoading, error, refetch } = useQuery(eventsQuery);
 
   // Show skeleton only for initial load when no data exists
   if (isLoading && !eventsData) {
-    return <ConsulteeDashboardSkeleton />;
+    return <HomeSkeleton />;
   }
 
   if (error && !eventsData) {
     return (
-      <DashboardErrorBoundary>
-        <div className="flex items-center justify-center min-h-[400px]">
-          <div className="p-4 bg-red-50 text-red-600 rounded-lg max-w-md text-center">
-            <h3 className="font-semibold mb-2">Error Loading Events</h3>
-            <p className="text-sm">
-              {(error as Error)?.message ||
-                "Failed to load events data. Please try again."}
-            </p>
-            <button
-              onClick={() => window.location.reload()}
-              className="mt-4 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
-            >
-              Retry
-            </button>
-          </div>
-        </div>
-      </DashboardErrorBoundary>
+      <EmptyState
+        icon={CalendarX2}
+        title="Couldn't load your sessions"
+        description={
+          (error as Error)?.message ||
+          "Failed to load events data. Please try again."
+        }
+        action={<Button onClick={() => refetch()}>Retry</Button>}
+      />
     );
   }
 
-  if (!eventsData) {
-    return <ConsulteeDashboardSkeleton />;
-  }
-
-  // If userDetails is not available, show skeleton
-  if (!userDetails) {
-    return <ConsulteeDashboardSkeleton />;
+  if (!eventsData || !userDetails) {
+    return <HomeSkeleton />;
   }
 
   return (

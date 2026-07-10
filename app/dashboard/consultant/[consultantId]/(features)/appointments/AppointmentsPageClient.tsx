@@ -1,8 +1,12 @@
 "use client";
 
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { CalendarX } from "lucide-react";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
-import { PageSkeleton } from "@/components/dashboard/DashboardSkeletons";
+import { DashboardHeader } from "@/components/dashboard/PageScaffold";
+import { EmptyState } from "@/components/dashboard/DataCard";
+import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { createConsultantQueries } from "@/lib/dashboard-queries";
 import { useOrgScope } from "@/hooks/useOrgScope";
 import {
@@ -11,8 +15,21 @@ import {
   ORG_FILTER_PERSONAL,
   type OrgContextFilterValue,
 } from "@/components/dashboard/OrgContextFilter";
-import { BADGE_STYLES } from "../../types";
 import { AppointmentsTab } from "./AppointmentsTab";
+
+function AppointmentsListSkeleton() {
+  return (
+    <div className="rounded-xl border border-zinc-200/80 bg-white shadow-sm p-4 sm:p-6 space-y-4">
+      <Skeleton className="h-6 w-48" />
+      <Skeleton className="h-10 w-full" />
+      <div className="space-y-3">
+        {[1, 2, 3, 4].map((i) => (
+          <Skeleton key={i} className="h-24 w-full rounded-xl" />
+        ))}
+      </div>
+    </div>
+  );
+}
 
 export default function AppointmentsPageClient({
   consultantId,
@@ -53,13 +70,25 @@ export default function AppointmentsPageClient({
     consultantId,
     orgScopeParam,
   ).appointments;
-  const { data: appointments, isLoading, error } = useQuery({
+  const {
+    data: appointments,
+    isLoading,
+    error,
+    refetch: refetchAppointments,
+  } = useQuery({
     ...appointmentsQuery,
     placeholderData: keepPreviousData,
   });
 
-  // Fetch scheduled trials for this consultant
-  const { data: trialsData, isLoading: trialsLoading } = useQuery({
+  // Auxiliary sections each carry their own query state into the tab so a
+  // slow or failed trials/classes/webinars read can't blank the main list
+  // (previously ONE loading flag gated the entire page).
+  const {
+    data: trialsData,
+    isLoading: trialsLoading,
+    isError: trialsError,
+    refetch: refetchTrials,
+  } = useQuery({
     placeholderData: keepPreviousData,
     queryKey: ["trials", consultantId, "SCHEDULED", orgScopeParam] as const,
     queryFn: async () => {
@@ -75,8 +104,12 @@ export default function AppointmentsPageClient({
     },
   });
 
-  // Fetch class events for this consultant (to show unscheduled classes in appointments page)
-  const { data: classEventsData, isLoading: classesLoading } = useQuery({
+  const {
+    data: classEventsData,
+    isLoading: classesLoading,
+    isError: classesError,
+    refetch: refetchClasses,
+  } = useQuery({
     placeholderData: keepPreviousData,
     queryKey: ["consultant-classes", consultantId, orgScopeParam] as const,
     queryFn: async () => {
@@ -94,8 +127,12 @@ export default function AppointmentsPageClient({
     },
   });
 
-  // Fetch webinar events for this consultant; filter to those with no appointment yet
-  const { data: webinarEventsData, isLoading: webinarsLoading } = useQuery({
+  const {
+    data: webinarEventsData,
+    isLoading: webinarsLoading,
+    isError: webinarsError,
+    refetch: refetchWebinars,
+  } = useQuery({
     placeholderData: keepPreviousData,
     queryKey: [
       "consultant-webinars-unscheduled",
@@ -117,48 +154,64 @@ export default function AppointmentsPageClient({
     },
   });
 
-  if (isLoading || trialsLoading || classesLoading || webinarsLoading) {
-    return <PageSkeleton />;
-  }
-
-  if (error) {
-    return (
-      <DashboardErrorBoundary>
-        <div className="flex items-center justify-center min-h-[400px]">
-          <div className="p-4 bg-red-50 text-red-600 rounded-lg max-w-md text-center">
-            <h3 className="font-semibold mb-2">Error Loading Appointments</h3>
-            <p className="text-sm">
-              {error.message ||
-                "Failed to load appointments. Please try again."}
-            </p>
-            <button
-              onClick={() => window.location.reload()}
-              className="mt-4 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
-            >
-              Retry
-            </button>
-          </div>
-        </div>
-      </DashboardErrorBoundary>
-    );
-  }
-
   return (
     <DashboardErrorBoundary>
-      <AppointmentsTab
-        appointments={appointments || []}
-        badgeStyles={BADGE_STYLES}
-        scheduledTrials={trialsData || []}
-        consultantId={consultantId}
-        unscheduledClasses={classEventsData || []}
-        unscheduledWebinars={webinarEventsData || []}
-        headerSlot={
-          <OrgContextFilter
-            value={filterValue}
-            onChange={handleFilterChange}
-          />
-        }
+      <DashboardHeader
+        title="Appointments"
+        subtitle="Your consultations, subscriptions, webinars, and classes"
       />
+      <div className="pt-6">
+        {isLoading ? (
+          <AppointmentsListSkeleton />
+        ) : error ? (
+          <EmptyState
+            icon={CalendarX}
+            title="Couldn't load appointments"
+            description={
+              error instanceof Error
+                ? error.message
+                : "Failed to load appointments. Please try again."
+            }
+            action={
+              <Button
+                variant="outline"
+                onClick={() => void refetchAppointments()}
+              >
+                Retry
+              </Button>
+            }
+          />
+        ) : (
+          <AppointmentsTab
+            appointments={appointments || []}
+            scheduledTrials={trialsData || []}
+            trialsState={{
+              isLoading: trialsLoading,
+              isError: trialsError,
+              onRetry: () => void refetchTrials(),
+            }}
+            consultantId={consultantId}
+            unscheduledClasses={classEventsData || []}
+            unscheduledClassesState={{
+              isLoading: classesLoading,
+              isError: classesError,
+              onRetry: () => void refetchClasses(),
+            }}
+            unscheduledWebinars={webinarEventsData || []}
+            unscheduledWebinarsState={{
+              isLoading: webinarsLoading,
+              isError: webinarsError,
+              onRetry: () => void refetchWebinars(),
+            }}
+            headerSlot={
+              <OrgContextFilter
+                value={filterValue}
+                onChange={handleFilterChange}
+              />
+            }
+          />
+        )}
+      </div>
     </DashboardErrorBoundary>
   );
 }

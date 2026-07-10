@@ -1,8 +1,11 @@
 "use client";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { AlertCircle, Inbox } from "lucide-react";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { HomeSkeleton } from "@/components/dashboard/DashboardSkeletons";
+import { EmptyState } from "@/components/dashboard/DataCard";
+import { Button } from "@/components/ui/button";
 import { createConsultantQueries } from "@/lib/dashboard-queries";
 import { HomeTab } from "./HomeTab";
 import type { TConsultantDashboardResponse } from "@/types/consultant-events";
@@ -28,6 +31,7 @@ export default function HomePageClient({
     isLoading,
     isFetching,
     error,
+    refetch,
     isStale: _isStale,
   } = useQuery<TConsultantDashboardResponse>(dashboardQuery);
 
@@ -39,21 +43,18 @@ export default function HomePageClient({
   if (error && !dashboardData) {
     return (
       <DashboardErrorBoundary>
-        <div className="flex items-center justify-center min-h-[400px]">
-          <div className="p-4 bg-red-50 text-red-600 rounded-lg max-w-md text-center">
-            <h3 className="font-semibold mb-2">Error Loading Dashboard</h3>
-            <p className="text-sm">
-              {error.message ||
-                "Failed to load dashboard data. Please try again."}
-            </p>
-            <button
-              onClick={() => window.location.reload()}
-              className="mt-4 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
-            >
+        <EmptyState
+          icon={AlertCircle}
+          title="Error loading dashboard"
+          description={
+            error.message || "Failed to load dashboard data. Please try again."
+          }
+          action={
+            <Button variant="outline" onClick={() => refetch()}>
               Retry
-            </button>
-          </div>
-        </div>
+            </Button>
+          }
+        />
       </DashboardErrorBoundary>
     );
   }
@@ -61,14 +62,11 @@ export default function HomePageClient({
   if (!dashboardData) {
     return (
       <DashboardErrorBoundary>
-        <div className="flex items-center justify-center min-h-[400px]">
-          <div className="p-4 bg-orange-50 text-orange-600 rounded-lg max-w-md text-center">
-            <h3 className="font-semibold mb-2">No Data Available</h3>
-            <p className="text-sm">
-              Dashboard data not found for this consultant.
-            </p>
-          </div>
-        </div>
+        <EmptyState
+          icon={Inbox}
+          title="No data available"
+          description="Dashboard data not found for this consultant."
+        />
       </DashboardErrorBoundary>
     );
   }

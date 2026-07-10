@@ -17,7 +17,7 @@ import {
   DashboardHeader,
   DashboardContent,
   DashboardGrid,
-} from "@/components/dashboard/DashboardShell";
+} from "@/components/dashboard/PageScaffold";
 import { StatCard, StatCardSkeleton } from "@/components/dashboard/StatCard";
 import { formatCurrencyAmount } from "@/utils/formatting";
 

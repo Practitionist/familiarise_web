@@ -7,12 +7,11 @@ import { Button } from "@/components/ui/button";
 import { useRouter } from "next/navigation";
 import { EventCarousel } from "./EventCarousel";
 import { EventPlanner } from "./EventPlanner";
-import { useStreamVideoClient } from "@stream-io/video-react-sdk";
-import {
-  getOrCreateAppointmentMeeting,
-  MeetingAppointment,
-  MeetingSlot,
-} from "@/lib/meeting";
+// #248 bundle discipline: never statically import the Stream SDK or
+// @/lib/meeting (which imports it) — the client singleton is read at
+// click time and the meeting helper is lazy-imported on demand.
+import { waitForGlobalVideoClient } from "@/lib/stream/disconnect";
+import type { MeetingAppointment, MeetingSlot } from "@/lib/meeting";
 import {
   WebinarEvent,
   ClassEvent,
@@ -49,23 +48,26 @@ interface PlannerData {
   classes: PlannerClassEvent[];
   participantCounts: Record<string, number>;
 }
-import { addMonths, startOfMonth, endOfMonth } from "date-fns";
 
 interface Props {
   consultantId: string;
-  initialData?: PlannerData;
+  /**
+   * Planner payload from the page's ["consultant-planner", …] query — the
+   * SINGLE source of truth. Mutations invalidate that key (usePlanner.ts)
+   * and fresh data flows back down; this component keeps no local copy.
+   * (Previously it seeded useState from this prop while mutations
+   * invalidated a key nobody queried, so the UI went stale after every
+   * create/edit/delete.)
+   */
+  data: PlannerData;
 }
 
 export function EventManagementDashboard({
   consultantId,
-  initialData,
+  data,
 }: Readonly<Props>) {
-  const [webinars, setWebinars] = useState<PlannerWebinarEvent[]>(
-    initialData?.webinars || [],
-  );
-  const [classes, setClasses] = useState<PlannerClassEvent[]>(
-    initialData?.classes || [],
-  );
+  const webinars = data.webinars;
+  const classes = data.classes;
   const [isWebinarDialogOpen, setIsWebinarDialogOpen] = useState(false);
   const [isClassDialogOpen, setIsClassDialogOpen] = useState(false);
   const [isConsultationDialogOpen, setIsConsultationDialogOpen] =
@@ -73,8 +75,6 @@ export function EventManagementDashboard({
   const [isSubscriptionDialogOpen, setIsSubscriptionDialogOpen] =
     useState(false);
   const [editingEvent, setEditingEvent] = useState<Event | null>(null);
-  const [isLoading, setIsLoading] = useState(!initialData);
-  const [error, setError] = useState<string | null>(null);
   const [_isSaving, setIsSaving] = useState(false);
   const { toast } = useToast();
 
@@ -98,9 +98,7 @@ export function EventManagementDashboard({
     deleteSubscriptionPlan,
   } = useSubscriptionPlanMutations(consultantId);
   const { refreshPlanner } = usePlannerRefresh(consultantId);
-  const [currentDate, setCurrentDate] = useState(new Date());
   const router = useRouter();
-  const streamClient = useStreamVideoClient();
   const [joiningEventId, setJoiningEventId] = useState<string | null>(null);
 
   // Compute which webinar/class events are currently joinable (within 10 min before start to end)
@@ -149,12 +147,15 @@ export function EventManagementDashboard({
     return ids;
   }, [webinars, classes]);
 
-  // Handle joining a meeting from the planner
+  // Handle joining a meeting from the planner. Reads the connected video
+  // client singleton at click time (HomeTab idiom, #248) so the Stream SDK
+  // stays off the planner bundle.
   const handleJoinWebinarMeeting = async (webinar: PlannerWebinarEvent) => {
+    const streamClient = await waitForGlobalVideoClient();
     if (!streamClient) {
       toast({
-        title: "Not signed in",
-        description: "Video client not initialized. Please sign in to join.",
+        title: "Connecting…",
+        description: "Setting up your meeting client. Please try Join again.",
         variant: "warning",
       });
       return;
@@ -184,6 +185,7 @@ export function EventManagementDashboard({
         slotsOfAppointment: [meetingSlot],
         webinar: { webinarPlan: { title: webinar.webinarPlan.title } },
       };
+      const { getOrCreateAppointmentMeeting } = await import("@/lib/meeting");
       const meetingId = await getOrCreateAppointmentMeeting(
         streamClient,
         meetingAppointment,
@@ -207,10 +209,11 @@ export function EventManagementDashboard({
   };
 
   const handleJoinClassMeeting = async (classEvent: PlannerClassEvent) => {
+    const streamClient = await waitForGlobalVideoClient();
     if (!streamClient) {
       toast({
-        title: "Not signed in",
-        description: "Video client not initialized. Please sign in to join.",
+        title: "Connecting…",
+        description: "Setting up your meeting client. Please try Join again.",
         variant: "warning",
       });
       return;
@@ -261,6 +264,7 @@ export function EventManagementDashboard({
         slotsOfAppointment: [meetingSlot],
         class: { classPlan: { title: classEvent.classPlan.title } },
       };
+      const { getOrCreateAppointmentMeeting } = await import("@/lib/meeting");
       const meetingId = await getOrCreateAppointmentMeeting(
         streamClient,
         meetingAppointment,
@@ -327,56 +331,6 @@ export function EventManagementDashboard({
   const handleTrialsClick = () => {
     router.push(`/dashboard/consultant/${consultantId}/trials`);
   };
-
-  // Fetch events on load only if no initial data
-  useEffect(() => {
-    if (initialData) {
-      setWebinars(initialData.webinars);
-      setClasses(initialData.classes);
-      setIsLoading(false);
-      return;
-    }
-
-    const fetchEvents = async () => {
-      try {
-        setIsLoading(true);
-        setError(null);
-
-        const startDate = startOfMonth(currentDate);
-        const endDate = endOfMonth(currentDate);
-
-        // Use the service to fetch data with consistent date filtering
-        const [fetchedWebinars, fetchedClasses] = await Promise.all([
-          PlannerService.fetchWebinars(consultantId, startDate, endDate),
-          PlannerService.fetchClasses(consultantId, startDate, endDate),
-        ]);
-
-        // Annotate with default role (owned plans from PlannerService)
-        setWebinars(
-          fetchedWebinars.map((w) => ({
-            ...w,
-            collaboratorRole: "HOST",
-            isCollaborated: false,
-          })),
-        );
-        setClasses(
-          fetchedClasses.map((c) => ({
-            ...c,
-            collaboratorRole: "HOST",
-            isCollaborated: false,
-          })),
-        );
-      } catch (err) {
-        Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "client" } });
-        setError(err instanceof Error ? err.message : "An error occurred");
-        console.error("Error fetching events:", err);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    fetchEvents();
-  }, [consultantId, initialData, currentDate]);
 
   // Handle webinar saved event
   const handleWebinarSaved = async (
@@ -565,116 +519,33 @@ export function EventManagementDashboard({
     deleteSubscriptionPlan.mutate(planId);
   };
 
-  const _handleMonthChange = (direction: "prev" | "next") => {
-    setCurrentDate((prevDate) =>
-      addMonths(prevDate, direction === "prev" ? -1 : 1),
-    );
-  };
-
-  if (error) {
-    return (
-      <div className="container mx-auto p-4">
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
-          {error}
-        </div>
-      </div>
-    );
-  }
-
-  if (isLoading) {
-    return (
-      <div className="min-h-screen bg-white">
-        <div className="w-full px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
-          <div className="animate-pulse space-y-8 sm:space-y-12">
-            {/* Header skeleton */}
-            <div className="space-y-3">
-              <div className="h-8 sm:h-10 bg-zinc-200 rounded-lg w-64 sm:w-80"></div>
-              <div className="h-4 sm:h-5 bg-zinc-200 rounded w-72 sm:w-96"></div>
-              <div className="flex flex-wrap gap-2 sm:gap-3 mt-4">
-                <div className="h-8 bg-zinc-200 rounded-full w-24 sm:w-28"></div>
-                <div className="h-8 bg-zinc-200 rounded-full w-28 sm:w-32"></div>
-              </div>
-            </div>
-
-            {/* Section skeleton */}
-            <div className="space-y-6">
-              <div className="flex items-center gap-3 sm:gap-4">
-                <div className="h-10 w-10 sm:h-12 sm:w-12 bg-zinc-200 rounded-xl"></div>
-                <div className="space-y-2">
-                  <div className="h-5 sm:h-6 bg-zinc-200 rounded w-32 sm:w-40"></div>
-                  <div className="h-3 sm:h-4 bg-zinc-200 rounded w-48 sm:w-64"></div>
-                </div>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4 sm:gap-5 lg:gap-6">
-                {[...Array(4)].map((_, i) => (
-                  <div
-                    key={i}
-                    className="h-56 sm:h-64 bg-zinc-200 rounded-xl"
-                  ></div>
-                ))}
-              </div>
-            </div>
-
-            {/* Section skeleton */}
-            <div className="space-y-6">
-              <div className="flex items-center gap-3 sm:gap-4">
-                <div className="h-10 w-10 sm:h-12 sm:w-12 bg-zinc-200 rounded-xl"></div>
-                <div className="space-y-2">
-                  <div className="h-5 sm:h-6 bg-zinc-200 rounded w-28 sm:w-36"></div>
-                  <div className="h-3 sm:h-4 bg-zinc-200 rounded w-44 sm:w-56"></div>
-                </div>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4 sm:gap-5 lg:gap-6">
-                {[...Array(4)].map((_, i) => (
-                  <div
-                    key={i}
-                    className="h-56 sm:h-64 bg-zinc-200 rounded-xl"
-                  ></div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   // Calculate stats
   const totalPlans =
     (consultationPlans?.length ?? 0) + (subscriptionPlans?.length ?? 0);
   const totalSessions = webinars.length + classes.length;
 
   return (
-    <div className="min-h-screen bg-white">
-      <div className="w-full px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
-        {/* Page Header */}
+    <div>
+      <div className="w-full">
+        {/* Quick Stats — the page title lives in the page-level
+            DashboardHeader; only the live counters render here. */}
         <motion.div
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3 }}
-          className="mb-8 sm:mb-12"
+          className="mb-8 flex flex-wrap items-center gap-2 sm:gap-3"
         >
-          <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-zinc-900 tracking-tight">
-            Event Planner
-          </h1>
-          <p className="mt-1 sm:mt-2 text-sm sm:text-base lg:text-lg text-zinc-500">
-            Create and manage your plans and scheduled sessions
-          </p>
-
-          {/* Quick Stats */}
-          <div className="mt-4 sm:mt-6 flex flex-wrap items-center gap-2 sm:gap-3">
-            <div className="flex items-center gap-2 px-3 sm:px-4 py-1.5 sm:py-2 rounded-full bg-zinc-100 border border-zinc-200/60">
-              <LayoutTemplate className="h-4 w-4 text-zinc-600" />
-              <span className="text-xs sm:text-sm font-medium text-zinc-700">
-                {totalPlans} Plans
-              </span>
-            </div>
-            <div className="flex items-center gap-2 px-3 sm:px-4 py-1.5 sm:py-2 rounded-full bg-zinc-100 border border-zinc-200/60">
-              <Radio className="h-4 w-4 text-zinc-600" />
-              <span className="text-xs sm:text-sm font-medium text-zinc-700">
-                {totalSessions} Upcoming Sessions
-              </span>
-            </div>
+          <div className="flex items-center gap-2 px-3 sm:px-4 py-1.5 sm:py-2 rounded-full bg-zinc-100 border border-zinc-200/60">
+            <LayoutTemplate className="h-4 w-4 text-zinc-600" />
+            <span className="text-xs sm:text-sm font-medium text-zinc-700">
+              {totalPlans} Plans
+            </span>
+          </div>
+          <div className="flex items-center gap-2 px-3 sm:px-4 py-1.5 sm:py-2 rounded-full bg-zinc-100 border border-zinc-200/60">
+            <Radio className="h-4 w-4 text-zinc-600" />
+            <span className="text-xs sm:text-sm font-medium text-zinc-700">
+              {totalSessions} Upcoming Sessions
+            </span>
           </div>
         </motion.div>
 
@@ -860,7 +731,7 @@ export function EventManagementDashboard({
               onEdit={handleEditWebinar}
               onDelete={handleWebinarDelete}
               eventType="webinar"
-              participantCounts={initialData?.participantCounts || {}}
+              participantCounts={data.participantCounts ?? {}}
               onJoinMeeting={handleJoinWebinarMeeting}
               joinableEventIds={joinableEventIds}
               joiningEventId={joiningEventId}
@@ -896,7 +767,7 @@ export function EventManagementDashboard({
               onEdit={handleEditClass}
               onDelete={handleClassDelete}
               eventType="class"
-              participantCounts={initialData?.participantCounts || {}}
+              participantCounts={data.participantCounts ?? {}}
               onJoinMeeting={handleJoinClassMeeting}
               joinableEventIds={joinableEventIds}
               joiningEventId={joiningEventId}

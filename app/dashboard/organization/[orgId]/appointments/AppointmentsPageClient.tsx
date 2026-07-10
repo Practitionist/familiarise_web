@@ -19,11 +19,11 @@ import { Badge } from "@/components/ui/badge";
 import {
   DashboardHeader,
   DashboardContent,
-} from "@/components/dashboard/DashboardShell";
+} from "@/components/dashboard/PageScaffold";
 import {
   ScopedListTable,
   type Column,
-} from "@/components/enterprise/ScopedListTable";
+} from "@/components/dashboard/ScopedListTable";
 
 interface AppointmentRow {
   id: string;

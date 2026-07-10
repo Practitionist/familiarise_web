@@ -11,7 +11,7 @@ import { useToast } from "@/hooks/use-toast";
 import { loadScript } from "@/app/checkout/plans/utils";
 import { useSession } from "@/lib/auth-client";
 import { normalizeRazorpayContact } from "@/lib/payments/razorpay-prefill";
-import { DashboardGrid } from "@/components/dashboard/DashboardShell";
+import { DashboardGrid } from "@/components/dashboard/PageScaffold";
 import { StatCard } from "@/components/dashboard/StatCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";

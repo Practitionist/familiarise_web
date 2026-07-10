@@ -8,7 +8,7 @@ import {
   TabsTrigger,
 } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
-import { PageHeader } from "@/components/ui/page-header";
+import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useMemo } from "react";
@@ -138,9 +138,9 @@ export default function AdminPayoutsPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
+      <DashboardHeader
         title="Payouts"
-        description="Manage consultant payouts and earnings"
+        subtitle="Manage consultant payouts and earnings"
       />
 
       {/* Payout trend chart */}

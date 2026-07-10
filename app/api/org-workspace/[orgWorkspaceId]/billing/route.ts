@@ -21,9 +21,8 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
-import prisma from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth-helpers";
-import { sumPaise } from "@/lib/payments/utils/money";
+import { getWorkspaceBillingRollup } from "@/lib/data/org-workspace";
 
 export async function GET(
   _req: NextRequest,
@@ -39,108 +38,10 @@ export async function GET(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  // Owned orgs (any status — we count DEACTIVATED orgs too because
-  // they may carry residual outstanding invoices the operator still
-  // has to settle).
-  const ownedMemberships = await prisma.membership.findMany({
-    where: {
-      userId: auth.session.user.id,
-      role: "OWNER",
-      status: "ACTIVE",
-    },
-    select: {
-      organizationId: true,
-      organization: {
-        select: {
-          id: true,
-          name: true,
-          slug: true,
-          status: true,
-          billingAccount: {
-            select: {
-              id: true,
-              walletBalance: true,
-              currency: true,
-              fundingSource: true,
-            },
-          },
-        },
-      },
-    },
-  });
-
-  const orgIds = ownedMemberships.map((m) => m.organizationId);
-
-  if (orgIds.length === 0) {
-    return NextResponse.json({
-      summary: {
-        orgsOwned: 0,
-        totalActiveMembers: 0,
-        totalOutstandingPaise: 0,
-        totalWalletPaise: 0,
-      },
-      perOrg: [],
-    });
-  }
-
-  // Parallel: invoice aggregates per org + member counts per org.
-  const [invoiceAgg, memberAgg] = await Promise.all([
-    prisma.organizationInvoice.groupBy({
-      by: ["billingAccountId"],
-      where: {
-        billingAccount: { ownerOrgId: { in: orgIds } },
-        status: { in: ["ISSUED", "OVERDUE"] },
-      },
-      _sum: { totalPaise: true },
-      _count: { _all: true },
-    }),
-    prisma.membership.groupBy({
-      by: ["organizationId"],
-      where: { organizationId: { in: orgIds }, status: "ACTIVE" },
-      _count: { _all: true },
-    }),
-  ]);
-
-  // Index by joinable key for an O(orgs) merge.
-  const invoiceByBA = new Map(
-    invoiceAgg.map((row) => [
-      row.billingAccountId,
-      {
-        outstandingCount: row._count._all,
-        outstandingPaise: sumPaise(row._sum.totalPaise),
-      },
-    ]),
-  );
-  const membersByOrg = new Map(
-    memberAgg.map((row) => [row.organizationId, row._count._all]),
-  );
-
-  const perOrg = ownedMemberships.map((m) => {
-    const ba = m.organization.billingAccount;
-    const inv = ba ? invoiceByBA.get(ba.id) : undefined;
-    return {
-      organizationId: m.organization.id,
-      organizationName: m.organization.name,
-      organizationSlug: m.organization.slug,
-      organizationStatus: m.organization.status,
-      fundingSource: ba?.fundingSource ?? null,
-      currency: ba?.currency ?? "INR",
-      walletBalancePaise: ba?.walletBalance ?? 0,
-      outstandingCount: inv?.outstandingCount ?? 0,
-      outstandingPaise: inv?.outstandingPaise ?? 0,
-      activeMembers: membersByOrg.get(m.organization.id) ?? 0,
-    };
-  });
-
-  const summary = {
-    orgsOwned: ownedMemberships.length,
-    totalActiveMembers: perOrg.reduce((sum, o) => sum + o.activeMembers, 0),
-    totalOutstandingPaise: perOrg.reduce(
-      (sum, o) => sum + o.outstandingPaise,
-      0,
-    ),
-    totalWalletPaise: perOrg.reduce((sum, o) => sum + o.walletBalancePaise, 0),
-  };
-
-  return NextResponse.json({ summary, perOrg });
+  // Body extracted to lib/data/org-workspace so the workspace home +
+  // billing pages' SSR prefetch reads through the same code path. The
+  // roll-up is scoped to the orgs the caller OWNS (not the workspace id),
+  // so only the authenticated userId is needed.
+  const result = await getWorkspaceBillingRollup(auth.session.user.id);
+  return NextResponse.json(result);
 }

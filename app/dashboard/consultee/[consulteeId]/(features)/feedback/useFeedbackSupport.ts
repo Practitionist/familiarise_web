@@ -8,8 +8,10 @@ import {
   SupportResponse as PrismaSupportResponse,
   UserRole,
 } from "@prisma/client";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import React from "react";
+import { createConsulteeQueries } from "@/lib/dashboard-queries";
 
 interface FeedbackFormData {
   title: string;
@@ -41,19 +43,34 @@ export interface SupportTicketWithResponses extends SupportTicket {
   responses: EnrichedSupportTicketResponse[];
 }
 
-export function useFeedbackSupport() {
+export function useFeedbackSupport(consulteeId: string) {
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const [isLoading, setIsLoading] = React.useState(false);
   const [activeTab, setActiveTab] = React.useState<"feedback" | "support">(
     "feedback",
   );
-  const [feedbacks, setFeedbacks] = React.useState<Feedback[]>([]);
-  const [tickets, setTickets] = React.useState<SupportTicketWithResponses[]>(
-    [],
-  );
   const [selectedTicket, setSelectedTicket] = React.useState<string | null>(
     null,
   );
+
+  // Same query configs the feedback page prefetches — the page's fetch IS
+  // this hook's data (previously the hook re-fetched both endpoints via
+  // useEffect, doubling every page load's network calls).
+  const consulteeQueries = createConsulteeQueries(consulteeId);
+  const { data: feedbacksData } = useQuery(consulteeQueries.feedback);
+  const { data: ticketsData } = useQuery(consulteeQueries.supportTickets);
+  const feedbacks = (feedbacksData ?? []) as unknown as Feedback[];
+  const tickets = (ticketsData ?? []) as unknown as SupportTicketWithResponses[];
+
+  const invalidateFeedbacks = () =>
+    queryClient.invalidateQueries({
+      queryKey: consulteeQueries.feedback.queryKey,
+    });
+  const invalidateTickets = () =>
+    queryClient.invalidateQueries({
+      queryKey: consulteeQueries.supportTickets.queryKey,
+    });
 
   const [feedbackForm, setFeedbackForm] = React.useState<FeedbackFormData>({
     title: "",
@@ -70,65 +87,6 @@ export function useFeedbackSupport() {
     React.useState<SupportResponseFormData>({
       message: "",
     });
-
-  const loadFeedbacks = React.useCallback(async () => {
-    try {
-      setIsLoading(true);
-      const response = await fetch(`/api/user/feedbacks`);
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(
-          errorData.message || "Failed to fetch your feedback history",
-        );
-      }
-      const data = await response.json();
-      setFeedbacks(data);
-    } catch (error: unknown) {
-      console.error("Failed to load feedbacks:", error);
-      toast({
-        title: "Error",
-        description:
-          error instanceof Error
-            ? error.message
-            : "Unable to load your feedback history. Please try refreshing the page.",
-        variant: "destructive",
-      });
-    } finally {
-      setIsLoading(false);
-    }
-  }, [toast]);
-
-  const loadTickets = React.useCallback(async () => {
-    try {
-      setIsLoading(true);
-      const response = await fetch(`/api/user/support-tickets`);
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(
-          errorData.message || "Failed to fetch your support tickets",
-        );
-      }
-      const data = await response.json();
-      setTickets(data);
-    } catch (error: unknown) {
-      console.error("Failed to load support tickets:", error);
-      toast({
-        title: "Error",
-        description:
-          error instanceof Error
-            ? error.message
-            : "Unable to load your support tickets. Please try refreshing the page.",
-        variant: "destructive",
-      });
-    } finally {
-      setIsLoading(false);
-    }
-  }, [toast]);
-
-  React.useEffect(() => {
-    loadFeedbacks();
-    loadTickets();
-  }, [loadFeedbacks, loadTickets]);
 
   const handleFeedbackSubmit = async () => {
     try {
@@ -151,7 +109,7 @@ export function useFeedbackSupport() {
       });
 
       setFeedbackForm({ title: "", description: "" });
-      loadFeedbacks();
+      void invalidateFeedbacks();
     } catch (error: unknown) {
       console.error("Failed to submit feedback:", error);
       toast({
@@ -197,7 +155,7 @@ export function useFeedbackSupport() {
         issueType: undefined,
       });
 
-      loadTickets();
+      void invalidateTickets();
     } catch (error: unknown) {
       console.error("Failed to create support ticket:", error);
       toast({
@@ -236,7 +194,7 @@ export function useFeedbackSupport() {
       });
 
       setResponseForm({ message: "" });
-      loadTickets(); // Reload tickets to show the new response
+      void invalidateTickets(); // Refresh tickets to show the new response
     } catch (error: unknown) {
       console.error("Failed to submit response:", error);
       toast({

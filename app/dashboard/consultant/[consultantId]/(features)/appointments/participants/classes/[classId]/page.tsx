@@ -4,13 +4,13 @@ import * as Sentry from "@sentry/nextjs";
 import React from "react";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
-import { PageHeader } from "@/components/ui/page-header";
+import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 import { ClassEvent } from "../../../types/event";
 import { useParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -215,34 +215,23 @@ export default function ClassParticipantsPage() {
   );
 
   return (
-    <div className="container mx-auto py-8">
-      <Card>
-        <CardHeader>
+    <>
+      <DashboardHeader
+        title={`${classEvent.classPlan.title} — Participants`}
+        subtitle={`${participants.length}/${classEvent.classPlan.maxParticipants} participants · ${waitlist.length} on waitlist`}
+        actions={
           <Link
             href={`/dashboard/consultant/${params.consultantId}/appointments`}
             passHref
-            className="mb-4"
           >
             <Button variant="outline" size="sm">
               <ArrowLeft className="mr-2 h-4 w-4" /> Back to Appointments
             </Button>
           </Link>
-          <PageHeader
-            headingAs="h1"
-            title={`${classEvent.classPlan.title} - Participants`}
-            description={
-              <span className="flex gap-4">
-                <span>
-                  {participants.length}/{classEvent.classPlan.maxParticipants}{" "}
-                  participants
-                </span>
-                <span>•</span>
-                <span>{waitlist.length} on waitlist</span>
-              </span>
-            }
-          />
-        </CardHeader>
-        <CardContent>
+        }
+      />
+      <Card className="mt-6">
+        <CardContent className="pt-6">
           <Tabs defaultValue="registered" className="w-full">
             <TabsList className="mb-4">
               <TabsTrigger value="registered">Registered</TabsTrigger>
@@ -280,6 +269,6 @@ export default function ClassParticipantsPage() {
           </Tabs>
         </CardContent>
       </Card>
-    </div>
+    </>
   );
 }
