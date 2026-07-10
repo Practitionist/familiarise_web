@@ -1,8 +1,15 @@
 "use client";
 
+import { useMemo } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { CalendarX } from "lucide-react";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
-import { PageSkeleton } from "@/components/dashboard/DashboardSkeletons";
+import { DashboardHeader } from "@/components/dashboard/PageScaffold";
+import { EmptyState } from "@/components/dashboard/DataCard";
+import { Button } from "@/components/ui/button";
+import { AppointmentsShell } from "@/components/appointments/AppointmentsShell";
+import { AppointmentsPageSkeleton } from "@/components/appointments/skeletons";
+import { mapConsulteeEvents } from "@/lib/appointments/map-consultee";
 import { createConsulteeQueries } from "@/lib/dashboard-queries";
 import { useOrgScope } from "@/hooks/useOrgScope";
 import {
@@ -11,22 +18,14 @@ import {
   ORG_FILTER_PERSONAL,
   type OrgContextFilterValue,
 } from "@/components/dashboard/OrgContextFilter";
-import { Overview } from "./Overview";
-import { Calendar } from "./Calendar";
-import { BookingHistoryTab } from "./components/BookingHistoryTab";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { motion } from "framer-motion";
+import { useConsulteeAppointmentsAdapter } from "./ConsulteeAppointmentsAdapter";
 
 export default function AppointmentsPageClient({
   consulteeId,
 }: Readonly<{ consulteeId: string }>) {
   // B1-personal-retrofit: drive the events query off the URL ?orgScope=
-  // so org-funded sessions surface here (e.g. deep-links from
-  // /dashboard/organization/<orgId>/my-program "Join now"). Default is
-  // personal — backwards-compatible with B2C users.
-  // Land on the union view by default — for an org learner who books
-  // both personally and through their org, the appointments page is
-  // the one place they want the full picture without toggling.
+  // so org-funded sessions surface here. Org members land on the union
+  // view by default; B2C users stay personal (#890).
   const { scope, setScope } = useOrgScope({ defaultForOrgMember: "all" });
   const orgScopeParam =
     scope.kind === "personal"
@@ -37,10 +36,19 @@ export default function AppointmentsPageClient({
   const eventsQuery = createConsulteeQueries(consulteeId, orgScopeParam).events;
   // keepPreviousData: scope-filter changes show the previous list while the
   // new one loads instead of a skeleton flash (documents-page idiom, #346).
-  const { data: eventsData, isLoading, error } = useQuery({
+  const {
+    data: eventsData,
+    isLoading,
+    error,
+    refetch,
+  } = useQuery({
     ...eventsQuery,
     placeholderData: keepPreviousData,
   });
+
+  const adapter = useConsulteeAppointmentsAdapter();
+
+  const vms = useMemo(() => mapConsulteeEvents(eventsData), [eventsData]);
 
   const filterValue: OrgContextFilterValue =
     scope.kind === "personal"
@@ -54,142 +62,43 @@ export default function AppointmentsPageClient({
     else setScope({ kind: "org", orgId: next });
   };
 
-  // Guard on initial load only — with keepPreviousData the previous scope's
-  // list stays in `eventsData` during a refetch, so gating on `isLoading`
-  // alone would flash the skeleton on every scope switch (#346).
-  if (isLoading && !eventsData) {
-    return <PageSkeleton />;
-  }
-
-  if (error) {
-    return (
-      <DashboardErrorBoundary>
-        <div className="flex items-center justify-center min-h-[400px]">
-          <div className="p-4 bg-red-50 text-red-600 dark:bg-red-900/30 dark:text-red-300 rounded-lg max-w-md text-center">
-            <h3 className="font-semibold mb-2">Error Loading Appointments</h3>
-            <p className="text-sm">
-              {error.message ||
-                "Failed to load appointments. Please try again."}
-            </p>
-            <button
-              onClick={() => window.location.reload()}
-              className="mt-4 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
-            >
-              Retry
-            </button>
-          </div>
-        </div>
-      </DashboardErrorBoundary>
-    );
-  }
-
-  const {
-    consultations = [],
-    subscriptions = [],
-    webinars = [],
-    classes = [],
-    trials = [],
-  } = eventsData || {};
-
-  if (
-    !consultations.length &&
-    !subscriptions.length &&
-    !webinars.length &&
-    !classes.length &&
-    !trials.length
-  ) {
-    return (
-      <DashboardErrorBoundary>
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="flex flex-col items-center justify-center min-h-[400px] p-8 bg-card rounded-xl shadow-sm"
-        >
-          <div className="w-16 h-16 mb-4 text-muted-foreground/70">
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={1}
-                d="M8 7V3a1 1 0 011-1h6a1 1 0 011 1v4h3a1 1 0 011 1v9a1 1 0 01-1 1H5a1 1 0 01-1-1V8a1 1 0 011-1h3z"
-              />
-            </svg>
-          </div>
-          <h3 className="text-fluid-2xl font-semibold tracking-tight text-foreground mb-2">
-            No Appointments Found
-          </h3>
-          <p className="text-muted-foreground text-center">
-            You don't have any appointments scheduled yet. Book your first
-            session to get started!
-          </p>
-        </motion.div>
-      </DashboardErrorBoundary>
-    );
-  }
-
   return (
     <DashboardErrorBoundary>
-      <Tabs defaultValue="upcoming" className="space-y-6">
-        <div className="flex items-center justify-between gap-3 flex-wrap">
-          <TabsList>
-            <TabsTrigger value="upcoming">Upcoming</TabsTrigger>
-            <TabsTrigger value="past">Past</TabsTrigger>
-            <TabsTrigger value="calendar">Calendar</TabsTrigger>
-            <TabsTrigger value="history">History</TabsTrigger>
-          </TabsList>
-          <OrgContextFilter
-            value={filterValue}
-            onChange={handleFilterChange}
+      <DashboardHeader
+        title="Appointments"
+        subtitle="Your consultations, subscriptions, webinars, and classes"
+      />
+      <div className="pt-6">
+        {isLoading && !eventsData ? (
+          <AppointmentsPageSkeleton />
+        ) : error ? (
+          <EmptyState
+            icon={CalendarX}
+            title="Couldn't load appointments"
+            description={
+              error instanceof Error
+                ? error.message
+                : "Failed to load appointments. Please try again."
+            }
+            action={
+              <Button variant="outline" onClick={() => void refetch()}>
+                Retry
+              </Button>
+            }
           />
-        </div>
-
-        <TabsContent value="upcoming">
-          <Overview
-            consultations={consultations}
-            subscriptions={subscriptions}
-            webinars={webinars}
-            classes={classes}
-            trials={trials}
-            mode="upcoming"
+        ) : (
+          <AppointmentsShell
+            vms={vms}
+            adapter={adapter}
+            orgFilterSlot={
+              <OrgContextFilter
+                value={filterValue}
+                onChange={handleFilterChange}
+              />
+            }
           />
-        </TabsContent>
-
-        <TabsContent value="past">
-          <Overview
-            consultations={consultations}
-            subscriptions={subscriptions}
-            webinars={webinars}
-            classes={classes}
-            trials={trials}
-            mode="past"
-          />
-        </TabsContent>
-
-        <TabsContent value="calendar">
-          <Calendar
-            consultations={consultations}
-            subscriptions={subscriptions}
-            webinars={webinars}
-            classes={classes}
-            trials={trials}
-          />
-        </TabsContent>
-
-        <TabsContent value="history">
-          <BookingHistoryTab
-            consultations={consultations}
-            subscriptions={subscriptions}
-            webinars={webinars}
-            classes={classes}
-            trials={trials}
-          />
-        </TabsContent>
-      </Tabs>
+        )}
+      </div>
     </DashboardErrorBoundary>
   );
 }
