@@ -132,8 +132,8 @@ export async function POST(request: NextRequest) {
     const totalHours = totalSessions * sessionDurationInHours;
 
     // Handle free trial fields
-    const freeTrialEnabled = body.freeTrialEnabled ?? false;
-    const freeTrialDurationMinutes = body.freeTrialDurationMinutes ?? 30;
+    const trialEnabled = body.trialEnabled ?? false;
+    const trialDurationMinutes = body.trialDurationMinutes ?? 30;
 
     // Handle subscription contents (roadmap)
     const subscriptionContents = body.subscriptionContents as
@@ -164,8 +164,8 @@ export async function POST(request: NextRequest) {
         prerequisites: validatedData.prerequisites,
         materialProvided: validatedData.materialProvided,
         learningOutcomes: validatedData.learningOutcomes,
-        freeTrialEnabled,
-        freeTrialDurationMinutes,
+        trialEnabled,
+        trialDurationMinutes,
         consultantProfile: { connect: { id: consultantProfileId } },
         topics:
           topicIds.length > 0

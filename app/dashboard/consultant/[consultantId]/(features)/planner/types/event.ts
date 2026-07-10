@@ -65,8 +65,8 @@ export type SubscriptionPlanEvent = {
     consultantProfile?: ConsultantProfileSummary | null;
     subscriptions?: TSubscription[];
     sessionDurationInHours?: number;
-    freeTrialEnabled?: boolean;
-    freeTrialDurationMinutes?: number;
+    trialEnabled?: boolean;
+    trialDurationMinutes?: number;
     subscriptionContents?: SubscriptionContentInput[];
     createdAt?: Date;
     updatedAt?: Date;

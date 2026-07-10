@@ -301,7 +301,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!subscriptionPlan.freeTrialEnabled) {
+    if (!subscriptionPlan.trialEnabled) {
       return NextResponse.json(
         { error: "Free trial is not available for this plan" },
         { status: 400 },

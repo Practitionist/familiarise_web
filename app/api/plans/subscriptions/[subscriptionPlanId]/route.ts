@@ -212,8 +212,8 @@ export async function PUT(
           prerequisites: validatedData.prerequisites,
           materialProvided: validatedData.materialProvided,
           learningOutcomes: validatedData.learningOutcomes,
-          freeTrialEnabled: body.freeTrialEnabled,
-          freeTrialDurationMinutes: body.freeTrialDurationMinutes,
+          trialEnabled: body.trialEnabled,
+          trialDurationMinutes: body.trialDurationMinutes,
           ...topicsUpdate,
           subscriptionContents:
             subscriptionContents !== undefined

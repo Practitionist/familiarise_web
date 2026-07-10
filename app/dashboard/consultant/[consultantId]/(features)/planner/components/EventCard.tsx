@@ -258,8 +258,8 @@ export function EventCard({
   const durationSuffix = isRecurringEventType(eventType) ? "/mo" : "";
 
   // Check if subscription plan has free trial enabled
-  const hasFreeTrialEnabled =
-    isSubscriptionPlanEvent(event) && event.subscriptionPlan.freeTrialEnabled;
+  const hasTrialEnabled =
+    isSubscriptionPlanEvent(event) && event.subscriptionPlan.trialEnabled;
 
   return (
     <motion.div
@@ -408,7 +408,7 @@ export function EventCard({
       )}
 
       {/* Free Trial Button (subscription plans with trial enabled) */}
-      {hasFreeTrialEnabled && onTrialsClick && (
+      {hasTrialEnabled && onTrialsClick && (
         <div className="mt-3">
           <Button
             variant="outline"

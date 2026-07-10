@@ -64,8 +64,8 @@ export async function GET(request: NextRequest) {
       const plan = await prisma.subscriptionPlan.findUnique({
         where: { id: subscriptionPlanId },
         select: {
-          freeTrialEnabled: true,
-          freeTrialDurationMinutes: true,
+          trialEnabled: true,
+          trialDurationMinutes: true,
           title: true,
         },
       });
@@ -77,20 +77,20 @@ export async function GET(request: NextRequest) {
         );
       }
 
-      planTrialEnabled = plan.freeTrialEnabled;
-      planTrialDuration = plan.freeTrialDurationMinutes;
+      planTrialEnabled = plan.trialEnabled;
+      planTrialDuration = plan.trialDurationMinutes;
     }
 
     // Get all plans with trial enabled for this consultant
     const plansWithTrialEnabled = await prisma.subscriptionPlan.findMany({
       where: {
         consultantProfileId,
-        freeTrialEnabled: true,
+        trialEnabled: true,
       },
       select: {
         id: true,
         title: true,
-        freeTrialDurationMinutes: true,
+        trialDurationMinutes: true,
       },
     });
 

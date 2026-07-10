@@ -104,11 +104,11 @@ export function EventPlannerForSubscription({
   }, [toast]);
 
   // State for free trial (not in the Zod schema, handled separately)
-  const [freeTrialEnabled, setFreeTrialEnabled] = useState(
-    initialData?.subscriptionPlan?.freeTrialEnabled ?? false,
+  const [trialEnabled, setTrialEnabled] = useState(
+    initialData?.subscriptionPlan?.trialEnabled ?? false,
   );
-  const [freeTrialDurationMinutes, setFreeTrialDurationMinutes] = useState(
-    initialData?.subscriptionPlan?.freeTrialDurationMinutes ?? 30,
+  const [trialDurationMinutes, setTrialDurationMinutes] = useState(
+    initialData?.subscriptionPlan?.trialDurationMinutes ?? 30,
   );
 
   // State for subscription contents/roadmap (not in Zod schema)
@@ -183,11 +183,11 @@ export function EventPlannerForSubscription({
         topics: initialData.subscriptionPlan.topics ?? [],
       });
       // Reset free trial and subscription contents state
-      setFreeTrialEnabled(
-        initialData.subscriptionPlan.freeTrialEnabled ?? false,
+      setTrialEnabled(
+        initialData.subscriptionPlan.trialEnabled ?? false,
       );
-      setFreeTrialDurationMinutes(
-        initialData.subscriptionPlan.freeTrialDurationMinutes ?? 30,
+      setTrialDurationMinutes(
+        initialData.subscriptionPlan.trialDurationMinutes ?? 30,
       );
       setSubscriptionContents(
         initialData.subscriptionPlan.subscriptionContents ?? [],
@@ -259,8 +259,8 @@ export function EventPlannerForSubscription({
           consultantProfile: null,
           subscriptions: initialData?.subscriptionPlan?.subscriptions ?? [],
           sessionDurationInHours: formData.sessionDurationInHours ?? 1,
-          freeTrialEnabled,
-          freeTrialDurationMinutes,
+          trialEnabled,
+          trialDurationMinutes,
           subscriptionContents: subscriptionContents.map((content, index) => ({
             ...content,
             order: index + 1,
@@ -576,18 +576,18 @@ export function EventPlannerForSubscription({
                     </FormDescription>
                   </div>
                   <Switch
-                    checked={freeTrialEnabled}
-                    onCheckedChange={setFreeTrialEnabled}
+                    checked={trialEnabled}
+                    onCheckedChange={setTrialEnabled}
                   />
                 </div>
 
-                {freeTrialEnabled && (
+                {trialEnabled && (
                   <div className="mt-4">
                     <FormLabel>Trial Duration</FormLabel>
                     <Select
-                      value={freeTrialDurationMinutes.toString()}
+                      value={trialDurationMinutes.toString()}
                       onValueChange={(value) =>
-                        setFreeTrialDurationMinutes(Number.parseInt(value))
+                        setTrialDurationMinutes(Number.parseInt(value))
                       }
                     >
                       <SelectTrigger className="mt-2">
