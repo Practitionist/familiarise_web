@@ -371,7 +371,7 @@ export default function SubscriptionPricingToggle({
 
             {/* Button stack with proper spacing */}
             <div className="space-y-2.5">
-              {/* Free Trial Button */}
+              {/* Trial Button */}
               {selectedPlanDetails?.trialEnabled && (
                 <Button
                   className={`w-full font-semibold rounded-xl h-12 text-sm transition-all duration-200 ${
@@ -406,7 +406,7 @@ export default function SubscriptionPricingToggle({
                   {trialEligibility.isLoading
                     ? "Checking eligibility..."
                     : trialEligibility.isEligible
-                      ? `Book Free Trial (${selectedPlanDetails.trialDurationMinutes ?? 0} min)`
+                      ? `Book Trial (${selectedPlanDetails.trialDurationMinutes ?? 0} min)`
                       : "Trial Already Requested"}
                 </Button>
               )}

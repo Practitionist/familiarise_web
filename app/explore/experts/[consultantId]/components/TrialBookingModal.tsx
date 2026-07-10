@@ -90,7 +90,7 @@ export function TrialBookingModal({
           title: "Not Eligible",
           description:
             eligibility.reason ||
-            "You are not eligible for a free trial with this consultant",
+            "You are not eligible for a trial with this consultant",
           variant: "destructive",
         });
         return;
@@ -146,15 +146,15 @@ export function TrialBookingModal({
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Gift className="h-5 w-5 text-emerald-500" />
-              Book Free Trial
+              Book Trial
             </DialogTitle>
             <DialogDescription>
-              Sign in to request a free trial session
+              Sign in to request a trial session
             </DialogDescription>
           </DialogHeader>
           <div className="py-6 text-center">
             <p className="text-muted-foreground mb-4">
-              Please sign in to request a free trial with {consultantName}
+              Please sign in to request a trial with {consultantName}
             </p>
             <Button onClick={redirectToSignIn}>
               Sign In to Continue
@@ -192,10 +192,10 @@ export function TrialBookingModal({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Gift className="h-5 w-5 text-emerald-500" />
-            Book Free Trial Session
+            Book Trial Session
           </DialogTitle>
           <DialogDescription>
-            Request a free {trialDurationMinutes}-minute trial with{" "}
+            Request a {trialDurationMinutes}-minute trial with{" "}
             {consultantName}
           </DialogDescription>
         </DialogHeader>
@@ -206,7 +206,7 @@ export function TrialBookingModal({
             <p className="text-sm font-medium text-foreground">{planTitle}</p>
             <div className="flex items-center gap-2 mt-2 text-sm text-muted-foreground">
               <Clock className="h-4 w-4" />
-              <span>{trialDurationMinutes} minute free trial</span>
+              <span>{trialDurationMinutes} minute trial</span>
             </div>
           </div>
 
@@ -249,7 +249,7 @@ export function TrialBookingModal({
             ) : (
               <>
                 <Gift className="h-4 w-4 mr-2" />
-                Request Free Trial
+                Request Trial
               </>
             )}
           </Button>
