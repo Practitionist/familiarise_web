@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import * as Sentry from "@sentry/nextjs";
 import { useParams, useRouter } from "next/navigation";
 import { useStreamVideoClient } from "@stream-io/video-react-sdk";
 import {
@@ -134,6 +135,7 @@ export function useConsulteeAppointmentsAdapter(): AppointmentActionAdapter {
       });
       router.push(`/meetings/${meetingId}`);
     } catch (error) {
+      Sentry.captureException(error);
       console.error("Error joining meeting:", error);
       toast({
         title: "Error joining meeting",
