@@ -13,6 +13,10 @@ import {
   canSeeFinanceSurface,
   canSeeOperatorSurface,
 } from "@/lib/auth/role-ranks";
+import {
+  hasOrgPermission,
+  type OrgSurface,
+} from "@/lib/auth/org-permissions";
 
 /**
  * Hook that returns the current user's role in the org and an `isAtLeast`
@@ -69,7 +73,11 @@ export function useOrgRole(orgId: string) {
  * API refuses to serve, and vice-versa.
  */
 export interface OrgAccessGate {
-  minRole: MemberRole;
+  /** Rank floor — for genuine hierarchy checks only. Prefer `permission`. */
+  minRole?: MemberRole;
+  /** Surface grant from the org permission matrix — expresses the
+   *  operations/finance track split the rank ladder cannot. */
+  permission?: OrgSurface;
   canSponsor?: true;
   canHost?: true;
   fundingSource?: FundingSource;
@@ -91,7 +99,8 @@ export function useRequireOrgAccess(
   const router = useRouter();
 
   const passes =
-    isAtLeast(gate.minRole) &&
+    (!gate.minRole || isAtLeast(gate.minRole)) &&
+    (!gate.permission || hasOrgPermission(role, gate.permission)) &&
     (gate.canSponsor !== true || canSponsor) &&
     (gate.canHost !== true || canHost) &&
     (!gate.fundingSource || fundingSource === gate.fundingSource);
