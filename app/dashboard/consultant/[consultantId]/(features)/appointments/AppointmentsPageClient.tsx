@@ -191,7 +191,7 @@ export default function AppointmentsPageClient({
       <div className="space-y-2">
         {trialsError && (
           <SideQueryNotice
-            label="Free trials"
+            label="Trials"
             onRetry={() => void refetchTrials()}
           />
         )}

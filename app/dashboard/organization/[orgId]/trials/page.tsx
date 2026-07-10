@@ -93,7 +93,7 @@ export default function OrgTrialsPage({
     <>
       <DashboardHeader
         title="Trials"
-        subtitle="Free trial sessions taken by this organization's members. Useful for sales pipeline reporting."
+        subtitle="Trial sessions taken by this organization's members. Useful for sales pipeline reporting."
       />
       <DashboardContent>
         <ScopedListTable

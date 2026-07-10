@@ -199,7 +199,7 @@ export enum DashboardSection {
   Chats = "Chats",
   Appointments = "Appointments",
   Requests = "Requests",
-  Trials = "Free Trials",
+  Trials = "Trials",
   Documents = "Documents for Review",
   Help = "Help",
   Settings = "Settings",

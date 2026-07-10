@@ -327,7 +327,7 @@ export function EventManagementDashboard({
     fetchTrialCounts();
   }, [fetchTrialCounts, subscriptionPlans]);
 
-  // Redirect to Free Trials tab when clicking trial button
+  // Redirect to Trials tab when clicking trial button
   const handleTrialsClick = () => {
     router.push(`/dashboard/consultant/${consultantId}/trials`);
   };

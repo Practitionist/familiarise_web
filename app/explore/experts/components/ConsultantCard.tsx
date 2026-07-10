@@ -386,7 +386,7 @@ export const ConsultantCard = memo(function ConsultantCard({
                 variant="outline"
                 className="h-10 border-border hover:bg-muted text-muted-foreground rounded-xl text-sm font-medium"
               >
-                <Link href={`${profileHref}?action=trial`}>Free Trial</Link>
+                <Link href={`${profileHref}?action=trial`}>Trial</Link>
               </Button>
               <Button
                 asChild
