@@ -131,9 +131,10 @@ export async function POST(request: NextRequest) {
     const totalSessions = (validatedData.callsPerWeek || 1) * estimatedWeeks;
     const totalHours = totalSessions * sessionDurationInHours;
 
-    // Handle free trial fields
-    const trialEnabled = body.trialEnabled ?? false;
-    const trialDurationMinutes = body.trialDurationMinutes ?? 30;
+    // Trial fields — Zod-validated; price defaults paid (10000 paise = ₹100)
+    const trialEnabled = validatedData.trialEnabled ?? false;
+    const trialDurationMinutes = validatedData.trialDurationMinutes ?? 30;
+    const trialPriceInPaise = validatedData.trialPriceInPaise ?? 10000;
 
     // Handle subscription contents (roadmap)
     const subscriptionContents = body.subscriptionContents as
@@ -166,6 +167,7 @@ export async function POST(request: NextRequest) {
         learningOutcomes: validatedData.learningOutcomes,
         trialEnabled,
         trialDurationMinutes,
+        trialPriceInPaise,
         consultantProfile: { connect: { id: consultantProfileId } },
         topics:
           topicIds.length > 0
