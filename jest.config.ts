@@ -41,9 +41,13 @@ const config: Config = {
   // Indicates which provider should be used to instrument code for coverage
   coverageProvider: "v8",
 
-  // A list of reporter names that Jest uses when writing coverage reports.
-  // `lcov` (coverage/lcov.info) is consumed by the SonarQube Cloud scan in CI.
-  coverageReporters: ["lcov", "text-summary"],
+  // A list of reporter names that Jest uses when writing coverage reports
+  // coverageReporters: [
+  //   "json",
+  //   "text",
+  //   "lcov",
+  //   "clover"
+  // ],
 
   // An object that configures minimum threshold enforcement for coverage results
   // coverageThreshold: undefined,

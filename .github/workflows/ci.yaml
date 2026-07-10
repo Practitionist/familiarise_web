@@ -118,16 +118,6 @@ jobs:
       - name: Unit Tests
         run: npm run test
 
-      - name: SonarQube Cloud scan
-        # Static analysis + coverage upload. Reuses coverage/lcov.info emitted by
-        # the Unit Tests step above (jest collectCoverage), so it does NOT re-run
-        # the suite. Non-blocking until SONAR_TOKEN is set and the quality gate is
-        # tuned — drop `continue-on-error` to let a failing gate block the PR.
-        uses: SonarSource/sonarqube-scan-action@v5
-        continue-on-error: true
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-
       - name: Build
         # Raise the V8 heap so `next build` (+ Sentry source-map generation) does
         # not flaky-OOM on the runner — mirrors netlify.toml's NODE_OPTIONS. The
