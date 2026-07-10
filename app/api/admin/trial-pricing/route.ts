@@ -41,8 +41,16 @@ export async function PATCH(request: Request) {
   const auth = await requirePrivilegedAuth();
   if (auth.error) return auth.error;
 
+  // Malformed JSON is a client error, not a Sentry-worthy exception.
+  let body: unknown;
   try {
-    const parsed = patchSchema.safeParse(await request.json());
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  try {
+    const parsed = patchSchema.safeParse(body);
     if (!parsed.success) {
       return NextResponse.json(
         { error: "minTrialPriceInPaise must be a non-negative integer" },
