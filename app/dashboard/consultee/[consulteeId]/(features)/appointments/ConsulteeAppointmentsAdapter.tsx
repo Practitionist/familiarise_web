@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useStreamVideoClient } from "@stream-io/video-react-sdk";
 import {
   AlertDialog,
@@ -76,6 +76,8 @@ export function useConsulteeAppointmentsAdapter(): AppointmentActionAdapter {
   const router = useRouter();
   const { toast } = useToast();
   const client = useStreamVideoClient();
+  const params = useParams<{ consulteeId: string }>();
+  const consulteeId = params?.consulteeId;
 
   // ONE set of dialogs, keyed off the row that opened them.
   const [activeVm, setActiveVm] = useState<AppointmentVM | null>(null);
@@ -347,7 +349,10 @@ export function useConsulteeAppointmentsAdapter(): AppointmentActionAdapter {
 
   return {
     role: "consultee",
-    detailHref: () => null, // detail pages land in a later chunk
+    detailHref: (vm) =>
+      vm.appointmentId && consulteeId
+        ? `/dashboard/consultee/${consulteeId}/appointments/${vm.appointmentId}`
+        : null,
     primaryAction,
     overflowItems,
     renderDialogs,

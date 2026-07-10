@@ -213,7 +213,10 @@ export function useConsultantAppointmentsAdapter(
 
   return {
     role: "consultant",
-    detailHref: () => null, // detail pages land in a later chunk
+    detailHref: (vm) =>
+      vm.appointmentId
+        ? `/dashboard/consultant/${consultantId}/appointments/${vm.appointmentId}`
+        : null,
     primaryAction,
     overflowItems,
     renderDialogs,
