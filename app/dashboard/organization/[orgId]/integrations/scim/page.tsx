@@ -16,7 +16,7 @@
 
 import { use, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useRequireFinanceSurface, useOrgRole } from "../../useOrgRole";
+import { useRequireOrgAccess, useOrgRole } from "../../useOrgRole";
 import {
   DashboardHeader,
   DashboardContent,
@@ -120,7 +120,7 @@ type PageProps = { params: Promise<{ orgId: string }> };
 
 export default function ScimPage({ params }: Readonly<PageProps>) {
   const { orgId } = use(params);
-  const { allowed, isLoading: isGateLoading } = useRequireFinanceSurface(orgId);
+  const { allowed, isLoading: isGateLoading } = useRequireOrgAccess(orgId, { permission: "integrations.read" });
   const { role: viewerRole } = useOrgRole(orgId);
   const isOwner = viewerRole === "OWNER";
   const qc = useQueryClient();

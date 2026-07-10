@@ -12,11 +12,14 @@ export default async function OrgHomePage({
   const queryClient = new QueryClient();
 
   // /home is the universal landing page for every org role, so don't gate
-  // the whole page. Only the analytics aggregate is MANAGER-scoped (mirrors
-  // GET /api/organizations/[orgId]/analytics + the client's `enabled:
-  // isOperator || isFinanceLead`), so guard just the prefetch — lower roles
-  // still get their overview, they simply don't dehydrate manager data.
-  const access = await requireOrgAccess(orgId, "MANAGER");
+  // the whole page. Only the analytics aggregate is operations-scoped
+  // (mirrors GET /api/organizations/[orgId]/analytics + the client's
+  // `enabled: isOperator || isFinanceLead`), so guard just the prefetch —
+  // lower roles still get their overview, they simply don't dehydrate
+  // operations data.
+  const access = await requireOrgAccess(orgId, {
+    permission: "operations.read",
+  });
 
   // queryKey MUST match HomePageClient's analytics useQuery
   // (["org-analytics", orgId]) or hydration won't apply. The home page's

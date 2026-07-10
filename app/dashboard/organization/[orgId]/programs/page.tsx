@@ -1762,7 +1762,7 @@ export default function OrgProgramsPage({
   const { isAtLeast, canSponsor, canHost } = useOrgRole(orgId);
   const capability = capabilityOf(canSponsor, canHost);
   const { allowed } = useRequireOrgAccess(orgId, {
-    minRole: "MAINTAINER",
+    permission: "programs.manage",
     canSponsor: true,
   });
   const [dialogOpen, setDialogOpen] = useState(false);

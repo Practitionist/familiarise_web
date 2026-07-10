@@ -263,7 +263,7 @@ function daysLate(dueDate: string | null, createdAt: string): number {
 export function BillingPageClient({ orgId }: { orgId: string }) {
   const { isAtLeast } = useOrgRole(orgId);
   const { allowed } = useRequireOrgAccess(orgId, {
-    minRole: "MANAGER",
+    permission: "billing.read",
     canSponsor: true,
   });
   const searchParams = useSearchParams();

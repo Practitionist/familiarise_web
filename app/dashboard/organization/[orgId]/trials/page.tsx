@@ -8,6 +8,7 @@
 
 import { use } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useRequireOrgAccess } from "../useOrgRole";
 import { useSearchParams } from "next/navigation";
 import { format } from "date-fns";
 import { Badge } from "@/components/ui/badge";
@@ -68,10 +69,16 @@ export default function OrgTrialsPage({
   params: Promise<{ orgId: string }>;
 }) {
   const { orgId } = use(params);
+  // Page-level mirror of the API gate — previously this page had NO
+  // guard and rendered an error shell for unauthorized roles (#audit F8).
+  const { allowed } = useRequireOrgAccess(orgId, {
+    permission: "operations.read",
+  });
   const searchParams = useSearchParams();
   const page = Number(searchParams?.get("page") ?? "1") || 1;
 
   const { data, isLoading, isError } = useQuery<TrialsResponse>({
+    enabled: allowed,
     queryKey: ["org-trials", orgId, page],
     queryFn: async () => {
       const res = await fetch(
