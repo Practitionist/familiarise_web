@@ -14,6 +14,7 @@ import type { TAppointment } from "@/types/appointment";
 import { deriveBucket } from "./bucket";
 import { getAnchorTime, isSessionOver } from "./slots";
 import { normalizeStatus } from "./status";
+import { trialMeta } from "./trial-labels";
 import {
   sortSessions,
   toDate,
@@ -60,7 +61,7 @@ function eventOf(appointment: TDetailAppointment): {
 
   if (trial) {
     return {
-      title: trial.subscriptionPlan?.title ?? "Free trial",
+      title: trial.subscriptionPlan?.title ?? "Trial",
       status: normalizeStatus(trial.status?.toString()),
       consultant: person(
         trial.subscriptionPlan?.consultantProfile?.user,
@@ -167,7 +168,14 @@ export function mapAppointmentDetail(
     nextAt: getAnchorTime(sessions, now),
     sessions,
     group: isGroup ? { total: withSlots.length, completed } : null,
-    meta: appointment.trialSession ? "Free trial" : null,
+    meta: appointment.trialSession
+      ? trialMeta(
+          appointment.trialSession.subscriptionPlan?.trialPriceInPaise ??
+            null,
+          appointment.trialSession.subscriptionPlan?.trialDurationMinutes ??
+            null,
+        )
+      : null,
     organizationId: appointment.organizationId ?? null,
     pendingPaymentUrl: facts.pendingPaymentUrl,
     waitlist: null,
