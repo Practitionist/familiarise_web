@@ -88,7 +88,8 @@ export type { CheckoutInput };
  * Consultant allocates specific slots later via Requests tab
  */
 type SubscriptionCheckoutResult = {
-  // #780 — extended-client reads return price as number; GetPayload says bigint.
+  // #780 — extended-client reads return price/trialPriceInPaise as number;
+  // GetPayload says bigint.
   plan: Omit<
     Prisma.SubscriptionPlanGetPayload<{
       include: {
@@ -97,8 +98,8 @@ type SubscriptionCheckoutResult = {
         };
       };
     }>,
-    "price"
-  > & { price: number };
+    "price" | "trialPriceInPaise"
+  > & { price: number; trialPriceInPaise: number };
   amount: number;
   subscription: Prisma.SubscriptionGetPayload<Record<string, never>>;
   appointment: Prisma.AppointmentGetPayload<Record<string, never>>;

@@ -73,7 +73,7 @@ interface TrialSession {
   subscriptionPlan: {
     id: string;
     title: string;
-    freeTrialDurationMinutes: number;
+    trialDurationMinutes: number;
   };
   appointment: {
     id: string;
@@ -92,7 +92,7 @@ interface TrialSession {
 interface SubscriptionPlan {
   id: string;
   title: string;
-  freeTrialEnabled: boolean;
+  trialEnabled: boolean;
 }
 
 function formatStatus(status: string): string {
@@ -249,7 +249,7 @@ export function TrialsTab() {
       }
       const { data } = await response.json();
       setSubscriptionPlans(
-        data.filter((p: SubscriptionPlan) => p.freeTrialEnabled),
+        data.filter((p: SubscriptionPlan) => p.trialEnabled),
       );
     } catch (error) {
       console.error("Error fetching subscription plans:", error);
@@ -694,7 +694,7 @@ export function TrialsTab() {
                   <div className="flex items-center gap-2 text-sm text-zinc-600">
                     <Clock className="h-4 w-4" />
                     <span>
-                      {trial.subscriptionPlan.freeTrialDurationMinutes} min
+                      {trial.subscriptionPlan.trialDurationMinutes} min
                       trial
                     </span>
                   </div>
@@ -874,7 +874,7 @@ export function TrialsTab() {
             <TrialScheduleCalendar
               consultantId={consultantId}
               trialDurationMinutes={
-                selectedTrial.subscriptionPlan.freeTrialDurationMinutes
+                selectedTrial.subscriptionPlan.trialDurationMinutes
               }
               onSlotSelect={handleSlotSelected}
               onCancel={() => {

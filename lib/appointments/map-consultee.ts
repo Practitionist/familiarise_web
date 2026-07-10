@@ -271,8 +271,8 @@ function mapTrial(t: TTrialWithPlan, now: Date): AppointmentVM {
     nextAt: getAnchorTime(sessions, now),
     sessions,
     group: null,
-    meta: t.subscriptionPlan.freeTrialDurationMinutes
-      ? `Free trial · ${t.subscriptionPlan.freeTrialDurationMinutes} min`
+    meta: t.subscriptionPlan.trialDurationMinutes
+      ? `Free trial · ${t.subscriptionPlan.trialDurationMinutes} min`
       : "Free trial",
     organizationId: t.appointment?.organizationId ?? null,
     pendingPaymentUrl: null,

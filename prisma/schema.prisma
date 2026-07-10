@@ -2689,9 +2689,10 @@ model SubscriptionPlan {
   learningOutcomes       String[]         @default([])
   topics                 Topic[]          @relation("TopicToSubscriptionPlan")
 
-  // Free trial fields
-  freeTrialEnabled         Boolean @default(false)
-  freeTrialDurationMinutes Int     @default(30) // 30 or 60 minutes
+  // Trial session offer — paid by default; ₹0 stays allowed but the UI adds friction
+  trialEnabled         Boolean @default(false)
+  trialDurationMinutes Int     @default(30) // 30 or 60 minutes
+  trialPriceInPaise    BigInt  @default(10000) // ₹100 default; 0 = free trial
 
   consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultantProfileId String
