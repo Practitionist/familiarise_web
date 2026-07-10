@@ -2796,17 +2796,22 @@ model TrialSession {
   appointment   Appointment? @relation(fields: [appointmentId], references: [id])
   appointmentId String?      @unique
 
+  // Paid-trial pay-link (mirrors Consultation/Subscription). Column frozen
+  // now (schema gate); wiring needs createApprovalPaymentIntent to accept
+  // TRIAL — deliberate lib/payments change, tracked as a follow-up.
+  pendingPaymentUrl String?
+
   // Outcome tracking
   convertedToSubscription   Subscription? @relation(fields: [convertedToSubscriptionId], references: [id])
   convertedToSubscriptionId String?       @unique
 
   // Enterprise (arch-4) — optional org tag. Set when the trial booker
   // is a LEARNER of an active org, so analytics can answer "how many
-  // trials did Wipro's members take, and how many converted?". Trials
-  // are free — no money moves, the org pays nothing — so this is pure
-  // *attribution*, not sponsorship. Full BookingUtilization integration
-  // (sub-trial-pool consumption, if we ever introduce paid trial pools)
-  // is deferred to Programs v2.
+  // trials did Wipro's members take, and how many converted?". The org
+  // pays nothing either way (a paid trial charges the consultee), so
+  // this is pure *attribution*, not sponsorship. Full BookingUtilization
+  // integration (sub-trial-pool consumption / org-sponsored trials) is
+  // deferred to Programs v2.
   organization   Organization? @relation("TrialsByOrg", fields: [organizationId], references: [id], onDelete: SetNull)
   organizationId String?
 
