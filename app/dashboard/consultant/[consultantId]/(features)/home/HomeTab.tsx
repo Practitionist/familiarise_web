@@ -51,7 +51,10 @@ import {
   getRoleBadgeStyle,
 } from "../../utils/appointmentHelpers";
 
-import { getBadgeStyle } from "../../types";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { eventUnionStatusBadge } from "@/lib/appointments/status";
+import { getProximityLabel } from "@/lib/appointments/slots";
+import { getAppointmentLifecycleStatus } from "@/lib/appointments/map-consultant";
 import { TAppointment } from "@/types/appointment";
 import { getJoinableSlot } from "../../utils/joinState";
 import { getInitials } from "@/utils/formatting";
@@ -196,7 +199,6 @@ export function HomeTab({
                   <div className="divide-y divide-zinc-100">
                     {todayAppointments.map((appointment) => {
                       const userName = getConsumeeName(appointment);
-                      const status = getAppointmentStatus(appointment);
                       const startTime = getStartTime(appointment);
                       const joinableSlot = getJoinableSlot(
                         appointment.slotsOfAppointment ?? [],
@@ -270,11 +272,25 @@ export function HomeTab({
                             </span>
                           </div>
 
-                          <Badge
-                            className={`flex-shrink-0 ${getBadgeStyle(status)}`}
-                          >
-                            {status}
-                          </Badge>
+                          <div className="flex flex-col items-end gap-0.5 flex-shrink-0">
+                            <StatusBadge
+                              {...eventUnionStatusBadge(
+                                getAppointmentLifecycleStatus(appointment),
+                              )}
+                              withDot
+                              size="sm"
+                            />
+                            {(() => {
+                              const proximity = getProximityLabel(
+                                getNextUpcomingSlotTime(appointment),
+                              );
+                              return proximity ? (
+                                <span className="text-[10px] text-zinc-400">
+                                  {proximity}
+                                </span>
+                              ) : null;
+                            })()}
+                          </div>
 
                           {(isDev || isJoinable) && (
                             <TooltipProvider>
@@ -355,7 +371,6 @@ export function HomeTab({
                         groupKey.startsWith("class-");
                       const firstAppointment = groupAppointments[0];
                       const userName = getConsumeeName(firstAppointment);
-                      const status = getAppointmentStatus(firstAppointment);
                       const startTime = isRecurring
                         ? getNextUpcomingSlotTime(firstAppointment)
                         : getStartTime(firstAppointment);
@@ -443,9 +458,25 @@ export function HomeTab({
                             )}
                           </div>
 
-                          <Badge className={getBadgeStyle(status)}>
-                            {status}
-                          </Badge>
+                          <div className="flex flex-col items-end gap-0.5 flex-shrink-0">
+                            <StatusBadge
+                              {...eventUnionStatusBadge(
+                                getAppointmentLifecycleStatus(firstAppointment),
+                              )}
+                              withDot
+                              size="sm"
+                            />
+                            {(() => {
+                              const proximity = getProximityLabel(
+                                startTime ?? null,
+                              );
+                              return proximity ? (
+                                <span className="text-[10px] text-zinc-400">
+                                  {proximity}
+                                </span>
+                              ) : null;
+                            })()}
+                          </div>
 
                           <ChevronRight className="h-5 w-5 text-zinc-300 group-hover:text-zinc-500 transition-colors" />
                         </motion.div>

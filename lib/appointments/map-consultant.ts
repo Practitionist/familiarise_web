@@ -127,6 +127,14 @@ function eventFacts(appointment: TAppointment): {
   }
 }
 
+/** Lifecycle status of an appointment's owning event — for surfaces (home
+ *  tab) that render a status pill for a bare TAppointment. */
+export function getAppointmentLifecycleStatus(
+  appointment: TAppointment,
+): string {
+  return eventFacts(appointment).status;
+}
+
 interface PlanCollaboratorLike {
   consultantProfileId: string;
   role: string;
