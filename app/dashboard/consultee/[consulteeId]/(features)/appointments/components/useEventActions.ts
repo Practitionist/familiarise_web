@@ -8,7 +8,10 @@ import { useStreamVideoClient } from "@stream-io/video-react-sdk";
 import { getOrCreateAppointmentMeeting } from "@/lib/meeting";
 import type { TAppointment } from "@/types/appointment";
 import type { SlotOfAppointment } from "@prisma/client";
-import { DEFAULT_MEETING_DURATION_MS } from "../types";
+import {
+  CONSULTEE_JOIN_WINDOW_MS,
+  getJoinableSlot as getJoinableSlotShared,
+} from "@/lib/appointments/slots";
 
 interface UseEventActionsOptions {
   appointmentId?: string;
@@ -57,21 +60,10 @@ export function useEventActions({
   const [showReportDialog, setShowReportDialog] = useState(false);
   const [showCancelDialog, setShowCancelDialog] = useState(false);
 
-  const getJoinableSlot = (): SlotOfAppointment | null => {
-    if (!rawSlots || rawSlots.length === 0) return null;
-    const now = new Date();
-    for (const slot of rawSlots) {
-      const startTime = new Date(slot.startsAt);
-      const endTime = slot.endsAt
-        ? new Date(slot.endsAt)
-        : new Date(startTime.getTime() + DEFAULT_MEETING_DURATION_MS);
-      const joinWindowStart = new Date(startTime.getTime() - 10 * 60 * 1000);
-      if (!slot.isTentative && now >= joinWindowStart && now <= endTime) {
-        return slot;
-      }
-    }
-    return null;
-  };
+  const getJoinableSlot = (): SlotOfAppointment | null =>
+    getJoinableSlotShared(rawSlots ?? [], {
+      joinWindowMs: CONSULTEE_JOIN_WINDOW_MS,
+    });
 
   const handleRescheduleClick = (isMultiSession: boolean) => {
     if (isMultiSession) {
