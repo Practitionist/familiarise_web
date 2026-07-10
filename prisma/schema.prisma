@@ -2775,7 +2775,7 @@ enum AppointmentStatus {
   @@map("RequestStatus")
 }
 
-// Free trial session tracking for subscriptions
+// Trial session tracking for subscriptions
 
 model TrialSession {
   id     String             @id @default(cuid())

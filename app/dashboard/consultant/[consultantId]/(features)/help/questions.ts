@@ -238,7 +238,7 @@ export const faqs: FAQ[] = [
 
   // Trials
   {
-    id: "how-free-trials-work",
+    id: "how-trials-work",
     question: "How do trials work?",
     answer:
       "You can offer trial sessions to let potential consultees experience your services before committing. You set the trial price on each subscription plan — we recommend charging at least ₹100–₹200, since paid trials get far fewer no-shows — though you can still make a trial free. Consultees request a trial from your profile, and you can approve or decline the request from the Home tab or the relevant service section.",

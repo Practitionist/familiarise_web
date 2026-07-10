@@ -2,12 +2,12 @@
 
 ## Overview
 
-A trial session is a free, one-time session that lets a consultee try a consultant's subscription plan before committing to a paid subscription. Trials are tied to a `SubscriptionPlan` that has `freeTrialEnabled: true`, and each consultee-consultant pair is limited to exactly one trial (enforced by a unique constraint).
+A trial session is a one-time session that lets a consultee try a consultant's subscription plan before committing to a paid subscription. Trials are tied to a `SubscriptionPlan` that has `trialEnabled: true`, and each consultee-consultant pair is limited to exactly one trial (enforced by a unique constraint).
 
 Key characteristics:
 
-- No payment required
-- Duration configured per plan via `freeTrialDurationMinutes` (default 30 min)
+- Priced per plan via `trialPriceInPaise` (₹100 default; the consultant can set it to ₹0 for a genuinely free trial)
+- Duration configured per plan via `trialDurationMinutes` (default 30 min)
 - Consultant must approve and schedule the session
 - Successful trials can convert into a full subscription
 
@@ -135,7 +135,7 @@ sequenceDiagram
 
     Consultee->>API: POST /api/trials (request trial)
     API->>DB: Check unique constraint (one trial per pair)
-    API->>DB: Verify plan has freeTrialEnabled
+    API->>DB: Verify plan has trialEnabled
     API->>DB: Create TrialSession (PENDING)
     API->>Novu: trial-session-requested (to consultant)
     API-->>Consultee: 201 Created
@@ -161,7 +161,7 @@ sequenceDiagram
 
 ### Step-by-step
 
-1. **Request** -- Consultee calls `POST /api/trials` with `consulteeProfileId`, `consultantProfileId`, `subscriptionPlanId`, and optional `notes`. The API checks the unique constraint and verifies `freeTrialEnabled` on the plan.
+1. **Request** -- Consultee calls `POST /api/trials` with `consulteeProfileId`, `consultantProfileId`, `subscriptionPlanId`, and optional `notes`. The API checks the unique constraint and verifies `trialEnabled` on the plan.
 2. **Eligibility check** -- `GET /api/trials/check-eligibility` can be called beforehand to verify the consultee has not already used their trial with this consultant.
 3. **Approve & Schedule** -- Consultant calls `PATCH /api/trials/[trialId]` with `status: "SCHEDULED"` and `slotData: { startsAt, endsAt }`. The system acquires a distributed lock, validates slot availability, then creates an `Appointment` (type `TRIAL`) and a `SlotOfAppointment` inside a Prisma transaction.
 4. **Session** -- Both parties join the meeting via Stream video call.
@@ -174,8 +174,8 @@ sequenceDiagram
 
 | Aspect                | Trial                                                             | Consultation                                                  |
 | --------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------- |
-| **Payment**           | Free                                                              | Required (via checkout)                                       |
-| **Duration**          | Fixed per plan (`freeTrialDurationMinutes`, default 30 min)       | Variable (`durationInHours`, 0.5-4h)                          |
+| **Payment**           | Per plan's `trialPriceInPaise` (₹100 default, ₹0 allowed)         | Required (via checkout)                                       |
+| **Duration**          | Fixed per plan (`trialDurationMinutes`, default 30 min)           | Variable (`durationInHours`, 0.5-4h)                          |
 | **Lock type**         | `lockTrialSlot()` -- key: `trial-slot-booking:{profileId}:{time}` | `lockSlotBooking()` -- key: `slot-booking:{profileId}:{time}` |
 | **Uniqueness**        | One per consultee-consultant pair                                 | Multiple allowed                                              |
 | **Conversion**        | Leads to Subscription (`convertedToSubscriptionId`)               | Standalone                                                    |

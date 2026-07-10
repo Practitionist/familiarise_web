@@ -423,8 +423,9 @@ erDiagram
         int callsPerWeek
         int durationInMonths
         int totalSessions
-        boolean freeTrialEnabled
-        int freeTrialDurationMinutes
+        boolean trialEnabled
+        int trialDurationMinutes
+        int trialPriceInPaise
         OrgPlanVisibility visibility
     }
     WebinarPlan {
@@ -615,7 +616,8 @@ erDiagram
         string id
         string consultantProfileId
         int price
-        boolean freeTrialEnabled
+        boolean trialEnabled
+        int trialPriceInPaise
         int callsPerWeek
         int durationInMonths
     }
