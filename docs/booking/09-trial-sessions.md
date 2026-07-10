@@ -6,7 +6,9 @@ A trial session is a one-time session that lets a consultee try a consultant's s
 
 Key characteristics:
 
-- Priced per plan via `trialPriceInPaise` (₹100 default; the consultant can set it to ₹0 for a genuinely free trial)
+- Priced per plan via `trialPriceInPaise` (free by default until paid-trial checkout is wired, after which the default flips to ₹100; the consultant can always set it to ₹0 for a genuinely free trial)
+- A platform-wide minimum sits under every plan's trial price: admin or staff set `PlatformPricingConfig.minTrialPriceInPaise` via `PATCH /api/admin/trial-pricing`, and the plan create/update routes reject prices below it. The floor defaults to 0, which keeps free trials allowed.
+- Booking a trial whose price is above 0 is rejected with a "Paid trials are not yet available" error until the payment wiring ships. The schema is already shaped for it: `TrialSession.pendingPaymentUrl` carries the checkout hand-off and `TrialSession.paymentId` links the settled `Payment`.
 - Duration configured per plan via `trialDurationMinutes` (default 30 min)
 - Consultant must approve and schedule the session
 - Successful trials can convert into a full subscription

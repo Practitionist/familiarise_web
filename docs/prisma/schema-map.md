@@ -639,7 +639,13 @@ erDiagram
         string appointmentId
         string convertedToSubscriptionId
         string organizationId
+        string pendingPaymentUrl
+        string paymentId
         TrialSessionStatus status
+    }
+    PlatformPricingConfig {
+        string id
+        int minTrialPriceInPaise
     }
 
     ConsulteeProfile ||--o{ Consultation : "requests"
