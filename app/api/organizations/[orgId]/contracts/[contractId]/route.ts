@@ -58,7 +58,7 @@ export async function GET(
 ) {
   const { orgId, contractId } = await params;
   const access = await requireOrgAccess(orgId, {
-    minimumRole: "MAINTAINER",
+    permission: "contracts.read",
     canSponsor: true,
   });
   if (access.error) return access.error;
@@ -102,7 +102,7 @@ export async function PATCH(
 ) {
   const { orgId, contractId } = await params;
   const access = await requireOrgAccess(orgId, {
-    minimumRole: "OWNER",
+    permission: "contracts.manage",
     canSponsor: true,
   });
   if (access.error) return access.error;
@@ -316,7 +316,7 @@ export async function DELETE(
 ) {
   const { orgId, contractId } = await params;
   const access = await requireOrgAccess(orgId, {
-    minimumRole: "OWNER",
+    permission: "contracts.manage",
     canSponsor: true,
   });
   if (access.error) return access.error;

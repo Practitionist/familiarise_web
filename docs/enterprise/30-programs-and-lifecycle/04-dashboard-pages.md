@@ -157,44 +157,56 @@ flowchart TD
   HOME -.->|sub-MANAGER deep-link| CON["role-specific ConsumerViewCard<br/>(deep-links to /my-program or /my-arrangement)"]
 ```
 
-Two nuances the arrows compress: the role ranks are cumulative (a MAINTAINER
-sees everything a MANAGER does, plus the MAINTAINER tier), and the boxes are
-*also* capability-gated — a `canHost=false` org hides `/experts` + `/payouts`
-even from an OWNER, and a `canSponsor=false` org hides `/programs`,
-`/contracts`, `/billing`, `/purchase-orders`. The matrix below is the
-authoritative cross-product.
+Two nuances the table compresses. First, role access is no longer expressed
+as a cumulative rank floor: since the 2026-07 remediation, every surface is
+granted through the **permission matrix** in `lib/auth/org-permissions.ts`,
+which the sidebar, the page guards, and the API routes all consume — so the
+"Roles" column below names a matrix surface and lists exactly which roles it
+admits. Second, the boxes are *also* capability-gated — a `canHost=false`
+org hides `/experts` + `/payouts` even from an OWNER, and a
+`canSponsor=false` org hides `/programs`, `/contracts`, `/billing`, and
+`/purchase-orders`.
 
 ## Visibility by capability
 
-Visibility here is the **capability** gate only. Every tab is **also** role-gated — see the "Min role" column. "Min role" reflects what the page itself enforces via `useRequireOrgAccess` / `useRequireOrgRole` (or, for pages that have no page-level gate, the API gate that fails first). The canonical API gate matrix lives in `03-roles-and-permissions.md:63-134`.
+Visibility here is the **capability** gate only. Every tab is **also**
+role-gated through the matrix surface named in the "Roles" column, which the
+page enforces via `useRequireOrgAccess({ permission })` and the API enforces
+via `requireOrgAccess(orgId, { permission })`. The matrix definition in
+`lib/auth/org-permissions.ts` is the single source of truth; this table is a
+readable projection of it.
 
-| Page           | SPONSOR | HOST | HYBRID | Min role  | In sidebar? | Notes |
+| Page           | SPONSOR | HOST | HYBRID | Roles (matrix surface) | In sidebar? | Notes |
 |----------------|---------|------|--------|-----------|-------------|-------|
-| `/home`        | ✅      | ✅   | ✅     | any       | yes | Renders operator stat grid for MANAGER+; role-branched ConsumerViewCard for sub-MANAGER deep-links. |
-| `/my-program`  | ✅      | —    | ✅     | any active member (page filters server-side to caller's assignments) | yes (LEARNER + canSponsor only) | Per-cycle ProgramAssignment progress, coverage rules, utilization history. 404 on canSponsor=false. |
-| `/my-arrangement` | —    | ✅   | ✅     | any active member (page filters to caller's earnings) | yes (EXPERT + canHost only) | Membership.payoutRecipient, default RateCard split, recent earnings on org-tagged payments. 404 on canHost=false. |
-| `/members`     | ✅      | ✅   | ✅     | MANAGER   | yes | — |
-| `/experts`     | —       | ✅   | ✅     | MANAGER   | yes (if `canHost`) | Hidden when `canHost = false`. |
-| `/learners`    | ✅      | —    | ✅     | MANAGER   | yes (if `canSponsor`) | Hidden when `canSponsor = false`. |
-| `/invitations` | ✅      | ✅   | ✅     | MAINTAINER| yes | Send-invite button disabled pre-verification; uses `humanizeOrgError` for `ORG_NOT_VERIFIED`. |
-| `/programs`    | ✅      | —    | ✅     | MAINTAINER| yes (if `canSponsor`) | Program subtypes only apply to sponsored bookings. |
-| `/billing`     | ✅      | —    | ✅     | MANAGER   | yes (if `canSponsor`) | BillingAccount summary + wallet (`WalletTab`) + invoices — one unified surface (no `/credits` split; see below). |
-| `/payouts`     | —       | ✅   | ✅     | MANAGER   | yes (if `canHost`) | Host-side only. |
-| `/analytics`   | ✅      | ✅   | ✅     | MANAGER   | yes | Rollups respect capability — host-side numbers hidden when `canHost = false` and vice versa. |
-| `/settings`    | ✅      | ✅   | ✅     | MAINTAINER| yes | Branding + policy. |
-| `/settings/sso`| ✅      | ✅   | ✅     | **OWNER** | no — reached from inside /settings | SSO policy + providers + domain claims. |
-| `/contracts`   | ✅      | —    | ✅     | MAINTAINER (page + API) | **yes** under `canSponsor && MAINTAINER+` | Round-2 close-out added `useRequireOrgAccess({minimumRole: "MAINTAINER", canSponsor: true})` + sidebar entry. |
-| `/purchase-orders` | ✅  | —    | ✅     | MAINTAINER (page + API) | **yes** under `canSponsor && MAINTAINER+` | Receipt icon. |
-| `/consent`     | ✅      | ✅   | ✅     | MANAGER (page + API) | **yes** under `MANAGER+` | ShieldCheck icon; DPDP artifact roster. |
+| `/home`        | ✅      | ✅   | ✅     | any active member | yes | Renders the operator stat grid when `operations.read` passes; role-branched ConsumerViewCard otherwise. |
+| `/my-program`  | ✅      | —    | ✅     | `myProgram.read` (LEARNER; page filters server-side to caller's assignments) | yes (LEARNER + canSponsor only) | Per-cycle ProgramAssignment progress, coverage rules, utilization history. 404 on canSponsor=false. |
+| `/my-arrangement` | —    | ✅   | ✅     | `myArrangement.read` (EXPERT; page filters to caller's earnings) | yes (EXPERT + canHost only) | Membership.payoutRecipient, default RateCard split, recent earnings on org-tagged payments. 404 on canHost=false. |
+| `/members`     | ✅      | ✅   | ✅     | `members.read` (OWNER, MAINTAINER, MANAGER, SUPPORT) | yes | BILLING_ADMIN is operator-blind and excluded at sidebar, page, and API. |
+| `/experts`     | —       | ✅   | ✅     | `experts.read` (OWNER, MAINTAINER, MANAGER) | yes (if `canHost`) | Hidden when `canHost = false`. |
+| `/learners`    | ✅      | —    | ✅     | `learners.read` (OWNER, MAINTAINER, MANAGER) | yes (if `canSponsor`) | Hidden when `canSponsor = false`. |
+| `/invitations` | ✅      | ✅   | ✅     | `invitations.manage` (OWNER, MAINTAINER) | yes | Send-invite button disabled pre-verification; uses `humanizeOrgError` for `ORG_NOT_VERIFIED`. |
+| `/programs`    | ✅      | —    | ✅     | `programs.manage` (OWNER, MAINTAINER) | yes (if `canSponsor`) | The learner-facing catalog GETs stay open to any active member by design. |
+| `/billing`     | ✅      | —    | ✅     | `billing.read` (OWNER, MAINTAINER, BILLING_ADMIN, MANAGER); mutations `billing.manage` (OWNER, BILLING_ADMIN) | yes (if `canSponsor`) | BillingAccount summary + wallet (`WalletTab`) + invoices — one unified surface. The former extra `fundingSource=WALLET` sidebar branch was removed as unreachable (a BillingAccount only exists when `canSponsor=true`). |
+| `/payouts`     | —       | ✅   | ✅     | `payouts.read`; mutations `payouts.manage` (OWNER, BILLING_ADMIN) | yes (if `canHost`) | Host-side only. |
+| `/analytics`   | ✅      | ✅   | ✅     | `operations.read` (OWNER, MAINTAINER, MANAGER, SUPPORT) | yes | Rollups respect capability — host-side numbers hidden when `canHost = false` and vice versa. SUPPORT reads for L1/L2 investigation. |
+| `/settings`    | ✅      | ✅   | ✅     | `settings.manage` (OWNER, MAINTAINER) | yes | Branding + policy. |
+| `/settings/sso`| ✅      | ✅   | ✅     | **OWNER** (rank floor — genuine hierarchy) | no — reached from inside /settings | SSO policy + providers + domain claims. |
+| `/contracts`   | ✅      | —    | ✅     | `contracts.read` (OWNER, MAINTAINER); mutations `contracts.manage` (OWNER) | yes under `canSponsor` + `contracts.read` | The old `≥MAINTAINER ‖ finance` sidebar expression showed a dead tab to MANAGER and BILLING_ADMIN; the matrix entry ended that drift. |
+| `/purchase-orders` | ✅  | —    | ✅     | `purchaseOrders.read` (OWNER, MAINTAINER, BILLING_ADMIN, MANAGER); mutations `purchaseOrders.manage` (OWNER, BILLING_ADMIN) | yes under `canSponsor && requiresPO` | Receipt icon. |
+| `/consent`     | ✅      | ✅   | ✅     | `consent.read` / `consent.manage` (OWNER, MAINTAINER, MANAGER) | yes | ShieldCheck icon; DPDP artifact roster. BILLING_ADMIN's former page-guard reach was closed to match the sidebar. |
 
 > The `/plans` page (previous "org catalog" over the removed
 > `OrganizationPlan` model) is gone. Discovery now reads each per-type
 > plan's `OrgPlanVisibility` directly — see
-> [public pages & discovery](05-public-pages-and-discovery.md). The matrix
-> rows for the other recently-added surfaces (`/disputes`, `/documents`,
-> `/trials`, `/waitlist`, `/recordings`, `/reimbursements`, `/audit`,
-> `/integrations/*`) follow the same capability+role gating as their
-> siblings and are enumerated in the page tree above.
+> [public pages & discovery](05-public-pages-and-discovery.md). The
+> operations surfaces (`/appointments`, `/waitlist`, `/trials`,
+> `/documents`, `/recordings`) all share the single `operations.read`
+> grant (OWNER, MAINTAINER, MANAGER, SUPPORT) at sidebar, page, and API;
+> `/reimbursements` uses `reimbursements.read` plus the
+> `fundingSource=PERSONAL` structural gate; `/audit` uses `audit.read`
+> (OWNER, MAINTAINER, SUPPORT) with the CSV export kept at a MAINTAINER
+> rank floor because bulk export is a governance action; and the
+> `/integrations/*` pages use `integrations.read` (the finance set).
 
 ### Billing surface
 

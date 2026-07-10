@@ -42,7 +42,7 @@ export async function GET(
   },
 ) {
   const { orgId, poId } = await params;
-  const access = await requireOrgAccess(orgId, { minimumRole: "MANAGER", canSponsor: true });
+  const access = await requireOrgAccess(orgId, { permission: "purchaseOrders.read", canSponsor: true });
   if (access.error) return access.error;
 
   const po = await prisma.purchaseOrder.findFirst({
