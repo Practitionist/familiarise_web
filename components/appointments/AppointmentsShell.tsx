@@ -7,16 +7,24 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
+import { CalendarDays, List } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useSession } from "@/lib/auth-client";
 import { resolveSponsoringOrgName } from "@/lib/labels/session-labels";
 import type { AppointmentActionAdapter } from "@/lib/appointments/adapter";
+import {
+  CONSULTANT_JOIN_WINDOW_MS,
+  CONSULTEE_JOIN_WINDOW_MS,
+} from "@/lib/appointments/slots";
 import type {
   AppointmentBucket,
   AppointmentVM,
 } from "@/lib/appointments/view-model";
+import { cn } from "@/utils/tailwind";
+import { AppointmentCalendar } from "./AppointmentCalendar";
 import { AppointmentList } from "./AppointmentList";
+import { AppointmentSheet } from "./AppointmentSheet";
 import {
   AppointmentsFilterBar,
   matchesTypeFilter,
@@ -93,13 +101,17 @@ export function AppointmentsShell({
   notices,
   highlightedId = null,
 }: AppointmentsShellProps) {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const { data: session } = useSession();
 
   const [tab, setTab] = useState<TabValue>(() =>
     initialTab(searchParams?.get("tab") ?? null),
   );
+  // Legacy consultee ?tab=calendar deep-links land on the calendar view.
+  const [view, setView] = useState<"list" | "calendar">(() =>
+    searchParams?.get("tab") === "calendar" ? "calendar" : "list",
+  );
+  const [sheetVm, setSheetVm] = useState<AppointmentVM | null>(null);
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("ALL");
   const [search, setSearch] = useState("");
   const [dateRange, setDateRange] = useState<DateRange>({ from: "", to: "" });
@@ -168,13 +180,21 @@ export function AppointmentsShell({
     value === "all" ? filtered.length : byBucket[value].length;
 
   // Hero reads the UNFILTERED list — it answers "what's next", not "what's
-  // next among the current filters".
+  // next among the current filters". A row only qualifies while its anchor
+  // session hasn't ended (live sessions stay; an elapsed pending booking in
+  // Needs action is not "next").
   const heroVm = useMemo(() => {
-    const candidates = vms.filter(
-      (vm) =>
-        (vm.bucket === "upcoming" || vm.bucket === "needsAction") &&
-        vm.nextAt !== null,
-    );
+    const now = Date.now();
+    const candidates = vms.filter((vm) => {
+      if (vm.bucket !== "upcoming" && vm.bucket !== "needsAction") return false;
+      if (!vm.nextAt) return false;
+      const anchor = vm.sessions.find(
+        (s) => s.startsAt.getTime() === vm.nextAt?.getTime(),
+      );
+      const end =
+        anchor?.endsAt?.getTime() ?? vm.nextAt.getTime() + 60 * 60 * 1000;
+      return end >= now;
+    });
     if (candidates.length === 0) return null;
     return candidates.reduce((a, b) =>
       (a.nextAt as Date).getTime() <= (b.nextAt as Date).getTime() ? a : b,
@@ -198,13 +218,16 @@ export function AppointmentsShell({
     ];
   }, [vms]);
 
-  // Row/hero click target: the detail page when one exists (Sheet arrives as
-  // the primary target in the next chunk).
-  const openVm = (vm: AppointmentVM) => {
-    const href = adapter.detailHref(vm);
-    if (href) router.push(href);
-  };
-  const canOpen = (vm: AppointmentVM) => adapter.detailHref(vm) !== null;
+  // Row/hero/calendar click → the summary Sheet. Track by id so the sheet
+  // re-renders fresh data after a mutation invalidates the list query.
+  const openVm = (vm: AppointmentVM) => setSheetVm(vm);
+  const activeSheetVm = sheetVm
+    ? (vms.find((vm) => vm.id === sheetVm.id) ?? null)
+    : null;
+  const joinWindowMs =
+    adapter.role === "consultant"
+      ? CONSULTANT_JOIN_WINDOW_MS
+      : CONSULTEE_JOIN_WINDOW_MS;
 
   return (
     <div className="space-y-5">
@@ -212,7 +235,7 @@ export function AppointmentsShell({
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as TabValue)}>
         <div className="flex items-center justify-between gap-3 flex-wrap">
-          <TabsList className="flex-wrap h-auto">
+          <TabsList className={cn("flex-wrap h-auto", view === "calendar" && "opacity-60")}>
             {TABS.map(({ value, label }) => (
               <TabsTrigger key={value} value={value} className="gap-1.5">
                 {label}
@@ -222,6 +245,32 @@ export function AppointmentsShell({
               </TabsTrigger>
             ))}
           </TabsList>
+
+          {/* List / calendar view toggle */}
+          <div className="flex items-center rounded-lg border border-border bg-card p-0.5">
+            {(
+              [
+                { value: "list", label: "List", icon: List },
+                { value: "calendar", label: "Calendar", icon: CalendarDays },
+              ] as const
+            ).map(({ value, label, icon: Icon }) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setView(value)}
+                className={cn(
+                  "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
+                  view === value
+                    ? "bg-foreground text-background"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+                aria-pressed={view === value}
+              >
+                <Icon className="h-3.5 w-3.5" />
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
 
         <div className="mt-4">
@@ -238,26 +287,41 @@ export function AppointmentsShell({
 
         {notices && <div className="mt-4">{notices}</div>}
 
-        {TABS.map(({ value }) => (
-          <TabsContent key={value} value={value} className="mt-4">
-            <AppointmentList
-              vms={value === "all" ? filtered : byBucket[value]}
-              bucket={value}
-              adapter={adapter}
-              resolveSponsoredLabel={resolveSponsoredLabel}
-              onOpen={openVm}
-              canOpen={canOpen}
-              highlightedId={flashId}
-              registerRowRef={(id, el) => {
-                if (el) rowRefs.current.set(id, el);
-                else rowRefs.current.delete(id);
-              }}
-              emptyTitle={EMPTY_COPY[value].title}
-              emptyDescription={EMPTY_COPY[value].description}
-            />
-          </TabsContent>
-        ))}
+        {view === "calendar" ? (
+          <div className="mt-4">
+            <AppointmentCalendar vms={filtered} onSelect={openVm} />
+          </div>
+        ) : (
+          TABS.map(({ value }) => (
+            <TabsContent key={value} value={value} className="mt-4">
+              <AppointmentList
+                vms={value === "all" ? filtered : byBucket[value]}
+                bucket={value}
+                adapter={adapter}
+                resolveSponsoredLabel={resolveSponsoredLabel}
+                onOpen={openVm}
+                highlightedId={flashId}
+                registerRowRef={(id, el) => {
+                  if (el) rowRefs.current.set(id, el);
+                  else rowRefs.current.delete(id);
+                }}
+                emptyTitle={EMPTY_COPY[value].title}
+                emptyDescription={EMPTY_COPY[value].description}
+              />
+            </TabsContent>
+          ))
+        )}
       </Tabs>
+
+      <AppointmentSheet
+        vm={activeSheetVm}
+        onOpenChange={(open) => !open && setSheetVm(null)}
+        adapter={adapter}
+        sponsoredLabel={
+          activeSheetVm ? resolveSponsoredLabel(activeSheetVm.organizationId) : null
+        }
+        joinWindowMs={joinWindowMs}
+      />
 
       {adapter.renderDialogs()}
     </div>
