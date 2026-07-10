@@ -18,7 +18,7 @@ flowchart TD
     Platform --> CL["🎓 Class\nGroup structured course · 6–20 sessions"]
 
     C --> C1["Individual or Org buyer\nPersonal payment / Org wallet / Invoice"]
-    S --> S1["Free trial → conversion funnel\n3 allocation modes\nOrg program caps"]
+    S --> S1["Trial → conversion funnel\n3 allocation modes\nOrg program caps"]
     W --> W1["Capacity limited with waitlist\nCollaborator revenue splits\nRecording + certificates"]
     CL --> CL1["Multi-session curriculum\nTeaching assistants\nAsync content + live sessions"]
 ```
@@ -75,7 +75,7 @@ flowchart TD
 
     Verified --> Plans["Create service plans\n/dashboard/consultant/planner/services/"]
     Plans --> ConsultPlan["ConsultationPlan\ntitle, price, duration, topics"]
-    Plans --> SubPlan["SubscriptionPlan\ncallsPerWeek, durationInMonths\nfree trial toggle"]
+    Plans --> SubPlan["SubscriptionPlan\ncallsPerWeek, durationInMonths\ntrial toggle + price"]
     Plans --> WebinarPlan["WebinarPlan\nmaxParticipants, recording policy\ncertificate toggle"]
     Plans --> ClassPlan["ClassPlan\ncurriculum, number of sessions"]
 
@@ -261,7 +261,7 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    SubEntry([Consultee views SubscriptionPlan]) --> TrialCheck{Free trial offered?}
+    SubEntry([Consultee views SubscriptionPlan]) --> TrialCheck{Trial offered?}
 
     TrialCheck -- Yes, wants trial --> TrialReq["POST /api/trials\nTrialSession PENDING"]
     TrialReq --> ConsApproves{Consultant approves?}
@@ -525,7 +525,7 @@ flowchart TD
     ApprovalGate -- Yes --> RequestApproval["Submit request\nConsultant approves → payment link"]
     RequestApproval --> Pay
 
-    S --> TrialGate{Free trial available?}
+    S --> TrialGate{Trial available?}
     TrialGate -- Yes, want trial --> FreeTrial["Free session → COMPLETED"]
     FreeTrial --> Liked{Liked it?}
     Liked -- Yes --> Pay
