@@ -22,6 +22,16 @@ export async function requireApiAuth(): Promise<
       error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
     };
   }
+  // #693 defense-in-depth — ban-time session deletion + the sign-in gate
+  // cover the normal paths; this catches a session minted in the race window.
+  if (session.user.banned) {
+    return {
+      error: NextResponse.json(
+        { error: "Account suspended" },
+        { status: 403 },
+      ),
+    };
+  }
   return { session };
 }
 

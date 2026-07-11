@@ -21,6 +21,9 @@ import {
   type SubscriptionPayload,
   type BookingRequestPayload,
   type VerificationPayload,
+  type ModerationWarningPayload,
+  type AccountSuspendedPayload,
+  type AccountBannedPayload,
   type PayoutPayload,
   type AnnouncementPayload,
   type WaitlistPayload,
@@ -427,6 +430,37 @@ export async function notifyVerificationStatusChanged(
     consultantUserId,
     payload,
   );
+}
+
+// Moderation (#693) — fire-and-forget; callers run these in the best-effort
+// phase, never inside the moderation transaction.
+export async function notifyModerationWarning(
+  targetUserId: string,
+  payload: ModerationWarningPayload,
+) {
+  return triggerWorkflow(
+    NOVU_WORKFLOWS.MODERATION_WARNING,
+    targetUserId,
+    payload,
+  );
+}
+
+export async function notifyAccountSuspended(
+  targetUserId: string,
+  payload: AccountSuspendedPayload,
+) {
+  return triggerWorkflow(
+    NOVU_WORKFLOWS.ACCOUNT_SUSPENDED,
+    targetUserId,
+    payload,
+  );
+}
+
+export async function notifyAccountBanned(
+  targetUserId: string,
+  payload: AccountBannedPayload,
+) {
+  return triggerWorkflow(NOVU_WORKFLOWS.ACCOUNT_BANNED, targetUserId, payload);
 }
 
 export async function notifyPayoutProcessed(

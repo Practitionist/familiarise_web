@@ -38,6 +38,10 @@ export {
   notifyNewBookingRequest,
   notifyVerificationStatusChanged,
   notifyPayoutProcessed,
+  // Moderation (#693)
+  notifyModerationWarning,
+  notifyAccountSuspended,
+  notifyAccountBanned,
   // Admin
   notifyGeneralAnnouncement,
   notifyNewConsultantApplication,

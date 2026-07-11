@@ -3,7 +3,7 @@ import { betterAuth } from "better-auth";
 import { APIError } from "better-auth/api";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import { nextCookies } from "better-auth/next-js";
-import { customSession, organization } from "better-auth/plugins";
+import { admin, customSession, organization } from "better-auth/plugins";
 import { sso } from "@better-auth/sso";
 import bcrypt from "bcrypt";
 import { Prisma } from "@prisma/client";
@@ -393,6 +393,19 @@ export const auth = betterAuth({
   },
 
   plugins: [
+    // Moderation (#693, starts #725 Tier-1): provides User.banned/banReason/
+    // banExpires, blocks sign-in for banned users, and auto-unbans at sign-in
+    // once banExpires passes (lazy suspension expiry — no cron). Ban writes
+    // happen directly via Prisma in lib/moderation, not auth.api.banUser.
+    // defaultRole must be a valid UserRole enum value — the plugin's
+    // user.create.before hook otherwise writes "user" and breaks signup.
+    admin({
+      defaultRole: "CONSULTEE",
+      adminRoles: ["ADMIN", "STAFF"],
+      bannedUserMessage:
+        "Your account has been suspended. If you believe this is a mistake, please contact support.",
+    }),
+
     // Enterprise: BetterAuth Organization plugin.
     // Arch 4-Modified: BetterAuth Member.role is a free-form string; the
     // source of truth is our Membership model (linked via
@@ -453,6 +466,11 @@ export const auth = betterAuth({
           sessionGeneration: true,
           consulteeProfileId: true,
           consultantProfileId: true,
+          // #693 defense-in-depth: sessions are deleted at ban time and
+          // sign-in is plugin-gated, but a session minted in the race window
+          // must still resolve as banned.
+          banned: true,
+          banExpires: true,
           // SSO membership sync: BetterAuth auto-provisioning creates a
           // BetterAuth Member row; we need a typed Membership sibling. Pull the
           // unrepaired ones (no Membership yet) so the loop below auto-creates
@@ -475,6 +493,9 @@ export const auth = betterAuth({
       });
       const liveSessionGeneration =
         currentUserRow?.sessionGeneration ?? user.sessionGeneration ?? 0;
+      const effectivelyBanned =
+        (currentUserRow?.banned ?? false) &&
+        (!currentUserRow?.banExpires || currentUserRow.banExpires > new Date());
       const preloadedProfiles = currentUserRow
         ? {
             consulteeProfileId: currentUserRow.consulteeProfileId,
@@ -646,6 +667,7 @@ export const auth = betterAuth({
           // Always emit the live value so client code can detect a
           // stale session by comparing this against its cached payload.
           sessionGeneration: liveSessionGeneration,
+          banned: effectivelyBanned,
           organizationMemberships,
           ssoEnforcementFailed,
         },

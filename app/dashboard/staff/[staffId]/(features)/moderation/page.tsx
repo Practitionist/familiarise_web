@@ -105,6 +105,7 @@ export default function ContentModerationPage() {
   const [selectedProfile, setSelectedProfile] =
     useState<ProfileVerification | null>(null);
   const [moderationNote, setModerationNote] = useState("");
+  const [suspensionDays, setSuspensionDays] = useState(7);
 
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -192,7 +193,15 @@ export default function ContentModerationPage() {
     refetchReviews();
   };
 
-  // Handle report action (dismiss or take action)
+  // Handle report action (dismiss or take action). UI verbs map to the
+  // ModerationActionType enum the API validates against (#693).
+  const REPORT_ACTION_TYPE = {
+    DISMISS: "NO_ACTION",
+    WARN: "WARNING_ISSUED",
+    SUSPEND: "USER_SUSPENDED",
+    BAN: "USER_BANNED",
+  } as const;
+
   const reportActionMutation = useMutation({
     mutationFn: async ({
       reportId,
@@ -207,22 +216,40 @@ export default function ContentModerationPage() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            actionType: action,
-            reason: moderationNote,
+            actionType: REPORT_ACTION_TYPE[action],
+            notes: moderationNote,
+            ...(action === "SUSPEND" ? { suspensionDays } : {}),
           }),
         },
       );
 
       if (!response.ok) throw new Error("Failed to process action");
+      return response.json() as Promise<{
+        sideEffects?: {
+          sessionsRevoked?: number;
+          earningsHeld?: number;
+          cancellations?: {
+            engagementsCancelled: number;
+            refundsIssued: number;
+          };
+        };
+      }>;
     },
-    onSuccess: (_data, { action }) => {
+    onSuccess: (data, { action }) => {
+      const cancelled = data?.sideEffects?.cancellations?.engagementsCancelled;
+      const refunded = data?.sideEffects?.cancellations?.refundsIssued;
+      const detail =
+        cancelled || refunded
+          ? ` ${cancelled ?? 0} appointment(s) cancelled, ${refunded ?? 0} refund(s) issued.`
+          : "";
       toast({
         title: "Action Completed",
-        description: `Report has been ${action === "DISMISS" ? "dismissed" : "processed"} successfully`,
+        description: `Report has been ${action === "DISMISS" ? "dismissed" : "processed"} successfully.${detail}`,
       });
 
       setSelectedReport(null);
       setModerationNote("");
+      setSuspensionDays(7);
       queryClient.invalidateQueries({
         queryKey: ["staff-moderation-reports"],
       });
@@ -839,6 +866,41 @@ export default function ContentModerationPage() {
                     onChange={(e) => setModerationNote(e.target.value)}
                   />
                 </div>
+                <div>
+                  <Label className="text-sm font-medium">
+                    Suspension duration (applies to Suspend only)
+                  </Label>
+                  <div className="mt-1 flex items-center gap-2">
+                    {[7, 30, 90].map((days) => (
+                      <Button
+                        key={days}
+                        type="button"
+                        size="sm"
+                        variant={
+                          suspensionDays === days ? "default" : "outline"
+                        }
+                        onClick={() => setSuspensionDays(days)}
+                        disabled={reportActionMutation.isPending}
+                      >
+                        {days} days
+                      </Button>
+                    ))}
+                    <Input
+                      type="number"
+                      min={1}
+                      max={365}
+                      className="w-24"
+                      value={suspensionDays}
+                      onChange={(e) => {
+                        const v = parseInt(e.target.value, 10);
+                        if (Number.isFinite(v))
+                          setSuspensionDays(Math.min(365, Math.max(1, v)));
+                      }}
+                      disabled={reportActionMutation.isPending}
+                      aria-label="Custom suspension days"
+                    />
+                  </div>
+                </div>
               </div>
               <ResponsiveModalFooter className="gap-2">
                 <Button
@@ -861,10 +923,10 @@ export default function ContentModerationPage() {
                   ) : (
                     <CheckCircle2 className="h-4 w-4 mr-2" />
                   )}
-                  Dismiss Report
+                  Dismiss
                 </Button>
                 <Button
-                  variant="destructive"
+                  variant="outline"
                   onClick={() => handleReportAction(selectedReport.id, "WARN")}
                   disabled={reportActionMutation.isPending}
                 >
@@ -873,7 +935,33 @@ export default function ContentModerationPage() {
                   ) : (
                     <XCircle className="h-4 w-4 mr-2" />
                   )}
-                  Take Action
+                  Warn
+                </Button>
+                <Button
+                  variant="destructive"
+                  onClick={() =>
+                    handleReportAction(selectedReport.id, "SUSPEND")
+                  }
+                  disabled={reportActionMutation.isPending}
+                >
+                  {reportActionMutation.isPending ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <XCircle className="h-4 w-4 mr-2" />
+                  )}
+                  Suspend
+                </Button>
+                <Button
+                  variant="destructive"
+                  onClick={() => handleReportAction(selectedReport.id, "BAN")}
+                  disabled={reportActionMutation.isPending}
+                >
+                  {reportActionMutation.isPending ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <XCircle className="h-4 w-4 mr-2" />
+                  )}
+                  Ban
                 </Button>
               </ResponsiveModalFooter>
             </>

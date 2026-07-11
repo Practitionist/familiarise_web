@@ -476,7 +476,8 @@ export async function getConsultantDashboard(
     prisma.consultantReview.aggregate({
       _avg: { rating: true },
       _count: { rating: true },
-      where: { consultantProfileId },
+      // #693 — mirror the moderation recalc: removed reviews don't count
+      where: { consultantProfileId, deletedAt: null },
     }),
     // 3. Session completion rate (last 30 days)
     prisma.slotOfAppointment.groupBy({
