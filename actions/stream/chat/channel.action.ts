@@ -8,6 +8,8 @@ import { markChannelExists } from "@/lib/stream-cache";
 import { upsertUsersToStream } from "./user.action";
 import { getDmChannelId } from "@/lib/stream-utils";
 import { getChannelTypeFromId } from "@/lib/stream-channel-ids";
+import { getSession } from "@/lib/auth-server";
+import { isPrivileged } from "@/lib/auth-helpers";
 import * as Sentry from "@sentry/nextjs";
 
 // Input validation schemas
@@ -794,7 +796,12 @@ export async function createCollaboratorChannel(
 }
 
 /**
- * Adds a user to a specific channel
+ * Adds a user to a specific channel.
+ *
+ * Stream's server-side API bypasses its permission system entirely, so the
+ * authz gate lives here (#899): ADMIN/STAFF may add to any channel; anyone
+ * else only to a channel they created — mirroring the create-route checks.
+ * Non-privileged callers never lazily create channels they don't own.
  */
 export async function addMemberToChannel(
   channelId: string,
@@ -803,6 +810,11 @@ export async function addMemberToChannel(
 ) {
   channelIdSchema.parse(channelId);
   memberIdSchema.parse(userId);
+
+  const session = await getSession();
+  if (!session?.user?.id) {
+    throw new Error("Unauthorized: sign in to manage channel members");
+  }
 
   const client = getStreamChatClient();
 
@@ -816,7 +828,18 @@ export async function addMemberToChannel(
 
   try {
     const channel = client.channel(resolvedChannelType, channelId);
-    await channel.create(); // Creates if doesn't exist, no-op if exists
+    const privileged = isPrivileged(session.user.role);
+    if (privileged) {
+      await channel.create(); // Creates if doesn't exist, no-op if exists
+    } else {
+      const state = await channel.query({});
+      const createdById = state.channel?.created_by?.id;
+      if (createdById !== session.user.id) {
+        throw new Error(
+          "Forbidden: only the channel creator or staff may add members",
+        );
+      }
+    }
 
     const response = await channel.addMembers([userId]);
 
