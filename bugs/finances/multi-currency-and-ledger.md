@@ -6,6 +6,17 @@ Money is modeled as integer paise with double-entry postings via `postLedgerTxn(
 
 Key paths: `lib/payments/ledger/post.ts`, `lib/payments/validation/currency-guards.ts`, `prisma/sql/ledger-triggers.sql`.
 
+## Triage verdict (2026-07-12)
+
+Triaged 2026-07-12 against real code (3 verifier agents cross-checked every claim); fix wave PRs #981–#994 shipped. This dossier's claims map as follows:
+
+| Claim (short) | Verdict |
+|---|---|
+| True multi-currency ledger not built | 🔵 TRACKED #783 |
+| Wallet cache drift possible until nightly reconcile | ✅ FIXED-BY #990 (freeze + page when reconcile `ok=false`; nightly reconcile remains) |
+| Display FX not used in refund math | 🟡 by-design (gateway settles INR) |
+| Stripe/legacy paths add mental load | 🎯 Stripe KEPT by decision |
+
 ## Known gaps / bugs
 
 - True multi-currency ledger (#783) not built — non-INR plan pricing throws.
@@ -30,6 +41,8 @@ Key paths: `lib/payments/ledger/post.ts`, `lib/payments/validation/currency-guar
 - Not B: Blocking all non-INR buyers cuts international consultees without fixing consultant payout reality.
 - Not C: Dual display-FX books before a true multi-currency ledger invites reconcile bugs and support disputes.
 
+> 🎯 Locked: rec A — INR settlement retained; true multi-currency stays tracked under #783.
+
 2. **On wallet drift detection, auto-heal from journal or page humans?**  
    - A) Auto-correct cache from ledger balance  
    - B) Freeze wallet + ops alert  
@@ -39,6 +52,8 @@ Key paths: `lib/payments/ledger/post.ts`, `lib/payments/validation/currency-guar
 - Not A: Silent auto-heal can mask a posting bug and keep moving bad money.
 - Not C: Log-only lets orgs keep booking against a lying denormalized balance.
 
+> 🎯 Locked: rec B — #990 freezes the wallet and pages Sentry (P0) on reconcile `ok=false`; no silent auto-heal.
+
 3. **Should refunds always return gateway-settled INR, ignoring display currency?**  
    - A) Yes (gateway truth)  
    - B) Attempt display-currency refund where gateway supports  
@@ -47,6 +62,8 @@ Key paths: `lib/payments/ledger/post.ts`, `lib/payments/validation/currency-guar
 **Recommendation: A.** Refund the gateway-settled INR amount — that is what Razorpay captured and what the ledger posted.
 - Not B: Display-currency refunds fight IBT settlement and create amount-mismatch recovery loops.
 - Not C: Wallet credit instead of gateway refund leaves the card/UPI customer unpaid.
+
+> 🎯 Locked: rec A — refunds return the gateway-settled INR by design.
 
 ## High concurrency / multi-device
 

@@ -4,6 +4,26 @@
 
 Much of the finance surface is schema-complete and code-complete but **gated**, **stubbed**, or **doc-only**. Shipping without knowing which gates are intentional creates false confidence.
 
+## Triage verdict (2026-07-12)
+
+Triaged 2026-07-12 against real code (3 verifier agents cross-checked every claim); fix wave PRs #981–#994 shipped. The gate/stub table below maps as follows:
+
+| Claim (short) | Verdict |
+|---|---|
+| `ENABLE_LIVE_PAYOUTS` off | 🔵 by-design gate |
+| `ENABLE_IRP_UPLOADER` off | 🔵 TRACKED #713 (ClearTax) |
+| Lemon Squeezy / XFlow dead routes | ✅ FIXED-BY #984 (removed) |
+| Multi-currency ledger not built | 🔵 TRACKED #783 |
+| Section 195 / non-resident blocked | 🟡 LEGIT-DEFERRED (accurate guard, by-design) |
+| Overage #715 paths partial | 🔵 TRACKED #715 (CLOSED) |
+| GST TCS collection schema-only | 🟡 LEGIT-DEFERRED (GSTR-8 batching deferred) |
+| Day-pass product doc-only | ✅ FIXED-BY #984 (mentions removed) |
+| Paid trial checkout "partial schema" | ❌ OVERSTATED — `trialPriceInPaise` is wired through checkout |
+| Org Stripe Connect deferred | 🟡 LEGIT-DEFERRED |
+| Payment cancellation helper warn-only → orphans | ❌ OVERSTATED — `reconcile-orphaned-confirmations` backstops it |
+| Export tax evidence (FIRC/LUT) TODO | 🟡 LEGIT-DEFERRED |
+| Dec 2025 P0 checkout task reads "Awaiting Fix" | ✅ code fixes landed; the task file was stale doc drift |
+
 ## Known gaps / bugs
 
 | Item | State | Risk if ignored |
@@ -40,6 +60,8 @@ Dec 2025 P0 checkout bugs in `tasks/payment-workflow-critical-bugs.md` appear la
 - Not A: Hard delete can break residual imports and webhook routes before the evaluation cleanup is complete.
 - Not C: Leaving Stripe “test-only” still keeps dual-rail complexity and asymmetric sync behavior in prod codepaths.
 
+> 🎯 Locked: Lemon/XFlow were hard-removed (#984); Stripe is KEPT as a live rail (not quarantined); Dodo Payments is the sanctioned post-MVP second gateway.
+
 2. **Single source of truth for “finance ready for prod” checklist?**  
    - A) This bugs pack + shipping checklist sign-off slots  
    - B) Notion/Linear only  
@@ -57,6 +79,8 @@ Dec 2025 P0 checkout bugs in `tasks/payment-workflow-critical-bugs.md` appear la
 **Recommendation: B.** Day passes are doc-only with no Prisma model — remove mentions so sales and eng stop treating them as shippable.
 - Not A: Building a new product surface before payouts/TDS/refund P0s is growth ahead of money safety.
 - Not C: “Future marketing only” still creates false confidence and support confusion.
+
+> 🎯 Locked: rec B — day-pass doc/skill mentions were removed in #984.
 
 ## High concurrency / multi-device
 

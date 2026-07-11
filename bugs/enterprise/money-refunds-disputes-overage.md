@@ -4,6 +4,20 @@
 
 Canonical cascade: [`lib/payments/operations/refund.ts`](../../lib/payments/operations/refund.ts) (`applyRefundCascade`) — Serializable, `cascadedAt` claim, reverse legs (wallet credit, accrual reversals, LICENSE utilization), earnings clawback, credit notes, best-effort `REFUND` ledger. Disputes: hold earnings → LOST applies org chargeback (`Dr WALLET` / receivable) + credit note. Overage: PENDING/ACCRUED can reverse on refund; **CHARGED overage (#716) is an explicit gap**.
 
+## Triage verdict (2026-07-12)
+
+Triaged 2026-07-12 against real code (3 verifier agents cross-checked every claim); fix wave PRs #981–#994 shipped. This dossier's claims map as follows:
+
+| Claim (short) | Verdict |
+|---|---|
+| R-01 #716 CHARGED overage lacks auto credit-note / return | 🟡 LEGIT-DEFERRED (#716) |
+| R-02 ledger reversal on refund best-effort | 🟡 LEGIT-DEFERRED (append-only legs + cron heal) |
+| R-03 org chargeback can drive wallet negative | 🟡 LEGIT-DEFERRED (dunning recovery) |
+| R-04 credit-note serial length / prefix edges | 🟡 LEGIT-DEFERRED |
+| R-05 Razorpay dispute reconciler manual-heavy | 🟡 LEGIT-DEFERRED |
+| R-06 post-COMPLETED payout clawback manual | 🟡 LEGIT-DEFERRED (post-payout netting not in this wave) |
+| R-07 docs claim multi-leg refund incomplete | ❌ STALE/OVERSTATED (cascade + tax adjustment rows already wired — don't chase ghosts) |
+
 ## Known gaps / bugs
 
 | ID | Severity | Issue |

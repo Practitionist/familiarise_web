@@ -4,6 +4,20 @@
 
 For full webinars/classes: `WAITING → NOTIFIED → BOOKED|EXPIRED|CANCELLED|SKIPPED`. Priority queue (priority DESC, joinedAt ASC); CAS batched notify on slot opening; Resend emails with deep links; expiration crons. Unique per user per webinar/class. Org scope on GET.
 
+## Triage verdict (2026-07-12)
+
+Triaged 2026-07-12 against real code (3 verifier agents cross-checked every claim); fix wave PRs #981–#994 shipped. This dossier's claims map as follows:
+
+| Claim (short) | Verdict |
+|---|---|
+| NOTIFIED users get no soft-held seat | ✅ FIXED-BY #986 (seat-hold-after-notify) |
+| Join is check-then-create outside transaction (ugly 500) | ✅ FIXED-BY #986 (tx + friendly 409) |
+| Slot assignment / notify fan-out race | 🔵 TRACKED #834 (CAS shipped); seat-hold-after-notify gap ✅ #986 |
+| Consultation waitlist not implemented | 🟡 LEGIT-DEFERRED |
+| VIP `priority` schema-only, weak admin UX | 🟡 LEGIT-DEFERRED |
+| `preferences` JSON unused; `organizationId` backfilled later | 🟡 LEGIT-DEFERRED |
+| Novu waitlist workflows secondary to email | 🟡 LEGIT-DEFERRED |
+
 ## Known gaps / bugs
 
 - NOTIFIED users do **not** get a soft-held seat — first-come at checkout can still lose.
@@ -26,6 +40,9 @@ For full webinars/classes: `WAITING → NOTIFIED → BOOKED|EXPIRED|CANCELLED|SK
    - A) Soft lock N minutes  
    - B) Keep FCFS checkout  
    - C) Tokenized one-click claim  
+
+   > 🎯 Locked: A — soft seat-hold for NOTIFIED head-of-queue shipped in #986.
+
 
    **Recommendation: A.** Soft-lock seats for NOTIFIED users for N minutes so “spot available” is not a race that feels like betrayal.  
    - Not B: pure FCFS after notify burns trust on hot webinars  

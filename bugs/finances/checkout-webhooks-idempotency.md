@@ -6,6 +6,18 @@
 
 Key paths: `lib/payments/operations/checkout.ts`, `app/api/webhooks/razorpay/`, `lib/payments/webhooks/handlers.ts`.
 
+## Triage verdict (2026-07-12)
+
+Triaged 2026-07-12 against real code (3 verifier agents cross-checked every claim); fix wave PRs #981–#994 shipped. This dossier's claims map as follows:
+
+| Claim (short) | Verdict |
+|---|---|
+| `after()` ACK-before-complete gap | 🔵 by-design + `sweep-stuck-webhook-events` cron backstop |
+| Refund-before-capture `DeferSignal` race | 🔵 handled (#855) |
+| Amount parity failure leaves funds captured, booking blocked | ✅ FIXED-BY #990 (auto-refund + Sentry) |
+| Stripe sync vs Razorpay async asymmetry | 🎯 Stripe KEPT by decision; asymmetry accepted (ADR recommended removal, user retains Stripe) |
+| `allocationIdempotencyKey` schema-only | ✅ FIXED-BY #988 (#837, wired via Idempotency-Key header) |
+
 ## Known gaps / bugs
 
 - Async `after()` processing means ACK-before-complete; stuck events rely on `sweep-stuck-webhook-events` cron (minutes-level gap).
@@ -32,6 +44,8 @@ Key paths: `lib/payments/operations/checkout.ts`, `app/api/webhooks/razorpay/`, 
 - Not B: Manual recovery leaves consultees charged while `REQUIRES_MANUAL_RECOVERY` sits.
 - Not C: Partial capture / price adjust invents a second money path instead of returning the wrong capture.
 
+> 🎯 Locked: rec A — #990 ships auto-refund + Sentry P0 on amount mismatch, with manual recovery only as fallback.
+
 2. **Should checkout remount reuse the same `clientIdempotencyKey` for a given cart fingerprint?**  
    - A) Persist key in sessionStorage keyed by plan+slots  
    - B) Mint fresh each mount; rely on paymentIntent uniqueness  
@@ -49,6 +63,8 @@ Key paths: `lib/payments/operations/checkout.ts`, `app/api/webhooks/razorpay/`, 
 **Recommendation: B.** Delete unused Stripe per the gateway evaluation so Razorpay-async + sweeper is the only production money path.
 - Not A: Unifying Stripe onto async invests in a dual-rail we intend to exit.
 - Not C: Test-only Stripe still leaves asymmetric timeout/retry behavior in the codebase.
+
+> 🎯 Locked: contrary to rec B, Stripe is KEPT by decision and the sync/async asymmetry is accepted; Dodo Payments is the post-MVP second rail (enum added in #984).
 
 ## High concurrency / multi-device
 

@@ -4,6 +4,19 @@
 
 Webhook route verifies HMAC; handles recording lifecycle, session end, participant join/leave, moderation flags. Recordings start on STREAM_S3 (URL expiry ~14 days) and transfer to Supabase per plan. Jobs transfer expiring, mark expired, cleanup old. Slot completion updated on session/call end.
 
+## Triage verdict (2026-07-12)
+
+Triaged 2026-07-12 against real code (3 verifier agents cross-checked every claim); fix wave PRs #981–#994 shipped. This dossier's claims map as follows:
+
+| Claim (short) | Verdict |
+|---|---|
+| Consultation/subscription recording disabled by design — expectation mismatch | 🟡 LEGIT-DEFERRED (product-policy) |
+| Transfer failures alert after retries; files `>500MB` unsupported | ✅ FIXED-BY #983 (streaming upload; enqueue-on-ready) |
+| Missing MeetingSession for webhook → logged no-op (orphan calls invisible) | 🟡 accurate caveat (by-design) |
+| #471/#472 no-show/overrun may not fully consume attendance | ✅ FIXED-BY #992 (no-show automation, consultations) |
+| Org calls export DB-backed; live Stream query for orphans incomplete | 🟡 LEGIT-DEFERRED |
+| Webhook sweeper parity with Razorpay | 🟡 LEGIT-DEFERRED (#899) |
+
 ## Known gaps / bugs
 
 - Consultation/subscription recording often disabled by design — product expectation mismatch.
@@ -37,6 +50,8 @@ Webhook route verifies HMAC; handles recording lifecycle, session end, participa
 **Recommendation: A.** One retention story in product + legal hold for open disputes beats ad-hoc Stream expiry.  
 - Not B: 14 days is Stream URL life, not our policy promise.  
 - Not C: Transfer-all burns storage before we know what matters.
+
+> 🎯 Locked: Recording rows expire at `now() + 14d`; Supabase remains the permanent store.
 
 3. **Webhook sweeper for Stream (parity with Razorpay)?**  
    - A) Replay unprocessed  

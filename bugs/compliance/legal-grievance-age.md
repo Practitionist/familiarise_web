@@ -4,6 +4,18 @@
 
 Privacy/Terms pages exist under `app/(pages)/` but company constants still contain placeholders. Consumer Protection e-commerce rules expect grievance officer, timelines, seller info. Age: `dateOfBirth` optional; no gate. Professional licensing: manual doc review ≠ regulated profession compliance.
 
+## Triage verdict (2026-07-12)
+
+Triaged 2026-07-12 against real code (3 verifier agents cross-checked every claim); fix wave PRs #981–#994 shipped. This dossier's claims map as follows:
+
+| Claim (short) | Verdict |
+|---|---|
+| `[COMPANY NAME]` / `[ADDRESS]` / `[EMAIL]` placeholders — launch blocker | ✅ FIXED-BY #989 (name=Practitionist, address removed; email placeholders kept w/ TODO; supersedes #434, does not close it) |
+| No `/grievance` page, no Grievance model, no 48h/30d SLA cron | 🟡 LEGIT-DEFERRED (user deferred) |
+| No parental consent / 13+ or 18+ enforcement | 🟡 LEGIT-DEFERRED (user deferred) |
+| No license number fields for CA/medical/legal verticals | 🟡 LEGIT-DEFERRED |
+| CCPA dark-pattern self-audit documented without artifact | 🟡 LEGIT-DEFERRED |
+
 ## Known gaps / bugs
 
 - `[COMPANY NAME]`, `[ADDRESS]`, `[EMAIL]` placeholders — launch blocker in hiring/research notes.

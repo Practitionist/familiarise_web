@@ -4,6 +4,20 @@
 
 Documented deferrals and dead code around Stream.
 
+## Triage verdict (2026-07-12)
+
+Triaged 2026-07-12 against real code (3 verifier agents cross-checked every claim); fix wave PRs #981–#994 shipped. This dossier's claims map as follows:
+
+| Claim (short) | Verdict |
+|---|---|
+| Collaborator video roles (host/moderator/speaker) deferred | 🟡 LEGIT-DEFERRED |
+| Instant `createMeeting()` in `lib/meeting.ts` has no callers (dead code) | ✅ FIXED-BY #983 (deleted) |
+| Passcode / hostKeys unused | 🟡 LEGIT-DEFERRED |
+| Backfill org metadata scripts exist for channels/calls | 🟡 LEGIT-DEFERRED (tooling, not a bug) |
+| Hard-delete soft-deleted Stream users >30 days (script TODO) | 🔵 TRACKED #535 |
+| Channel naming duplication / policy issues | 🟡 LEGIT-DEFERRED |
+| Maker plan concurrent limits — monitoring unclear | 🟡 LEGIT-DEFERRED |
+
 ## Known gaps / bugs
 
 - Collaborator video roles (host/moderator/speaker) deferred — `docs/collaborators/05-stream-integration.md`.

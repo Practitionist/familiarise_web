@@ -4,6 +4,22 @@
 
 Enterprise buyers expect audit-ready invoices, TDS on org payouts, MSME timelines, and eventually IRN. Schema and helpers are deep ([`lib/compliance/`](../../lib/compliance/), org tax models, invoice counters). Several **gates are UI/docs only** — money APIs still move without KYB/domain hard checks. That is incompatible with “enterprise respect.”
 
+## Triage verdict (2026-07-12)
+
+Triaged 2026-07-12 against real code (3 verifier agents cross-checked every claim); fix wave PRs #981–#994 shipped. This dossier's claims map as follows:
+
+| Claim (short) | Verdict |
+|---|---|
+| K-01 KYB not a hard gate on INVOICE | 🔵/✅ partial via #991 (domain gate) |
+| K-02 `assertVerifiedDomainOrThrow` unwired | ✅ FIXED-BY #991 (INVOICE now hard-requires verified domain) |
+| K-03 IRP uploader gated / stub | 🔵 TRACKED #713 |
+| K-04 `requireActive` inconsistent across money surfaces | 🟡 LEGIT-DEFERRED |
+| K-05 MSME §16 interest not accrued | 🟡 LEGIT-DEFERRED |
+| K-06 `TdsAdjustment` / Form 26Q export schema-only | 🔵 TRACKED #737 (audit cited #738 — misattribution) |
+| K-07 Dual TDS engines vs B2C deprecated 194J path | ❌ STALE (194-O already live via `computeTdsForPayout`) |
+| K-08 Invoice GST not per-line; credit-note length | 🟡 LEGIT-DEFERRED |
+| Refund tax cascade incomplete (implied) | ❌ OVERSTATED (`TdsAdjustment` + `GstTcsAdjustment` both wired) |
+
 ## Known gaps / bugs
 
 | ID | Severity | Issue |

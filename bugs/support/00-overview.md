@@ -4,6 +4,19 @@
 
 In-app `SupportTicket` with responses, attachments, internal notes, and Swiggy-style links to consultation/subscription/payment/refund entities. User and staff APIs; Novu for create/update/response. Mobile API notes in `docs/api/support-tickets-mobile.md`.
 
+## Triage verdict (2026-07-12)
+
+Triaged 2026-07-12 against real code (3 verifier agents cross-checked every claim); fix wave PRs #981–#994 shipped. This dossier's claims map as follows:
+
+| Claim (short) | Verdict |
+|---|---|
+| No ticket merge/dedup for one failed payment | ✅ FIXED-BY #989 (runtime create-time reuse by `paymentId`) |
+| Concurrent staff status updates last-write-wins | ✅ FIXED-BY #989 (status CAS) |
+| No SLA / escalation / CSAT automation | 🟡 LEGIT-DEFERRED |
+| No email-to-ticket ingestion / Zendesk bridge | 🟡 LEGIT-DEFERRED |
+| Auto-refund-from-ticket unclear | 🟡 LEGIT-DEFERRED |
+| Priority auto-escalation absent | 🟡 LEGIT-DEFERRED |
+
 ## Known gaps / bugs
 
 - No SLA / escalation / CSAT automation.

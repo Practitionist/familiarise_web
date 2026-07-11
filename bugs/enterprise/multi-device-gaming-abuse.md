@@ -4,6 +4,18 @@
 
 Enterprise money + seats + open B2B/B2C boundary (ADR-18) create **incentive surfaces**. Some “bugs” are intentional product openness; others are governance holes. Multi-device and multi-account behavior is how real abusers (and confused employees) reach inconsistent or profitable states.
 
+## Triage verdict (2026-07-12)
+
+Triaged 2026-07-12 against real code (3 verifier agents cross-checked every claim); fix wave PRs #981–#994 shipped. This dossier's implementation gaps map as follows:
+
+| Claim (short) | Verdict |
+|---|---|
+| No session/device fingerprint on program utilization | 🟡 LEGIT-DEFERRED |
+| SCIM seat-cap asymmetry vs invitations | ✅ FIXED-BY #985 |
+| `ProgramConsultantAllowlist` / `exclusiveEngagement` never read at checkout | ✅ FIXED-BY #982 (enforced at checkout per ADR 18) |
+| KYB hard-gate missing | ✅ FIXED-BY #991 (domain gate) |
+| Chaos suite does not simulate gaming scenarios | 🟡 LEGIT-DEFERRED |
+
 ## Attack / psychology catalogue
 
 | Scenario | What happens today | Residual |
@@ -50,6 +62,8 @@ Enterprise money + seats + open B2B/B2C boundary (ADR-18) create **incentive sur
    - A) Wire before curated enterprise panels  
    - B) Keep forever open  
    - C) Default closed for new sponsor orgs  
+
+> 🎯 Locked: ADR 18 — allowlist/exclusivity now enforced at checkout (#982); open sponsor network stays the default until curated panels require closing.
 
 **Recommendation: A.** Open default OK; enforce allowlist when selling curated panels.  
 - Not B if enterprise RFPs demand closed panels.  

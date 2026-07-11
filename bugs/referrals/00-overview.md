@@ -4,6 +4,19 @@
 
 `ReferralCode` → `Referral` attribution → `ReferralCredit` spend at checkout. Deferred qualify on first paid booking (Serializable, budget gates, program pause). Pending code in localStorage + `/r/[code]` + `?ref=`. Crons expire credits/referrals. Launch economics conservative (₹300/₹300 class defaults; docs may still mention older amounts).
 
+## Triage verdict (2026-07-12)
+
+Triaged 2026-07-12 against real code (3 verifier agents cross-checked every claim); fix wave PRs #981–#994 shipped. This dossier's claims map as follows:
+
+| Claim (short) | Verdict |
+|---|---|
+| Signup wipes stashed referral code (#891) | ✅ FIXED-BY #989 (Closes #891) |
+| Cross-device attribution loss (localStorage) | 🔵/🎯 accepted — post-auth entry deferred (rec C) |
+| Phone step-up anti-sybil (#884) planned | 🔵 TRACKED #884 |
+| Doc/code drift on reward amounts | 🟡 LEGIT-DEFERRED |
+| Org-funded checkout credit blocking (#766) audit | 🔵 TRACKED #766 (enforced; audit periodically) |
+| Consultant commission waiver later phases | 🟡 LEGIT-DEFERRED |
+
 ## Known gaps / bugs
 
 - **Cross-device attribution loss:** localStorage pending code does not survive OAuth on another device (documented acceptable).
@@ -24,6 +37,9 @@
    - A) Server-side cookie / account claim code entry  
    - B) Accept localStorage loss  
    - C) Require code entry post-signup always  
+
+   > 🎯 Locked: current localStorage behavior accepted; post-auth code-entry capture deferred (rec C not built this wave).
+
 
    **Recommendation: C.** Always offer post-auth “have a referral code?” entry so OAuth on another device does not silently drop attribution.  
    - Not A: cookies still fail across devices and browsers after OAuth  

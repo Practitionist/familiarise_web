@@ -6,6 +6,20 @@ Stream Chat + Stream Video power messaging and meetings. Lazy `StreamProvider`, 
 
 Canonical: `docs/stream/`, `lib/stream-client.ts`, `app/meetings/`.
 
+## Triage verdict (2026-07-12)
+
+Triaged 2026-07-12 against real code (3 verifier agents cross-checked every claim); fix wave PRs #981–#994 shipped. This dossier's claims map as follows:
+
+| Claim (short) | Verdict |
+|---|---|
+| Recording cron pipeline loses data at scale (P0 infra) | ✅ FIXED-BY #983 (Phase-0: enqueue-on-ready, streaming upload, retention object delete, bounded concurrency, backlog alert) |
+| External-S3 / Temporal / microservice rearchitecture | 🎯 DECLINED — Supabase stays the store; monolith + cron; no Temporal now |
+| Token server actions accept arbitrary `userId` (#400) | ✅ FIXED-BY #981 (session-bind; #400 was CLOSED but regressed) |
+| All app roles mapped to Stream `admin` | ✅ FIXED-BY #981 (demote to `user`; STAFF/ADMIN admin; channel-scoped consultant grants) |
+| Client-side call creation ≠ Stream-enforced membership | 🟡 LEGIT-DEFERRED (server-side call create not in this wave) |
+| Multi-tab duplicate participation allowed | 🟡 LEGIT-DEFERRED (soft-warn design decision) |
+| Collaborator video roles deferred; passcode/hostKeys unused | 🟡 LEGIT-DEFERRED |
+
 ## Known gaps / bugs
 
 - **P0 infrastructure:** Stream recordings live on Stream S3 for ~14 days; permanent retention relies on a sequential GH Actions cron (~40 transfers/day, 500MB in-memory) into Supabase — will lose data at webinar scale. See [recording-storage-scale-infrastructure.md](recording-storage-scale-infrastructure.md).

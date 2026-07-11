@@ -4,6 +4,21 @@
 
 Enterprise concurrency is **Postgres-native** by ADR 13: conditional UPDATEs, unique constraints, sorted ledger account locks. Serializable appears on checkout, some governance, and crons — not on every point mutation. Redis locks protect booking/checkout and cron exclusion. Documented intent: [`docs/enterprise/30-programs-and-lifecycle/01-concurrency-and-idempotency.md`](../../docs/enterprise/30-programs-and-lifecycle/01-concurrency-and-idempotency.md). Chaos go/no-go covers B2C-heavy races; **enterprise 14c (seats, invoice void, wallet top-up replay) is staged, not blocking**.
 
+## Triage verdict (2026-07-12)
+
+Triaged 2026-07-12 against real code (3 verifier agents cross-checked every claim); fix wave PRs #981–#994 shipped. This dossier's claims map as follows:
+
+| Claim (short) | Verdict |
+|---|---|
+| X-01 chaos 14c unstaged | 🟡 LEGIT-DEFERRED (staging chaos gate remains) |
+| X-02 SSO PATCH last-write-wins (has `version`) | ✅ FIXED-BY #985 (`expectedVersion` CAS) |
+| X-03 SCIM bypasses unverified seat governance | ✅ FIXED-BY #985 |
+| X-04 `revokeSession` on member removal comment-only | ✅ FIXED-BY #985 (comment corrected to real bump; TRUE revoke blocked — BetterAuth admin plugin not installed → follow-up #725) |
+| X-05 no contractual seat ceiling at assign | 🟡 LEGIT-DEFERRED |
+| X-06 JIT SSO auto-join may not bump `sessionGeneration` | 🟡 LEGIT-DEFERRED |
+| X-07 long Serializable checkout + pool pressure (#368) | 🔵 TRACKED #368 (CLOSED — pooler fix landed) |
+| X-08 CREDIT_POOL lacks reserve-hold-TTL | 🟡 LEGIT-DEFERRED |
+
 ## What works
 
 | Path | Pattern |

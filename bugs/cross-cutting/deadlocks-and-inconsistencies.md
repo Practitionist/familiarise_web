@@ -4,6 +4,26 @@
 
 Familiarise avoids classic DB deadlocks with documented Redis lock ordering (consultant/event → consultee → slot) and sorted ledger account updates. Residual pain is less “DB deadlock” and more **distributed inconsistency windows**, **doc/code drift**, and **asymmetric fail modes**.
 
+## Triage verdict (2026-07-12)
+
+Triaged 2026-07-12 against real code (3 verifier agents cross-checked every claim); fix wave PRs #981–#994 shipped. This dossier's claims map as follows:
+
+| Claim (short) | Verdict |
+|---|---|
+| Payment Phase-2 side effects outside confirm tx (skew healed by crons) | 🔵 by-design (ACK-before-complete + sweeper) |
+| Sorted ledger-account locking / deadlock avoidance | 🔵 by-design |
+| Consent "stub" comments vs live fail-closed checks | ✅ FIXED-BY #989 (checkConsent docstring corrected) |
+| `revokeSession` comment-only vs real mechanism | ✅ FIXED-BY #985 (comment corrected; true revoke follow-up #725) |
+| Payment critical-bugs task file vs fixed code (doc drift) | ✅ resolved (task file superseded; code fixed) |
+| Subscription status vs per-session slot after partial reschedule (#448) | ✅ FIXED-BY #988 |
+| Rating denormalization vs review rows | ✅ FIXED-BY #987 |
+| Wallet cache vs ledger journal drift | ✅ FIXED-BY #990 (freeze + page on reconcile `ok=false`) |
+| Stream call exists before MeetingSession row (orphan window) | 🟡 LEGIT-DEFERRED |
+| BetterAuth `Member` vs `Membership` dual source | 🟡 LEGIT-DEFERRED (large) |
+| SCIM/docs vs live implementation drift | 🟡 doc drift (SCIM implemented; docs say parked) |
+| Display currency vs INR settlement dual truth | 🔵 TRACKED #783 |
+| Novu vs Resend delivery split brain | 🟡 LEGIT-DEFERRED |
+
 ## Known gaps / bugs
 
 ### Locking & ordering
@@ -54,6 +74,9 @@ Familiarise avoids classic DB deadlocks with documented Redis lock ordering (con
    - A) Yes + status page + SLA  
    - B) Move earnings inside confirm txn  
    - C) Outbox pattern with visible pending  
+
+   > 🎯 Locked: Phase-2 stays by-design ACK-before-complete with a sweeper/cron backstop; not moved into the confirm txn (B) and no new outbox this wave.
+
 
    **Recommendation: C.** Use an outbox (or explicit pending status) for Phase-2 earnings/notifications so users see “processing” instead of silent skew.  
    - Not A: a status page alone still leaves confirm→side-effect gaps invisible in-product  

@@ -4,6 +4,21 @@
 
 BetterAuth with Prisma; singular `User.role`; nullable profile FKs; onboarding wizard per role; ORG_WORKSPACE early role commit + org wizard; lazy `ConsulteeProfile` on first consumer action; guards `requireOnboarded`; SSO domain enforcement; referral capture on auth paths; cross-tab `auth-broadcast`.
 
+## Triage verdict (2026-07-12)
+
+Triaged 2026-07-12 against real code (3 verifier agents cross-checked every claim); fix wave PRs #981–#994 shipped. This dossier's claims map as follows:
+
+| Claim (short) | Verdict |
+|---|---|
+| Onboarding multi-device last-write-wins | ✅ FIXED-BY #985 (CAS on `onboardingCompleted`) |
+| Phone unique empty-string Zod hazard | ❌ NON-ISSUE (mitigation exists at both real write boundaries; the only Zod phone field is unused/dead code) |
+| No true concurrent consultant + consultee role signup (Member vs Membership dual source) | 🟡 LEGIT-DEFERRED (large) |
+| No self-serve "become a consultant too" role switcher | 🟡 LEGIT-DEFERRED |
+| Consultant lazy ConsulteeProfile — one-role dashboard routing unclear | 🟡 LEGIT-DEFERRED |
+| STAFF/ADMIN invite-only — ensure no UI leak | 🔵 by-design (verify no leak) |
+| True session revoke blocked (BetterAuth admin plugin not installed) | 🟡 follow-up #725 |
+| Marketing consent not stamped at signup | 🔵 TRACKED #701 |
+
 ## Known gaps / bugs
 
 - **No true concurrent consultant + consultee role signup** — one role; dual needs via Membership or separate accounts (seed commentary).

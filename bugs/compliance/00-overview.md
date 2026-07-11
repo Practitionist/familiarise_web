@@ -6,6 +6,19 @@ Dual-rail compliance: strong **B2B enterprise** primitives (GST/TDS helpers, inv
 
 Canonical: `docs/compliance/`, `lib/compliance/`, `jobs/compliance/`.
 
+## Triage verdict (2026-07-12)
+
+Triaged 2026-07-12 against real code (3 verifier agents cross-checked every claim); fix wave PRs #981–#994 shipped. This dossier's claims map as follows:
+
+| Claim (short) | Verdict |
+|---|---|
+| Legal pages use `[COMPANY NAME]` placeholders — P0 enforceability | ✅ FIXED-BY #989 (name=Practitionist, address removed; email placeholders kept w/ TODO; supersedes #434, does not close it) |
+| No consumer grievance officer flow | 🟡 LEGIT-DEFERRED (user deferred) |
+| B2C TDS wrong-path risk | ❌ STALE — consultant withholding is already 194-O |
+| GST TCS schema-only | 🟡 LEGIT-DEFERRED |
+| Age gate not enforced; professional licenses not verified | 🟡 LEGIT-DEFERRED (user deferred) |
+| DPDP Phase 3 runway — consumer layer incomplete | 🟡 LEGIT-DEFERRED |
+
 ## Known gaps / bugs
 
 - Legal pages use `[COMPANY NAME]` placeholders — **P0** enforceability.

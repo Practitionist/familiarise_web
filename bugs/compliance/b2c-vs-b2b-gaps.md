@@ -4,6 +4,19 @@
 
 Enterprise rail: org tax info, invoices, credit notes, MSME alerts, org payout TDS, audit export. Marketplace rail: consultant verification (manual), PAN encryption, payout tax fields — but filing automation and TCS lag. Shipping checklist grades MUST vs DEFER in `docs/compliance/15-india-compliance-shipping-checklist.md`.
 
+## Triage verdict (2026-07-12)
+
+Triaged 2026-07-12 against real code (3 verifier agents cross-checked every claim); fix wave PRs #981–#994 shipped. This dossier's claims map as follows:
+
+| Claim (short) | Verdict |
+|---|---|
+| Dual TDS engines (#778 planned consolidation) | ❌ STALE — consultant path is already 194-O via `computeTdsForPayout`; `tds-service.ts` is FY-helper/audit only |
+| No GSTR-8 aggregator job | 🟡 LEGIT-DEFERRED |
+| Refund tax adjustment wiring gaps | ❌ OVERSTATED — TdsAdjustment (via reversal) and GstTcsAdjustment are both wired from `refund.ts`; only monthly `GstTcsBatch` collection deferred |
+| Seller disclosure (name/address/GSTIN on public profiles) incomplete | 🟡 LEGIT-DEFERRED |
+| RBI PA Path C needs legal confirmation | 🎯 legal/CA gate, not code |
+| Form 26Q/140 automation missing | 🔵 TRACKED #737 (code cites #737; audit said #738) |
+
 ## Known gaps / bugs
 
 - Dual TDS engines (#778 planned consolidation).

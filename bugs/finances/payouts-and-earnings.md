@@ -6,6 +6,19 @@ Successful payments create `ConsultantEarnings` / `OrganizationEarnings` (platfo
 
 Key paths: `lib/payments/payouts/`, jobs under `.github/workflows/*payout*`.
 
+## Triage verdict (2026-07-12)
+
+Triaged 2026-07-12 against real code (3 verifier agents cross-checked every claim); fix wave PRs #981–#994 shipped. This dossier's claims map as follows:
+
+| Claim (short) | Verdict |
+|---|---|
+| Live gateway submission gated → PROCESSING/PENDING freeze | 🔵 by-design gate + CAS terminal guards |
+| Non-resident consultants blocked (Sec 195) | 🟡 LEGIT-DEFERRED (accurate guard) |
+| Org clawback after COMPLETED payout is manual | 🟡 LEGIT-DEFERRED (post-payout netting not in this wave) |
+| GST TCS fields exist, collection deferred (cites #780) | 🟡 LEGIT-DEFERRED — note #780 is misattributed (it is the BigInt money migration, not GST TCS) |
+| Form 26Q / TRACES schema-only (cites #738) | 🔵 TRACKED #737 — code cites #737, audit said #738 |
+| INVOICE earnings park in `PENDING_TRUST` "forever" | ✅/🔵 #991 rescopes the park to the sponsor and extends the #687 release valve to consultant rows; dunning-suspend is 🔵 #779 |
+
 ## Known gaps / bugs
 
 - **P0/ops:** live gateway submission gated — without the flag, rows freeze PROCESSING/PENDING and consultants never get money.
@@ -33,6 +46,8 @@ Key paths: `lib/payments/payouts/`, jobs under `.github/workflows/*payout*`.
 - Not B: Manual bank transfers do not exercise idempotent RazorpayX batching and hide production failure modes.
 - Not C: Redesigning onto Route before FAA delays payouts and abandons Path C without a CA-driven reason.
 
+> 🎯 Locked: rec A stands; batch earnings now move to a BATCHED status (#993) so nothing reads PAID before a UTR exists, and the flag stays the go-live gate.
+
 2. **What happens when INVOICE org never pays — force clawback, write-off, or suspend booking?**  
    - A) Auto-suspend org after dunning stage 3 (`ENABLE_DUNNING_SUSPEND`)  
    - B) Earnings stay PENDING_TRUST indefinitely (ops review)  
@@ -42,6 +57,8 @@ Key paths: `lib/payments/payouts/`, jobs under `.github/workflows/*payout*`.
 - Not B: Indefinite PENDING_TRUST strands consultants and never forces org payment.
 - Not C: Platform absorption turns Familiarise into the bad-debt party for unpaid B2B bookings.
 
+> 🎯 Locked: rec A direction — #991 rescopes the park to the sponsor (not the consultant) and dunning→suspend is tracked under #779.
+
 3. **Non-resident / Section 195 timeline before international consultants?**  
    - A) Block non-resident until Form 15CA/CB live  
    - B) Manual CA process outside product  
@@ -50,6 +67,8 @@ Key paths: `lib/payments/payouts/`, jobs under `.github/workflows/*payout*`.
 **Recommendation: C.** Launch with INR-resident consultants only until Section 195 / Form 15CA/CB is productized — India settlement first.
 - Not A: “Block until 15CA/CB” still invites half-built intl onboarding UI and support exceptions.
 - Not B: Manual CA outside product does not scale and will be bypassed under sales pressure.
+
+> 🎯 Locked: rec C — launch with INR-resident consultants only; Section 195 / Form 15CA/CB is deferred.
 
 ## High concurrency / multi-device
 

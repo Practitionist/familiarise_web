@@ -6,6 +6,18 @@
 
 This is the exact unhappy path: firm onboarding on one device as consultant, other device as consultee, both hit submit.
 
+## Triage verdict (2026-07-12)
+
+Triaged 2026-07-12 against real code (3 verifier agents cross-checked every claim); fix wave PRs #981–#994 shipped. This dossier's claims map as follows:
+
+| Claim (short) | Verdict |
+|---|---|
+| No optimistic locking / version CAS on `User` during onboarding | ✅ FIXED-BY #985 (CAS on onboardingCompleted) |
+| No onboarding mutex (unlike invite accept) | ✅ FIXED-BY #985 |
+| `sessionGeneration` not always bumped on mid-onboarding role flips | ✅ FIXED-BY #985 |
+| Chaos suite covers login, not multi-role onboarding | 🟡 LEGIT-DEFERRED |
+| Orphan `ConsultantProfile` / `ConsulteeProfile` rows linger | 🟡 LEGIT-DEFERRED (soft-keep for audit by design) |
+
 ## Known gaps / bugs
 
 - No optimistic locking / version CAS on `User` during onboarding.

@@ -4,6 +4,20 @@
 
 Dual path: **Resend** for auth/payment/waitlist transactional email; **Novu** for 40+ product workflows (appointments, support, reviews, referrals, collaborators, org events). `NotificationPreference` rich model; **two APIs** (legacy narrow toggles vs full Novu sync). Subscriber sync on signup. Failed email retry job. Push/SMS/WhatsApp largely missing (roadmap).
 
+## Triage verdict (2026-07-12)
+
+Triaged 2026-07-12 against real code (3 verifier agents cross-checked every claim); fix wave PRs #981–#994 shipped. This dossier's claims map as follows:
+
+| Claim (short) | Verdict |
+|---|---|
+| Fire-and-forget Novu triggers → duplicate on retries (no transactionId) | ✅ FIXED-BY #989 (idempotent workflow key) |
+| Novu unset → workflows silently skip | ✅ FIXED-BY #989 (fail-loud Sentry in prod) |
+| Marketing consent (`MARKETING_COMMS`) not stamped at signup | 🔵 TRACKED #701 |
+| Preference API duplication (two shapes) | 🟡 LEGIT-DEFERRED |
+| Push/FCM missing despite schema fields | 🟡 LEGIT-DEFERRED |
+| Quiet-hours enforcement depends on Novu dashboard rules | 🟡 LEGIT-DEFERRED |
+| Directus broadcast webhook stub | 🔵 TRACKED #312 |
+
 ## Known gaps / bugs
 
 - Preference API duplication — different shapes, user confusion.

@@ -6,6 +6,22 @@ Familiarise books consultations, subscriptions, webinars, classes, and trials as
 
 Canonical engineering: `docs/booking/`, `utils/slotAllocation/`, `lib/payments/operations/checkout.ts`, race suite under `tests/typescript/race-conditions/`.
 
+## Triage verdict (2026-07-12)
+
+Triaged 2026-07-12 against real code (3 verifier agents cross-checked every claim); fix wave PRs #981–#994 shipped. This dossier's claims map as follows:
+
+| Claim (short) | Verdict |
+|---|---|
+| `allocationIdempotencyKey` unwired | ✅ FIXED-BY #988 (#837) |
+| No-show automation (#471) | ✅ FIXED-BY #992 (consultations; subscriptions remain a deferred TODO#471) |
+| Partial subscription reschedule flips whole plan PENDING (#448) | ✅ FIXED-BY #988 (now scoped partial-vs-full) |
+| DST deferred (#872) | 🔵 TRACKED #872 |
+| Double-booking loser both pay, manual refund | ✅ FIXED-BY #990 |
+| Reconcile detector SUCCEEDED-only scope | ✅ FIXED-BY #988 (`buildOccupiedAppointmentFilter`) |
+| Lemon/XFlow appointment stubs | ✅ FIXED-BY #984 |
+| Docs vs code drift on cancel auth (code stricter) | 🟡 doc drift (minor) |
+| Enterprise dunning does not cascade to booking suspend | 🔵 TRACKED #779 |
+
 ## Known gaps / bugs
 
 - Happy path is mature; residual gaps: unwired `allocationIdempotencyKey`, no-show automation (#471), partial subscription reschedule status bug (#448), DST deferred (#872), incomplete reconcile detector scope, Lemon/XFlow appointment stubs.
@@ -28,6 +44,8 @@ Canonical engineering: `docs/booking/`, `utils/slotAllocation/`, `lib/payments/o
 **Recommendation: C.** Fail closed on events without Redis; let 1:1 continue with GiST as the confirmed-overlap backstop.
 - Not A: Treating Redis as optional for webinars/classes risks unlocked capacity recount under seat contention.
 - Not B: Failing all paid booking on a Redis blip over-blocks 1:1 when GiST already enforces no confirmed overlap.
+
+> 🎯 Locked: rec C matches shipped behaviour — events fail closed without Redis, 1:1 continues on the GiST backstop.
 
 2. **What is the product SLA for tentative slot holds (24h + 2h cron)?**  
    - A) Shorten hold to 30–60 minutes for paid checkout  

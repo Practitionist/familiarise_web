@@ -6,6 +6,18 @@ Canonical refund path is `refundPayment()` + `applyRefundCascade()` in a Seriali
 
 Key paths: `lib/payments/operations/refund.ts`, `docs/payments/refunds-disputes/`.
 
+## Triage verdict (2026-07-12)
+
+Triaged 2026-07-12 against real code (3 verifier agents cross-checked every claim); fix wave PRs #981–#994 shipped. This dossier's claims map as follows:
+
+| Claim (short) | Verdict |
+|---|---|
+| Tax adjustment rows incompletely wired from refund | ❌ OVERSTATED — `recordTdsReversal` (refund.ts:593) and `gstTcsAdjustment.create` (refund.ts:723) are both wired; only the `GstTcsBatch` monthly collection is deferred |
+| Overage credit-back refuses non-invoice reversals | 🔵 TRACKED #715 |
+| Org payout COMPLETED → clawback manual | 🟡 LEGIT-DEFERRED |
+| Double-booking loser holds SUCCEEDED, manual refund | ✅ FIXED-BY #990 |
+| Chargeback evidence SLA timers in admin UI | 🟡 UNVERIFIED (alert cron exists; the UI timer was not confirmed) |
+
 ## Known gaps / bugs
 
 - Cascade is strong, but some tax adjustment rows (`TdsAdjustment` / `GstTcsAdjustment`) are documented as incompletely wired from refund in compliance shipping checklist.
@@ -32,6 +44,8 @@ Key paths: `lib/payments/operations/refund.ts`, `docs/payments/refunds-disputes/
 - Not B: Support-only leaves paid consultees waiting and contradicts published refund copy.
 - Not C: Partial credit plus forced reschedule underpays the customer relative to the promised full refund.
 
+> 🎯 Locked: rec A — no-show refunds are automated in #992 (#471) for consultations; subscriptions remain a deferred TODO#471.
+
 2. **Refund vs dispute race — which wins as product policy?**  
    - A) Dispute freezes refund UI; finance owns  
    - B) Refund completes; dispute maps to already-refunded  
@@ -49,6 +63,8 @@ Key paths: `lib/payments/operations/refund.ts`, `docs/payments/refunds-disputes/
 **Recommendation: A.** Net clawbacks against the next payout batch so refunded sessions do not permanently strand platform receivables after COMPLETED payouts.
 - Not B: Manual collection does not scale and leaves `clawbackAmount` growing with no recovery path.
 - Not C: Holding future bookings punishes consultees and consultants for a finance recovery problem.
+
+> 🎯 Locked: post-payout clawback netting is LEGIT-DEFERRED — not in this wave; manual recovery remains the v1 stopgap.
 
 ## High concurrency / multi-device
 

@@ -6,6 +6,20 @@ Familiarise’s money stack is Razorpay-primary (Stripe legacy/fallback), with i
 
 Canonical engineering: `docs/payments/`, `docs/enterprise/10-money-and-ledger/`, `lib/payments/`.
 
+## Triage verdict (2026-07-12)
+
+Triaged 2026-07-12 against real code (3 verifier agents cross-checked every claim); fix wave PRs #981–#994 shipped. This dossier's claims map as follows:
+
+| Claim (short) | Verdict |
+|---|---|
+| Live payout disbursement flag-gated off | 🔵 by-design gate (`ENABLE_LIVE_PAYOUTS`); not a bug |
+| INR-only ledger, FX fields cosmetic | 🔵 TRACKED #783 (multi-currency deferred) |
+| Phase-2 side effects outside confirm tx | 🔵 by-design ACK-before-complete; sweeper backstop |
+| Amount mismatch marks recovery, no auto-refund | ✅ FIXED-BY #990 (auto-refund + Sentry, manual-recovery fallback) |
+| Dual TDS engines, B2C consultant on 194J (P0) | ❌ STALE — consultant withholding is already 194-O via `computeTdsForPayout` (payout-service.ts:592-607); the P0 does not exist in current code |
+| Lemon Squeezy / XFlow `NOT_IMPLEMENTED` + routes | ✅ FIXED-BY #984 (removed; Stripe kept; DODO_PAYMENTS enum added post-MVP) |
+| Day-pass doc-only, no Prisma model | ✅ FIXED-BY #984 (doc mentions removed) |
+
 ## Known gaps / bugs
 
 - Live payout disbursement is feature-flagged off by default — earnings accrue without real money movement until ops flips the flag.
@@ -34,6 +48,8 @@ Canonical engineering: `docs/payments/`, `docs/enterprise/10-money-and-ledger/`,
 - Not B: Hold copy without a memo still leaves RBI PA exposure once real UTRs flow.
 - Not C: Route sub-merchants abandon the intentional Path C architecture and delay go-live.
 
+> 🎯 Locked: rec A stands — this is a legal/CA sign-off gate, not a code change.
+
 2. **What is the customer SLA when payment succeeds but booking confirmation lags (async webhook gap)?**  
    - A) Confirm within N minutes via sweeper + status page  
    - B) Poll client until SUCCEEDED or timeout with auto-refund  
@@ -43,6 +59,8 @@ Canonical engineering: `docs/payments/`, `docs/enterprise/10-money-and-ledger/`,
 - Not B: Client-timeout auto-refunds can claw back legitimate slow confirms and fight the sweeper.
 - Not C: Ops-ticket-only acceptance erodes trust when payment already succeeded.
 
+> 🎯 Locked: rec A — the sweeper + status-page design is already the shipped behaviour.
+
 3. **Who owns finance reconciliation when `LedgerReconciliationReport.ok=false`?**  
    - A) On-call eng pages nightly  
    - B) Finance ops dashboard with weekly review  
@@ -51,6 +69,8 @@ Canonical engineering: `docs/payments/`, `docs/enterprise/10-money-and-ledger/`,
 **Recommendation: A.** Ledger `ok=false` is a money-correctness P0 and should page engineering the night it appears, not wait for a weekly ops glance.
 - Not B: Weekly review is too slow when wallet/cache drift can compound under load.
 - Not C: Support tickets do not fix journal/cache imbalance and create noise without owners.
+
+> 🎯 Locked: rec A — #990 partially delivers this (wallet freeze + Sentry P0 page when reconcile `ok=false`).
 
 ## High concurrency / multi-device
 

@@ -15,6 +15,22 @@ This is the right *product* idea (temp capture → permanent object store). It i
 
 Stream also offers a better vendor path we are **not** using yet: configure **external storage** (S3 / GCS / Azure) on the call type so Stream **writes recordings directly into our bucket** — no download-reupload hop, no 14-day race. See [Stream external storage docs](https://getstream.io/video/docs/api/recording/storage/).
 
+## Triage verdict (2026-07-12)
+
+Triaged 2026-07-12 against real code (3 verifier agents cross-checked every claim); fix wave PRs #981–#994 shipped. The infrastructure claims here are almost all accurate — the Phase-0 remediation shipped, but the deeper rearchitecture was a deliberate design decline. Claims map as follows:
+
+| Claim (short) | Verdict |
+|---|---|
+| Phase-0: enqueue-on-`recording_ready`, wire dead `queueRecordingTransfer` | ✅ FIXED-BY #983 |
+| Phase-0: streaming/multipart upload (no full in-memory `blob()`) | ✅ FIXED-BY #983 |
+| Phase-0: org retention deletes the Supabase object, not only DB status | ✅ FIXED-BY #983 (orphan-object fix) |
+| Phase-0: bounded concurrent transfers + near-expiry backlog alert | ✅ FIXED-BY #983 |
+| Phase-0: doc drift (3 vs 5 day window), cap infinite retries | ✅ FIXED-BY #983 |
+| `>500MB` hard-reject cap | ✅ FIXED-BY #983 (streaming upload revisits the cap) |
+| `createMeeting()` dead code | ✅ FIXED-BY #983 (deleted) |
+| `streamUrlExpiresAt = recordedAt + 14d` | ❌ OVERSTATED — code uses `now() + 14d` (immaterial to the argument) |
+| Phase-1/2: Stream external S3, durable workflows (Temporal/Inngest), microservice split, Kafka | 🎯 DECLINED — Supabase stays the permanent store; monolith + cron backstop; no Temporal/Kafka/microservice now |
+
 ## What we have today (concrete)
 
 | Setting | Value |
@@ -183,6 +199,8 @@ Keep the Next.js monolith; run **workers** as a second process/service in the sa
 - Not A: Current ~40 transfers/day and in-memory blobs will lose data under load.  
 - Not C: Client-side recording is unsupported by Stream’s model and creates worse device/consent chaos.
 
+> 🎯 Locked: Supabase stays the permanent store — the pull-transfer path (option A) is retained with the Phase-0 hardening; Stream external S3 is declined for now.
+
 2. **Orchestration for transfer/verify/retention workflows?**  
    - A) GitHub Actions cron forever  
    - B) Durable workflows (Temporal / Inngest) + cron as sweeper only  
@@ -192,6 +210,8 @@ Keep the Next.js monolith; run **workers** as a second process/service in the sa
 - Not A: Cron cannot resume mid-transfer or guarantee completion before Stream TTL.  
 - Not C: Kafka is transport; using it as a workflow store recreates Temporal poorly.
 
+> 🎯 Locked: Monolith + GH Actions cron (as backstop sweeper) stays; no Temporal/Inngest or Kafka workflow engine is adopted now.
+
 3. **When do we introduce a separate recording microservice?**  
    - A) Now, as part of this fix  
    - B) Only after worker pool + external storage exist and ownership splits  
@@ -200,6 +220,8 @@ Keep the Next.js monolith; run **workers** as a second process/service in the sa
 **Recommendation: B.** Stay monolith-plus-workers until scale and team boundaries justify a split; premature microservices add deploy/ops cost without fixing the TTL problem.  
 - Not A: Splitting now delays the real fix (external storage + enqueue-on-ready).  
 - Not C: Long media work must not live in serverless request timeouts forever.
+
+> 🎯 Locked: No separate recording microservice — stay monolith-plus-cron.
 
 4. **Default product policy for new plans?**  
    - A) STREAM_ONLY (14-day) default; permanent as paid add-on  
@@ -218,6 +240,8 @@ Keep the Next.js monolith; run **workers** as a second process/service in the sa
 **Recommendation: B.** Stream’s first-class external storage is S3/GCS/Azure; aligning on S3 minimizes glue and lets us use lifecycle rules / Glacier. Supabase remains DB/auth.  
 - Not A: Pull-transfer into Supabase keeps the two-hop design and GH Actions coupling.  
 - Not C: Dual-write doubles cost and consistency bugs.
+
+> 🎯 Locked: Supabase Storage remains the object store of record (option A); recording rows expire at `now() + 14d`.
 
 ## High concurrency / multi-device
 

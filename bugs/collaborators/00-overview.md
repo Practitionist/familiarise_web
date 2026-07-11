@@ -4,6 +4,18 @@
 
 Unified `Collaborator` for webinar/class plans: invite, accept, revenue bps (host ≥10%, collaborators ≤90%), permissions booleans, Stream collab channels, multi-party earnings and refund tests. Availability overlay APIs exist. Consultation co-consultant out of scope (1:1). Podcast collaborators not modeled.
 
+## Triage verdict (2026-07-12)
+
+Triaged 2026-07-12 against real code (3 verifier agents cross-checked every claim); fix wave PRs #981–#994 shipped. This dossier's claims map as follows:
+
+| Claim (short) | Verdict |
+|---|---|
+| Permission booleans richer in schema than enforced | ✅ FIXED-BY #989 (set on invite; `canSeeAttendees` enforced; `canApprovePayment`/`ViewAnalytics`/`EditEvent` set-only + TODO — no endpoint to gate yet) |
+| XOR webinar/class plan IDs app-enforced only (no DB check) | ✅ FIXED-BY #989 (check-constraints.sql, #784) |
+| Collaborator video host/moderator roles deferred | 🟡 LEGIT-DEFERRED (stream pack) |
+| Org-hosted expert collaborator path gated `ENABLE_HOST_ORGS` | 🔵 by-design gate |
+| Legal revenue-share assent not in ToS flow | 🟡 LEGIT-DEFERRED |
+
 ## Known gaps / bugs
 
 - Permission flags richer in schema than API enforcement surface — audit needed.

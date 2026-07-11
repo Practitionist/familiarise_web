@@ -4,6 +4,18 @@
 
 Two concepts: **platform Feedback** (user → product, staff workflow) and **ConsultantReview** (consultee → consultant rating). Reviews surface on explore profiles; staff can moderate/delete. Novu notifies on feedback and new reviews. Moderation reports are a separate adjacent system.
 
+## Triage verdict (2026-07-12)
+
+Triaged 2026-07-12 against real code (3 verifier agents cross-checked every claim); fix wave PRs #981–#994 shipped. This dossier's claims map as follows:
+
+| Claim (short) | Verdict |
+|---|---|
+| Review create does not denormalize `ConsultantProfile.rating` | ✅ FIXED-BY #987 |
+| No unique constraint per consultee–consultant pair | ✅ FIXED-BY #987 (⚠️ de-dupe existing rows before db push) |
+| No completed-booking eligibility gate | ✅ FIXED-BY #987 |
+| Review POST does not prove `consulteeProfileId` ownership | ✅ FIXED-BY #987 |
+| Public consultant search matches on email (PII) | ✅ FIXED-BY #987 |
+
 ## Known gaps / bugs
 
 - Review create does **not** reliably denormalize `ConsultantProfile.rating` (delete path recalculates; create may not) — explore sort drift.

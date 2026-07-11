@@ -4,6 +4,18 @@
 
 Channels: DMs (`dm-…`), webinar/class team channels, collab channels, legacy consultation/subscription names. Server creates/syncs channels; org tagging on custom data. DPDP consent gates Stream user upsert. Unread badges read client singleton.
 
+## Triage verdict (2026-07-12)
+
+Triaged 2026-07-12 against real code (3 verifier agents cross-checked every claim); fix wave PRs #981–#994 shipped. This dossier's claims map as follows:
+
+| Claim (short) | Verdict |
+|---|---|
+| `chatTokenProvider` not proving `session.user.id === userId` (#400) | ✅ FIXED-BY #981 (session-bind) |
+| `mapRoleToStream()` maps everyone → Stream `admin` | ✅ FIXED-BY #981 (demote to `user`; STAFF/ADMIN admin; channel-scoped consultant grants) |
+| Consultee↔consultee / consultant↔consultant chat policy incomplete | 🟡 LEGIT-DEFERRED |
+| Docs claim token issuance verifies user existence; code may not | ✅ FIXED-BY #981 (session-bound issuance) |
+| In-memory server caches ineffective across serverless instances (perf) | 🟡 LEGIT-DEFERRED (perf, not auth) |
+
 ## Known gaps / bugs
 
 - `chatTokenProvider(userId)` / related actions not proving `session.user.id === userId` (#400).

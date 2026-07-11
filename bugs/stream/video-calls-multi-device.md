@@ -4,6 +4,20 @@
 
 Join: lazy meeting create with `slot-{id}` → `/meetings/[id]` → validate-access → Setup → `call.join()`. Host end via consultant EndCallButton. Attendance upserted from webhooks (`MeetingAttendance` per user, not per device). Join windows: consultee ~10 min early, consultant ~15.
 
+## Triage verdict (2026-07-12)
+
+Triaged 2026-07-12 against real code (3 verifier agents cross-checked every claim); fix wave PRs #981–#994 shipped. This dossier's claims map as follows:
+
+| Claim (short) | Verdict |
+|---|---|
+| Client `getOrCreate` can create Stream call before DB row (orphan window) | 🟡 LEGIT-DEFERRED (server-side call create not in this wave) |
+| Multi-tab: multiple `user_session_id`s — echo, double-billing risk | 🟡 LEGIT-DEFERRED (soft-warn design decision) |
+| Meeting unmount `leave()` fights another tab still in call | 🟡 LEGIT-DEFERRED |
+| `useGetCallById` fallback may create calls despite subtle access story | 🟡 LEGIT-DEFERRED |
+| Consultee path still static-imports SDK (bundle debt #248 partial) | 🔵 TRACKED #248 |
+| Passcode / hostKeys in schema unused | 🟡 LEGIT-DEFERRED |
+| Call ID + stolen token bypasses page gate (ties to #400) | ✅ FIXED-BY #981 (token session-bind) |
+
 ## Known gaps / bugs
 
 - Client `getOrCreate` can create Stream call before DB row — orphan call window if DB fails.

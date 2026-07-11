@@ -4,6 +4,17 @@
 
 Booking state lives on the server (appointments, tentative slots, payment status). Client calendars (`useSlotAllocation`, `useCalendarData`) can lag. Auth multi-device login is tested separately from booking races. Same email = same user; two devices share locks keyed by userId / consultant / slot.
 
+## Triage verdict (2026-07-12)
+
+Triaged 2026-07-12 against real code (3 verifier agents cross-checked every claim); fix wave PRs #981–#994 shipped. This dossier's claims map as follows:
+
+| Claim (short) | Verdict |
+|---|---|
+| Large client hook shows stale availability across tabs | 🟡 by-design (client refetches; server is source of truth) |
+| Checkout remount may mint new idempotency keys per tab | 🔵 checkout idempotency pre-existing (server reuse of open PENDING) |
+| Reschedule A + allocate B → half-tentative subscription | ✅ FIXED-BY #988 (#448 scoped) |
+| No first-class cross-device "booking session" mutex | 🟡 by-design (Redis locks on mutating APIs) |
+
 ## Known gaps / bugs
 
 - Large client hook (~2170 lines) can show stale availability across tabs until refetch.

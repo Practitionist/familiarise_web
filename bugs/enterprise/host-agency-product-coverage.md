@@ -6,6 +6,18 @@ Host agencies (`canHost`) supply experts and catalog (consultations, subscriptio
 
 Key files: [`lib/payments/payouts/earnings-service.ts`](../../lib/payments/payouts/earnings-service.ts), [`lib/api/organizations/rate-card.ts`](../../lib/api/organizations/rate-card.ts), [`app/explore/enterprise/organisations/`](../../app/explore/enterprise/organisations/).
 
+## Triage verdict (2026-07-12)
+
+Triaged 2026-07-12 against real code (3 verifier agents cross-checked every claim); fix wave PRs #981–#994 shipped. This dossier's claims map as follows:
+
+| Claim (short) | Verdict |
+|---|---|
+| P0: flag-off → `resolveOrgSplit()` null → silent no-split | ✅ FIXED-BY #991 (honesty gate on host earnings data paths) |
+| Wizard shows host checkbox; API rejects create | 🟡 LEGIT-DEFERRED (doc/UX drift — code is 400 HOST_ORGS_GATED) |
+| Webinar/class `Appointment.organizationId` host-vs-sponsor confusion | 🟡 LEGIT-DEFERRED (reporting caveat) |
+| `payoutRecipient=ORGANIZATION` + independent B2C allowed (ADR-18 leakage) | ✅ FIXED-BY #982 (exclusiveEngagement/allowlist enforced at checkout per ADR 18) |
+| Explore affiliation badges confuse when host flag off + seed data | 🟡 LEGIT-DEFERRED |
+
 ## Product matrix (consult / sub / webinar / class)
 
 | Product | B2C checkout | Org-sponsored checkout | Host org stamp | 3-way earnings (flag on) | Gaps |
@@ -48,6 +60,8 @@ Key files: [`lib/payments/payouts/earnings-service.ts`](../../lib/payments/payou
    - A) Never — flag required for any host commercial  
    - B) Soft launch with manual journal adjustments  
    - C) Allow dashboards only, disclose no live split  
+
+> 🎯 Locked: sponsor-first — host commercial waits for flag-on split; do not sell host agencies before `ENABLE_HOST_ORGS`.
 
 **Recommendation: A.** Do not commercially host until flag-on split is proven in staging with real RateCard snapshots.  
 - Not B: Manual journals do not scale and destroy audit trust.  

@@ -4,6 +4,19 @@
 
 Org-funded checkout ([`lib/payments/operations/checkout.ts`](../../lib/payments/operations/checkout.ts)) resolves membership + program, then funds via WALLET (conditional debit), INVOICE (accrual leg + credit-limit recheck inside Serializable tx), or LICENSE (zero-amount leg + utilization). Ledger `BOOKING` posts usually via `createEarningsFromPayment` **after** checkout commit (try/catch + cron heal). Enterprise trust requires books to match what finance sees in wallet and invoices.
 
+## Triage verdict (2026-07-12)
+
+Triaged 2026-07-12 against real code (3 verifier agents cross-checked every claim); fix wave PRs #981–#994 shipped. This dossier's claims map as follows:
+
+| Claim (short) | Verdict |
+|---|---|
+| C-01 checkout↔ledger non-atomic → `WALLET_BALANCE_DRIFT` / missing earnings | ✅ FIXED-BY #994 |
+| C-02 payment leg sum mismatch warn-only | 🟡 LEGIT-DEFERRED (nightly reconcile backstops) |
+| C-03 INVOICE booking for PENDING_VERIFICATION without hard KYB | ✅ partial via #991 (domain gate) |
+| C-04 CHARGE_MEMBER on non-INVOICE parent fail-closed (#715) | 🔵 TRACKED #715 |
+| C-05 auto-top-up notify-only (#777) | 🔵 TRACKED #777 |
+| C-06 dunning suspend behind flag | 🔵 TRACKED #779 |
+
 ## Known gaps / bugs
 
 | ID | Severity | Issue |

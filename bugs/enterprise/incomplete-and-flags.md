@@ -4,6 +4,23 @@
 
 Large schema/API surface with deliberate gates. Readiness audits score design-partner readiness higher than self-serve production readiness.
 
+## Triage verdict (2026-07-12)
+
+Triaged 2026-07-12 against real code (3 verifier agents cross-checked every claim); fix wave PRs #981–#994 shipped. This dossier's claims map as follows:
+
+| Claim (short) | Verdict |
+|---|---|
+| `ENABLE_HOST_ORGS` / `ENABLE_LIVE_PAYOUTS` / `ENABLE_TDS_ADMIN_VIEW` gates | 🔵 by-design gates |
+| `ENABLE_IRP_UPLOADER` | 🔵 TRACKED #713 |
+| `ENABLE_DUNNING_SUSPEND` | 🔵 TRACKED #779 |
+| #777 auto-charge notify-only | 🔵 TRACKED #777 |
+| #715 overage partial | 🔵 TRACKED #715 (CLOSED) |
+| #716 CHARGED overage credit-back | 🟡 LEGIT-DEFERRED |
+| #771 hierarchy stub / no RLS | 🔵 TRACKED #771 (CLOSED — 🎯 accepted API-layer isolation) |
+| `exclusiveEngagement` unenforced | ✅ FIXED-BY #982 (enforced at checkout per ADR 18) |
+| Bulk members 405 stub | 🟡 LEGIT-DEFERRED |
+| Doc drift: SCIM parked vs live; HOST error codes | 🟡 LEGIT-DEFERRED (doc drift) |
+
 ## Known gaps / bugs
 
 | Flag / area | Effect |
@@ -42,6 +59,8 @@ Doc drift: SCIM parked vs live; HOST gate error codes inconsistent in docs vs ro
    - A) With live payouts + rate-card QA  
    - B) Soft launch without live money  
    - C) Defer indefinitely; sponsor-only  
+
+> 🎯 Locked: sponsor-first — flip `ENABLE_HOST_ORGS` only after the sponsor rail ships, coupled with live payouts as one program.
 
 **Recommendation: A.** Host orgs without live money teach the wrong economics; flip with payouts as one program after sponsor path is stable.  
 - Not B: Soft launch creates demo/prod confusion and fake rate-card expectations.  

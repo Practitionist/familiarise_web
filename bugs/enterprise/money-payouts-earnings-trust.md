@@ -6,6 +6,20 @@ Successful org/host flows create `OrganizationEarnings` + `ConsultantEarnings`, 
 
 Key: [`lib/payments/payouts/earnings-service.ts`](../../lib/payments/payouts/earnings-service.ts), [`lib/payments/payouts/org-payout-service.ts`](../../lib/payments/payouts/org-payout-service.ts), ADR `docs/enterprise/70-design-decisions/12-pending-trust-earnings-parking.md`.
 
+## Triage verdict (2026-07-12)
+
+Triaged 2026-07-12 against real code (3 verifier agents cross-checked every claim); fix wave PRs #981–#994 shipped. This dossier's claims map as follows:
+
+| Claim (short) | Verdict |
+|---|---|
+| E-01 PENDING_TRUST scopes host not sponsoring org | ✅ FIXED-BY #991 |
+| E-02 consultant earnings for ghost INVOICE not parked | ✅ FIXED-BY #991 |
+| E-03 earnings flip PAID at batch creation | ✅ FIXED-BY #993 (BATCHED status) |
+| E-04 LIVE_PAYOUTS off → batches PAID without UTR | ✅ FIXED-BY #993 |
+| E-05 post-COMPLETED clawback manual; org-side TDS reversal | 🟡 LEGIT-DEFERRED |
+| E-06 no RazorpayX balance pre-check before batch | 🟡 LEGIT-DEFERRED |
+| E-07 poller vs webhook reverse-status edges | 🟡 LEGIT-DEFERRED |
+
 ## Known gaps / bugs
 
 | ID | Severity | Issue |
@@ -41,6 +55,8 @@ Key: [`lib/payments/payouts/earnings-service.ts`](../../lib/payments/payouts/ear
    - B) At batch creation (current)  
    - C) Intermediate status `BATCHED` then `PAID`  
 
+> 🎯 Locked: BATCHED status (rec C, shipped #993) — earnings go BATCHED at batch creation and only PAID after the gateway wire completes.
+
 **Recommendation: C (or A).** Introduce `BATCHED`/`IN_FLIGHT` so UI never lies; `PAID` only after wire.  
 - Not B: “Paid” before cash is how enterprise trust dies.  
 - A alone may be enough if batch UI uses non-PAID labels.
@@ -49,6 +65,8 @@ Key: [`lib/payments/payouts/earnings-service.ts`](../../lib/payments/payouts/ear
    - A) With HOST flag + Path C CA memo + sandbox UTR  
    - B) Enable anytime for consultant-only  
    - C) Stay manual bank forever  
+
+> 🎯 Locked: sponsor-first — the live-payouts flip couples with the host flag as one go-live program after the sponsor rail ships.
 
 **Recommendation: A.** One runbook: host split + live payouts + CA Path C + UTR proof.  
 - Not B: Consultant-only still needs trust parking + TDS correctness.  

@@ -4,6 +4,19 @@
 
 Org RBAC: `MemberRole` ladder + surface permissions (`members.manage`, `billing.manage`, …). Enforcement: `requireOrgAccess` requires ACTIVE membership (ADMIN stub exception), optional capability/funding gates. BetterAuth `Member` kept for invite tokens; `Membership` is source of truth. LEARNER ↔ EXPERT transitions blocked — remove and re-invite.
 
+## Triage verdict (2026-07-12)
+
+Triaged 2026-07-12 against real code (3 verifier agents cross-checked every claim); fix wave PRs #981–#994 shipped. This dossier's claims map as follows:
+
+| Claim (short) | Verdict |
+|---|---|
+| No Postgres RLS — service-role Prisma | 🔵 TRACKED #771 (CLOSED — 🎯 accepted API-layer isolation) |
+| Hierarchy scoping not in `requireOrgAccess` (#771); APIs 501 | 🔵 TRACKED #771 |
+| `exclusiveEngagement` unenforced | ✅ FIXED-BY #982 (enforced at checkout per ADR 18) |
+| Settings UI/API permission drift (#779 class) | 🔵 TRACKED #779 |
+| Bulk member API 405 anti-lockout | 🟡 LEGIT-DEFERRED (by-design anti-lockout) |
+| Invite EXPERT vs SSO JIT lazy-create asymmetry | 🟡 LEGIT-DEFERRED |
+
 ## Known gaps / bugs
 
 - No Postgres RLS — service-role Prisma; defense-in-depth deferred.
@@ -25,6 +38,8 @@ Org RBAC: `MemberRole` ladder + surface permissions (`members.manage`, `billing.
    - A) Document API isolation as sufficient  
    - B) RLS before any SOC 2 language  
    - C) RLS only when Supabase client exposure  
+
+> 🎯 Locked: accepted API-layer isolation for design partners (rec A); RLS stays roadmap defense-in-depth (#771 CLOSED).
 
 **Recommendation: A.** Honest API-tenancy language unblocks design-partner DPAs; put RLS on the roadmap, not on the critical path.  
 - Not B: Over-commits before we have RLS design and migration plan.  

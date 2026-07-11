@@ -4,6 +4,20 @@
 
 Programs: LICENSED_SEAT and CREDIT_POOL. Seats aggregate into billing subscriptions; wallet prepaid with conditional debit; INVOICE accrual + dunning; LICENSE utilization metering. Unverified orgs capped (5 seats, invoice limits). SSO: domain claims, enforceSSO, JIT join, SCIM Users API. Verification loop: PENDING_VERIFICATION → admin verify.
 
+## Triage verdict (2026-07-12)
+
+Triaged 2026-07-12 against real code (3 verifier agents cross-checked every claim); fix wave PRs #981–#994 shipped. This dossier's claims map as follows:
+
+| Claim (short) | Verdict |
+|---|---|
+| Wallet auto-top-up notify-only, no money moves (#777) | 🔵 TRACKED #777 |
+| `ENABLE_DUNNING_SUSPEND` off — orgs linger unpaid | 🔵 TRACKED #779 (by-design flag) |
+| Host economics / 3-way split behind `ENABLE_HOST_ORGS` | 🔵 by-design gate |
+| SCIM docs drift vs live `/scim/v2/**` | 🟡 LEGIT-DEFERRED (doc drift) |
+| PERSONAL funding reimbursement (#714) incomplete | 🟡 LEGIT-DEFERRED |
+| SSO settings PATCH last-write-wins (see concurrency file) | ✅ FIXED-BY #985 (version CAS) |
+| SCIM bypasses unverified seat governance (see concurrency file) | ✅ FIXED-BY #985 |
+
 ## Known gaps / bugs
 
 - Wallet auto-top-up: schema + notify-only cron — **no money moves** (#777).

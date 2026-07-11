@@ -4,6 +4,19 @@
 
 `ConsentArtifact` with purpose codes; signup stamps primary + Stream processing; org consent UI; Stream upsert gated; org DSAR export jobs; admin-mediated erasure scrub; cookie preferences; consent retention sweeper; breach 72h alert cron. User `termsAcceptedAt` / `privacyAcceptedAt` on onboarding.
 
+## Triage verdict (2026-07-12)
+
+Triaged 2026-07-12 against real code (3 verifier agents cross-checked every claim); fix wave PRs #981–#994 shipped. This dossier's claims map as follows:
+
+| Claim (short) | Verdict |
+|---|---|
+| No consumer self-serve `/api/me` data export or delete | ❌ half-OVERSTATED — a self-serve erasure-REQUEST endpoint already ships; only data-EXPORT self-serve is absent (that part → 🟡 LEGIT-DEFERRED) |
+| Consent withdrawal cascade incomplete (marketing processors, full Stream purge) | 🟡 LEGIT-DEFERRED |
+| Multilingual notices not implemented | 🟡 LEGIT-DEFERRED |
+| Breach model approximates single 72h clock | 🟡 LEGIT-DEFERRED |
+| Doc drift: headers call `checkConsent` a stub — it is fail-closed live | ✅ FIXED-BY #989 (docstring corrected) |
+| GDPR DPA pack with processors not productized | 🟡 LEGIT-DEFERRED |
+
 ## Known gaps / bugs
 
 - No consumer self-serve `/api/me` data export or delete.

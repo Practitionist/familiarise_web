@@ -2,6 +2,31 @@
 
 High-level investigation notes for Familiarise: incomplete work, concurrency traps, multi-device unhappy paths, and open architecture questions. This is **not** a ticket tracker and **not** a rewrite of `docs/` — it is a CTO lens that points at real gaps found in code and docs.
 
+## Triage outcome (2026-07-12)
+
+This pack was fully triaged on 2026-07-12: three verifier agents cross-checked every claim against the current codebase, and a wave of fourteen fix PRs (#981–#994) was then shipped. Each dossier now carries a `## Triage verdict (2026-07-12)` section that stamps its claims with one of ✅ FIXED-BY, 🟡 LEGIT-DEFERRED, 🔵 TRACKED, ❌ STALE/OVERSTATED, or 🎯 DESIGN-DECISION, and the A/B/C questions carry one-line 🎯 notes wherever a decision is now locked.
+
+The fourteen fix PRs are: #981 stream-security, #982 adr18-allowlist, #983 recordings-pipeline, #984 gateway-cleanup (schema), #985 onboarding-identity, #986 waitlist-seat-hold, #987 reviews-integrity (schema), #988 booking-correctness, #989 trust-safety-sweep, #990 money-auto-refund, #991 enterprise-invoice-trust, #992 noshow-automation, #993 payout-batched-status (schema), and #994 checkout-earnings-atomicity.
+
+### Corrections — where this audit was wrong
+
+Several headline claims in this pack did not survive verification against the live code, and they are corrected here so the record is honest.
+
+1. **The "B2C consultant still on 194J" P0 is stale.** Consultant withholding already runs at 194-O through `computeTdsForPayout` (payout-service.ts:592-607); the legacy `tds-service.ts` engine only supplies financial-year helpers and audit-trail data. There is no dual-engine 194J exposure on the live payout path.
+2. **The "incomplete refund tax cascade" claim is overstated.** Both adjustment models are already wired from `refund.ts`: the TDS reversal via `recordTdsReversal` (refund.ts:593) and the GST TCS adjustment via `gstTcsAdjustment.create` (refund.ts:723). Only the monthly `GstTcsBatch` collection is genuinely deferred.
+3. **DPDP is not missing self-serve erasure.** A self-serve erasure-request endpoint already ships; the claim of "no self-serve delete" is half-overstated. Only self-serve data *export* is actually absent, and that piece is deferred.
+4. **Two issue numbers were misattributed.** The audit tied GST TCS to #780, but #780 is the BigInt money migration; and it tied Form 26Q to #738, whereas the code cites #737.
+5. **Recording expiry uses `now()+14d`, not `recordedAt+14d`.** The distinction is immaterial to the retention argument but the audit's phrasing was wrong.
+6. **The paid-trial funnel is wired, not "partial schema."** `trialPriceInPaise` flows through checkout, so the trial→pay path is not broken.
+
+### Schema-push status
+
+Two of the schema-carrying PRs are safe to push now because their changes are additive: the review-integrity unique constraint (#987) and the BATCHED payout status (#993). Before pushing #987, existing duplicate `(consultant, consultee)` review rows must be de-duplicated so the new unique constraint can be created. The gateway enum removal in #984 is deliberately **deferred to the pre-MVP database reset**, because 156 `Payment`, 21 `Refund`, and 10 `Dispute` rows still reference the `LEMON_SQUEEZY` and `XFLOW` enum values; dropping those values before the reset would orphan real rows.
+
+### Deferred but legitimate (rolled up)
+
+The following gaps are real and intentionally left for after this wave: the grievance page plus age gate (compliance, user-deferred), self-serve data export (DPDP), true multi-currency settlement (#783), post-payout clawback netting against the next batch, the subscription no-show remainder (TODO#471, since #992 automates only the consultation no-show), and a real session-revoke mechanism that needs the BetterAuth admin plugin (#725).
+
 ## How to read
 
 1. Start with **finances** (mission-critical money movement).

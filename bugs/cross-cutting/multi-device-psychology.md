@@ -4,6 +4,21 @@
 
 Real users do not use one browser tab. They bounce between phone, laptop, iPad, WhatsApp OTPs, UPI apps, and email deep links. Familiarise is largely a **web** product with server-authoritative mutations, but client state and third-party SDKs (Razorpay, Stream, Novu, OAuth) create multi-surface races.
 
+## Triage verdict (2026-07-12)
+
+Triaged 2026-07-12 against real code (3 verifier agents cross-checked every claim); fix wave PRs #981–#994 shipped. This dossier's cross-system claims map as follows:
+
+| Claim (short) | Verdict |
+|---|---|
+| Onboarding: same email, two roles, two devices → last write wins | ✅ FIXED-BY #985 (onboarding CAS) |
+| Waitlist: notify then claim elsewhere without soft hold | ✅ FIXED-BY #986 (seat-hold) |
+| Checkout: new idempotency keys per remount/tab | 🔵 by-design (checkout idempotency pre-existing) |
+| Referrals: localStorage attribution dies across devices | 🔵/🎯 accepted (post-auth entry deferred) |
+| Booking: stale green slots across devices | see booking pack — ✅ #988 correctness, ✅ #990 auto-refund |
+| Payments: UPI-on-phone success invisible until refresh | 🔵 by-design (server-truth + refetch) |
+| Stream video: multi-tab join → echo / duplicate sessions | 🟡 LEGIT-DEFERRED |
+| Notifications: preference toggles disagree across APIs/devices | 🟡 LEGIT-DEFERRED |
+
 ## Known gaps / bugs (cross-system)
 
 - Platform onboarding: same email, two roles, two devices → last write wins.
@@ -35,6 +50,9 @@ Real users do not use one browser tab. They bounce between phone, laptop, iPad, 
    - B) Single active session per user (kick others)  
    - C) Soft warnings when parallel mutating sessions detected  
 
+   > 🎯 Locked: A — server is authoritative with refetch; parallel sessions stay allowed (UPI-on-phone / email deep links require it).
+
+
    **Recommendation: A.** Treat the server as truth with aggressive refetch and allow parallel sessions — UPI-on-phone and email deep links require it.  
    - Not B: kicking other sessions breaks the phone-OTP / desktop-checkout flow  
    - Not C: soft warnings alone do not fix stale slots or double submits  
@@ -43,6 +61,9 @@ Real users do not use one browser tab. They bounce between phone, laptop, iPad, 
    - A) Onboarding CAS + checkout key persistence  
    - B) Stream single-session  
    - C) Cross-device pending-payment banner  
+
+   > 🎯 Locked: A — onboarding CAS shipped (#985) and waitlist seat-hold (#986); checkout idempotency pre-existing. Stream single-session and banners deferred.
+
 
    **Recommendation: A.** Invest first in onboarding CAS and checkout idempotency-key persistence — identity and money races hurt more than call echo.  
    - Not B: Stream single-session matters but is secondary to signup/payment correctness  

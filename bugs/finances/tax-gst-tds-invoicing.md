@@ -6,6 +6,20 @@ B2B enterprise tax is relatively mature: GST breakdown (`lib/compliance/gst.ts`)
 
 Key paths: `lib/compliance/`, `lib/payments/tax/`, `docs/compliance/15-india-compliance-shipping-checklist.md`.
 
+## Triage verdict (2026-07-12)
+
+Triaged 2026-07-12 against real code (3 verifier agents cross-checked every claim); fix wave PRs #981–#994 shipped. This dossier's claims map as follows:
+
+| Claim (short) | Verdict |
+|---|---|
+| B2C consultant TDS still on 194J (P0) | ❌ STALE — 194-O is live via `computeTdsForPayout` (payout-service.ts:592-607) |
+| GST TCS / GSTR-8 batching not wired (`GstTcsBatch`) | 🟡 LEGIT-DEFERRED |
+| Refund tax cascade incomplete | ❌ OVERSTATED — `TdsAdjustment` (reversal) and `GstTcsAdjustment` are both wired from `refund.ts` |
+| Form 15CA/CB stub returns nulls | 🟡 LEGIT-DEFERRED (explicit stub in `form15.ts`) |
+| IRN filing gated (ClearTax) | 🔵 TRACKED #713 |
+| HSN defaults static | 🟡 LEGIT-DEFERRED |
+| Consultant GSTIN format-only, no registry check | 🟡 LEGIT-DEFERRED |
+
 ## Known gaps / bugs
 
 - **P0:** B2C consultant TDS may still use deprecated 194J@10% path vs required 194-O@0.1% for e-commerce operator style flows.
@@ -34,6 +48,8 @@ Key paths: `lib/compliance/`, `lib/payments/tax/`, `docs/compliance/15-india-com
 - Not B: Dual engines until a GMV threshold guarantees some consultants are under-withheld or over-withheld in prod.
 - Not C: Spreadsheet TDS cannot stay consistent with ledger clawbacks and concurrent payout batches.
 
+> 🎯 Locked: the premise is ❌ STALE — the consultant payout path already withholds at 194-O via `computeTdsForPayout`, so no cutover is required.
+
 2. **When does GSTR-8 / TCS become launch-blocking?**  
    - A) Before first B2C payout  
    - B) After N consultants registered  
@@ -43,6 +59,8 @@ Key paths: `lib/compliance/`, `lib/payments/tax/`, `docs/compliance/15-india-com
 - Not A: Blocking every B2C payout on schema-only `GstTcsBatch` stalls Path C after the higher-priority TDS fix.
 - Not B: Consultant headcount is a weak proxy for TCS liability and still leaves early GMV unfiled.
 
+> 🎯 Locked: rec C — GST TCS / GSTR-8 batching is LEGIT-DEFERRED; file via CA retainer until volume justifies productised TCS.
+
 3. **IRP — enable for all orgs or only above AATO?**  
    - A) Flag on for everyone with ClearTax  
    - B) PENDING IRN below threshold  
@@ -51,6 +69,8 @@ Key paths: `lib/compliance/`, `lib/payments/tax/`, `docs/compliance/15-india-com
 **Recommendation: B.** Keep IRN pending below AATO and enable ClearTax IRP where the threshold actually requires it.
 - Not A: Forcing IRP for every org adds ClearTax cost/ops before legal necessity.
 - Not C: PDF-only past the threshold is non-compliant once e-invoicing applies.
+
+> 🎯 Locked: rec B — IRN stays PENDING below AATO and gated behind #713 (ClearTax) where the threshold requires it.
 
 ## High concurrency / multi-device
 

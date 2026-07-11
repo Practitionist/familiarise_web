@@ -4,6 +4,27 @@
 
 Several schema fields and docs describe intent that application code never fully wires. Others are known product bugs with issue numbers.
 
+## Triage verdict (2026-07-12)
+
+Triaged 2026-07-12 against real code (3 verifier agents cross-checked every claim); fix wave PRs #981–#994 shipped. The items table below maps as follows:
+
+| Claim (short) | Verdict |
+|---|---|
+| `allocationIdempotencyKey` (#837) schema-only | ✅ FIXED-BY #988 |
+| DST availability columns (#872) | 🔵 TRACKED #872 |
+| No-show automation (#471) | ✅ FIXED-BY #992 (consultations; subscriptions deferred TODO#471) |
+| Partial subscription reschedule (#448) | ✅ FIXED-BY #988 |
+| Reschedule API `slotIds[]` fragile | 🟡 LEGIT-DEFERRED |
+| `sessionsAwaitingReschedule` no counter | 🟡 LEGIT-DEFERRED |
+| Paid trial fields "partial" | ❌ OVERSTATED — `trialPriceInPaise` is wired through checkout |
+| Lemon/XFlow webhooks stub | ✅ FIXED-BY #984 (removed) |
+| `acquireEventSlot` semaphore docs-only | 🟡 accurate (not in prod code) |
+| Program allowlist / `exclusiveEngagement` write-only | ✅ FIXED-BY #982 (enforced at checkout per ADR 18) |
+| Reconcile detector scope incomplete | ✅ FIXED-BY #988 |
+| Class/webinar CRUD guards TOCTOU | ✅ FIXED-BY #988 (Serializable tx) |
+| Dunning → booking suspend (#779) | 🔵 TRACKED #779 |
+| Calendar external sync roadmap | 🟡 LEGIT-DEFERRED |
+
 ## Known gaps / bugs
 
 | Item | Issue | Nature |
@@ -40,6 +61,8 @@ Several schema fields and docs describe intent that application code never fully
 - Not B: Hiding plan PENDING in UI papers over wrong domain state consultants still see elsewhere.
 - Not C: A new `rescheduleQueue` entity is speculative redesign ahead of the known bug fix.
 
+> 🎯 Locked: rec A — #988 scopes reschedule status to the session, so one reschedule no longer flips the whole subscription to PENDING.
+
 2. **Ship IST-only and block non-IST timezones in UI until #872?**  
    - A) Hard block  
    - B) Soft warn  
@@ -57,6 +80,8 @@ Several schema fields and docs describe intent that application code never fully
 **Recommendation: A.** Wire `#837` immediately on PATCH allocate so double-submit allocate is covered before flash-event traffic.
 - Not B: Redesigning the request contract first delays a known schema-ready bug fix.
 - Not C: Redis locks alone are not enough when serverless freeze or multi-device retries remint requests.
+
+> 🎯 Locked: rec A — #988 wires `allocationIdempotencyKey` (#837) on PATCH allocate.
 
 ## High concurrency / multi-device
 

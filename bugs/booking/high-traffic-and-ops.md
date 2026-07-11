@@ -4,6 +4,18 @@
 
 Public availability APIs, checkout locks, consultant-level auto-allocate serialization, GitHub Actions crons (tentative cleanup, expire requests, auto-complete, reconcile), and a large race-test suite. Performance open items include availability caching (#309) and pool pressure (#368).
 
+## Triage verdict (2026-07-12)
+
+Triaged 2026-07-12 against real code (3 verifier agents cross-checked every claim); fix wave PRs #981–#994 shipped. This dossier's claims map as follows:
+
+| Claim (short) | Verdict |
+|---|---|
+| Availability caching incomplete | 🔵 TRACKED #309 |
+| Auto-allocate lock is consultant-global | ✅ FIXED-BY #988 (#860 sharded; auto-allocate keeps consultant key by design, GiST backstop) |
+| Cron granularity leaves abandoned holds | 🔵 TRACKED #866 (cron→QStash) |
+| Reconcile incomplete scope | ✅ FIXED-BY #988 (`buildOccupiedAppointmentFilter`) |
+| No first-class ops dashboard for blocked confirms | 🟡 LEGIT-DEFERRED (auto-refund in #990 reduces the ops-discovery need) |
+
 ## Known gaps / bugs
 
 - Availability caching incomplete — hot consultant pages can hammer DB.
@@ -28,6 +40,8 @@ Public availability APIs, checkout locks, consultant-level auto-allocate seriali
 **Recommendation: A.** Shard auto-allocate locks by day/slot so celebrity consultants are not a single-file queue during spikes.
 - Not B: Accepting a global queue still serializes the whole consultant and looks like “site broken” at peak.
 - Not C: Lottery/waitlist-only is a growth productization detour before lock sharding fixes the bottleneck.
+
+> 🎯 Locked: rec A — #988 (#860) shards the auto-allocate locks; the consultant key is kept by design with the GiST backstop.
 
 2. **Shorten tentative hold during campaigns?**  
    - A) Config flag per event  

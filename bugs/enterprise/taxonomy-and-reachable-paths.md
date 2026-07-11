@@ -4,6 +4,18 @@
 
 Familiarise enterprise uses Arch 4-Modified: three orthogonal axes — **capability** (`canSponsor` / `canHost` → SPONSOR / HOST / HYBRID), **funding** (PERSONAL / WALLET / INVOICE / LICENSE), and **programs** (LICENSED_SEAT / CREDIT_POOL). The locked reachable matrix lives in [`lib/enterprise/reachable-paths.ts`](../../lib/enterprise/reachable-paths.ts) and is enforced at program create. Harness (2026-06): ~31 pass / 5 warn — sponsor rail is design-partner ready; host earn-side is code-complete but flag-gated.
 
+## Triage verdict (2026-07-12)
+
+Triaged 2026-07-12 against real code (3 verifier agents cross-checked every claim); fix wave PRs #981–#994 shipped. This dossier's claims map as follows:
+
+| Claim (short) | Verdict |
+|---|---|
+| HOST create gated; `resolveOrgSplit()` null → no earnings until flag on | ✅ FIXED-BY #991 (honesty gate) + 🔵 by-design gate |
+| Doc drift: rollout says 501 + hidden checkbox; code is 400 + visible | 🟡 LEGIT-DEFERRED (doc drift) |
+| ADR-18 stubs (`ProgramConsultantAllowlist`, `exclusiveEngagement`) schema-only | ✅ FIXED-BY #982 (enforced at checkout per ADR 18) |
+| No Postgres RLS — tenancy API-layer only | 🔵 TRACKED #771 (CLOSED — 🎯 accepted API-layer isolation) |
+| Hierarchy columns (#771) inert in `requireOrgAccess` | 🔵 TRACKED #771 |
+
 ## What is accurately / completely implemented
 
 ### Capability
@@ -58,6 +70,8 @@ Familiarise enterprise uses Arch 4-Modified: three orthogonal axes — **capabil
    - B) Wait until HOST flag + live payouts  
    - C) Soft-sell both with manual ops  
 
+> 🎯 Locked: sponsor-first (rec A) — sell the E2E sponsor rail now; host is a separate go-live program.
+
 **Recommendation: A.** Sell SPONSOR (WALLET/INVOICE/LICENSE + programs) first — that matrix is E2E and harness-backed; HOST is a separate go-live program.  
 - Not B: Blocking all enterprise until host money delays revenue on the finished rail.  
 - Not C: Soft-selling host with silent split-off creates enterprise trust debt.
@@ -67,6 +81,8 @@ Familiarise enterprise uses Arch 4-Modified: three orthogonal axes — **capabil
    - B) Host dashboards first, payouts later  
    - C) Live payouts first without host split  
 
+> 🎯 Locked: sponsor-first — `ENABLE_HOST_ORGS` + `ENABLE_LIVE_PAYOUTS` flip together as one program.
+
 **Recommendation: A.** Split math and disbursement must ship as one program — partial flip yields wrong economics or “PAID” without UTR.  
 - Not B: Dashboards without live payouts train hosts that money is stuck.  
 - Not C: Payouts without host split mis-attributes org vs consultant shares.
@@ -75,6 +91,8 @@ Familiarise enterprise uses Arch 4-Modified: three orthogonal axes — **capabil
    - A) Keep open; contractually manage leakage  
    - B) Wire `ProgramConsultantAllowlist` at checkout lock  
    - C) Force exclusive engagement for all EXPERT members  
+
+> 🎯 Locked: ADR 18 — allowlist wired at checkout (#982); open network stays the marketplace default.
 
 **Recommendation: B.** Curated-panel enterprises will require allowlists; wire at `revalidateInsideLock` before those deals, keep open as default for marketplace.  
 - Not A: Pure contractual control fails when AP asks “who can my wallet pay?”  

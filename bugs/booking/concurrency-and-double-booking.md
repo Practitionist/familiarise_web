@@ -4,6 +4,18 @@
 
 Three layers: (1) Redis locks (`utils/appointmentlock.ts`) with documented lock order, (2) re-validation inside transactions, (3) DB GiST `slot_no_confirmed_overlap` for confirmed 1:1 slots. Events (webinar/class) use event locks + Serializable participant recount (no exclusion constraint). Payment confirmation re-checks overlaps before flipping `isTentative=false` (#827).
 
+## Triage verdict (2026-07-12)
+
+Triaged 2026-07-12 against real code (3 verifier agents cross-checked every claim); fix wave PRs #981–#994 shipped. This dossier's claims map as follows:
+
+| Claim (short) | Verdict |
+|---|---|
+| Both users pay; loser stays tentative, refund manual | ✅ FIXED-BY #990 (auto-refund on confirmation block) |
+| `allocationIdempotencyKey` unwired | ✅ FIXED-BY #988 (#837) |
+| Reconcile detector focuses on SUCCEEDED-payment slots | ✅ FIXED-BY #988 (`buildOccupiedAppointmentFilter`) |
+| Class/webinar CRUD guards outside transaction (TOCTOU) | ✅ FIXED-BY #988 (Serializable tx) |
+| Legacy rows missing `consultantProfileId` excluded from GiST | 🟡 accurate caveat (until backfilled) |
+
 ## Known gaps / bugs
 
 - Both users can still **pay**; loser stays tentative — refund may be manual (Sentry `CONFIRMATION_BLOCKED_DOUBLE_BOOKING`).
@@ -29,6 +41,8 @@ Three layers: (1) Redis locks (`utils/appointmentlock.ts`) with documented lock 
 - Not B: Ops-only recovery is too slow for chargebacks and panics after both parties paid.
 - Not C: Authorize-then-capture after GiST is a speculative payment redesign; fix the known loser-refund gap first.
 
+> 🎯 Locked: rec A — #990 auto-refunds the paid loser on the #827 confirmation block.
+
 2. **Should validate-then-allocate UI freeze slots client-side?**  
    - A) Soft hold token for N seconds  
    - B) No UI hold; always recheck at submit  
@@ -46,6 +60,8 @@ Three layers: (1) Redis locks (`utils/appointmentlock.ts`) with documented lock 
 **Recommendation: A.** Keep fail-closed 503 for event checkout when Redis is down — overselling seats is worse than temporary conversion loss.
 - Not B: Continuing on Serializable alone without the event lock increases last-seat double-sell risk.
 - Not C: An external capacity semaphore is documented but not in prod — speculative vs the existing fail-closed path.
+
+> 🎯 Locked: rec A matches shipped behaviour — event checkout stays fail-closed (503) when Redis is down.
 
 ## High concurrency / multi-device
 

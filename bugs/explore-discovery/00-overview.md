@@ -4,6 +4,20 @@
 
 Public discovery: `/explore/experts` (cached consultant cards, filters, infinite scroll), `/explore/programs` (classes/webinars), enterprise org browse. Community page is marketing placeholder. Trials via `TrialBookingModal`. Marketplace visibility helpers in `lib/api/plans/visibility.ts`. Verified consultants only on public explore.
 
+## Triage verdict (2026-07-12)
+
+Triaged 2026-07-12 against real code (3 verifier agents cross-checked every claim); fix wave PRs #981–#994 shipped. This dossier's claims map as follows:
+
+| Claim (short) | Verdict |
+|---|---|
+| Public search OR includes consultant email (PII) | ✅ FIXED-BY #987 |
+| "top rated" filter misranks (rating denorm wrong) | ✅ FIXED-BY #987 (rating denorm fixed on create/update/delete) |
+| Paid trial wiring partial — conversion funnel soft | ❌ OVERSTATED (`trialPriceInPaise` wired through checkout) |
+| Prisma `contains` search weak at scale (no Algolia/Typesense) | 🟡 LEGIT-DEFERRED |
+| Community backend missing | 🟡 LEGIT-DEFERRED |
+| Smart matching / badges roadmap only | 🟡 LEGIT-DEFERRED |
+| `ENABLE_HOST_ORGS` gates affiliation badges | 🔵 by-design gate |
+
 ## Known gaps / bugs
 
 - Prisma `contains` search — no Algolia/Typesense; weak at scale.

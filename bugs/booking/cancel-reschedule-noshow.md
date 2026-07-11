@@ -4,6 +4,18 @@
 
 Cancel: CAS-guarded transitions (`lib/booking/transitions.ts`), soft-cancel slots, policy refund for consultation/subscription after commit, waitlist open for events. Reschedule: 24h minimum notice, marks slots tentative, no new charge, consultant re-allocates. No-show: **not automated** (#471); auto-complete cron marks COMPLETED/UNVERIFIED; Stream attendance is foundation data.
 
+## Triage verdict (2026-07-12)
+
+Triaged 2026-07-12 against real code (3 verifier agents cross-checked every claim); fix wave PRs #981–#994 shipped. This dossier's claims map as follows:
+
+| Claim (short) | Verdict |
+|---|---|
+| No automated no-show → refund/credit | ✅ FIXED-BY #992 (#471, consultations; subscriptions deferred TODO#471) |
+| Partial subscription reschedule status wrong (#448) | ✅ FIXED-BY #988 |
+| Docs outdated on who may cancel (code stricter) | 🟡 doc drift |
+| Cancel preserves appointment rows for audit | 🟡 by-design (calendars must honour `completionStatus`) |
+| Refund policy promises full no-show refund with no code path | ✅ FIXED-BY #992 (now automated) |
+
 ## Known gaps / bugs
 
 - No automated consultant/consultee no-show → refund/credit.
@@ -29,6 +41,8 @@ Cancel: CAS-guarded transitions (`lib/booking/transitions.ts`), soft-cancel slot
 **Recommendation: A.** Define no-show as no MeetingAttendance join within N minutes so #471 can auto-refund from data already collected.
 - Not B: Manual-only leaves policy-promised refunds dependent on support judgment.
 - Not C: Consultant-gated confirmation invites bias and delays refunds the policy already promises.
+
+> 🎯 Locked: rec A — #992 automates the no-show refund from MeetingAttendance for consultations (subscriptions remain TODO#471).
 
 2. **Cancellation policy snapshot — show at checkout prominently?**  
    - A) Mandatory acknowledge checkbox  

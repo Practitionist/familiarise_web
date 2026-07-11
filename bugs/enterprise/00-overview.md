@@ -8,6 +8,22 @@ Canonical: `docs/enterprise/`, `ENTERPRISE_SCREENS.html`, `lib/auth/org-permissi
 
 **Deep-dive pack (second wave):** taxonomy, host agencies, money E2E, compliance gates, concurrency, gaming — listed below.
 
+## Triage verdict (2026-07-12)
+
+Triaged 2026-07-12 against real code (3 verifier agents cross-checked every claim); fix wave PRs #981–#994 shipped. This dossier's claims map as follows:
+
+| Claim (short) | Verdict |
+|---|---|
+| Design-partner ready, manual ops, not full self-serve | 🎯 DESIGN-DECISION (accepted posture) |
+| Host orgs / live payouts / IRP / dunning suspend gated off | 🔵 by-design flags (#713 IRP, #779 dunning) |
+| No RLS; hierarchy columns inert (#771) | 🔵 #771 (CLOSED — accepted API-layer isolation; 🎯 rec A) |
+| Platform onboarding role race | ✅ FIXED-BY #985 (CAS on onboardingCompleted) |
+| SCIM implemented; some docs still say parked | 🟡 LEGIT-DEFERRED (doc drift) |
+| P0: checkout↔ledger non-atomicity (C-01) | ✅ FIXED-BY #994 |
+| P0: PENDING_TRUST mis-scoped to host not sponsor (E-01) | ✅ FIXED-BY #991 |
+| P0: consultant payables unparked for ghost INVOICE (E-02) | ✅ FIXED-BY #991 |
+| P0: KYB/domain unwired (K-02) | ✅ FIXED-BY #991 |
+
 ## Known gaps / bugs
 
 - Design-partner ready with manual ops; not fully self-serve multi-tenant.
@@ -48,6 +64,8 @@ Canonical: `docs/enterprise/`, `ENTERPRISE_SCREENS.html`, `lib/auth/org-permissi
    - B) Parallel marketplace + enterprise  
    - C) Host orgs later; sponsor orgs first  
 
+> 🎯 Locked: sponsor-first (rec C) — ship the finished sponsor rail; host orgs are a separate go-live program.
+
 **Recommendation: C.** Sponsor-first lets us ship design-partner B2B value without waiting on host-org payouts and 3-way split.  
 - Not A: Blocks useful parallel marketplace learning while flags stay off.  
 - Not B: Parallel host+sponsor+marketplace spreads eng thin before isolation and payouts are proven.
@@ -56,6 +74,8 @@ Canonical: `docs/enterprise/`, `ENTERPRISE_SCREENS.html`, `lib/auth/org-permissi
    - A) Yes for design partners  
    - B) RLS required before SOC 2  
    - C) Separate DB per large tenant  
+
+> 🎯 Locked: accepted API-layer isolation for design partners (rec A); RLS stays roadmap defense-in-depth (#771 CLOSED).
 
 **Recommendation: A.** Document API isolation as sufficient for design partners while scheduling RLS as defense-in-depth.  
 - Not B: Blocks partner contracts on work we have not started.  
