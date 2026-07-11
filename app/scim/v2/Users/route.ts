@@ -14,6 +14,10 @@ import { requireScimAuth } from "@/lib/scim/auth";
 import { scimError } from "@/lib/scim/errors";
 import { createOrReprovisionScimUser } from "@/lib/scim/operations";
 import { toScimUser } from "@/lib/scim/resource-user";
+import {
+  DomainVerificationRequiredError,
+  UNVERIFIED_ORG_SEAT_CAP,
+} from "@/lib/enterprise/governance";
 
 const SCIM_USER_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:User";
 const SCIM_LIST_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:ListResponse";
@@ -118,15 +122,28 @@ export async function POST(req: NextRequest) {
     .map((g) => (typeof g === "string" ? g : (g.value ?? g.display ?? "")))
     .filter((s): s is string => s.length > 0);
 
-  const result = await createOrReprovisionScimUser(prisma, {
-    organizationId,
-    userName,
-    givenName: body.name?.givenName,
-    familyName: body.name?.familyName,
-    active: body.active ?? true,
-    externalId: body.externalId,
-    groupNames,
-  });
+  let result: Awaited<ReturnType<typeof createOrReprovisionScimUser>>;
+  try {
+    result = await createOrReprovisionScimUser(prisma, {
+      organizationId,
+      userName,
+      givenName: body.name?.givenName,
+      familyName: body.name?.familyName,
+      active: body.active ?? true,
+      externalId: body.externalId,
+      groupNames,
+    });
+  } catch (err) {
+    // Unverified-org seat cap — surface as a permanent SCIM error so the
+    // IdP's provisioning report tells the admin to verify a domain.
+    if (err instanceof DomainVerificationRequiredError) {
+      return scimError(
+        403,
+        `Seat cap reached — verify a domain to provision more than ${UNVERIFIED_ORG_SEAT_CAP} members.`,
+      );
+    }
+    throw err;
+  }
 
   if ("kind" in result) {
     if (result.kind === "USER_ERASED") {

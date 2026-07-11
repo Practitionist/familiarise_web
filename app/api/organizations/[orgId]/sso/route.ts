@@ -35,8 +35,11 @@ const PatchBodySchema = z
     // = "OWNER"` would make the first SSO user co-owner. See audit
     // Phase A.1 + docs/enterprise/20-iam-and-security/01-sso-and-authentication.md.
     defaultRoleForAutoJoin: JitDefaultRoleSchema.optional(),
+    // Optimistic-lock clock. When present, a concurrent admin PATCH that
+    // already bumped the version 409s instead of silently clobbering.
+    expectedVersion: z.coerce.number().int().min(1).optional(),
   })
-  .refine((v) => Object.keys(v).length > 0, {
+  .refine((v) => Object.keys(v).filter((k) => k !== "expectedVersion").length > 0, {
     message: "PATCH body must contain at least one field",
   });
 
@@ -75,6 +78,7 @@ export async function GET(
       allowedEmailDomains: [],
       enforceSSO: false,
       defaultRoleForAutoJoin: "LEARNER",
+      version: 1,
     },
     providers: providers.map(({ samlConfig, oidcConfig, ...rest }) => ({
       ...rest,
@@ -107,6 +111,30 @@ export async function PATCH(
       const existing = await tx.organizationSSOSettings.findUnique({
         where: { organizationId: orgId },
       });
+
+      // Optimistic lock — two admins editing SSO settings from stale tabs
+      // would last-write-wins the enforcement/domain config without this.
+      // CAS takes the row lock, serializing the upsert below behind it. Only
+      // meaningful once a row exists; the create path is guarded by the
+      // organizationId unique constraint.
+      if (existing && body.expectedVersion !== undefined) {
+        const cas = await tx.organizationSSOSettings.updateMany({
+          where: { organizationId: orgId, version: body.expectedVersion },
+          data: { version: { increment: 1 } },
+        });
+        if (cas.count === 0) {
+          throw Object.assign(
+            new Error(
+              "SSO settings were changed in another session — reload and retry",
+            ),
+            {
+              httpStatus: 409,
+              code: "VERSION_CONFLICT",
+              currentVersion: existing.version,
+            },
+          );
+        }
+      }
 
       // Enforcing SSO without at least one allowed domain OR an SSO
       // provider would lock every user out of the org. Catch it here.
@@ -209,7 +237,22 @@ export async function PATCH(
     if (err instanceof Error && "httpStatus" in err) {
       const status =
         typeof err.httpStatus === "number" ? err.httpStatus : 500;
-      return NextResponse.json({ error: err.message }, { status });
+      // VERSION_CONFLICT carries currentVersion so the client can
+      // refetch-and-retry without an extra GET.
+      const code =
+        "code" in err && typeof err.code === "string" ? err.code : undefined;
+      const currentVersion =
+        "currentVersion" in err && typeof err.currentVersion === "number"
+          ? err.currentVersion
+          : undefined;
+      return NextResponse.json(
+        {
+          error: err.message,
+          ...(code && { code }),
+          ...(currentVersion !== undefined && { currentVersion }),
+        },
+        { status },
+      );
     }
     Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
     throw err;

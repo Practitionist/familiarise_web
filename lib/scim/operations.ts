@@ -26,6 +26,11 @@ import {
   bumpUserSessionGeneration,
 } from "@/lib/api/organizations/membership-transitions";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import {
+  DomainVerificationRequiredError,
+  UNVERIFIED_ORG_SEAT_CAP,
+  hasVerifiedDomain,
+} from "@/lib/enterprise/governance";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 import { resolveRoleFromGroupNames } from "./resource-user";
 
@@ -201,6 +206,25 @@ export async function createOrReprovisionScimUser(
         role: updated.role,
         status: updated.status,
       } satisfies ScimUserOpResult;
+    }
+
+    // #675 parity with the invite path — an unverified org is hard-capped at
+    // UNVERIFIED_ORG_SEAT_CAP seats; SCIM auto-provisioning must honor the same
+    // gate or an IdP could bulk-provision straight past it. Only brand-new
+    // seats count (reprovisions returned above). Throw (not a CONFLICT return)
+    // so the User/profile writes above roll back instead of orphaning.
+    if (!(await hasVerifiedDomain(tx, organizationId))) {
+      const [activeMembers, pendingInvites] = await Promise.all([
+        tx.membership.count({
+          where: { organizationId, status: "ACTIVE" },
+        }),
+        tx.invitation.count({
+          where: { organizationId, status: "pending" },
+        }),
+      ]);
+      if (activeMembers + pendingInvites >= UNVERIFIED_ORG_SEAT_CAP) {
+        throw new DomainVerificationRequiredError("BULK_SEATS");
+      }
     }
 
     const created = await tx.membership.create({

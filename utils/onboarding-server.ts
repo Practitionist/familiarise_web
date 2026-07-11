@@ -591,56 +591,83 @@ export async function processOnboardingData(
     // onboardingCompleted flag at launch. This path now only handles
     // CONSULTANT / CONSULTEE / STAFF / ADMIN profiles.
 
-    const updatedUser = await prisma.$transaction(
-      async (tx) => {
-        const baseUserData: Prisma.UserUpdateInput = {
-          ...buildUserUpdateData(validatedBody),
-          // Reset profile IDs (will be set by profileFkData)
-          consultantProfileId: null,
-          consulteeProfileId: null,
-          staffProfileId: null,
-          adminProfileId: null,
-        };
-
-        const profileFkData = await upsertProfileByRole(
-          userId,
-          validatedBody,
-          tx,
-        );
-
-        await persistProfessionalBackground(
-          userId,
-          profileFkData.consultantProfileId,
-          body as Record<string, unknown>,
-          tx,
-        );
-
-        const user = await tx.user.update({
-          where: { id: userId },
-          data: { ...baseUserData, ...profileFkData },
-          include: {
-            consultantProfile: {
-              include: {
-                slotsOfAvailabilityWeekly: true,
-                slotsOfAvailabilityCustom: true,
-                domain: true,
-                subDomains: true,
-                tags: true,
-              },
-            },
-            consulteeProfile: true,
-            workExperiences: true,
-            education: true,
-            certifications: true,
-            staffProfile: true,
-            adminProfile: true,
-          },
-        });
-
-        return user;
+    const onboardingUserInclude = {
+      consultantProfile: {
+        include: {
+          slotsOfAvailabilityWeekly: true,
+          slotsOfAvailabilityCustom: true,
+          domain: true,
+          subDomains: true,
+          tags: true,
+        },
       },
-      { maxWait: 15000, timeout: 45000 },
-    );
+      consulteeProfile: true,
+      workExperiences: true,
+      education: true,
+      certifications: true,
+      staffProfile: true,
+      adminProfile: true,
+    } satisfies Prisma.UserInclude;
+
+    let updatedUser: Prisma.UserGetPayload<{
+      include: typeof onboardingUserInclude;
+    }>;
+    try {
+      updatedUser = await prisma.$transaction(
+        async (tx) => {
+          const baseUserData: Prisma.UserUpdateInput = {
+            ...buildUserUpdateData(validatedBody),
+            // Reset profile IDs (will be set by profileFkData)
+            consultantProfileId: null,
+            consulteeProfileId: null,
+            staffProfileId: null,
+            adminProfileId: null,
+          };
+
+          const profileFkData = await upsertProfileByRole(
+            userId,
+            validatedBody,
+            tx,
+          );
+
+          await persistProfessionalBackground(
+            userId,
+            profileFkData.consultantProfileId,
+            body as Record<string, unknown>,
+            tx,
+          );
+
+          const user = await tx.user.update({
+            // #724, #840: CAS guard — only apply the role/profile transition
+            // while the user is still un-onboarded, so two devices onboarding
+            // the same email can't last-write-wins each other. A no-match
+            // throws P2025 and rolls back the whole tx (incl. profile upserts).
+            where: { id: userId, onboardingCompleted: { not: true } },
+            data: { ...baseUserData, ...profileFkData },
+            include: onboardingUserInclude,
+          });
+
+          return user;
+        },
+        { maxWait: 15000, timeout: 45000 },
+      );
+    } catch (error: unknown) {
+      // #724, #840: another device already completed onboarding for this user;
+      // treat as idempotent success rather than clobbering their transition.
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2025"
+      ) {
+        const existing = await prisma.user.findUnique({
+          where: { id: userId },
+          include: onboardingUserInclude,
+        });
+        if (existing?.onboardingCompleted) {
+          return { success: true, user: existing };
+        }
+      }
+      throw error;
+    }
 
     // Post-transaction: consultant verification
     let verificationWarning: string | undefined;
