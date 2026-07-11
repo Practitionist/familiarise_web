@@ -164,7 +164,7 @@ describe("Stream Chat Types", () => {
           ADMIN: "admin",
           CONSULTANT: "user",
           CONSULTEE: "user",
-          STAFF: "user",
+          STAFF: "admin",
         };
         return mapping[role] || "user";
       };
@@ -172,7 +172,7 @@ describe("Stream Chat Types", () => {
       expect(mapRoleToStream("ADMIN")).toBe("admin");
       expect(mapRoleToStream("CONSULTANT")).toBe("user");
       expect(mapRoleToStream("CONSULTEE")).toBe("user");
-      expect(mapRoleToStream("STAFF")).toBe("user");
+      expect(mapRoleToStream("STAFF")).toBe("admin");
     });
   });
 });
