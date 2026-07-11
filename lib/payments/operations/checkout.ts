@@ -1046,41 +1046,51 @@ async function verifyPlanExistsInsideLock(
   tx: Tx,
   appointmentType: string,
   planId: string,
-): Promise<void> {
-  let planExists = false;
+): Promise<{
+  consultantProfileId: string | null;
+  organizationId: string | null;
+}> {
+  // ADR 18 — also surface the plan's consultant + org ownership so the
+  // allowlist/exclusivity checks below reuse this lookup.
+  const select = { consultantProfileId: true, organizationId: true } as const;
+  let plan: {
+    consultantProfileId: string | null;
+    organizationId: string | null;
+  } | null = null;
 
   switch (appointmentType) {
     case "CONSULTATION":
-      planExists = !!(await tx.consultationPlan.findUnique({
+      plan = await tx.consultationPlan.findUnique({
         where: { id: planId },
-        select: { id: true },
-      }));
+        select,
+      });
       break;
     case "SUBSCRIPTION":
-      planExists = !!(await tx.subscriptionPlan.findUnique({
+      plan = await tx.subscriptionPlan.findUnique({
         where: { id: planId },
-        select: { id: true },
-      }));
+        select,
+      });
       break;
     case "WEBINAR":
-      planExists = !!(await tx.webinarPlan.findUnique({
+      plan = await tx.webinarPlan.findUnique({
         where: { id: planId },
-        select: { id: true },
-      }));
+        select,
+      });
       break;
     case "CLASS":
-      planExists = !!(await tx.classPlan.findUnique({
+      plan = await tx.classPlan.findUnique({
         where: { id: planId },
-        select: { id: true },
-      }));
+        select,
+      });
       break;
   }
 
-  if (!planExists) {
+  if (!plan) {
     throw new Error(
       "This plan is no longer available. Please refresh and try again.",
     );
   }
+  return plan;
 }
 
 /**
@@ -1090,6 +1100,9 @@ async function verifyPlanExistsInsideLock(
 async function revalidateInsideLock(
   data: CheckoutInput,
   userId: string,
+  // ADR 18 — Program funding this org-sponsored booking; null for
+  // PERSONAL/marketplace checkouts. Drives the curated-panel check.
+  programId: string | null = null,
 ): Promise<void> {
   // Re-run the same validation as calculateAmountAndValidate
   // but this time we're inside the lock, so it's safe
@@ -1105,7 +1118,52 @@ async function revalidateInsideLock(
     }
 
     // BUG-E: Re-validate plan still exists (could be deleted between initial validation and lock)
-    await verifyPlanExistsInsideLock(tx, data.appointmentType, data.planId);
+    const plan = await verifyPlanExistsInsideLock(
+      tx,
+      data.appointmentType,
+      data.planId,
+    );
+
+    // ADR 18 — curated-panel enforcement (#971 shipped the stub). Rows on
+    // the funding Program restrict org-sponsored bookings to listed
+    // consultants; zero rows keep the sponsor network open. Checked under
+    // the distributed lock to close the check-then-book race.
+    if (programId) {
+      const panel = await tx.programConsultantAllowlist.findMany({
+        where: { programId },
+        select: { consultantProfileId: true },
+      });
+      if (
+        panel.length > 0 &&
+        !panel.some(
+          (row) => row.consultantProfileId === plan.consultantProfileId,
+        )
+      ) {
+        throw new Error(
+          "This consultant is not on your organization's approved panel for this program. Choose a listed consultant or ask your organization admin.",
+        );
+      }
+    }
+
+    // ADR 18 — exclusiveEngagement blocks the consultant's independent
+    // plans (no org ownership) while an ACTIVE membership declares
+    // exclusivity. Org-owned plans stay bookable. The "hide" half
+    // (marketplace visibility filtering) remains future work per the ADR.
+    if (plan.consultantProfileId && !plan.organizationId) {
+      const exclusive = await tx.membership.findFirst({
+        where: {
+          consultantProfileId: plan.consultantProfileId,
+          exclusiveEngagement: true,
+          status: "ACTIVE",
+        },
+        select: { id: true },
+      });
+      if (exclusive) {
+        throw new Error(
+          "This consultant works exclusively through their organization; their independent plans cannot be booked.",
+        );
+      }
+    }
 
     // FIX #548: Validate waitlist entry if this checkout originates from a waitlist offer.
     // Verify the entry belongs to this user, is in NOTIFIED status, and hasn't expired.
@@ -1854,6 +1912,9 @@ export async function handleCheckout(
   let fundingSource: "PERSONAL" | "WALLET" | "INVOICE" | "LICENSE" | null =
     null;
   let programAssignmentId: string | null = null;
+  // ADR 18 — Program behind the assignment above; feeds the curated-panel
+  // check in revalidateInsideLock.
+  let fundingProgramId: string | null = null;
   let callerMembershipId: string | null = null;
   // #785 B6 — effective INVOICE credit limit; threaded to the Serializable
   // booking tx for a race-safe re-check (the pre-lock check below is fast-fail only).
@@ -2020,7 +2081,7 @@ export async function handleCheckout(
           },
         },
         orderBy: { periodEnd: "desc" },
-        select: { id: true },
+        select: { id: true, programId: true },
       });
 
       if (!assignment) {
@@ -2032,13 +2093,13 @@ export async function handleCheckout(
       }
       programAssignmentId = assignment.id;
 
-      // ADR 18 — future curated-panel enforcement. The Program is resolved
-      // HERE, but the authoritative check belongs inside
-      // revalidateInsideLock, where the plan's consultant is already loaded
-      // and the distributed lock closes the TOCTOU window: allowlist rows
-      // exist for the resolved Program ⇒ the booked plan's consultant must
-      // be listed. Absent rows keep the network open — sponsors fund any
-      // marketplace consultant by design.
+      // ADR 18 — the Program is resolved HERE, but the authoritative
+      // curated-panel check runs inside revalidateInsideLock, where the
+      // plan's consultant is loaded and the distributed lock closes the
+      // TOCTOU window: allowlist rows exist for the resolved Program ⇒ the
+      // booked plan's consultant must be listed. Absent rows keep the
+      // network open — sponsors fund any marketplace consultant by design.
+      fundingProgramId = assignment.programId;
     }
   }
 
@@ -2102,7 +2163,7 @@ export async function handleCheckout(
     );
 
     // STEP 3: RE-VALIDATE INSIDE LOCK (critical for preventing TOCTOU race conditions)
-    await revalidateInsideLock(validatedData, userId);
+    await revalidateInsideLock(validatedData, userId, fundingProgramId);
 
     console.log(
       JSON.stringify({
