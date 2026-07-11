@@ -15,6 +15,7 @@ import {
   generateRecordingTitle,
   getEventAttendeeIds,
 } from "@/lib/stream/recording-utils";
+import { RecordingTransferService } from "@/lib/stream/recording-transfer-service";
 
 // Types for Stream webhook payloads
 export interface StreamRecordingStartedEvent {
@@ -308,6 +309,22 @@ export async function handleRecordingReady(
       title,
       durationInMinutes,
     });
+
+    // #899 — permanent-policy recordings start transferring at ready-time
+    // (fire-and-forget, mirrors the notify pattern below) instead of waiting
+    // for the near-expiry window; the 6-hourly cron sweep backstops any kick
+    // that dies with the function.
+    const storagePolicy =
+      appointment?.webinar?.webinarPlan?.recordingStoragePolicy ??
+      appointment?.class?.classPlan?.recordingStoragePolicy;
+    if (storagePolicy === "SUPABASE_PERMANENT") {
+      void RecordingTransferService.queueRecordingTransfer(recording.id).catch(
+        (err) =>
+          streamLogger.error("Ready-time transfer kick threw", err, {
+            recordingId: recording.id,
+          }),
+      );
+    }
 
     // Build recipient list — for webinar/class, include all enrolled attendees
     // (the meeting session slot only has the consultant's allocation slot users)

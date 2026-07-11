@@ -21,7 +21,9 @@ const RECORDINGS_BUCKET = "recordings";
 const storageClient = supabaseAdmin || supabase;
 
 // Maximum file size for direct transfer (500MB)
-// Files larger than this should use resumable uploads (future enhancement)
+// #899 — uploads now stream (no in-memory buffering), but the recordings
+// bucket is provisioned with a 500MB fileSizeLimit, so keep the pre-flight
+// reject to fail fast instead of burning a full upload into a server 413.
 const MAX_TRANSFER_SIZE = 500 * 1024 * 1024; // 500MB
 
 // STR-2/3 — page engineering once a recording has burned through this many
@@ -79,27 +81,26 @@ function buildStoragePolicyFilter(
 
 export class RecordingTransferService {
   /**
-   * Queue a recording for transfer to Supabase
+   * Queue a recording for transfer to Supabase.
+   *
+   * #899 — no broker: "queueing" is an immediate best-effort transfer,
+   * fired from the recording_ready webhook so permanent recordings move
+   * near-ready instead of near-expiry. Every failure path in
+   * transferRecordingToSupabase reverts status to READY, and the stale-
+   * TRANSFERRING sweep in processExpiringRecordings recovers kicks that die
+   * mid-flight, so the 6-hourly cron always backstops this.
    * @param recordingId The recording ID to queue
    */
   static async queueRecordingTransfer(recordingId: string): Promise<boolean> {
-    try {
-      // Update status to TRANSFERRING
-      await prisma.recording.update({
-        where: { id: recordingId },
-        data: {
-          status: "TRANSFERRING" as RecordingStatus,
-        },
-      });
-
-      streamLogger.info("Recording queued for transfer", { recordingId });
-      return true;
-    } catch (error) {
-      streamLogger.error("Failed to queue recording for transfer", error, {
+    const { success, error } =
+      await this.transferRecordingToSupabase(recordingId);
+    if (!success) {
+      streamLogger.warn("Ready-time transfer kick failed; cron will retry", {
         recordingId,
+        error,
       });
-      return false;
     }
+    return success;
   }
 
   /**
@@ -270,13 +271,15 @@ export class RecordingTransferService {
         storagePath,
       });
 
-      // Use blob() instead of arrayBuffer() for more efficient memory handling
-      // Blob is more memory-efficient in most JS runtimes for large files
-      const fileBlob = await response.blob();
+      // #899 — pipe the download straight into the storage upload instead of
+      // materializing the file (response.blob() buffered up to 500MB in
+      // memory). storage-js accepts ReadableStream and sets duplex:"half"
+      // itself; blob() is only the fallback for a body-less response.
+      const uploadBody = response.body ?? (await response.blob());
 
       const { error: uploadError } = await storageClient.storage
         .from(RECORDINGS_BUCKET)
-        .upload(storagePath, fileBlob, {
+        .upload(storagePath, uploadBody, {
           contentType,
           cacheControl: "31536000", // 1 year cache
           upsert: true,
@@ -362,6 +365,23 @@ export class RecordingTransferService {
     };
 
     try {
+      // #899 — recover transfers killed mid-flight (serverless webhook kick,
+      // crashed cron run): TRANSFERRING with no update for 2h is stuck, and
+      // nothing else ever revisits it. Revert to READY so this sweep retries.
+      const stale = await prisma.recording.updateMany({
+        where: {
+          status: "TRANSFERRING",
+          storageType: "STREAM_S3",
+          updatedAt: { lt: new Date(Date.now() - 2 * 60 * 60 * 1000) },
+        },
+        data: { status: "READY" as RecordingStatus },
+      });
+      if (stale.count > 0) {
+        streamLogger.warn("Reset stale TRANSFERRING recordings to READY", {
+          count: stale.count,
+        });
+      }
+
       const expiringRecordings = await prisma.recording.findMany({
         where: {
           storageType: "STREAM_S3",
@@ -383,18 +403,29 @@ export class RecordingTransferService {
         policyFilter,
       });
 
-      for (const recording of expiringRecordings) {
-        results.processed++;
+      // #899 — network-bound transfers in chunks of 3: cuts sweep latency
+      // without piling memory/connection pressure onto one invocation.
+      // transferRecordingToSupabase never throws, so Promise.all is safe.
+      const CONCURRENCY = 3;
+      for (let i = 0; i < expiringRecordings.length; i += CONCURRENCY) {
+        const chunk = expiringRecordings.slice(i, i + CONCURRENCY);
+        const outcomes = await Promise.all(
+          chunk.map(async (recording) => ({
+            id: recording.id,
+            result: await this.transferRecordingToSupabase(recording.id),
+          })),
+        );
 
-        const result = await this.transferRecordingToSupabase(recording.id);
-
-        if (result.success) {
-          results.succeeded++;
-        } else {
-          results.failed++;
-          results.errors.push(
-            `Recording ${recording.id}: ${result.error || "Unknown error"}`,
-          );
+        for (const { id, result } of outcomes) {
+          results.processed++;
+          if (result.success) {
+            results.succeeded++;
+          } else {
+            results.failed++;
+            results.errors.push(
+              `Recording ${id}: ${result.error || "Unknown error"}`,
+            );
+          }
         }
       }
 
@@ -405,6 +436,28 @@ export class RecordingTransferService {
       streamLogger.error("Failed to process expiring recordings", error);
       return results;
     }
+  }
+
+  /**
+   * #899 — count permanent-policy recordings still on Stream S3 with less
+   * than `hoursBeforeExpiry` of URL life left. Non-zero after a sweep means
+   * the pipeline is falling behind or failing repeatedly; the transfer job
+   * pages on it before the bytes lapse.
+   */
+  static async countAtRiskPermanentRecordings(
+    hoursBeforeExpiry: number = 72,
+  ): Promise<number> {
+    const threshold = new Date(
+      Date.now() + hoursBeforeExpiry * 60 * 60 * 1000,
+    );
+    return prisma.recording.count({
+      where: {
+        storageType: "STREAM_S3",
+        status: "READY",
+        streamUrlExpiresAt: { lte: threshold, gt: new Date() },
+        ...buildStoragePolicyFilter("SUPABASE_PERMANENT"),
+      },
+    });
   }
 
   /**

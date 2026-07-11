@@ -67,10 +67,12 @@ async function main(): Promise<void> {
       "transfer-expiring-recordings",
       { failMode: "open" },
       async () => {
-        // Auto-transfer SUPABASE_PERMANENT recordings expiring in 5 days
+        // #899 — 14-day window = every READY permanent recording (Stream URLs
+        // live exactly 14d), so the sweep starts transfers near-ready and
+        // backstops ready-time webhook kicks that died, not just near-expiry.
         const result =
           await RecordingTransferService.processExpiringRecordings(
-            5,
+            14,
             10,
             "SUPABASE_PERMANENT",
           );
@@ -85,6 +87,25 @@ async function main(): Promise<void> {
     // STR-3 — warn consultants whose STREAM_ONLY recordings are about to expire.
     if (expiringStreamOnly.length > 0) {
       await notifyConsultantsOfExpiringRecordings(expiringStreamOnly);
+    }
+
+    // #899 — backlog alert: permanent recordings <72h from Stream expiry that
+    // this sweep still left untransferred. Non-zero means the pipeline is
+    // falling behind or failing repeatedly; page before the bytes lapse.
+    const atRisk =
+      await RecordingTransferService.countAtRiskPermanentRecordings(72);
+    if (atRisk > 0) {
+      console.warn(
+        `⚠️ ${atRisk} permanent recording(s) <72h from Stream expiry, still untransferred`,
+      );
+      Sentry.captureMessage(
+        "Permanent recordings at risk of Stream URL expiry",
+        {
+          level: "warning",
+          tags: { subsystem: "jobs", job: "transfer-expiring-recordings" },
+          extra: { atRisk },
+        },
+      );
     }
 
     const duration = (Date.now() - startTime) / 1000;
