@@ -40,8 +40,6 @@ const PayoutStatusSchema = z.enum([
 const PaymentGatewaySchema = z.enum([
   "STRIPE",
   "RAZORPAY",
-  "LEMON_SQUEEZY",
-  "XFLOW",
   "CARD",
 ]);
 

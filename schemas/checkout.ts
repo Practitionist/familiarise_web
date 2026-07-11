@@ -14,8 +14,6 @@ export const appointmentTypeSchema = z.enum([
 export const paymentGatewaySchema = z.enum([
   "STRIPE",
   "RAZORPAY",
-  "LEMON_SQUEEZY",
-  "XFLOW",
   "CARD",
 ]);
 

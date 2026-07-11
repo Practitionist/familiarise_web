@@ -3784,8 +3784,7 @@ enum PaymentLegSource {
 enum PaymentGateway {
   STRIPE
   RAZORPAY
-  LEMON_SQUEEZY
-  XFLOW
+  DODO_PAYMENTS // post-MVP: evaluation pending
   CARD
 }
 

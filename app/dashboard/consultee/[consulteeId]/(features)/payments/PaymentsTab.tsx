@@ -113,8 +113,6 @@ function formatDate(date: string): string {
 const GATEWAY_LABELS: Record<string, string> = {
   STRIPE: "Stripe",
   RAZORPAY: "Razorpay",
-  LEMON_SQUEEZY: "Lemon Squeezy",
-  XFLOW: "Xflow",
 };
 
 function formatGateway(gateway: string): string {

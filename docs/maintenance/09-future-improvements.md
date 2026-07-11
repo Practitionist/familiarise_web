@@ -122,8 +122,6 @@ export async function abortIfMaintenance(jobName: string): Promise<void> {
 
 - `app/api/webhooks/stripe/route.ts`
 - `app/api/webhooks/razorpay/route.ts`
-- `app/api/webhooks/lemon-squeezy/route.ts`
-- `app/api/webhooks/xflow/route.ts`
 
 **Implementation**:
 
@@ -305,7 +303,7 @@ File: `scripts/cleanup/reconcile-document-storage.ts`
 | --- | -------------------------------------------------- | -------- | ------- |
 | 2   | Cron job maintenance guard                         | CRITICAL | ✅ Done |
 | 1   | DEGRADED write-blocking                            | HIGH     | ✅ Done |
-| 3   | Webhook DB health check (Stripe/Razorpay/LS/XFlow) | HIGH     | ✅ Done |
+| 3   | Webhook DB health check (Stripe/Razorpay) | HIGH     | ✅ Done |
 | A   | Admin system-jobs DEGRADED blocking                | MEDIUM   | ✅ Done |
 | B   | Stream.io webhook DB health check                  | MEDIUM   | ✅ Done |
 | C   | `reconcile-document-storage` storage probe         | MEDIUM   | ✅ Done |

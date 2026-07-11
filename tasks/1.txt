@@ -16,7 +16,6 @@ The plan is complete. Here's a summary of what we'll implement:
   4. Payout Service: Admin approval workflow with auto-approve under ₹5000
   5. Weekly Payouts: Cron job every Monday
   6. Invoice Generation: GST-compliant invoices with HSN codes
-  7. Skip: LemonSqueezy/XFlow webhook completion (not actively used)
 
   Source Files
 
@@ -386,16 +385,6 @@ The plan is complete. Here's a summary of what we'll implement:
 
      Update all webhook handlers to log events before processing.
 
-     2. Complete LemonSqueezy Webhook (if needed)
-
-     File: app/api/webhooks/lemon-squeezy/route.ts
-     - Add appointment creation logic (currently TODO)
-
-     3. Complete XFlow Webhook (if needed)
-
-     File: app/api/webhooks/xflow/route.ts
-     - Add appointment creation logic (currently TODO)
-
      ---
      Environment Variables Required
 
@@ -443,9 +432,7 @@ The plan is complete. Here's a summary of what we'll implement:
 
      PR 4: Payment Fixes (Optional)
 
-     1. Complete LemonSqueezy webhook (if using)
-     2. Complete XFlow webhook (if using)
-     3. Add invoice generation (if needed)
+     1. Add invoice generation (if needed)
 
      ---
      Source Files Reference
@@ -501,7 +488,6 @@ The plan is complete. Here's a summary of what we'll implement:
 
      | Question           | Decision                                                    |
      |--------------------|-------------------------------------------------------------|
-     | LemonSqueezy/XFlow | Skip for now - Focus on Razorpay/Stripe only                |
      | Payout Frequency   | Weekly - Process every Monday                               |
      | Admin Approval     | Auto-approve under ₹5000, admin approval for larger amounts |
      | Invoice Generation | Yes - Add GST-compliant invoice generation                  |
