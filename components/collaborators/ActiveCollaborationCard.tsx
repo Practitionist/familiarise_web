@@ -59,9 +59,11 @@ export function ActiveCollaborationCard({
   );
   const totalCollabShare =
     countedCollaborators.reduce((sum, c) => sum + c.revenueShareBps, 0) / 100;
-  const hostShare = 100 - totalCollabShare;
-  const youShare = collab.revenueShareBps / 100;
-  const otherShare = Math.max(0, totalCollabShare - youShare);
+  const hostShare = Number((100 - totalCollabShare).toFixed(2));
+  const youShare = Number((collab.revenueShareBps / 100).toFixed(2));
+  const otherShare = Number(
+    Math.max(0, totalCollabShare - youShare).toFixed(2),
+  );
 
   const hasExpandableDetails =
     (collab.planType === "webinar" &&
@@ -166,7 +168,7 @@ export function ActiveCollaborationCard({
         {/* Team — host + other collaborators (self is in the header/share) */}
         <div className="mt-4">
           <p className="mb-2 text-[11px] font-medium uppercase tracking-wider text-zinc-400">
-            Team ({2 + otherCollaborators.length})
+            Team ({(owner ? 1 : 0) + otherCollaborators.length})
           </p>
           <div className="space-y-1.5">
             {owner && (

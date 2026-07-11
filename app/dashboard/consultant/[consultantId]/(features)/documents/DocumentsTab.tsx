@@ -662,7 +662,7 @@ export function DocumentsTab({
               {selectedDocument?.originalName}
             </ResponsiveModalDescription>
           </ResponsiveModalHeader>
-          <div className="grid gap-4 py-4">
+          <div className="min-h-0 flex-1 grid gap-4 overflow-y-auto py-4">
             <div className="space-y-2">
               <label className="text-sm font-medium">Review Status</label>
               <Select value={reviewStatus} onValueChange={setReviewStatus}>
@@ -707,7 +707,7 @@ export function DocumentsTab({
               </div>
             )}
           </div>
-          <ResponsiveModalFooter>
+          <ResponsiveModalFooter className="shrink-0">
             <Button
               variant="outline"
               onClick={() => setReviewDialogOpen(false)}
@@ -745,7 +745,7 @@ export function DocumentsTab({
               Set a review status and optional notes for all selected documents.
             </ResponsiveModalDescription>
           </ResponsiveModalHeader>
-          <div className="grid gap-4 py-4">
+          <div className="min-h-0 flex-1 grid gap-4 overflow-y-auto py-4">
             <div className="space-y-2">
               <label className="text-sm font-medium">Review Status</label>
               <Select value={bulkReviewStatus} onValueChange={setBulkReviewStatus}>
@@ -795,7 +795,7 @@ export function DocumentsTab({
               </div>
             </div>
           </div>
-          <ResponsiveModalFooter>
+          <ResponsiveModalFooter className="shrink-0">
             <Button
               variant="outline"
               onClick={() => setBulkReviewDialogOpen(false)}

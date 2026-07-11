@@ -616,7 +616,7 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
       {/* Action Buttons — the combined profile+availability save. Rendered
           on every tab (verification/notifications have their own flows but
           the form save remains reachable, matching the old single-page UX). */}
-      <div className="flex flex-col-reverse items-stretch gap-3 sm:flex-row sm:items-center sm:justify-end sm:space-x-4">
+      <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-end sm:space-x-4">
         <Button
           type="button"
           variant="outline"

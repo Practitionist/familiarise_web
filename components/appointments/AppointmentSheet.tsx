@@ -69,8 +69,7 @@ export function AppointmentSheet({
   return (
     <Sheet open onOpenChange={onOpenChange}>
       <SheetContent className="flex w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-md max-h-[100dvh]">
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6 sm:py-6">
-        <SheetHeader className="space-y-3 p-0 text-left">
+        <SheetHeader className="shrink-0 space-y-3 border-b border-border px-5 py-5 text-left sm:px-6 sm:py-6">
           <div className="flex items-start gap-3">
             <Avatar className="h-11 w-11 border border-border shrink-0">
               <AvatarImage
@@ -113,7 +112,8 @@ export function AppointmentSheet({
           </div>
         </SheetHeader>
 
-        <div className="mt-5 space-y-5">
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6 sm:py-6">
+        <div className="space-y-5">
           {/* Next session */}
           {vm.nextAt && (
             <div className="rounded-lg bg-muted border border-border p-3">

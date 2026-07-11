@@ -31,11 +31,14 @@ export function HostedPlanCard({
 }) {
   const [eventsExpanded, setEventsExpanded] = useState(false);
 
-  const totalCollabShare =
-    plan.collaborators
-      .filter((c) => c.status === "PENDING" || c.status === "ACCEPTED")
-      .reduce((sum, c) => sum + c.revenueShareBps, 0) / 100;
-  const hostShare = 100 - totalCollabShare;
+  const totalCollabShare = Number(
+    (
+      plan.collaborators
+        .filter((c) => c.status === "PENDING" || c.status === "ACCEPTED")
+        .reduce((sum, c) => sum + c.revenueShareBps, 0) / 100
+    ).toFixed(2),
+  );
+  const hostShare = Number((100 - totalCollabShare).toFixed(2));
 
   const pendingCollabs = plan.collaborators.filter(
     (c) => c.status === "PENDING",

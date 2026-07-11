@@ -228,7 +228,7 @@ export function RequestedSlotsDialog({
                 </span>
               </div>
               {requestType === AppointmentsType.SUBSCRIPTION && (
-                <div className="flex items-center justify-between col-span-2">
+                <div className="col-span-1 flex items-center justify-between sm:col-span-2">
                   <span className="text-gray-600 flex items-center gap-1">
                     <span className="text-blue-600">🔵</span> Outside Period:
                   </span>
