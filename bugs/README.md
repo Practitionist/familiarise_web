@@ -33,7 +33,7 @@ Questions use **A / B / C** short approaches. They are not ranked recommendation
 |--------|--------|
 | [finances/](finances/) | Checkout, webhooks, payouts, refunds, disputes, ledger, FX, tax |
 | [booking/](booking/) | Slots, locks, double-booking, cancel/reschedule/no-show |
-| [enterprise/](enterprise/) | Orgs, RBAC, onboarding race, seats, SSO |
+| [enterprise/](enterprise/) | Orgs, taxonomy, host agencies, money trust, KYB, concurrency/gaming — start [00-overview](enterprise/00-overview.md) |
 | [stream/](stream/) | Chat, video, tokens, recordings, multi-tab calls — **P0:** [recording storage scale](stream/recording-storage-scale-infrastructure.md) |
 | [compliance/](compliance/) | TDS/GST/DPDP, legal pages, grievance, audit |
 
@@ -61,11 +61,13 @@ Questions use **A / B / C** short approaches. They are not ranked recommendation
 
 1. [finances/00-overview.md](finances/00-overview.md)
 2. [booking/00-overview.md](booking/00-overview.md)
-3. [stream/recording-storage-scale-infrastructure.md](stream/recording-storage-scale-infrastructure.md) (P0 media durability)
-4. [enterprise/onboarding-multi-device-role-race.md](enterprise/onboarding-multi-device-role-race.md)
-5. [stream/chat-security-and-roles.md](stream/chat-security-and-roles.md)
-6. [compliance/b2c-vs-b2b-gaps.md](compliance/b2c-vs-b2b-gaps.md)
-7. [cross-cutting/multi-device-psychology.md](cross-cutting/multi-device-psychology.md)
+3. [enterprise/money-payouts-earnings-trust.md](enterprise/money-payouts-earnings-trust.md) (P0 sponsor trust)
+4. [enterprise/taxonomy-and-reachable-paths.md](enterprise/taxonomy-and-reachable-paths.md)
+5. [stream/recording-storage-scale-infrastructure.md](stream/recording-storage-scale-infrastructure.md) (P0 media durability)
+6. [enterprise/onboarding-multi-device-role-race.md](enterprise/onboarding-multi-device-role-race.md)
+7. [stream/chat-security-and-roles.md](stream/chat-security-and-roles.md)
+8. [compliance/b2c-vs-b2b-gaps.md](compliance/b2c-vs-b2b-gaps.md)
+9. [cross-cutting/multi-device-psychology.md](cross-cutting/multi-device-psychology.md)
 
 ## Related docs (canonical engineering)
 
