@@ -1224,6 +1224,7 @@ erDiagram
         MemberStatus status
         PayoutRecipient payoutRecipient
         string rateCardOverrideId
+        boolean exclusiveEngagement
         string departmentLabel
         string betterAuthMemberId
     }
@@ -1382,6 +1383,11 @@ erDiagram
         string name
         datetime configLockedAt
         datetime archivedAt
+    }
+    ProgramConsultantAllowlist {
+        string id
+        string programId
+        string consultantProfileId
     }
     LicensedSeatConfig {
         string programId

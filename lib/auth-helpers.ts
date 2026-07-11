@@ -438,6 +438,7 @@ export async function requireOrgAccess(
       consultantProfileId: null,
       payoutRecipient: "SELF",
       rateCardOverrideId: null,
+      exclusiveEngagement: false,
       betterAuthMemberId: null,
       // PR #655 SCIM addition — the stub satisfies the Membership type
       // by tracking every schema column. Admin sessions never have a

@@ -2373,7 +2373,7 @@ sequenceDiagram
 
 ### 33.2 Current status
 
-Not implemented. Not priority. The `capabilitiesExtra Json?` field on Organization can store `{"RESELL": true}` as an escape hatch if we want to prototype.
+Not implemented. Not priority. A `capabilitiesExtra Json?` escape hatch was sketched for this but never added to the schema (ADR 18); prototyping resale would start with a typed `canResell` boolean instead.
 
 ### 33.3 Effort estimate
 

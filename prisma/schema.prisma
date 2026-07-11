@@ -742,6 +742,14 @@ model Membership {
   rateCardOverrideId String?
   rateCardOverride   RateCard?       @relation("MembershipRateCardOverride", fields: [rateCardOverrideId], references: [id], onUpdate: Cascade, onDelete: SetNull)
 
+  /// ADR 18 — org-declared exclusivity for internal consultants (pairs with
+  /// payoutRecipient=ORGANIZATION). Schema stub, UNENFORCED: nothing hides or
+  /// blocks the consultant's independent B2C plans yet; the flag exists now
+  /// because the schema freezes before launch. Enforcement (hide/block
+  /// independent plans while an exclusive engagement is active) is a future
+  /// feature gated on org demand.
+  exclusiveEngagement Boolean @default(false)
+
   // Entitlement tracking
   programAssignments ProgramAssignment[]
 
@@ -1132,6 +1140,9 @@ model Program {
 
   assignments ProgramAssignment[]
 
+  /// ADR 18 — unenforced curated-panel stub; empty = open network.
+  consultantAllowlist ProgramConsultantAllowlist[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1307,6 +1318,26 @@ model BookingUtilization {
   // #781 §D — createdAt-ordered utilization scans (statements / reconcile). The
   // composite also serves programAssignmentId-only lookups (leftmost prefix).
   @@index([programAssignmentId, createdAt])
+}
+
+/// ADR 18 — optional curated consultant panel for a Program. Schema stub,
+/// UNENFORCED: the sponsor network stays open (a Program with zero rows
+/// imposes no restriction, and checkout does not consult this table yet).
+/// When a sponsor asks for a curated panel, enforcement slots into the
+/// checkout org-resolution block right after the ProgramAssignment is
+/// validated (see the ADR-18 comment in lib/payments/operations/checkout.ts):
+/// rows present ⇒ the booked plan's consultant must be listed.
+model ProgramConsultantAllowlist {
+  id                  String            @id @default(uuid())
+  programId           String
+  program             Program           @relation(fields: [programId], references: [id], onDelete: Cascade)
+  consultantProfileId String
+  consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([programId, consultantProfileId])
+  @@index([consultantProfileId])
 }
 
 enum ProgramType {
@@ -2196,6 +2227,9 @@ model ConsultantProfile {
   // Trial sessions and activity logs
   trialSessions TrialSession[]
   activityLogs  ActivityLog[]
+
+  // ADR 18 — program curated-panel stub (unenforced)
+  programAllowlists ProgramConsultantAllowlist[]
 
   // Note: Professional background (workExperiences, certifications, education)
   // has been consolidated to User level for DRY principle
