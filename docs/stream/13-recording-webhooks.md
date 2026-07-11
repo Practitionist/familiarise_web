@@ -41,7 +41,7 @@ The recording system enables consultants to record webinars and classes for late
 - **Consultant-only recording control** - Only the session host can start/stop
 - **Automatic webhook processing** - Recording lifecycle managed via webhooks
 - **Idempotent operations** - Safe to receive duplicate webhook events
-- **Automatic transfer** - Cron job transfers recordings before expiration
+- **Automatic transfer** - The `recording_ready` webhook enqueues the permanent-storage transfer immediately (via Next.js `after()`), and a cron job runs as a backstop sweeper that picks up any recording the webhook missed before its Stream URL expires
 - **Role-based access** - Different permissions for consultants, consultees, and admins
 
 ---

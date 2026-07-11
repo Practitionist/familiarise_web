@@ -32,86 +32,35 @@ Comprehensive troubleshooting guide for Stream Chat and Video integration issues
 
 This section documents known critical bugs and their workarounds. Review before deploying to production.
 
-### Universal Admin Role (Critical)
+### Stream Role Mapping (Resolved in #899)
 
-**Severity:** CRITICAL | **Security Impact:** HIGH
+**Severity:** RESOLVED | **Security Impact:** N/A
 
 #### Problem Description
 
-All users receive "admin" role in Stream Chat regardless of their actual role in the system. This means there is no permission differentiation between user types.
+Earlier builds mapped every user to the "admin" role in Stream Chat regardless of their actual role, which left no permission differentiation between user types. As of #899 the mapping follows least privilege, so this is no longer an issue.
 
 #### Location
 
-**File:** `/Users/kaustavghosh/Desktop/familiarise_web/lib/user.ts`
-**Lines:** 98-115
+**File:** `lib/user.ts`
 
 #### Current Code
 
 ```typescript
 export function mapRoleToStream(role: string | null | undefined): string {
-  if (!role) return "admin"; // Default to admin for team channel access
-
-  switch (role.toUpperCase()) {
+  switch (role?.toUpperCase()) {
     case "ADMIN":
-      return "admin";
-    case "CONSULTANT":
-      return "admin"; // Should be custom role or "channel_moderator"
-    case "CONSULTEE":
-      return "admin"; // Should be "user" or "channel_member"
-    case "USER":
-      return "admin";
-    default:
-      return "admin";
-  }
-}
-```
-
-#### Impact
-
-1. **No Permission Enforcement:**
-   - Consultees can moderate channels they shouldn't
-   - All users can delete messages from anyone
-   - No role-based access control
-
-2. **Security Risks:**
-   - Unauthorized access to sensitive operations
-   - Potential data tampering
-   - No audit trail for privileged operations
-
-3. **Billing Impact:**
-   - Stream pricing may differ based on user roles
-   - All users counted as admin users
-
-#### Recommended Fix
-
-**Option 1: Custom Roles** (Recommended)
-
-```typescript
-export function mapRoleToStream(role: string | null | undefined): string {
-  if (!role) return "user";
-
-  switch (role.toUpperCase()) {
-    case "ADMIN":
-      return "admin";
-    case "CONSULTANT":
-      return "channel_moderator"; // Can moderate their own channels
-    case "CONSULTEE":
-      return "user"; // Regular user permissions
     case "STAFF":
-      return "admin"; // Full administrative access
+      return "admin";
     default:
       return "user";
   }
 }
 ```
 
-#### Current Workaround
+#### How Hosts Get Moderation
 
-**Temporary Mitigation:**
-
-- Application-level permission checks (don't rely on Stream roles)
-- Audit logging for sensitive operations
-- User education about not abusing permissions
+Only platform staff and admins receive Stream's global `admin` role. Everyone else, consultants included, is mapped to the plain `user` role. Channel creation happens server-side, and each host is given a channel-scoped `channel_moderator` grant on their own host channels at creation time. Hosts therefore moderate the channels they own without receiving global admin permissions or moderation rights over unrelated peer direct-message channels.
 
 ---
 
@@ -381,7 +330,7 @@ logger.error("stream.chat.connection_failed", {
 
 | Issue           | Workaround                   | Effectiveness | Notes                            |
 | --------------- | ---------------------------- | ------------- | -------------------------------- |
-| Admin role bug  | Application-level checks     | Partial       | Doesn't prevent Stream API abuse |
+| Admin role bug  | Resolved in #899             | Fixed         | Least-privilege role mapping now in place |
 | Token expiry    | 50-min cache (10-min buffer) | Good          | Still occasional drops           |
 | Race conditions | Atomic creation              | Moderate      | Race window still exists         |
 | User cleanup    | Exclusion list               | Good          | Manual maintenance required      |

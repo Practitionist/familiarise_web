@@ -33,6 +33,7 @@ Both paths call the same core function exported from `scripts/appointments/`. Th
 | Cleanup invalid appointments        | `0 * * * *`     | Every hour, on the hour | `scripts/appointments/cleanup-invalid-appointments.ts`        | `/api/cleanup/invalid-appointments`        |
 | Expire stale requests               | `0 1 * * *`     | Daily at 01:00 UTC      | `scripts/appointments/expire-stale-requests.ts`               | `/api/cleanup/expire-stale-requests`       |
 | Reconcile slot availability         | `15 * * * *`    | Every hour, at :15      | `scripts/appointments/reconcile-slot-availability.ts`         | `/api/cleanup/reconcile-slot-availability` |
+| Detect consultant no-shows          | `17 * * * *`    | Every hour, at :17      | `scripts/appointments/detect-consultant-no-shows.ts`          | N/A (GitHub Actions only)                  |
 
 ---
 
@@ -192,6 +193,26 @@ Both paths call the same core function exported from `scripts/appointments/`. Th
 **Ownership of the 207 response**: A `207` is a degraded-but-not-broken signal, not a page. The GitHub Actions workflow posts it to the ops Slack channel configured via `SLACK_OPS_WEBHOOK_URL`, and the on-call engineer owns the follow-up. That engineer is responsible for triaging the reported overlaps, manually resolving the affected bookings (the job never auto-resolves them), and confirming the next hourly run returns `200`. Treat a `207` that persists across more than one run as the trigger to escalate.
 
 **Safety**: Two independent `try/catch` blocks. The double booking detection is read-only and does not modify data. The GitHub Actions workflow is configured to trigger a failure notification specifically for double booking scenarios, routed to the ops Slack channel (`SLACK_OPS_WEBHOOK_URL`) described above.
+
+---
+
+### g. Detect Consultant No-Shows
+
+| Field              | Value                                                 |
+| ------------------ | ----------------------------------------------------- |
+| **Schedule**       | `17 * * * *` -- every hour, at :17                    |
+| **Source**         | `scripts/appointments/detect-consultant-no-shows.ts`  |
+| **API**            | N/A -- runs via GitHub Actions only                   |
+| **GitHub Actions** | `.github/workflows/detect-consultant-no-shows.yml`    |
+| **HTTP Methods**   | N/A                                                   |
+
+**Purpose**: Closes the loop on the platform's promise of a full refund when the consultant fails to attend a paid session. The job scans confirmed `CONSULTATION` bookings whose session ended at least the grace window ago, uses the per-attendee `MeetingAttendance` records (stamped by the Stream session handlers) to identify the ones the consultant never joined, and for each such no-show it auto-refunds the consultee via `refundPayment`, marks the booking cancelled, and notifies both parties.
+
+**Scope**: Consultations only. A consultation is a single-session, single-consultant exclusive booking where a full refund of the one payment is the correct remedy. Subscriptions are multi-session, so a per-session consultant no-show is a partial refund of one session out of many and needs its own design; it is not yet handled.
+
+**Grace window**: A session must have ended at least 120 minutes ago (`NO_SHOW_GRACE_MINUTES = 120`) before a missing consultant is treated as a no-show, so a late join or a delayed Stream participant webhook cannot trigger a false-positive refund.
+
+**Safety**: The job runs under a fail-closed cron lock. Because it moves money, it refuses to run without a real Redis lock rather than risk a silent unlocked double-run, and `refundPayment`'s refundable-balance guard remains the correctness backstop.
 
 ---
 
