@@ -40,6 +40,8 @@ export interface EarningsSummary {
   totalEarnings: number;
   pendingEarnings: number;
   readyEarnings: number;
+  /** #837 — in a payout batch, cash not yet disbursed (distinct from PAID). */
+  batchedEarnings: number;
   paidEarnings: number;
   heldEarnings: number;
   /**
@@ -70,6 +72,8 @@ interface OrgEarningsSummary {
   totalEarnings: number;
   pendingEarnings: number;
   readyEarnings: number;
+  /** #837 — in a payout batch, cash not yet disbursed (distinct from PAID). */
+  batchedEarnings: number;
   paidEarnings: number;
   heldEarnings: number;
 }
@@ -837,31 +841,37 @@ export async function releaseEarningsFromHold(): Promise<number> {
 export async function getConsultantEarningsSummary(
   consultantProfileId: string,
 ): Promise<EarningsSummary> {
-  const [pending, ready, paid, held, pendingTrust] = await Promise.all([
-    prisma.consultantEarnings.aggregate({
-      where: { consultantProfileId, status: EarningStatus.PENDING },
-      _sum: { consultantSharePaise: true },
-    }),
-    prisma.consultantEarnings.aggregate({
-      where: { consultantProfileId, status: EarningStatus.READY },
-      _sum: { consultantSharePaise: true },
-    }),
-    prisma.consultantEarnings.aggregate({
-      where: { consultantProfileId, status: EarningStatus.PAID },
-      _sum: { consultantSharePaise: true },
-    }),
-    prisma.consultantEarnings.aggregate({
-      where: { consultantProfileId, status: EarningStatus.HELD },
-      _sum: { consultantSharePaise: true },
-    }),
-    prisma.consultantEarnings.aggregate({
-      where: { consultantProfileId, status: EarningStatus.PENDING_TRUST },
-      _sum: { consultantSharePaise: true },
-    }),
-  ]);
+  const [pending, ready, batched, paid, held, pendingTrust] =
+    await Promise.all([
+      prisma.consultantEarnings.aggregate({
+        where: { consultantProfileId, status: EarningStatus.PENDING },
+        _sum: { consultantSharePaise: true },
+      }),
+      prisma.consultantEarnings.aggregate({
+        where: { consultantProfileId, status: EarningStatus.READY },
+        _sum: { consultantSharePaise: true },
+      }),
+      prisma.consultantEarnings.aggregate({
+        where: { consultantProfileId, status: EarningStatus.BATCHED },
+        _sum: { consultantSharePaise: true },
+      }),
+      prisma.consultantEarnings.aggregate({
+        where: { consultantProfileId, status: EarningStatus.PAID },
+        _sum: { consultantSharePaise: true },
+      }),
+      prisma.consultantEarnings.aggregate({
+        where: { consultantProfileId, status: EarningStatus.HELD },
+        _sum: { consultantSharePaise: true },
+      }),
+      prisma.consultantEarnings.aggregate({
+        where: { consultantProfileId, status: EarningStatus.PENDING_TRUST },
+        _sum: { consultantSharePaise: true },
+      }),
+    ]);
 
   const pendingEarnings = sumPaise(pending._sum.consultantSharePaise);
   const readyEarnings = sumPaise(ready._sum.consultantSharePaise);
+  const batchedEarnings = sumPaise(batched._sum.consultantSharePaise);
   const paidEarnings = sumPaise(paid._sum.consultantSharePaise);
   const heldEarnings = sumPaise(held._sum.consultantSharePaise);
   const pendingTrustEarnings = sumPaise(
@@ -870,10 +880,16 @@ export async function getConsultantEarningsSummary(
 
   return {
     consultantProfileId,
+    // #837 — batched money is real cleared earnings in transit; keep it in the total.
     totalEarnings:
-      pendingEarnings + readyEarnings + paidEarnings + heldEarnings,
+      pendingEarnings +
+      readyEarnings +
+      batchedEarnings +
+      paidEarnings +
+      heldEarnings,
     pendingEarnings,
     readyEarnings,
+    batchedEarnings,
     paidEarnings,
     heldEarnings,
     pendingTrustEarnings,
@@ -1208,7 +1224,7 @@ export async function releaseHeldEarnings(
  * Get earnings statistics for admin dashboard
  */
 export async function getEarningsStats() {
-  const [pending, ready, paid, held, refunded] = await Promise.all([
+  const [pending, ready, batched, paid, held, refunded] = await Promise.all([
     prisma.consultantEarnings.aggregate({
       where: { status: EarningStatus.PENDING },
       _sum: { consultantSharePaise: true, platformFeePaise: true },
@@ -1216,6 +1232,11 @@ export async function getEarningsStats() {
     }),
     prisma.consultantEarnings.aggregate({
       where: { status: EarningStatus.READY },
+      _sum: { consultantSharePaise: true, platformFeePaise: true },
+      _count: true,
+    }),
+    prisma.consultantEarnings.aggregate({
+      where: { status: EarningStatus.BATCHED },
       _sum: { consultantSharePaise: true, platformFeePaise: true },
       _count: true,
     }),
@@ -1247,6 +1268,12 @@ export async function getEarningsStats() {
       consultantSharePaise: sumPaise(ready._sum.consultantSharePaise),
       platformFeePaise: sumPaise(ready._sum.platformFeePaise),
     },
+    // #837 — batched, cash not yet disbursed (was previously counted under ready).
+    batched: {
+      count: batched._count,
+      consultantSharePaise: sumPaise(batched._sum.consultantSharePaise),
+      platformFeePaise: sumPaise(batched._sum.platformFeePaise),
+    },
     paid: {
       count: paid._count,
       consultantSharePaise: sumPaise(paid._sum.consultantSharePaise),
@@ -1262,8 +1289,11 @@ export async function getEarningsStats() {
       consultantSharePaise: sumPaise(refunded._sum.consultantSharePaise),
       platformFeePaise: sumPaise(refunded._sum.platformFeePaise),
     },
+    // #837 — platform fee is earned once the sale settles (READY); batched/paid
+    // are downstream of READY, so include all three to keep recognized revenue whole.
     totalPlatformRevenue:
       sumPaise(paid._sum.platformFeePaise) +
+      sumPaise(batched._sum.platformFeePaise) +
       sumPaise(ready._sum.platformFeePaise),
   };
 }
@@ -1278,13 +1308,17 @@ export async function getEarningsStats() {
 export async function getOrgEarningsSummary(
   organizationId: string,
 ): Promise<OrgEarningsSummary> {
-  const [pending, ready, paid, held] = await Promise.all([
+  const [pending, ready, batched, paid, held] = await Promise.all([
     prisma.organizationEarnings.aggregate({
       where: { organizationId, status: EarningStatus.PENDING },
       _sum: { orgSharePaise: true },
     }),
     prisma.organizationEarnings.aggregate({
       where: { organizationId, status: EarningStatus.READY },
+      _sum: { orgSharePaise: true },
+    }),
+    prisma.organizationEarnings.aggregate({
+      where: { organizationId, status: EarningStatus.BATCHED },
       _sum: { orgSharePaise: true },
     }),
     prisma.organizationEarnings.aggregate({
@@ -1299,15 +1333,22 @@ export async function getOrgEarningsSummary(
 
   const pendingEarnings = sumPaise(pending._sum.orgSharePaise);
   const readyEarnings = sumPaise(ready._sum.orgSharePaise);
+  const batchedEarnings = sumPaise(batched._sum.orgSharePaise);
   const paidEarnings = sumPaise(paid._sum.orgSharePaise);
   const heldEarnings = sumPaise(held._sum.orgSharePaise);
 
   return {
     organizationId,
+    // #837 — batched money is real cleared earnings in transit; keep it in the total.
     totalEarnings:
-      pendingEarnings + readyEarnings + paidEarnings + heldEarnings,
+      pendingEarnings +
+      readyEarnings +
+      batchedEarnings +
+      paidEarnings +
+      heldEarnings,
     pendingEarnings,
     readyEarnings,
+    batchedEarnings,
     paidEarnings,
     heldEarnings,
   };

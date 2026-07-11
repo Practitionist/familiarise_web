@@ -3895,7 +3895,12 @@ enum EarningStatus {
   PENDING // In hold period
   HELD // Extended hold (dispute)
   READY // Ready for payout
-  PAID // Successfully paid
+  /// #837 E-03/E-04 — rolled into a payout batch but cash has NOT left yet
+  /// (batch exists / gateway not wired / ENABLE_LIVE_PAYOUTS off). Distinct
+  /// from PAID so finance exports + dashboards don't claim money moved before
+  /// the payout reaches COMPLETED with a UTR. Excluded from batch-eligibility.
+  BATCHED
+  PAID // Cash actually disbursed (payout COMPLETED + UTR)
   REFUNDED // Refunded to consultee
   /// Earnings accrued from a PENDING_VERIFICATION INVOICE-funded org
   /// before the org has been verified or paid its first invoice. The

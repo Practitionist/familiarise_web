@@ -28,6 +28,7 @@ const EarningStatusSchema = z.enum([
   "PENDING",
   "HELD",
   "READY",
+  "BATCHED", // #837 — batched, cash not yet disbursed; filterable + distinct from PAID
   "PAID",
   "REFUNDED",
 ]);
