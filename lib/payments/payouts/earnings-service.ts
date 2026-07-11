@@ -310,6 +310,30 @@ export async function createEarningsFromPayment({
             payment.createdAt,
           );
 
+          // #687 E-01/E-02 — the PENDING_TRUST park keys on the SPONSORING org
+          // (the org that OWES the invoice = payment.organizationId), NOT the
+          // expert's HOST org from resolveOrgSplit. An unverified sponsor that
+          // may never pay its invoice must not let consultant OR org earnings
+          // clear. Decide ONCE here and apply to every row this booking writes
+          // (consultant, primary-org, collaborator-org).
+          const sponsorOrgId = payment.organizationId;
+          let parkForTrust = false;
+          if (sponsorOrgId) {
+            const sponsorOrg = await tx.organization.findUnique({
+              where: { id: sponsorOrgId },
+              select: { status: true },
+            });
+            if (sponsorOrg?.status === "PENDING_VERIFICATION") {
+              const paidInvoiceCount = await tx.organizationInvoice.count({
+                where: { organizationId: sponsorOrgId, status: "PAID" },
+              });
+              parkForTrust = paidInvoiceCount === 0;
+            }
+          }
+          const initialEarningStatus: EarningStatus = parkForTrust
+            ? EarningStatus.PENDING_TRUST
+            : EarningStatus.PENDING;
+
           // Determine platform fee and consultant pool based on whether org split applies.
           // #778 §C-2 — floor the marketplace fee (was Math.round); the shaved paisa
           // stays in the consultant pool (gross − fee), the pool's residual party.
@@ -427,7 +451,10 @@ export async function createEarningsFromPayment({
                   consultantSharePaise: creditedShare,
                   role: isOwner ? EarningRole.OWNER : EarningRole.COLLABORATOR,
                   shareBps,
-                  status: EarningStatus.PENDING,
+                  // #687 E-02 — park consultant payables too when the sponsor
+                  // is an unverified INVOICE org; else the platform owes real
+                  // money for a ghost sponsor's booking.
+                  status: initialEarningStatus,
                   holdUntil,
                   currency: "INR",
                 },
@@ -450,7 +477,8 @@ export async function createEarningsFromPayment({
                 grossAmount,
                 platformFeePaise,
                 consultantSharePaise: totalConsultantPool,
-                status: EarningStatus.PENDING,
+                // #687 E-02 — see multi-party branch above.
+                status: initialEarningStatus,
                 holdUntil,
                 currency: "INR",
               },
@@ -463,28 +491,12 @@ export async function createEarningsFromPayment({
           // Skip when orgShare is 0 (Platform-only mode: platformCommissionRate = 1.0)
           // — creating 0-value rows adds noise without value.
           //
-          // PR-1d / #687: if the sponsoring org is still PENDING_VERIFICATION
+          // PR-1d / #687: if the SPONSORING org (payment.organizationId, resolved
+          // above into initialEarningStatus — E-01) is still PENDING_VERIFICATION
           // and has never paid an invoice, accruals start in PENDING_TRUST
           // instead of PENDING. The `release-pending-trust-earnings` cron
           // promotes them once the org is verified or first invoice clears.
           if (orgSplit && orgSplit.orgShare > 0) {
-            const sponsorOrg = await tx.organization.findUnique({
-              where: { id: orgSplit.organizationId },
-              select: { status: true },
-            });
-            let initialStatus: EarningStatus = EarningStatus.PENDING;
-            if (sponsorOrg?.status === "PENDING_VERIFICATION") {
-              const paidInvoiceCount = await tx.organizationInvoice.count({
-                where: {
-                  organizationId: orgSplit.organizationId,
-                  status: "PAID",
-                },
-              });
-              if (paidInvoiceCount === 0) {
-                initialStatus = EarningStatus.PENDING_TRUST;
-              }
-            }
-
             await tx.organizationEarnings.create({
               data: {
                 organizationId: orgSplit.organizationId,
@@ -494,7 +506,7 @@ export async function createEarningsFromPayment({
                 orgSharePaise: orgSplit.orgShare,
                 consultantSharePaise: orgSplit.consultantSharePaise,
                 refundedAmountPaise: 0,
-                status: initialStatus,
+                status: initialEarningStatus,
                 holdUntil,
                 currency: "INR",
                 // Rate-card snapshot: persist the exact split applied so
@@ -538,24 +550,9 @@ export async function createEarningsFromPayment({
               continue;
             }
 
-            // PR-1d / #687 — same PENDING_TRUST gate as the primary org above.
-            const collabSponsorOrg = await tx.organization.findUnique({
-              where: { id: s.orgSplit.organizationId },
-              select: { status: true },
-            });
-            let collabInitialStatus: EarningStatus = EarningStatus.PENDING;
-            if (collabSponsorOrg?.status === "PENDING_VERIFICATION") {
-              const paidInvoiceCount = await tx.organizationInvoice.count({
-                where: {
-                  organizationId: s.orgSplit.organizationId,
-                  status: "PAID",
-                },
-              });
-              if (paidInvoiceCount === 0) {
-                collabInitialStatus = EarningStatus.PENDING_TRUST;
-              }
-            }
-
+            // #687 E-01 — same sponsor-scoped PENDING_TRUST gate as the primary
+            // org above; the park keys on the SPONSOR (payment.organizationId,
+            // via initialEarningStatus), not this collaborator's host org.
             await tx.organizationEarnings.create({
               data: {
                 organizationId: s.orgSplit.organizationId,
@@ -568,7 +565,7 @@ export async function createEarningsFromPayment({
                 orgSharePaise: s.orgSplit.orgShare,
                 consultantSharePaise: s.orgSplit.consultantSharePaise,
                 refundedAmountPaise: 0,
-                status: collabInitialStatus,
+                status: initialEarningStatus,
                 holdUntil,
                 currency: "INR",
                 rateCardIdApplied: s.orgSplit.rateCardIdApplied,

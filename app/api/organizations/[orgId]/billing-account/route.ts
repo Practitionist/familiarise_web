@@ -26,6 +26,7 @@ import { requireOrgAccess } from "@/lib/auth-helpers";
 // description in `lib/labels/org-labels.ts`.
 import { requireOrgBillingAdminOrOwner } from "@/lib/auth/billing-admin-gate";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { assertVerifiedDomainOrThrow } from "@/lib/enterprise/governance";
 
 // PROJECT is reserved in the Prisma enum for v2 project-billing; the
 // API layer rejects it so callers can't quietly land a BillingAccount
@@ -200,6 +201,13 @@ export async function PATCH(
               { httpStatus: 409 },
             );
           }
+        }
+        // K-02 / #687 — enabling INVOICE funding requires a verified domain
+        // (governance.ts documents this gate for the fundingSource→INVOICE
+        // transition). tx-scoped read: TOCTOU-safe against a concurrent
+        // verification rollback.
+        if (body.fundingSource === "INVOICE") {
+          await assertVerifiedDomainOrThrow(tx, orgId, "INVOICE_FUNDING");
         }
       }
 

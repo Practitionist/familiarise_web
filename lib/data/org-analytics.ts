@@ -17,6 +17,7 @@ import prisma from "@/lib/prisma";
 import { ledgerAccountId } from "@/lib/payments/ledger/post";
 import { sumPaise } from "@/lib/payments/utils/money";
 import { resolveActivationSignals } from "@/lib/enterprise/org-activation-signals";
+import { ENABLE_HOST_ORGS } from "@/lib/feature-flags";
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -204,7 +205,9 @@ export async function getOrgAnalytics(
           },
         })
       : Promise.resolve(0),
-    org.canHost
+    // Honesty gate (#687): with ENABLE_HOST_ORGS off no new splits accrue, so
+    // don't surface host earnings even if canHost is still set on the row.
+    ENABLE_HOST_ORGS && org.canHost
       ? prisma.organizationEarnings.groupBy({
           by: ["status"],
           where: { organizationId: orgId },
