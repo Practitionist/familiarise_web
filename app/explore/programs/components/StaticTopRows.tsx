@@ -3,7 +3,7 @@
 import { memo } from "react";
 import { Sparkles, Flame, Clock, Hash } from "lucide-react";
 import type { Program, TopicWithCount } from "../utils";
-import SectionHeader from "./SectionHeader";
+import SectionHeader from "@/app/explore/components/SectionHeader";
 import FeaturedCarousel from "./FeaturedCarousel";
 import ProgramRow from "./ProgramRow";
 import CategoryGrid from "./CategoryGrid";

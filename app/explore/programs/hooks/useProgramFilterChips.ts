@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useMemo } from "react";
-import type { ActiveFilter } from "../components/FilterChips";
+import type { ActiveFilter } from "@/app/explore/components/FilterChips";
 import type {
   ProgramFilters,
   TopicWithCount,

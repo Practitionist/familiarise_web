@@ -182,9 +182,9 @@ export function WebinarDetails({
             </div>
 
             {/* About */}
-            <Card className="border-border shadow-sm">
+            <Card className="rounded-2xl border-border">
               <CardContent className="p-6 md:p-8">
-                <h2 className="text-xl font-semibold text-foreground mb-4">
+                <h2 className="text-xl font-semibold tracking-tight text-foreground mb-4">
                   About this Webinar
                 </h2>
                 <p className="text-muted-foreground whitespace-pre-line leading-relaxed">
@@ -195,9 +195,9 @@ export function WebinarDetails({
 
             {/* What You'll Learn */}
             {plan.learningOutcomes && plan.learningOutcomes.length > 0 && (
-              <Card className="border-border shadow-sm">
+              <Card className="rounded-2xl border-border">
                 <CardContent className="p-6 md:p-8">
-                  <h2 className="text-xl font-semibold text-foreground mb-4">
+                  <h2 className="text-xl font-semibold tracking-tight text-foreground mb-4">
                     What you&apos;ll learn
                   </h2>
                   <div className="grid md:grid-cols-2 gap-3">
@@ -213,9 +213,9 @@ export function WebinarDetails({
             )}
 
             {/* Topics */}
-            <Card className="border-border shadow-sm">
+            <Card className="rounded-2xl border-border">
               <CardContent className="p-6 md:p-8">
-                <h2 className="text-xl font-semibold text-foreground mb-4">
+                <h2 className="text-xl font-semibold tracking-tight text-foreground mb-4">
                   Topics Covered
                 </h2>
                 <div className="flex flex-wrap gap-2">
@@ -241,7 +241,7 @@ export function WebinarDetails({
           >
             <div className="sticky top-24 space-y-6">
               {/* Instructor Card */}
-              <Card className="border-border shadow-sm">
+              <Card className="rounded-2xl border-border">
                 <CardHeader className="pb-2">
                   <CardTitle className="text-lg">Your Host</CardTitle>
                 </CardHeader>
@@ -281,7 +281,7 @@ export function WebinarDetails({
 
               {/* Collaborators */}
               {plan.collaborators && plan.collaborators.length > 0 && (
-                <Card>
+                <Card className="rounded-2xl border-border">
                   <CardHeader className="pb-2">
                     <CardTitle className="text-lg flex items-center gap-2">
                       <Users className="w-4 h-4" />

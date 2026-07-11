@@ -201,7 +201,8 @@ function FilterPanelImpl({
     }) || [];
 
   return (
-    <div className="bg-muted rounded-2xl p-6 border border-border">
+    // Single soft container — inner cards carry the borders (double-border cleanup).
+    <div className="bg-muted/60 rounded-2xl p-5 md:p-6">
       <div className="flex items-center gap-2 mb-6">
         <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center">
           <Filter className="w-5 h-5 text-primary-foreground" />
@@ -228,7 +229,7 @@ function FilterPanelImpl({
                 value={selectedDomain || "all"}
                 onValueChange={handleDomainChange}
               >
-                <SelectTrigger className="w-full h-11 bg-muted border-border rounded-lg focus:ring-ring">
+                <SelectTrigger className="w-full h-11 bg-muted border-border rounded-xl focus:ring-ring">
                   <SelectValue placeholder="All Domains" />
                 </SelectTrigger>
                 <SelectContent>
@@ -250,7 +251,7 @@ function FilterPanelImpl({
                 value={selectedSubdomain || "all"}
                 onValueChange={handleSubdomainChange}
               >
-                <SelectTrigger className="w-full h-11 bg-muted border-border rounded-lg focus:ring-ring disabled:opacity-50">
+                <SelectTrigger className="w-full h-11 bg-muted border-border rounded-xl focus:ring-ring disabled:opacity-50">
                   <SelectValue
                     placeholder={
                       selectedDomain ? "All Subdomains" : "Select domain first"
@@ -288,7 +289,7 @@ function FilterPanelImpl({
             </label>
             <div className="relative" ref={tagDropdownRef}>
               <input
-                className="w-full h-11 px-4 bg-muted border border-border text-foreground text-sm rounded-lg focus:ring-2 focus:ring-ring focus:border-transparent transition-all disabled:opacity-50"
+                className="w-full h-11 px-4 bg-muted border border-border text-foreground text-sm rounded-xl focus:ring-2 focus:ring-ring focus:border-transparent transition-all disabled:opacity-50"
                 placeholder={
                   selectedDomain ? "Search skills..." : "Select domain first"
                 }
@@ -299,7 +300,7 @@ function FilterPanelImpl({
                 disabled={!selectedDomain}
               />
               {isDropdownOpen && filteredTags.length > 0 && (
-                <div className="absolute z-20 w-full mt-2 bg-popover border border-border rounded-xl shadow-xl max-h-48 overflow-auto">
+                <div className="absolute z-20 w-full mt-2 bg-popover border border-border rounded-xl shadow-elevation-2 max-h-48 overflow-auto">
                   {filteredTags.map((tag) => (
                     <button
                       key={tag.id}
@@ -459,7 +460,7 @@ function FilterPanelImpl({
             </label>
             <div className="relative" ref={companyDropdownRef}>
               <input
-                className="w-full h-11 px-4 bg-muted border border-border text-foreground text-sm rounded-lg focus:ring-2 focus:ring-ring focus:border-transparent transition-all"
+                className="w-full h-11 px-4 bg-muted border border-border text-foreground text-sm rounded-xl focus:ring-2 focus:ring-ring focus:border-transparent transition-all"
                 placeholder="e.g. Google, Deloitte..."
                 type="text"
                 value={companySearchTerm}
@@ -467,7 +468,7 @@ function FilterPanelImpl({
                 onFocus={() => setIsCompanyDropdownOpen(true)}
               />
               {isCompanyDropdownOpen && filteredCompanies.length > 0 && (
-                <div className="absolute z-20 w-full mt-2 bg-popover border border-border rounded-xl shadow-xl max-h-48 overflow-auto">
+                <div className="absolute z-20 w-full mt-2 bg-popover border border-border rounded-xl shadow-elevation-2 max-h-48 overflow-auto">
                   {filteredCompanies.map((company) => (
                     <button
                       key={company}
@@ -515,7 +516,7 @@ function FilterPanelImpl({
               value={language || "all"}
               onValueChange={handleLanguageChange}
             >
-              <SelectTrigger className="w-full h-11 bg-muted border-border rounded-lg focus:ring-ring">
+              <SelectTrigger className="w-full h-11 bg-muted border-border rounded-xl focus:ring-ring">
                 <SelectValue placeholder="Any Language" />
               </SelectTrigger>
               <SelectContent>

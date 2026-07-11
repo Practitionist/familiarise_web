@@ -51,31 +51,21 @@ export function FeaturedExpertsSkeleton() {
 
 export function TestimonialsSkeleton() {
   return (
-    <>
-      <section className="py-20 md:py-28 bg-gradient-to-b from-zinc-900 to-zinc-950">
-        <div className="container mx-auto px-4 md:px-6">
-          <div className="text-center mb-12 space-y-3">
-            <div className="h-6 w-28 bg-zinc-800 rounded animate-pulse mx-auto" />
-            <div className="h-10 w-72 bg-zinc-800 rounded animate-pulse mx-auto" />
-          </div>
-          <div className="flex gap-6 overflow-hidden">
-            {[...Array(3)].map((_, i) => (
-              <div
-                key={i}
-                className="flex-shrink-0 w-[350px] h-[180px] bg-zinc-800 rounded-xl animate-pulse"
-              />
-            ))}
-          </div>
+    <section className="py-24 md:py-32 bg-gradient-to-b from-zinc-900 to-zinc-950">
+      <div className="container mx-auto px-4 md:px-6">
+        <div className="text-center mb-12 space-y-3">
+          <div className="h-6 w-28 bg-zinc-800 rounded animate-pulse mx-auto" />
+          <div className="h-10 w-72 bg-zinc-800 rounded animate-pulse mx-auto" />
         </div>
-      </section>
-      <section className="py-20 bg-zinc-950">
-        <div className="container mx-auto px-4 md:px-6">
-          <div className="grid md:grid-cols-2 gap-8">
-            <div className="h-[320px] bg-zinc-800 rounded-xl animate-pulse" />
-            <div className="h-[320px] bg-zinc-800 rounded-xl animate-pulse" />
-          </div>
+        <div className="flex gap-6 overflow-hidden">
+          {[...Array(3)].map((_, i) => (
+            <div
+              key={i}
+              className="flex-shrink-0 w-[350px] h-[180px] bg-zinc-800 rounded-xl animate-pulse"
+            />
+          ))}
         </div>
-      </section>
-    </>
+      </div>
+    </section>
   );
 }

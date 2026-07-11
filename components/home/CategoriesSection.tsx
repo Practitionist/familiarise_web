@@ -26,10 +26,10 @@ function CategoryCard({
       viewport={{ once: true }}
     >
       <Link href={`/explore/experts?category=${category.name.toLowerCase()}`}>
-        <Card className="group cursor-pointer border border-border bg-card hover:border-foreground/40 transition-all duration-300 hover:-translate-y-1 hover:shadow-elevation-2">
+        <Card className="group cursor-pointer rounded-2xl border border-border bg-card hover:border-foreground/30 transition-all duration-300 hover:shadow-elevation-2">
           <CardContent className="p-6 flex items-center gap-4">
             <div
-              className={`w-12 h-12 rounded-xl ${category.color} flex items-center justify-center group-hover:scale-110 transition-transform`}
+              className={`w-12 h-12 rounded-xl ${category.color} flex items-center justify-center`}
             >
               <Icon className="w-6 h-6 text-white" />
             </div>

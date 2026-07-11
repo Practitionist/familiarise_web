@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo } from "react";
 import { motion } from "framer-motion";
-import { GraduationCap, Video, Users, Sparkles } from "lucide-react";
+import { GraduationCap, Video, Users } from "lucide-react";
 import { useSession } from "@/lib/auth-client";
 import { useCurrency } from "@/hooks/useCurrency";
 import {
@@ -19,10 +19,11 @@ import {
   useProgramsFilters,
   useTopicsWithCount,
 } from "./hooks";
+import { ExploreHero } from "../components/ExploreHero";
 import ProgramTabs from "./components/ProgramTabs";
-import SectionHeader from "./components/SectionHeader";
+import SectionHeader from "@/app/explore/components/SectionHeader";
 import AdvancedFilters from "./components/AdvancedFilters";
-import FilterChips from "./components/FilterChips";
+import FilterChips from "@/app/explore/components/FilterChips";
 import StaticTopRows from "./components/StaticTopRows";
 import ProgramResults from "./components/ProgramResults";
 
@@ -177,58 +178,16 @@ export default function ProgramsInteractiveContent({
   return (
     <main className="min-h-screen bg-background">
       {/* Hero Section */}
-      <section className="relative pt-32 pb-20 bg-zinc-950 overflow-hidden">
-        <div className="absolute inset-0">
-          <div className="absolute top-1/4 left-1/4 w-[600px] h-[600px] bg-zinc-800/30 rounded-full blur-[120px] animate-blob" />
-          <div className="absolute bottom-1/4 right-1/4 w-[500px] h-[500px] bg-zinc-700/20 rounded-full blur-[100px] animate-blob animation-delay-2000" />
-        </div>
-        <div className="absolute inset-0 grid-pattern opacity-20" />
-
-        <div className="max-w-[1600px] mx-auto px-4 md:px-8 lg:px-12 relative z-10">
-          <motion.div
-            className="max-w-4xl mx-auto text-center"
-            initial={{ opacity: 0, y: 30 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6 }}
-          >
-            <div className="inline-flex items-center gap-2 px-4 py-2 bg-zinc-800/50 backdrop-blur-sm border border-zinc-700/50 rounded-full mb-8">
-              <Sparkles className="w-4 h-4 text-white" />
-              <span className="text-sm font-medium text-zinc-300">
-                Learn from the Best
-              </span>
-            </div>
-
-            <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold text-white mb-6">
-              Classes & <span className="silver-text">Webinars</span>
-            </h1>
-
-            <p className="text-lg md:text-xl text-zinc-400 mb-12 max-w-2xl mx-auto">
-              Expand your knowledge with expert-led classes and live webinars.
-              Learn at your own pace or join interactive sessions.
-            </p>
-
-            <div className="flex flex-wrap justify-center gap-8 md:gap-16">
-              {stats.map((stat, index) => (
-                <motion.div
-                  key={stat.label}
-                  className="text-center"
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.5, delay: 0.2 + index * 0.1 }}
-                >
-                  <div className="w-12 h-12 mx-auto mb-3 rounded-xl bg-zinc-800/50 border border-zinc-700/50 flex items-center justify-center">
-                    <stat.icon className="w-6 h-6 text-white" />
-                  </div>
-                  <div className="text-2xl md:text-3xl font-bold text-white">
-                    {stat.value}
-                  </div>
-                  <div className="text-sm text-zinc-500">{stat.label}</div>
-                </motion.div>
-              ))}
-            </div>
-          </motion.div>
-        </div>
-      </section>
+      <ExploreHero
+        badge="Learn from the Best"
+        title={
+          <>
+            Classes & <span className="silver-text">Webinars</span>
+          </>
+        }
+        description="Expand your knowledge with expert-led classes and live webinars. Learn at your own pace or join interactive sessions."
+        stats={stats}
+      />
 
       {/* Content Section */}
       <section className="py-10 md:py-16">

@@ -92,7 +92,7 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
         className="group"
       >
         <div
-          className="relative bg-card rounded-2xl border border-border overflow-hidden hover:border-muted-foreground/30 hover:shadow-xl transition-all duration-300 cursor-pointer h-full flex flex-col"
+          className="relative bg-card rounded-2xl border border-border shadow-elevation-1 overflow-hidden hover:border-muted-foreground/30 hover:shadow-elevation-2 transition-all duration-300 cursor-pointer h-full flex flex-col"
           onClick={() =>
             router.push(`/explore/programs/plans/classes/${classPlan.id}`)
           }
@@ -204,7 +204,7 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
         className="group"
       >
         <div
-          className="relative bg-card rounded-2xl border border-border overflow-hidden hover:border-muted-foreground/30 hover:shadow-xl transition-all duration-300 cursor-pointer h-full flex flex-col"
+          className="relative bg-card rounded-2xl border border-border shadow-elevation-1 overflow-hidden hover:border-muted-foreground/30 hover:shadow-elevation-2 transition-all duration-300 cursor-pointer h-full flex flex-col"
           onClick={() =>
             router.push(`/explore/programs/plans/webinars/${webinarPlan.id}`)
           }
@@ -304,7 +304,7 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
 
   return (
     <div>
-      <div className="bg-card rounded-2xl border border-border overflow-hidden">
+      <div className="bg-card rounded-2xl border border-border shadow-elevation-1 overflow-hidden">
         {/* Header with Tabs */}
         <div className="border-b border-border px-6 md:px-8 py-5">
           <div className="flex items-center justify-between flex-wrap gap-4">
@@ -313,7 +313,7 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
                 <GraduationCap className="w-5 h-5 text-muted-foreground" />
               </div>
               <div>
-                <h2 className="text-lg font-semibold text-foreground">
+                <h2 className="text-lg font-semibold tracking-tight text-foreground">
                   Programs by this Expert
                 </h2>
                 <p className="text-sm text-muted-foreground">

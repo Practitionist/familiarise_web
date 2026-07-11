@@ -19,14 +19,14 @@ function ExpertMiniCardImpl({ expert, badge }: ExpertMiniCardProps) {
       href={`/explore/experts/${expert.id}`}
       className="group flex-shrink-0 w-[260px] block"
     >
-      <div className="bg-card rounded-2xl p-5 border border-border hover:border-border hover:shadow-lg transition-all duration-300 h-full flex flex-col">
+      <div className="bg-card rounded-2xl p-5 border border-border shadow-elevation-1 hover:shadow-elevation-2 hover:border-foreground/30 transition-all duration-300 h-full flex flex-col">
         {/* Badge */}
         {badge && (
           <div className="mb-3">
             <span
               className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wide ${
                 badge === "trending"
-                  ? "bg-orange-100 text-orange-700"
+                  ? "bg-rose-100 text-rose-700"
                   : "bg-emerald-100 text-emerald-700"
               }`}
             >
@@ -54,7 +54,7 @@ function ExpertMiniCardImpl({ expert, badge }: ExpertMiniCardProps) {
           </Avatar>
           <div className="min-w-0">
             <div className="flex items-center gap-1">
-              <h3 className="text-sm font-semibold text-foreground line-clamp-1 group-hover:text-muted-foreground transition-colors">
+              <h3 className="text-sm font-semibold tracking-tight text-foreground line-clamp-1">
                 {expert.user.name}
               </h3>
               {expert.isVerified && (

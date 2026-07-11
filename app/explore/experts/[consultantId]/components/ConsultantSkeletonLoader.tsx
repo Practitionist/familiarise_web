@@ -56,7 +56,7 @@ export const ConsultantSkeletonLoader: React.FC = () => {
 
           {/* Right Column (Sidebar - Pricing) */}
           <div className="w-full xl:w-[450px] 2xl:w-[500px] flex-shrink-0">
-            <div className="bg-card rounded-2xl p-6 shadow-sm border border-border space-y-6">
+            <div className="bg-card rounded-2xl p-6 shadow-elevation-1 border border-border space-y-6">
               {/* Tabs */}
               <div className="flex bg-muted p-1 rounded-xl">
                 <Skeleton className="h-10 w-1/2 rounded-lg bg-card shadow-sm" />

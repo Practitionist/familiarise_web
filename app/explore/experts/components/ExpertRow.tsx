@@ -13,7 +13,7 @@ interface ExpertRowProps {
 
 function SkeletonCard() {
   return (
-    <div className="flex-shrink-0 w-[260px] rounded-2xl border border-border p-5 animate-pulse">
+    <div className="flex-shrink-0 w-[260px] rounded-2xl border border-border bg-card shadow-elevation-1 p-5 animate-pulse">
       <div className="flex items-center gap-3 mb-3">
         <div className="w-12 h-12 rounded-full bg-muted" />
         <div className="space-y-2 flex-1">
@@ -60,14 +60,14 @@ function ExpertRowImpl({ experts, badge, isLoading }: ExpertRowProps) {
       {/* Scroll buttons */}
       <button
         onClick={() => scroll("left")}
-        className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-4 z-10 w-10 h-10 rounded-full bg-card border border-border shadow-lg flex items-center justify-center opacity-0 group-hover/row:opacity-100 transition-opacity hover:bg-muted"
+        className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-4 z-10 w-10 h-10 rounded-full bg-card border border-border shadow-elevation-2 flex items-center justify-center opacity-0 group-hover/row:opacity-100 transition-opacity hover:bg-muted"
         aria-label="Scroll left"
       >
         <ChevronLeft className="w-5 h-5 text-muted-foreground" />
       </button>
       <button
         onClick={() => scroll("right")}
-        className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-4 z-10 w-10 h-10 rounded-full bg-card border border-border shadow-lg flex items-center justify-center opacity-0 group-hover/row:opacity-100 transition-opacity hover:bg-muted"
+        className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-4 z-10 w-10 h-10 rounded-full bg-card border border-border shadow-elevation-2 flex items-center justify-center opacity-0 group-hover/row:opacity-100 transition-opacity hover:bg-muted"
         aria-label="Scroll right"
       >
         <ChevronRight className="w-5 h-5 text-muted-foreground" />

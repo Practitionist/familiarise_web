@@ -200,7 +200,7 @@ export function ExpertPricing({
   return (
     <div className="sticky top-24 space-y-4">
       {/* Profile Image Card — refined, no flat border */}
-      <div className="rounded-3xl overflow-hidden shadow-2xl shadow-black/30 ring-1 ring-white/10">
+      <div className="rounded-2xl overflow-hidden shadow-elevation-3 ring-1 ring-white/10">
         <div className="aspect-[4/3] relative">
           <Image
             alt="Profile"
@@ -213,10 +213,12 @@ export function ExpertPricing({
       </div>
 
       {/* Pricing Card — glassmorphism dark */}
-      <div className="bg-zinc-950/90 backdrop-blur-xl rounded-3xl p-6 shadow-2xl shadow-black/40 border border-white/[0.07] ring-1 ring-white/[0.04]">
+      <div className="bg-zinc-950/90 backdrop-blur-xl rounded-2xl p-6 shadow-elevation-3 border border-white/[0.07] ring-1 ring-white/[0.04]">
         {/* Header */}
         <div className="text-center mb-5">
-          <h3 className="text-xl font-bold text-white mb-1">Book a Session</h3>
+          <h3 className="text-xl font-bold tracking-tight text-white mb-1">
+            Book a Session
+          </h3>
           <p className="text-xs text-zinc-500 tracking-wide uppercase font-medium">
             Choose your preferred option
           </p>

@@ -189,7 +189,7 @@ function ExpertMiniCard({
   return (
     <Link
       href={`/explore/experts/${expert.id}`}
-      className="flex items-center gap-3 p-4 bg-card rounded-xl border border-border hover:border-border hover:shadow-md transition-all group"
+      className="flex items-center gap-3 p-4 bg-card rounded-2xl border border-border shadow-elevation-1 hover:shadow-elevation-2 transition-shadow group"
     >
       <div className="relative w-12 h-12 flex-shrink-0">
         <Image
@@ -261,8 +261,9 @@ export default async function OrgProfilePage({
 
   return (
     <main className="min-h-screen bg-muted">
-      {/* Banner — decorative dark cover header */}
-      <div className="relative h-48 md:h-64 bg-gradient-to-br from-zinc-800 to-zinc-900 overflow-hidden">
+      {/* Banner — decorative dark cover header, matches the explore heroes */}
+      <div className="relative h-48 md:h-64 bg-zinc-950 overflow-hidden">
+        <div className="absolute inset-0 grid-pattern opacity-20" />
         {org.bannerImage && (
           <Image
             src={org.bannerImage}
@@ -271,7 +272,7 @@ export default async function OrgProfilePage({
             className="object-cover opacity-40"
           />
         )}
-        <div className="absolute inset-0 bg-gradient-to-b from-transparent to-zinc-900/60" />
+        <div className="absolute inset-0 bg-gradient-to-b from-transparent to-zinc-950/60" />
       </div>
 
       <div className="max-w-[1100px] mx-auto px-4 md:px-8">
@@ -287,7 +288,7 @@ export default async function OrgProfilePage({
         </div>
 
         {/* Org header card */}
-        <div className="bg-card rounded-2xl border border-border p-6 md:p-8 mb-8 -mt-16 relative shadow-sm">
+        <div className="bg-card rounded-2xl border border-border p-6 md:p-8 mb-8 -mt-16 relative shadow-elevation-1">
           <div className="flex flex-col sm:flex-row gap-5 items-start">
             {/* Logo */}
             <div className="w-20 h-20 rounded-2xl bg-muted border-2 border-card shadow-md flex items-center justify-center overflow-hidden flex-shrink-0">
@@ -360,7 +361,7 @@ export default async function OrgProfilePage({
           <div className="lg:col-span-2 space-y-6">
             {exclusiveExperts.length > 0 ? (
               <>
-                <h2 className="text-xl font-bold text-foreground tracking-tight">
+                <h2 className="text-xl font-semibold text-foreground tracking-tight">
                   Exclusive Experts
                 </h2>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -370,7 +371,7 @@ export default async function OrgProfilePage({
                 </div>
               </>
             ) : (
-              <div className="flex flex-col items-center justify-center py-16 text-center bg-card rounded-2xl border border-border">
+              <div className="flex flex-col items-center justify-center py-16 text-center bg-card rounded-2xl border border-border shadow-elevation-1">
                 <Users className="w-10 h-10 text-muted-foreground/70 mb-3" />
                 <p className="text-muted-foreground">
                   No exclusive experts listed yet
@@ -382,8 +383,8 @@ export default async function OrgProfilePage({
           {/* Sidebar: Org plans */}
           <div className="space-y-6">
             {org.organizationPlans.length > 0 && (
-              <div className="bg-card rounded-2xl border border-border p-5">
-                <h2 className="text-base font-bold text-foreground mb-4 tracking-tight">
+              <div className="bg-card rounded-2xl border border-border shadow-elevation-1 p-5">
+                <h2 className="text-base font-semibold text-foreground mb-4 tracking-tight">
                   Available Programs
                 </h2>
                 <div className="space-y-3">
@@ -391,7 +392,7 @@ export default async function OrgProfilePage({
                     <Link
                       key={plan.id}
                       href={`/checkout/plans/${CHECKOUT_FAMILY[plan.planType]}/${plan.id}`}
-                      className="block p-3 rounded-xl bg-muted border border-border hover:border-border hover:bg-card hover:shadow-sm transition-all group"
+                      className="block p-3 rounded-xl bg-muted border border-border hover:bg-card hover:shadow-elevation-1 transition-all group"
                     >
                       <p className="text-sm font-semibold text-foreground mb-0.5">
                         {plan.title}

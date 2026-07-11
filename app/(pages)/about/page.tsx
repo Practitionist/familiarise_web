@@ -1,9 +1,11 @@
 "use client";
 
+import Image from "next/image";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { Users, Target, Award, BookOpen } from "lucide-react";
+import aboutTeam from "@/public/images/landing/about-team.jpg";
 import {
   COMPANY_INFO,
   PAGE_META,
@@ -14,15 +16,28 @@ import {
 export default function AboutPage() {
   return (
     <section className="w-full">
-      <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-20 md:py-28">
         {/* Hero Section */}
         <div className="text-center mb-12">
-          <h1 className="text-fluid-4xl md:text-fluid-5xl font-bold tracking-tight mb-4">
+          <h1 className="text-fluid-4xl font-bold tracking-tight mb-4">
             {PAGE_META.about.title}
           </h1>
-          <p className="text-fluid-lg text-muted-foreground max-w-3xl mx-auto">
+          <p className="text-lg text-muted-foreground max-w-3xl mx-auto">
             {PAGE_META.about.description}
           </p>
+        </div>
+
+        {/* Hero Image */}
+        <div className="max-w-4xl mx-auto mb-12">
+          <div className="rounded-3xl overflow-hidden border border-border shadow-elevation-2 duotone">
+            <Image
+              src={aboutTeam}
+              alt="The Familiarise team at work"
+              placeholder="blur"
+              sizes="(max-width: 960px) 100vw, 896px"
+              className="w-full h-auto object-cover"
+            />
+          </div>
         </div>
 
         {/* Main Content */}

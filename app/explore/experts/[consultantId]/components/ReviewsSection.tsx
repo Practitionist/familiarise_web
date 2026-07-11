@@ -15,14 +15,14 @@ export function ReviewsSection({ reviews }: ReviewsSectionProps) {
       : 0;
 
   return (
-    <div className="bg-card rounded-2xl border border-border p-6 md:p-8">
+    <div className="bg-card rounded-2xl border border-border shadow-elevation-1 p-6 md:p-8">
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-muted flex items-center justify-center">
             <MessageSquare className="w-5 h-5 text-muted-foreground" />
           </div>
           <div>
-            <h3 className="text-lg font-semibold text-foreground">
+            <h3 className="text-lg font-semibold tracking-tight text-foreground">
               Reviews ({reviews?.length || 0})
             </h3>
             {reviews.length > 0 && (

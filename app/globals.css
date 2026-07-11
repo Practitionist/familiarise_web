@@ -1028,6 +1028,42 @@
   animation: marquee-reverse 40s linear infinite;
 }
 
+.animate-marquee-slow {
+  animation: marquee 60s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-marquee,
+  .animate-marquee-reverse,
+  .animate-marquee-slow,
+  .animate-blob {
+    animation: none;
+  }
+}
+
+/* Zinc duotone treatment for decorative photography (not content images) */
+.duotone {
+  position: relative;
+  overflow: hidden;
+}
+
+.duotone img {
+  filter: grayscale(1) contrast(1.08) brightness(0.98);
+}
+
+.duotone::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    135deg,
+    rgb(24 24 27 / 0.28),
+    rgb(113 113 122 / 0.12)
+  );
+  mix-blend-mode: multiply;
+  pointer-events: none;
+}
+
 /* Stagger animation delays */
 .stagger-1 {
   animation-delay: 0.1s;

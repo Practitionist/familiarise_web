@@ -2,12 +2,13 @@
 
 import { useMemo } from "react";
 import { motion } from "framer-motion";
-import { Star } from "lucide-react";
+import { Quote, Star } from "lucide-react";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import type { ReviewWithProfiles } from "@/types/review";
+import { TRUST_BADGES } from "./data";
 
 function TestimonialCard({ review }: { review: ReviewWithProfiles }) {
   return (
@@ -17,7 +18,7 @@ function TestimonialCard({ review }: { review: ReviewWithProfiles }) {
           {Array.from({ length: 5 }).map((_, i) => (
             <Star
               key={i}
-              className={`w-4 h-4 ${i < review.rating ? "fill-white text-white" : "fill-zinc-700 text-zinc-700"}`}
+              className={`w-4 h-4 ${i < review.rating ? "fill-amber-400 text-amber-400" : "fill-zinc-700 text-zinc-700"}`}
             />
           ))}
         </div>
@@ -56,6 +57,40 @@ function TestimonialLoadingSkeleton() {
   );
 }
 
+// Real review + real avatar only — no stock portraits on testimonials.
+function FeaturedQuote({ review }: { review: ReviewWithProfiles }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.6 }}
+      viewport={{ once: true }}
+      className="max-w-3xl mx-auto text-center mb-16 relative"
+    >
+      <Quote className="w-10 h-10 text-zinc-700 mx-auto mb-6" />
+      <blockquote className="text-xl md:text-2xl text-zinc-200 leading-relaxed font-medium mb-8">
+        &ldquo;{review.reviewDescription}&rdquo;
+      </blockquote>
+      <div className="flex items-center justify-center gap-3">
+        <Avatar className="w-12 h-12 border border-zinc-700">
+          <AvatarImage src={review.consulteeProfile?.user?.image ?? ""} />
+          <AvatarFallback className="bg-zinc-800 text-zinc-300">
+            {review.consulteeProfile?.user?.name?.charAt(0) ?? "U"}
+          </AvatarFallback>
+        </Avatar>
+        <div className="text-left">
+          <p className="font-medium text-white text-sm">
+            {review.consulteeProfile?.user?.name || "Anonymous"}
+          </p>
+          <p className="text-xs text-zinc-500">
+            Session with {review.consultantProfile?.user?.name}
+          </p>
+        </div>
+      </div>
+    </motion.div>
+  );
+}
+
 interface TestimonialsSectionProps {
   reviews: ReviewWithProfiles[];
   isLoading: boolean;
@@ -72,8 +107,21 @@ export function TestimonialsSection({
     [reviews],
   );
 
+  // Longest well-rated review carries the pull-quote.
+  const featured = useMemo(
+    () =>
+      [...reviews]
+        .filter((r) => r.rating >= 4 && r.reviewDescription)
+        .sort(
+          (a, b) =>
+            (b.reviewDescription?.length ?? 0) -
+            (a.reviewDescription?.length ?? 0),
+        )[0] ?? null,
+    [reviews],
+  );
+
   return (
-    <section className="py-20 md:py-32 bg-gradient-to-b from-zinc-900 via-zinc-950 to-black overflow-hidden relative">
+    <section className="py-24 md:py-32 bg-gradient-to-b from-zinc-900 via-zinc-950 to-black overflow-hidden relative">
       <div className="absolute inset-0 grid-pattern opacity-20" />
 
       {/* Glow accents */}
@@ -86,7 +134,7 @@ export function TestimonialsSection({
           whileInView={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5 }}
           viewport={{ once: true }}
-          className="text-center"
+          className="text-center mb-12"
         >
           <Badge
             variant="secondary"
@@ -101,6 +149,8 @@ export function TestimonialsSection({
             See what our community has to say about their experience
           </p>
         </motion.div>
+
+        {featured && !isLoading && <FeaturedQuote review={featured} />}
       </div>
 
       {/* First marquee row - left to right */}
@@ -151,6 +201,39 @@ export function TestimonialsSection({
             </>
           )}
         </div>
+      </div>
+
+      {/* Trust badges — absorbed from the old TrustBadgesSection strip */}
+      <div className="container mx-auto px-4 md:px-6 relative z-10">
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+          viewport={{ once: true }}
+          className="mt-20 pt-12 border-t border-zinc-800/80 grid grid-cols-2 lg:grid-cols-4 gap-8"
+        >
+          {TRUST_BADGES.map((badge) => {
+            const Icon = badge.icon;
+            return (
+              <div
+                key={badge.label}
+                className="flex flex-col items-center text-center gap-3"
+              >
+                <div className="w-12 h-12 rounded-full bg-zinc-800/80 border border-zinc-700/50 flex items-center justify-center">
+                  <Icon className="w-5 h-5 text-zinc-300" />
+                </div>
+                <div>
+                  <p className="text-white font-medium text-sm">
+                    {badge.label}
+                  </p>
+                  <p className="text-zinc-500 text-xs mt-1">
+                    {badge.description}
+                  </p>
+                </div>
+              </div>
+            );
+          })}
+        </motion.div>
       </div>
     </section>
   );

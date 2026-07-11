@@ -121,8 +121,8 @@ function CertificationBadge({
   certification: Certification;
 }) {
   return (
-    <div className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-50 border border-amber-100">
-      <Award className="w-4 h-4 text-amber-600 flex-shrink-0" />
+    <div className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-muted border border-border">
+      <Award className="w-4 h-4 text-muted-foreground flex-shrink-0" />
       <div className="min-w-0">
         <p className="text-sm font-medium text-foreground truncate">
           {certification.name}
@@ -150,13 +150,15 @@ export function ExperienceSection({
   }
 
   return (
-    <div className="bg-card rounded-2xl border border-border p-6 md:p-8 space-y-8">
+    <div className="bg-card rounded-2xl border border-border shadow-elevation-1 p-6 md:p-8 space-y-8">
       {/* Work Experience */}
       {workExperiences.length > 0 && (
         <div>
           <div className="flex items-center gap-2 mb-4">
             <Briefcase className="w-5 h-5 text-muted-foreground" />
-            <h3 className="text-lg font-semibold text-foreground">Experience</h3>
+            <h3 className="text-lg font-semibold tracking-tight text-foreground">
+              Experience
+            </h3>
             <Badge variant="secondary" className="ml-auto">
               {workExperiences.length}
             </Badge>
@@ -184,7 +186,9 @@ export function ExperienceSection({
         <div>
           <div className="flex items-center gap-2 mb-4">
             <GraduationCap className="w-5 h-5 text-muted-foreground" />
-            <h3 className="text-lg font-semibold text-foreground">Education</h3>
+            <h3 className="text-lg font-semibold tracking-tight text-foreground">
+              Education
+            </h3>
             <Badge variant="secondary" className="ml-auto">
               {education.length}
             </Badge>
@@ -204,7 +208,7 @@ export function ExperienceSection({
         <div>
           <div className="flex items-center gap-2 mb-4">
             <Award className="w-5 h-5 text-muted-foreground" />
-            <h3 className="text-lg font-semibold text-foreground">
+            <h3 className="text-lg font-semibold tracking-tight text-foreground">
               Certifications
             </h3>
             <Badge variant="secondary" className="ml-auto">

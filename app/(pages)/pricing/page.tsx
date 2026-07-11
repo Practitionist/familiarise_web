@@ -23,13 +23,13 @@ import { PAGE_META, PRICING_DATA } from "../constants";
 export default function PricingPage() {
   return (
     <section className="w-full">
-      <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-20 md:py-28">
         {/* Hero Section */}
         <div className="text-center mb-12">
-          <h1 className="text-fluid-4xl md:text-fluid-5xl font-bold tracking-tight mb-4">
+          <h1 className="text-fluid-4xl font-bold tracking-tight mb-4">
             {PAGE_META.pricing.title}
           </h1>
-          <p className="text-fluid-lg text-muted-foreground max-w-3xl mx-auto">
+          <p className="text-lg text-muted-foreground max-w-3xl mx-auto">
             {PAGE_META.pricing.description}
           </p>
         </div>

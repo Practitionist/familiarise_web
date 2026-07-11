@@ -1,64 +1,14 @@
 "use client";
 
-import { useCallback } from "react";
-import { motion, useInView } from "framer-motion";
-import { ArrowRight, Play, Sparkles } from "lucide-react";
+import { motion } from "framer-motion";
+import { ArrowRight, Sparkles } from "lucide-react";
 import Link from "next/link";
-import { useRef, useState, useEffect } from "react";
 
 import { Button } from "@/components/ui/button";
-import { STATS } from "./data";
-
-function AnimatedNumber({
-  value,
-  suffix = "",
-}: {
-  value: number;
-  suffix: string;
-}) {
-  const ref = useRef(null);
-  const isInView = useInView(ref, { once: true });
-  const [displayValue, setDisplayValue] = useState(0);
-
-  const animate = useCallback(() => {
-    const duration = 2000;
-    const steps = 60;
-    const increment = value / steps;
-    let current = 0;
-    const timer = setInterval(() => {
-      current += increment;
-      if (current >= value) {
-        setDisplayValue(value);
-        clearInterval(timer);
-      } else {
-        setDisplayValue(Math.floor(current));
-      }
-    }, duration / steps);
-    return () => clearInterval(timer);
-  }, [value]);
-
-  useEffect(() => {
-    if (isInView) {
-      return animate();
-    }
-  }, [isInView, animate]);
-
-  return (
-    <motion.span
-      ref={ref}
-      className="text-4xl md:text-5xl font-bold text-white tabular-nums"
-    >
-      {value % 1 !== 0
-        ? displayValue.toFixed(1)
-        : displayValue.toLocaleString()}
-      {suffix}
-    </motion.span>
-  );
-}
 
 export function HeroSection() {
   return (
-    <section className="relative min-h-[95vh] flex items-center bg-black overflow-hidden">
+    <section className="relative min-h-[85vh] flex items-center bg-black overflow-hidden">
       {/* Animated gradient orbs */}
       <div className="absolute inset-0 overflow-hidden">
         <div className="absolute top-1/4 left-1/4 w-[600px] h-[600px] rounded-full bg-gradient-to-br from-zinc-800/50 to-transparent blur-[50px] animate-blob" />
@@ -72,7 +22,7 @@ export function HeroSection() {
       {/* Spotlight effect */}
       <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[600px] bg-gradient-to-b from-zinc-800/20 via-transparent to-transparent blur-[40px]" />
 
-      <div className="container mx-auto px-4 md:px-6 relative z-10 py-20 md:py-32">
+      <div className="container mx-auto px-4 md:px-6 relative z-10 py-24 md:py-32">
         <div className="max-w-4xl mx-auto text-center">
           {/* Badge */}
           <motion.div
@@ -90,7 +40,7 @@ export function HeroSection() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, delay: 0.1 }}
-            className="text-fluid-5xl font-bold text-white mb-6 leading-tight tracking-tight"
+            className="text-fluid-5xl font-bold text-white mb-8 leading-[1.05] tracking-tighter"
           >
             Learn from the{" "}
             <span className="relative inline-block">
@@ -105,7 +55,7 @@ export function HeroSection() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, delay: 0.2 }}
-            className="text-lg md:text-xl text-zinc-500 mb-10 max-w-2xl mx-auto leading-relaxed"
+            className="text-lg md:text-xl text-zinc-500 mb-12 max-w-2xl mx-auto leading-relaxed"
           >
             Connect with world-class experts for personalized 1-on-1 sessions,
             interactive classes, and live webinars. Your career transformation
@@ -117,7 +67,7 @@ export function HeroSection() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, delay: 0.3 }}
-            className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-16"
+            className="flex flex-col sm:flex-row items-center justify-center gap-4"
           >
             <Link href="/explore/experts">
               <Button
@@ -128,29 +78,15 @@ export function HeroSection() {
                 <ArrowRight className="ml-2 w-5 h-5 group-hover:translate-x-1 transition-transform" />
               </Button>
             </Link>
-            <Button
-              size="lg"
-              variant="outline"
-              className="border-zinc-700 bg-transparent text-white hover:bg-zinc-900 hover:text-white px-8 h-14 text-base rounded-xl group"
-            >
-              <Play className="mr-2 w-5 h-5" />
-              Watch Demo
-            </Button>
-          </motion.div>
-
-          {/* Stats with animated counters */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6, delay: 0.4 }}
-            className="grid grid-cols-2 md:grid-cols-4 gap-8 md:gap-12 pt-8 border-t border-zinc-800"
-          >
-            {STATS.map((stat, i) => (
-              <div key={i} className="text-center">
-                <AnimatedNumber value={stat.value} suffix={stat.suffix} />
-                <div className="text-zinc-600 text-sm mt-1">{stat.label}</div>
-              </div>
-            ))}
+            <Link href="/#how-it-works">
+              <Button
+                size="lg"
+                variant="outline"
+                className="border-zinc-700 bg-transparent text-white hover:bg-zinc-900 hover:text-white px-8 h-14 text-base rounded-xl"
+              >
+                How It Works
+              </Button>
+            </Link>
           </motion.div>
         </div>
       </div>

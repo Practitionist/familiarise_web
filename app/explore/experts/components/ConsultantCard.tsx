@@ -170,8 +170,8 @@ export const ConsultantCard = memo(function ConsultantCard({
   });
 
   return (
-    <div className="bg-card rounded-2xl border border-border hover:border-border hover:shadow-xl transition-all duration-300 overflow-hidden group">
-      <div className="p-6 md:p-8 lg:p-10 flex flex-col lg:flex-row gap-8 lg:gap-12">
+    <div className="bg-card rounded-2xl border border-border shadow-elevation-1 hover:shadow-elevation-3 hover:border-foreground/30 transition-all duration-300 overflow-hidden group">
+      <div className="p-5 md:p-6 flex flex-col lg:flex-row gap-6 lg:gap-10">
         {/* Left Section: Consultant Info. Uses a stretched overlay <Link>
             (absolute inset-0) instead of wrapping the whole section, so the
             nested org-badge link stays valid HTML (no <a> inside <a>) while
@@ -197,7 +197,7 @@ export const ConsultantCard = memo(function ConsultantCard({
             </div>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-1.5">
-                <h3 className="text-xl font-bold text-foreground group-hover:text-muted-foreground transition-colors">
+                <h3 className="text-lg font-semibold tracking-tight text-foreground">
                   {consultant.user.name}
                 </h3>
                 {consultant.isVerified && (

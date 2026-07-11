@@ -128,9 +128,9 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
             </div>
 
             {/* About */}
-            <Card className="border-border shadow-sm">
+            <Card className="rounded-2xl border-border">
               <CardContent className="p-6 md:p-8">
-                <h2 className="text-xl font-semibold text-foreground mb-4">
+                <h2 className="text-xl font-semibold tracking-tight text-foreground mb-4">
                   About this Class
                 </h2>
                 <p className="text-muted-foreground whitespace-pre-line leading-relaxed">
@@ -163,9 +163,9 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
             </Card>
 
             {/* What You'll Learn */}
-            <Card className="border-border shadow-sm">
+            <Card className="rounded-2xl border-border">
               <CardContent className="p-6 md:p-8">
-                <h2 className="text-xl font-semibold text-foreground mb-4">
+                <h2 className="text-xl font-semibold tracking-tight text-foreground mb-4">
                   What you&apos;ll learn
                 </h2>
                 <div className="grid md:grid-cols-2 gap-3">
@@ -180,9 +180,9 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
             </Card>
 
             {/* Prerequisites */}
-            <Card className="border-border shadow-sm">
+            <Card className="rounded-2xl border-border">
               <CardContent className="p-6 md:p-8">
-                <h2 className="text-xl font-semibold text-foreground mb-4">
+                <h2 className="text-xl font-semibold tracking-tight text-foreground mb-4">
                   Prerequisites
                 </h2>
                 <p className="text-muted-foreground">
@@ -193,9 +193,9 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
             </Card>
 
             {/* Course Content */}
-            <Card className="border-border shadow-sm">
+            <Card className="rounded-2xl border-border">
               <CardContent className="p-6 md:p-8">
-                <h2 className="text-xl font-semibold text-foreground mb-6">
+                <h2 className="text-xl font-semibold tracking-tight text-foreground mb-6">
                   Course Content
                 </h2>
                 <div className="space-y-4">
@@ -222,9 +222,9 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
             </Card>
 
             {/* Topics */}
-            <Card className="border-border shadow-sm">
+            <Card className="rounded-2xl border-border">
               <CardContent className="p-6 md:p-8">
-                <h2 className="text-xl font-semibold text-foreground mb-4">
+                <h2 className="text-xl font-semibold tracking-tight text-foreground mb-4">
                   Topics Covered
                 </h2>
                 <div className="flex flex-wrap gap-2">
@@ -241,9 +241,9 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
             </Card>
 
             {/* Schedule */}
-            <Card className="border-border shadow-sm">
+            <Card className="rounded-2xl border-border">
               <CardContent className="p-6 md:p-8">
-                <h2 className="text-xl font-semibold text-foreground mb-6">
+                <h2 className="text-xl font-semibold tracking-tight text-foreground mb-6">
                   Class Schedule
                 </h2>
                 {plan.classes && plan.classes.length > 0 ? (
@@ -350,7 +350,7 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
           >
             <div className="sticky top-24 space-y-6">
               {/* Instructor Card */}
-              <Card className="border-border shadow-sm">
+              <Card className="rounded-2xl border-border">
                 <CardHeader className="pb-2">
                   <CardTitle className="text-lg">Your Instructor</CardTitle>
                 </CardHeader>
@@ -390,7 +390,7 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
 
               {/* Collaborators */}
               {plan.collaborators && plan.collaborators.length > 0 && (
-                <Card className="border-border shadow-sm">
+                <Card className="rounded-2xl border-border">
                   <CardHeader className="pb-2">
                     <CardTitle className="text-lg flex items-center gap-2">
                       <Users className="w-4 h-4" />

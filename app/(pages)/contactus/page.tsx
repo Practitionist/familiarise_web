@@ -26,16 +26,16 @@ import {
 export default function ContactUsPage() {
   return (
     <section className="w-full">
-      <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-20 md:py-28">
         {/* Hero Section */}
         <div className="text-center mb-12">
           <div className="flex justify-center mb-4">
             <MessageSquare className="h-16 w-16 text-foreground" />
           </div>
-          <h1 className="text-fluid-4xl md:text-fluid-5xl font-bold tracking-tight mb-4">
+          <h1 className="text-fluid-4xl font-bold tracking-tight mb-4">
             {PAGE_META.contact.title}
           </h1>
-          <p className="text-fluid-lg text-muted-foreground max-w-3xl mx-auto">
+          <p className="text-lg text-muted-foreground max-w-3xl mx-auto">
             {PAGE_META.contact.description}
           </p>
         </div>
@@ -184,6 +184,7 @@ export default function ContactUsPage() {
                     </Label>
                     <Input
                       id="first-name"
+                      className="h-11 rounded-xl"
                       placeholder="Enter your first name"
                       required
                     />
@@ -194,6 +195,7 @@ export default function ContactUsPage() {
                     </Label>
                     <Input
                       id="last-name"
+                      className="h-11 rounded-xl"
                       placeholder="Enter your last name"
                       required
                     />
@@ -206,6 +208,7 @@ export default function ContactUsPage() {
                   </Label>
                   <Input
                     id="email"
+                    className="h-11 rounded-xl"
                     placeholder="Enter your email"
                     required
                     type="email"
@@ -216,6 +219,7 @@ export default function ContactUsPage() {
                   <Label htmlFor="phone">Phone (optional)</Label>
                   <Input
                     id="phone"
+                    className="h-11 rounded-xl"
                     placeholder="Enter your phone number"
                     type="tel"
                   />
@@ -227,6 +231,7 @@ export default function ContactUsPage() {
                   </Label>
                   <Input
                     id="subject"
+                    className="h-11 rounded-xl"
                     placeholder="What is this regarding?"
                     required
                   />
@@ -237,7 +242,7 @@ export default function ContactUsPage() {
                     Message <span className="text-red-500">*</span>
                   </Label>
                   <Textarea
-                    className="min-h-[150px]"
+                    className="min-h-[150px] rounded-xl"
                     id="message"
                     placeholder="Enter your message"
                     required
@@ -248,7 +253,7 @@ export default function ContactUsPage() {
                   <Label htmlFor="category">Inquiry Type</Label>
                   <select
                     id="category"
-                    className="w-full px-3 py-2 border border-border rounded-md bg-background"
+                    className="w-full h-11 px-3 border border-border rounded-xl bg-background text-sm"
                   >
                     {INQUIRY_CATEGORIES.map((category) => (
                       <option key={category.value} value={category.value}>

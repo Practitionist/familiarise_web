@@ -63,12 +63,9 @@ export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
   };
 
   return (
-    <div className="bg-gradient-to-br from-white via-gray-50/50 to-white rounded-2xl shadow-xl border border-gray-200/50 p-8 backdrop-blur-sm relative">
-      {/* Glossy overlay effect */}
-      <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent rounded-2xl pointer-events-none" />
-
+    <div className="bg-card rounded-2xl border border-border shadow-elevation-1 p-6 md:p-8 relative">
       <div className="relative">
-        <h3 className="text-2xl font-bold mb-6 text-center text-gray-800 bg-gradient-to-r from-gray-700 to-gray-900 bg-clip-text text-transparent">
+        <h3 className="text-xl font-semibold tracking-tight mb-6 text-center text-foreground">
           Custom Availability
         </h3>
 
@@ -78,10 +75,10 @@ export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
           <button
             onClick={onPrevWeek}
             disabled={!onPrevWeek}
-            className={`flex-shrink-0 mt-2 p-2 rounded-xl border shadow-sm transition-all ${
+            className={`flex-shrink-0 mt-2 p-2 rounded-xl border transition-colors ${
               onPrevWeek
-                ? "bg-gradient-to-b from-gray-100 to-gray-200/80 border-gray-300/50 text-gray-700 hover:from-gray-200 hover:to-gray-300/80 cursor-pointer"
-                : "bg-gray-50 border-gray-200/50 text-gray-300 cursor-not-allowed"
+                ? "bg-muted border-border text-foreground hover:bg-muted/70 cursor-pointer"
+                : "bg-muted/50 border-border text-muted-foreground/50 cursor-not-allowed"
             }`}
             aria-label="Previous week"
           >
@@ -94,11 +91,11 @@ export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
             <div className="grid grid-cols-7 gap-4 mb-6">
               {mergedDays.map(({ date }) => (
                 <div key={date.toISOString()} className="text-center">
-                  <div className="bg-gradient-to-b from-gray-100 to-gray-200/80 px-3 py-2 rounded-xl border border-gray-300/50 shadow-sm">
-                    <div className="text-sm font-semibold text-gray-800">
+                  <div className="bg-muted px-3 py-2 rounded-xl border border-border">
+                    <div className="text-sm font-semibold text-foreground">
                       {date.toLocaleDateString(undefined, { weekday: "short" })}
                     </div>
-                    <div className="text-xs text-gray-600 mt-1">
+                    <div className="text-xs text-muted-foreground mt-1">
                       {date.toLocaleDateString(undefined, {
                         month: "short",
                         day: "numeric",
@@ -134,21 +131,18 @@ export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
                             key={slot.id}
                             className={`
                               w-full min-h-[4.5rem] px-2 py-2 text-xs rounded-xl
-                              border shadow-lg backdrop-blur-sm relative overflow-hidden
+                              border relative overflow-hidden
                               ${
                                 isFullyBooked
-                                  ? "bg-gradient-to-br from-gray-300 to-gray-400 text-gray-600 border-gray-300 shadow-gray-400/20"
+                                  ? "bg-muted text-muted-foreground border-border"
                                   : isPartiallyBooked
-                                    ? "bg-gradient-to-br from-amber-200 to-amber-300 border-amber-400 text-amber-900 shadow-amber-400/25"
+                                    ? "bg-amber-50 border-amber-200 text-amber-800"
                                     : slot.isAllocated
-                                      ? "bg-gradient-to-br from-orange-200 to-orange-300 border-orange-400 text-orange-900 shadow-orange-400/20"
-                                      : "bg-gradient-to-br from-emerald-100 to-emerald-200 text-emerald-800 border-emerald-300 shadow-emerald-400/20"
+                                      ? "bg-orange-50 border-orange-200 text-orange-800"
+                                      : "bg-emerald-50 border-emerald-200 text-emerald-700"
                               }
                             `}
                           >
-                            {/* Glossy overlay for buttons */}
-                            <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent rounded-xl pointer-events-none" />
-
                             <div className="relative flex flex-col items-center justify-center h-full space-y-1">
                               {/* Time range in one line */}
                               <div className="font-medium leading-tight text-center text-[11px]">
@@ -185,7 +179,7 @@ export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
                         );
                       })
                     ) : (
-                      <div className="min-h-[4.5rem] flex items-center justify-center text-xs text-muted-foreground/70 bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl border border-border shadow-sm">
+                      <div className="min-h-[4.5rem] flex items-center justify-center text-xs text-muted-foreground/70 bg-muted rounded-xl border border-border">
                         No slots
                       </div>
                     )}
@@ -199,7 +193,7 @@ export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
               <div className="flex justify-center mt-4">
                 <button
                   onClick={() => setIsExpanded((prev) => !prev)}
-                  className="flex items-center gap-1.5 px-4 py-2 text-xs font-medium text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 rounded-xl border border-emerald-200 transition-colors cursor-pointer shadow-sm"
+                  className="flex items-center gap-1.5 px-4 py-2 text-xs font-medium text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 rounded-xl border border-emerald-200 transition-colors cursor-pointer"
                 >
                   {isExpanded ? (
                     <>
@@ -221,10 +215,10 @@ export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
           <button
             onClick={onNextWeek}
             disabled={!onNextWeek}
-            className={`flex-shrink-0 mt-2 p-2 rounded-xl border shadow-sm transition-all ${
+            className={`flex-shrink-0 mt-2 p-2 rounded-xl border transition-colors ${
               onNextWeek
-                ? "bg-gradient-to-b from-gray-100 to-gray-200/80 border-gray-300/50 text-gray-700 hover:from-gray-200 hover:to-gray-300/80 cursor-pointer"
-                : "bg-gray-50 border-gray-200/50 text-gray-300 cursor-not-allowed"
+                ? "bg-muted border-border text-foreground hover:bg-muted/70 cursor-pointer"
+                : "bg-muted/50 border-border text-muted-foreground/50 cursor-not-allowed"
             }`}
             aria-label="Next week"
           >

@@ -65,14 +65,15 @@ function SearchBarImpl({
   }, 300);
 
   return (
-    <div className="flex flex-col sm:flex-row gap-4">
+    // Lives inside the dark zinc-950 search panel — zinc literals match that surface.
+    <div className="flex flex-col sm:flex-row gap-3">
       {/* Search Input */}
-      <div className="flex-1 relative rounded-xl focus-within:ring-2 focus-within:ring-ring transition-shadow">
+      <div className="flex-1 relative rounded-xl focus-within:ring-2 focus-within:ring-zinc-600 transition-shadow">
         <div className="absolute left-4 top-1/2 -translate-y-1/2">
-          <Search className="w-6 h-6 text-muted-foreground/70" />
+          <Search className="w-5 h-5 text-zinc-500" />
         </div>
         <Input
-          className="w-full h-14 pl-14 pr-4 bg-muted border border-border rounded-xl focus:ring-0 focus-visible:ring-0 placeholder:text-muted-foreground/70 text-base"
+          className="w-full h-14 pl-12 pr-4 bg-zinc-900 border border-zinc-800 text-white rounded-xl focus:ring-0 focus-visible:ring-0 placeholder:text-zinc-500 text-base"
           placeholder="Search experts by name, skill, or specialty..."
           type="search"
           value={localValue}
@@ -85,9 +86,9 @@ function SearchBarImpl({
 
       {/* Sort Dropdown */}
       <div className="flex items-center gap-2">
-        <div className="flex items-center gap-2 px-4 h-14 bg-muted border border-border rounded-xl">
-          <SlidersHorizontal className="w-4 h-4 text-muted-foreground" />
-          <span className="text-sm font-medium text-muted-foreground hidden sm:inline">
+        <div className="flex items-center gap-2 px-2 h-14">
+          <SlidersHorizontal className="w-4 h-4 text-zinc-400" />
+          <span className="text-sm font-medium text-zinc-400 hidden sm:inline">
             Sort by
           </span>
         </div>
@@ -95,7 +96,7 @@ function SearchBarImpl({
           value={sortBy}
           onValueChange={(value) => onSort(value as SortOption)}
         >
-          <SelectTrigger className="w-full sm:w-[180px] flex-1 sm:flex-initial min-w-0 h-14 bg-muted border border-border rounded-xl focus:ring-ring">
+          <SelectTrigger className="w-full sm:w-[180px] flex-1 sm:flex-initial min-w-0 h-14 bg-zinc-900 border border-zinc-800 text-white rounded-xl focus:ring-zinc-600">
             <SelectValue placeholder="Sort by" />
           </SelectTrigger>
           <SelectContent>

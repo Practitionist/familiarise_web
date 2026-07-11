@@ -54,7 +54,7 @@ export function BenefitsSection({ images }: BenefitsSectionProps) {
                   viewport={{ once: true }}
                   className="flex gap-4 group"
                 >
-                  <div className="w-12 h-12 rounded-xl bg-primary flex items-center justify-center flex-shrink-0 group-hover:scale-110 transition-transform shadow-elevation-2">
+                  <div className="w-12 h-12 rounded-xl bg-primary flex items-center justify-center flex-shrink-0 shadow-elevation-2">
                     <benefit.icon className="w-6 h-6 text-primary-foreground" />
                   </div>
                   <div className="min-w-0">
@@ -77,7 +77,7 @@ export function BenefitsSection({ images }: BenefitsSectionProps) {
             viewport={{ once: true }}
             className="relative"
           >
-            <div className="relative rounded-2xl overflow-hidden shadow-elevation-3 border border-border">
+            <div className="relative rounded-2xl overflow-hidden shadow-elevation-3 border border-border duotone">
               {renderLCPImage(images, 0, "/placeholder.svg", 600, 400)}
             </div>
             {/* Floating card decoration */}

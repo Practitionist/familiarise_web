@@ -2,11 +2,13 @@
 
 import { motion } from "framer-motion";
 import { ArrowRight } from "lucide-react";
+import Image from "next/image";
 import Link from "next/link";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { HOW_IT_WORKS } from "./data";
+import howItWorksPhoto from "@/public/images/landing/how-it-works-call.jpg";
 
 function HowItWorksStep({
   step,
@@ -27,15 +29,15 @@ function HowItWorksStep({
     >
       <div className="flex gap-6">
         <div className="flex flex-col items-center">
-          <div className="w-12 h-12 rounded-full bg-gradient-to-br from-zinc-100 to-zinc-300 flex items-center justify-center text-zinc-900 font-bold text-lg shadow-elevation-2 border border-border">
+          <div className="w-14 h-14 rounded-full bg-gradient-to-br from-zinc-100 to-zinc-300 flex items-center justify-center text-zinc-900 font-bold text-xl shadow-elevation-2 border border-border shrink-0">
             {step.step}
           </div>
           {!isLast && (
             <div className="w-0.5 h-full bg-gradient-to-b from-border to-transparent mt-4" />
           )}
         </div>
-        <div className="pb-12 min-w-0">
-          <h4 className="text-xl font-semibold text-foreground mb-2">
+        <div className="pb-14 min-w-0">
+          <h4 className="text-xl font-semibold text-foreground mb-2 tracking-tight">
             {step.title}
           </h4>
           <p className="text-muted-foreground leading-relaxed">
@@ -51,13 +53,9 @@ export function HowItWorksSection() {
   return (
     <section
       id="how-it-works"
-      className="py-20 md:py-32 bg-gradient-to-b from-zinc-50 to-white relative overflow-hidden scroll-mt-20"
+      className="py-24 md:py-32 bg-gradient-to-b from-zinc-50 to-white relative overflow-hidden scroll-mt-20"
     >
       <div className="absolute inset-0 diagonal-stripes" />
-
-      {/* Decorative circles */}
-      <div className="absolute top-40 right-20 w-64 h-64 border border-border rounded-full opacity-50" />
-      <div className="absolute bottom-40 left-20 w-48 h-48 border border-border rounded-full opacity-50" />
 
       <div className="container mx-auto px-4 md:px-6 relative z-10">
         <div className="grid lg:grid-cols-2 gap-16 items-start">
@@ -90,6 +88,16 @@ export function HowItWorksSection() {
                 <ArrowRight className="ml-2 w-5 h-5" />
               </Button>
             </Link>
+
+            <div className="mt-12 rounded-3xl overflow-hidden border border-border shadow-elevation-2 duotone hidden lg:block">
+              <Image
+                src={howItWorksPhoto}
+                alt="Expert guiding a mentee over a video call"
+                className="w-full h-auto object-cover"
+                sizes="(min-width: 1024px) 50vw, 0px"
+                placeholder="blur"
+              />
+            </div>
           </motion.div>
 
           <div>

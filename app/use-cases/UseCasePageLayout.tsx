@@ -52,12 +52,12 @@ export default function UseCasePageLayout({ data }: { data: UseCasePageData }) {
   return (
     <div className="w-full">
       {/* Hero — intentional dark landing section */}
-      <section className="bg-zinc-950 text-white py-20 md:py-28">
+      <section className="bg-zinc-950 text-white py-24 md:py-32">
         <div className="container mx-auto px-4 md:px-6 text-center max-w-3xl">
-          <h1 className="text-fluid-5xl font-bold tracking-tight mb-6">
+          <h1 className="text-fluid-4xl font-bold tracking-tight mb-6">
             {data.title}
           </h1>
-          <p className="text-fluid-lg md:text-fluid-xl text-zinc-400 mb-8 leading-relaxed">
+          <p className="text-lg text-zinc-400 mb-8 leading-relaxed">
             {data.subtitle}
           </p>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
@@ -84,12 +84,12 @@ export default function UseCasePageLayout({ data }: { data: UseCasePageData }) {
       </section>
 
       {/* Pain Points */}
-      <section className="py-16 md:py-24 bg-card">
+      <section className="py-20 md:py-28 bg-card">
         <div className="container mx-auto px-4 md:px-6 max-w-5xl">
-          <h2 className="text-fluid-3xl md:text-fluid-4xl font-bold tracking-tight text-center mb-4">
+          <h2 className="text-fluid-3xl font-bold tracking-tight text-center mb-4">
             The Challenge
           </h2>
-          <p className="text-muted-foreground text-center mb-12 max-w-2xl mx-auto">
+          <p className="text-lg text-muted-foreground text-center mb-12 max-w-2xl mx-auto">
             Common problems that hold you back — and why generic solutions
             don&apos;t cut it.
           </p>
@@ -97,7 +97,7 @@ export default function UseCasePageLayout({ data }: { data: UseCasePageData }) {
             {data.painPoints.map((point, i) => (
               <div
                 key={i}
-                className="p-6 rounded-2xl border border-border bg-muted"
+                className="p-6 rounded-2xl border border-border bg-card shadow-elevation-1"
               >
                 <div className="w-10 h-10 rounded-xl bg-error/10 text-error flex items-center justify-center font-bold text-lg mb-4">
                   {i + 1}
@@ -115,12 +115,12 @@ export default function UseCasePageLayout({ data }: { data: UseCasePageData }) {
       </section>
 
       {/* Solutions */}
-      <section className="py-16 md:py-24 bg-muted">
+      <section className="py-20 md:py-28 bg-muted">
         <div className="container mx-auto px-4 md:px-6 max-w-5xl">
-          <h2 className="text-fluid-3xl md:text-fluid-4xl font-bold tracking-tight text-center mb-4">
+          <h2 className="text-fluid-3xl font-bold tracking-tight text-center mb-4">
             How Familiarise Helps
           </h2>
-          <p className="text-muted-foreground text-center mb-12 max-w-2xl mx-auto">
+          <p className="text-lg text-muted-foreground text-center mb-12 max-w-2xl mx-auto">
             Real guidance from real experts — not AI-generated advice or
             pre-recorded videos.
           </p>
@@ -128,7 +128,7 @@ export default function UseCasePageLayout({ data }: { data: UseCasePageData }) {
             {data.solutions.map((solution, i) => (
               <div
                 key={i}
-                className="p-6 rounded-2xl border border-border bg-card"
+                className="p-6 rounded-2xl border border-border bg-card shadow-elevation-1"
               >
                 <div className="w-10 h-10 rounded-xl bg-foreground text-card flex items-center justify-center font-bold text-lg mb-4">
                   {i + 1}
@@ -147,12 +147,12 @@ export default function UseCasePageLayout({ data }: { data: UseCasePageData }) {
 
       {/* Featured Categories */}
       {data.categories.length > 0 && (
-        <section className="py-16 md:py-24 bg-card">
+        <section className="py-20 md:py-28 bg-card">
           <div className="container mx-auto px-4 md:px-6 max-w-4xl text-center">
-            <h2 className="text-fluid-3xl md:text-fluid-4xl font-bold tracking-tight mb-4">
+            <h2 className="text-fluid-3xl font-bold tracking-tight mb-4">
               Explore Experts by Domain
             </h2>
-            <p className="text-muted-foreground mb-10 max-w-2xl mx-auto">
+            <p className="text-lg text-muted-foreground mb-10 max-w-2xl mx-auto">
               Find verified consultants in the fields that matter to you.
             </p>
             <div className="flex flex-wrap justify-center gap-3">
@@ -173,10 +173,10 @@ export default function UseCasePageLayout({ data }: { data: UseCasePageData }) {
       {/* Bottom CTA — intentional dark landing section */}
       <section className="py-20 md:py-28 bg-zinc-950 text-white">
         <div className="container mx-auto px-4 md:px-6 text-center max-w-2xl">
-          <h2 className="text-fluid-3xl md:text-fluid-4xl font-bold tracking-tight mb-4">
+          <h2 className="text-fluid-3xl font-bold tracking-tight mb-4">
             {data.bottomCtaTitle}
           </h2>
-          <p className="text-zinc-400 mb-8 leading-relaxed">
+          <p className="text-lg text-zinc-400 mb-8 leading-relaxed">
             {data.bottomCtaDescription}
           </p>
           <Link href={ctaHref} className="inline-block w-full sm:w-auto">

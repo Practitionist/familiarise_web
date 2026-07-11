@@ -27,14 +27,16 @@ export function AboutSection({
   consultantDetails,
 }: AboutSectionProps) {
   return (
-    <div className="bg-card rounded-2xl border border-border p-6 md:p-8 space-y-6">
+    <div className="bg-card rounded-2xl border border-border shadow-elevation-1 p-6 md:p-8 space-y-6">
       {/* About */}
       <div>
         <div className="flex items-center gap-2 mb-3">
           <div className="w-8 h-8 rounded-lg bg-muted flex items-center justify-center">
             <User2 className="w-4 h-4 text-muted-foreground" />
           </div>
-          <h3 className="text-lg font-semibold text-foreground">About</h3>
+          <h3 className="text-lg font-semibold tracking-tight text-foreground">
+            About
+          </h3>
         </div>
         <p className="text-muted-foreground leading-relaxed">
           {isRealDescription(consultantDetails.description) ? (
@@ -58,7 +60,7 @@ export function AboutSection({
           <div className="w-8 h-8 rounded-lg bg-muted flex items-center justify-center">
             <GraduationCap className="w-4 h-4 text-muted-foreground" />
           </div>
-          <h3 className="text-lg font-semibold text-foreground">
+          <h3 className="text-lg font-semibold tracking-tight text-foreground">
             Education & Background
           </h3>
         </div>
@@ -79,7 +81,7 @@ export function AboutSection({
           <div className="w-8 h-8 rounded-lg bg-muted flex items-center justify-center">
             <Sparkles className="w-4 h-4 text-muted-foreground" />
           </div>
-          <h3 className="text-lg font-semibold text-foreground">
+          <h3 className="text-lg font-semibold tracking-tight text-foreground">
             Skills & Specialties
           </h3>
         </div>

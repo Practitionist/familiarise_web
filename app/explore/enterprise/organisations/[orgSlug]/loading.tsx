@@ -1,12 +1,14 @@
 export default function Loading() {
   return (
     <div className="min-h-screen bg-muted">
-      <div className="relative h-48 overflow-hidden bg-gradient-to-br from-zinc-800 to-zinc-900 md:h-64" />
+      <div className="relative h-48 overflow-hidden bg-zinc-950 md:h-64">
+        <div className="absolute inset-0 grid-pattern opacity-20" />
+      </div>
       <div className="mx-auto max-w-[1100px] px-4 md:px-8">
         <div className="py-4">
           <div className="h-4 w-32 animate-pulse rounded-md bg-muted" />
         </div>
-        <div className="relative -mt-16 mb-8 rounded-2xl border border-border bg-card p-6 shadow-sm md:p-8">
+        <div className="relative -mt-16 mb-8 rounded-2xl border border-border bg-card p-6 shadow-elevation-1 md:p-8">
           <div className="flex flex-col items-start gap-5 sm:flex-row">
             <div className="h-20 w-20 flex-shrink-0 animate-pulse rounded-2xl bg-muted" />
             <div className="flex-1 space-y-3">

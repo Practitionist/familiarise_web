@@ -1,25 +1,18 @@
 import {
   Award,
   BadgeCheck,
-  BookOpen,
   Briefcase,
   Calendar,
   Clock,
   Code,
-  FileCheck,
   Globe,
   GraduationCap,
-  HeadphonesIcon,
   HeartHandshake,
-  LayoutDashboard,
   Lightbulb,
-  ListChecks,
   Lock,
-  MessageSquare,
   Monitor,
   Palette,
   Shield,
-  Star,
   TrendingUp,
   Users,
   Video,
@@ -164,42 +157,13 @@ export const HOW_IT_WORKS = [
   },
 ];
 
-export const SUCCESS_STORIES = [
-  {
-    name: "Sarah Chen",
-    role: "Software Engineer → Tech Lead",
-    company: "Google",
-    image: "/placeholder-user.jpg",
-    story:
-      "After 3 months of mentorship, I successfully transitioned from an individual contributor to leading a team of 8 engineers.",
-    metric: "50% salary increase",
-  },
-  {
-    name: "Marcus Johnson",
-    role: "Student → Product Manager",
-    company: "Stripe",
-    image: "/placeholder-user.jpg",
-    story:
-      "My mentor helped me break into product management with zero experience. The mock interviews were game-changing.",
-    metric: "Landed dream job",
-  },
-  {
-    name: "Elena Rodriguez",
-    role: "Designer → Design Director",
-    company: "Airbnb",
-    image: "/placeholder-user.jpg",
-    story:
-      "The strategic guidance I received helped me build a portfolio that stood out and accelerated my career.",
-    metric: "3 promotions in 2 years",
-  },
-];
-
-export const PLATFORM_FEATURES = [
+// Small bento tiles rendered alongside the four large FEATURES cards.
+export const PLATFORM_HIGHLIGHTS = [
   {
     icon: Monitor,
     title: "HD Video Calls",
     description:
-      "Crystal clear video with screen sharing powered by Stream. Works on any device.",
+      "Crystal clear video with screen sharing. Works on any device.",
   },
   {
     icon: Calendar,
@@ -211,61 +175,13 @@ export const PLATFORM_FEATURES = [
     icon: Lock,
     title: "Secure Payments",
     description:
-      "Protected transactions with Stripe & Razorpay. Refunds and dispute handling built-in.",
-  },
-  {
-    icon: LayoutDashboard,
-    title: "Personal Dashboard",
-    description:
-      "Your command center for bookings, sessions, earnings, and analytics—all in one place.",
-  },
-  {
-    icon: Video,
-    title: "Session Recordings",
-    description:
-      "Record your sessions with one click. Review key moments and insights anytime.",
-  },
-  {
-    icon: Star,
-    title: "Reviews & Ratings",
-    description:
-      "Rate your sessions and read verified reviews to find the perfect expert.",
+      "Protected transactions with refunds and dispute handling built-in.",
   },
   {
     icon: BadgeCheck,
     title: "Verified Profiles",
     description:
-      "Document-based verification for consultants. Staff review ensures quality experts.",
-  },
-  {
-    icon: MessageSquare,
-    title: "In-app Messaging",
-    description:
-      "Direct communication with experts. Create support tickets and track issue resolution.",
-  },
-  {
-    icon: HeadphonesIcon,
-    title: "Support System",
-    description:
-      "Priority-based ticket system with issue tracking for sessions, payments, and more.",
-  },
-  {
-    icon: FileCheck,
-    title: "Document Review",
-    description:
-      "Upload resumes, portfolios, or documents for expert review with detailed feedback.",
-  },
-  {
-    icon: BookOpen,
-    title: "Learning Materials",
-    description:
-      "Consultants upload resources, guides, and materials for each plan you purchase.",
-  },
-  {
-    icon: ListChecks,
-    title: "Smart Waitlist",
-    description:
-      "Automatic queue management for sold-out webinars and classes. Get notified when spots open up.",
+      "Document-based verification and staff review ensure quality experts.",
   },
 ];
 
@@ -289,33 +205,6 @@ export const TRUST_BADGES = [
     icon: Award,
     label: "Quality Assured",
     description: "4.9★ average session rating",
-  },
-];
-
-export const UPCOMING_EVENTS = [
-  {
-    title: "Breaking into Tech Leadership",
-    host: "David Park",
-    date: "Dec 20, 2025",
-    time: "6:00 PM EST",
-    attendees: 156,
-    type: "Webinar",
-  },
-  {
-    title: "Portfolio Review Workshop",
-    host: "Lisa Wang",
-    date: "Dec 22, 2025",
-    time: "2:00 PM EST",
-    attendees: 89,
-    type: "Workshop",
-  },
-  {
-    title: "Startup Fundraising 101",
-    host: "Alex Rivera",
-    date: "Dec 28, 2025",
-    time: "11:00 AM EST",
-    attendees: 234,
-    type: "Class",
   },
 ];
 
@@ -347,6 +236,7 @@ export const FAQ_ITEMS = [
   },
 ];
 
+// Every name must resolve in lib/data/known-companies.ts for the logo marquee.
 export const COMPANY_LOGOS = [
   "Google",
   "Microsoft",
@@ -356,4 +246,8 @@ export const COMPANY_LOGOS = [
   "Netflix",
   "Stripe",
   "Airbnb",
+  "Salesforce",
+  "Adobe",
+  "Uber",
+  "LinkedIn",
 ];

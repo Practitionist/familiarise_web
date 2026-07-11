@@ -35,7 +35,7 @@ function FeaturedExpertsImpl({ experts, isLoading }: FeaturedExpertsProps) {
   };
 
   return (
-    <section className="py-20 bg-gradient-to-b from-zinc-100 to-white relative overflow-hidden">
+    <section className="py-20 bg-gradient-to-b from-muted/60 to-background relative overflow-hidden">
       {/* Background Pattern */}
       <div className="absolute inset-0 dot-pattern opacity-30" />
 
@@ -71,7 +71,7 @@ function FeaturedExpertsImpl({ experts, isLoading }: FeaturedExpertsProps) {
                 .map((_, index) => (
                   <div
                     key={index}
-                    className="bg-card rounded-2xl p-6 shadow-sm border border-border animate-pulse"
+                    className="bg-card rounded-2xl p-6 shadow-elevation-1 border border-border animate-pulse"
                   >
                     <div className="w-20 h-20 rounded-full bg-muted mx-auto mb-4" />
                     <div className="h-5 bg-muted rounded w-3/4 mx-auto mb-3" />
@@ -98,7 +98,7 @@ function FeaturedExpertsImpl({ experts, isLoading }: FeaturedExpertsProps) {
                     href={`/explore/experts/${expert.id}`}
                     className="group block h-full"
                   >
-                    <div className="bg-card rounded-2xl p-6 shadow-sm border border-border hover:border-border hover:shadow-lg transition-all duration-300 h-full flex flex-col">
+                    <div className="bg-card rounded-2xl p-6 shadow-elevation-1 border border-border hover:border-foreground/30 hover:shadow-elevation-2 transition-all duration-300 h-full flex flex-col">
                       {/* Avatar */}
                       <div className="relative mb-4">
                         <Avatar className="mx-auto h-20 w-20 ring-4 ring-muted group-hover:ring-border transition-all">
@@ -113,15 +113,15 @@ function FeaturedExpertsImpl({ experts, isLoading }: FeaturedExpertsProps) {
                         </Avatar>
                         {/* Top Expert Badge */}
                         {index === 0 && (
-                          <div className="absolute -top-2 -right-2 w-8 h-8 bg-gradient-to-br from-amber-400 to-amber-600 rounded-full flex items-center justify-center shadow-lg">
-                            <Award className="w-4 h-4 text-white" />
+                          <div className="absolute -top-2 -right-2 w-8 h-8 bg-amber-400 rounded-full flex items-center justify-center shadow-elevation-2">
+                            <Award className="w-4 h-4 text-amber-950" />
                           </div>
                         )}
                       </div>
 
                       {/* Name */}
                       <div className="flex items-center justify-center gap-1 mb-2">
-                        <h3 className="text-lg font-semibold text-foreground text-center line-clamp-1 group-hover:text-muted-foreground transition-colors">
+                        <h3 className="text-lg font-semibold tracking-tight text-foreground text-center line-clamp-1">
                           {expert.user.name}
                         </h3>
                         {expert.isVerified && (

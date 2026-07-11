@@ -132,8 +132,8 @@ const UPCOMING_EVENTS = [
 export default function CommunityPage() {
   return (
     <div className="w-full">
-      {/* Hero */}
-      <section className="bg-zinc-950 text-white py-20 md:py-28">
+      {/* Hero — must stay dark zinc-950 (Navbar darkHeroPages) */}
+      <section className="bg-zinc-950 text-white py-24 md:py-32">
         <div className="container mx-auto px-4 md:px-6 text-center max-w-3xl">
           <Badge
             variant="outline"
@@ -144,7 +144,7 @@ export default function CommunityPage() {
           <h1 className="text-fluid-4xl font-bold tracking-tight mb-6">
             Your Career, Together
           </h1>
-          <p className="text-lg md:text-xl text-zinc-300 leading-relaxed">
+          <p className="text-lg text-zinc-400 leading-relaxed">
             A community of professionals helping each other grow — through peer
             advice, expert AMAs, skill challenges, and real conversations about
             career moves.
@@ -153,12 +153,12 @@ export default function CommunityPage() {
       </section>
 
       {/* Features grid */}
-      <section className="py-16 md:py-24 bg-card">
+      <section className="py-20 md:py-28 bg-card">
         <div className="container mx-auto px-4 md:px-6 max-w-5xl">
           <h2 className="text-fluid-3xl font-bold tracking-tight text-center mb-4">
             What&apos;s Coming
           </h2>
-          <p className="text-muted-foreground text-center mb-12 max-w-2xl mx-auto">
+          <p className="text-lg text-muted-foreground text-center mb-12 max-w-2xl mx-auto">
             We&apos;re building the community features right now. Here&apos;s
             what to expect.
           </p>
@@ -168,7 +168,7 @@ export default function CommunityPage() {
               return (
                 <div
                   key={feature.title}
-                  className="p-6 rounded-2xl border border-border bg-muted"
+                  className="p-6 rounded-2xl border border-border bg-card shadow-elevation-1"
                 >
                   <div className="w-10 h-10 rounded-xl bg-primary text-primary-foreground flex items-center justify-center mb-4">
                     <Icon className="w-5 h-5" />
@@ -187,12 +187,12 @@ export default function CommunityPage() {
       </section>
 
       {/* Placeholder discussions — visible but locked */}
-      <section className="py-16 md:py-24 bg-muted">
+      <section className="py-20 md:py-28 bg-muted">
         <div className="container mx-auto px-4 md:px-6 max-w-4xl">
           <h2 className="text-fluid-3xl font-bold tracking-tight text-center mb-4">
             Conversations You&apos;ll Find Here
           </h2>
-          <p className="text-muted-foreground text-center mb-12 max-w-2xl mx-auto">
+          <p className="text-lg text-muted-foreground text-center mb-12 max-w-2xl mx-auto">
             A preview of the kind of discussions our community will have.
           </p>
           <div className="space-y-3">
@@ -230,12 +230,12 @@ export default function CommunityPage() {
       </section>
 
       {/* Upcoming events preview */}
-      <section className="py-16 md:py-24 bg-card">
+      <section className="py-20 md:py-28 bg-card">
         <div className="container mx-auto px-4 md:px-6 max-w-3xl">
           <h2 className="text-fluid-3xl font-bold tracking-tight text-center mb-4">
             Upcoming Events
           </h2>
-          <p className="text-muted-foreground text-center mb-10 max-w-2xl mx-auto">
+          <p className="text-lg text-muted-foreground text-center mb-10 max-w-2xl mx-auto">
             Live sessions, challenges, and workshops — all free for community
             members.
           </p>
@@ -243,7 +243,7 @@ export default function CommunityPage() {
             {UPCOMING_EVENTS.map((event, i) => (
               <div
                 key={i}
-                className="flex items-center justify-between gap-3 p-5 rounded-2xl border border-border bg-muted"
+                className="flex items-center justify-between gap-3 p-5 rounded-2xl border border-border bg-card shadow-elevation-1"
               >
                 <div className="min-w-0">
                   <h3 className="font-semibold text-foreground">{event.title}</h3>
@@ -268,7 +268,7 @@ export default function CommunityPage() {
           <h2 className="text-fluid-3xl font-bold tracking-tight mb-4">
             Be the first to join
           </h2>
-          <p className="text-zinc-300 leading-relaxed">
+          <p className="text-lg text-zinc-400 leading-relaxed">
             We&apos;re building a community where career conversations happen in
             the open — not behind paywalls or locked DMs. Stay tuned.
           </p>

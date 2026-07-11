@@ -15,7 +15,7 @@ const Review: React.FC<Readonly<TConsultantReview>> = ({
   const reviewerImage = consulteeProfile?.user?.image || null;
 
   return (
-    <div className="flex items-start space-x-4 p-4 bg-card rounded-lg shadow-sm">
+    <div className="flex items-start space-x-4 p-4 bg-card rounded-xl border border-border">
       <Avatar className="w-10 h-10">
         {reviewerImage && (
           <AvatarImage src={reviewerImage} alt={reviewerName} />
@@ -36,7 +36,7 @@ const Review: React.FC<Readonly<TConsultantReview>> = ({
             {[...Array(5)].map((_, i) => (
               <StarIcon
                 key={`star-${rating}-${i}`}
-                className={`w-4 h-4 ${i < rating ? "text-yellow-400" : "text-muted"}`}
+                className={`w-4 h-4 ${i < rating ? "fill-amber-400 text-amber-400" : "fill-muted text-muted"}`}
               />
             ))}
           </div>

@@ -1,20 +1,15 @@
 import { Suspense } from "react";
 
 import { HeroSection } from "@/components/home/HeroSection";
-import { TrustedBySection } from "@/components/home/TrustedBySection";
+import { LogoMarqueeSection } from "@/components/home/LogoMarqueeSection";
 import { FeaturesSection } from "@/components/home/FeaturesSection";
 import { CategoriesSection } from "@/components/home/CategoriesSection";
 import { BenefitsSection } from "@/components/home/BenefitsSection";
-import { SuccessStoriesSection } from "@/components/home/SuccessStoriesSection";
 import { FeaturedExpertsSection } from "@/components/home/FeaturedExpertsSection";
-import { PlatformFeaturesSection } from "@/components/home/PlatformFeaturesSection";
 import { TestimonialsSection } from "@/components/home/TestimonialsSection";
-import { UpcomingEventsSection } from "@/components/home/UpcomingEventsSection";
-import { TrustBadgesSection } from "@/components/home/TrustBadgesSection";
 import { HowItWorksSection } from "@/components/home/HowItWorksSection";
 import { BecomeExpertSection } from "@/components/home/BecomeExpertSection";
 import { FAQSection } from "@/components/home/FAQSection";
-import { SatisfiedTestimonial } from "@/app/explore/experts/components/SatisfiedTestimonial";
 import { getHomeExperts, getHomeReviews, getHomeImages } from "@/lib/data/home";
 import { emptyOnTransientDbError } from "@/lib/data/fail-open";
 import {
@@ -54,12 +49,7 @@ async function ReviewsLoader() {
     emptyOnTransientDbError("home reviews"),
   );
   if (reviews.length === 0) return null;
-  return (
-    <>
-      <TestimonialsSection reviews={reviews} isLoading={false} />
-      <UpcomingEventsSection reviews={reviews} />
-    </>
-  );
+  return <TestimonialsSection reviews={reviews} isLoading={false} />;
 }
 
 export default function Home() {
@@ -68,10 +58,10 @@ export default function Home() {
       {/* Hero - Black with animated orbs */}
       <HeroSection />
 
-      {/* Trusted By / Logo Cloud - Dark */}
-      <TrustedBySection />
+      {/* Logo marquee + proof strip - Dark, reads as hero's coda */}
+      <LogoMarqueeSection />
 
-      {/* Our Offerings - Dark charcoal with dot pattern */}
+      {/* Offerings bento - Light */}
       <FeaturesSection />
 
       {/* Browse by Category - Light gradient */}
@@ -82,33 +72,21 @@ export default function Home() {
         <BenefitsLoader />
       </Suspense>
 
-      {/* Success Stories - Dark gradient */}
-      <SuccessStoriesSection />
+      {/* Testimonials + trust badges - Dark */}
+      <Suspense fallback={<TestimonialsSkeleton />}>
+        <ReviewsLoader />
+      </Suspense>
 
       {/* Featured Experts Marquee - White with dot pattern */}
       <Suspense fallback={<FeaturedExpertsSkeleton />}>
         <FeaturedExpertsLoader />
       </Suspense>
 
-      {/* Platform Features - Light with diagonal stripes */}
-      <PlatformFeaturesSection />
-
-      {/* Testimonials Marquee + Upcoming Events - Dark */}
-      <Suspense fallback={<TestimonialsSkeleton />}>
-        <ReviewsLoader />
-      </Suspense>
-
-      {/* Trust & Security Badges - Dark strip */}
-      <TrustBadgesSection />
-
       {/* How It Works - Light with circles */}
       <HowItWorksSection />
 
-      {/* Become an Expert CTA - Light mesh gradient */}
+      {/* Become an Expert CTA - Dark split */}
       <BecomeExpertSection />
-
-      {/* Explore Testimonials - Dark */}
-      <SatisfiedTestimonial />
 
       {/* FAQ - Clean white */}
       <FAQSection />

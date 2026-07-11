@@ -90,7 +90,7 @@ export function ClientClassRegistration({
     const signInButtonDisabled = isFull;
 
     return (
-      <Card>
+      <Card className="rounded-2xl border-border">
         <CardHeader>
           <CardTitle>Class Registration</CardTitle>
         </CardHeader>
@@ -129,14 +129,14 @@ export function ClientClassRegistration({
   // Show "Already Enrolled" state for logged-in users who are already enrolled
   if (isAlreadyEnrolled) {
     return (
-      <Card>
+      <Card className="rounded-2xl border-border">
         <CardHeader>
           <CardTitle>Class Registration</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="flex items-center gap-2 mb-4">
-            <CheckCircle className="h-5 w-5 text-green-600" />
-            <Badge className="bg-green-100 text-green-800 border-green-300">
+            <CheckCircle className="h-5 w-5 text-emerald-600" />
+            <Badge className="bg-emerald-50 text-emerald-700 border-emerald-200">
               Already Enrolled
             </Badge>
           </div>
@@ -160,7 +160,7 @@ export function ClientClassRegistration({
     const classInstanceId = classes?.[0]?.id;
 
     return (
-      <Card>
+      <Card className="rounded-2xl border-border">
         <CardHeader>
           <CardTitle>Class Registration</CardTitle>
         </CardHeader>
@@ -206,7 +206,7 @@ export function ClientClassRegistration({
   }
 
   return (
-    <Card>
+    <Card className="rounded-2xl border-border">
       <CardHeader>
         <CardTitle>Class Registration</CardTitle>
       </CardHeader>

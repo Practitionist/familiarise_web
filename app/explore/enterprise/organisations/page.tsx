@@ -1,5 +1,6 @@
 import { Suspense } from "react";
-import { Building2, Users, Globe, Sparkles } from "lucide-react";
+import { Building2, Users, Globe } from "lucide-react";
+import { ExploreHero } from "../../components/ExploreHero";
 import { Badge } from "@/components/ui/badge";
 import Image from "next/image";
 import Link from "next/link";
@@ -89,7 +90,7 @@ function OrgCard({
   return (
     <Link
       href={`/explore/enterprise/organisations/${org.slug}`}
-      className="group flex flex-col bg-card rounded-2xl border border-border hover:border-border hover:shadow-lg transition-all duration-300 overflow-hidden"
+      className="group flex flex-col bg-card rounded-2xl border border-border shadow-elevation-1 hover:shadow-elevation-2 hover:border-foreground/30 transition-all duration-300 overflow-hidden"
     >
       {/* Banner / header area */}
       <div className="relative h-24 bg-gradient-to-br from-muted to-muted overflow-hidden">
@@ -107,7 +108,7 @@ function OrgCard({
       <div className="p-5 flex flex-col gap-3 flex-1">
         {/* Logo + name row */}
         <div className="flex items-center gap-3 -mt-10 relative">
-          <div className="w-14 h-14 rounded-xl bg-card border-2 border-card shadow-md flex items-center justify-center overflow-hidden flex-shrink-0">
+          <div className="w-14 h-14 rounded-xl bg-card border-2 border-card shadow-elevation-1 flex items-center justify-center overflow-hidden flex-shrink-0">
             {org.logo ? (
               <Image
                 src={org.logo}
@@ -121,7 +122,7 @@ function OrgCard({
             )}
           </div>
           <div className="pt-8 min-w-0">
-            <h3 className="font-bold text-foreground group-hover:text-muted-foreground transition-colors truncate">
+            <h3 className="text-base font-semibold tracking-tight text-foreground truncate">
               {org.name}
             </h3>
             {org.industry && (
@@ -164,7 +165,7 @@ function OrgCard({
 
 function OrgCardSkeleton() {
   return (
-    <div className="flex flex-col bg-card rounded-2xl border border-border overflow-hidden animate-pulse">
+    <div className="flex flex-col bg-card rounded-2xl border border-border shadow-elevation-1 overflow-hidden animate-pulse">
       <div className="h-24 bg-muted" />
       <div className="p-5 flex flex-col gap-3">
         <div className="flex items-center gap-3 -mt-10">
@@ -237,31 +238,16 @@ export default async function ExploreOrganisationsPage({
   return (
     <main className="min-h-screen bg-background">
       {/* Hero */}
-      <section className="relative pt-32 pb-16 bg-zinc-950 overflow-hidden">
-        <div className="absolute inset-0">
-          <div className="absolute top-1/4 left-1/4 w-[500px] h-[500px] bg-zinc-800/30 rounded-full blur-[120px] animate-blob" />
-          <div className="absolute bottom-1/4 right-1/4 w-[400px] h-[400px] bg-zinc-700/20 rounded-full blur-[100px] animate-blob animation-delay-2000" />
-        </div>
-        <div className="absolute inset-0 grid-pattern opacity-20" />
-
-        <div className="max-w-[1400px] mx-auto px-4 md:px-8 relative z-10">
-          <div className="max-w-3xl mx-auto text-center">
-            <div className="inline-flex items-center gap-2 px-4 py-2 bg-zinc-800/50 backdrop-blur-sm border border-zinc-700/50 rounded-full mb-8">
-              <Sparkles className="w-4 h-4 text-white" />
-              <span className="text-sm font-medium text-zinc-300">
-                Expert Networks & Agencies
-              </span>
-            </div>
-            <h1 className="text-fluid-4xl font-bold text-white mb-6 tracking-tight">
-              Explore <span className="silver-text">Organisations</span>
-            </h1>
-            <p className="text-lg text-zinc-300 max-w-xl mx-auto">
-              Discover expert networks, consulting agencies, and learning
-              institutions on Familiarise. Book their curated experts directly.
-            </p>
-          </div>
-        </div>
-      </section>
+      <ExploreHero
+        badge="Expert Networks & Agencies"
+        title={
+          <>
+            Explore <span className="silver-text">Organisations</span>
+          </>
+        }
+        description="Discover expert networks, consulting agencies, and learning institutions on Familiarise. Book their curated experts directly."
+        containerClassName="max-w-[1400px] mx-auto px-4 md:px-8"
+      />
 
       {/* Filters + Grid */}
       <section className="py-10 md:py-16">

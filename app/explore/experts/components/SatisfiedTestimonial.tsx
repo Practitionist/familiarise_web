@@ -24,7 +24,7 @@ const TESTIMONIALS = [
     image: "/placeholder-user.jpg",
     rating: 5,
     quote:
-      "Found an amazing mentor through Familiarise. The guidance I received accelerated my career growth by years. Highly recommend!",
+      "Found an exceptional mentor through Familiarise. The structured guidance I received accelerated my career growth by years.",
   },
   {
     id: 3,
@@ -41,11 +41,6 @@ const TESTIMONIALS = [
 export function SatisfiedTestimonial() {
   return (
     <section className="relative py-20 md:py-28 bg-zinc-950 overflow-hidden">
-      {/* Background Effects */}
-      <div className="absolute inset-0">
-        <div className="absolute top-1/3 left-1/4 w-[500px] h-[500px] bg-zinc-800/30 rounded-full blur-[120px] animate-blob" />
-        <div className="absolute bottom-1/3 right-1/4 w-[400px] h-[400px] bg-zinc-700/20 rounded-full blur-[100px] animate-blob animation-delay-2000" />
-      </div>
       <div className="absolute inset-0 grid-pattern opacity-20" />
 
       <div className="max-w-[1600px] mx-auto px-4 md:px-8 lg:px-12 relative z-10">
@@ -63,7 +58,7 @@ export function SatisfiedTestimonial() {
               Testimonials
             </span>
           </div>
-          <h2 className="text-3xl md:text-4xl lg:text-5xl font-bold text-white mb-4">
+          <h2 className="text-fluid-3xl md:text-fluid-4xl font-bold tracking-tight text-white mb-4">
             What <span className="silver-text">Professionals</span> Say
           </h2>
           <p className="text-lg text-zinc-400 max-w-2xl mx-auto">

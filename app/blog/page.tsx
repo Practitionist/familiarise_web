@@ -114,7 +114,7 @@ const FEATURED_POST: BlogPost = {
 
 function BlurredCard({ post }: { post: BlogPost }) {
   return (
-    <div className="relative bg-card rounded-2xl border border-border overflow-hidden select-none">
+    <div className="relative bg-card rounded-2xl border border-border shadow-elevation-1 overflow-hidden select-none">
       <div className="blur-[6px] pointer-events-none" aria-hidden>
         <div className="h-44 bg-gradient-to-br from-muted to-muted" />
         <div className="p-5">
@@ -135,7 +135,7 @@ export default function BlogPage() {
   return (
     <div className="w-full">
       {/* Hero */}
-      <section className="bg-zinc-950 text-white py-20 md:py-28">
+      <section className="bg-zinc-950 text-white py-24 md:py-32">
         <div className="container mx-auto px-4 md:px-6 text-center max-w-3xl">
           <Badge
             variant="outline"
@@ -143,23 +143,23 @@ export default function BlogPage() {
           >
             Coming Soon
           </Badge>
-          <h1 className="text-fluid-5xl font-bold tracking-tight mb-6">
+          <h1 className="text-fluid-4xl font-bold tracking-tight mb-6">
             The Familiarise Blog
           </h1>
-          <p className="text-lg md:text-xl text-zinc-400 leading-relaxed">
+          <p className="text-lg text-zinc-400 leading-relaxed">
             Career advice, interview strategies, and expert insights — written
             by the professionals you&apos;ll meet on the platform.
           </p>
         </div>
       </section>
 
-      <main className="container mx-auto px-4 md:px-6 py-12 md:py-16 space-y-16">
+      <main className="container mx-auto px-4 md:px-6 py-20 md:py-28 space-y-16">
         {/* Featured / Top Story */}
         <section>
           <h2 className="text-fluid-3xl font-bold tracking-tight mb-6">
             Featured
           </h2>
-          <div className="relative bg-card rounded-2xl border border-border overflow-hidden select-none">
+          <div className="relative bg-card rounded-2xl border border-border shadow-elevation-1 overflow-hidden select-none">
             <div className="blur-[6px] pointer-events-none" aria-hidden>
               <div className="grid grid-cols-1 md:grid-cols-2">
                 <div className="h-64 md:h-auto bg-gradient-to-br from-muted to-muted" />
@@ -195,13 +195,13 @@ export default function BlogPage() {
       </main>
 
       {/* Bottom CTA */}
-      <section className="py-16 md:py-20 bg-muted border-t border-border">
+      <section className="py-20 md:py-28 bg-muted border-t border-border">
         <div className="container mx-auto px-4 md:px-6 text-center max-w-xl">
           <FileText className="w-10 h-10 text-muted-foreground/70 mx-auto mb-4" />
           <h2 className="text-fluid-3xl font-bold tracking-tight mb-3">
             We&apos;re writing the first articles now
           </h2>
-          <p className="text-muted-foreground">
+          <p className="text-lg text-muted-foreground">
             Real stories, real advice, from the experts on our platform. No
             fluff, no filler — just the guidance you&apos;d pay for in a
             session, for free.

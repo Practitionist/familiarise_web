@@ -162,7 +162,7 @@ export function ClientWebinarRegistration({
     }
 
     return (
-      <Card>
+      <Card className="rounded-2xl border-border">
         <CardHeader>
           <CardTitle>Webinar Registration</CardTitle>
         </CardHeader>
@@ -190,14 +190,14 @@ export function ClientWebinarRegistration({
   // Show "Already Registered" state for logged-in users who are already registered
   if (isAlreadyRegistered) {
     return (
-      <Card>
+      <Card className="rounded-2xl border-border">
         <CardHeader>
           <CardTitle>Webinar Registration</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="flex items-center gap-2 mb-4">
-            <CheckCircle className="h-5 w-5 text-green-600" />
-            <Badge className="bg-green-100 text-green-800 border-green-300">
+            <CheckCircle className="h-5 w-5 text-emerald-600" />
+            <Badge className="bg-emerald-50 text-emerald-700 border-emerald-200">
               Already Registered
             </Badge>
           </div>
@@ -213,7 +213,7 @@ export function ClientWebinarRegistration({
   // Show waitlist UI when event is full
   if (isFull && isLoggedIn && !isAlreadyRegistered) {
     return (
-      <Card>
+      <Card className="rounded-2xl border-border">
         <CardHeader>
           <CardTitle>Webinar Registration</CardTitle>
         </CardHeader>
@@ -254,7 +254,7 @@ export function ClientWebinarRegistration({
   }
 
   return (
-    <Card>
+    <Card className="rounded-2xl border-border">
       <CardHeader>
         <CardTitle>Webinar Registration</CardTitle>
       </CardHeader>
