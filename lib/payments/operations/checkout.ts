@@ -37,7 +37,10 @@ import {
   isUserEnrolled,
   countWebinarParticipants,
 } from "@/lib/payments/utils/participants";
-import { markWaitlistAsBooked } from "@/lib/waitlist/slot-handler";
+import {
+  markWaitlistAsBooked,
+  countWaitlistHolds,
+} from "@/lib/waitlist/slot-handler";
 import { getExchangeRates } from "@/lib/currency";
 import {
   applyCreditsToPayment,
@@ -1337,7 +1340,18 @@ async function revalidateInsideLock(
           [consultantUserId || ""],
         );
 
-        if (currentParticipants >= webinar.webinarPlan.maxParticipants) {
+        // #837 — count NOTIFIED waitlist holds (seats offered to waitlisted
+        // users) so an FCFS buyer can't take one; exclude this buyer's own hold
+        // so a waitlisted user's fromWaitlist checkout still fits.
+        const webinarHolds = await countWaitlistHolds(tx, {
+          webinarId: data.eventId,
+          excludeUserId: userId,
+        });
+
+        if (
+          currentParticipants + webinarHolds >=
+          webinar.webinarPlan.maxParticipants
+        ) {
           throw new Error("Webinar is full");
         }
         break;
@@ -1373,7 +1387,16 @@ async function revalidateInsideLock(
           ownerUserId ? [ownerUserId] : [],
         );
 
-        if (currentParticipants >= classInstance.classPlan.maxParticipants) {
+        // #837 — count NOTIFIED waitlist holds; exclude this buyer's own.
+        const classHolds = await countWaitlistHolds(tx, {
+          classId: data.eventId,
+          excludeUserId: userId,
+        });
+
+        if (
+          currentParticipants + classHolds >=
+          classInstance.classPlan.maxParticipants
+        ) {
           throw new Error("Class is full");
         }
         break;
@@ -1663,10 +1686,17 @@ export async function handleWebinarCheckout(
     consultantUserId || "",
   ]);
 
+  // #837 — NOTIFIED waitlist holds occupy seats; exclude this buyer's own hold
+  // so a waitlisted user's fromWaitlist checkout still fits.
+  const webinarHolds = await countWaitlistHolds(tx, {
+    webinarId: webinar.id,
+    excludeUserId: userId,
+  });
+
   // Check if max participants reached
   // NOTE: Waitlist creation happens OUTSIDE the transaction in handleCheckout's catch block,
   // because creating it here (inside the transaction) would be rolled back on throw.
-  if (currentParticipants >= plan.maxParticipants) {
+  if (currentParticipants + webinarHolds >= plan.maxParticipants) {
     throw new Error("Webinar is full");
   }
 
@@ -1788,10 +1818,16 @@ export async function handleClassCheckout(
     consultantUserId ? [consultantUserId] : [],
   );
 
+  // #837 — NOTIFIED waitlist holds occupy seats; exclude this buyer's own.
+  const classHolds = await countWaitlistHolds(tx, {
+    classId: classInstance.id,
+    excludeUserId: userId,
+  });
+
   // Check if max participants reached
   // NOTE: Waitlist creation happens OUTSIDE the transaction in handleCheckout's catch block,
   // because creating it here (inside the transaction) would be rolled back on throw.
-  if (currentParticipants >= plan.maxParticipants) {
+  if (currentParticipants + classHolds >= plan.maxParticipants) {
     throw new Error("Class is full");
   }
 
