@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { format } from "date-fns";
 import { Video, Loader2, ChevronDown } from "lucide-react";
 import { cn } from "@/utils/tailwind";
@@ -28,6 +28,11 @@ interface SessionTimelineProps {
   joinWindowMs?: number;
   /** Rows rendered when collapsed (default 1 focus row). */
   className?: string;
+  /**
+   * When true, show every session up front (detail pages for subscriptions /
+   * classes). Default collapses to a single focus row with an expander.
+   */
+  defaultExpanded?: boolean;
 }
 
 interface SessionGroup {
@@ -111,8 +116,12 @@ export function SessionTimeline({
   onJoinSession,
   joinWindowMs = CONSULTEE_JOIN_WINDOW_MS,
   className,
+  defaultExpanded = false,
 }: SessionTimelineProps) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(defaultExpanded);
+  useEffect(() => {
+    setExpanded(defaultExpanded);
+  }, [defaultExpanded]);
 
   const nonTentative = useMemo(
     () => sessions.filter((s) => !s.isTentative),
