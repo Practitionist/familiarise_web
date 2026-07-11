@@ -202,61 +202,76 @@ export async function DELETE(
       );
     }
 
-    // Check if there are any associated classes
-    const associatedClasses = await prisma.class.findMany({
-      where: { classPlanId: classPlanId },
-    });
+    // #837 — guard-check + delete must be atomic. Under check-then-act, a class
+    // or collaborator created between the count and the delete would be orphaned
+    // (or cascade-deleted); Serializable aborts such a racing write.
+    const classPlan = await prisma.$transaction(
+      async (tx) => {
+        const associatedClasses = await tx.class.count({
+          where: { classPlanId },
+        });
+        if (associatedClasses > 0) {
+          throw Object.assign(
+            new Error("Cannot delete class plan with associated classes"),
+            { httpStatus: 400 },
+          );
+        }
 
-    if (associatedClasses.length > 0) {
-      return NextResponse.json(
-        { error: "Cannot delete class plan with associated classes" },
-        { status: 400 },
-      );
-    }
+        const activeCollaborators = await tx.collaborator.count({
+          where: {
+            classPlanId,
+            status: { in: ["PENDING", "ACCEPTED"] },
+          },
+        });
+        if (activeCollaborators > 0) {
+          throw Object.assign(
+            new Error(
+              "Cannot delete class plan with active collaborators. Remove or notify collaborators first.",
+            ),
+            { httpStatus: 400 },
+          );
+        }
 
-    // Check for active collaborators (PENDING or ACCEPTED)
-    const activeCollaborators = await prisma.collaborator.count({
-      where: {
-        classPlanId,
-        status: { in: ["PENDING", "ACCEPTED"] },
-      },
-    });
-
-    if (activeCollaborators > 0) {
-      return NextResponse.json(
-        {
-          error:
-            "Cannot delete class plan with active collaborators. Remove or notify collaborators first.",
-        },
-        { status: 400 },
-      );
-    }
-
-    const classPlan = await prisma.classPlan.delete({
-      where: { id: classPlanId },
-      include: {
-        consultantProfile: {
+        return tx.classPlan.delete({
+          where: { id: classPlanId },
           include: {
-            user: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-                image: true,
+            consultantProfile: {
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    image: true,
+                  },
+                },
+                domain: true,
+                subDomains: true,
+                tags: true,
               },
             },
-            domain: true,
-            subDomains: true,
-            tags: true,
+            topics: true,
+            classContents: true,
           },
-        },
-        topics: true,
-        classContents: true,
+        });
       },
-    });
+      { isolationLevel: "Serializable" },
+    );
 
     return NextResponse.json({ data: classPlan }, { status: 200 });
   } catch (error) {
+    // Guard-check failures thrown inside the tx carry an httpStatus.
+    if (error instanceof Error && "httpStatus" in error) {
+      return NextResponse.json(
+        { error: error.message },
+        {
+          status:
+            typeof (error as { httpStatus?: number }).httpStatus === "number"
+              ? (error as { httpStatus: number }).httpStatus
+              : 400,
+        },
+      );
+    }
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2025"

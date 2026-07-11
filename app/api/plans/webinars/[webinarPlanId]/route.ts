@@ -169,60 +169,75 @@ export async function DELETE(
       );
     }
 
-    // Check if there are any associated webinars
-    const associatedWebinars = await prisma.webinar.findMany({
-      where: { webinarPlanId: webinarPlanId },
-    });
+    // #837 — guard-check + delete must be atomic. Under check-then-act, a
+    // webinar or collaborator created between the count and the delete would be
+    // orphaned (or cascade-deleted); Serializable aborts such a racing write.
+    const webinarPlan = await prisma.$transaction(
+      async (tx) => {
+        const associatedWebinars = await tx.webinar.count({
+          where: { webinarPlanId },
+        });
+        if (associatedWebinars > 0) {
+          throw Object.assign(
+            new Error("Cannot delete webinar plan with associated webinars"),
+            { httpStatus: 400 },
+          );
+        }
 
-    if (associatedWebinars.length > 0) {
-      return NextResponse.json(
-        { error: "Cannot delete webinar plan with associated webinars" },
-        { status: 400 },
-      );
-    }
+        const activeCollaborators = await tx.collaborator.count({
+          where: {
+            webinarPlanId,
+            status: { in: ["PENDING", "ACCEPTED"] },
+          },
+        });
+        if (activeCollaborators > 0) {
+          throw Object.assign(
+            new Error(
+              "Cannot delete webinar plan with active collaborators. Remove or notify collaborators first.",
+            ),
+            { httpStatus: 400 },
+          );
+        }
 
-    // Check for active collaborators (PENDING or ACCEPTED)
-    const activeCollaborators = await prisma.collaborator.count({
-      where: {
-        webinarPlanId,
-        status: { in: ["PENDING", "ACCEPTED"] },
-      },
-    });
-
-    if (activeCollaborators > 0) {
-      return NextResponse.json(
-        {
-          error:
-            "Cannot delete webinar plan with active collaborators. Remove or notify collaborators first.",
-        },
-        { status: 400 },
-      );
-    }
-
-    const webinarPlan = await prisma.webinarPlan.delete({
-      where: { id: webinarPlanId },
-      include: {
-        consultantProfile: {
+        return tx.webinarPlan.delete({
+          where: { id: webinarPlanId },
           include: {
-            user: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-                image: true,
+            consultantProfile: {
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    image: true,
+                  },
+                },
+                domain: true,
+                subDomains: true,
+                tags: true,
               },
             },
-            domain: true,
-            subDomains: true,
-            tags: true,
+            topics: true,
           },
-        },
-        topics: true,
+        });
       },
-    });
+      { isolationLevel: "Serializable" },
+    );
 
     return NextResponse.json({ data: webinarPlan }, { status: 200 });
   } catch (error) {
+    // Guard-check failures thrown inside the tx carry an httpStatus.
+    if (error instanceof Error && "httpStatus" in error) {
+      return NextResponse.json(
+        { error: error.message },
+        {
+          status:
+            typeof (error as { httpStatus?: number }).httpStatus === "number"
+              ? (error as { httpStatus: number }).httpStatus
+              : 400,
+        },
+      );
+    }
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2025"
