@@ -1,0 +1,53 @@
+name: Detect Consultant No-Shows
+
+on:
+  schedule:
+    # Run hourly (offset to avoid colliding with other :00/:07 crons)
+    - cron: "17 * * * *"
+  workflow_dispatch: # Allow manual triggering
+
+jobs:
+  detect-consultant-no-shows:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      # Database connection (required for Prisma)
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DIRECT_URL: ${{ secrets.DIRECT_URL }}
+      # #476 cron locks load lib/redis at import — every job entry needs these
+      UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
+      UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
+      # #471 auto-refund reuses refundPayment (#990) — gateway creds for parity
+      # with the other money jobs (reconcile-pending-refunds).
+      STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+      RAZORPAY_KEY_ID: ${{ secrets.RAZORPAY_KEY_ID }}
+      RAZORPAY_SECRET: ${{ secrets.RAZORPAY_SECRET }}
+      # Both-party no-show + refund notifications
+      NOVU_SECRET_KEY: ${{ secrets.NOVU_SECRET_KEY }}
+      NEXT_PUBLIC_APP_URL: ${{ secrets.NEXT_PUBLIC_APP_URL }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Detect consultant no-shows
+        run: npx tsx jobs/appointments/detect-consultant-no-shows.ts
+
+      - name: Notify on failure
+        if: failure()
+        env:
+          SLACK_OPS_WEBHOOK_URL: ${{ secrets.SLACK_OPS_WEBHOOK_URL }}
+        run: bash scripts/ci/notify-ops-failure.sh "detect-consultant-no-shows"
