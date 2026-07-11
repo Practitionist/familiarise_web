@@ -51,6 +51,7 @@ import {
   type AppointmentType,
 } from "@/lib/payments/payouts";
 import { walletDebit } from "@/lib/api/organizations/wallet";
+import { isWalletFrozen, WalletFrozenError } from "@/lib/payments/wallet-freeze";
 import {
   recordBookingUtilization,
   ProgramAssignmentLimitError,
@@ -2366,6 +2367,13 @@ export async function handleCheckout(
           // Triggered only when we also have a resolved program assignment,
           // which guarantees the booking is actually sponsored.
           if (isOrgWalletPayment && billingAccountId) {
+            // #837 — refuse to spend a wallet whose cache drifted from the
+            // journal (frozen by the ledger-reconcile job): the balance can't
+            // be trusted until ops reconciles. Chargeback recovery is NOT gated
+            // (see wallet-freeze.ts).
+            if (await isWalletFrozen(tx, billingAccountId)) {
+              throw new WalletFrozenError(billingAccountId);
+            }
             await walletDebit(tx, {
               billingAccountId,
               amountPaise: amount,

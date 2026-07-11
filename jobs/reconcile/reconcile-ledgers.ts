@@ -24,6 +24,7 @@ import {
   recordSystemError,
 } from "../../lib/enterprise/system-events";
 import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
+import { freezeWalletSpend } from "../../lib/payments/wallet-freeze";
 import * as Sentry from "@sentry/nextjs";
 
 async function main(): Promise<void> {
@@ -102,6 +103,41 @@ async function main(): Promise<void> {
           },
         },
       );
+
+      // #837 — a wallet cache/journal drift means the balance can't be trusted,
+      // so freeze spend on each drifted account (scoped, not platform-wide) and
+      // page P0. Only WALLET_BALANCE_DRIFT freezes; other finding kinds page via
+      // the captureException above but don't gate spend.
+      const walletDrift = report.findings.filter(
+        (f) => f.kind === "WALLET_BALANCE_DRIFT" && f.billingAccountId,
+      );
+      for (const f of walletDrift) {
+        const froze = await freezeWalletSpend({
+          billingAccountId: f.billingAccountId!,
+          organizationId: f.organizationId ?? null,
+          reason: `ledger reconcile ${report.id}: wallet cache ${f.actualPaise}p ≠ journal ${f.expectedPaise}p (Δ${f.deltaPaise}p)`,
+        });
+        Sentry.captureException(
+          new Error(
+            `WALLET_BALANCE_DRIFT — wallet spend frozen for billing account ${f.billingAccountId}`,
+          ),
+          {
+            level: "fatal",
+            tags: { subsystem: "jobs", job: "reconcile-ledgers" },
+            contexts: {
+              wallet: {
+                billingAccountId: f.billingAccountId,
+                organizationId: f.organizationId ?? null,
+                expectedPaise: f.expectedPaise,
+                actualPaise: f.actualPaise,
+                deltaPaise: f.deltaPaise,
+                reportId: report.id,
+                newlyFrozen: froze,
+              },
+            },
+          },
+        );
+      }
       process.exit(2);
     }
   } catch (error) {

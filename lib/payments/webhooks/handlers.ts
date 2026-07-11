@@ -131,6 +131,29 @@ interface EventData {
  *
  * Used by both webhook handlers and mock payment flows
  */
+// #837 — discriminated Phase-1 outcomes so Phase 2 can auto-refund the two
+// captured-but-blocked cases (amount mismatch, double-booking loser) instead of
+// parking the funds on manual ops. `null` = already-processed / metadata-fail.
+type PaymentSuccessTxResult =
+  | {
+      outcome: "amount_mismatch";
+      paymentId: string;
+      gatewayAmountPaise: number;
+      expectedAmount: number;
+    }
+  | {
+      outcome: "confirmed";
+      paymentId: string;
+      appointmentId: string;
+      appointmentType: string;
+      userId: string;
+      userName: string | null;
+      amount: number;
+      currency: string;
+      capturedAfterTerminal: boolean;
+      doubleBookingBlocked: boolean;
+    };
+
 export async function handlePaymentSuccess(
   paymentIntentId: string,
   rawMetadata: Record<string, string>,
@@ -159,7 +182,7 @@ export async function handlePaymentSuccess(
   // winner confirmed and blocks. The SUCCEEDED early-return keeps the retry
   // idempotent.
   const txResult = await withSerializableRetry(() =>
-    prisma.$transaction(async (tx) => {
+    prisma.$transaction(async (tx): Promise<PaymentSuccessTxResult | null> => {
     const payment = await tx.payment.findUnique({
       where: { paymentIntent: paymentIntentId },
       include: { user: { include: { consulteeProfile: true } } },
@@ -202,11 +225,14 @@ export async function handlePaymentSuccess(
           },
         },
       );
+      // #837 — mark SUCCEEDED (gateway truth) + stamp REQUIRES_MANUAL_RECOVERY as
+      // the FALLBACK. Phase 2 auto-refunds the wrong-amount capture; the manual
+      // marker only survives if that refund call itself throws.
       await tx.payment.update({
         where: { id: payment.id },
         data: {
           paymentStatus: PaymentStatus.SUCCEEDED,
-          description: `REQUIRES_MANUAL_RECOVERY: capture amount ${gatewayAmountPaise}p ≠ expected ${payment.amount}p. Booking NOT confirmed.`,
+          description: `REQUIRES_MANUAL_RECOVERY: capture amount ${gatewayAmountPaise}p ≠ expected ${payment.amount}p. Booking NOT confirmed; auto-refund attempted.`,
         },
       });
       console.error(
@@ -218,12 +244,18 @@ export async function handlePaymentSuccess(
           user_id: payment.userId,
           gateway_amount_paise: gatewayAmountPaise,
           expected_amount_paise: payment.amount,
-          action_required:
-            "IMMEDIATE: reconcile captured funds; confirm or refund manually",
+          action_required: "auto-refund attempted; reconcile only if it failed",
           timestamp: new Date().toISOString(),
         }),
       );
-      return null; // Skip confirmation + Phase 2 — requires manual intervention
+      // Signal Phase 2 to auto-refund post-commit — the gateway refund call must
+      // not run inside this Serializable tx.
+      return {
+        outcome: "amount_mismatch",
+        paymentId: payment.id,
+        gatewayAmountPaise,
+        expectedAmount: payment.amount,
+      };
     }
 
     // VALIDATION: Check metadata before processing
@@ -350,6 +382,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
 
     // Return data needed for Phase 2
     return {
+      outcome: "confirmed",
       paymentId: payment.id,
       appointmentId: appointment.id,
       appointmentType: metadata.appointmentType,
@@ -360,6 +393,9 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
       // #855 — a capture that landed after the booking was cancelled; Phase 2
       // auto-refunds it instead of treating it as a confirmed booking.
       capturedAfterTerminal: confirmResult.capturedAfterTerminal,
+      // #837 — the #827 first-confirmed-wins guard blocked this booking; Phase 2
+      // auto-refunds the loser and releases its tentative hold.
+      doubleBookingBlocked: confirmResult.doubleBookingBlocked ?? false,
     };
     },
     { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
@@ -368,6 +404,42 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
 
   // If transaction returned null, the payment was already processed or had a metadata error
   if (!txResult) return;
+
+  // #837 — the gateway captured a different amount than we ordered. Auto-refund
+  // the whole capture (never confirm a booking for the wrong money) and skip
+  // Phase 2. REQUIRES_MANUAL_RECOVERY stays stamped as the fallback if the
+  // refund throws. Idempotent: on webhook replay the payment is already
+  // SUCCEEDED so the SUCCEEDED early-return fires before this path is reached,
+  // and refundPayment's refundable-balance guard blocks any double-refund.
+  if (txResult.outcome === "amount_mismatch") {
+    try {
+      await refundPayment({
+        paymentId: txResult.paymentId,
+        reason: "capture amount mismatch",
+        initiatedByUserId: null,
+      });
+    } catch (refundError) {
+      Sentry.captureException(
+        refundError instanceof Error ? refundError : new Error(String(refundError)),
+        {
+          tags: { subsystem: "payments" },
+          level: "error",
+          contexts: {
+            payment: {
+              paymentId: txResult.paymentId,
+              gatewayAmountPaise: txResult.gatewayAmountPaise,
+              expectedAmount: txResult.expectedAmount,
+            },
+          },
+        },
+      );
+      console.error(
+        "Failed to auto-refund amount-mismatch capture; REQUIRES_MANUAL_RECOVERY (Phase 2):",
+        refundError,
+      );
+    }
+    return;
+  }
 
   // #855 — the capture landed after the booking was cancelled. The payment is
   // SUCCEEDED (gateway truth) but the booking is dead, so auto-refund and skip
@@ -387,6 +459,51 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
       );
       console.error(
         "Failed to auto-refund capture-after-cancellation (Phase 2):",
+        refundError,
+      );
+    }
+    return;
+  }
+
+  // #837 — the #827 first-confirmed-wins guard blocked this booking: the payment
+  // is SUCCEEDED but the slots lost to an overlapping confirmed booking, so
+  // auto-refund and release the tentative hold (otherwise a paid customer holds
+  // no booking and their slots block rebooking). Skip the rest of Phase 2 — no
+  // earnings/invoice/notifications for a booking that never confirmed.
+  // Idempotent: webhook replay hits the SUCCEEDED early-return before here;
+  // refundPayment's refundable-balance guard blocks a double-refund; the slot
+  // release runs after a successful refund so a refund failure leaves the hold
+  // for the #830 orphan sweep + manual recovery rather than freeing it unpaid.
+  if (txResult.doubleBookingBlocked) {
+    try {
+      await refundPayment({
+        paymentId: txResult.paymentId,
+        reason: "double-booking blocked at confirmation",
+        initiatedByUserId: null,
+      });
+      // Release the tentative hold only once the money is back.
+      await withSerializableRetry(() =>
+        prisma.$transaction(
+          (tx) => cleanupFailedPaymentAppointment(tx, txResult.appointmentId),
+          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+        ),
+      );
+    } catch (refundError) {
+      Sentry.captureException(
+        refundError instanceof Error ? refundError : new Error(String(refundError)),
+        {
+          tags: { subsystem: "payments" },
+          level: "error",
+          contexts: {
+            booking: {
+              paymentId: txResult.paymentId,
+              appointmentId: txResult.appointmentId,
+            },
+          },
+        },
+      );
+      console.error(
+        "Failed to auto-refund double-booking loser; slots left for #830 sweep (Phase 2):",
         refundError,
       );
     }
@@ -1277,7 +1394,7 @@ export async function confirmExistingAppointment(
   tx: Tx,
   appointmentId: string,
   userId?: string,
-): Promise<{ capturedAfterTerminal: boolean }> {
+): Promise<{ capturedAfterTerminal: boolean; doubleBookingBlocked?: boolean }> {
   // First fetch appointment to determine type
   const appointment = await tx.appointment.findUnique({
     where: { id: appointmentId },
@@ -1355,8 +1472,11 @@ export async function confirmExistingAppointment(
             slotId: slot.id,
           },
         }).catch(() => {});
-        // slots stay tentative; do not confirm over the winner
-        return { capturedAfterTerminal: false };
+        // #837 — slots stay tentative here; the webhook's Phase 2 auto-refunds
+        // the loser and releases the hold. The #830 sweep re-drives via this
+        // same guard and reports (doesn't refund), so signalling the block up is
+        // what routes the refund without fighting the guard.
+        return { capturedAfterTerminal: false, doubleBookingBlocked: true };
       }
     }
   }
