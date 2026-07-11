@@ -224,40 +224,46 @@ export async function applyBestEffortEffects(
   }
 
   try {
+    // The Novu wrappers are non-throwing (TriggerResult) — read the success
+    // flag; the catch only covers unexpected throws.
+    let trigger: { success: boolean; error?: Error | string } | null = null;
     switch (actionType) {
       case "WARNING_ISSUED":
       case "CONTENT_REMOVED":
-        await notifyModerationWarning(report.targetUserId, {
+        trigger = await notifyModerationWarning(report.targetUserId, {
           reason: notes,
         });
-        summary.notification = "ok";
         break;
       case "USER_SUSPENDED":
-        await notifyAccountSuspended(report.targetUserId, {
+        trigger = await notifyAccountSuspended(report.targetUserId, {
           reason: notes,
           suspendedUntil: transactional.banExpires ?? "",
           appointmentsCancelled: summary.cancellations?.engagementsCancelled,
         });
-        summary.notification = "ok";
         break;
       case "USER_BANNED":
-        await notifyAccountBanned(report.targetUserId, {
+        trigger = await notifyAccountBanned(report.targetUserId, {
           reason: notes,
           appointmentsCancelled: summary.cancellations?.engagementsCancelled,
         });
-        summary.notification = "ok";
         break;
       case "PROFILE_UNVERIFIED":
-        await notifyVerificationStatusChanged(report.targetUserId, {
+        trigger = await notifyVerificationStatusChanged(report.targetUserId, {
           status: "REJECTED",
           reason: notes,
           dashboardUrl: "/dashboard",
         });
-        summary.notification = "ok";
         break;
       case "NO_ACTION":
-        summary.notification = "skipped";
         break;
+    }
+    if (trigger === null) {
+      summary.notification = "skipped";
+    } else if (trigger.success) {
+      summary.notification = "ok";
+    } else {
+      summary.notification = "failed";
+      errors.push(`notification: ${errMsg(trigger.error ?? "trigger failed")}`);
     }
   } catch (error) {
     summary.notification = "failed";

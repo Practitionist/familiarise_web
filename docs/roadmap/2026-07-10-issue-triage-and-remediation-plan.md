@@ -4,6 +4,8 @@
 
 > This is a **planning document only**. No code is changed here. Each remediation item becomes its own follow-up PR into the feature branch.
 
+> **Status addendum (2026-07-11):** Wave 0 item 0.1 (**#693** moderation side-effects — listed below as the top launch blocker) has since been implemented in PR #974, which wires the full enforcement pipeline (ban/suspend flags, session and Stream revocation, bulk cancellation with refunds, earnings hold, notifications). Read the #693 rows in this snapshot as historical; the remaining moderation tails (unban/reinstate action, best-effort reconciliation path, Novu dashboard workflows) are named as follow-ups in `docs/decisions/2026-07-11-moderation-enforcement-and-peer-chat-block.md`. The rest of the snapshot is unmodified.
+
 ---
 
 ## 1. Headline numbers

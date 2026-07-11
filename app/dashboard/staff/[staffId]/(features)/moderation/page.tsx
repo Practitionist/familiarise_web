@@ -223,7 +223,11 @@ export default function ContentModerationPage() {
         },
       );
 
-      if (!response.ok) throw new Error("Failed to process action");
+      if (!response.ok) {
+        // surface the server's actionable message (400 validation, 409 resolved)
+        const body = await response.json().catch(() => null);
+        throw new Error(body?.error ?? "Failed to process action");
+      }
       return response.json() as Promise<{
         sideEffects?: {
           sessionsRevoked?: number;
@@ -255,10 +259,11 @@ export default function ContentModerationPage() {
       });
       queryClient.invalidateQueries({ queryKey: ["staff-moderation-stats"] });
     },
-    onError: () => {
+    onError: (error) => {
       toast({
         title: "Error",
-        description: "Failed to process action",
+        description:
+          error instanceof Error ? error.message : "Failed to process action",
         variant: "destructive",
       });
     },
