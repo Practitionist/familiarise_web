@@ -29,8 +29,8 @@ interface SessionTimelineProps {
   /** Rows rendered when collapsed (default 1 focus row). */
   className?: string;
   /**
-   * When true, show every session up front (detail pages for subscriptions /
-   * classes). Default collapses to a single focus row with an expander.
+   * When false, collapse to a single focus row with an expander.
+   * Defaults to true so multi-session plans show the full list.
    */
   defaultExpanded?: boolean;
 }
@@ -116,7 +116,7 @@ export function SessionTimeline({
   onJoinSession,
   joinWindowMs = CONSULTEE_JOIN_WINDOW_MS,
   className,
-  defaultExpanded = false,
+  defaultExpanded = true,
 }: SessionTimelineProps) {
   const [expanded, setExpanded] = useState(defaultExpanded);
   useEffect(() => {
