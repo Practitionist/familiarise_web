@@ -452,14 +452,35 @@ export default function ConsultantLayout({
   }, [session?.user]);
 
   // Full breadcrumb trail — every URL segment after the consultant id
-  // becomes a crumb; opaque record ids are dropped.
+  // becomes a crumb; opaque record ids are dropped. Parent crumbs keep an
+  // href so users can click back (e.g. Appointments from a detail page).
   const breadcrumbs = useMemo(() => {
-    return pathname
+    const parts = pathname
       .replace(basePath, "")
       .split("/")
-      .filter(Boolean)
-      .filter((seg) => !looksLikeRecordId(seg))
-      .map((seg) => PAGE_LABELS[seg] ?? seg);
+      .filter(Boolean);
+
+    const crumbs: { label: string; href?: string }[] = [];
+    let acc = basePath;
+
+    for (const seg of parts) {
+      acc = `${acc}/${seg}`;
+      if (looksLikeRecordId(seg)) continue;
+      crumbs.push({
+        label: PAGE_LABELS[seg] ?? seg,
+        href: acc,
+      });
+    }
+
+    return crumbs.map((crumb, index) => {
+      const isLast = index === crumbs.length - 1;
+      // Keep a link when the visible crumb is still a parent of the URL
+      // (happens when the last segment was an opaque id we stripped).
+      if (isLast && crumb.href && pathname === crumb.href) {
+        return { label: crumb.label };
+      }
+      return crumb;
+    });
   }, [pathname, basePath]);
 
   // Memoize StreamProvider children to prevent re-initialization on tab

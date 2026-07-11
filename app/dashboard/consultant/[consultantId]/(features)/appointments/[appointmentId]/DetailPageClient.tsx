@@ -17,21 +17,25 @@ export default function DetailPageClient({
   const adapter = useConsultantAppointmentsAdapter(consultantId);
 
   return (
-    <AppointmentDetailClient
-      appointmentId={appointmentId}
-      role="consultant"
-      adapter={adapter}
-      backHref={`/dashboard/consultant/${consultantId}/appointments`}
-      joinWindowMs={CONSULTANT_JOIN_WINDOW_MS}
-      renderDocuments={() => (
-        <AppointmentDocumentsList appointmentId={appointmentId} />
-      )}
-      participantsHref={(detail) => {
-        const appointment = detail.appointment as unknown as TAppointment;
-        return supportsParticipantManagement(appointment)
-          ? getParticipantManagementUrl(appointment, consultantId)
-          : null;
-      }}
-    />
+    <>
+      <AppointmentDetailClient
+        appointmentId={appointmentId}
+        role="consultant"
+        adapter={adapter}
+        backHref={`/dashboard/consultant/${consultantId}/appointments`}
+        joinWindowMs={CONSULTANT_JOIN_WINDOW_MS}
+        renderDocuments={() => (
+          <AppointmentDocumentsList appointmentId={appointmentId} />
+        )}
+        participantsHref={(detail) => {
+          const appointment = detail.appointment as unknown as TAppointment;
+          return supportsParticipantManagement(appointment)
+            ? getParticipantManagementUrl(appointment, consultantId)
+            : null;
+        }}
+      />
+      {/* Timings / schedule dialogs live on the adapter — must mount here too */}
+      {adapter.renderDialogs()}
+    </>
   );
 }

@@ -54,8 +54,8 @@ function Section({
   children: ReactNode;
 }) {
   return (
-    <div className="rounded-2xl border border-border bg-card shadow-sm p-4 sm:p-5">
-      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-3">
+    <div className="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6">
+      <p className="mb-3 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
         {title}
       </p>
       {children}
@@ -221,7 +221,11 @@ export function AppointmentDetailClient({
                 </p>
               )}
             </div>
-            <div className="flex items-center gap-2 shrink-0">
+          </div>
+
+          {/* Actions — full-width bar so buttons aren't cramped beside the title */}
+          {(action.kind !== "view" || overflow.length > 0) && (
+            <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-border pt-4">
               {action.kind !== "view" && (
                 <RowPrimaryAction action={action} size="default" />
               )}
@@ -242,7 +246,7 @@ export function AppointmentDetailClient({
                 </Button>
               ))}
             </div>
-          </div>
+          )}
 
           {vm.group && vm.group.total > 0 && (
             <div className="mt-4 pt-4 border-t border-border">
@@ -260,7 +264,7 @@ export function AppointmentDetailClient({
           )}
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+        <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
           {/* Sessions */}
           <Section title="Sessions">
             {vm.sessions.some((s) => !s.isTentative) ? (

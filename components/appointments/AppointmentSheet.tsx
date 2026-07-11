@@ -68,9 +68,9 @@ export function AppointmentSheet({
 
   return (
     <Sheet open onOpenChange={onOpenChange}>
-      <SheetContent className="flex w-full flex-col overflow-hidden sm:max-w-md max-h-[100dvh]">
-        <div className="min-h-0 flex-1 overflow-y-auto">
-        <SheetHeader className="text-left space-y-3">
+      <SheetContent className="flex w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-md max-h-[100dvh]">
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6 sm:py-6">
+        <SheetHeader className="space-y-3 p-0 text-left">
           <div className="flex items-start gap-3">
             <Avatar className="h-11 w-11 border border-border shrink-0">
               <AvatarImage
