@@ -10,13 +10,17 @@ interface ChatsTabProps {
   userRole: string | null;
 }
 
+/**
+ * Full-bleed chat surface: cancels PageScaffold padding and fills the
+ * content column under the context bar (and above the mobile tab bar).
+ */
 export function ChatsTab({ userId: _userId }: Readonly<ChatsTabProps>) {
   // Connection state from the lazy Stream provider: render the chat UI only
   // once the chat client is live; surface failures instead of a blank box.
   const { chatConnected, error, retryConnection } = useStreamConnection();
 
   return (
-    <div className="w-full overflow-hidden rounded-xl border border-border bg-card shadow-sm h-[calc(100dvh-8rem)] min-h-[min(280px,calc(100dvh-8rem))] max-h-[calc(100dvh-6rem)] sm:h-[calc(100dvh-9rem)] sm:min-h-[min(360px,calc(100dvh-9rem))]">
+    <div className="-m-4 h-[calc(100dvh-3.5rem-4rem)] overflow-hidden border-border bg-card sm:-m-6 md:h-[calc(100dvh-3.5rem)] lg:-m-8">
       {error ? (
         <ChatUnavailable description={error} onRetry={retryConnection} />
       ) : chatConnected ? (
