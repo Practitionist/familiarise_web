@@ -3,6 +3,7 @@
  * Handles webhook events for recording lifecycle
  */
 
+import { after } from "next/server";
 import prisma from "@/lib/prisma";
 import { RecordingStatus } from "@prisma/client";
 import { streamLogger } from "@/lib/stream-logger";
@@ -15,6 +16,7 @@ import {
   generateRecordingTitle,
   getEventAttendeeIds,
 } from "@/lib/stream/recording-utils";
+import { RecordingTransferService } from "@/lib/stream/recording-transfer-service";
 
 // Types for Stream webhook payloads
 export interface StreamRecordingStartedEvent {
@@ -309,6 +311,27 @@ export async function handleRecordingReady(
       durationInMinutes,
     });
 
+    // #899 — permanent-policy recordings start transferring at ready-time
+    // instead of waiting for the near-expiry window. The transfer is the heavy
+    // Stream-S3-download + Supabase-upload, so it runs via `after()` (not a bare
+    // `void`) — on serverless an unawaited promise is killed once the webhook
+    // response returns, which would drop the kick; `after()` keeps it alive past
+    // the response. The 6-hourly cron sweep still backstops any kick that dies
+    // with the function.
+    const storagePolicy =
+      appointment?.webinar?.webinarPlan?.recordingStoragePolicy ??
+      appointment?.class?.classPlan?.recordingStoragePolicy;
+    if (storagePolicy === "SUPABASE_PERMANENT") {
+      after(() =>
+        RecordingTransferService.queueRecordingTransfer(recording.id).catch(
+          (err) =>
+            streamLogger.error("Ready-time transfer kick threw", err, {
+              recordingId: recording.id,
+            }),
+        ),
+      );
+    }
+
     // Build recipient list — for webinar/class, include all enrolled attendees
     // (the meeting session slot only has the consultant's allocation slot users)
     const slotUserIds = meetingSession.slotOfAppointment.user?.map(
@@ -342,15 +365,19 @@ export async function handleRecordingReady(
           "Unknown Consultant";
       }
 
-      void notifyRecordingAvailable(userIds, {
-        appointmentType,
-        consultantName,
-        recordingUrl: url,
-        dashboardUrl: `${getAppUrl()}/dashboard`,
-      }).catch((err) =>
-        streamLogger.error("Failed to send recording notification", err, {
-          streamCallId,
-        }),
+      // Same serverless rationale as the transfer kick above: run the
+      // notification via `after()` so it survives the webhook response.
+      after(() =>
+        notifyRecordingAvailable(userIds, {
+          appointmentType,
+          consultantName,
+          recordingUrl: url,
+          dashboardUrl: `${getAppUrl()}/dashboard`,
+        }).catch((err) =>
+          streamLogger.error("Failed to send recording notification", err, {
+            streamCallId,
+          }),
+        ),
       );
     }
   } catch (error) {
