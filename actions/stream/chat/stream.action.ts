@@ -7,6 +7,8 @@ import {
   isStreamConfigured,
 } from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
+import { getSession } from "@/lib/auth-server";
+import { isPrivileged } from "@/lib/auth-helpers";
 import * as Sentry from "@sentry/nextjs";
 
 // Token expiry for both chat and video (1 hour)
@@ -14,6 +16,21 @@ const TOKEN_EXPIRATION_SECONDS = 3600;
 
 // Input validation
 const userIdSchema = z.string().min(1, "User ID is required");
+
+/**
+ * Tokens may only be minted for the caller's own userId (staff/admin may mint
+ * for anyone) — Stream's server-side API skips all permission checks, so this
+ * session bind is the only gate against identity spoofing (#899).
+ */
+async function assertCanMintToken(forUserId: string): Promise<void> {
+  const session = await getSession();
+  if (!session?.user?.id) {
+    throw new Error("Unauthorized: sign in to request a Stream token");
+  }
+  if (session.user.id !== forUserId && !isPrivileged(session.user.role)) {
+    throw new Error("Forbidden: cannot mint a token for another user");
+  }
+}
 
 /**
  * Generate a video call token for a user
@@ -24,6 +41,7 @@ const userIdSchema = z.string().min(1, "User ID is required");
 export async function tokenProvider(userId: string): Promise<string> {
   // Validate input
   const validatedUserId = userIdSchema.parse(userId);
+  await assertCanMintToken(validatedUserId);
 
   if (!isStreamConfigured()) {
     streamLogger.error("Stream not configured for video token generation");
@@ -54,6 +72,7 @@ export async function tokenProvider(userId: string): Promise<string> {
 export async function chatTokenProvider(userId: string): Promise<string> {
   // Validate input
   const validatedUserId = userIdSchema.parse(userId);
+  await assertCanMintToken(validatedUserId);
 
   if (!isStreamConfigured()) {
     streamLogger.error("Stream not configured for chat token generation");

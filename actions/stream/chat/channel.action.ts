@@ -98,6 +98,20 @@ export async function createChannel(input: {
 
   const channelData = await channel.create();
 
+  // Channel-scoped moderation for the host replaces the old global-admin
+  // Stream role (#899). Non-fatal: chat still works without the grant.
+  try {
+    await channel.assignRoles([
+      { user_id: validated.createdById, channel_role: "channel_moderator" },
+    ]);
+  } catch (error) {
+    streamLogger.warn("Failed to grant channel_moderator to channel creator", {
+      channelId: validated.channelId,
+      createdById: validated.createdById,
+      error,
+    });
+  }
+
   // Cache the channel existence
   markChannelExists(validated.channelType, validated.channelId);
 
@@ -746,6 +760,20 @@ export async function createCollaboratorChannel(
   // Idempotent create — no-op if channel already exists
   await channel.create();
   markChannelExists("messaging", channelId);
+
+  // Host moderates their own collab channel — this path bypasses
+  // createChannel, so the #899 channel-scoped grant is repeated here.
+  try {
+    await channel.assignRoles([
+      { user_id: hostUserId, channel_role: "channel_moderator" },
+    ]);
+  } catch (error) {
+    streamLogger.warn("Failed to grant channel_moderator to collab host", {
+      channelId,
+      hostUserId,
+      error,
+    });
+  }
 
   // Query current channel membership for diffing
   const channelData = await channel.query();
