@@ -51,9 +51,11 @@ export interface NoShowResult {
 
 export async function detectConsultantNoShows(): Promise<NoShowResult> {
   // #476 — locked at the core so every entry shares one mutual exclusion.
-  // Fail-open: the CAS claim + refundPayment's refundable-balance guard already
-  // make the work repeat-safe; the lock is belt-and-braces against overlap.
-  return withCronLock("detect-consultant-no-shows", { failMode: "open" }, () =>
+  // Fail-closed: this is a money job (auto-refund), so per with-cron-lock.ts it
+  // refuses to run without a real Redis lock rather than risk a silent unlocked
+  // double-run. The CAS claim + refundPayment's refundable-balance guard remain
+  // the correctness backstop; the lock is the mutual-exclusion layer on top.
+  return withCronLock("detect-consultant-no-shows", { failMode: "closed" }, () =>
     detectConsultantNoShowsUnlocked(),
   );
 }
@@ -125,8 +127,11 @@ async function detectConsultantNoShowsUnlocked(): Promise<NoShowResult> {
       const consultantUserId =
         consultation.consultationPlan?.consultantProfile?.userId;
       const consulteeUserId = consultation.requestedBy?.userId;
-      if (!consultantUserId || !consulteeUserId) {
-        // Cannot attribute presence without both user ids — skip, don't guess.
+      const appointmentId = consultation.appointment?.id;
+      if (!consultantUserId || !consulteeUserId || !appointmentId) {
+        // Cannot attribute presence without both user ids, and an undefined
+        // appointmentId would drop the where-filter on the slot updateMany
+        // below (Prisma ignores undefined) — skip, don't guess.
         continue;
       }
 
@@ -179,7 +184,7 @@ async function detectConsultantNoShowsUnlocked(): Promise<NoShowResult> {
       // slots the auto-complete cron left SCHEDULED/UNVERIFIED.
       await prisma.slotOfAppointment.updateMany({
         where: {
-          appointmentId: consultation.appointment?.id,
+          appointmentId,
           completionStatus: {
             in: [SlotCompletionStatus.SCHEDULED, SlotCompletionStatus.UNVERIFIED],
           },
@@ -193,7 +198,7 @@ async function detectConsultantNoShowsUnlocked(): Promise<NoShowResult> {
       // (the cancellation stands) rather than silently swallowing — same doctrine
       // as the manual cancel route.
       const paidPayment = consultation.appointment?.payment?.find(
-        (p) => p.paymentStatus === PaymentStatus.SUCCEEDED && p.amount > 0n,
+        (p) => p.paymentStatus === PaymentStatus.SUCCEEDED && p.amount > 0,
       );
       let refundedPaise = 0;
       if (paidPayment) {
@@ -228,7 +233,7 @@ async function detectConsultantNoShowsUnlocked(): Promise<NoShowResult> {
       void notifyAppointmentCancelled(
         [consultantUserId, consulteeUserId],
         {
-          appointmentId: consultation.appointment?.id,
+          appointmentId,
           appointmentType: "consultation",
           consultantName,
           consulteeName,
