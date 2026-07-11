@@ -112,7 +112,7 @@ export class SubscriptionService {
         topics: plan.topics ?? [],
         trialEnabled: plan.trialEnabled ?? false,
         trialDurationMinutes: plan.trialDurationMinutes ?? 30,
-        trialPriceInPaise: plan.trialPriceInPaise ?? 10000,
+        trialPriceInPaise: plan.trialPriceInPaise ?? 0,
         subscriptionContents: plan.subscriptionContents ?? [],
         consultantProfileId: consultantId,
         ...(isUpdate && plan.id ? { id: plan.id } : {}),

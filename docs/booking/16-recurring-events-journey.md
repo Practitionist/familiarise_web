@@ -62,7 +62,7 @@ Both share the same core flow: **Plan Creation -> Checkout -> Payment -> Slot Al
 | `sessionDurationInHours` | Float (0.5-4) | Duration of each individual session |
 | `trialEnabled` | Boolean | Whether to offer a trial first |
 | `trialDurationMinutes` | 30 or 60 | Trial session length |
-| `trialPriceInPaise` | Int (paise) | Trial price (₹100 default; 0 = free) |
+| `trialPriceInPaise` | Int (paise) | Trial price (0 = free, the default until paid-trial checkout ships) |
 | `subscriptionContents[]` | Array | Session-by-session curriculum (title, description, order) |
 | `topics[]` | Array | Topic tags for discoverability |
 | `learningOutcomes[]` | Array | What the consultee will learn |

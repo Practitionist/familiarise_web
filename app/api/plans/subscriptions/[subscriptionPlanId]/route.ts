@@ -175,7 +175,7 @@ export async function PUT(
       const floor = await getMinTrialPriceInPaise();
       if (effectivePrice < floor) {
         return NextResponse.json(
-          { error: `Trial price must be at least ${floor} paise` },
+          { error: `Trial price must be at least ₹${floor / 100}` },
           { status: 400 },
         );
       }

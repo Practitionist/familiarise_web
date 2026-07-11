@@ -176,7 +176,7 @@ sequenceDiagram
 
 | Aspect                | Trial                                                             | Consultation                                                  |
 | --------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------- |
-| **Payment**           | Per plan's `trialPriceInPaise` (₹100 default, ₹0 allowed)         | Required (via checkout)                                       |
+| **Payment**           | Per plan's `trialPriceInPaise` (0 = free, the default until paid-trial checkout ships)         | Required (via checkout)                                       |
 | **Duration**          | Fixed per plan (`trialDurationMinutes`, default 30 min)           | Variable (`durationInHours`, 0.5-4h)                          |
 | **Lock type**         | `lockTrialSlot()` -- key: `trial-slot-booking:{profileId}:{time}` | `lockSlotBooking()` -- key: `slot-booking:{profileId}:{time}` |
 | **Uniqueness**        | One per consultee-consultant pair                                 | Multiple allowed                                              |

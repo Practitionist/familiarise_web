@@ -111,9 +111,10 @@ export function EventPlannerForSubscription({
   const [trialDurationMinutes, setTrialDurationMinutes] = useState(
     initialData?.subscriptionPlan?.trialDurationMinutes ?? 30,
   );
-  // Rupee text input; paise derived below. Defaults paid (₹100).
+  // Rupee text input; paise derived below. Free by default until paid-trial
+  // checkout is wired (the wiring PR flips this to ₹100 with the schema).
   const [trialPriceInput, setTrialPriceInput] = useState(
-    String((initialData?.subscriptionPlan?.trialPriceInPaise ?? 10000) / 100),
+    String((initialData?.subscriptionPlan?.trialPriceInPaise ?? 0) / 100),
   );
   // ₹0 is allowed but must be an explicit choice, not a default slide-through.
   const [freeTrialAcknowledged, setFreeTrialAcknowledged] = useState(false);
@@ -674,8 +675,12 @@ export function EventPlannerForSubscription({
                           Charging even ₹100 filters for consultees who are
                           serious about subscribing.
                         </p>
-                        <label className="flex items-start gap-2 pt-1 text-sm font-medium text-amber-900 dark:text-amber-300">
+                        <label
+                          htmlFor="free-trial-acknowledged"
+                          className="flex items-start gap-2 pt-1 text-sm font-medium text-amber-900 dark:text-amber-300"
+                        >
                           <Checkbox
+                            id="free-trial-acknowledged"
                             checked={freeTrialAcknowledged}
                             onCheckedChange={(checked) =>
                               setFreeTrialAcknowledged(checked === true)
