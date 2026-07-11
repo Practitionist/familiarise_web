@@ -32,6 +32,29 @@ const createChannelSchema = z.object({
 });
 
 /**
+ * Best-effort channel-scoped `channel_moderator` grant (#899). Non-fatal: chat
+ * still works without it. Shared by createChannel and the collaborator-channel
+ * path so the grant contract lives in one place.
+ */
+async function grantChannelModerator(
+  channel: ReturnType<ReturnType<typeof getStreamChatClient>["channel"]>,
+  userId: string,
+  channelId: string,
+): Promise<void> {
+  try {
+    await channel.assignRoles([
+      { user_id: userId, channel_role: "channel_moderator" },
+    ]);
+  } catch (error) {
+    streamLogger.warn("Failed to grant channel_moderator to channel host", {
+      channelId,
+      userId,
+      error,
+    });
+  }
+}
+
+/**
  * Generic function to create a channel
  * Validates inputs and handles member deduplication
  */
@@ -98,18 +121,21 @@ export async function createChannel(input: {
 
   const channelData = await channel.create();
 
-  // Channel-scoped moderation for the host replaces the old global-admin
-  // Stream role (#899). Non-fatal: chat still works without the grant.
-  try {
-    await channel.assignRoles([
-      { user_id: validated.createdById, channel_role: "channel_moderator" },
-    ]);
-  } catch (error) {
-    streamLogger.warn("Failed to grant channel_moderator to channel creator", {
-      channelId: validated.channelId,
-      createdById: validated.createdById,
-      error,
-    });
+  // Channel-scoped moderation replaces the old global-admin Stream role
+  // (#899). Only the channel HOST may moderate — never an arbitrary creator:
+  //  - team channels (webinar/class): the creator IS the consultant host.
+  //  - messaging channels: only consultation/subscription DMs carry a
+  //    `dm_consultant_user_id`; grant moderation to that consultant. Peer DMs
+  //    (createDirectMessageChannel) have no host, so `moderatorId` is
+  //    undefined and no grant is issued — this prevents a consultee who
+  //    opens a 1:1 DM from being able to mute/remove the consultant (#981).
+  const moderatorId =
+    validated.channelType === "team"
+      ? validated.createdById
+      : (mergedAdditionalData.dm_consultant_user_id as string | undefined);
+
+  if (moderatorId) {
+    await grantChannelModerator(channel, moderatorId, validated.channelId);
   }
 
   // Cache the channel existence
@@ -763,17 +789,7 @@ export async function createCollaboratorChannel(
 
   // Host moderates their own collab channel — this path bypasses
   // createChannel, so the #899 channel-scoped grant is repeated here.
-  try {
-    await channel.assignRoles([
-      { user_id: hostUserId, channel_role: "channel_moderator" },
-    ]);
-  } catch (error) {
-    streamLogger.warn("Failed to grant channel_moderator to collab host", {
-      channelId,
-      hostUserId,
-      error,
-    });
-  }
+  await grantChannelModerator(channel, hostUserId, channelId);
 
   // Query current channel membership for diffing
   const channelData = await channel.query();

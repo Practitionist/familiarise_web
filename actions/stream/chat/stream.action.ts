@@ -23,7 +23,9 @@ const userIdSchema = z.string().min(1, "User ID is required");
  * session bind is the only gate against identity spoofing (#899).
  */
 async function assertCanMintToken(forUserId: string): Promise<void> {
-  const session = await getSession();
+  // Bypass the cookie-session cache so a just-demoted staff/admin can't keep
+  // minting cross-user tokens until the cache expires (#899).
+  const session = await getSession(true);
   if (!session?.user?.id) {
     throw new Error("Unauthorized: sign in to request a Stream token");
   }
