@@ -2021,12 +2021,13 @@ export async function handleCheckout(
       }
       programAssignmentId = assignment.id;
 
-      // ADR 18 — future curated-panel hook. When ProgramConsultantAllowlist
-      // enforcement ships, it slots HERE: rows exist for the resolved
-      // Program ⇒ the booked plan's consultant must be listed (needs the
-      // consultant id, first fetched in getPlanDataForLock below). Absent
-      // rows keep the network open — sponsors fund any marketplace
-      // consultant by design.
+      // ADR 18 — future curated-panel enforcement. The Program is resolved
+      // HERE, but the authoritative check belongs inside
+      // revalidateInsideLock, where the plan's consultant is already loaded
+      // and the distributed lock closes the TOCTOU window: allowlist rows
+      // exist for the resolved Program ⇒ the booked plan's consultant must
+      // be listed. Absent rows keep the network open — sponsors fund any
+      // marketplace consultant by design.
     }
   }
 
