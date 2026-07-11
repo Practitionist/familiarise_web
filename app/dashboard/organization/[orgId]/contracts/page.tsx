@@ -797,7 +797,7 @@ export default function OrgContractsPage({
   const { orgId } = use(params);
   const { isAtLeast } = useOrgRole(orgId);
   const { allowed } = useRequireOrgAccess(orgId, {
-    minRole: "MAINTAINER",
+    permission: "contracts.read",
     canSponsor: true,
   });
 

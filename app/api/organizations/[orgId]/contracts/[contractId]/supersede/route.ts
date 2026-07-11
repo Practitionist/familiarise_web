@@ -39,7 +39,7 @@ export async function POST(
 ) {
   const { orgId, contractId } = await params;
   const access = await requireOrgAccess(orgId, {
-    minimumRole: "OWNER",
+    permission: "contracts.manage",
     canSponsor: true,
   });
   if (access.error) return access.error;

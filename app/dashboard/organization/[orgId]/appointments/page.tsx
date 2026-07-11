@@ -20,7 +20,9 @@ export default async function OrgAppointmentsPage({
 
   // Mirror GET /api/organizations/[orgId]/appointments (MANAGER) — the SSR
   // prefetch reads org appointments directly, so guard before dehydrating.
-  const access = await requireOrgAccess(orgId, "MANAGER");
+  // operations.read admits SUPPORT — the L1/L2 carve-out the sidebar
+  // promised but the old MANAGER floor defeated.
+  const access = await requireOrgAccess(orgId, { permission: "operations.read" });
   if (access.error) redirect(`/dashboard/organization/${orgId}/home`);
 
   const queryClient = new QueryClient();

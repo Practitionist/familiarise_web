@@ -144,7 +144,7 @@ export async function PATCH(
 ) {
   const { orgId, programId } = await params;
   const access = await requireOrgAccess(orgId, {
-    minimumRole: "MAINTAINER",
+    permission: "programs.manage",
     canSponsor: true,
   });
   if (access.error) return access.error;
@@ -438,7 +438,7 @@ export async function DELETE(
 ) {
   const { orgId, programId } = await params;
   const access = await requireOrgAccess(orgId, {
-    minimumRole: "MAINTAINER",
+    permission: "programs.manage",
     canSponsor: true,
   });
   if (access.error) return access.error;

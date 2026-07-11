@@ -57,7 +57,7 @@ export async function GET(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, "MANAGER");
+  const access = await requireOrgAccess(orgId, { permission: "consent.read" });
   if (access.error) return access.error;
 
   const url = new URL(req.url);
@@ -97,7 +97,7 @@ export async function POST(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, "MANAGER");
+  const access = await requireOrgAccess(orgId, { permission: "consent.manage" });
   if (access.error) return access.error;
 
   const raw = await req.json().catch(() => null);
@@ -216,7 +216,7 @@ export async function DELETE(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, "MANAGER");
+  const access = await requireOrgAccess(orgId, { permission: "consent.manage" });
   if (access.error) return access.error;
 
   const url = new URL(req.url);

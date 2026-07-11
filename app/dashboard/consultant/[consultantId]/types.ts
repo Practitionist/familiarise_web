@@ -1,4 +1,3 @@
-import type React from "react";
 import { TConsultantProfile } from "@/types/consultant";
 import { TAppointment } from "@/types/appointment";
 
@@ -84,45 +83,10 @@ export interface IApproval {
   time: string;
 }
 
-// Base props for components that need badge styling
-export interface WithBadgeStyle {
-  getBadgeStyle: (badge: string) => string;
-}
-
 // Props for each tab component
 export interface HomeTabProps {
   appointments: TAppointment[];
   onUpdate?: () => void;
-}
-
-// Trial session type for appointments tab
-export interface ScheduledTrial {
-  id: string;
-  status: string;
-  notes: string | null;
-  requestedAt: string;
-  consulteeProfile: {
-    id: string;
-    user: {
-      id: string;
-      name: string;
-      email: string;
-      image: string | null;
-    };
-  };
-  subscriptionPlan: {
-    id: string;
-    title: string;
-    freeTrialDurationMinutes: number;
-  };
-  appointment: {
-    id: string;
-    slotsOfAppointment: Array<{
-      id: string;
-      startsAt: string;
-      endsAt: string;
-    }>;
-  } | null;
 }
 
 export interface UnscheduledClass {
@@ -169,28 +133,6 @@ export interface UnscheduledWebinar {
  * renders its own skeleton and inline retry so one slow or failed query
  * can't blank the whole appointments page.
  */
-export interface SectionQueryState {
-  isLoading: boolean;
-  isError: boolean;
-  onRetry: () => void;
-}
-
-export interface AppointmentsTabProps {
-  appointments: TAppointment[];
-  scheduledTrials?: ScheduledTrial[];
-  trialsState?: SectionQueryState;
-  consultantId?: string;
-  onUpdate?: () => void;
-  unscheduledClasses?: UnscheduledClass[];
-  unscheduledClassesState?: SectionQueryState;
-  unscheduledWebinars?: UnscheduledWebinar[];
-  unscheduledWebinarsState?: SectionQueryState;
-  /** Optional right-aligned element rendered next to the "All Appointments"
-   *  header — used by the page wrapper to mount the OrgContextFilter
-   *  dropdown inline instead of stacking it above the card. */
-  headerSlot?: React.ReactNode;
-}
-
 export interface RequestsTabProps {
   approvals: IApproval[];
   onUpdate?: () => void;
@@ -247,55 +189,9 @@ export interface DocumentsTabProps {
   onTypeFilterChange: (type: string) => void;
 }
 
-// Props for reusable components
-export interface AppointmentCardProps {
-  appointment: TAppointment;
-  badgeStyles: BadgeStyleMap;
-}
-
 export interface ClientActivityProps {
   activities: IActivity[];
 }
-
-// Utility type for badge styles
-export type BadgeStyleMap = { [key: string]: string };
-
-// Badge styles for the DERIVED timing statuses produced by
-// getAppointmentStatus() ("Today", "Starting soon", "In 3 days", …).
-// These are relative-proximity labels, not AppointmentStatus enum values,
-// so they can't live in lib/labels/session-labels.ts — but they wear the
-// same pill conventions (bg-*-100 text-*-900 border-*-200) so every badge
-// across the dashboard reads as one system. Proximity ladder: red (now) →
-// orange (imminent / needs action) → amber (today-ish) → emerald (soon) →
-// zinc (far / terminal).
-export const BADGE_STYLES: BadgeStyleMap = {
-  Completed: "bg-green-100 text-green-900 border-green-200",
-  Cancelled: "bg-zinc-100 text-zinc-600 border-zinc-200",
-  "In Progress": "bg-blue-100 text-blue-900 border-blue-200",
-  "Starting soon": "bg-orange-100 text-orange-900 border-orange-200",
-  "Meeting in 5 min": "bg-red-100 text-red-900 border-red-200",
-  Today: "bg-amber-100 text-amber-900 border-amber-200",
-  Tomorrow: "bg-emerald-100 text-emerald-900 border-emerald-200",
-  "In week": "bg-emerald-100 text-emerald-900 border-emerald-200",
-  "In month": "bg-zinc-100 text-zinc-700 border-zinc-200",
-  "In year": "bg-zinc-100 text-zinc-700 border-zinc-200",
-  "Not Scheduled": "bg-orange-100 text-orange-900 border-orange-200",
-  default: "bg-zinc-100 text-zinc-600 border-zinc-200",
-};
-
-/**
- * Gets the badge style for a status string with pattern matching.
- * Handles dynamic statuses like "In 3 days", "In 2 weeks" that don't
- * have exact keys in BADGE_STYLES.
- */
-export const getBadgeStyle = (status: string): string => {
-  if (BADGE_STYLES[status]) return BADGE_STYLES[status];
-  if (status.startsWith("In ") && status.includes("day"))
-    return "bg-emerald-100 text-emerald-900 border-emerald-200";
-  if (status.startsWith("In ") && status.includes("week"))
-    return "bg-emerald-100 text-emerald-900 border-emerald-200";
-  return BADGE_STYLES.default;
-};
 
 // Enum for section names
 export enum DashboardSection {

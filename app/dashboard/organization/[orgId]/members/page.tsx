@@ -1,10 +1,8 @@
 import { HydrationBoundary, QueryClient, dehydrate } from "@tanstack/react-query";
 import { redirect } from "next/navigation";
 import { requireOrgAccess } from "@/lib/auth-helpers";
-import {
-  canSeeOperatorSurface,
-  canSeeFinanceSurface,
-} from "@/lib/auth/role-ranks";
+
+
 import { MembersPageClient } from "./MembersPageClient";
 import { getOrgMembers } from "@/lib/data/org-members";
 
@@ -15,15 +13,11 @@ export default async function OrgMembersPage({
 }) {
   const { orgId } = await params;
 
-  // Mirror GET /api/organizations/[orgId]/members — bare membership + the
-  // operator-or-finance surface floor (#777). The roster is operational, not
-  // member-facing, so guard before the SSR prefetch dehydrates it.
-  const access = await requireOrgAccess(orgId);
-  if (
-    access.error ||
-    (!canSeeOperatorSurface(access.member.role) &&
-      !canSeeFinanceSurface(access.member.role))
-  ) {
+  // members.read — the roster is an operator surface (BILLING_ADMIN is
+  // operator-blind by role design; the old `|| finance` branch let it in).
+  // Guard before the SSR prefetch dehydrates the roster.
+  const access = await requireOrgAccess(orgId, { permission: "members.read" });
+  if (access.error) {
     redirect(`/dashboard/organization/${orgId}/home`);
   }
 

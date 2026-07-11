@@ -269,6 +269,10 @@ export async function authorizeEventAccess(
 // ============================================================================
 
 import { isAtLeastRole } from "@/lib/auth/role-ranks";
+import {
+  hasOrgPermission,
+  type OrgSurface,
+} from "@/lib/auth/org-permissions";
 
 export type OrgAccessGrant = {
   session: Session;
@@ -290,6 +294,14 @@ export type OrgAccessGrant = {
  */
 export type OrgCapabilityGate = {
   minimumRole?: MemberRole;
+  /**
+   * Surface grant from the org permission matrix
+   * (lib/auth/org-permissions.ts) — the preferred gate for surface access.
+   * Unlike `minimumRole` it expresses the operations/finance track split
+   * (SUPPORT reads operations; BILLING_ADMIN is operator-blind) that the
+   * rank ladder cannot. Both may be set; both must pass.
+   */
+  permission?: OrgSurface;
   canSponsor?: true;
   canHost?: true;
   fundingSource?: FundingSource;
@@ -321,8 +333,14 @@ export async function requireOrgAccess(
 ): Promise<({ error?: never } & OrgAccessGrant) | { error: NextResponse }> {
   const options: OrgCapabilityGate =
     typeof opts === "string" ? { minimumRole: opts } : (opts ?? {});
-  const { minimumRole, canSponsor, canHost, fundingSource, requireActive } =
-    options;
+  const {
+    minimumRole,
+    permission,
+    canSponsor,
+    canHost,
+    fundingSource,
+    requireActive,
+  } = options;
 
   const auth = await requireApiAuth();
   if (auth.error) return { error: auth.error };
@@ -457,6 +475,15 @@ export async function requireOrgAccess(
     return {
       error: NextResponse.json(
         { error: `Forbidden — ${minimumRole} or higher required` },
+        { status: 403 },
+      ),
+    };
+  }
+
+  if (permission && !hasOrgPermission(member.role, permission)) {
+    return {
+      error: NextResponse.json(
+        { error: `Forbidden — your role does not grant ${permission}` },
         { status: 403 },
       ),
     };
