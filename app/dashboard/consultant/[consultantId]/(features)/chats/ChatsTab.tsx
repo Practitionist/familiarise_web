@@ -19,7 +19,7 @@ export function ChatsTab({ userId: _userId }: Readonly<ChatsTabProps>) {
   return (
     <>
       <DashboardHeader title="Chats" subtitle="Messages and conversations" />
-      <div className="mt-4 w-full bg-card rounded-xl border border-border shadow-sm overflow-hidden h-[calc(100vh-15rem)] min-h-[400px]">
+      <div className="mt-4 w-full overflow-hidden rounded-xl border border-border bg-card shadow-sm h-[calc(100dvh-14rem)] min-h-[280px] max-h-[calc(100dvh-10rem)] sm:h-[calc(100dvh-15rem)] sm:min-h-[360px]">
         {error ? (
           <ChatUnavailable description={error} onRetry={retryConnection} />
         ) : chatConnected ? (

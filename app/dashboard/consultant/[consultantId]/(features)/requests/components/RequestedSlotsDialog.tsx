@@ -195,7 +195,7 @@ export function RequestedSlotsDialog({
             <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
               <span>📊</span> Validation Summary
             </h3>
-            <div className="grid grid-cols-2 gap-3 text-sm">
+            <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
               <div className="flex items-center justify-between">
                 <span className="text-gray-600">Total Slots:</span>
                 <span className="font-semibold text-gray-900">
@@ -426,40 +426,42 @@ export function RequestedSlotsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
-        <DialogHeader>
+      <DialogContent className="max-w-2xl max-h-[90dvh] overflow-hidden flex flex-col">
+        <DialogHeader className="shrink-0">
           <DialogTitle>Confirm Slot Allocation</DialogTitle>
           <DialogDescription>
             Review requested slots before allocation
           </DialogDescription>
         </DialogHeader>
 
-        {/* Reschedule indicator */}
-        {hasReschedule && (
-          <div className="mb-4">
-            {isFullReschedule ? (
-              <div className="flex items-center gap-2 text-sm font-medium text-blue-600 bg-blue-50 px-3 py-2 rounded-md border border-blue-200">
-                <RefreshCw className="h-4 w-4" />
-                <span>
-                  Full Reschedule - All {totalCount} session
-                  {totalCount !== 1 ? "s" : ""} need new times
-                </span>
-              </div>
-            ) : (
-              <div className="flex items-center gap-2 text-sm font-medium text-amber-600 bg-amber-50 px-3 py-2 rounded-md border border-amber-200">
-                <AlertTriangle className="h-4 w-4" />
-                <span>
-                  Partial Reschedule - {tentativeCount} of {totalCount} session
-                  {tentativeCount !== 1 ? "s" : ""} need new times
-                </span>
-              </div>
-            )}
-          </div>
-        )}
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          {/* Reschedule indicator */}
+          {hasReschedule && (
+            <div className="mb-4">
+              {isFullReschedule ? (
+                <div className="flex items-center gap-2 text-sm font-medium text-blue-600 bg-blue-50 px-3 py-2 rounded-md border border-blue-200">
+                  <RefreshCw className="h-4 w-4" />
+                  <span>
+                    Full Reschedule - All {totalCount} session
+                    {totalCount !== 1 ? "s" : ""} need new times
+                  </span>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 text-sm font-medium text-amber-600 bg-amber-50 px-3 py-2 rounded-md border border-amber-200">
+                  <AlertTriangle className="h-4 w-4" />
+                  <span>
+                    Partial Reschedule - {tentativeCount} of {totalCount}{" "}
+                    session{tentativeCount !== 1 ? "s" : ""} need new times
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
 
-        {renderDialogContent()}
+          {renderDialogContent()}
+        </div>
 
-        <DialogFooter className="gap-2">
+        <DialogFooter className="shrink-0 gap-2 border-t pt-4">
           <Button variant="outline" onClick={onCancel} disabled={loading}>
             Cancel
           </Button>

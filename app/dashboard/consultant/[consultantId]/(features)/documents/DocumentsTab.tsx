@@ -654,8 +654,8 @@ export function DocumentsTab({
 
       {/* Review Dialog */}
       <ResponsiveModal open={reviewDialogOpen} onOpenChange={setReviewDialogOpen}>
-        <ResponsiveModalContent className="sm:max-w-[425px]">
-          <ResponsiveModalHeader>
+        <ResponsiveModalContent className="sm:max-w-[425px] max-h-[90dvh] overflow-hidden flex flex-col">
+          <ResponsiveModalHeader className="shrink-0">
             <ResponsiveModalTitle>Review Document</ResponsiveModalTitle>
             <ResponsiveModalDescription>
               Update the review status and add notes for{" "}
@@ -736,8 +736,8 @@ export function DocumentsTab({
           }
         }}
       >
-        <ResponsiveModalContent className="sm:max-w-[500px]">
-          <ResponsiveModalHeader>
+        <ResponsiveModalContent className="sm:max-w-[500px] max-h-[90dvh] overflow-hidden flex flex-col">
+          <ResponsiveModalHeader className="shrink-0">
             <ResponsiveModalTitle>
               Review {selectedIds.size} Documents
             </ResponsiveModalTitle>

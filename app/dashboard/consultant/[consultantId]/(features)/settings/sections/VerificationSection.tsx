@@ -361,11 +361,11 @@ export function VerificationSection({
 
       {/* Verification Resubmission Modal */}
       <ResponsiveModal open={isModalOpen} onOpenChange={setIsModalOpen}>
-        <ResponsiveModalContent className="max-w-2xl max-h-[90vh] overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
-          <ResponsiveModalHeader>
+        <ResponsiveModalContent className="max-w-2xl max-h-[90dvh] overflow-hidden flex flex-col">
+          <ResponsiveModalHeader className="shrink-0">
             <ResponsiveModalTitle>Verification Details</ResponsiveModalTitle>
           </ResponsiveModalHeader>
-          <div className="mt-4">
+          <div className="mt-4 min-h-0 flex-1 overflow-y-auto px-1">
             <ConsultantVerificationForm
               onNext={handleVerificationSubmit}
               onBack={() => setIsModalOpen(false)}

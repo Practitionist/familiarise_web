@@ -742,7 +742,7 @@ export function RequestSlotAllocationTab({
 
         {/* Single Allocation Dialog - moved outside map loop to prevent multiple dialogs */}
         <ResponsiveModal open={dialogOpen} onOpenChange={setDialogOpen}>
-          <ResponsiveModalContent className="max-w-[95vw] w-[1400px] max-h-[90dvh] overflow-hidden flex flex-col">
+          <ResponsiveModalContent className="max-w-[95vw] w-full lg:max-w-[1400px] max-h-[90dvh] overflow-hidden flex flex-col">
             <ResponsiveModalHeader className="shrink-0">
               <ResponsiveModalTitle>Allocate Slots</ResponsiveModalTitle>
               <ResponsiveModalDescription asChild>

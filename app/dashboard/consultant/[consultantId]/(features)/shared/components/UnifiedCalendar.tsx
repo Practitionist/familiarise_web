@@ -1184,7 +1184,7 @@ export function UnifiedCalendar({
       )}
 
       {/* Header */}
-      <div className="shrink-0 flex justify-between items-center gap-4">
+      <div className="shrink-0 flex flex-wrap items-center justify-between gap-2 sm:gap-4">
         <div className="flex gap-2">
           <Button
             variant={view === "week" ? "default" : "outline"}
@@ -1216,7 +1216,7 @@ export function UnifiedCalendar({
           >
             <ChevronLeft className="h-4 w-4" />
           </Button>
-          <div className="text-lg font-bold text-center min-w-[150px]">
+          <div className="min-w-0 text-center text-sm font-bold sm:min-w-[150px] sm:text-lg">
             {view === "week"
               ? `${format(startOfWeek(currentDate), "MMM d")} - ${format(endOfWeek(currentDate), "MMM d, yyyy")}`
               : format(currentDate, "MMMM yyyy")}
@@ -1247,7 +1247,7 @@ export function UnifiedCalendar({
             Clear Selection
           </Button>
         ) : (
-          <div className="w-20"></div>
+          <div className="hidden w-20 sm:block"></div>
         )}
       </div>
 
@@ -1322,8 +1322,8 @@ export function UnifiedCalendar({
       )}
 
       {/* Footer */}
-      <div className="shrink-0 flex items-center justify-between gap-4">
-        <div className="flex items-center gap-4">
+      <div className="shrink-0 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-4">
           <div className="text-sm">
             {(() => {
               try {
@@ -1405,7 +1405,7 @@ export function UnifiedCalendar({
 
       {/* Allocation Buttons - Bottom */}
       {showAllocationButtons && mode === "allocate" && (
-        <div className="shrink-0 flex justify-end gap-2 mt-2">
+        <div className="mt-2 flex shrink-0 flex-wrap justify-end gap-2">
           {onClose && (
             <Button
               variant="outline"
