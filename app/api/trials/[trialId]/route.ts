@@ -293,7 +293,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         } else {
           startTime = new Date(scheduledTime!);
           const durationMinutes =
-            existingTrial.subscriptionPlan.freeTrialDurationMinutes;
+            existingTrial.subscriptionPlan.trialDurationMinutes;
           endTime = new Date(startTime.getTime() + durationMinutes * 60 * 1000);
         }
 

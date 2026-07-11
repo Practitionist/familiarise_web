@@ -4,6 +4,7 @@ import { SubscriptionPlanSchema } from "@/schemas/plans";
 import { findOrCreateTopics, transformTopicsToStrings } from "@/lib/topics";
 import { SlotCalculationService } from "@/utils/slotAllocation/SlotCalculationService";
 import { marketplaceVisibilityWhere } from "@/lib/api/plans/visibility";
+import { getMinTrialPriceInPaise } from "@/lib/trials/pricing-config";
 
 import { getSession } from "@/lib/auth-server";
 import * as Sentry from "@sentry/nextjs";
@@ -131,9 +132,21 @@ export async function POST(request: NextRequest) {
     const totalSessions = (validatedData.callsPerWeek || 1) * estimatedWeeks;
     const totalHours = totalSessions * sessionDurationInHours;
 
-    // Handle free trial fields
-    const freeTrialEnabled = body.freeTrialEnabled ?? false;
-    const freeTrialDurationMinutes = body.freeTrialDurationMinutes ?? 30;
+    // Trial fields — Zod-validated; free by default until paid-trial
+    // checkout is wired (the wiring PR flips the default to ₹100).
+    const trialEnabled = validatedData.trialEnabled ?? false;
+    const trialDurationMinutes = validatedData.trialDurationMinutes ?? 30;
+    const trialPriceInPaise = validatedData.trialPriceInPaise ?? 0;
+
+    if (trialEnabled) {
+      const floor = await getMinTrialPriceInPaise();
+      if (trialPriceInPaise < floor) {
+        return NextResponse.json(
+          { error: `Trial price must be at least ₹${floor / 100}` },
+          { status: 400 },
+        );
+      }
+    }
 
     // Handle subscription contents (roadmap)
     const subscriptionContents = body.subscriptionContents as
@@ -164,8 +177,9 @@ export async function POST(request: NextRequest) {
         prerequisites: validatedData.prerequisites,
         materialProvided: validatedData.materialProvided,
         learningOutcomes: validatedData.learningOutcomes,
-        freeTrialEnabled,
-        freeTrialDurationMinutes,
+        trialEnabled,
+        trialDurationMinutes,
+        trialPriceInPaise,
         consultantProfile: { connect: { id: consultantProfileId } },
         topics:
           topicIds.length > 0

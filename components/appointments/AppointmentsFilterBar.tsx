@@ -7,15 +7,19 @@ import { Button } from "@/components/ui/button";
 import type { AppointmentKind } from "@/lib/appointments/view-model";
 import { cn } from "@/utils/tailwind";
 
-export type TypeFilter = "ALL" | "CONSULTATION" | "SUBSCRIPTION" | "WEBINAR" | "CLASS";
+export type TypeFilter =
+  | "ALL"
+  | "CONSULTATION"
+  | "SUBSCRIPTION"
+  | "TRIAL"
+  | "WEBINAR"
+  | "CLASS";
 
-/** Trials ride with subscriptions — mirrors both old pages' sectioning. */
 export function matchesTypeFilter(
   kind: AppointmentKind,
   filter: TypeFilter,
 ): boolean {
   if (filter === "ALL") return true;
-  if (filter === "SUBSCRIPTION") return kind === "SUBSCRIPTION" || kind === "TRIAL";
   return kind === filter;
 }
 
@@ -23,6 +27,7 @@ const TYPE_CHIPS: Array<{ value: TypeFilter; label: string }> = [
   { value: "ALL", label: "All types" },
   { value: "CONSULTATION", label: "Consultations" },
   { value: "SUBSCRIPTION", label: "Subscriptions" },
+  { value: "TRIAL", label: "Trials" },
   { value: "WEBINAR", label: "Webinars" },
   { value: "CLASS", label: "Classes" },
 ];

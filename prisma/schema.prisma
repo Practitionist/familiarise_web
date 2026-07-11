@@ -116,9 +116,9 @@ model User {
   /// distinguishes it from `erasureRequests` above (requests filed
   /// against this user) — Prisma requires the disambiguation since
   /// both edges target ErasureRequest.
-  erasureRequestsProcessed ErasureRequest[] @relation("ErasureRequestProcessor")
+  erasureRequestsProcessed ErasureRequest[]      @relation("ErasureRequestProcessor")
   // Disputes this admin owns (#269).
-  disputesAssigned         Dispute[]        @relation("DisputeAssignee")
+  disputesAssigned         Dispute[]             @relation("DisputeAssignee")
   // A8 — documents this consultant reviewed (back-relation for the FK-ified
   // AppointmentDocument.reviewedById; named to avoid the implicit-relation guess).
   documentsReviewed        AppointmentDocument[] @relation("DocumentReviewer")
@@ -1515,7 +1515,7 @@ model OrganizationPayout {
   // India statutory (fields final; cron + derivation stubbed in v1)
   tdsSectionApplied String? // "194J" | "194O" | "194C"
   tdsAmountPaise    BigInt?
-  mustPayByDate     DateTime? @db.Timestamptz // derived from MSME 15/45-day rule
+  mustPayByDate     DateTime?           @db.Timestamptz // derived from MSME 15/45-day rule
   // #781 §A — rail the batch was (or will be) submitted on.
   paRouteProvider   PayoutRailProvider?
   paReferenceId     String?
@@ -2689,9 +2689,14 @@ model SubscriptionPlan {
   learningOutcomes       String[]         @default([])
   topics                 Topic[]          @relation("TopicToSubscriptionPlan")
 
-  // Free trial fields
-  freeTrialEnabled         Boolean @default(false)
-  freeTrialDurationMinutes Int     @default(30) // 30 or 60 minutes
+  // Trial session offer. Free by default ONLY until paid-trial checkout is
+  // wired (booking rejects paid trials today); the wiring PR flips the
+  // default to 10000 (₹100) and removes that gate together. ₹0 stays
+  // allowed after the flip but the UI adds friction. Admin floor lives in
+  // PlatformPricingConfig.minTrialPriceInPaise.
+  trialEnabled         Boolean @default(false)
+  trialDurationMinutes Int     @default(30) // 30 or 60 minutes
+  trialPriceInPaise    BigInt  @default(0) // 0 = free trial
 
   consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultantProfileId String
@@ -2774,7 +2779,7 @@ enum AppointmentStatus {
   @@map("RequestStatus")
 }
 
-// Free trial session tracking for subscriptions
+// Trial session tracking for subscriptions
 
 model TrialSession {
   id     String             @id @default(cuid())
@@ -2795,17 +2800,27 @@ model TrialSession {
   appointment   Appointment? @relation(fields: [appointmentId], references: [id])
   appointmentId String?      @unique
 
+  // Paid-trial pay-link (mirrors Consultation/Subscription). Column frozen
+  // now (schema gate); wiring needs createApprovalPaymentIntent to accept
+  // TRIAL — deliberate lib/payments change, tracked as a follow-up.
+  pendingPaymentUrl String?
+
+  // Ledger truth once a paid trial settles (pendingPaymentUrl is only the
+  // checkout hand-off). Frozen with the wiring follow-up, same as above.
+  payment   Payment? @relation("TrialSessionPayment", fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: SetNull)
+  paymentId String?  @unique
+
   // Outcome tracking
   convertedToSubscription   Subscription? @relation(fields: [convertedToSubscriptionId], references: [id])
   convertedToSubscriptionId String?       @unique
 
   // Enterprise (arch-4) — optional org tag. Set when the trial booker
   // is a LEARNER of an active org, so analytics can answer "how many
-  // trials did Wipro's members take, and how many converted?". Trials
-  // are free — no money moves, the org pays nothing — so this is pure
-  // *attribution*, not sponsorship. Full BookingUtilization integration
-  // (sub-trial-pool consumption, if we ever introduce paid trial pools)
-  // is deferred to Programs v2.
+  // trials did Wipro's members take, and how many converted?". The org
+  // pays nothing either way (a paid trial charges the consultee), so
+  // this is pure *attribution*, not sponsorship. Full BookingUtilization
+  // integration (sub-trial-pool consumption / org-sponsored trials) is
+  // deferred to Programs v2.
   organization   Organization? @relation("TrialsByOrg", fields: [organizationId], references: [id], onDelete: SetNull)
   organizationId String?
 
@@ -3258,7 +3273,7 @@ model AppointmentDocument {
   // A8 — FK-ified from a raw `reviewedBy String?` (#676). SetNull keeps the
   // document if the reviewing user is deleted; the review history survives.
   reviewedById String?
-  reviewedBy   User?     @relation("DocumentReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedBy   User?                @relation("DocumentReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
 
   // Upload role - who uploaded this document
   uploadedByRole DocumentUploadRole @default(CONSULTEE)
@@ -3626,6 +3641,7 @@ model Payment {
   // Back-relations for org settlement flows
   organizationEarnings       OrganizationEarnings[] // PROVIDER/HYBRID 3-way split (one per org)
   organizationInvoiceSettled OrganizationInvoice?   @relation("OrgInvoicePayment") // back-relation for OrganizationInvoice.payment
+  trialSessionPaid           TrialSession?          @relation("TrialSessionPayment") // back-relation for TrialSession.payment
   bookingUtilization         BookingUtilization?    @relation("PaymentBookingUtilization") // Program entitlement usage
   invoiceLineItems           InvoiceLineItem[] // back-relation for InvoiceLineItem.payment
 
@@ -4428,6 +4444,17 @@ model ReferralProgramConfig {
   referrerRewardPaise    BigInt   @default(30000) // ₹300 launch; ramp to 50000 (₹500)
   createdAt              DateTime @default(now())
   updatedAt              DateTime @updatedAt
+}
+
+// Single-row platform pricing config (fixed id), mirroring
+// ReferralProgramConfig. Admin/staff-editable floor under every plan's
+// trialPriceInPaise: 0 keeps free trials allowed; raising it forces a
+// minimum paid trial platform-wide without touching existing plans.
+model PlatformPricingConfig {
+  id                   String   @id @default("singleton")
+  minTrialPriceInPaise BigInt   @default(0)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
 }
 
 enum ReferralStatus {

@@ -53,9 +53,10 @@ booking regardless of session count (#710).
 (`MeetingSession`, created lazily at "Start Call," not at confirmation). A
 confirmed slot without a meeting is a valid state.
 
-**Trial.** A free trial booking (`TrialSession`), optionally org-attributed
-via `organizationId` — pure attribution for conversion analytics, with no
-referral or money logic attached.
+**Trial.** A trial booking (`TrialSession`), optionally org-attributed
+via `organizationId` — pure attribution for conversion analytics. The org
+attribution itself carries no referral or money logic; a paid trial
+charges the consultee directly, never the org.
 
 **Auth session.** BetterAuth's `Session` model. Nothing to do with
 scheduling; never rename anything else to "Session."

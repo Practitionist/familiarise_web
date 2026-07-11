@@ -32,7 +32,7 @@ Recurring events are multi-session programs that span days, weeks, or months. Th
 | Session duration | `sessionDurationInHours` (0.5-4) | `sessionDurationInHours` (0.5-4) |
 | Total sessions | `callsPerWeek x weeks x months` | `meetingsPerWeek x weeks x months` |
 | Capacity | Always 1 consultee | `maxParticipants` (configurable) |
-| Free trial | Yes (30 or 60 min) | No |
+| Trial | Yes (30 or 60 min) | No |
 | Collaborators | No | Yes (co-instructors, TAs, guest lecturers) |
 | Certificates | No | Optional |
 | Recording | No | Optional (Stream S3 or Supabase permanent) |
@@ -60,8 +60,9 @@ Both share the same core flow: **Plan Creation -> Checkout -> Payment -> Slot Al
 | `durationInMonths` | Int (1-24) | How many months the subscription runs |
 | `callsPerWeek` | Int (0-7) | How many sessions per week |
 | `sessionDurationInHours` | Float (0.5-4) | Duration of each individual session |
-| `freeTrialEnabled` | Boolean | Whether to offer a free trial first |
-| `freeTrialDurationMinutes` | 30 or 60 | Trial session length |
+| `trialEnabled` | Boolean | Whether to offer a trial first |
+| `trialDurationMinutes` | 30 or 60 | Trial session length |
+| `trialPriceInPaise` | Int (paise) | Trial price (0 = free, the default until paid-trial checkout ships) |
 | `subscriptionContents[]` | Array | Session-by-session curriculum (title, description, order) |
 | `topics[]` | Array | Topic tags for discoverability |
 | `learningOutcomes[]` | Array | What the consultee will learn |
@@ -481,7 +482,7 @@ All cron jobs are triggered via GitHub Actions workflows in `.github/workflows/`
 | **Appointments** | 1 Appointment per session, each has N slots | 1 Appointment per session (shared by all participants via M2M user relation on slots) |
 | **Slot sharing** | Slots connected to consultant + 1 consultee | New enrollees are linked to ALL existing slots of ALL appointments (`handleClassCheckout` line 1510-1524) |
 | **Collaborators** | Not supported | `ClassCollaborator[]` with revenue shares |
-| **Free trial** | Yes (`TrialSession` model) | No |
+| **Trial** | Yes (`TrialSession` model) | No |
 | **Recording** | No | Optional |
 | **Certificate** | No | Optional |
 | **Waitlist** | No | Yes (`Waitlist` model, status: WAITING -> NOTIFIED -> BOOKED/EXPIRED) |
