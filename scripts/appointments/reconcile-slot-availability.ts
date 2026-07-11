@@ -21,6 +21,7 @@
 import prisma from "../../lib/prisma";
 import { PaymentStatus } from "@prisma/client";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
+import { buildOccupiedAppointmentFilter } from "@/utils/slotAllocation/occupancyPolicy";
 
 export interface SlotReconciliationResult {
   success: boolean;
@@ -143,21 +144,17 @@ async function detectDoubleBookings(): Promise<{
   console.log("\n🔍 Detecting double-booked slots...");
 
   try {
-    // Get all confirmed (non-tentative) future slots grouped by consultant.
-    // TODO: The canonical occupancy policy (buildOccupiedAppointmentFilter) also treats
-    // unpaid-but-active states (PENDING, APPROVED, APPROVED_PENDING_PAYMENT) as occupied.
-    // This detection is limited to SUCCEEDED payments, so overlaps involving those states
-    // will be missed. A future improvement could use buildOccupiedAppointmentFilter here.
+    // Get all future slots whose parent event is in an occupied state, grouped
+    // by consultant. Occupancy is defined by the canonical policy
+    // (buildOccupiedAppointmentFilter), not by a SUCCEEDED-payment filter, so
+    // overlaps involving unpaid/tentative holds (PENDING, APPROVED,
+    // APPROVED_PENDING_PAYMENT) are caught too — the old payment-only query
+    // missed them.
     const confirmedSlots = await prisma.slotOfAppointment.findMany({
       where: {
-        isTentative: false,
         endsAt: { gt: new Date() }, // Only future slots
         appointment: {
-          payment: {
-            some: {
-              paymentStatus: PaymentStatus.SUCCEEDED,
-            },
-          },
+          OR: buildOccupiedAppointmentFilter(),
         },
       },
       // FIX #625: Include all 5 appointment types (not just consultation/subscription)

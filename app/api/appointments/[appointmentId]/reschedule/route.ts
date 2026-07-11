@@ -321,15 +321,32 @@ export async function POST(
             })
           ).count;
         } else if (appointment.subscription) {
-          movedStatus = (
-            await tx.subscription.updateMany({
-              where: {
-                id: appointment.subscription.id,
-                status: { in: [...RESCHEDULABLE_FROM] },
-              },
-              data: { status: "PENDING" },
-            })
-          ).count;
+          // #448 — a single/multi-session reschedule must NOT flip the WHOLE
+          // subscription to PENDING. Subscription has no per-session status;
+          // the affected slots already carry isTentative + RESCHEDULED, so the
+          // session-level state is captured there. Only a full-subscription
+          // reschedule (no slotIds) genuinely re-enters PENDING. The partial
+          // path still terminal-guards (count, no write): rescheduling a
+          // session of a cancelled/completed subscription stays a 409.
+          const isPartialSubscriptionReschedule = Boolean(
+            slotIds && slotIds.length > 0,
+          );
+          movedStatus = isPartialSubscriptionReschedule
+            ? await tx.subscription.count({
+                where: {
+                  id: appointment.subscription.id,
+                  status: { in: [...RESCHEDULABLE_FROM] },
+                },
+              })
+            : (
+                await tx.subscription.updateMany({
+                  where: {
+                    id: appointment.subscription.id,
+                    status: { in: [...RESCHEDULABLE_FROM] },
+                  },
+                  data: { status: "PENDING" },
+                })
+              ).count;
         } else if (appointment.webinar) {
           // Explicit allowed-from (was notIn) — robust against future enum
           // additions (#837).
