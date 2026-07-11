@@ -180,7 +180,17 @@ export async function POST(req: NextRequest) {
           userId: session.user.id,
           status: { notIn: ["RESOLVED", "CLOSED"] },
         },
-        include: { responses: true, attachments: true },
+        // Match the user-facing GET shape: hide internal staff notes
+        include: {
+          responses: {
+            where: { isInternal: false },
+            orderBy: { createdAt: "asc" },
+            include: {
+              user: { select: { name: true, role: true } },
+            },
+          },
+          attachments: { orderBy: { uploadedAt: "desc" } },
+        },
       });
       if (existing) {
         return NextResponse.json(existing, { status: 200 });

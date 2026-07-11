@@ -42,7 +42,7 @@ export async function GET(
     const { classId } = await params;
     // Non-privileged users can view the roster if they own the plan OR are an
     // accepted collaborator granted canSeeAttendees (#768). Everyone else 404s.
-    const classEvent = await prisma.class.findUnique({
+    const classEvent = await prisma.class.findFirst({
       where: {
         id: classId,
         ...(isPrivileged(session.user.role)
@@ -160,7 +160,7 @@ export async function DELETE(
     // Ownership check only — the old shape loaded the entire roster
     // (every appointment × every slot × every full User row) just to find
     // the one participant being removed.
-    const classEvent = await prisma.class.findUnique({
+    const classEvent = await prisma.class.findFirst({
       where: {
         id: classId,
         ...(isPrivileged(session.user.role)
