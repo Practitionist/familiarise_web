@@ -115,8 +115,14 @@ export async function cancelFutureEngagementsForUser(
       if (slot.appointment?.classId) classIds.add(slot.appointment.classId);
     }
     work.push(
-      ...[...webinarIds].map((id) => ({ kind: "webinar-attendance" as const, id })),
-      ...[...classIds].map((id) => ({ kind: "class-attendance" as const, id })),
+      ...Array.from(webinarIds, (id) => ({
+        kind: "webinar-attendance" as const,
+        id,
+      })),
+      ...Array.from(classIds, (id) => ({
+        kind: "class-attendance" as const,
+        id,
+      })),
     );
   }
 
@@ -217,7 +223,8 @@ interface NormalizedEngagement {
   appointments: Array<{
     id: string;
     appointmentType: string;
-    payment: Array<{ id: string; amount: bigint; paymentStatus: string }>;
+    // amount is number at runtime — the extended client converts BigInt on read
+    payment: Array<{ id: string; amount: number; paymentStatus: string }>;
   }>;
 }
 
@@ -398,7 +405,7 @@ async function cancelGroupEvent(
     await issueFullRefund(payment.id, ctx.initiatedByUserId, ctx.summary);
   }
 
-  const attendeeIds = [...new Set(payments.map((p) => p.userId))];
+  const attendeeIds = Array.from(new Set(payments.map((p) => p.userId)));
   if (attendeeIds.length > 0) {
     void notifyAppointmentCancelled(attendeeIds, {
       appointmentType: isWebinar ? "WEBINAR" : "CLASS",

@@ -13,8 +13,9 @@
  * and the outcome lands in ModerationAction.sideEffects for staff visibility.
  */
 import * as Sentry from "@sentry/nextjs";
-import type { ModerationActionType, Prisma } from "@prisma/client";
+import type { ModerationActionType } from "@prisma/client";
 import { EarningStatus } from "@prisma/client";
+import type { Tx } from "@/lib/prisma";
 import {
   getStreamChatClient,
   withStreamCircuitBreaker,
@@ -66,7 +67,7 @@ const HOLDABLE: EarningStatus[] = [
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 export async function applyTransactionalEffects(
-  tx: Prisma.TransactionClient,
+  tx: Tx,
   input: ModerationSideEffectInput,
 ): Promise<TransactionalEffectResult> {
   const { actionType, report, notes, suspensionDays } = input;
