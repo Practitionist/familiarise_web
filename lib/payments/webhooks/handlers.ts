@@ -418,6 +418,14 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
         reason: "capture amount mismatch",
         initiatedByUserId: null,
       });
+      // Refund succeeded — clear the Phase 1 REQUIRES_MANUAL_RECOVERY marker so
+      // ops dashboards don't flag a payment that no longer needs manual recovery.
+      await prisma.payment.update({
+        where: { id: txResult.paymentId },
+        data: {
+          description: `Auto-refunded: capture amount ${txResult.gatewayAmountPaise}p ≠ expected ${txResult.expectedAmount}p. Booking NOT confirmed.`,
+        },
+      });
     } catch (refundError) {
       Sentry.captureException(
         refundError instanceof Error ? refundError : new Error(String(refundError)),

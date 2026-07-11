@@ -128,9 +128,10 @@ async function main(): Promise<void> {
               wallet: {
                 billingAccountId: f.billingAccountId,
                 organizationId: f.organizationId ?? null,
-                expectedPaise: f.expectedPaise,
-                actualPaise: f.actualPaise,
-                deltaPaise: f.deltaPaise,
+                // JSON can't serialize BigInt; walletBalance is BigInt at runtime.
+                expectedPaise: Number(f.expectedPaise),
+                actualPaise: Number(f.actualPaise),
+                deltaPaise: Number(f.deltaPaise),
                 reportId: report.id,
                 newlyFrozen: froze,
               },
