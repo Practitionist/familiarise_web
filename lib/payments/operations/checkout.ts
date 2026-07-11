@@ -2020,6 +2020,13 @@ export async function handleCheckout(
         );
       }
       programAssignmentId = assignment.id;
+
+      // ADR 18 — future curated-panel hook. When ProgramConsultantAllowlist
+      // enforcement ships, it slots HERE: rows exist for the resolved
+      // Program ⇒ the booked plan's consultant must be listed (needs the
+      // consultant id, first fetched in getPlanDataForLock below). Absent
+      // rows keep the network open — sponsors fund any marketplace
+      // consultant by design.
     }
   }
 
