@@ -7,6 +7,7 @@ import {
   checkOwnership,
   forbiddenResponse,
 } from "@/lib/auth-helpers";
+import { recomputeConsultantRating } from "@/lib/reviews";
 
 // GET: Public read (for trust/SEO purposes)
 export async function GET(
@@ -55,7 +56,7 @@ export async function PUT(
     // Fetch the review to check ownership
     const review = await prisma.consultantReview.findUnique({
       where: { id: id },
-      select: { consulteeProfileId: true },
+      select: { consulteeProfileId: true, consultantProfileId: true },
     });
 
     if (!review) {
@@ -73,16 +74,24 @@ export async function PUT(
     }
 
     const body = await req.json();
-    const updatedReview = await prisma.consultantReview.update({
-      where: { id: id },
-      data: {
-        rating: body.rating,
-        reviewDescription: body.reviewDescription,
-      },
-      include: {
-        consultantProfile: true,
-        consulteeProfile: true,
-      },
+    // Update + rating recompute in one transaction — ConsultantProfile.rating
+    // is denormalized for explore sort/filter and must track every mutation.
+    const updatedReview = await prisma.$transaction(async (tx) => {
+      const updated = await tx.consultantReview.update({
+        where: { id: id },
+        data: {
+          rating: body.rating,
+          reviewDescription: body.reviewDescription,
+        },
+        include: {
+          consultantProfile: true,
+          consulteeProfile: true,
+        },
+      });
+
+      await recomputeConsultantRating(tx, review.consultantProfileId);
+
+      return updated;
     });
 
     return NextResponse.json(updatedReview, { status: 200 });
@@ -112,7 +121,7 @@ export async function DELETE(
     // Fetch the review to check ownership
     const review = await prisma.consultantReview.findUnique({
       where: { id: id },
-      select: { consulteeProfileId: true },
+      select: { consulteeProfileId: true, consultantProfileId: true },
     });
 
     if (!review) {
@@ -129,8 +138,12 @@ export async function DELETE(
       return forbiddenResponse("You can only delete your own reviews");
     }
 
-    await prisma.consultantReview.delete({
-      where: { id: id },
+    // Delete + rating recompute in one transaction — see PUT.
+    await prisma.$transaction(async (tx) => {
+      await tx.consultantReview.delete({
+        where: { id: id },
+      });
+      await recomputeConsultantRating(tx, review.consultantProfileId);
     });
 
     return NextResponse.json(
