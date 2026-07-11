@@ -3,7 +3,6 @@
 import { Loader2 } from "lucide-react";
 import { ChatLayout } from "@/components/chat/ChatLayout";
 import { ChatUnavailable } from "@/components/chat/ChatUnavailable";
-import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 import { useStreamConnection } from "@/providers/StreamProvider";
 
 interface ChatsTabProps {
@@ -17,20 +16,17 @@ export function ChatsTab({ userId: _userId }: Readonly<ChatsTabProps>) {
   const { chatConnected, error, retryConnection } = useStreamConnection();
 
   return (
-    <>
-      <DashboardHeader title="Chats" subtitle="Messages and conversations" />
-      <div className="mt-4 w-full overflow-hidden rounded-xl border border-border bg-card shadow-sm h-[calc(100dvh-14rem)] min-h-[280px] max-h-[calc(100dvh-10rem)] sm:h-[calc(100dvh-15rem)] sm:min-h-[360px]">
-        {error ? (
-          <ChatUnavailable description={error} onRetry={retryConnection} />
-        ) : chatConnected ? (
-          <ChatLayout />
-        ) : (
-          <div className="flex h-full items-center justify-center text-muted-foreground">
-            <Loader2 className="h-6 w-6 animate-spin mr-2" />
-            Connecting to chat…
-          </div>
-        )}
-      </div>
-    </>
+    <div className="w-full overflow-hidden rounded-xl border border-border bg-card shadow-sm h-[calc(100dvh-8rem)] min-h-[280px] max-h-[calc(100dvh-6rem)] sm:h-[calc(100dvh-9rem)] sm:min-h-[360px]">
+      {error ? (
+        <ChatUnavailable description={error} onRetry={retryConnection} />
+      ) : chatConnected ? (
+        <ChatLayout />
+      ) : (
+        <div className="flex h-full items-center justify-center text-muted-foreground">
+          <Loader2 className="mr-2 h-6 w-6 animate-spin" />
+          Connecting to chat…
+        </div>
+      )}
+    </div>
   );
 }

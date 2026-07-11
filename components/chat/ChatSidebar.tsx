@@ -676,11 +676,20 @@ export const ChatSidebar = () => {
     activeChannelIdRef.current = activeChannelId;
   }, [activeChannelId]);
 
+  // Debug Stream tools: local hostname only — never on deployed/preview hosts
+  // even if NODE_ENV were somehow still "development".
+  const [showLocalDebugTools, setShowLocalDebugTools] = useState(false);
+  useEffect(() => {
+    if (process.env.NODE_ENV !== "development") return;
+    const host = window.location.hostname;
+    setShowLocalDebugTools(host === "localhost" || host === "127.0.0.1");
+  }, []);
+
   return (
     <div className="w-80 bg-blue-600 text-white flex flex-col h-full">
       {/* Header with Title and Refresh */}
       <div className="p-4 border-b border-blue-700 flex justify-between items-center">
-        <h1 className="text-xl font-bold">Familiarise</h1>
+        <h1 className="text-xl font-bold">Chats</h1>
         <TooltipProvider delayDuration={200}>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -819,9 +828,9 @@ export const ChatSidebar = () => {
         )}
       </div>
 
-      {/* Footer Section — Debug tools, hidden in production */}
-      {process.env.NODE_ENV === "development" && (
-        <div className="p-4 border-t border-blue-700 mt-auto space-y-2">
+      {/* Footer Section — Debug tools, localhost only */}
+      {showLocalDebugTools && (
+        <div className="mt-auto space-y-2 border-t border-blue-700 p-4">
           <InitializeUserChannelsButton
             userId={client?.userID || ""}
             className="w-full"
