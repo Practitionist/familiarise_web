@@ -424,6 +424,11 @@ export const EARNING_STATUS_BADGE: Record<EarningStatus, StatusBadgeStyle> = {
     label: "Ready for payout",
     className: "bg-emerald-100 text-emerald-900 border-emerald-200",
   },
+  // #837 — in a payout batch but cash hasn't left yet; honestly distinct from Paid.
+  BATCHED: {
+    label: "Processing payout",
+    className: "bg-sky-100 text-sky-900 border-sky-200",
+  },
   PAID: {
     label: "Paid",
     className: "bg-green-100 text-green-900 border-green-200",

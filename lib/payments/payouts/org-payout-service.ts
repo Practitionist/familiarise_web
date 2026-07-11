@@ -13,9 +13,10 @@
  *   - createOrgPayoutBatch(orgId, periodStart, periodEnd, opts?)
  *       Atomic batch creation: claim READY earnings, compute aggregated
  *       totals, write the OrganizationPayout (status DRAFT/PENDING),
- *       flip the claimed earnings to PAID, write SettlementLedgerEntry
- *       + audit log. Optionally accepts an `idempotencyKey` so cron
- *       retries become no-ops via the unique constraint.
+ *       flip the claimed earnings to BATCHED (#837 — NOT PAID; cash has
+ *       not moved yet), write SettlementLedgerEntry + audit log. Optionally
+ *       accepts an `idempotencyKey` so cron retries become no-ops via the
+ *       unique constraint.
  *
  *   - processOrgPayout(payoutId)
  *       State machine progression: PENDING → PROCESSING → COMPLETED |
@@ -413,9 +414,13 @@ export async function createOrgPayoutBatch(
           },
         });
 
+        // #837 E-03/E-04 — batch creation only STAGES the earnings; cash has
+        // not left. Mark BATCHED, not PAID. The PAID flip moves to
+        // markOrgPayoutCompleted (PROCESSING → COMPLETED), so a batch built
+        // with ENABLE_LIVE_PAYOUTS off never reads as paid to auditors.
         await tx.organizationEarnings.updateMany({
           where: { orgPayoutId: created.id, status: "READY" },
-          data: { status: "PAID" },
+          data: { status: "BATCHED" },
         });
 
         await tx.orgAuditLog.create({
@@ -773,8 +778,10 @@ async function markPayoutFailedFromSubmission(
     if (claim.count === 0) return;
 
     // Release earnings back to READY so they're eligible for the next batch.
+    // #837 — a submission-rejected payout is pre-COMPLETED, so its earnings are
+    // BATCHED (never reached PAID).
     await tx.organizationEarnings.updateMany({
-      where: { orgPayoutId: payoutId, status: "PAID" },
+      where: { orgPayoutId: payoutId, status: "BATCHED" },
       data: { status: "READY", orgPayoutId: null },
     });
 
@@ -884,6 +891,14 @@ export async function markOrgPayoutCompleted(payoutId: string): Promise<{
         currency: true,
         organization: { select: { name: true } },
       },
+    });
+
+    // #837 E-03/E-04 — cash has now actually moved (COMPLETED + UTR). This is
+    // the ONLY place org earnings become PAID; createOrgPayoutBatch staged them
+    // as BATCHED.
+    await tx.organizationEarnings.updateMany({
+      where: { orgPayoutId: payoutId, status: "BATCHED" },
+      data: { status: "PAID" },
     });
 
     await tx.orgAuditLog.create({
@@ -1000,8 +1015,9 @@ async function markOrgPayoutFailedInternal(
 
     // Release the underlying earnings back to READY so the next batch
     // sees them. This is the inverse of the createOrgPayoutBatch claim.
+    // #837 — a PROCESSING→FAILED payout's earnings are BATCHED (never PAID).
     await tx.organizationEarnings.updateMany({
-      where: { orgPayoutId: payoutId, status: "PAID" },
+      where: { orgPayoutId: payoutId, status: "BATCHED" },
       data: { status: "READY", orgPayoutId: null },
     });
 

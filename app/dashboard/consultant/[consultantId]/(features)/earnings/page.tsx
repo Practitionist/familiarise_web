@@ -163,6 +163,7 @@ export default function EarningsPage({
     { label: "All", value: "ALL" },
     { label: "Pending", value: "PENDING" },
     { label: "Ready", value: "READY" },
+    { label: "Processing", value: "BATCHED" }, // #837 — batched, cash not yet disbursed
     { label: "Paid", value: "PAID" },
     { label: "On Hold", value: "HELD" },
     { label: "Org Trust", value: "PENDING_TRUST" },
