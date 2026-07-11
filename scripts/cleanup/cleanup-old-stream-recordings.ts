@@ -94,22 +94,37 @@ async function cleanupOldStreamRecordingsUnlocked(): Promise<StreamRetentionResu
     // retention violation. A failed delete keeps its row un-tombstoned so
     // tomorrow's run retries the pair together.
     const tombstoneIds: string[] = [];
+
+    // Rows without a Supabase object need no storage call — tombstone directly.
     for (const candidate of candidates) {
       if (!candidate.supabasePath) {
         tombstoneIds.push(candidate.id);
-        continue;
       }
-      const del = await RecordingTransferService.deleteRecordingFromSupabase(
-        candidate.id,
+    }
+
+    // #899 — network-bound Supabase deletes (read + storage remove + write) in
+    // bounded chunks, mirroring processExpiringRecordings' transfer sweep, so a
+    // large candidate set can't serialise into a timeout or exhaust the pool.
+    const supabaseCandidates = candidates.filter((c) => c.supabasePath);
+    const CONCURRENCY = 5;
+    for (let i = 0; i < supabaseCandidates.length; i += CONCURRENCY) {
+      const chunk = supabaseCandidates.slice(i, i + CONCURRENCY);
+      await Promise.all(
+        chunk.map(async (candidate) => {
+          const del =
+            await RecordingTransferService.deleteRecordingFromSupabase(
+              candidate.id,
+            );
+          if (del.success) {
+            tombstoneIds.push(candidate.id);
+          } else {
+            result.success = false;
+            result.errors.push(
+              `org=${org.id} recording=${candidate.id}: ${del.error}`,
+            );
+          }
+        }),
       );
-      if (del.success) {
-        tombstoneIds.push(candidate.id);
-      } else {
-        result.success = false;
-        result.errors.push(
-          `org=${org.id} recording=${candidate.id}: ${del.error}`,
-        );
-      }
     }
     if (tombstoneIds.length === 0) {
       result.cutoffsByOrg.push({
