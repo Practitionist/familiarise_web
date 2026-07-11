@@ -66,7 +66,10 @@ import {
 } from "@/lib/payments/validation/currency-guards";
 import { checkPaymentLegsSumToAmount } from "@/lib/payments/payment-legs";
 import { recordOverageAtCheckout } from "@/lib/payments/billing/overage-settlement";
-import { getInvoiceCreditLimitPaise } from "@/lib/enterprise/governance";
+import {
+  getInvoiceCreditLimitPaise,
+  assertVerifiedDomainOrThrow,
+} from "@/lib/enterprise/governance";
 import {
   notifyOrgProgramExhausted,
   notifyOrgProgramCapNear,
@@ -1939,6 +1942,12 @@ export async function handleCheckout(
     // book-everything-then-ghost abuse pattern. The cap auto-lifts
     // once the org is verified OR pays its first invoice.
     if (fundingSource === "INVOICE") {
+      // K-02 / #687 — an org may not accrue INVOICE debt without a verified
+      // domain. The credit-limit gate below caps unverified-STATUS orgs; this
+      // asserts the orthogonal domain-ownership proof (OrgDomainClaim), the
+      // gate governance.ts documents for INVOICE funding but had no caller.
+      await assertVerifiedDomainOrThrow(prisma, org.id, "INVOICE_FUNDING");
+
       const explicitLimit = org.billingAccount?.creditLimit ?? null;
       const isVerified = org.status === "ACTIVE";
       const governanceLimit = isVerified ? null : getInvoiceCreditLimitPaise();
