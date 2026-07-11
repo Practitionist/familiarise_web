@@ -101,33 +101,14 @@ export async function createDbMeetingSession(
   });
 
   let organizationId: string | null = null;
-  let hostUserId: string | null = null;
   if (slot.appointmentId) {
-    // Walk to the hosting consultant's user id for the call-level host grant.
-    const planHost = {
-      select: {
-        consultantProfile: { select: { user: { select: { id: true } } } },
-      },
-    } as const;
     const appointment = await prisma.appointment.findUnique({
       where: { id: slot.appointmentId },
       select: {
         organizationId: true,
-        consultation: { select: { consultationPlan: planHost } },
-        subscription: { select: { subscriptionPlan: planHost } },
-        webinar: { select: { webinarPlan: planHost } },
-        class: { select: { classPlan: planHost } },
       },
     });
     organizationId = appointment?.organizationId ?? null;
-    hostUserId =
-      appointment?.consultation?.consultationPlan?.consultantProfile?.user
-        ?.id ??
-      appointment?.subscription?.subscriptionPlan?.consultantProfile?.user
-        ?.id ??
-      appointment?.webinar?.webinarPlan?.consultantProfile?.user?.id ??
-      appointment?.class?.classPlan?.consultantProfile?.user?.id ??
-      null;
   }
 
   try {

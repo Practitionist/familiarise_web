@@ -4,7 +4,7 @@
  */
 
 import * as Sentry from "@sentry/nextjs";
-import prisma from "@/lib/prisma";
+import prisma, { type PrismaLike } from "@/lib/prisma";
 import { Prisma, WaitlistStatus } from "@prisma/client";
 import {
   getNextBatchInQueue,
@@ -31,7 +31,7 @@ const NOTIFICATION_WINDOW_HOURS = 48;
  * checkout isn't rejected by the very seat being reserved for them.
  */
 export async function countWaitlistHolds(
-  db: Prisma.TransactionClient,
+  db: PrismaLike,
   params: {
     webinarId?: string | null;
     classId?: string | null;

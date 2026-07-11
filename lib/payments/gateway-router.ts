@@ -11,11 +11,11 @@
  * - Stripe international: ~6.3% (4.3% processing + 2% currency conversion)
  */
 
-import { PaymentGateway } from "@prisma/client";
+import type { SupportedCheckoutGateway } from "@/schemas/checkout";
 
 export interface GatewayRoutingResult {
-  /** Selected payment gateway */
-  gateway: PaymentGateway;
+  /** Selected payment gateway — always an implemented gateway, never a stub */
+  gateway: SupportedCheckoutGateway;
   /** Human-readable reason for the selection (for audit logs) */
   reason: string;
   /** Whether this is a Razorpay International Bank Transfer */
@@ -35,7 +35,7 @@ export interface GatewayRoutingResult {
  */
 export function routeGateway(params: {
   buyerCountry: string;
-  requestedGateway?: PaymentGateway;
+  requestedGateway?: SupportedCheckoutGateway;
 }): GatewayRoutingResult {
   const { buyerCountry, requestedGateway } = params;
 

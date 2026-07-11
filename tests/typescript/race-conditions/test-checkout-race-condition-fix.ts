@@ -26,7 +26,7 @@
 import { handleCheckout } from "@/lib/payments/operations/checkout";
 import prisma from "@/lib/prisma";
 import { CheckoutInput } from "@/schemas/checkout";
-import { PaymentGateway, PaymentStatus } from "@prisma/client";
+import { PaymentStatus } from "@prisma/client";
 
 // ============================================================================
 // Test Configuration
@@ -56,7 +56,7 @@ const createCheckoutInput = (userId: string): CheckoutInput => ({
   startsAt: TEST_CONFIG.SLOT_START,
   endsAt: TEST_CONFIG.SLOT_END,
   notes: `Test checkout for user ${userId}`,
-  paymentGateway: "STRIPE" as PaymentGateway,
+  paymentGateway: "STRIPE",
 });
 
 // ============================================================================

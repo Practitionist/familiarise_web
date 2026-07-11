@@ -14,8 +14,8 @@ import {
   createCheckoutData,
   WebinarSearchParams,
   webinarSearchParamsSchema,
+  type SupportedCheckoutGateway,
 } from "@/schemas/checkout";
-import { PaymentGateway } from "@prisma/client";
 import { CreditCard as CreditCardIcon } from "lucide-react";
 import { CompanyLogo } from "@/components/ui/company-logo";
 import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -206,7 +206,7 @@ export default function WebinarCheckoutPage({
   const razorpayHandlers = createRazorpayCheckoutHandlers(toast);
 
   const handleCheckout = useCallback(
-    async (gateway: PaymentGateway, isMockPayment: boolean = false) => {
+    async (gateway: SupportedCheckoutGateway, isMockPayment: boolean = false) => {
       // Block checkout during maintenance mode
       if (isMaintenanceBlocked) {
         toast({
