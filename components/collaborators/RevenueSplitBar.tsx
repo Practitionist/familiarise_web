@@ -33,7 +33,7 @@ export function RevenueSplitBar({
           <Avatar className="h-6 w-6 ring-2 ring-white shrink-0">
             <AvatarImage src={avatar.image ?? undefined} />
             <AvatarFallback className="text-[9px] bg-zinc-200 text-zinc-700">
-              {(avatar.name ?? "?").charAt(0)}
+              {(avatar.name || "?").charAt(0)}
             </AvatarFallback>
           </Avatar>
         )}

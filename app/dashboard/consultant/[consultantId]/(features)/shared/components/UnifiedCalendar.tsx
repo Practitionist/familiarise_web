@@ -1060,7 +1060,7 @@ export function UnifiedCalendar({
     };
 
     return (
-      <div className="grid grid-cols-7 gap-1 flex-1 min-h-[12rem] max-h-[min(600px,calc(90dvh-16rem))] overflow-y-auto">
+      <div className="grid grid-cols-7 gap-1 flex-1 min-h-[12rem] max-h-[min(600px,calc(90dvh_-_16rem))] overflow-y-auto">
         {DAYS.map((day) => (
           <div key={day} className="text-center font-bold p-2">
             {day.slice(0, 3)}
@@ -1253,7 +1253,7 @@ export function UnifiedCalendar({
 
       {/* Calendar View */}
       {view === "week" ? (
-        <div className="flex flex-col flex-1 min-h-[12rem] max-h-[min(500px,calc(90dvh-16rem))]">
+        <div className="flex flex-col flex-1 min-h-[12rem] max-h-[min(500px,calc(90dvh_-_16rem))]">
           {/* Week header */}
           <div className="shrink-0 grid grid-cols-8 gap-0.5 md:gap-1 bg-background z-20 pb-1">
             <div className="w-14 md:w-20"></div>
