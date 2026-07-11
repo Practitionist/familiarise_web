@@ -124,7 +124,7 @@ export const CURRENCY_MULTIPLIERS: Record<SupportedCurrency, number> = {
   CAD: 100, // cents
   SGD: 100, // cents
   AED: 100, // fils
-  NGN: 100, // kobo (for XFlow)
+  NGN: 100, // kobo
 };
 
 // ============================================================================

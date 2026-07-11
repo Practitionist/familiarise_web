@@ -100,7 +100,7 @@ All 27 scheduled jobs run as GitHub Actions workflows, executing standalone Node
 | **Script**           | `jobs/alerts/alert-orphaned-payments.ts`                                                                                         |
 | **Description**      | Detects payments recorded in payment gateways but with no corresponding appointment created. Sends alerts for orphaned payments. |
 | **DB Connection**    | Yes (Prisma)                                                                                                                     |
-| **External APIs**    | Stripe, Razorpay, Lemon Squeezy, Xflow                                                                                           |
+| **External APIs**    | Stripe, Razorpay                                                                                                                  |
 | **Maintenance Risk** | LOW -- Read-only detection, but may generate false alerts during maintenance                                                     |
 | **Safe to skip?**    | Yes -- alerts delayed but no data corruption.                                                                                    |
 
@@ -112,7 +112,7 @@ All 27 scheduled jobs run as GitHub Actions workflows, executing standalone Node
 | **Script**           | `jobs/payments/cleanup-abandoned-payments.ts`                                                                                |
 | **Description**      | Cancels payment intents abandoned >30 min with no confirmed appointment. Also resets approval-pending consultation requests. |
 | **DB Connection**    | Yes (Prisma)                                                                                                                 |
-| **External APIs**    | Stripe, Razorpay, Lemon Squeezy, Xflow                                                                                       |
+| **External APIs**    | Stripe, Razorpay                                                                                                              |
 | **Maintenance Risk** | **CRITICAL** -- May cancel valid payment intents where appointment creation was delayed by maintenance downtime              |
 | **Safe to skip?**    | Must skip during maintenance. Run post-maintenance catch-up after confirming no in-flight payments.                          |
 

@@ -581,51 +581,6 @@ export async function verifyWebhookSignature(
   }
 }
 
-/**
- * #813/#812 — generic HMAC-SHA256 webhook verifier for the hand-rolled
- * Lemon Squeezy / XFlow routes (they differ only by header name and Lemon's
- * `sha256=` prefix). Uses the STRICTER hex-decode + fixed-length-64 gate +
- * timingSafeEqual that verifyWebhookSignature(razorpay) uses, replacing the old
- * raw-UTF8 Buffer compare. Reads the body once and returns it alongside the
- * verdict; `missingHeader` lets callers keep their distinct 401-missing /
- * 400-invalid responses.
- */
-export async function verifyHmacWebhookSignature(
-  req: Request,
-  secret: string,
-  opts: { header: string; prefix?: string },
-): Promise<{ isValid: boolean; body: string; missingHeader: boolean }> {
-  const body = await req.text();
-  const raw = req.headers.get(opts.header);
-  if (!raw) {
-    return { isValid: false, body, missingHeader: true };
-  }
-  // Strip the gateway's prefix (e.g. Lemon's `sha256=`) before hex-decoding.
-  const signature =
-    opts.prefix && raw.startsWith(opts.prefix)
-      ? raw.slice(opts.prefix.length)
-      : raw;
-  // hex-decode gate: a hex SHA-256 digest is exactly 64 chars; Buffer.from
-  // silently truncates odd/invalid input, so reject anything else outright.
-  if (signature.length !== 64) {
-    return { isValid: false, body, missingHeader: false };
-  }
-  const expected = crypto
-    .createHmac("sha256", secret)
-    .update(body)
-    .digest("hex");
-  const sigBuf = Buffer.from(signature, "hex");
-  const expectedBuf = Buffer.from(expected, "hex");
-  if (sigBuf.length !== expectedBuf.length) {
-    return { isValid: false, body, missingHeader: false };
-  }
-  return {
-    isValid: crypto.timingSafeEqual(sigBuf, expectedBuf),
-    body,
-    missingHeader: false,
-  };
-}
-
 // ============================================================================
 // Refund Webhook Handlers
 // ============================================================================
