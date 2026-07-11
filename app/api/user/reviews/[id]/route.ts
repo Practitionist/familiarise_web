@@ -25,10 +25,7 @@ export async function GET(
     });
 
     // #693 — a moderation-removed review reads as gone
-    if (review?.deletedAt) {
-      return NextResponse.json({ error: "Review not found" }, { status: 404 });
-    }
-    if (!review) {
+    if (!review || review.deletedAt) {
       return NextResponse.json({ error: "Review not found" }, { status: 404 });
     }
 

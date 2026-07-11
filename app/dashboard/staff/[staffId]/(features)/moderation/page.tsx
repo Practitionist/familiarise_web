@@ -890,8 +890,14 @@ export default function ContentModerationPage() {
                       min={1}
                       max={365}
                       className="w-24"
-                      value={suspensionDays}
+                      value={Number.isFinite(suspensionDays) ? suspensionDays : ""}
                       onChange={(e) => {
+                        // NaN sentinel lets the field be cleared while typing;
+                        // the Suspend button disables until a valid number is back
+                        if (e.target.value === "") {
+                          setSuspensionDays(NaN);
+                          return;
+                        }
                         const v = parseInt(e.target.value, 10);
                         if (Number.isFinite(v))
                           setSuspensionDays(Math.min(365, Math.max(1, v)));
@@ -942,7 +948,10 @@ export default function ContentModerationPage() {
                   onClick={() =>
                     handleReportAction(selectedReport.id, "SUSPEND")
                   }
-                  disabled={reportActionMutation.isPending}
+                  disabled={
+                    reportActionMutation.isPending ||
+                    !Number.isFinite(suspensionDays)
+                  }
                 >
                   {reportActionMutation.isPending ? (
                     <Loader2 className="h-4 w-4 mr-2 animate-spin" />
