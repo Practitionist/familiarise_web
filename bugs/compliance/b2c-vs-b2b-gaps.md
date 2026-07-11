@@ -25,15 +25,27 @@ Enterprise rail: org tax info, invoices, credit notes, MSME alerts, org payout T
    - B) Soft warn + CA escrow  
    - C) Proceed with documented risk acceptance  
 
+**Recommendation: A.** Unify TDS before B2C payouts — wrong 194-O path is not acceptable risk at scale.  
+- Not B: Soft warn still pays out on the wrong engine.  
+- Not C: Documented risk acceptance does not fix GSTN notices to consultants.
+
 2. **Public seller disclosure minimum on consultant profile?**  
    - A) Legal name + address + GSTIN if registered  
    - B) Display name only  
    - C) Disclosure only at checkout  
 
+**Recommendation: A.** E-commerce seller disclosure belongs on the public profile, not only at payment.  
+- Not B: Display name alone fails consumer disclosure expectations.  
+- Not C: Checkout-only disclosure is easy to miss and weak for trust/browse.
+
 3. **Who files quarterly TDS returns?**  
    - A) In-house automation  
    - B) CA retainer  
    - C) Hybrid export + CA upload  
+
+**Recommendation: C.** Hybrid export + CA upload is the realistic interim until Form 26Q automation is trustworthy.  
+- Not A: Full in-house automation is not ready before quarterly deadlines.  
+- Not B: CA-only without clean exports recreates spreadsheet chaos.
 
 ## High concurrency / multi-device
 

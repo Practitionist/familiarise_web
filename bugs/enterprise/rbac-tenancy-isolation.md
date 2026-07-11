@@ -26,15 +26,27 @@ Org RBAC: `MemberRole` ladder + surface permissions (`members.manage`, `billing.
    - B) RLS before any SOC 2 language  
    - C) RLS only when Supabase client exposure  
 
+**Recommendation: A.** Honest API-tenancy language unblocks design-partner DPAs; put RLS on the roadmap, not on the critical path.  
+- Not B: Over-commits before we have RLS design and migration plan.  
+- Not C: Waiting for client exposure leaves a known gap undated.
+
 2. **EXPERT invite — lazy-create consultant profile?**  
    - A) Parity with SSO JIT  
    - B) Keep strict “onboard as consultant first”  
    - C) Org-hosted expert profile distinct from marketplace consultant  
 
+**Recommendation: B.** Keep marketplace consultant onboarding as the gate until host-org expert identity is a real product path.  
+- Not A: Lazy-creates marketplace consultants for org invites and blurs sponsor vs host.  
+- Not C: Premature while `ENABLE_HOST_ORGS` is still off.
+
 3. **Domain claim disputes process?**  
    - A) Manual admin arbitration  
    - B) DNS re-verify winner takes all  
    - C) Allow shared domains with break-glass  
+
+**Recommendation: A.** Design-partner volume is low enough that founder/ops arbitration is faster and clearer than automated winner-take-all.  
+- Not B: DNS races and spoof edge cases still need humans.  
+- Not C: Shared domains weaken SSO exclusivity and complicate enforceSSO.
 
 ## High concurrency / multi-device
 

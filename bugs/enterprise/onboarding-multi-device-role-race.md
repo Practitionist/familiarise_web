@@ -27,15 +27,27 @@ This is the exact unhappy path: firm onboarding on one device as consultant, oth
    - B) Allow dual platform roles (schema change)  
    - C) Separate accounts encouraged  
 
+**Recommendation: A.** Singular `UserRole` plus Membership for cross-org needs matches Arch 4 and avoids dual-wizard races.  
+- Not B: Schema change reopens the exact multi-device race we need to close.  
+- Not C: Separate accounts punish real dual-need users and fragment SSO identity.
+
 2. **Concurrent onboarding submit — how to handle?**  
    - A) Role lock at step 0 for all roles + CAS on submit  
    - B) Reject second submit if `onboardingCompleted` or role mismatch  
    - C) Accept last-write-wins; cleanup orphans via job  
 
+**Recommendation: A.** Early role lock plus CAS makes last-write-wins impossible and matches invite-accept hardness.  
+- Not B: Still allows mid-wizard flips before `onboardingCompleted`.  
+- Not C: Leaves founders in the wrong role with silent orphan profiles.
+
 3. **After role flip, delete unused profiles?**  
    - A) Hard delete unused  
    - B) Soft keep for audit  
    - C) Merge data where possible  
+
+**Recommendation: B.** Soft-keep preserves audit/dispute evidence if a flip was accidental or contested.  
+- Not A: Hard delete erases forensic trail on a high-stakes identity change.  
+- Not C: Merge is ambiguous across consultant vs consultee shapes and delays the fix.
 
 ## High concurrency / multi-device
 

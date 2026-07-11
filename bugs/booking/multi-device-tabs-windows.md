@@ -25,15 +25,27 @@ Booking state lives on the server (appointments, tentative slots, payment status
    - B) Server locks only; no cross-device UX  
    - C) Force single active checkout session (kick other tabs)  
 
+**Recommendation: A.** Surface a cross-device “payment in progress” banner from PENDING payments so phone/laptop users do not double-start checkout blindly.
+- Not B: Server locks alone leave the other device looking free and drive duplicate pay attempts.
+- Not C: Kicking other tabs is hostile UX when a banner plus server reuse of PENDING payments is enough.
+
 2. **Expired tentative + stale tab — auto-redirect or allow revive?**  
    - A) Hard expire; restart checkout  
    - B) Revive if slot still free  
    - C) Convert to waitlist automatically  
 
+**Recommendation: A.** Hard-expire stale tabs and restart checkout so overnight clients cannot revive into a raced seat.
+- Not B: Revive-if-free races other checkouts and recreates bait-and-switch psychology.
+- Not C: Auto-waitlist converts a payment intent into a different product without explicit consent.
+
 3. **Consultant multi-device approve — require step-up confirm?**  
    - A) Yes for revenue-impacting approve  
    - B) Redis lock sufficient  
    - C) WebAuthn for high-value plans  
+
+**Recommendation: B.** Approval Redis locks already serialize double-approve; add clearer UI disablement rather than step-up ceremony.
+- Not A: Extra confirm friction on every revenue approve slows consultants without fixing stale-tab UX.
+- Not C: WebAuthn for high-value plans is speculative security ahead of wiring allocate idempotency (#837).
 
 ## High concurrency / multi-device
 

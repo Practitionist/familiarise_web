@@ -25,15 +25,27 @@ Public availability APIs, checkout locks, consultant-level auto-allocate seriali
    - B) Accept queue; show wait UX  
    - C) Pre-sell via lottery/waitlist only  
 
+**Recommendation: A.** Shard auto-allocate locks by day/slot so celebrity consultants are not a single-file queue during spikes.
+- Not B: Accepting a global queue still serializes the whole consultant and looks like “site broken” at peak.
+- Not C: Lottery/waitlist-only is a growth productization detour before lock sharding fixes the bottleneck.
+
 2. **Shorten tentative hold during campaigns?**  
    - A) Config flag per event  
    - B) Always 30–60 min for paid  
    - C) Keep 24h  
 
+**Recommendation: B.** Always use 30–60 minute paid holds so campaign and steady-state booking share one correctness rule.
+- Not A: Per-event flags invite misconfiguration exactly when flash sales need predictability.
+- Not C: Keeping 24h during campaigns maximizes abandoned tentatives and false-green calendars.
+
 3. **Ops dashboard for booking integrity?**  
    - A) First-class admin page for blocked confirms + overlaps  
    - B) Sentry-only  
    - C) Nightly email report  
+
+**Recommendation: A.** Give ops a first-class view of `CONFIRMATION_BLOCKED_DOUBLE_BOOKING` and overlaps so loser refunds are not discovered via tweets.
+- Not B: Sentry-only alerts lack the booking context support needs to act.
+- Not C: Nightly email is too late for same-day paid losers still holding SUCCEEDED payments.
 
 ## High concurrency / multi-device
 

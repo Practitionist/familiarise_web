@@ -27,15 +27,27 @@ In-app `SupportTicket` with responses, attachments, internal notes, and Swiggy-s
    - B) Email intake + in-app  
    - C) External helpdesk as system of record  
 
+   **Recommendation: A.** Keep support in-app so tickets stay linked to consultation/payment entities without a second system of record.  
+   - Not B: email intake adds bridge/SLA complexity before basic dedup and timers exist  
+   - Not C: an external helpdesk splits ownership from Familiarise payment and booking truth  
+
 2. **On-call for URGENT tickets?**  
    - A) PagerDuty  
    - B) Slack business hours  
    - C) Next-business-day only  
 
+   **Recommendation: B.** Route URGENT tickets to Slack during business hours until volume and SLAs justify a paid paging stack.  
+   - Not A: PagerDuty is premature before ticket volume and runbooks mature  
+   - Not C: next-business-day is too slow for failed-payment panic  
+
 3. **One payment one ticket rule?**  
    - A) Dedup by paymentId  
    - B) Allow multiples  
    - C) Auto-merge  
+
+   **Recommendation: A.** Dedup by `paymentId` so one failed charge has one owner instead of three parallel threads.  
+   - Not B: multiples recreate the pay-twice / dispute / ticket storm  
+   - Not C: auto-merge is harder to get right than preventing duplicates at create  
 
 ## High concurrency / multi-device
 

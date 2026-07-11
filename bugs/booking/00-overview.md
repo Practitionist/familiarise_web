@@ -25,10 +25,18 @@ Canonical engineering: `docs/booking/`, `utils/slotAllocation/`, `lib/payments/o
    - B) Fail closed without Redis for all paid booking  
    - C) Hybrid: events fail closed, 1:1 degrade  
 
+**Recommendation: C.** Fail closed on events without Redis; let 1:1 continue with GiST as the confirmed-overlap backstop.
+- Not A: Treating Redis as optional for webinars/classes risks unlocked capacity recount under seat contention.
+- Not B: Failing all paid booking on a Redis blip over-blocks 1:1 when GiST already enforces no confirmed overlap.
+
 2. **What is the product SLA for tentative slot holds (24h + 2h cron)?**  
    - A) Shorten hold to 30–60 minutes for paid checkout  
    - B) Keep 24h; improve early release UX  
    - C) Dynamic hold by plan type  
+
+**Recommendation: A.** Short paid checkout holds (30–60 min) free abandoned seats faster and reduce double-pay pressure before flash campaigns.
+- Not B: 24h tentatives make calendars look free while seats are ghost-held through campaigns.
+- Not C: Dynamic holds add policy complexity before fixing known #448/#837/#827 gaps.
 
 ## High concurrency / multi-device
 

@@ -26,15 +26,27 @@ Unified `Collaborator` for webinar/class plans: invite, accept, revenue bps (hos
    - B) Later product  
    - C) Soft co-host without revenue split  
 
+   **Recommendation: B.** Keep 1:1 co-consult out of scope for now and revisit later — webinar/class collab is the product that already ships.  
+   - Not A: “never” closes a plausible future without needing that decision today  
+   - Not C: soft co-host without revenue creates support and Stream edge cases now  
+
 2. **Can collaborators schedule?**  
    - A) Host-only forever  
    - B) Permission-gated  
    - C) Role-based (moderator yes)  
 
+   **Recommendation: B.** Permission-gated scheduling later — schema already has booleans; enforce them when the API surface is audited.  
+   - Not A: host-only forever blocks real collaborator workflows as the feature matures  
+   - Not C: moderator roles pull in Stream complexity before permission flags are enforced  
+
 3. **Capture revenue share legal assent?**  
    - A) Clickwrap on accept  
    - B) External contract only  
    - C) Org MSA covers  
+
+   **Recommendation: A.** Clickwrap on invite accept captures revenue-share assent in-product for SMB hosts without legal ops.  
+   - Not B: external contracts alone will not scale beyond a few design partners  
+   - Not C: an org MSA does not cover individual collaborator assent on consumer plans  
 
 ## High concurrency / multi-device
 

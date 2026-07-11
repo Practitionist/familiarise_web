@@ -26,15 +26,27 @@
    - B) Admin-only until Phase 3  
    - C) Email form + SLA cron  
 
+**Recommendation: C.** Admin-mediated DSAR via email/form is fine interim if an SLA cron tracks overdue requests.  
+- Not A: Full self-serve this year competes with legal placeholders, TDS, and grievance P0s.  
+- Not B: Admin-only without SLA tracking fails the “interim OK if SLA exists” bar.
+
 2. **India-only DPDP for v1 vs accept EU users?**  
    - A) Geo-block EU/UK  
    - B) Accept with GDPR pack  
    - C) Soft accept; fix later  
 
+**Recommendation: A.** India DPDP first — geo-block EU/UK until a real GDPR pack exists.  
+- Not B: GDPR pack is not productized; accepting now creates false compliance.  
+- Not C: Soft accept is the highest-risk path for future enforcement.
+
 3. **Recording retention default vs privacy policy promise?**  
    - A) Align copy to `streamRecordingRetentionDays`  
    - B) Shorten platform default  
    - C) Per-session user choice  
+
+**Recommendation: A.** Make Privacy Policy match `streamRecordingRetentionDays` so product and legal say the same thing.  
+- Not B: Shortening without product need creates storage churn and policy churn.  
+- Not C: Per-session choice complicates disputes before baseline alignment ships.
 
 ## High concurrency / multi-device
 

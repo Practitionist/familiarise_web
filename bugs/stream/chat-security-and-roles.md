@@ -25,15 +25,27 @@ Channels: DMs (`dm-…`), webinar/class team channels, collab channels, legacy c
    - B) Keep admin for simplicity (reject)  
    - C) Separate Stream apps for consult vs org  
 
+**Recommendation: A.** Demote everyone off Stream `admin` and grant channel-scoped permissions by product role.  
+- Not B: Admin-for-all is an explicit reject — any member can escalate channel powers.  
+- Not C: Two Stream apps double ops cost before we fix the mapping bug.
+
 2. **Consultee↔consultee messaging?**  
    - A) Forbid  
    - B) Allow in class/webinar only  
    - C) Allow DMs with report button  
 
+**Recommendation: B.** Class/webinar channels need peer chat; open DMs wait until abuse reporting exists.  
+- Not A: Breaks cohort/classroom product expectations.  
+- Not C: Broad DM graph without report tooling invites harassment and support load.
+
 3. **Token API shape?**  
    - A) Authenticated route; ignore body userId  
    - B) Server action with assertSession  
    - C) Short-lived call-scoped tokens only  
+
+**Recommendation: A.** Session-bound route that ignores client-supplied `userId` closes #400 cleanly for chat and video.  
+- Not B: Assert helps but still tempts “pass userId” call sites to drift.  
+- Not C: Call-scoped alone does not fix chat token minting.
 
 ## High concurrency / multi-device
 

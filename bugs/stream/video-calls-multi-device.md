@@ -27,15 +27,27 @@ Join: lazy meeting create with `slot-{id}` → `/meetings/[id]` → validate-acc
    - B) Keep client getOrCreate  
    - C) Hybrid: server create, client join only  
 
+**Recommendation: A.** Server-defined members and roles close the orphan-call window and stop client-created bypasses.  
+- Not B: Client getOrCreate is the orphan and membership gap.  
+- Not C: Hybrid still risks client create fallbacks unless getOrCreate is fully removed.
+
 2. **Multi-device policy?**  
    - A) Kick older session  
    - B) Allow; show “you’re in this call elsewhere”  
    - C) Soft warn in Setup  
 
+**Recommendation: C.** Soft warn before hard kick — educate on echo without locking out legitimate device switches yet.  
+- Not A: Hard kick first is harsh until we see real abuse rates.  
+- Not B: Allowing without a Setup friction still causes double-tile chaos.
+
 3. **Enforce call membership in Stream, not only validate-access?**  
    - A) Stream call members required  
    - B) App gate enough  
    - C) Backstage + waiting room  
+
+**Recommendation: A.** App `validate-access` alone fails when token binding is wrong — Stream membership is the real gate.  
+- Not B: Page gate is bypassable with call ID + forged token (#400).  
+- Not C: Waiting room is product polish after membership enforcement exists.
 
 ## High concurrency / multi-device
 

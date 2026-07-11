@@ -27,15 +27,27 @@ Public discovery: `/explore/experts` (cached consultant cards, filters, infinite
    - B) Before launch  
    - C) Stay on Prisma  
 
+   **Recommendation: A.** Stay on Prisma until a clear consultant/QPS threshold forces dedicated search — premature Algolia/Typesense is unused ops cost.  
+   - Not B: search infra before launch delays PII and rating fixes that matter more  
+   - Not C: “stay on Prisma forever” ignores eventual scale cliffs  
+
 2. **Unverified consultants in org catalogs only?**  
    - A) Yes — public VERIFIED only (current leaning)  
    - B) Show with badge  
    - C) Hide entirely until verified  
 
+   **Recommendation: A.** Keep public explore verified-only so marketplace trust stays intact while orgs can still surface their own roster.  
+   - Not B: badges still pollute public rankings with unverified noise  
+   - Not C: hiding everywhere breaks org catalog needs  
+
 3. **Community: build or remove?**  
    - A) Remove placeholder  
    - B) Ship MVP feed  
    - C) Keep SEO shell  
+
+   **Recommendation: A.** Remove the community placeholder now — a dead CTA hurts SEO and trust more than no page.  
+   - Not B: shipping an MVP feed now dilutes focus from booking and explore quality  
+   - Not C: an SEO shell that dead-ends still bounces users  
 
 ## High concurrency / multi-device
 

@@ -25,15 +25,27 @@ Privacy/Terms pages exist under `app/(pages)/` but company constants still conta
    - B) 13+ parental consent  
    - C) No restriction until DPDP Phase 3  
 
+**Recommendation: A.** 18+ with DOB is the cleanest India marketplace posture for paid professional consults.  
+- Not B: Parental consent flows are heavy and still risky for paid advice.  
+- Not C: Waiting until Phase 3 leaves minors in paid sessions today.
+
 2. **Grievance officer — hire + page before GMV?**  
    - A) Before first paid consumer txn  
    - B) Shared founder email interim  
    - C) Enterprise MSA only; B2C later  
 
+**Recommendation: A.** Publish grievance page and officer before consumer GMV — Consumer Protection Rules expect it.  
+- Not B: Founder inbox is not a durable SLA or public grievance channel.  
+- Not C: Enterprise MSA does not satisfy B2C e-commerce disclosure duties.
+
 3. **Vertical licensing — marketplace trust or regulated?**  
    - A) Stay generalist ed-tech trust  
    - B) Build license verify for CA/legal/health  
    - C) Ban regulated advice categories  
+
+**Recommendation: A.** Stay generalist trust signals for now; regulated verticals need dedicated compliance programs we are not ready to own.  
+- Not B: License verify for CA/legal/health is a multi-year product, not a checkbox.  
+- Not C: Hard bans shrink marketplace before we have clear category taxonomy.
 
 ## High concurrency / multi-device
 

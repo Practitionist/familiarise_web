@@ -30,15 +30,27 @@ Key paths: `lib/compliance/`, `lib/payments/tax/`, `docs/compliance/15-india-com
    - B) Keep dual until B2C GMV threshold  
    - C) Outsource all TDS calc to CA spreadsheet  
 
+**Recommendation: A.** Wrong 194J vs 194-O rates on live B2C payouts is a P0 expert-trust and compliance failure — cut over to one CA-signed engine first.
+- Not B: Dual engines until a GMV threshold guarantees some consultants are under-withheld or over-withheld in prod.
+- Not C: Spreadsheet TDS cannot stay consistent with ledger clawbacks and concurrent payout batches.
+
 2. **When does GSTR-8 / TCS become launch-blocking?**  
    - A) Before first B2C payout  
    - B) After N consultants registered  
    - C) Defer with CA retainer filing manually  
 
+**Recommendation: C.** After TDS unification, design-partner GSTR-8 can be filed via CA retainer until collection volume justifies productized TCS batches.
+- Not A: Blocking every B2C payout on schema-only `GstTcsBatch` stalls Path C after the higher-priority TDS fix.
+- Not B: Consultant headcount is a weak proxy for TCS liability and still leaves early GMV unfiled.
+
 3. **IRP — enable for all orgs or only above AATO?**  
    - A) Flag on for everyone with ClearTax  
    - B) PENDING IRN below threshold  
    - C) PDF-only until first audit  
+
+**Recommendation: B.** Keep IRN pending below AATO and enable ClearTax IRP where the threshold actually requires it.
+- Not A: Forcing IRP for every org adds ClearTax cost/ops before legal necessity.
+- Not C: PDF-only past the threshold is non-compliant once e-invoicing applies.
 
 ## High concurrency / multi-device
 

@@ -36,15 +36,27 @@ Dec 2025 P0 checkout bugs in `tasks/payment-workflow-critical-bugs.md` appear la
    - B) Quarantine behind `DEPRECATED_GATEWAYS`  
    - C) Keep Stripe test-only  
 
+**Recommendation: B.** Quarantine unused gateways behind a deprecation flag to shrink secret/webhook surface without a risky big-bang delete of shared types.
+- Not A: Hard delete can break residual imports and webhook routes before the evaluation cleanup is complete.
+- Not C: Leaving Stripe “test-only” still keeps dual-rail complexity and asymmetric sync behavior in prod codepaths.
+
 2. **Single source of truth for “finance ready for prod” checklist?**  
    - A) This bugs pack + shipping checklist sign-off slots  
    - B) Notion/Linear only  
    - C) Feature-flag dashboard as checklist  
 
+**Recommendation: A.** Keep the go-live checklist next to the audited gaps in-repo so eng and finance sign the same artifacts.
+- Not B: Notion/Linear drift from code (as already seen on payment-workflow task status).
+- Not C: Flags show what is on, not whether Path C, TDS, and IRP are actually signed off.
+
 3. **Are day passes on the roadmap or should skill/docs mentions be removed?**  
    - A) Build schema + grant path  
    - B) Remove mentions to reduce confusion  
    - C) Keep as future marketing only  
+
+**Recommendation: B.** Day passes are doc-only with no Prisma model — remove mentions so sales and eng stop treating them as shippable.
+- Not A: Building a new product surface before payouts/TDS/refund P0s is growth ahead of money safety.
+- Not C: “Future marketing only” still creates false confidence and support confusion.
 
 ## High concurrency / multi-device
 

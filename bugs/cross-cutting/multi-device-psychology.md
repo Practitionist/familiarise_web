@@ -35,15 +35,27 @@ Real users do not use one browser tab. They bounce between phone, laptop, iPad, 
    - B) Single active session per user (kick others)  
    - C) Soft warnings when parallel mutating sessions detected  
 
+   **Recommendation: A.** Treat the server as truth with aggressive refetch and allow parallel sessions — UPI-on-phone and email deep links require it.  
+   - Not B: kicking other sessions breaks the phone-OTP / desktop-checkout flow  
+   - Not C: soft warnings alone do not fix stale slots or double submits  
+
 2. **Where to invest first?**  
    - A) Onboarding CAS + checkout key persistence  
    - B) Stream single-session  
    - C) Cross-device pending-payment banner  
 
+   **Recommendation: A.** Invest first in onboarding CAS and checkout idempotency-key persistence — identity and money races hurt more than call echo.  
+   - Not B: Stream single-session matters but is secondary to signup/payment correctness  
+   - Not C: banners help UX but do not remove the root remount/tab races  
+
 3. **Mobile strategy?**  
    - A) Responsive web + WebView payments  
    - B) Native SDK later  
    - C) PWA install prompts  
+
+   **Recommendation: A.** Double down on responsive web plus WebView-friendly payments before native — Familiarise is still a web product.  
+   - Not B: native SDKs can wait until web multi-device money flows are solid  
+   - Not C: PWA install prompts without fixing dual-device races are vanity  
 
 ## High concurrency / multi-device
 

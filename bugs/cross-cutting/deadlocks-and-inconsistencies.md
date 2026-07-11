@@ -46,20 +46,36 @@ Familiarise avoids classic DB deadlocks with documented Redis lock ordering (con
    - B) Central lock registry module only  
    - C) Prefer DB constraints over new Redis locks  
 
+   **Recommendation: A.** Require an ADR plus PR-template checklist for every new distributed lock so order and fail-open/closed stay reviewable.  
+   - Not B: a registry without process still drifts when someone adds a lock ad hoc  
+   - Not C: DB constraints cannot cover Redis slot and appointment intent races  
+
 2. **Accept eventual consistency for Phase-2 side effects?**  
    - A) Yes + status page + SLA  
    - B) Move earnings inside confirm txn  
    - C) Outbox pattern with visible pending  
+
+   **Recommendation: C.** Use an outbox (or explicit pending status) for Phase-2 earnings/notifications so users see “processing” instead of silent skew.  
+   - Not A: a status page alone still leaves confirm→side-effect gaps invisible in-product  
+   - Not B: stuffing earnings into confirm lengthens ACK windows and timeouts  
 
 3. **Doc drift process?**  
    - A) Docs CI check against flags/paths  
    - B) Quarterly audit only  
    - C) Delete stale task files when fixed  
 
+   **Recommendation: C.** Delete stale task docs when bugs are fixed so ops never follows a runbook that disagrees with code.  
+   - Not A: full docs CI is heavier process than Familiarise needs right now  
+   - Not B: quarterly-only lets wrong payment/security docs linger for months  
+
 4. **Unify dual truth pairs?**  
    - A) Hard deprecate BetterAuth Member fields in app logic  
    - B) Keep bridge forever  
    - C) Generate Membership from Member only  
+
+   **Recommendation: A.** Hard-deprecate BetterAuth `Member` fields in app logic and lean on `Membership` — dual truth is how role bugs keep returning.  
+   - Not B: keeping the bridge forever preserves every UI misuse of the wrong role model  
+   - Not C: generating Membership from Member only still couples product auth to BetterAuth’s shape  
 
 ## High concurrency / multi-device
 

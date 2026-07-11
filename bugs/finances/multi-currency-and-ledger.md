@@ -26,15 +26,27 @@ Key paths: `lib/payments/ledger/post.ts`, `lib/payments/validation/currency-guar
    - B) No — block non-INR buyers until #783  
    - C) Dual books: display FX wallet separate from INR ledger  
 
+**Recommendation: A.** Stay INR settlement with clear checkout copy until real US/EU supply justifies #783 — matches the India-first money model already in code.
+- Not B: Blocking all non-INR buyers cuts international consultees without fixing consultant payout reality.
+- Not C: Dual display-FX books before a true multi-currency ledger invites reconcile bugs and support disputes.
+
 2. **On wallet drift detection, auto-heal from journal or page humans?**  
    - A) Auto-correct cache from ledger balance  
    - B) Freeze wallet + ops alert  
    - C) Log only until N paise threshold  
 
+**Recommendation: B.** Freeze the wallet and page ops when cache drifts from the journal so further bookings cannot spend a wrong balance.
+- Not A: Silent auto-heal can mask a posting bug and keep moving bad money.
+- Not C: Log-only lets orgs keep booking against a lying denormalized balance.
+
 3. **Should refunds always return gateway-settled INR, ignoring display currency?**  
    - A) Yes (gateway truth)  
    - B) Attempt display-currency refund where gateway supports  
    - C) Credit wallet in INR equivalent only  
+
+**Recommendation: A.** Refund the gateway-settled INR amount — that is what Razorpay captured and what the ledger posted.
+- Not B: Display-currency refunds fight IBT settlement and create amount-mismatch recovery loops.
+- Not C: Wallet credit instead of gateway refund leaves the card/UPI customer unpaid.
 
 ## High concurrency / multi-device
 

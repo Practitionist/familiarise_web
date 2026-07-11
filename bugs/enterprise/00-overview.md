@@ -27,10 +27,18 @@ Canonical: `docs/enterprise/`, `ENTERPRISE_SCREENS.html`, `lib/auth/org-permissi
    - B) Parallel marketplace + enterprise  
    - C) Host orgs later; sponsor orgs first  
 
+**Recommendation: C.** Sponsor-first lets us ship design-partner B2B value without waiting on host-org payouts and 3-way split.  
+- Not A: Blocks useful parallel marketplace learning while flags stay off.  
+- Not B: Parallel host+sponsor+marketplace spreads eng thin before isolation and payouts are proven.
+
 2. **Is API-layer tenancy enough for customer DPAs?**  
    - A) Yes for design partners  
    - B) RLS required before SOC 2  
    - C) Separate DB per large tenant  
+
+**Recommendation: A.** Document API isolation as sufficient for design partners while scheduling RLS as defense-in-depth.  
+- Not B: Blocks partner contracts on work we have not started.  
+- Not C: Ops cost is unjustified at current tenant count.
 
 ## High concurrency / multi-device
 

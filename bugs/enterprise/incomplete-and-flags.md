@@ -34,10 +34,18 @@ Doc drift: SCIM parked vs live; HOST gate error codes inconsistent in docs vs ro
    - B) Founder + CA + eng  
    - C) Per-flag owners  
 
+**Recommendation: B.** Flags span tax, payouts, and product law — founder + CA + eng must co-sign go-live.  
+- Not A: Eng alone cannot own GST/TDS/MSA risk.  
+- Not C: Per-flag owners fragment the sponsor→host program into unsafe partial flips.
+
 2. **When to flip `ENABLE_HOST_ORGS`?**  
    - A) With live payouts + rate-card QA  
    - B) Soft launch without live money  
    - C) Defer indefinitely; sponsor-only  
+
+**Recommendation: A.** Host orgs without live money teach the wrong economics; flip with payouts as one program after sponsor path is stable.  
+- Not B: Soft launch creates demo/prod confusion and fake rate-card expectations.  
+- Not C: “Indefinitely” kills the host roadmap; sponsor-first is sequencing, not abandonment.
 
 ## High concurrency / multi-device
 

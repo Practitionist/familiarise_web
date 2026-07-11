@@ -25,15 +25,27 @@ Programs: LICENSED_SEAT and CREDIT_POOL. Seats aggregate into billing subscripti
    - B) Manual top-up OK for design partners  
    - C) Invoice-only customers; wallet secondary  
 
+**Recommendation: B.** Notify-only wallet is fine for design partners if UI is honest; ship #777 when volume justifies mandates.  
+- Not A: Blocks GA on a convenience feature partners can live without.  
+- Not C: Wallet is already in the funding model; demoting it confuses existing paths.
+
 2. **Dunning auto-suspend default on for enterprise tier?**  
    - A) On after 3 reminders  
    - B) Manual suspend only  
    - C) Soft-block new bookings; keep existing  
 
+**Recommendation: B.** Design-partner ops should suspend by hand until dunning copy and edge cases are battle-tested.  
+- Not A: Auto-suspend mid-workshop is a trust nuke with few tenants.  
+- Not C: Soft-block still surprises buyers without clear finance UX.
+
 3. **SCIM — beta allowlist or public?**  
    - A) Update docs; allowlist customers  
    - B) Feature flag off by default  
    - C) Keep 405 for write until certified  
+
+**Recommendation: A.** Code is live — fix doc drift and gate customers via allowlist so IT can onboard safely.  
+- Not B: Hides a working surface and worsens doc/code mismatch.  
+- Not C: Write 405 contradicts implemented SCIM and frustrates HRIS pilots.
 
 ## High concurrency / multi-device
 

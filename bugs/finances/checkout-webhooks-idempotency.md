@@ -28,15 +28,27 @@ Key paths: `lib/payments/operations/checkout.ts`, `app/api/webhooks/razorpay/`, 
    - B) Manual ops with 24h SLA (current leaning)  
    - C) Partial capture / adjust booking price only with admin approval  
 
+**Recommendation: A.** Auto-refund amount mismatches and page Sentry P0 — captured funds with a blocked booking must not wait on a 24h ops SLA.
+- Not B: Manual recovery leaves consultees charged while `REQUIRES_MANUAL_RECOVERY` sits.
+- Not C: Partial capture / price adjust invents a second money path instead of returning the wrong capture.
+
 2. **Should checkout remount reuse the same `clientIdempotencyKey` for a given cart fingerprint?**  
    - A) Persist key in sessionStorage keyed by plan+slots  
    - B) Mint fresh each mount; rely on paymentIntent uniqueness  
    - C) Server-side “open PENDING payment for this user+plan” reuse  
 
+**Recommendation: C.** Reuse an open PENDING payment server-side for the same user+plan so remounts, tabs, and WebViews cannot mint parallel charges.
+- Not A: sessionStorage helps one browser only and fails across phone/desktop checkout.
+- Not B: Fresh keys on every mount are exactly how double-pay unhappy paths start.
+
 3. **Is asymmetric Razorpay-async vs Stripe-sync acceptable long-term?**  
    - A) Unify both on async + sweeper  
    - B) Delete Stripe per gateway evaluation  
    - C) Keep Stripe sync for test-only  
+
+**Recommendation: B.** Delete unused Stripe per the gateway evaluation so Razorpay-async + sweeper is the only production money path.
+- Not A: Unifying Stripe onto async invests in a dual-rail we intend to exit.
+- Not C: Test-only Stripe still leaves asymmetric timeout/retry behavior in the codebase.
 
 ## High concurrency / multi-device
 

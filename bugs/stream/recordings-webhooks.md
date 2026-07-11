@@ -25,15 +25,27 @@ Webhook route verifies HMAC; handles recording lifecycle, session end, participa
    - B) Plan flag only for webinar/class  
    - C) Org-policy forced recording  
 
+**Recommendation: A.** Opt-in per session with clear Setup consent matches DPDP expectations and dispute needs.  
+- Not B: Leaves 1:1 users surprised when they need evidence.  
+- Not C: Forced org recording without consent UX is a privacy landmine.
+
 2. **Dispute evidence retention default?**  
    - A) Align with `streamRecordingRetentionDays` + legal hold  
    - B) 14 days max always  
    - C) Transfer-all immediately  
 
+**Recommendation: A.** One retention story in product + legal hold for open disputes beats ad-hoc Stream expiry.  
+- Not B: 14 days is Stream URL life, not our policy promise.  
+- Not C: Transfer-all burns storage before we know what matters.
+
 3. **Webhook sweeper for Stream (parity with Razorpay)?**  
    - A) Replay unprocessed  
    - B) Rely on Stream retries only  
    - C) Nightly reconcile vs Stream API  
+
+**Recommendation: A.** Replay unprocessed events mirrors Razorpay discipline and catches missed recording/session ends.  
+- Not B: Vendor retries alone leave orphan MeetingSession gaps silent.  
+- Not C: Nightly reconcile is slower for live-call state than event replay.
 
 ## High concurrency / multi-device
 

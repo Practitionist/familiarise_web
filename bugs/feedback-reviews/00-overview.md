@@ -25,15 +25,27 @@ Two concepts: **platform Feedback** (user → product, staff workflow) and **Con
    - B) Allow updates to single review  
    - C) Open reviews; badge “verified booking”  
 
+   **Recommendation: A.** Unique constraint plus completed paid-booking eligibility stops spam and revenge reviews while keeping explore trustworthy for Familiarise now.  
+   - Not B: updates without an eligibility gate still allow an unverified first review  
+   - Not C: open reviews invite competitor spam before any badge helps  
+
 2. **Rating source of truth?**  
    - A) Live aggregate query  
    - B) Denormalized field with triggers on all mutations  
    - C) Nightly recompute job  
 
+   **Recommendation: B.** Update the denormalized rating on every create/update/delete so explore sort stays correct without scanning all reviews per request.  
+   - Not A: live aggregates are too expensive for card grids and infinite scroll  
+   - Not C: nightly recompute leaves ratings wrong for a full day  
+
 3. **Remove email from public search?**  
    - A) Immediate  
    - B) Admin-only search  
    - C) Hash/obfuscate  
+
+   **Recommendation: A.** Strip email from public explore search immediately — it is a PII leak with no product upside.  
+   - Not B: admin-only still widens blast radius if staff tools or logs leak  
+   - Not C: hashing adds complexity without fixing that email should not be a discovery key  
 
 ## High concurrency / multi-device
 

@@ -28,15 +28,27 @@ Dual path: **Resend** for auth/payment/waitlist transactional email; **Novu** fo
    - B) In-house for critical; Novu for engagement  
    - C) Resend-only simplify  
 
+   **Recommendation: B.** Keep Resend for critical auth/payment/waitlist mail and Novu for product workflows — that dual path already matches how Familiarise ships.  
+   - Not A: putting critical money/auth mail only through Novu adds a single failure domain  
+   - Not C: Resend-only drops in-app bells and the 40+ product workflows already wired  
+
 2. **Push before mobile app?**  
    - A) Skip  
    - B) Web push first  
    - C) Build with native app  
 
+   **Recommendation: A.** Skip push until a real mobile client exists — schema fields without delivery only create false expectations.  
+   - Not B: web push before native is half-baked and competes with email that already works  
+   - Not C: bundling push with native is fine later; it is not a now decision  
+
 3. **Unify preference APIs?**  
    - A) Deprecate legacy immediately  
    - B) Facade over both  
    - C) Keep legacy for mobile docs  
+
+   **Recommendation: A.** Deprecate the legacy narrow preference API immediately so one Novu-synced model stops “I turned email off” split brain.  
+   - Not B: a facade prolongs two shapes and two bugs  
+   - Not C: keeping legacy for mobile docs locks in the confusion  
 
 ## High concurrency / multi-device
 

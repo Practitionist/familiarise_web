@@ -27,10 +27,18 @@ Canonical: `docs/compliance/`, `lib/compliance/`, `jobs/compliance/`.
    - B) Design-partner MSA covers  
    - C) Ship with draft TOS marked beta  
 
+**Recommendation: A.** Replace placeholders before any paid txn — unenforceable TOS/Privacy is a launch blocker.  
+- Not B: MSA does not cover B2C checkout or public page enforceability.  
+- Not C: “Beta draft” TOS still fails consumer and enterprise diligence.
+
 2. **B2B-only compliance posture until B2C tax fixed?**  
    - A) Yes  
    - B) Fix TDS/TCS in parallel  
    - C) Manual CA for B2C interim  
+
+**Recommendation: A.** Keep B2B posture until TDS is unified; do not scale B2C payouts on dual engines.  
+- Not B: Parallel fix without a payout gate still ships wrong withholdings.  
+- Not C: Manual CA interim without a hard stop invites silent wrong filings at volume.
 
 ## High concurrency / multi-device
 

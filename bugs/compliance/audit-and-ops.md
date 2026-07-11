@@ -24,15 +24,27 @@
    - B) Org-only until SOC 2  
    - C) Rely on provider logs (BetterAuth, Sentry)  
 
+**Recommendation: A.** Staff access to consumer data needs our own immutable trail for enterprise questionnaires and disputes.  
+- Not B: Org-only leaves B2C admin actions invisible until SOC 2 forces a scramble.  
+- Not C: Provider logs are incomplete, not retention-aligned, and hard to export for auditors.
+
 2. **Page on-call for compliance cron failures?**  
    - A) PagerDuty  
    - B) Slack only  
    - C) Weekly human checklist  
 
+**Recommendation: B.** Slack ops webhook is enough at current cron criticality; escalate to pager when breach/erasure SLAs go live.  
+- Not A: PagerDuty overhead before SLAs and volume justify it.  
+- Not C: Weekly checklists miss 72h breach clocks.
+
 3. **Erasure SLA automation?**  
    - A) Cron escalating overdue ErasureRequest  
    - B) Admin calendar reminder  
    - C) Legal holds queue first  
+
+**Recommendation: A.** Admin DSAR is fine interim only if an escalating SLA cron exists.  
+- Not B: Calendar reminders do not survive vacation or ticket volume.  
+- Not C: Legal holds matter but should not block overdue-request escalation.
 
 ## High concurrency / multi-device
 

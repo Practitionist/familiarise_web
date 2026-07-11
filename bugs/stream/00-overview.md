@@ -27,10 +27,18 @@ Canonical: `docs/stream/`, `lib/stream-client.ts`, `app/meetings/`.
    - B) Mitigate with network controls only  
    - C) Move tokens to session-bound API this sprint  
 
+**Recommendation: A.** Unbound token minting is a hard security gate — no growth push until session binding ships.  
+- Not B: Network controls do not stop a forged server action with another user’s id.  
+- Not C: Sprint timing is the how; the decision must be “blocked until fixed,” not merely scheduled.
+
 2. **Single active device per call?**  
    - A) Enforce  
    - B) Allow multi-device  
    - C) Warn only  
+
+**Recommendation: C.** Warn in Setup first; hard kick can wait until we measure real multi-device abuse vs accessibility needs.  
+- Not A: Immediate kick risks locking out legitimate phone↔laptop switches mid-consult.  
+- Not B: Silent multi-device produces echo and “who is speaking?” blame on consultants.
 
 ## High concurrency / multi-device
 

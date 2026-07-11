@@ -25,15 +25,27 @@
    - B) Accept localStorage loss  
    - C) Require code entry post-signup always  
 
+   **Recommendation: C.** Always offer post-auth “have a referral code?” entry so OAuth on another device does not silently drop attribution.  
+   - Not A: cookies still fail across devices and browsers after OAuth  
+   - Not B: accepting localStorage loss guarantees friend-share betrayal  
+
 2. **Economics lock for launch?**  
    - A) Keep ₹300/₹300 + caps  
    - B) Ramp referrer to ₹500 later  
    - C) Pause program via config  
 
+   **Recommendation: A.** Keep conservative ₹300/₹300 plus caps at launch so farming risk stays bounded while docs catch up.  
+   - Not B: ramping to ₹500 early raises sybil payout before phone verify lands  
+   - Not C: pausing is a kill switch, not a launch economics decision  
+
 3. **Phone verify before credit spend or qualify?**  
    - A) Before qualify  
    - B) Before spend  
    - C) Defer #884  
+
+   **Recommendation: A.** Require phone verify before qualify so fake accounts never mint referral credit into the budget.  
+   - Not B: before-spend still lets farm rings burn the program budget at qualify time  
+   - Not C: deferring #884 leaves the main anti-sybil gap open at launch  
 
 ## High concurrency / multi-device
 

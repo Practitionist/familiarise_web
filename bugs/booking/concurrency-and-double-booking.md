@@ -25,15 +25,27 @@ Three layers: (1) Redis locks (`utils/appointmentlock.ts`) with documented lock 
    - B) Ops runbook + alert only  
    - C) Authorize-only until confirm; capture after GiST  
 
+**Recommendation: A.** Auto-refund on `#827` confirmation block so the paid loser is not left on SUCCEEDED-with-tentative until ops notices.
+- Not B: Ops-only recovery is too slow for chargebacks and panics after both parties paid.
+- Not C: Authorize-then-capture after GiST is a speculative payment redesign; fix the known loser-refund gap first.
+
 2. **Should validate-then-allocate UI freeze slots client-side?**  
    - A) Soft hold token for N seconds  
    - B) No UI hold; always recheck at submit  
    - C) Optimistic UI with instant 409 recovery UX  
 
+**Recommendation: B.** Do not pretend the client owns a seat — always recheck at submit and tell the truth when the slot is gone.
+- Not A: Client soft holds without a server hold feel like bait-and-switch when the timer expires under contention.
+- Not C: Optimistic UI still needs the same recheck; “instant 409 recovery” is polish after correctness messaging exists.
+
 3. **Event last-seat: prefer 503 (Redis down) or risk unlocked recount?**  
    - A) Keep fail-closed 503  
    - B) Continue on Serializable only  
    - C) External capacity semaphore (documented but not in prod)  
+
+**Recommendation: A.** Keep fail-closed 503 for event checkout when Redis is down — overselling seats is worse than temporary conversion loss.
+- Not B: Continuing on Serializable alone without the event lock increases last-seat double-sell risk.
+- Not C: An external capacity semaphore is documented but not in prod — speculative vs the existing fail-closed path.
 
 ## High concurrency / multi-device
 

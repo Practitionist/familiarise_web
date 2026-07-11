@@ -27,15 +27,27 @@ BetterAuth with Prisma; singular `User.role`; nullable profile FKs; onboarding w
    - B) Role switcher for CONSULTANT↔CONSULTEE  
    - C) Encourage two accounts  
 
+   **Recommendation: A.** Keep one account → one `User.role` and use Membership for cross-role org needs — dashboards and Stream stay coherent.  
+   - Not B: a CONSULTANT↔CONSULTEE switcher explodes routing and permission complexity  
+   - Not C: two accounts punish referrals, payments, and SSO  
+
 2. **ORG_WORKSPACE personal consultee booking?**  
    - A) Allow via lazy profile  
    - B) Forbid  
    - C) Separate personal user invite  
 
+   **Recommendation: A.** Allow org-workspace users personal booking via lazy `ConsulteeProfile` carefully — experts booking others should not need a second email.  
+   - Not B: forbidding personal booking traps org users who also learn  
+   - Not C: a separate personal invite is heavy process for SMB  
+
 3. **Phone step-up (#884) first where?**  
    - A) Referral rewards  
    - B) Payouts  
    - C) All new signups  
+
+   **Recommendation: B.** Require phone on payouts first (and referrals in the same wave) — cash-out and credit mint are the highest-leverage fraud gates.  
+   - Not A: referrals-only leaves payout cash-out open longer  
+   - Not C: OTP on every signup adds conversion friction before money moves  
 
 ## High concurrency / multi-device
 

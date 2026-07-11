@@ -29,15 +29,27 @@ Key paths: `lib/payments/payouts/`, jobs under `.github/workflows/*payout*`.
    - B) Keep manual bank transfers until GMV threshold  
    - C) Switch architecture to Route splits before enabling FAA  
 
+**Recommendation: A.** Prove sandbox UTRs, then design-partner cohort, then full prod with a kill switch — the only safe way to flip `ENABLE_LIVE_PAYOUTS`.
+- Not B: Manual bank transfers do not exercise idempotent RazorpayX batching and hide production failure modes.
+- Not C: Redesigning onto Route before FAA delays payouts and abandons Path C without a CA-driven reason.
+
 2. **What happens when INVOICE org never pays — force clawback, write-off, or suspend booking?**  
    - A) Auto-suspend org after dunning stage 3 (`ENABLE_DUNNING_SUSPEND`)  
    - B) Earnings stay PENDING_TRUST indefinitely (ops review)  
    - C) Platform absorbs and invoices org legally  
 
+**Recommendation: A.** After dunning stage 3, auto-suspend the org so unpaid invoice funding cannot keep creating `PENDING_TRUST` earnings forever.
+- Not B: Indefinite PENDING_TRUST strands consultants and never forces org payment.
+- Not C: Platform absorption turns Familiarise into the bad-debt party for unpaid B2B bookings.
+
 3. **Non-resident / Section 195 timeline before international consultants?**  
    - A) Block non-resident until Form 15CA/CB live  
    - B) Manual CA process outside product  
    - C) Only allow INR-resident consultants at launch  
+
+**Recommendation: C.** Launch with INR-resident consultants only until Section 195 / Form 15CA/CB is productized — India settlement first.
+- Not A: “Block until 15CA/CB” still invites half-built intl onboarding UI and support exceptions.
+- Not B: Manual CA outside product does not scale and will be bypassed under sales pressure.
 
 ## High concurrency / multi-device
 

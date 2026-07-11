@@ -26,10 +26,18 @@ Documented deferrals and dead code around Stream.
    - B) After ENABLE_HOST_ORGS  
    - C) Never — host-only end  
 
+**Recommendation: B.** Ship collaborator video roles with host-org GA when multi-expert economics actually need them.  
+- Not A: Pulls Stream role work ahead of sponsor-first sequencing.  
+- Not C: “Never” contradicts webinar/class collaborator product already in schema.
+
 2. **Delete dead `createMeeting` or productize instant rooms?**  
    - A) Delete  
    - B) Productize personal rooms  
    - C) Keep internal/admin only  
+
+**Recommendation: A.** Dead entry points confuse ownership of MeetingSession and orphan-call debugging — delete until productized.  
+- Not B: Instant rooms expand surface before #400 and server-side create land.  
+- Not C: “Internal only” still leaves unowned code paths support will hit.
 
 ## High concurrency / multi-device
 

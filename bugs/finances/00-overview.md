@@ -30,15 +30,27 @@ Canonical engineering: `docs/payments/`, `docs/enterprise/10-money-and-ledger/`,
    - B) Ship design partners with escrow-like hold language only  
    - C) Move to Razorpay Route sub-merchants per consultant  
 
+**Recommendation: A.** Money movement under Path C needs a written CA/RBI memo before the first live payout so Familiarise does not invent escrow language or redesign onto Route.
+- Not B: Hold copy without a memo still leaves RBI PA exposure once real UTRs flow.
+- Not C: Route sub-merchants abandon the intentional Path C architecture and delay go-live.
+
 2. **What is the customer SLA when payment succeeds but booking confirmation lags (async webhook gap)?**  
    - A) Confirm within N minutes via sweeper + status page  
    - B) Poll client until SUCCEEDED or timeout with auto-refund  
    - C) Accept ops tickets; document “eventual confirmation”  
 
+**Recommendation: A.** Sweeper + status page matches the existing ACK-before-complete webhook design and keeps paid users informed without premature refunds.
+- Not B: Client-timeout auto-refunds can claw back legitimate slow confirms and fight the sweeper.
+- Not C: Ops-ticket-only acceptance erodes trust when payment already succeeded.
+
 3. **Who owns finance reconciliation when `LedgerReconciliationReport.ok=false`?**  
    - A) On-call eng pages nightly  
    - B) Finance ops dashboard with weekly review  
    - C) Auto-open support ticket per finding  
+
+**Recommendation: A.** Ledger `ok=false` is a money-correctness P0 and should page engineering the night it appears, not wait for a weekly ops glance.
+- Not B: Weekly review is too slow when wallet/cache drift can compound under load.
+- Not C: Support tickets do not fix journal/cache imbalance and create noise without owners.
 
 ## High concurrency / multi-device
 

@@ -12,6 +12,8 @@ High-level investigation notes for Familiarise: incomplete work, concurrency tra
 
 Each markdown follows: Context → Known gaps → Unhappy paths → Questions (A/B/C) → Concurrency / multi-device → Suggested directions.
 
+After every A/B/C question, a **Recommendation** names the preferred option with a short why, plus why-not for the other two. Recommendations are CTO judgment for Familiarise *now* (money/booking safety, India launch, design-partner gates)—not irreversible product law.
+
 ## Severity legend
 
 | Tag | Meaning |

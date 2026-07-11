@@ -25,15 +25,27 @@ Money paths already assume concurrency: Redis checkout locks, Serializable isola
    - B) One-off pre-launch test only  
    - C) Rely on race unit suite  
 
+**Recommendation: A.** Formal checkout/webhook load gates catch pool exhaustion (#368) and lock bottlenecks before marketing spikes create real chargebacks.
+- Not B: A single pre-launch run goes stale as checkout and cron paths change.
+- Not C: Race unit tests prove correctness under contention, not QPS or Prisma pool headroom.
+
 2. **Redis down during peak — fail closed everywhere or degrade 1:1 to DB-only?**  
    - A) Fail closed all paid checkout  
    - B) Events fail closed; 1:1 continue on GiST  
    - C) Queue checkout intents for later processing  
 
+**Recommendation: B.** Keep event capacity fail-closed on Redis outage while 1:1 can rely on GiST as the confirmed-slot backstop.
+- Not A: Blocking all paid checkout when GiST still protects 1:1 over-punishes consultations during a Redis blip.
+- Not C: Queued intents defer money state and create worse “paid later / seat gone” psychology at peak.
+
 3. **Move booking/money crons from Actions to a real queue (#866)?**  
    - A) Inngest/BullMQ near-term  
    - B) Keep Actions until scale pain  
    - C) Hybrid: critical sweepers on always-on worker  
+
+**Recommendation: C.** Put money-critical sweepers (webhooks, refunds, tentative cleanup) on an always-on worker while leaving lower-urgency jobs on Actions.
+- Not A: A full near-term queue migration is speculative ops redesign ahead of fixing known refund/idempotency bugs.
+- Not B: Actions jitter already delays confirmation/refund healing under load — waiting for “scale pain” risks paid users.
 
 ## High concurrency / multi-device
 

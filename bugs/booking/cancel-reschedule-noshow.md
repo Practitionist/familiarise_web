@@ -26,15 +26,27 @@ Cancel: CAS-guarded transitions (`lib/booking/transitions.ts`), soft-cancel slot
    - B) Manual only via SupportIssueType  
    - C) Consultant-confirmed no-show button + consultee contest window  
 
+**Recommendation: A.** Define no-show as no MeetingAttendance join within N minutes so #471 can auto-refund from data already collected.
+- Not B: Manual-only leaves policy-promised refunds dependent on support judgment.
+- Not C: Consultant-gated confirmation invites bias and delays refunds the policy already promises.
+
 2. **Cancellation policy snapshot — show at checkout prominently?**  
    - A) Mandatory acknowledge checkbox  
    - B) Link in footer only  
    - C) Dynamic policy by plan tier with examples  
 
+**Recommendation: A.** Require an acknowledge checkbox at checkout so refund % surprises become fewer disputes later.
+- Not B: Footer-only links are invisible under payment pressure and do not reduce chargebacks.
+- Not C: Dynamic tier examples are good later but secondary to a mandatory acknowledgment now.
+
 3. **Reschedule under 24h — paid exception or never?**  
    - A) Never (current)  
    - B) Paid change fee  
    - C) Consultant discretion override  
+
+**Recommendation: A.** Keep the hard 24h floor — clear, enforceable with CAS, and free of fee/product complexity.
+- Not B: Paid change fees are a growth monetization path before #448 status correctness is fixed.
+- Not C: Discretion overrides create inconsistent multi-device outcomes and support gray areas.
 
 ## High concurrency / multi-device
 
