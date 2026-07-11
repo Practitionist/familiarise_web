@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { signUp, useSession, sendVerificationEmail } from "@/lib/auth-client";
-import { setPendingReferral, clearPendingReferral } from "@/lib/pending-referral";
+import { setPendingReferral } from "@/lib/pending-referral";
 import { ssoSigninWithGuard } from "@/lib/sso/signin-with-toast";
 import { GlobeIcon } from "@/components/auth/auth-icons";
 import { SocialLoginButtons } from "@/components/auth/social-login-buttons";
@@ -88,9 +88,10 @@ function SignUpContent() {
   // Persist the referral code at first touch so it survives the OAuth redirect
   // and the email-verification gap; it is applied after authentication on the
   // onboarding landing. #880
+  // #891 — landing here WITHOUT ?ref= must not wipe a previously-stashed code;
+  // an explicit different code simply overwrites the stash.
   useEffect(() => {
     if (refCode) setPendingReferral(refCode);
-    else clearPendingReferral();
   }, [refCode]);
 
   // Show loading while checking session status (fallback for when middleware doesn't catch)

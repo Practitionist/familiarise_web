@@ -686,9 +686,6 @@ export default function RefundPolicyPage() {
                   <strong>Company Name:</strong> {COMPANY_INFO.name}
                 </p>
                 <p>
-                  <strong>Address:</strong> {COMPANY_INFO.address}
-                </p>
-                <p>
                   <strong>Email:</strong>{" "}
                   <a
                     href={getMailtoLink()}

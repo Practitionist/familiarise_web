@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import { Mail, MapPin, Phone, Clock, MessageSquare } from "lucide-react";
+import { Mail, Phone, Clock, MessageSquare } from "lucide-react";
 import {
   COMPANY_INFO,
   PAGE_META,
@@ -51,23 +51,6 @@ export default function ContactUsPage() {
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
-                {/* Company Address */}
-                <div className="flex items-start gap-4">
-                  <div className="flex-shrink-0 w-10 h-10 rounded-full bg-muted flex items-center justify-center">
-                    <MapPin className="h-5 w-5 text-foreground" />
-                  </div>
-                  <div>
-                    <h3 className="font-semibold mb-1">Address</h3>
-                    <p className="text-sm text-muted-foreground">
-                      {COMPANY_INFO.name}
-                      <br />
-                      {COMPANY_INFO.address}
-                    </p>
-                  </div>
-                </div>
-
-                <Separator />
-
                 {/* Email */}
                 <div className="flex items-start gap-4">
                   <div className="flex-shrink-0 w-10 h-10 rounded-full bg-muted flex items-center justify-center">

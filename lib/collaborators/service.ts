@@ -69,6 +69,28 @@ function asPlanRole(planType: PlanType, role: string): CollaboratorRole | null {
 /**
  * Invite a collaborator to a webinar or class plan.
  */
+// #768 lockdown #12 — capability booleans, set from invite input. Default
+// false so an unspecified permission is never silently granted.
+// Enforced: canSeeAttendees (participant-roster GET).
+// TODO #768 — enforce canApprovePayment / canViewAnalytics / canEditEvent
+// once collaborator-facing payment-approval, analytics, and event-edit
+// surfaces exist; today they have no endpoint to gate, so only the SET lands.
+export interface CollaboratorPermissions {
+  canApprovePayment?: boolean;
+  canViewAnalytics?: boolean;
+  canEditEvent?: boolean;
+  canSeeAttendees?: boolean;
+}
+
+function normalizePermissions(permissions?: CollaboratorPermissions) {
+  return {
+    canApprovePayment: permissions?.canApprovePayment ?? false,
+    canViewAnalytics: permissions?.canViewAnalytics ?? false,
+    canEditEvent: permissions?.canEditEvent ?? false,
+    canSeeAttendees: permissions?.canSeeAttendees ?? false,
+  };
+}
+
 export async function inviteCollaborator(
   planType: PlanType,
   planId: string,
@@ -76,6 +98,7 @@ export async function inviteCollaborator(
   role: string,
   revenueSharePercentage: number,
   invitedById: string,
+  permissions?: CollaboratorPermissions,
 ): Promise<Collaborator | null> {
   // Validate percentage range
   if (revenueSharePercentage <= 0 || revenueSharePercentage > 90) {
@@ -84,6 +107,8 @@ export async function inviteCollaborator(
 
   const planRole = asPlanRole(planType, role);
   if (!planRole) return null;
+
+  const perms = normalizePermissions(permissions);
 
   // Verify the invited consultant profile exists before creating a collaborator record.
   // Without this check, a stale or fabricated consultantProfileId creates an orphaned row.
@@ -125,6 +150,7 @@ export async function inviteCollaborator(
               status: "PENDING",
               invitedById,
               respondedAt: null,
+              ...perms,
             },
           });
         }
@@ -140,6 +166,7 @@ export async function inviteCollaborator(
           revenueShareBps: pctToBps(revenueSharePercentage),
           status: "PENDING",
           invitedById,
+          ...perms,
         },
       });
     },
