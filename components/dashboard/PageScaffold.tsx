@@ -51,19 +51,19 @@ export function DashboardHeader({
           </nav>
         )}
 
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
-            <h1 className="text-xl sm:text-2xl font-bold text-zinc-900 truncate">
+            <h1 className="text-xl sm:text-2xl font-bold text-zinc-900 sm:truncate">
               {title}
             </h1>
             {subtitle && (
-              <p className="text-xs sm:text-sm text-zinc-500 mt-0.5 truncate">
+              <p className="text-xs sm:text-sm text-zinc-500 mt-0.5 sm:truncate">
                 {subtitle}
               </p>
             )}
           </div>
           {actions && (
-            <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+            <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:gap-3 sm:shrink-0">
               {actions}
             </div>
           )}

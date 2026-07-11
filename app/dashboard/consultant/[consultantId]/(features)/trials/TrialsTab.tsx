@@ -476,7 +476,7 @@ export function TrialsTab() {
     <TooltipProvider>
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-zinc-900">
             Trial Requests
@@ -485,7 +485,12 @@ export function TrialsTab() {
             Manage trial session requests from potential subscribers
           </p>
         </div>
-        <Button variant="outline" onClick={handleRefresh} disabled={isRefreshing}>
+        <Button
+          variant="outline"
+          onClick={handleRefresh}
+          disabled={isRefreshing}
+          className="w-full sm:w-auto"
+        >
           <RefreshCw
             className={`h-4 w-4 mr-2 ${isRefreshing ? "animate-spin" : ""}`}
           />
@@ -866,24 +871,26 @@ export function TrialsTab() {
 
       {/* Schedule Dialog with Calendar */}
       <Dialog open={showScheduleDialog} onOpenChange={setShowScheduleDialog}>
-        <DialogContent className="max-w-4xl">
+        <DialogContent className="max-w-4xl max-h-[90dvh] overflow-hidden flex flex-col">
           <VisuallyHidden>
             <DialogTitle>Schedule Trial Session</DialogTitle>
           </VisuallyHidden>
           {selectedTrial && (
-            <TrialScheduleCalendar
-              consultantId={consultantId}
-              trialDurationMinutes={
-                selectedTrial.subscriptionPlan.trialDurationMinutes
-              }
-              onSlotSelect={handleSlotSelected}
-              onCancel={() => {
-                setShowScheduleDialog(false);
-                setSelectedTrial(null);
-              }}
-              isProcessing={isProcessing}
-              consulteeUserName={selectedTrial.consulteeProfile.user.name}
-            />
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              <TrialScheduleCalendar
+                consultantId={consultantId}
+                trialDurationMinutes={
+                  selectedTrial.subscriptionPlan.trialDurationMinutes
+                }
+                onSlotSelect={handleSlotSelected}
+                onCancel={() => {
+                  setShowScheduleDialog(false);
+                  setSelectedTrial(null);
+                }}
+                isProcessing={isProcessing}
+                consulteeUserName={selectedTrial.consulteeProfile.user.name}
+              />
+            </div>
           )}
         </DialogContent>
       </Dialog>

@@ -1060,7 +1060,7 @@ export function UnifiedCalendar({
     };
 
     return (
-      <div className="grid grid-cols-7 gap-1 h-[600px] overflow-y-auto">
+      <div className="grid grid-cols-7 gap-1 flex-1 min-h-0 max-h-[min(600px,calc(90dvh_-_16rem))] overflow-y-auto">
         {DAYS.map((day) => (
           <div key={day} className="text-center font-bold p-2">
             {day.slice(0, 3)}
@@ -1150,10 +1150,10 @@ export function UnifiedCalendar({
   }
 
   return (
-    <div className={`flex flex-col gap-4 ${className}`}>
+    <div className={`flex flex-col gap-4 min-h-0 ${className}`}>
       {/* Warning Banner */}
       {configWarning && (
-        <div className="rounded-md bg-yellow-50 border border-yellow-200 px-4 py-3">
+        <div className="shrink-0 rounded-md bg-yellow-50 border border-yellow-200 px-4 py-3">
           <div className="flex items-start">
             <span className="text-yellow-600 mr-2">⚠️</span>
             <div className="flex-1">
@@ -1168,7 +1168,7 @@ export function UnifiedCalendar({
 
       {/* Scheduling Period Info Banner */}
       {allowedStart && allowedEnd && (
-        <div className="rounded-md bg-blue-50 border border-blue-200 px-4 py-3">
+        <div className="shrink-0 rounded-md bg-blue-50 border border-blue-200 px-4 py-3">
           <div className="flex items-start">
             <Calendar className="h-5 w-5 text-blue-600 mr-2 flex-shrink-0" />
             <div className="flex-1">
@@ -1184,7 +1184,7 @@ export function UnifiedCalendar({
       )}
 
       {/* Header */}
-      <div className="flex justify-between items-center gap-4">
+      <div className="shrink-0 flex flex-wrap items-center justify-between gap-2 sm:gap-4">
         <div className="flex gap-2">
           <Button
             variant={view === "week" ? "default" : "outline"}
@@ -1216,7 +1216,7 @@ export function UnifiedCalendar({
           >
             <ChevronLeft className="h-4 w-4" />
           </Button>
-          <div className="text-lg font-bold text-center min-w-[150px]">
+          <div className="min-w-0 text-center text-sm font-bold sm:min-w-[150px] sm:text-lg">
             {view === "week"
               ? `${format(startOfWeek(currentDate), "MMM d")} - ${format(endOfWeek(currentDate), "MMM d, yyyy")}`
               : format(currentDate, "MMMM yyyy")}
@@ -1247,15 +1247,15 @@ export function UnifiedCalendar({
             Clear Selection
           </Button>
         ) : (
-          <div className="w-20"></div>
+          <div className="hidden w-20 sm:block"></div>
         )}
       </div>
 
       {/* Calendar View */}
       {view === "week" ? (
-        <div className="flex flex-col h-[calc(100vh-24rem)] xl:h-[65vh] max-h-[500px]">
+        <div className="flex flex-col flex-1 min-h-0 max-h-[min(500px,calc(90dvh_-_16rem))]">
           {/* Week header */}
-          <div className="grid grid-cols-8 gap-0.5 md:gap-1 sticky top-0 bg-background z-20 pb-1">
+          <div className="shrink-0 grid grid-cols-8 gap-0.5 md:gap-1 bg-background z-20 pb-1">
             <div className="w-14 md:w-20"></div>
             {weekDates.map((date, index) => {
               const isToday = isSameDay(date, new Date());
@@ -1322,8 +1322,8 @@ export function UnifiedCalendar({
       )}
 
       {/* Footer */}
-      <div className="flex items-center justify-between gap-4">
-        <div className="flex items-center gap-4">
+      <div className="shrink-0 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-4">
           <div className="text-sm">
             {(() => {
               try {
@@ -1405,7 +1405,7 @@ export function UnifiedCalendar({
 
       {/* Allocation Buttons - Bottom */}
       {showAllocationButtons && mode === "allocate" && (
-        <div className="flex justify-end gap-2 mt-2">
+        <div className="mt-2 flex shrink-0 flex-wrap justify-end gap-2">
           {onClose && (
             <Button
               variant="outline"

@@ -379,7 +379,7 @@ export default function EarningsPage({
 
           {/* Pagination */}
           {pagination && pagination.total > limit && (
-            <div className="flex items-center justify-between px-4 py-3 border-t border-zinc-200 bg-zinc-50">
+            <div className="flex flex-col gap-3 border-t border-zinc-200 bg-zinc-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-sm text-zinc-500">
                 Showing {page * limit + 1}–
                 {Math.min((page + 1) * limit, pagination.total)} of{" "}
