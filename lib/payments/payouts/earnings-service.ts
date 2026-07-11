@@ -320,18 +320,29 @@ export async function createEarningsFromPayment({
           // may never pay its invoice must not let consultant OR org earnings
           // clear. Decide ONCE here and apply to every row this booking writes
           // (consultant, primary-org, collaborator-org).
+          // Only INVOICE (NET-X postpaid) funding creates a receivable the
+          // sponsor might never settle — PERSONAL/WALLET/LICENSE are already
+          // paid, so an org id retained on those legs must NOT park. Gate on
+          // the charged billing account's fundingSource, not on organizationId
+          // alone.
           const sponsorOrgId = payment.organizationId;
           let parkForTrust = false;
-          if (sponsorOrgId) {
-            const sponsorOrg = await tx.organization.findUnique({
-              where: { id: sponsorOrgId },
-              select: { status: true },
+          if (sponsorOrgId && payment.billingAccountId) {
+            const billingAccount = await tx.billingAccount.findUnique({
+              where: { id: payment.billingAccountId },
+              select: { fundingSource: true },
             });
-            if (sponsorOrg?.status === "PENDING_VERIFICATION") {
-              const paidInvoiceCount = await tx.organizationInvoice.count({
-                where: { organizationId: sponsorOrgId, status: "PAID" },
+            if (billingAccount?.fundingSource === "INVOICE") {
+              const sponsorOrg = await tx.organization.findUnique({
+                where: { id: sponsorOrgId },
+                select: { status: true },
               });
-              parkForTrust = paidInvoiceCount === 0;
+              if (sponsorOrg?.status === "PENDING_VERIFICATION") {
+                const paidInvoiceCount = await tx.organizationInvoice.count({
+                  where: { organizationId: sponsorOrgId, status: "PAID" },
+                });
+                parkForTrust = paidInvoiceCount === 0;
+              }
             }
           }
           const initialEarningStatus: EarningStatus = parkForTrust

@@ -39,7 +39,7 @@ const PatchBodySchema = z
     // already bumped the version 409s instead of silently clobbering.
     expectedVersion: z.coerce.number().int().min(1).optional(),
   })
-  .refine((v) => Object.keys(v).filter((k) => k !== "expectedVersion").length > 0, {
+  .refine((v) => Object.keys(v).some((k) => k !== "expectedVersion"), {
     message: "PATCH body must contain at least one field",
   });
 

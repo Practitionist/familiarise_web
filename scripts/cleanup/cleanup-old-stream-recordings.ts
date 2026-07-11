@@ -111,10 +111,13 @@ async function cleanupOldStreamRecordingsUnlocked(): Promise<StreamRetentionResu
       const chunk = supabaseCandidates.slice(i, i + CONCURRENCY);
       await Promise.all(
         chunk.map(async (candidate) => {
-          const del =
-            await RecordingTransferService.deleteRecordingFromSupabase(
-              candidate.id,
-            );
+          // #899 — delete only the storage object here; the row's status flip
+          // + audit log land together in the transaction below so a partial
+          // failure can't tombstone the row before the audit write (which the
+          // `notIn [EXPIRED]` candidate filter would then never retry).
+          const del = await RecordingTransferService.deleteSupabaseObject(
+            candidate.supabasePath!,
+          );
           if (del.success) {
             tombstoneIds.push(candidate.id);
           } else {
@@ -139,7 +142,15 @@ async function cleanupOldStreamRecordingsUnlocked(): Promise<StreamRetentionResu
       await prisma.$transaction(async (tx) => {
         await tx.recording.updateMany({
           where: { id: { in: tombstoneIds } },
-          data: { status: "EXPIRED" },
+          // Tombstone + clear the now-deleted Supabase pointers atomically
+          // (the storage object was removed above). storageType reflects that
+          // only Stream's S3 copy — if any — remains.
+          data: {
+            status: "EXPIRED",
+            supabaseUrl: null,
+            supabasePath: null,
+            storageType: "STREAM_S3",
+          },
         });
         await tx.orgAuditLog.create({
           data: {

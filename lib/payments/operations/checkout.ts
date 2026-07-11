@@ -3165,6 +3165,13 @@ export async function handleCheckout(
         }
       }
 
+      // #837 — WalletFrozenError carries httpStatus=409 + an actionable reason;
+      // don't let it collapse into the generic "Failed to record payment
+      // information" below. Rethrow so the route surfaces the 409.
+      if (dbError instanceof WalletFrozenError) {
+        throw dbError;
+      }
+
       // Preserve specific error messages (duplicate registration, full capacity, etc.)
       if (dbError instanceof Error) {
         const preservedMessages = [

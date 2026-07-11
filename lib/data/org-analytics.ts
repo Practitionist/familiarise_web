@@ -317,7 +317,9 @@ export async function getOrgAnalytics(
           last30dPaise: sumPaise(reimbursementAgg._sum.amount),
         }
       : null,
-    earnings: org.canHost
+    // Honesty gate (#687): mirror the query gate above — flag off ⇒ null, not
+    // an empty array, so a still-canHost row doesn't imply zeroed host earnings.
+    earnings: ENABLE_HOST_ORGS && org.canHost
       ? earningsAggregate.map((e) => ({
           status: e.status,
           count: e._count._all,

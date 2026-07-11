@@ -34,6 +34,7 @@ interface EarningsSummary {
   totalEarnings: number;
   pendingEarnings: number;
   readyEarnings: number;
+  batchedEarnings: number;
   paidEarnings: number;
   heldEarnings: number;
   pendingTrustEarnings: number;
@@ -283,7 +284,7 @@ export default function EarningsPage({
             value={formatSummaryAmount(summary?.totalEarnings ?? 0)}
             icon={IndianRupee}
             variant="default"
-            tooltip="Total of all cleared earnings (pending + ready + paid + held). Excludes refunded amounts."
+            tooltip="Total of all cleared earnings (pending + ready + processing + paid + held). Excludes refunded amounts."
           />
           <StatCard
             title="Ready for Payout"
@@ -310,6 +311,16 @@ export default function EarningsPage({
             icon={Wallet}
             variant="info"
           />
+          {summary && summary.batchedEarnings > 0 && (
+            <StatCard
+              title="Processing Payout"
+              value={formatSummaryAmount(summary.batchedEarnings)}
+              icon={ArrowUpRight}
+              variant="info"
+              subtitle="In a payout batch"
+              tooltip="Cleared earnings locked into an in-flight payout batch. Cash is on its way to your bank; this releases as Paid once the payout settles."
+            />
+          )}
           {summary && summary.pendingTrustEarnings > 0 && (
             <StatCard
               title="Pending Org Trust"

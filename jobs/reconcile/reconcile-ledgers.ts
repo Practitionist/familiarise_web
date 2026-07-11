@@ -139,6 +139,10 @@ async function main(): Promise<void> {
           },
         );
       }
+      // #837 — captureException queues asynchronously; process.exit would drop
+      // the discrepancy alert + wallet-freeze P0 pages before the transport
+      // flushes. Drain first so the pages actually reach Sentry.
+      await Sentry.flush(2000);
       process.exit(2);
     }
   } catch (error) {
@@ -158,6 +162,7 @@ async function main(): Promise<void> {
       summary: "Ledger reconciliation crashed",
       err: error,
     });
+    await Sentry.flush(2000);
     process.exit(1);
   } finally {
     await prisma.$disconnect();

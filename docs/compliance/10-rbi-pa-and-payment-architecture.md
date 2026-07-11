@@ -32,7 +32,7 @@ This affects every marketplace that today receives consumer payments and pays ou
 
 Verified at `lib/payments/payouts/razorpay-payouts.ts`:
 
-```
+```text
 Consumer → Razorpay PG (PA license) → Practitionist operating account (we are the merchant)
                                                 ↓
                 Cron → RazorpayX Payouts API (FAA license) → consultant bank / UPI / Stripe

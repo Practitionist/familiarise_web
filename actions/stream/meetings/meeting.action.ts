@@ -5,7 +5,6 @@ import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { getMaintenanceState } from "@/lib/maintenance";
-import { getStreamVideoClient } from "@/lib/stream-client";
 /**
  * Minimal slot interface for database meeting session operations.
  * Matches the MeetingSlot interface from lib/meeting.ts.

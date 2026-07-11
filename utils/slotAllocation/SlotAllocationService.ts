@@ -357,6 +357,17 @@ export class SlotAllocationService {
         consulteeLock = await lockConsulteeBooking(consulteeLockUserId);
       }
 
+      // #837 TOCTOU — the pre-lock replay check can miss a concurrent first
+      // submit that stamped its key while we waited on the lock. Re-check now
+      // that we hold the locks so the loser replays the winner's batch instead
+      // of racing into the unique-constraint 409.
+      const lockedReplay = await this.findIdempotentAllocation(
+        eventType,
+        eventId,
+        idempotencyKey,
+      );
+      if (lockedReplay) return lockedReplay;
+
       // #908 — read/search/validate run OUTSIDE the write transaction, but still
       // UNDER the locks acquired above. An interactive txn pins its pooled
       // connection for its whole duration (incl. the JS between queries); doing
@@ -691,6 +702,17 @@ export class SlotAllocationService {
       if (consulteeLockUserId) {
         consulteeLock = await lockConsulteeBooking(consulteeLockUserId);
       }
+
+      // #837 TOCTOU — the pre-lock replay check can miss a concurrent first
+      // submit that stamped its key while we waited on the lock. Re-check now
+      // that we hold the locks so the loser replays the winner's batch instead
+      // of racing into the unique-constraint 409.
+      const lockedReplay = await this.findIdempotentAllocation(
+        eventType,
+        eventId,
+        idempotencyKey,
+      );
+      if (lockedReplay) return lockedReplay;
 
       // #908 — slot parsing, count checks and validation run OUTSIDE the write
       // transaction (but under the locks above), so the heavy conflict read no

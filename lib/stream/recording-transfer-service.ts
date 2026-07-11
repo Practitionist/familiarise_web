@@ -654,6 +654,31 @@ export class RecordingTransferService {
   }
 
   /**
+   * Delete ONLY the Supabase storage object — no DB side effects.
+   *
+   * Retention cleanup (#899) uses this instead of deleteRecordingFromSupabase
+   * so the row's status flip to EXPIRED and the OrgAuditLog write land
+   * atomically in the caller's own transaction. Flipping status here would
+   * tombstone the row before the audit write; the cleanup candidate query
+   * filters `status notIn [EXPIRED, FAILED]`, so a failed audit write would
+   * never be retried and the audit trail would be lost permanently.
+   */
+  static async deleteSupabaseObject(
+    supabasePath: string,
+  ): Promise<{ success: boolean; error?: string }> {
+    const { error } = await storageClient.storage
+      .from(RECORDINGS_BUCKET)
+      .remove([supabasePath]);
+    if (error) {
+      streamLogger.error("Failed to delete Supabase object", error, {
+        path: supabasePath,
+      });
+      return { success: false, error: error.message };
+    }
+    return { success: true };
+  }
+
+  /**
    * Get the best available URL for a recording
    * Returns Supabase URL if available, otherwise Stream URL
    * @param recording The recording object
