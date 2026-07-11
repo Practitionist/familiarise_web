@@ -28,6 +28,7 @@ const UNFREEZE_CATEGORY = "WALLET_UNFREEZE";
 const freezeKey = (billingAccountId: string) => `wallet-freeze:${billingAccountId}`;
 
 export class WalletFrozenError extends Error {
+  public readonly httpStatus = 409;
   constructor(public billingAccountId: string) {
     super(
       `Wallet spend frozen on billing account ${billingAccountId} pending ledger-drift resolution`,

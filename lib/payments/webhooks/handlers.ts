@@ -649,11 +649,19 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
       }
     }
   } catch (earningsError) {
-    Sentry.captureException(
-      earningsError instanceof Error ? earningsError : new Error(String(earningsError)),
-      { tags: { subsystem: "payments" }, level: "warning" },
-    );
-    // Log but don't fail — sync-payment-earnings job will pick up the gap
+    // C-01 #837 — payment + booking are committed but earnings + the BOOKING
+    // journal are not. Real money moved, so we don't roll back and we don't
+    // pretend success with a silent warning: page (ERROR) and durably record
+    // the ledger gap. The healer is the data-state sync-payment-earnings scan
+    // (SUCCEEDED payment + earnings:none), keyed on row state — not on this
+    // marker — so it's guaranteed and idempotent even if this alert is lost.
+    await recordSystemError({
+      category: "PAYOUT",
+      summary: `Earnings + booking journal not written for committed payment ${paymentId} (webhook path)`,
+      err: earningsError,
+      correlationId: paymentId,
+      context: { paymentId, appointmentId, userId, path: "webhook" },
+    });
     console.error(
       `⚠️ Failed to create earnings for payment ${paymentId}:`,
       earningsError,
