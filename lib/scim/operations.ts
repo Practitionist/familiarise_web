@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import type { PrismaLike } from "@/lib/prisma";
 /**
  * SCIM 2.0 User operations — `createUser`, `patchUser`, `deprovisionUser`,
@@ -113,6 +114,12 @@ export async function createOrReprovisionScimUser(
     return { kind: "USER_ERASED", userId: existingUser.id };
   }
 
+  // Serializable, matching the invite path (organizations/[orgId]/
+  // invitations): the seat-cap gate below is a count-then-create TOCTOU
+  // that a parallel IdP provisioning burst could slip past at READ
+  // COMMITTED. Serializable makes concurrent transactions that both read
+  // the seat counts and insert fail one side at commit (P2034) instead of
+  // both overshooting UNVERIFIED_ORG_SEAT_CAP.
   return prisma.$transaction(async (tx) => {
     const user = existingUser
       ? await tx.user.update({
@@ -276,7 +283,7 @@ export async function createOrReprovisionScimUser(
       role: created.role,
       status: created.status,
     } satisfies ScimUserOpResult;
-  });
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 }
 
 /**

@@ -9,6 +9,7 @@
 
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { requireScimAuth } from "@/lib/scim/auth";
 import { scimError } from "@/lib/scim/errors";
@@ -140,6 +141,20 @@ export async function POST(req: NextRequest) {
       return scimError(
         403,
         `Seat cap reached — verify a domain to provision more than ${UNVERIFIED_ORG_SEAT_CAP} members.`,
+      );
+    }
+    // Concurrent provisioning of the same user raced past the membership
+    // lookup; the (userId, organizationId) unique index is the backstop.
+    // Idempotent — the member already exists — so surface RFC 7644's
+    // uniqueness conflict rather than a 500 the IdP would keep retrying.
+    if (
+      err instanceof Prisma.PrismaClientKnownRequestError &&
+      err.code === "P2002"
+    ) {
+      return scimError(
+        409,
+        "User is already provisioned in this organization",
+        "uniqueness",
       );
     }
     throw err;

@@ -114,12 +114,20 @@ export async function PATCH(
 
       // Optimistic lock — two admins editing SSO settings from stale tabs
       // would last-write-wins the enforcement/domain config without this.
-      // CAS takes the row lock, serializing the upsert below behind it. Only
-      // meaningful once a row exists; the create path is guarded by the
-      // organizationId unique constraint.
-      if (existing && body.expectedVersion !== undefined) {
+      // The version bump is UNCONDITIONAL on any settings write to an
+      // existing row: it is the increment (not the caller's expectedVersion)
+      // that makes a concurrent stale writer's CAS miss. expectedVersion only
+      // gates the 409 conflict check — a client that supplies it opts into
+      // failing fast, but omitting it must never silently bypass the clock.
+      // The create path is guarded by the organizationId unique constraint.
+      if (existing) {
         const cas = await tx.organizationSSOSettings.updateMany({
-          where: { organizationId: orgId, version: body.expectedVersion },
+          where: {
+            organizationId: orgId,
+            ...(body.expectedVersion !== undefined && {
+              version: body.expectedVersion,
+            }),
+          },
           data: { version: { increment: 1 } },
         });
         if (cas.count === 0) {
