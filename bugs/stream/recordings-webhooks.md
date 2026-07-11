@@ -54,3 +54,5 @@ Duplicate recording events should be idempotent. Two hosts starting record from 
 ## Suggested directions
 
 Consent copy in MeetingSetup. Monitor transfer failure alerts during pilot.
+
+**Scale / durability:** the cron pull-transfer path is a P0 infrastructure risk at growth — see [recording-storage-scale-infrastructure.md](recording-storage-scale-infrastructure.md) (Stream external S3 + durable workflows recommended over GH Actions as the long-term design).

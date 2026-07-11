@@ -34,7 +34,7 @@ Questions use **A / B / C** short approaches. They are not ranked recommendation
 | [finances/](finances/) | Checkout, webhooks, payouts, refunds, disputes, ledger, FX, tax |
 | [booking/](booking/) | Slots, locks, double-booking, cancel/reschedule/no-show |
 | [enterprise/](enterprise/) | Orgs, RBAC, onboarding race, seats, SSO |
-| [stream/](stream/) | Chat, video, tokens, recordings, multi-tab calls |
+| [stream/](stream/) | Chat, video, tokens, recordings, multi-tab calls — **P0:** [recording storage scale](stream/recording-storage-scale-infrastructure.md) |
 | [compliance/](compliance/) | TDS/GST/DPDP, legal pages, grievance, audit |
 
 ### Secondary
@@ -61,10 +61,11 @@ Questions use **A / B / C** short approaches. They are not ranked recommendation
 
 1. [finances/00-overview.md](finances/00-overview.md)
 2. [booking/00-overview.md](booking/00-overview.md)
-3. [enterprise/onboarding-multi-device-role-race.md](enterprise/onboarding-multi-device-role-race.md)
-4. [stream/chat-security-and-roles.md](stream/chat-security-and-roles.md)
-5. [compliance/b2c-vs-b2b-gaps.md](compliance/b2c-vs-b2b-gaps.md)
-6. [cross-cutting/multi-device-psychology.md](cross-cutting/multi-device-psychology.md)
+3. [stream/recording-storage-scale-infrastructure.md](stream/recording-storage-scale-infrastructure.md) (P0 media durability)
+4. [enterprise/onboarding-multi-device-role-race.md](enterprise/onboarding-multi-device-role-race.md)
+5. [stream/chat-security-and-roles.md](stream/chat-security-and-roles.md)
+6. [compliance/b2c-vs-b2b-gaps.md](compliance/b2c-vs-b2b-gaps.md)
+7. [cross-cutting/multi-device-psychology.md](cross-cutting/multi-device-psychology.md)
 
 ## Related docs (canonical engineering)
 

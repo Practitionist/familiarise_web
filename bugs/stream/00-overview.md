@@ -8,6 +8,7 @@ Canonical: `docs/stream/`, `lib/stream-client.ts`, `app/meetings/`.
 
 ## Known gaps / bugs
 
+- **P0 infrastructure:** Stream recordings live on Stream S3 for ~14 days; permanent retention relies on a sequential GH Actions cron (~40 transfers/day, 500MB in-memory) into Supabase — will lose data at webinar scale. See [recording-storage-scale-infrastructure.md](recording-storage-scale-infrastructure.md).
 - **P0 security:** token server actions accept arbitrary `userId` without session bind (#400).
 - All app roles mapped to Stream `"admin"` — weak channel permission model.
 - Client-side call creation; app `validate-access` ≠ Stream-enforced membership.
