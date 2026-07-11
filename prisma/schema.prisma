@@ -2349,10 +2349,13 @@ model ConsultantReview {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // One review per consultee per consultant — POST maps P2002 here to 409.
+  @@unique([consultantProfileId, consulteeProfileId])
   // #696 — explore "trending" sort orders ConsultantProfile by
   // reviews._count; without this the per-profile aggregate seq-scans the
   // whole review table. Also serves the FK join + rating>=4 social-proof reads.
-  @@index([consultantProfileId])
+  // (The @@unique above already prefixes consultantProfileId, so no separate
+  // single-column index is needed for it.)
   @@index([consulteeProfileId])
 }
 

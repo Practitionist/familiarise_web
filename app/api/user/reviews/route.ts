@@ -7,6 +7,11 @@ import { CreateReviewSchema } from "@/schemas/feedbacks";
 import { apiError } from "@/lib/errors";
 import { getSession } from "@/lib/auth-server";
 import { spamLimiter, applyRateLimit } from "@/lib/rate-limit";
+import {
+  hasCompletedBookingWith,
+  recomputeConsultantRating,
+} from "@/lib/reviews";
+import { withSerializableRetry } from "@/lib/db/serializable-retry";
 
 export async function GET(req: NextRequest) {
   try {
@@ -104,35 +109,80 @@ export async function POST(req: NextRequest) {
     }
     const validatedData = result.data;
 
-    const newReview = await prisma.consultantReview.create({
-      data: {
-        rating: validatedData.rating,
-        reviewDescription: validatedData.reviewDescription,
-        consultantProfileId: validatedData.consultantProfileId,
-        consulteeProfileId: validatedData.consulteeProfileId,
-      },
-      include: {
-        consultantProfile: {
-          include: {
-            user: {
-              select: {
-                name: true,
+    // Reviews are always authored as the session user's own consultee
+    // profile — the body's consulteeProfileId is only accepted if it matches.
+    const sessionConsulteeProfileId = session.user.consulteeProfileId;
+    if (!sessionConsulteeProfileId) {
+      return NextResponse.json(
+        { error: "You need a consultee profile to post a review" },
+        { status: 403 },
+      );
+    }
+    if (validatedData.consulteeProfileId !== sessionConsulteeProfileId) {
+      return NextResponse.json(
+        { error: "You can only post reviews as yourself" },
+        { status: 403 },
+      );
+    }
+
+    // Only consultees with a completed booking may review the consultant.
+    const eligible = await hasCompletedBookingWith(
+      sessionConsulteeProfileId,
+      validatedData.consultantProfileId,
+    );
+    if (!eligible) {
+      return NextResponse.json(
+        {
+          error:
+            "You can only review consultants after a completed session with them",
+        },
+        { status: 403 },
+      );
+    }
+
+    // Create + rating recompute in one transaction so the denormalized
+    // ConsultantProfile.rating (explore sort/filter) never drifts. Serializable
+    // + retry so two concurrent reviews for the same consultant can't lose-update
+    // the recomputed average (P2034 aborts one, retry then sees the committed row).
+    const newReview = await withSerializableRetry(() =>
+      prisma.$transaction(async (tx) => {
+      const created = await tx.consultantReview.create({
+        data: {
+          rating: validatedData.rating,
+          reviewDescription: validatedData.reviewDescription,
+          consultantProfileId: validatedData.consultantProfileId,
+          consulteeProfileId: sessionConsulteeProfileId,
+        },
+        include: {
+          consultantProfile: {
+            include: {
+              user: {
+                select: {
+                  name: true,
+                },
+              },
+            },
+          },
+          consulteeProfile: {
+            include: {
+              user: {
+                select: {
+                  name: true,
+                  image: true,
+                },
               },
             },
           },
         },
-        consulteeProfile: {
-          include: {
-            user: {
-              select: {
-                name: true,
-                image: true,
-              },
-            },
-          },
-        },
+      });
+
+      await recomputeConsultantRating(tx, created.consultantProfileId);
+
+      return created;
       },
-    });
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      ),
+    );
 
     // Notify the consultant about the new review
     void notifyNewReview(newReview.consultantProfile.userId, {
@@ -145,6 +195,16 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(newReview, { status: 201 });
   } catch (error) {
+    // @@unique([consultantProfileId, consulteeProfileId]) — one review per pair.
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    ) {
+      return NextResponse.json(
+        { error: "You have already reviewed this consultant" },
+        { status: 409 },
+      );
+    }
     Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
     return apiError({ tag: "[Reviews.POST]", error });
   }
