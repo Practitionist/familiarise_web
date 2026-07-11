@@ -33,6 +33,10 @@ import {
   PersonalDashboardShellSkeleton,
 } from "@/components/dashboard/PersonalDashboardShell";
 import type { CollapsibleSidebarGroup } from "@/components/dashboard/CollapsibleSidebar";
+import {
+  BreadcrumbOverrideProvider,
+  useBreadcrumbOverride,
+} from "@/components/dashboard/breadcrumb-override";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import StreamProvider from "@/providers/StreamProvider";
 import NovuProvider from "@/providers/NovuProvider";
@@ -120,8 +124,12 @@ const PAGE_LABELS: Record<string, string> = {
   help: "Help",
 };
 
-// Opaque record ids (cuids) in nested routes carry no meaning as crumbs.
-const looksLikeRecordId = (segment: string) => /^[a-z0-9]{20,}$/i.test(segment);
+// Opaque record ids (cuid / uuid) in nested routes carry no meaning as crumbs.
+const looksLikeRecordId = (segment: string) =>
+  /^[a-z0-9]{20,}$/i.test(segment) ||
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+    segment,
+  );
 
 interface PageProps {
   children: React.ReactNode;
@@ -307,7 +315,15 @@ function AccessCard({
   );
 }
 
-export default function ConsultantLayout({
+export default function ConsultantLayout(props: Readonly<PageProps>) {
+  return (
+    <BreadcrumbOverrideProvider>
+      <ConsultantLayoutInner {...props} />
+    </BreadcrumbOverrideProvider>
+  );
+}
+
+function ConsultantLayoutInner({
   children,
   params,
 }: Readonly<PageProps>) {
@@ -451,16 +467,49 @@ export default function ConsultantLayout({
     }));
   }, [session?.user]);
 
+  const { overrideLabel } = useBreadcrumbOverride();
+
   // Full breadcrumb trail — every URL segment after the consultant id
-  // becomes a crumb; opaque record ids are dropped.
+  // becomes a crumb; opaque record ids are dropped (or replaced with an
+  // override label such as the appointment title). Parent crumbs keep an
+  // href so users can click back (e.g. Appointments from a detail page).
   const breadcrumbs = useMemo(() => {
-    return pathname
+    const parts = pathname
       .replace(basePath, "")
       .split("/")
-      .filter(Boolean)
-      .filter((seg) => !looksLikeRecordId(seg))
-      .map((seg) => PAGE_LABELS[seg] ?? seg);
-  }, [pathname, basePath]);
+      .filter(Boolean);
+
+    const crumbs: { label: string; href?: string }[] = [];
+    let acc = basePath;
+    let lastSegWasRecordId = false;
+
+    for (const seg of parts) {
+      acc = `${acc}/${seg}`;
+      if (looksLikeRecordId(seg)) {
+        lastSegWasRecordId = true;
+        continue;
+      }
+      lastSegWasRecordId = false;
+      crumbs.push({
+        label: PAGE_LABELS[seg] ?? seg,
+        href: acc,
+      });
+    }
+
+    if (lastSegWasRecordId && overrideLabel) {
+      crumbs.push({ label: overrideLabel });
+    }
+
+    return crumbs.map((crumb, index) => {
+      const isLast = index === crumbs.length - 1;
+      // Keep a link when the visible crumb is still a parent of the URL
+      // (happens when the last segment was an opaque id we stripped).
+      if (isLast && crumb.href && pathname === crumb.href) {
+        return { label: crumb.label };
+      }
+      return crumb;
+    });
+  }, [pathname, basePath, overrideLabel]);
 
   // Memoize StreamProvider children to prevent re-initialization on tab
   // switches. Must be called before any early returns (Rules of Hooks).

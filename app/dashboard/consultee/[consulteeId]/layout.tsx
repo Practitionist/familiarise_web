@@ -26,6 +26,10 @@ import {
   PersonalDashboardShellSkeleton,
 } from "@/components/dashboard/PersonalDashboardShell";
 import type { CollapsibleSidebarGroup } from "@/components/dashboard/CollapsibleSidebar";
+import {
+  BreadcrumbOverrideProvider,
+  useBreadcrumbOverride,
+} from "@/components/dashboard/breadcrumb-override";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import StreamProvider from "@/providers/StreamProvider";
 import NovuProvider from "@/providers/NovuProvider";
@@ -90,8 +94,12 @@ const PAGE_LABELS: Record<string, string> = {
   settings: "Settings",
 };
 
-// Opaque record ids (cuids) in nested routes carry no meaning as crumbs.
-const looksLikeRecordId = (segment: string) => /^[a-z0-9]{20,}$/i.test(segment);
+// Opaque record ids (cuid / uuid) in nested routes carry no meaning as crumbs.
+const looksLikeRecordId = (segment: string) =>
+  /^[a-z0-9]{20,}$/i.test(segment) ||
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+    segment,
+  );
 
 interface PageProps {
   children: React.ReactNode;
@@ -132,7 +140,15 @@ function AccessCard({
   );
 }
 
-export default function ConsulteeLayout({
+export default function ConsulteeLayout(props: Readonly<PageProps>) {
+  return (
+    <BreadcrumbOverrideProvider>
+      <ConsulteeLayoutInner {...props} />
+    </BreadcrumbOverrideProvider>
+  );
+}
+
+function ConsulteeLayoutInner({
   children,
   params,
 }: Readonly<PageProps>) {
@@ -246,16 +262,45 @@ export default function ConsulteeLayout({
     }));
   }, [session?.user]);
 
-  // Full breadcrumb trail — every URL segment after the consultee id
-  // becomes a crumb; opaque record ids are dropped.
+  const { overrideLabel } = useBreadcrumbOverride();
+
+  // Full breadcrumb trail — opaque record ids are dropped (or replaced with
+  // an override label such as the appointment title).
   const breadcrumbs = useMemo(() => {
-    return pathname
+    const parts = pathname
       .replace(basePath, "")
       .split("/")
-      .filter(Boolean)
-      .filter((seg) => !looksLikeRecordId(seg))
-      .map((seg) => PAGE_LABELS[seg] ?? seg);
-  }, [pathname, basePath]);
+      .filter(Boolean);
+
+    const crumbs: { label: string; href?: string }[] = [];
+    let acc = basePath;
+    let lastSegWasRecordId = false;
+
+    for (const seg of parts) {
+      acc = `${acc}/${seg}`;
+      if (looksLikeRecordId(seg)) {
+        lastSegWasRecordId = true;
+        continue;
+      }
+      lastSegWasRecordId = false;
+      crumbs.push({
+        label: PAGE_LABELS[seg] ?? seg,
+        href: acc,
+      });
+    }
+
+    if (lastSegWasRecordId && overrideLabel) {
+      crumbs.push({ label: overrideLabel });
+    }
+
+    return crumbs.map((crumb, index) => {
+      const isLast = index === crumbs.length - 1;
+      if (isLast && crumb.href && pathname === crumb.href) {
+        return { label: crumb.label };
+      }
+      return crumb;
+    });
+  }, [pathname, basePath, overrideLabel]);
 
   const isLoading = isLoadingUser || isLoadingProfile;
   const error = (userError || profileError) as Error | null;

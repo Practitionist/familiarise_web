@@ -9,6 +9,7 @@ import {
   CalendarX,
   CreditCard,
   ExternalLink,
+  FileText,
   Users,
   Video,
 } from "lucide-react";
@@ -19,6 +20,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/dashboard/DataCard";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
+import { useSetBreadcrumbLabel } from "@/components/dashboard/breadcrumb-override";
 import type { AppointmentActionAdapter } from "@/lib/appointments/adapter";
 import { mapAppointmentDetail } from "@/lib/appointments/map-detail";
 import { eventUnionStatusBadge } from "@/lib/appointments/status";
@@ -37,6 +39,8 @@ import { KIND_LABEL } from "../AppointmentRow";
 import { RowPrimaryAction } from "../RowPrimaryAction";
 import { SessionTimeline } from "../SessionTimeline";
 
+const PARTICIPANTS_PREVIEW = 5;
+
 function initials(name: string): string {
   return name
     .split(/\s+/)
@@ -54,8 +58,28 @@ function Section({
   children: ReactNode;
 }) {
   return (
-    <div className="rounded-2xl border border-border bg-card shadow-sm p-4 sm:p-5">
-      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-3">
+    <div className="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6">
+      <p className="mb-3 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+        {title}
+      </p>
+      {children}
+    </div>
+  );
+}
+
+function ResourceSubgroup({
+  title,
+  icon: Icon,
+  children,
+}: {
+  title: string;
+  icon: typeof FileText;
+  children: ReactNode;
+}) {
+  return (
+    <div className="space-y-2">
+      <p className="flex items-center gap-1.5 text-[11px] font-semibold text-foreground">
+        <Icon className="h-3.5 w-3.5 text-muted-foreground" />
         {title}
       </p>
       {children}
@@ -103,6 +127,9 @@ export function AppointmentDetailClient({
     },
   });
 
+  const mapped = detail ? mapAppointmentDetail(detail, role) : null;
+  useSetBreadcrumbLabel(mapped?.vm.title);
+
   if (isLoading && !detail) {
     return (
       <div className="space-y-4">
@@ -113,7 +140,7 @@ export function AppointmentDetailClient({
     );
   }
 
-  if (error || !detail) {
+  if (error || !detail || !mapped) {
     return (
       <EmptyState
         icon={CalendarX}
@@ -130,7 +157,7 @@ export function AppointmentDetailClient({
     );
   }
 
-  const { vm, recordings } = mapAppointmentDetail(detail, role);
+  const { vm, recordings } = mapped;
   const action = adapter.primaryAction(vm);
   const overflow = adapter.overflowItems(vm);
   const badge = eventUnionStatusBadge(vm.status);
@@ -148,13 +175,20 @@ export function AppointmentDetailClient({
         .map((u) => [u.id, u]),
     ).values(),
   );
+  const previewParticipants = participants.slice(0, PARTICIPANTS_PREVIEW);
+  const hiddenParticipantCount = Math.max(
+    0,
+    participants.length - PARTICIPANTS_PREVIEW,
+  );
+  const manageHref = participantsHref?.(detail) ?? null;
   const anchorSession = vm.nextAt
     ? vm.sessions.find((s) => s.startsAt.getTime() === vm.nextAt?.getTime())
     : undefined;
+  const hasConfirmedSessions = vm.sessions.some((s) => !s.isTentative);
 
   return (
     <DashboardErrorBoundary>
-      <div className="space-y-4">
+      <div className="w-full space-y-4">
         <Button variant="ghost" size="sm" className="-ml-2" asChild>
           <Link href={backHref}>
             <ArrowLeft className="h-4 w-4 mr-1.5" />
@@ -221,7 +255,11 @@ export function AppointmentDetailClient({
                 </p>
               )}
             </div>
-            <div className="flex items-center gap-2 shrink-0">
+          </div>
+
+          {/* Actions — full-width bar so buttons aren't cramped beside the title */}
+          {(action.kind !== "view" || overflow.length > 0) && (
+            <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-border pt-4">
               {action.kind !== "view" && (
                 <RowPrimaryAction action={action} size="default" />
               )}
@@ -242,7 +280,7 @@ export function AppointmentDetailClient({
                 </Button>
               ))}
             </div>
-          </div>
+          )}
 
           {vm.group && vm.group.total > 0 && (
             <div className="mt-4 pt-4 border-t border-border">
@@ -260,178 +298,196 @@ export function AppointmentDetailClient({
           )}
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
-          {/* Sessions */}
-          <Section title="Sessions">
-            {vm.sessions.some((s) => !s.isTentative) ? (
-              <SessionTimeline
-                sessions={vm.sessions}
-                joinWindowMs={joinWindowMs}
-                isJoining={action.kind === "join" && !!action.busy}
-                onJoinSession={
-                  action.kind === "join" && action.onClick
-                    ? () => action.onClick!()
-                    : undefined
-                }
-              />
-            ) : (
-              <p className="text-xs text-muted-foreground">
-                {vm.sessions.length > 0
-                  ? "Awaiting schedule confirmation."
-                  : "No sessions scheduled yet."}
-              </p>
-            )}
-          </Section>
-
-          {/* Payment & sponsorship */}
-          <Section title="Payment & sponsorship">
-            {payments.length === 0 && !orgName ? (
-              <p className="text-xs text-muted-foreground">
-                No payment is attached to this booking.
-              </p>
-            ) : (
-              <div className="space-y-2">
-                {payments.map((payment) => (
-                  <div
-                    key={payment.id}
-                    className="flex items-center justify-between gap-2 rounded-lg bg-muted border border-border px-3 py-2"
-                  >
-                    <div className="flex items-center gap-2 text-sm">
-                      <CreditCard className="h-3.5 w-3.5 text-muted-foreground" />
-                      <span className="font-medium text-foreground tabular-nums">
-                        {formatCurrencyAmount(
-                          Number(payment.amount),
-                          payment.currency?.toString() ?? "INR",
-                        )}
-                      </span>
-                      <span className="text-xs text-muted-foreground">
-                        {format(new Date(payment.createdAt), "d MMM yyyy")}
-                      </span>
-                    </div>
-                    <StatusBadge
-                      {...paymentStatusBadge(
-                        payment.paymentStatus as PaymentDisplayStatus,
-                      )}
-                      size="sm"
-                    />
-                  </div>
-                ))}
-                {orgName && (
-                  <p className="text-xs text-muted-foreground">
-                    This booking is sponsored by <strong>{orgName}</strong>.
-                  </p>
-                )}
-                {vm.needsActionReason === "PAY_NOW" && vm.pendingPaymentUrl && (
-                  <Button
-                    size="sm"
-                    className="w-full bg-amber-500 hover:bg-amber-600 text-white dark:bg-amber-600 dark:hover:bg-amber-500"
-                    onClick={() => {
-                      if (/^https?:\/\//.test(vm.pendingPaymentUrl!)) {
-                        window.open(
-                          vm.pendingPaymentUrl!,
-                          "_blank",
-                          "noopener,noreferrer",
-                        );
-                      }
-                    }}
-                  >
-                    <CreditCard className="h-4 w-4 mr-2" />
-                    Pay Now to Confirm
-                  </Button>
-                )}
-              </div>
-            )}
-          </Section>
-
-          {/* Documents */}
-          {renderDocuments && (
-            <Section title="Documents">{renderDocuments(vm)}</Section>
-          )}
-
-          {/* Recordings */}
-          <Section title="Recordings">
-            {recordings.length === 0 ? (
-              <p className="text-xs text-muted-foreground">
-                Recordings of completed sessions will appear here.
-              </p>
-            ) : (
-              <div className="space-y-2">
-                {recordings.map((rec) => (
-                  <div
-                    key={rec.id}
-                    className="flex items-center justify-between gap-2 rounded-lg bg-muted border border-border px-3 py-2"
-                  >
-                    <div className="flex items-center gap-2 min-w-0">
-                      <Video className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium text-foreground truncate">
-                          {rec.title}
-                        </p>
-                        <p className="text-[11px] text-muted-foreground">
-                          {format(rec.recordedAt, "d MMM yyyy")} ·{" "}
-                          {rec.durationInMinutes} min
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <StatusBadge
-                        {...recordingStatusBadge(rec.status)}
-                        size="sm"
-                      />
-                      {rec.url && (
-                        <Button variant="outline" size="sm" asChild>
-                          <a
-                            href={rec.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                          >
-                            Watch
-                            <ExternalLink className="h-3 w-3 ml-1" />
-                          </a>
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </Section>
-
-          {/* Participants (consultant) */}
-          {role === "consultant" && (
-            <Section title="Participants">
-              {participants.length === 0 ? (
-                <p className="text-xs text-muted-foreground">
-                  No participants on this session yet.
-                </p>
+        <div className="grid w-full grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(260px,340px)] lg:items-start">
+          <div className="flex min-w-0 flex-col gap-4">
+            <Section title="Sessions">
+              {hasConfirmedSessions ? (
+                <SessionTimeline
+                  sessions={vm.sessions}
+                  joinWindowMs={joinWindowMs}
+                  defaultExpanded
+                  isJoining={action.kind === "join" && !!action.busy}
+                  onJoinSession={
+                    action.kind === "join" && action.onClick
+                      ? () => action.onClick!()
+                      : undefined
+                  }
+                />
               ) : (
-                <div className="flex flex-wrap gap-2 mb-3">
-                  {participants.map((u) => (
-                    <span
-                      key={u.id}
-                      className="flex items-center gap-1.5 rounded-full border border-border bg-muted pl-1 pr-2.5 py-0.5 text-xs text-foreground"
-                    >
-                      <Avatar className="h-5 w-5">
-                        <AvatarImage src={u.image ?? undefined} alt={u.name} />
-                        <AvatarFallback className="text-[9px]">
-                          {initials(u.name) || "?"}
-                        </AvatarFallback>
-                      </Avatar>
-                      {u.name}
-                    </span>
-                  ))}
-                </div>
-              )}
-              {participantsHref?.(detail) && (
-                <Button variant="outline" size="sm" asChild>
-                  <Link href={participantsHref(detail)!}>
-                    <Users className="h-3.5 w-3.5 mr-1.5" />
-                    Manage participants
-                  </Link>
-                </Button>
+                <p className="text-xs text-muted-foreground">
+                  {vm.sessions.length > 0
+                    ? "Awaiting schedule confirmation."
+                    : "No sessions scheduled yet."}
+                </p>
               )}
             </Section>
-          )}
+
+            <Section title="Payment & sponsorship">
+              {payments.length === 0 && !orgName ? (
+                <p className="text-xs text-muted-foreground">
+                  No payment is attached to this booking.
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {payments.map((payment) => (
+                    <div
+                      key={payment.id}
+                      className="flex items-center justify-between gap-2 rounded-lg bg-muted border border-border px-3 py-2"
+                    >
+                      <div className="flex items-center gap-2 text-sm">
+                        <CreditCard className="h-3.5 w-3.5 text-muted-foreground" />
+                        <span className="font-medium text-foreground tabular-nums">
+                          {formatCurrencyAmount(
+                            Number(payment.amount),
+                            payment.currency?.toString() ?? "INR",
+                          )}
+                        </span>
+                        <span className="text-xs text-muted-foreground">
+                          {format(new Date(payment.createdAt), "d MMM yyyy")}
+                        </span>
+                      </div>
+                      <StatusBadge
+                        {...paymentStatusBadge(
+                          payment.paymentStatus as PaymentDisplayStatus,
+                        )}
+                        size="sm"
+                      />
+                    </div>
+                  ))}
+                  {orgName && (
+                    <p className="text-xs text-muted-foreground">
+                      This booking is sponsored by <strong>{orgName}</strong>.
+                    </p>
+                  )}
+                  {vm.needsActionReason === "PAY_NOW" &&
+                    vm.pendingPaymentUrl && (
+                      <Button
+                        size="sm"
+                        className="w-full bg-amber-500 hover:bg-amber-600 text-white dark:bg-amber-600 dark:hover:bg-amber-500"
+                        onClick={() => {
+                          if (/^https?:\/\//.test(vm.pendingPaymentUrl!)) {
+                            window.open(
+                              vm.pendingPaymentUrl!,
+                              "_blank",
+                              "noopener,noreferrer",
+                            );
+                          }
+                        }}
+                      >
+                        <CreditCard className="h-4 w-4 mr-2" />
+                        Pay Now to Confirm
+                      </Button>
+                    )}
+                </div>
+              )}
+            </Section>
+
+            {role === "consultant" && (
+              <Section title="Participants">
+                {participants.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">
+                    No participants on this session yet.
+                  </p>
+                ) : (
+                  <div className="mb-3 flex flex-wrap gap-2">
+                    {previewParticipants.map((u) => (
+                      <span
+                        key={u.id}
+                        className="flex items-center gap-1.5 rounded-full border border-border bg-muted py-0.5 pl-1 pr-2.5 text-xs text-foreground"
+                      >
+                        <Avatar className="h-5 w-5">
+                          <AvatarImage
+                            src={u.image ?? undefined}
+                            alt={u.name}
+                          />
+                          <AvatarFallback className="text-[9px]">
+                            {initials(u.name) || "?"}
+                          </AvatarFallback>
+                        </Avatar>
+                        {u.name}
+                      </span>
+                    ))}
+                    {hiddenParticipantCount > 0 && (
+                      <span className="inline-flex items-center rounded-full border border-border bg-muted px-2.5 py-0.5 text-xs text-muted-foreground">
+                        +{hiddenParticipantCount} more
+                      </span>
+                    )}
+                  </div>
+                )}
+                {manageHref && (
+                  <Button variant="outline" size="sm" asChild>
+                    <Link href={manageHref}>
+                      <Users className="mr-1.5 h-3.5 w-3.5" />
+                      Manage participants
+                    </Link>
+                  </Button>
+                )}
+              </Section>
+            )}
+          </div>
+
+          <aside className="min-w-0 lg:sticky lg:top-20">
+            <Section title="Resources">
+              <div className="space-y-5">
+                <ResourceSubgroup title="Documents" icon={FileText}>
+                  {renderDocuments ? (
+                    renderDocuments(vm)
+                  ) : (
+                    <p className="text-xs text-muted-foreground">
+                      Documents for this booking will appear here.
+                    </p>
+                  )}
+                </ResourceSubgroup>
+
+                <div className="border-t border-border" />
+
+                <ResourceSubgroup title="Recordings" icon={Video}>
+                  {recordings.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">
+                      Recordings of completed sessions will appear here.
+                    </p>
+                  ) : (
+                    <div className="space-y-2">
+                      {recordings.map((rec) => (
+                        <div
+                          key={rec.id}
+                          className="flex items-center justify-between gap-2 rounded-lg border border-border bg-muted px-3 py-2"
+                        >
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-medium text-foreground">
+                              {rec.title}
+                            </p>
+                            <p className="text-[11px] text-muted-foreground">
+                              {format(rec.recordedAt, "d MMM yyyy")} ·{" "}
+                              {rec.durationInMinutes} min
+                            </p>
+                          </div>
+                          <div className="flex shrink-0 items-center gap-2">
+                            <StatusBadge
+                              {...recordingStatusBadge(rec.status)}
+                              size="sm"
+                            />
+                            {rec.url && (
+                              <Button variant="outline" size="sm" asChild>
+                                <a
+                                  href={rec.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                >
+                                  Watch
+                                  <ExternalLink className="ml-1 h-3 w-3" />
+                                </a>
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </ResourceSubgroup>
+              </div>
+            </Section>
+          </aside>
         </div>
       </div>
     </DashboardErrorBoundary>

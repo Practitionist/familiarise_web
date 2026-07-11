@@ -337,8 +337,8 @@ export function EventPlannerForWebinar({
           if (!open) onClose();
         }}
       >
-        <ResponsiveModalContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
-          <ResponsiveModalHeader>
+        <ResponsiveModalContent className="max-w-3xl max-h-[90dvh] overflow-hidden flex flex-col">
+          <ResponsiveModalHeader className="shrink-0">
             <ResponsiveModalTitle className="text-xl">
               {initialData ? "Edit" : "Create New"} Webinar
             </ResponsiveModalTitle>
@@ -350,7 +350,8 @@ export function EventPlannerForWebinar({
           </ResponsiveModalHeader>
 
           <Form {...form}>
-            <form onSubmit={handleFormSubmit} className="space-y-6 py-4">
+            <form onSubmit={handleFormSubmit} className="flex min-h-0 flex-1 flex-col">
+              <div className="min-h-0 flex-1 space-y-6 overflow-y-auto py-4">
               {/* Basic Information Section */}
               <FormSection
                 title="Basic Information"
@@ -756,7 +757,8 @@ export function EventPlannerForWebinar({
                 )}
               </FormSection>
 
-              <ResponsiveModalFooter className="pt-6 border-t">
+              </div>
+              <ResponsiveModalFooter className="shrink-0 border-t pt-4">
                 <Button
                   type="button"
                   variant="outline"
