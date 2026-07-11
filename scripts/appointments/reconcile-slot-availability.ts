@@ -154,7 +154,23 @@ async function detectDoubleBookings(): Promise<{
       where: {
         endsAt: { gt: new Date() }, // Only future slots
         appointment: {
-          OR: buildOccupiedAppointmentFilter(),
+          AND: [
+            { OR: buildOccupiedAppointmentFilter() },
+            // Exclude legitimately in-flight tentative holds. A consultation/
+            // subscription reset to PENDING is either awaiting first approval or
+            // mid-reschedule (#623) — its slots are transient and self-resolve, so
+            // flagging them is report noise, not a real double-booking. We still
+            // catch APPROVED_PENDING_PAYMENT (unpaid but committed) overlaps, which
+            // is the widening this detector was changed to cover.
+            {
+              NOT: {
+                OR: [
+                  { consultation: { status: "PENDING" } },
+                  { subscription: { status: "PENDING" } },
+                ],
+              },
+            },
+          ],
         },
       },
       // FIX #625: Include all 5 appointment types (not just consultation/subscription)
