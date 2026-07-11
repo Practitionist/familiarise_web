@@ -40,7 +40,8 @@ export async function GET(
 
   try {
     const { webinarId } = await params;
-    // Non-privileged users can only view participants for webinars they own as consultant
+    // Non-privileged users can view the roster if they own the plan OR are an
+    // accepted collaborator granted canSeeAttendees (#768). Everyone else 404s.
     const webinarEvent = await prisma.webinar.findUnique({
       where: {
         id: webinarId,
@@ -48,8 +49,22 @@ export async function GET(
           ? {}
           : {
               webinarPlan: {
-                consultantProfileId:
-                  session.user.consultantProfileId ?? "__none__",
+                OR: [
+                  {
+                    consultantProfileId:
+                      session.user.consultantProfileId ?? "__none__",
+                  },
+                  {
+                    collaborators: {
+                      some: {
+                        consultantProfileId:
+                          session.user.consultantProfileId ?? "__none__",
+                        status: "ACCEPTED",
+                        canSeeAttendees: true,
+                      },
+                    },
+                  },
+                ],
               },
             }),
       },
