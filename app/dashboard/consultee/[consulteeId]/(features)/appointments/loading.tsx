@@ -1,5 +1,5 @@
-import { TableSkeleton } from "@/components/dashboard/DashboardSkeletons";
+import { AppointmentsPageSkeleton } from "@/components/appointments/skeletons";
 
 export default function Loading() {
-  return <TableSkeleton />;
+  return <AppointmentsPageSkeleton />;
 }

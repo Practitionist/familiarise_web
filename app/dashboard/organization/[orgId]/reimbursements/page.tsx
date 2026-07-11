@@ -8,6 +8,7 @@
 
 import { use, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useRequireOrgAccess } from "../useOrgRole";
 import { useSearchParams } from "next/navigation";
 import { format } from "date-fns";
 import { Download } from "lucide-react";
@@ -18,11 +19,11 @@ import { Label } from "@/components/ui/label";
 import {
   DashboardHeader,
   DashboardContent,
-} from "@/components/dashboard/DashboardShell";
+} from "@/components/dashboard/PageScaffold";
 import {
   ScopedListTable,
   type Column,
-} from "@/components/enterprise/ScopedListTable";
+} from "@/components/dashboard/ScopedListTable";
 
 interface ReimbursementRow {
   id: string;
@@ -80,6 +81,13 @@ export default function OrgReimbursementsPage({
   params: Promise<{ orgId: string }>;
 }) {
   const { orgId } = use(params);
+  // Page-level mirror of the API gate — previously this page had NO
+  // guard and rendered an error shell for unauthorized roles (#audit F8).
+  const { allowed } = useRequireOrgAccess(orgId, {
+    permission: "reimbursements.read",
+    canSponsor: true,
+    fundingSource: "PERSONAL",
+  });
   const searchParams = useSearchParams();
   const page = Number(searchParams?.get("page") ?? "1") || 1;
   const [fromDate, setFromDate] = useState("");
@@ -107,6 +115,7 @@ export default function OrgReimbursementsPage({
 
   const { data, isLoading, isError, error } =
     useQuery<ReimbursementsResponse>({
+    enabled: allowed,
       queryKey: ["org-reimbursements", orgId, page, fromIso, toIso],
       queryFn: async () => {
         const res = await fetch(

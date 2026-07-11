@@ -6,6 +6,16 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   CreditCard,
   AlertTriangle,
   AlertCircle,
@@ -30,7 +40,17 @@ interface PendingPayment {
   expiresAt: string;
   isExpiringSoon: boolean;
   source?: "approval_pending" | "gateway_pending";
+  /**
+   * Appointment record id for approval-pending items — the cancel route
+   * (`POST /api/appointments/[appointmentId]/cancel`) keys on Appointment,
+   * not the consultation/subscription row that `id` refers to.
+   */
+  appointmentId?: string | null;
 }
+
+type PendingCancelTarget =
+  | { kind: "gateway"; paymentId: string; title: string }
+  | { kind: "approval"; appointmentId: string; title: string };
 
 interface PendingPaymentsWidgetProps {
   consulteeId: string;
@@ -84,17 +104,14 @@ export function PendingPaymentsWidget({
       : "Failed to load pending payments"
     : null;
 
+  const [cancelTarget, setCancelTarget] = useState<PendingCancelTarget | null>(
+    null,
+  );
+
   // #849 — release the caller's own tentative hold instead of waiting out
   // the 24h cleanup window.
-  const handleCancelPending = useCallback(
+  const cancelGatewayPending = useCallback(
     async (paymentId: string) => {
-      if (
-        !window.confirm(
-          "Cancel this pending booking? Your held slot will be released.",
-        )
-      ) {
-        return;
-      }
       setCancellingId(paymentId);
       setCancelNotice(null);
       try {
@@ -119,6 +136,57 @@ export function PendingPaymentsWidget({
     },
     [queryClient, consulteeId],
   );
+
+  // Cancel an APPROVED_PENDING_PAYMENT booking outright. The cancel route
+  // allows this transition (CANCELLABLE_FROM) and skips refunds for unpaid
+  // bookings, so this is the user-driven exit from the "pay or wait for
+  // expiry" dead end. 409 = the booking already transitioned (e.g. payment
+  // landed in another tab) — refresh rather than error.
+  const cancelApprovalPending = useCallback(
+    async (appointmentId: string) => {
+      setCancellingId(appointmentId);
+      setCancelNotice(null);
+      try {
+        const response = await fetch(
+          `/api/appointments/${appointmentId}/cancel`,
+          { method: "POST", headers: { "Content-Type": "application/json" } },
+        );
+        if (response.status === 409) {
+          setCancelNotice(
+            "This booking already changed state — refreshing.",
+          );
+        } else if (!response.ok) {
+          const data = await response.json().catch(() => null);
+          setCancelNotice(
+            data?.error ?? "Could not cancel the booking. Try again.",
+          );
+        }
+        await Promise.all([
+          queryClient.invalidateQueries({
+            queryKey: ["pending-payments", consulteeId],
+          }),
+          queryClient.invalidateQueries({
+            queryKey: ["consultee-events", consulteeId],
+          }),
+        ]);
+      } catch {
+        setCancelNotice("Could not cancel the booking. Try again.");
+      } finally {
+        setCancellingId(null);
+      }
+    },
+    [queryClient, consulteeId],
+  );
+
+  const handleConfirmCancel = useCallback(() => {
+    if (!cancelTarget) return;
+    if (cancelTarget.kind === "gateway") {
+      void cancelGatewayPending(cancelTarget.paymentId);
+    } else {
+      void cancelApprovalPending(cancelTarget.appointmentId);
+    }
+    setCancelTarget(null);
+  }, [cancelTarget, cancelGatewayPending, cancelApprovalPending]);
 
   if (loading) {
     return null;
@@ -241,7 +309,13 @@ export function PendingPaymentsWidget({
                       variant="ghost"
                       disabled={cancellingId === payment.id}
                       className="h-7 px-2 text-xs text-muted-foreground hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 font-semibold"
-                      onClick={() => handleCancelPending(payment.id)}
+                      onClick={() =>
+                        setCancelTarget({
+                          kind: "gateway",
+                          paymentId: payment.id,
+                          title: payment.title,
+                        })
+                      }
                     >
                       {cancellingId === payment.id ? (
                         <Loader2 className="h-3 w-3 animate-spin" />
@@ -254,25 +328,51 @@ export function PendingPaymentsWidget({
                     </Button>
                   </span>
                 ) : (
-                  <Button
-                    size="sm"
-                    className="h-7 px-3 text-xs bg-amber-700 hover:bg-amber-800 text-white font-semibold"
-                    onClick={() => {
-                      if (
-                        payment.paymentUrl &&
-                        /^https?:\/\//.test(payment.paymentUrl)
-                      ) {
-                        window.open(
-                          payment.paymentUrl,
-                          "_blank",
-                          "noopener,noreferrer",
-                        );
-                      }
-                    }}
-                  >
-                    Pay Now
-                    <ExternalLink className="ml-1 h-3 w-3" />
-                  </Button>
+                  <span className="inline-flex items-center gap-1.5">
+                    {payment.appointmentId && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={cancellingId === payment.appointmentId}
+                        className="h-7 px-2 text-xs text-muted-foreground hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 font-semibold"
+                        onClick={() =>
+                          setCancelTarget({
+                            kind: "approval",
+                            appointmentId: payment.appointmentId!,
+                            title: payment.title,
+                          })
+                        }
+                      >
+                        {cancellingId === payment.appointmentId ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <>
+                            <X className="h-3 w-3 mr-0.5" />
+                            Cancel
+                          </>
+                        )}
+                      </Button>
+                    )}
+                    <Button
+                      size="sm"
+                      className="h-7 px-3 text-xs bg-amber-700 hover:bg-amber-800 text-white font-semibold"
+                      onClick={() => {
+                        if (
+                          payment.paymentUrl &&
+                          /^https?:\/\//.test(payment.paymentUrl)
+                        ) {
+                          window.open(
+                            payment.paymentUrl,
+                            "_blank",
+                            "noopener,noreferrer",
+                          );
+                        }
+                      }}
+                    >
+                      Pay Now
+                      <ExternalLink className="ml-1 h-3 w-3" />
+                    </Button>
+                  </span>
                 )}
               </div>
             </div>
@@ -293,6 +393,37 @@ export function PendingPaymentsWidget({
           </Button>
         </div>
       )}
+
+      <AlertDialog
+        open={cancelTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setCancelTarget(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {cancelTarget?.kind === "approval"
+                ? "Cancel this booking request?"
+                : "Cancel this pending payment?"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {cancelTarget?.kind === "approval"
+                ? `"${cancelTarget.title}" will be cancelled. Nothing has been charged — the consultant's approval and any held slots are released.`
+                : `"${cancelTarget?.title ?? ""}" will be cancelled and your held slot released. If the payment already went through, it will be reconciled automatically.`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep booking</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-red-600 hover:bg-red-700 text-white"
+              onClick={handleConfirmCancel}
+            >
+              Cancel booking
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

@@ -4,7 +4,7 @@ import { use, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Mail, Trash2, Copy } from "lucide-react";
 import type { MemberRole, OrgStatus } from "@prisma/client";
-import { useOrgRole, useRequireOrgRole } from "../useOrgRole";
+import { useOrgRole, useRequireOrgAccess } from "../useOrgRole";
 import { MEMBER_ROLE_LABEL, getInvitableRoles } from "@/lib/labels/org-labels";
 import { humanizeOrgError } from "@/lib/labels/org-errors";
 import {
@@ -55,7 +55,7 @@ const INVITATION_STATUS_LABEL: Record<string, string> = {
 import {
   DashboardHeader,
   DashboardContent,
-} from "@/components/dashboard/DashboardShell";
+} from "@/components/dashboard/PageScaffold";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -144,7 +144,7 @@ export default function OrgInvitationsPage({
   params: Promise<{ orgId: string }>;
 }) {
   const { orgId } = use(params);
-  const { allowed } = useRequireOrgRole(orgId, "MAINTAINER");
+  const { allowed } = useRequireOrgAccess(orgId, { permission: "invitations.manage" });
   const { canSponsor, canHost } = useOrgRole(orgId);
   const roleOptions = selectableRoles(canSponsor, canHost);
   // Same default-role logic as MembersPageClient: LEARNER if sponsor-capable,

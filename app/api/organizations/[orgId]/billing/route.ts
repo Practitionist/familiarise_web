@@ -31,7 +31,7 @@ export async function GET(
 ) {
   const { orgId } = await params;
   const access = await requireOrgAccess(orgId, {
-    minimumRole: "MANAGER",
+    permission: "billing.read",
     canSponsor: true,
   });
   if (access.error) return access.error;

@@ -257,9 +257,9 @@ export function EventCard({
   const isLiveSession = eventType === "webinar" || eventType === "class";
   const durationSuffix = isRecurringEventType(eventType) ? "/mo" : "";
 
-  // Check if subscription plan has free trial enabled
-  const hasFreeTrialEnabled =
-    isSubscriptionPlanEvent(event) && event.subscriptionPlan.freeTrialEnabled;
+  // Check if subscription plan has trials enabled
+  const hasTrialEnabled =
+    isSubscriptionPlanEvent(event) && event.subscriptionPlan.trialEnabled;
 
   return (
     <motion.div
@@ -407,8 +407,8 @@ export function EventCard({
         </div>
       )}
 
-      {/* Free Trial Button (subscription plans with trial enabled) */}
-      {hasFreeTrialEnabled && onTrialsClick && (
+      {/* Trial Button (subscription plans with trial enabled) */}
+      {hasTrialEnabled && onTrialsClick && (
         <div className="mt-3">
           <Button
             variant="outline"
@@ -422,7 +422,7 @@ export function EventCard({
             <Gift className="h-4 w-4" />
             {pendingTrialCount && pendingTrialCount > 0
               ? `${pendingTrialCount} Trial Request${pendingTrialCount > 1 ? "s" : ""}`
-              : "Free Trials"}
+              : "Trials"}
           </Button>
         </div>
       )}

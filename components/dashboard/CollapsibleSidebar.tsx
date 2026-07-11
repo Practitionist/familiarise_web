@@ -5,6 +5,7 @@ import { ChevronLeft, ChevronRight, ChevronDown, ChevronsUpDown, LogOut, type Lu
 import Link from "next/link";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { LinkPendingIcon } from "@/components/ui/NavLink";
 import {
   Tooltip,
   TooltipContent,
@@ -21,11 +22,17 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Skeleton } from "@/components/ui/skeleton";
+import { isActiveRoute } from "@/components/dashboard/route-active";
 
 export interface CollapsibleSidebarItem {
   name: string;
   icon: LucideIcon;
   path: string;
+  /**
+   * Optional notification badge (e.g. unread chat count). Rendered as a
+   * right-aligned pill when expanded and a dot on the icon when collapsed.
+   */
+  badge?: string | number;
 }
 
 /**
@@ -162,7 +169,7 @@ export function CollapsibleSidebar({
     },
   );
 
-  const isActive = (path: string) => pathname.includes(`${basePath}/${path}`);
+  const isActive = (path: string) => isActiveRoute(pathname, basePath, path);
 
   const fallbackChar =
     avatarFallback ??
@@ -178,8 +185,8 @@ export function CollapsibleSidebar({
       )}
     >
       {/* Header: single-row layout, fixed h-14 to pixel-match the
-          OrgContextBar's h-14 so the sidebar / top-bar border intersection
-          lines up cleanly at the crossroad. */}
+          DashboardContextBar's h-14 so the sidebar / top-bar border
+          intersection lines up cleanly at the crossroad. */}
       <div className="border-b border-border">
         <div
           className={cn(
@@ -358,18 +365,31 @@ export function CollapsibleSidebar({
                                     isActive(item.path) ? "page" : undefined
                                   }
                                   className={cn(
-                                    "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors",
+                                    "relative flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors",
                                     isActive(item.path)
                                       ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
                                       : "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:text-zinc-100 dark:hover:bg-zinc-800",
                                   )}
                                 >
-                                  <item.icon className="h-5 w-5 flex-shrink-0" />
+                                  <LinkPendingIcon Icon={item.icon} />
                                   {collapsed ? (
                                     <span className="sr-only">{item.name}</span>
                                   ) : (
-                                    <span>{item.name}</span>
+                                    <span className="flex-1 min-w-0 truncate">
+                                      {item.name}
+                                    </span>
                                   )}
+                                  {item.badge !== undefined &&
+                                    (collapsed ? (
+                                      <span
+                                        className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-red-500"
+                                        aria-hidden
+                                      />
+                                    ) : (
+                                      <span className="ml-auto shrink-0 rounded-full bg-red-500 px-1.5 py-0.5 text-center text-[10px] font-semibold leading-none text-white min-w-[18px]">
+                                        {item.badge}
+                                      </span>
+                                    ))}
                                 </Link>
                               </TooltipTrigger>
                               {collapsed && (
@@ -397,18 +417,31 @@ export function CollapsibleSidebar({
                         aria-label={collapsed ? item.name : undefined}
                         aria-current={isActive(item.path) ? "page" : undefined}
                         className={cn(
-                          "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors",
+                          "relative flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors",
                           isActive(item.path)
                             ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
                             : "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:text-zinc-100 dark:hover:bg-zinc-800",
                         )}
                       >
-                        <item.icon className="h-5 w-5 flex-shrink-0" />
+                        <LinkPendingIcon Icon={item.icon} />
                         {collapsed ? (
                           <span className="sr-only">{item.name}</span>
                         ) : (
-                          <span>{item.name}</span>
+                          <span className="flex-1 min-w-0 truncate">
+                            {item.name}
+                          </span>
                         )}
+                        {item.badge !== undefined &&
+                          (collapsed ? (
+                            <span
+                              className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-red-500"
+                              aria-hidden
+                            />
+                          ) : (
+                            <span className="ml-auto shrink-0 rounded-full bg-red-500 px-1.5 py-0.5 text-center text-[10px] font-semibold leading-none text-white min-w-[18px]">
+                              {item.badge}
+                            </span>
+                          ))}
                       </Link>
                     </TooltipTrigger>
                     {collapsed && (

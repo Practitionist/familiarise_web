@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { useRequireOrgRole } from "../useOrgRole";
+import { useRequireOrgAccess } from "../useOrgRole";
 import {
   Users,
   Briefcase,
@@ -17,7 +17,7 @@ import {
   DashboardHeader,
   DashboardContent,
   DashboardGrid,
-} from "@/components/dashboard/DashboardShell";
+} from "@/components/dashboard/PageScaffold";
 import { StatCard, StatCardSkeleton } from "@/components/dashboard/StatCard";
 import { formatCurrencyAmount } from "@/utils/formatting";
 
@@ -76,7 +76,7 @@ function countByRole(
 }
 
 export function AnalyticsPageClient({ orgId }: { orgId: string }) {
-  const { allowed } = useRequireOrgRole(orgId, "MANAGER");
+  const { allowed } = useRequireOrgAccess(orgId, { permission: "operations.read" });
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["org-analytics", orgId],
     queryFn: () => fetchAnalytics(orgId),

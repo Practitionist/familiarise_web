@@ -2,13 +2,21 @@
 
 import { use, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import type { EarningStatus } from "@prisma/client";
 import {
   DashboardHeader,
   DashboardContent,
   DashboardGrid,
-} from "@/components/dashboard/DashboardShell";
+} from "@/components/dashboard/PageScaffold";
 import { StatCard } from "@/components/dashboard/StatCard";
-import { Badge } from "@/components/ui/badge";
+import { EmptyState } from "@/components/dashboard/DataCard";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { earningStatusBadge } from "@/lib/labels/session-labels";
+import {
+  ResponsiveTable,
+  type ResponsiveColumn,
+} from "@/components/ui/responsive-table";
+import { Button } from "@/components/ui/button";
 import {
   Wallet,
   Clock,
@@ -17,10 +25,9 @@ import {
   IndianRupee,
   ArrowUpRight,
   Loader2,
+  ShieldQuestion,
 } from "lucide-react";
 import { formatCurrencyAmount } from "@/utils/formatting";
-
-type EarningStatus = "PENDING" | "READY" | "PAID" | "HELD" | "REFUNDED";
 
 interface EarningsSummary {
   consultantProfileId: string;
@@ -29,6 +36,7 @@ interface EarningsSummary {
   readyEarnings: number;
   paidEarnings: number;
   heldEarnings: number;
+  pendingTrustEarnings: number;
 }
 
 interface EarningRecord {
@@ -95,41 +103,6 @@ function formatDate(dateStr: string): string {
   });
 }
 
-const statusConfig: Record<
-  EarningStatus,
-  {
-    label: string;
-    variant: "default" | "secondary" | "destructive" | "outline";
-    className: string;
-  }
-> = {
-  PENDING: {
-    label: "Pending",
-    variant: "secondary",
-    className: "bg-amber-50 text-amber-700 border-amber-200",
-  },
-  READY: {
-    label: "Ready for Payout",
-    variant: "default",
-    className: "bg-emerald-50 text-emerald-700 border-emerald-200",
-  },
-  PAID: {
-    label: "Paid",
-    variant: "default",
-    className: "bg-blue-50 text-blue-700 border-blue-200",
-  },
-  HELD: {
-    label: "On Hold",
-    variant: "destructive",
-    className: "bg-red-50 text-red-700 border-red-200",
-  },
-  REFUNDED: {
-    label: "Refunded",
-    variant: "outline",
-    className: "bg-zinc-50 text-zinc-500 border-zinc-200",
-  },
-};
-
 export default function EarningsPage({
   params,
 }: {
@@ -142,7 +115,7 @@ export default function EarningsPage({
   const [page, setPage] = useState(0);
   const limit = 15;
 
-  const { data, isLoading, error } = useQuery<EarningsResponse>({
+  const { data, isLoading, error, refetch } = useQuery<EarningsResponse>({
     queryKey: ["consultant-earnings", consultantId, statusFilter, page],
     queryFn: async () => {
       const params = new URLSearchParams();
@@ -166,15 +139,18 @@ export default function EarningsPage({
 
   if (error && !data) {
     return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <div className="p-6 bg-red-50 text-red-600 rounded-lg max-w-md text-center">
-          <AlertTriangle className="w-8 h-8 mx-auto mb-2" />
-          <h3 className="font-semibold mb-1">Error Loading Earnings</h3>
-          <p className="text-sm">
-            {error instanceof Error ? error.message : "Please try again later."}
-          </p>
-        </div>
-      </div>
+      <EmptyState
+        icon={AlertTriangle}
+        title="Couldn't load your earnings"
+        description={
+          error instanceof Error ? error.message : "Please try again later."
+        }
+        action={
+          <Button variant="outline" onClick={() => refetch()}>
+            Retry
+          </Button>
+        }
+      />
     );
   }
 
@@ -189,7 +165,107 @@ export default function EarningsPage({
     { label: "Ready", value: "READY" },
     { label: "Paid", value: "PAID" },
     { label: "On Hold", value: "HELD" },
+    { label: "Org Trust", value: "PENDING_TRUST" },
     { label: "Refunded", value: "REFUNDED" },
+  ];
+
+  const columns: ResponsiveColumn<EarningRecord>[] = [
+    {
+      key: "type",
+      header: "Type",
+      primary: true,
+      cell: (earning) => (
+        <span className="capitalize text-zinc-800">
+          {(
+            earning.payment?.appointment?.appointmentType ?? "N/A"
+          ).toLowerCase()}
+        </span>
+      ),
+    },
+    {
+      key: "date",
+      header: "Date",
+      cell: (earning) => (
+        <span className="text-zinc-600">{formatDate(earning.createdAt)}</span>
+      ),
+    },
+    {
+      key: "role",
+      header: "Role",
+      cell: (earning) => (
+        <span
+          className={`text-xs font-medium px-2 py-0.5 rounded-full whitespace-nowrap ${
+            earning.role === "COLLABORATOR"
+              ? "bg-purple-50 text-purple-700"
+              : "bg-zinc-100 text-zinc-600"
+          }`}
+        >
+          {earning.role === "COLLABORATOR"
+            ? `Collab ${earning.shareBps / 100}%`
+            : earning.shareBps < 10000
+              ? `Owner ${earning.shareBps / 100}%`
+              : "Owner"}
+        </span>
+      ),
+    },
+    {
+      key: "planPrice",
+      header: "Plan Price",
+      headClassName: "text-right",
+      className: "text-right text-zinc-600",
+      cell: (earning) =>
+        formatEarningAmount(
+          earning.payment?.originalAmount ?? 0,
+          earning.payment?.currency ?? "INR",
+        ),
+    },
+    {
+      key: "yourEarnings",
+      header: "Your Earnings",
+      headClassName: "text-right",
+      className: "text-right font-medium text-zinc-900",
+      cell: (earning) =>
+        formatEarningAmount(
+          earning.consultantSharePaise,
+          earning.payment?.currency ?? "INR",
+        ),
+    },
+    {
+      key: "platformFee",
+      header: "Platform Fee",
+      headClassName: "text-right",
+      className: "text-right text-zinc-400",
+      hideOnCard: true,
+      cell: (earning) =>
+        formatEarningAmount(
+          earning.platformFeePaise,
+          earning.payment?.currency ?? "INR",
+        ),
+    },
+    {
+      key: "status",
+      header: "Status",
+      cell: (earning) => <StatusBadge {...earningStatusBadge(earning.status)} />,
+    },
+    {
+      key: "payout",
+      header: "Payout",
+      cell: (earning) =>
+        earning.payout ? (
+          <span className="flex items-center gap-1 text-xs text-zinc-500">
+            {earning.payout.status === "COMPLETED" ? (
+              <CheckCircle className="w-3.5 h-3.5 text-emerald-500" />
+            ) : (
+              <Clock className="w-3.5 h-3.5 text-amber-500" />
+            )}
+            {earning.payout.processedAt
+              ? formatDate(earning.payout.processedAt)
+              : earning.payout.status}
+          </span>
+        ) : (
+          <span className="text-xs text-zinc-400">-</span>
+        ),
+    },
   ];
 
   return (
@@ -233,6 +309,16 @@ export default function EarningsPage({
             icon={Wallet}
             variant="info"
           />
+          {summary && summary.pendingTrustEarnings > 0 && (
+            <StatCard
+              title="Pending Org Trust"
+              value={formatSummaryAmount(summary.pendingTrustEarnings)}
+              icon={ShieldQuestion}
+              variant="info"
+              subtitle="From unverified organizations"
+              tooltip="Earnings from organizations that haven't completed verification or paid their first invoice yet. They unlock automatically once the organization is verified or pays."
+            />
+          )}
         </DashboardGrid>
 
         {/* Held earnings alert */}
@@ -273,129 +359,23 @@ export default function EarningsPage({
 
         {/* Earnings Table */}
         <div className="mt-4 bg-white rounded-xl border border-zinc-200 overflow-hidden">
-          {earnings.length === 0 ? (
-            <div className="p-12 text-center text-zinc-500">
-              <Wallet className="w-10 h-10 mx-auto mb-3 text-zinc-300" />
-              <p className="font-medium">No earnings found</p>
-              <p className="text-sm mt-1">
-                {statusFilter !== "ALL"
-                  ? `No ${statusFilter.toLowerCase()} earnings to display.`
-                  : "Earnings will appear here after your appointments are completed and paid."}
-              </p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="bg-zinc-50 border-b border-zinc-200">
-                    <th className="text-left px-4 py-3 font-medium text-zinc-600">
-                      Date
-                    </th>
-                    <th className="text-left px-4 py-3 font-medium text-zinc-600">
-                      Type
-                    </th>
-                    <th className="text-left px-4 py-3 font-medium text-zinc-600">
-                      Role
-                    </th>
-                    <th className="text-right px-4 py-3 font-medium text-zinc-600">
-                      Plan Price
-                    </th>
-                    <th className="text-right px-4 py-3 font-medium text-zinc-600">
-                      Your Earnings
-                    </th>
-                    <th className="text-right px-4 py-3 font-medium text-zinc-600">
-                      Platform Fee
-                    </th>
-                    <th className="text-left px-4 py-3 font-medium text-zinc-600">
-                      Status
-                    </th>
-                    <th className="text-left px-4 py-3 font-medium text-zinc-600">
-                      Payout
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-100">
-                  {earnings.map((earning) => {
-                    const config = statusConfig[earning.status];
-                    const appointmentType =
-                      earning.payment?.appointment?.appointmentType ?? "N/A";
-                    return (
-                      <tr
-                        key={earning.id}
-                        className="hover:bg-zinc-50 transition-colors"
-                      >
-                        <td className="px-4 py-3 text-zinc-600">
-                          {formatDate(earning.createdAt)}
-                        </td>
-                        <td className="px-4 py-3">
-                          <span className="capitalize text-zinc-800">
-                            {appointmentType.toLowerCase()}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3">
-                          <span
-                            className={`text-xs font-medium px-2 py-0.5 rounded-full ${
-                              earning.role === "COLLABORATOR"
-                                ? "bg-purple-50 text-purple-700"
-                                : "bg-zinc-100 text-zinc-600"
-                            }`}
-                          >
-                            {earning.role === "COLLABORATOR"
-                              ? `Collab ${earning.shareBps / 100}%`
-                              : earning.shareBps < 10000
-                                ? `Owner ${earning.shareBps / 100}%`
-                                : "Owner"}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-right text-zinc-600">
-                          {formatEarningAmount(
-                            earning.payment?.originalAmount ?? 0,
-                            earning.payment?.currency ?? "INR",
-                          )}
-                        </td>
-                        <td className="px-4 py-3 text-right font-medium text-zinc-900">
-                          {formatEarningAmount(
-                            earning.consultantSharePaise,
-                            earning.payment?.currency ?? "INR",
-                          )}
-                        </td>
-                        <td className="px-4 py-3 text-right text-zinc-400">
-                          {formatEarningAmount(
-                            earning.platformFeePaise,
-                            earning.payment?.currency ?? "INR",
-                          )}
-                        </td>
-                        <td className="px-4 py-3">
-                          <Badge
-                            variant={config.variant}
-                            className={config.className}
-                          >
-                            {config.label}
-                          </Badge>
-                        </td>
-                        <td className="px-4 py-3">
-                          {earning.payout ? (
-                            <span className="flex items-center gap-1 text-xs text-zinc-500">
-                              {earning.payout.status === "COMPLETED" ? (
-                                <CheckCircle className="w-3.5 h-3.5 text-emerald-500" />
-                              ) : (
-                                <Clock className="w-3.5 h-3.5 text-amber-500" />
-                              )}
-                              {earning.payout.processedAt
-                                ? formatDate(earning.payout.processedAt)
-                                : earning.payout.status}
-                            </span>
-                          ) : (
-                            <span className="text-xs text-zinc-400">-</span>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
+          <ResponsiveTable
+            columns={columns}
+            rows={earnings}
+            getRowId={(earning) => earning.id}
+            className="[&>ul]:p-3"
+            empty={
+              <EmptyState
+                icon={Wallet}
+                title="No earnings found"
+                description={
+                  statusFilter !== "ALL"
+                    ? `No ${statusFilter.toLowerCase().replace(/_/g, " ")} earnings to display.`
+                    : "Earnings will appear here after your appointments are completed and paid."
+                }
+              />
+            }
+          />
 
           {/* Pagination */}
           {pagination && pagination.total > limit && (
@@ -406,20 +386,22 @@ export default function EarningsPage({
                 {pagination.total}
               </p>
               <div className="flex gap-2">
-                <button
+                <Button
+                  variant="outline"
+                  size="sm"
                   onClick={() => setPage((p) => Math.max(0, p - 1))}
                   disabled={page === 0}
-                  className="px-3 py-1.5 text-sm rounded-md border border-zinc-300 bg-white hover:bg-zinc-50 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Previous
-                </button>
-                <button
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
                   onClick={() => setPage((p) => p + 1)}
                   disabled={!pagination.hasMore}
-                  className="px-3 py-1.5 text-sm rounded-md border border-zinc-300 bg-white hover:bg-zinc-50 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Next
-                </button>
+                </Button>
               </div>
             </div>
           )}

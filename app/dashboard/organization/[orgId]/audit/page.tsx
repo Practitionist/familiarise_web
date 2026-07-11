@@ -1,16 +1,14 @@
 "use client";
 
-import { use, useEffect, useMemo, useState } from "react";
+import { use, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Download, Filter, Search } from "lucide-react";
 import type { OrgAuditCategory } from "@prisma/client";
-import { useOrgRole } from "../useOrgRole";
-import { useRouter } from "next/navigation";
-import { isAtLeastRole } from "@/lib/auth/role-ranks";
+import { useRequireOrgAccess } from "../useOrgRole";
 import {
   DashboardHeader,
   DashboardContent,
-} from "@/components/dashboard/DashboardShell";
+} from "@/components/dashboard/PageScaffold";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -103,23 +101,12 @@ type AuditResponse = {
 
 export default function AuditLogPage({ params }: Readonly<PageProps>) {
   const { orgId } = use(params);
-  // #777 FDE Group B P1 — page gate aligned with the sidebar
-  // (`isAtLeast("MAINTAINER") || isSupport`) so SUPPORT can open Audit
-  // read-only for ticket investigation and the nav entry isn't a dead
-  // redirect. Mirrors useRequireOrgAccess's redirect-on-fail so an
-  // EXPERT/LEARNER/BILLING_ADMIN direct-URL bypass still bounces to /home.
-  // NOTE: the audit GET API (route.ts) admits SUPPORT read-only at the
-  // same floor as this gate, so SUPPORT's data fetch succeeds.
-  const router = useRouter();
-  const { role, isLoading: isGateLoading } = useOrgRole(orgId);
-  const passes = role === "SUPPORT" || isAtLeastRole(role, "MAINTAINER");
-  const allowed = !isGateLoading && passes;
-
-  useEffect(() => {
-    if (!isGateLoading && !passes) {
-      router.replace(`/dashboard/organization/${orgId}/home`);
-    }
-  }, [isGateLoading, passes, orgId, router]);
+  // audit.read (OWNER/MAINTAINER/SUPPORT) — same matrix entry the sidebar
+  // and the audit GET API check, so SUPPORT's ticket-investigation read
+  // works and an EXPERT/LEARNER/BILLING_ADMIN direct URL bounces to /home.
+  const { allowed, isLoading: isGateLoading } = useRequireOrgAccess(orgId, {
+    permission: "audit.read",
+  });
 
   const [category, setCategory] = useState<OrgAuditCategory | "ALL">("ALL");
   const [search, setSearch] = useState("");

@@ -28,7 +28,7 @@ import {
 import {
   DashboardHeader,
   DashboardContent,
-} from "@/components/dashboard/DashboardShell";
+} from "@/components/dashboard/PageScaffold";
 import { Checkbox } from "@/components/ui/checkbox";
 // WIP banner import removed — see PR #655 reviewer feedback. The
 // credit-pool soak status is tracked in #715/#716 in the issue tracker;
@@ -1762,7 +1762,7 @@ export default function OrgProgramsPage({
   const { isAtLeast, canSponsor, canHost } = useOrgRole(orgId);
   const capability = capabilityOf(canSponsor, canHost);
   const { allowed } = useRequireOrgAccess(orgId, {
-    minRole: "MAINTAINER",
+    permission: "programs.manage",
     canSponsor: true,
   });
   const [dialogOpen, setDialogOpen] = useState(false);

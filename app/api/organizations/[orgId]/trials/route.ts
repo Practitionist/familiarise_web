@@ -22,7 +22,7 @@ export async function GET(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, "MANAGER");
+  const access = await requireOrgAccess(orgId, { permission: "operations.read" });
   if (access.error) return access.error;
 
   const url = new URL(req.url);

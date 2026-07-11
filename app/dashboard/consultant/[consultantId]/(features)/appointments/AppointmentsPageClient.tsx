@@ -1,8 +1,16 @@
 "use client";
 
+import { useMemo } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { useSearchParams } from "next/navigation";
+import { AlertTriangle, CalendarX } from "lucide-react";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
-import { PageSkeleton } from "@/components/dashboard/DashboardSkeletons";
+import { DashboardHeader } from "@/components/dashboard/PageScaffold";
+import { EmptyState } from "@/components/dashboard/DataCard";
+import { Button } from "@/components/ui/button";
+import { AppointmentsShell } from "@/components/appointments/AppointmentsShell";
+import { AppointmentsPageSkeleton } from "@/components/appointments/skeletons";
+import { mapConsultantAppointments } from "@/lib/appointments/map-consultant";
 import { createConsultantQueries } from "@/lib/dashboard-queries";
 import { useOrgScope } from "@/hooks/useOrgScope";
 import {
@@ -11,15 +19,46 @@ import {
   ORG_FILTER_PERSONAL,
   type OrgContextFilterValue,
 } from "@/components/dashboard/OrgContextFilter";
-import { BADGE_STYLES } from "../../types";
-import { AppointmentsTab } from "./AppointmentsTab";
+import { useConsultantAppointmentsAdapter } from "./ConsultantAppointmentsAdapter";
+
+/** Old HomeTab deep-links carry groupRecurringAppointments keys — map the
+ *  non-recurring "single-<appointmentId>" form onto the VM row id. */
+function normalizeHighlight(param: string | null): string | null {
+  if (!param) return null;
+  if (param.startsWith("single-")) {
+    return `appointment-${param.slice("single-".length)}`;
+  }
+  return param;
+}
+
+function SideQueryNotice({
+  label,
+  onRetry,
+}: {
+  label: string;
+  onRetry: () => void;
+}) {
+  return (
+    <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 dark:border-amber-900/40 dark:bg-amber-900/20 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
+      <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+      <span className="flex-1">{label} couldn&apos;t be loaded.</span>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-6 px-2 text-xs"
+        onClick={onRetry}
+      >
+        Retry
+      </Button>
+    </div>
+  );
+}
 
 export default function AppointmentsPageClient({
   consultantId,
 }: Readonly<{ consultantId: string }>) {
   // Default to "All activity" so a panel expert lands on the union view
-  // (sponsored + personal) without a manual toggle every visit. Matches
-  // the consultee /appointments choice we shipped earlier this branch.
+  // (sponsored + personal) without a manual toggle every visit.
   const { scope, setScope } = useOrgScope({ defaultForOrgMember: "all" });
   const orgScopeParam =
     scope.kind === "personal"
@@ -29,6 +68,10 @@ export default function AppointmentsPageClient({
         : scope.orgId;
   const orgScopeQueryParam =
     orgScopeParam && orgScopeParam !== "personal" ? orgScopeParam : null;
+  const searchParams = useSearchParams();
+  const highlightedId = normalizeHighlight(
+    searchParams?.get("highlight") ?? null,
+  );
 
   const filterValue: OrgContextFilterValue =
     scope.kind === "personal"
@@ -42,24 +85,30 @@ export default function AppointmentsPageClient({
     else setScope({ kind: "org", orgId: next });
   };
 
-  // Use the centralized query configuration.
   // keepPreviousData: org-scope filter changes show the previous list while
-  // the new one loads instead of a skeleton flash (the documents-page idiom,
-  // #346).
-  // #890 — the server page prefetches the "personal"-scope view; this query
-  // hydrates from that cache when the resolved scope is personal, and falls
-  // back to a client fetch for any other scope (org / all).
+  // the new one loads instead of a skeleton flash (#346). The server page
+  // prefetches the "personal" scope (#890).
   const appointmentsQuery = createConsultantQueries(
     consultantId,
     orgScopeParam,
   ).appointments;
-  const { data: appointments, isLoading, error } = useQuery({
+  const {
+    data: appointments,
+    isLoading,
+    error,
+    refetch: refetchAppointments,
+  } = useQuery({
     ...appointmentsQuery,
     placeholderData: keepPreviousData,
   });
 
-  // Fetch scheduled trials for this consultant
-  const { data: trialsData, isLoading: trialsLoading } = useQuery({
+  // Side queries keep their own state so a slow/failed trials or
+  // classes/webinars read degrades to a notice instead of blanking the list.
+  const {
+    data: trialsData,
+    isError: trialsError,
+    refetch: refetchTrials,
+  } = useQuery({
     placeholderData: keepPreviousData,
     queryKey: ["trials", consultantId, "SCHEDULED", orgScopeParam] as const,
     queryFn: async () => {
@@ -75,8 +124,11 @@ export default function AppointmentsPageClient({
     },
   });
 
-  // Fetch class events for this consultant (to show unscheduled classes in appointments page)
-  const { data: classEventsData, isLoading: classesLoading } = useQuery({
+  const {
+    data: classEventsData,
+    isError: classesError,
+    refetch: refetchClasses,
+  } = useQuery({
     placeholderData: keepPreviousData,
     queryKey: ["consultant-classes", consultantId, orgScopeParam] as const,
     queryFn: async () => {
@@ -94,8 +146,11 @@ export default function AppointmentsPageClient({
     },
   });
 
-  // Fetch webinar events for this consultant; filter to those with no appointment yet
-  const { data: webinarEventsData, isLoading: webinarsLoading } = useQuery({
+  const {
+    data: webinarEventsData,
+    isError: webinarsError,
+    refetch: refetchWebinars,
+  } = useQuery({
     placeholderData: keepPreviousData,
     queryKey: [
       "consultant-webinars-unscheduled",
@@ -117,48 +172,86 @@ export default function AppointmentsPageClient({
     },
   });
 
-  if (isLoading || trialsLoading || classesLoading || webinarsLoading) {
-    return <PageSkeleton />;
-  }
+  const adapter = useConsultantAppointmentsAdapter(consultantId);
 
-  if (error) {
-    return (
-      <DashboardErrorBoundary>
-        <div className="flex items-center justify-center min-h-[400px]">
-          <div className="p-4 bg-red-50 text-red-600 rounded-lg max-w-md text-center">
-            <h3 className="font-semibold mb-2">Error Loading Appointments</h3>
-            <p className="text-sm">
-              {error.message ||
-                "Failed to load appointments. Please try again."}
-            </p>
-            <button
-              onClick={() => window.location.reload()}
-              className="mt-4 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
-            >
-              Retry
-            </button>
-          </div>
-        </div>
-      </DashboardErrorBoundary>
-    );
-  }
+  const vms = useMemo(
+    () =>
+      mapConsultantAppointments({
+        appointments: appointments ?? [],
+        scheduledTrials: trialsData ?? [],
+        unscheduledClasses: classEventsData ?? [],
+        unscheduledWebinars: webinarEventsData ?? [],
+        consultantId,
+      }),
+    [appointments, trialsData, classEventsData, webinarEventsData, consultantId],
+  );
+
+  const notices =
+    trialsError || classesError || webinarsError ? (
+      <div className="space-y-2">
+        {trialsError && (
+          <SideQueryNotice
+            label="Trials"
+            onRetry={() => void refetchTrials()}
+          />
+        )}
+        {classesError && (
+          <SideQueryNotice
+            label="Unscheduled classes"
+            onRetry={() => void refetchClasses()}
+          />
+        )}
+        {webinarsError && (
+          <SideQueryNotice
+            label="Unscheduled webinars"
+            onRetry={() => void refetchWebinars()}
+          />
+        )}
+      </div>
+    ) : null;
 
   return (
     <DashboardErrorBoundary>
-      <AppointmentsTab
-        appointments={appointments || []}
-        badgeStyles={BADGE_STYLES}
-        scheduledTrials={trialsData || []}
-        consultantId={consultantId}
-        unscheduledClasses={classEventsData || []}
-        unscheduledWebinars={webinarEventsData || []}
-        headerSlot={
-          <OrgContextFilter
-            value={filterValue}
-            onChange={handleFilterChange}
-          />
-        }
+      <DashboardHeader
+        title="Appointments"
+        subtitle="Your consultations, subscriptions, webinars, and classes"
       />
+      <div className="pt-6">
+        {isLoading && !appointments ? (
+          <AppointmentsPageSkeleton />
+        ) : error ? (
+          <EmptyState
+            icon={CalendarX}
+            title="Couldn't load appointments"
+            description={
+              error instanceof Error
+                ? error.message
+                : "Failed to load appointments. Please try again."
+            }
+            action={
+              <Button
+                variant="outline"
+                onClick={() => void refetchAppointments()}
+              >
+                Retry
+              </Button>
+            }
+          />
+        ) : (
+          <AppointmentsShell
+            vms={vms}
+            adapter={adapter}
+            highlightedId={highlightedId}
+            notices={notices}
+            orgFilterSlot={
+              <OrgContextFilter
+                value={filterValue}
+                onChange={handleFilterChange}
+              />
+            }
+          />
+        )}
+      </div>
     </DashboardErrorBoundary>
   );
 }

@@ -88,7 +88,8 @@ export type { CheckoutInput };
  * Consultant allocates specific slots later via Requests tab
  */
 type SubscriptionCheckoutResult = {
-  // #780 — extended-client reads return price as number; GetPayload says bigint.
+  // #780 — extended-client reads return price/trialPriceInPaise as number;
+  // GetPayload says bigint.
   plan: Omit<
     Prisma.SubscriptionPlanGetPayload<{
       include: {
@@ -97,8 +98,8 @@ type SubscriptionCheckoutResult = {
         };
       };
     }>,
-    "price"
-  > & { price: number };
+    "price" | "trialPriceInPaise"
+  > & { price: number; trialPriceInPaise: number };
   amount: number;
   subscription: Prisma.SubscriptionGetPayload<Record<string, never>>;
   appointment: Prisma.AppointmentGetPayload<Record<string, never>>;
@@ -2019,6 +2020,14 @@ export async function handleCheckout(
         );
       }
       programAssignmentId = assignment.id;
+
+      // ADR 18 — future curated-panel enforcement. The Program is resolved
+      // HERE, but the authoritative check belongs inside
+      // revalidateInsideLock, where the plan's consultant is already loaded
+      // and the distributed lock closes the TOCTOU window: allowlist rows
+      // exist for the resolved Program ⇒ the booked plan's consultant must
+      // be listed. Absent rows keep the network open — sponsors fund any
+      // marketplace consultant by design.
     }
   }
 

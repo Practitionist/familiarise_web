@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -16,7 +17,7 @@ import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
-import { PageHeader } from "@/components/ui/page-header";
+import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 import {
   Search,
   RefreshCw,
@@ -27,7 +28,6 @@ import {
   AlertTriangle,
   Users,
 } from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
 import type {
   SubscriptionListItem,
   SubscriptionListResponse,
@@ -42,7 +42,7 @@ const getStatusColor = (status: string) => {
     case "expired":
       return "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300";
     default:
-      return "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300";
+      return "bg-muted text-muted-foreground";
   }
 };
 
@@ -76,6 +76,9 @@ const formatDate = (dateString: string | null) => {
   });
 };
 
+const EMPTY_STATS = { activeCount: 0, expiringCount: 0, expiredCount: 0 };
+const LIMIT = 20;
+
 export interface SubscriptionsPageProps {
   /** API endpoint for fetching subscriptions */
   apiEndpoint?: string;
@@ -90,23 +93,9 @@ export function SubscriptionsPage({
   title = "Subscriptions",
   description = "View platform subscriptions (read-only)",
 }: SubscriptionsPageProps) {
-  const { toast } = useToast();
-  const [subscriptions, setSubscriptions] = useState<SubscriptionListItem[]>(
-    [],
-  );
-  const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [page, setPage] = useState(1);
-  const [total, setTotal] = useState(0);
-  const [hasMore, setHasMore] = useState(false);
-  const [stats, setStats] = useState({
-    activeCount: 0,
-    expiringCount: 0,
-    expiredCount: 0,
-  });
-  const limit = 20;
-
   const [debouncedSearch, setDebouncedSearch] = useState("");
 
   useEffect(() => {
@@ -117,40 +106,35 @@ export function SubscriptionsPage({
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
-  const fetchSubscriptions = useCallback(async () => {
-    setLoading(true);
-    try {
+  const { data, isPending, isFetching, isError, refetch } = useQuery({
+    queryKey: [
+      "admin-subscriptions",
+      apiEndpoint,
+      page,
+      debouncedSearch,
+      statusFilter,
+    ],
+    queryFn: async (): Promise<SubscriptionListResponse> => {
       const params = new URLSearchParams();
-      params.set("limit", limit.toString());
-      params.set("offset", ((page - 1) * limit).toString());
+      params.set("limit", LIMIT.toString());
+      params.set("offset", ((page - 1) * LIMIT).toString());
       if (debouncedSearch) params.set("search", debouncedSearch);
       if (statusFilter !== "all") params.set("status", statusFilter);
 
       const response = await fetch(`${apiEndpoint}?${params}`);
       if (!response.ok) throw new Error("Failed to fetch subscriptions");
+      return response.json();
+    },
+    // Keep the previous page visible while the next one loads instead of
+    // flashing a spinner over the whole table on every page/filter change.
+    placeholderData: keepPreviousData,
+  });
 
-      const data: SubscriptionListResponse = await response.json();
-      setSubscriptions(data.subscriptions);
-      setStats(data.stats);
-      setTotal(data.pagination.total);
-      setHasMore(data.pagination.hasMore);
-    } catch (error) {
-      console.error("Error fetching subscriptions:", error);
-      toast({
-        title: "Error",
-        description: "Failed to load subscriptions",
-        variant: "destructive",
-      });
-    } finally {
-      setLoading(false);
-    }
-  }, [page, debouncedSearch, statusFilter, toast, apiEndpoint]);
-
-  useEffect(() => {
-    fetchSubscriptions();
-  }, [fetchSubscriptions]);
-
-  const totalPages = Math.ceil(total / limit);
+  const subscriptions = data?.subscriptions ?? [];
+  const stats = data?.stats ?? EMPTY_STATS;
+  const total = data?.pagination.total ?? 0;
+  const hasMore = data?.pagination.hasMore ?? false;
+  const totalPages = Math.ceil(total / LIMIT);
 
   const columns: ResponsiveColumn<SubscriptionListItem>[] = [
     {
@@ -215,17 +199,17 @@ export function SubscriptionsPage({
   return (
     <div className="space-y-6">
       {/* Header */}
-      <PageHeader
+      <DashboardHeader
         title={title}
-        description={description}
+        subtitle={description}
         actions={
           <Button
             variant="outline"
-            onClick={fetchSubscriptions}
-            disabled={loading}
+            onClick={() => refetch()}
+            disabled={isFetching}
           >
             <RefreshCw
-              className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`}
+              className={`h-4 w-4 mr-2 ${isFetching ? "animate-spin" : ""}`}
             />
             Refresh
           </Button>
@@ -333,7 +317,23 @@ export function SubscriptionsPage({
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0 sm:p-6 sm:pt-0">
-          {loading ? (
+          {isError && !data ? (
+            <div className="flex flex-col items-center justify-center h-64 gap-3 text-center">
+              <div className="flex items-center gap-2 text-destructive">
+                <AlertTriangle className="h-5 w-5" />
+                <span>Failed to load subscriptions.</span>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-2"
+                onClick={() => refetch()}
+              >
+                <RefreshCw className="h-4 w-4" />
+                Retry
+              </Button>
+            </div>
+          ) : isPending ? (
             <div className="flex items-center justify-center h-64">
               <Loader2 className="h-8 w-8 animate-spin text-muted-foreground/70" />
             </div>
@@ -357,7 +357,7 @@ export function SubscriptionsPage({
       {totalPages > 1 && (
         <div className="flex items-center justify-between">
           <div className="text-sm text-muted-foreground">
-            Showing {(page - 1) * limit + 1} to {Math.min(page * limit, total)}{" "}
+            Showing {(page - 1) * LIMIT + 1} to {Math.min(page * LIMIT, total)}{" "}
             of {total}
           </div>
           <div className="flex gap-2">

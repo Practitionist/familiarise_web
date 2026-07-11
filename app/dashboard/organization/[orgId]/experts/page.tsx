@@ -6,7 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import {
   DashboardHeader,
   DashboardContent,
-} from "@/components/dashboard/DashboardShell";
+} from "@/components/dashboard/PageScaffold";
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
@@ -68,7 +68,7 @@ export default function OrgExpertsPage({
 }) {
   const { orgId } = use(params);
   const { allowed } = useRequireOrgAccess(orgId, {
-    minRole: "MANAGER",
+    permission: "experts.read",
     canHost: true,
   });
 

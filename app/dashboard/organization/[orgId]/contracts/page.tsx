@@ -9,7 +9,7 @@ import { useOrgRole, useRequireOrgAccess } from "../useOrgRole";
 import {
   DashboardHeader,
   DashboardContent,
-} from "@/components/dashboard/DashboardShell";
+} from "@/components/dashboard/PageScaffold";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -797,7 +797,7 @@ export default function OrgContractsPage({
   const { orgId } = use(params);
   const { isAtLeast } = useOrgRole(orgId);
   const { allowed } = useRequireOrgAccess(orgId, {
-    minRole: "MAINTAINER",
+    permission: "contracts.read",
     canSponsor: true,
   });
 

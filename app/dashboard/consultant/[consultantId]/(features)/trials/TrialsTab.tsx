@@ -11,7 +11,8 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { trialStatusBadge } from "@/lib/labels/session-labels";
 import {
   Select,
   SelectContent,
@@ -45,13 +46,10 @@ import {
 } from "@/components/ui/tooltip";
 import Link from "next/link";
 import { cn } from "@/utils/tailwind";
-import { useRouter } from "next/navigation";
-import { useStreamVideoClient } from "@stream-io/video-react-sdk";
-import {
-  getOrCreateAppointmentMeeting,
-  type MeetingAppointment,
-  type MeetingSlot,
-} from "@/lib/meeting";
+// #248: no static Stream SDK / lib/meeting import — the shared hook
+// lazy-loads both at click time. Type-only imports are erased.
+import type { MeetingSlot } from "@/lib/meeting";
+import { useLazyJoinMeeting } from "../shared/hooks/useLazyJoinMeeting";
 import {
   TrialScheduleCalendar,
   SelectedSlot,
@@ -75,7 +73,7 @@ interface TrialSession {
   subscriptionPlan: {
     id: string;
     title: string;
-    freeTrialDurationMinutes: number;
+    trialDurationMinutes: number;
   };
   appointment: {
     id: string;
@@ -94,7 +92,7 @@ interface TrialSession {
 interface SubscriptionPlan {
   id: string;
   title: string;
-  freeTrialEnabled: boolean;
+  trialEnabled: boolean;
 }
 
 function formatStatus(status: string): string {
@@ -109,21 +107,15 @@ function maskEmail(email: string): string {
   return `${visible}***@${domain}`;
 }
 
-const statusColors: Record<string, string> = {
-  PENDING: "bg-yellow-100 text-yellow-800",
-  SCHEDULED: "bg-purple-100 text-purple-800",
-  COMPLETED: "bg-green-100 text-green-800",
-  CONVERTED: "bg-emerald-100 text-emerald-800",
-  CANCELLED: "bg-gray-100 text-gray-800",
-  REJECTED: "bg-red-100 text-red-800",
-};
-
+// Badge colours come from lib/labels/session-labels (single source of
+// truth); the label stays formatStatus() so REJECTED reads "Declined" on
+// the consultant side (they did the declining — "Rejected" reads wrong).
 const statusBgColors: Record<string, string> = {
   PENDING: "bg-yellow-50 hover:bg-yellow-100 border-yellow-200",
   SCHEDULED: "bg-purple-50 hover:bg-purple-100 border-purple-200",
   COMPLETED: "bg-green-50 hover:bg-green-100 border-green-200",
   CONVERTED: "bg-emerald-50 hover:bg-emerald-100 border-emerald-200",
-  CANCELLED: "bg-gray-50 hover:bg-gray-100 border-gray-200",
+  CANCELLED: "bg-zinc-50 hover:bg-zinc-100 border-zinc-200",
   REJECTED: "bg-red-50 hover:bg-red-100 border-red-200",
 };
 
@@ -132,7 +124,7 @@ const statusTextColors: Record<string, string> = {
   SCHEDULED: "text-purple-700",
   COMPLETED: "text-green-700",
   CONVERTED: "text-emerald-700",
-  CANCELLED: "text-gray-700",
+  CANCELLED: "text-zinc-700",
   REJECTED: "text-red-700",
 };
 
@@ -140,8 +132,7 @@ export function TrialsTab() {
   const params = useParams();
   const consultantId = params.consultantId as string;
   const { toast } = useToast();
-  const router = useRouter();
-  const client = useStreamVideoClient();
+  const joinMeeting = useLazyJoinMeeting();
 
   const [trials, setTrials] = useState<TrialSession[]>([]);
   const [loading, setLoading] = useState(true);
@@ -258,7 +249,7 @@ export function TrialsTab() {
       }
       const { data } = await response.json();
       setSubscriptionPlans(
-        data.filter((p: SubscriptionPlan) => p.freeTrialEnabled),
+        data.filter((p: SubscriptionPlan) => p.trialEnabled),
       );
     } catch (error) {
       console.error("Error fetching subscription plans:", error);
@@ -425,16 +416,6 @@ export function TrialsTab() {
   };
 
   const handleJoinMeeting = async (trial: TrialSession) => {
-    if (!client) {
-      toast({
-        title: "Not signed in",
-        description:
-          "Video client not initialized. Please sign in to join the meeting.",
-        variant: "destructive",
-      });
-      return;
-    }
-
     if (!trial.appointment?.slotsOfAppointment?.[0]) {
       toast({
         title: "Unable to join",
@@ -445,37 +426,18 @@ export function TrialsTab() {
     }
 
     setIsJoining(trial.id);
-    try {
-      const slot = trial.appointment.slotsOfAppointment[0];
-      // Create a minimal appointment object for the meeting helper
-      const appointmentForMeeting: MeetingAppointment = {
+    const slot = trial.appointment.slotsOfAppointment[0];
+    // Minimal appointment shape for the meeting helper; the shared hook
+    // lazy-loads the Stream SDK at click time (#248).
+    const navigating = await joinMeeting(
+      {
         id: trial.appointment.id,
         appointmentType: "TRIAL",
         slotsOfAppointment: trial.appointment.slotsOfAppointment,
-      };
-
-      const meetingId = await getOrCreateAppointmentMeeting(
-        client,
-        appointmentForMeeting,
-        slot as MeetingSlot,
-      );
-
-      toast({
-        title: "Joining meeting",
-        description: "You will now be redirected to the meeting room.",
-      });
-
-      router.push(`/meetings/${meetingId}`);
-    } catch (error) {
-      console.error("Error joining meeting:", error);
-      toast({
-        title: "Error joining meeting",
-        description:
-          error instanceof Error ? error.message : "Unknown error occurred",
-        variant: "destructive",
-      });
-      setIsJoining(null);
-    }
+      },
+      slot as MeetingSlot,
+    );
+    if (!navigating) setIsJoining(null);
   };
 
   const handleRefresh = async () => {
@@ -516,10 +478,10 @@ export function TrialsTab() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">
-            Free Trial Requests
+          <h1 className="text-2xl font-bold text-zinc-900">
+            Trial Requests
           </h1>
-          <p className="text-gray-600 mt-1">
+          <p className="text-zinc-600 mt-1">
             Manage trial session requests from potential subscribers
           </p>
         </div>
@@ -576,7 +538,7 @@ export function TrialsTab() {
       <div className="flex flex-col sm:flex-row gap-3">
         {/* Search */}
         <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
           <Input
             placeholder="Search by name or email..."
             value={search}
@@ -586,7 +548,7 @@ export function TrialsTab() {
           {search && (
             <button
               onClick={() => setSearch("")}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600"
             >
               <X className="h-4 w-4" />
             </button>
@@ -647,7 +609,7 @@ export function TrialsTab() {
 
       {/* Results count */}
       {total > 0 && (
-        <p className="text-sm text-gray-600">
+        <p className="text-sm text-zinc-600">
           Showing {(page - 1) * limit + 1}-{Math.min(page * limit, total)} of{" "}
           {total} trials
         </p>
@@ -656,19 +618,19 @@ export function TrialsTab() {
       {/* Trial Requests List */}
       {loading ? (
         <div className="flex items-center justify-center h-64">
-          <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
         </div>
       ) : trials.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center">
-            <Gift className="h-12 w-12 mx-auto text-gray-400 mb-4" />
-            <h3 className="text-lg font-medium text-gray-900 mb-2">
+            <Gift className="h-12 w-12 mx-auto text-zinc-400 mb-4" />
+            <h3 className="text-lg font-medium text-zinc-900 mb-2">
               No trial requests
             </h3>
-            <p className="text-gray-600">
+            <p className="text-zinc-600">
               {statusFilter !== "all" || planFilter !== "all" || debouncedSearch
                 ? "No trial requests match your filters"
-                : "You don't have any trial requests yet. Enable free trials on your subscription plans to start receiving requests."}
+                : "You don't have any trial requests yet. Enable trials on your subscription plans to start receiving requests."}
             </p>
             {(statusFilter !== "all" ||
               planFilter !== "all" ||
@@ -705,7 +667,7 @@ export function TrialsTab() {
                       />
                     ) : (
                       <div className="h-10 w-10 bg-blue-100 rounded-full flex items-center justify-center">
-                        <User className="h-5 w-5 text-blue-600" />
+                        <User className="h-5 w-5 text-muted-foreground" />
                       </div>
                     )}
                     <div>
@@ -717,35 +679,34 @@ export function TrialsTab() {
                       </CardDescription>
                     </div>
                   </div>
-                  <Badge
-                    className={statusColors[trial.status] || "bg-gray-100"}
-                  >
-                    {formatStatus(trial.status)}
-                  </Badge>
+                  <StatusBadge
+                    {...trialStatusBadge(trial.status)}
+                    label={formatStatus(trial.status)}
+                  />
                 </div>
               </CardHeader>
               <CardContent className="pt-0">
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-                  <div className="flex items-center gap-2 text-sm text-gray-600">
+                  <div className="flex items-center gap-2 text-sm text-zinc-600">
                     <Gift className="h-4 w-4" />
                     <span>{trial.subscriptionPlan.title}</span>
                   </div>
-                  <div className="flex items-center gap-2 text-sm text-gray-600">
+                  <div className="flex items-center gap-2 text-sm text-zinc-600">
                     <Clock className="h-4 w-4" />
                     <span>
-                      {trial.subscriptionPlan.freeTrialDurationMinutes} min
+                      {trial.subscriptionPlan.trialDurationMinutes} min
                       trial
                     </span>
                   </div>
-                  <div className="flex items-center gap-2 text-sm text-gray-600">
+                  <div className="flex items-center gap-2 text-sm text-zinc-600">
                     <Calendar className="h-4 w-4" />
                     <span>Requested {formatDate(trial.requestedAt)}</span>
                   </div>
                 </div>
 
                 {trial.notes && (
-                  <div className="bg-gray-50 rounded-lg p-3 mb-4">
-                    <p className="text-sm text-gray-700">
+                  <div className="bg-zinc-50 rounded-lg p-3 mb-4">
+                    <p className="text-sm text-zinc-700">
                       <span className="font-medium">Notes: </span>
                       {trial.notes}
                     </p>
@@ -874,7 +835,7 @@ export function TrialsTab() {
           {/* Pagination */}
           {totalPages > 1 && (
             <div className="flex items-center justify-between mt-6 pt-4 border-t">
-              <p className="text-sm text-gray-600">
+              <p className="text-sm text-zinc-600">
                 Page {page} of {totalPages}
               </p>
               <div className="flex items-center gap-2">
@@ -913,7 +874,7 @@ export function TrialsTab() {
             <TrialScheduleCalendar
               consultantId={consultantId}
               trialDurationMinutes={
-                selectedTrial.subscriptionPlan.freeTrialDurationMinutes
+                selectedTrial.subscriptionPlan.trialDurationMinutes
               }
               onSlotSelect={handleSlotSelected}
               onCancel={() => {

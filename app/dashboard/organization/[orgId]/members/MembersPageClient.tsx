@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { UserPlus, Trash2, Pencil, Search } from "lucide-react";
 
 import type { MemberRole, MemberStatus } from "@prisma/client";
-import { useOrgRole, useRequireOperatorSurface } from "../useOrgRole";
+import { useOrgRole, useRequireOrgAccess } from "../useOrgRole";
 import {
   MEMBER_ROLE_LABEL,
   MEMBER_STATUS_LABEL,
@@ -28,7 +28,7 @@ import { useSession } from "@/lib/auth-client";
 import {
   DashboardHeader,
   DashboardContent,
-} from "@/components/dashboard/DashboardShell";
+} from "@/components/dashboard/PageScaffold";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -216,7 +216,7 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
   // SUPPORT). SUPPORT gets the roster READ-ONLY for ticket investigation,
   // so the sidebar Members entry isn't a dead redirect. Mutation controls
   // below stay MAINTAINER-gated (isAtLeast("MAINTAINER")).
-  const { allowed } = useRequireOperatorSurface(orgId);
+  const { allowed } = useRequireOrgAccess(orgId, { permission: "members.read" });
   const queryClient = useQueryClient();
   const roleOptions = selectableRoles(canSponsor, canHost);
   // Default to the most common consumer role for the org's capability:

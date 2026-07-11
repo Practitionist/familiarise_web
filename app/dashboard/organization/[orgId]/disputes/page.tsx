@@ -8,7 +8,7 @@ import {
   DashboardHeader,
   DashboardContent,
   DashboardGrid,
-} from "@/components/dashboard/DashboardShell";
+} from "@/components/dashboard/PageScaffold";
 import { StatCard, StatCardSkeleton } from "@/components/dashboard/StatCard";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -18,7 +18,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { formatCurrencyAmount } from "@/utils/formatting";
-import { useRequireFinanceSurface } from "../useOrgRole";
+import { useRequireOrgAccess } from "../useOrgRole";
 
 interface DisputeItem {
   id: string;
@@ -74,7 +74,7 @@ export default function OrgDisputesPage({
   params: Promise<{ orgId: string }>;
 }) {
   const { orgId } = use(params);
-  const { allowed } = useRequireFinanceSurface(orgId);
+  const { allowed } = useRequireOrgAccess(orgId, { permission: "disputes.read" });
 
   const { data, isPending } = useQuery({
     queryKey: ["org-disputes", orgId],

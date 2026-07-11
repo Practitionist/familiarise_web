@@ -18,7 +18,7 @@ import { useOrgRole, useRequireOrgAccess } from "../useOrgRole";
 import {
   DashboardHeader,
   DashboardContent,
-} from "@/components/dashboard/DashboardShell";
+} from "@/components/dashboard/PageScaffold";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -55,7 +55,7 @@ export default function PurchaseOrdersPage({
   const { orgId } = use(params);
   const { isAtLeast } = useOrgRole(orgId);
   const { allowed } = useRequireOrgAccess(orgId, {
-    minRole: "MANAGER",
+    permission: "purchaseOrders.read",
     canSponsor: true,
   });
 

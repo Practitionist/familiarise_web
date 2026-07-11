@@ -1,13 +1,18 @@
 "use client";
 
 import { useState } from "react";
+import * as Sentry from "@sentry/nextjs";
 import { useToast } from "@/hooks/use-toast";
-import { useRouter } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import { useStreamVideoClient } from "@stream-io/video-react-sdk";
 import { getOrCreateAppointmentMeeting } from "@/lib/meeting";
 import type { TAppointment } from "@/types/appointment";
 import type { SlotOfAppointment } from "@prisma/client";
-import { DEFAULT_MEETING_DURATION_MS } from "../types";
+import {
+  CONSULTEE_JOIN_WINDOW_MS,
+  getJoinableSlot as getJoinableSlotShared,
+} from "@/lib/appointments/slots";
 
 interface UseEventActionsOptions {
   appointmentId?: string;
@@ -29,6 +34,25 @@ export function useEventActions({
   const { toast } = useToast();
   const router = useRouter();
   const client = useStreamVideoClient();
+  const queryClient = useQueryClient();
+  const params = useParams<{ consulteeId: string }>();
+  const consulteeId = params?.consulteeId;
+
+  // Refresh every surface that renders this booking (events across all org
+  // scopes via prefix match, plus the home pending-payments widget) without
+  // the full-page reload that used to nuke the react-query cache and SPA
+  // state after cancel/reschedule.
+  const invalidateBookingData = () => {
+    // Outside the consultee route the param is absent; an undefined key
+    // segment would silently match nothing — bail instead.
+    if (!consulteeId) return;
+    void queryClient.invalidateQueries({
+      queryKey: ["consultee-events", consulteeId],
+    });
+    void queryClient.invalidateQueries({
+      queryKey: ["pending-payments", consulteeId],
+    });
+  };
 
   const [isLoading, setIsLoading] = useState(false);
   const [isJoining, setIsJoining] = useState(false);
@@ -37,21 +61,10 @@ export function useEventActions({
   const [showReportDialog, setShowReportDialog] = useState(false);
   const [showCancelDialog, setShowCancelDialog] = useState(false);
 
-  const getJoinableSlot = (): SlotOfAppointment | null => {
-    if (!rawSlots || rawSlots.length === 0) return null;
-    const now = new Date();
-    for (const slot of rawSlots) {
-      const startTime = new Date(slot.startsAt);
-      const endTime = slot.endsAt
-        ? new Date(slot.endsAt)
-        : new Date(startTime.getTime() + DEFAULT_MEETING_DURATION_MS);
-      const joinWindowStart = new Date(startTime.getTime() - 10 * 60 * 1000);
-      if (!slot.isTentative && now >= joinWindowStart && now <= endTime) {
-        return slot;
-      }
-    }
-    return null;
-  };
+  const getJoinableSlot = (): SlotOfAppointment | null =>
+    getJoinableSlotShared(rawSlots ?? [], {
+      joinWindowMs: CONSULTEE_JOIN_WINDOW_MS,
+    });
 
   const handleRescheduleClick = (isMultiSession: boolean) => {
     if (isMultiSession) {
@@ -108,8 +121,12 @@ export function useEventActions({
             : `Select new times for your ${sessionsAffected} sessions.`,
       });
 
-      window.location.reload();
+      invalidateBookingData();
     } catch (error) {
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "client" } },
+      );
       console.error("Error requesting reschedule:", error);
       toast({
         title: "Error",
@@ -145,6 +162,19 @@ export function useEventActions({
       );
       const data = await response.json();
       if (!response.ok) {
+        // 409 = the CAS transition guard matched zero rows: the booking
+        // already changed state (double-cancel, consultant approved a
+        // stale tab, …). The list refresh IS the answer — not an error.
+        if (response.status === 409) {
+          toast({
+            title: "Booking already updated",
+            description:
+              "This booking changed state in the meantime — refreshing.",
+          });
+          setShowCancelDialog(false);
+          invalidateBookingData();
+          return;
+        }
         throw new Error(data.error || "Failed to cancel appointment");
       }
       toast({
@@ -152,8 +182,12 @@ export function useEventActions({
         description: `Your ${type.toLowerCase()} "${title}" has been cancelled successfully.`,
       });
       setShowCancelDialog(false);
-      window.location.reload();
+      invalidateBookingData();
     } catch (error) {
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "client" } },
+      );
       console.error("Error cancelling appointment:", error);
       toast({
         title: "Error",
@@ -203,6 +237,10 @@ export function useEventActions({
       });
       router.push(`/meetings/${meetingId}`);
     } catch (error) {
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "client" } },
+      );
       console.error("Error joining meeting:", error);
       toast({
         title: "Error joining meeting",

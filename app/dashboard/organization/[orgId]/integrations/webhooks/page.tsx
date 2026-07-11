@@ -9,7 +9,7 @@
  * v1 hands the operator the curl recipes from
  * `docs/enterprise/40-compliance-and-data/04-outbound-webhooks.md` for the destructive paths.
  *
- * Gated via `useRequireFinanceSurface` so OWNER + MAINTAINER +
+ * Gated via the org permission matrix (integrations.read) so OWNER + MAINTAINER +
  * BILLING_ADMIN + MANAGER all reach it. MANAGER is read-only at the
  * API layer (the POST route requires OWNER+BILLING_ADMIN); the form
  * shows but submits surface a 403 with friendly copy.
@@ -17,11 +17,11 @@
 
 import { use, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useRequireFinanceSurface } from "../../useOrgRole";
+import { useRequireOrgAccess } from "../../useOrgRole";
 import {
   DashboardHeader,
   DashboardContent,
-} from "@/components/dashboard/DashboardShell";
+} from "@/components/dashboard/PageScaffold";
 import {
   Card,
   CardContent,
@@ -114,7 +114,7 @@ type PageProps = { params: Promise<{ orgId: string }> };
 
 export default function WebhooksPage({ params }: Readonly<PageProps>) {
   const { orgId } = use(params);
-  const { allowed, isLoading: isGateLoading } = useRequireFinanceSurface(orgId);
+  const { allowed, isLoading: isGateLoading } = useRequireOrgAccess(orgId, { permission: "integrations.read" });
   const qc = useQueryClient();
 
   // Local form state. Kept here rather than React Hook Form because

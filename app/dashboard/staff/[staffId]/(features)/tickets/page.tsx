@@ -1,6 +1,12 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState } from "react";
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -17,7 +23,7 @@ import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
-import { PageHeader } from "@/components/ui/page-header";
+import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 import {
   ResponsiveModal,
   ResponsiveModalContent,
@@ -56,6 +62,15 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
 import type { Ticket, TicketCounts, TicketListResponse } from "@/types/tickets";
+
+const EMPTY_COUNTS: TicketCounts = {
+  total: 0,
+  open: 0,
+  inProgress: 0,
+  onHold: 0,
+  resolved: 0,
+  closed: 0,
+};
 
 // Manual refunds will ship with the live checkout/program wiring. The
 // staff ticket panel shows linked payments + automated refund history
@@ -139,35 +154,27 @@ const formatFileSize = (bytes: number) => {
 
 export default function SupportTicketsPage() {
   const { toast } = useToast();
-  const [tickets, setTickets] = useState<Ticket[]>([]);
-  const [counts, setCounts] = useState<TicketCounts>({
-    total: 0,
-    open: 0,
-    inProgress: 0,
-    onHold: 0,
-    resolved: 0,
-    closed: 0,
-  });
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
+
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [priorityFilter, setPriorityFilter] = useState("all");
   const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
 
   // Detail view state
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
-  const [ticketDetail, setTicketDetail] = useState<Ticket | null>(null);
-  const [loadingDetail, setLoadingDetail] = useState(false);
   const [replyText, setReplyText] = useState("");
   const [isInternalNote, setIsInternalNote] = useState(false);
-  const [sendingReply, setSendingReply] = useState(false);
-  const [updatingStatus, setUpdatingStatus] = useState(false);
 
-  // Fetch tickets
-  const fetchTickets = useCallback(async () => {
-    setLoading(true);
-    try {
+  const { data, isPending, isFetching, isError, refetch } = useQuery({
+    queryKey: [
+      "staff-tickets",
+      page,
+      statusFilter,
+      priorityFilter,
+      searchQuery,
+    ],
+    queryFn: async (): Promise<TicketListResponse> => {
       const params = new URLSearchParams();
       params.set("page", page.toString());
       params.set("limit", "20");
@@ -177,156 +184,179 @@ export default function SupportTicketsPage() {
 
       const response = await fetch(`/api/staff/support-tickets?${params}`);
       if (!response.ok) throw new Error("Failed to fetch tickets");
+      return response.json();
+    },
+    placeholderData: keepPreviousData,
+  });
 
-      const data: TicketListResponse = await response.json();
-      setTickets(data.tickets);
-      setCounts(data.counts);
-      setTotalPages(data.pagination.totalPages);
-    } catch (error) {
-      console.error("Error fetching tickets:", error);
-      toast({
-        title: "Error",
-        description: "Failed to load support tickets",
-        variant: "destructive",
-      });
-    } finally {
-      setLoading(false);
-    }
-  }, [page, statusFilter, priorityFilter, searchQuery, toast]);
+  const tickets = data?.tickets ?? [];
+  const counts = data?.counts ?? EMPTY_COUNTS;
+  const totalPages = data?.pagination.totalPages ?? 1;
 
-  useEffect(() => {
-    fetchTickets();
-  }, [fetchTickets]);
-
-  // Fetch ticket detail
-  const fetchTicketDetail = async (ticketId: string) => {
-    setLoadingDetail(true);
-    try {
-      const response = await fetch(`/api/staff/support-tickets/${ticketId}`);
+  const {
+    data: ticketDetail,
+    isLoading: loadingDetail,
+    isError: isDetailError,
+    refetch: refetchDetail,
+  } = useQuery({
+    queryKey: ["staff-ticket-detail", selectedTicket?.id],
+    queryFn: async (): Promise<Ticket> => {
+      const response = await fetch(
+        `/api/staff/support-tickets/${selectedTicket!.id}`,
+      );
       if (!response.ok) throw new Error("Failed to fetch ticket detail");
-
-      const data = await response.json();
-      setTicketDetail(data);
-    } catch (error) {
-      console.error("Error fetching ticket detail:", error);
-      toast({
-        title: "Error",
-        description: "Failed to load ticket details",
-        variant: "destructive",
-      });
-    } finally {
-      setLoadingDetail(false);
-    }
-  };
+      return response.json();
+    },
+    enabled: !!selectedTicket,
+  });
 
   // Handle ticket selection
-  const handleSelectTicket = async (ticket: Ticket) => {
+  const handleSelectTicket = (ticket: Ticket) => {
     setSelectedTicket(ticket);
-    await fetchTicketDetail(ticket.id);
   };
 
   // Update ticket status
-  const handleUpdateStatus = async (newStatus: string) => {
-    if (!selectedTicket) return;
-    setUpdatingStatus(true);
-    try {
-      const response = await fetch(
-        `/api/staff/support-tickets/${selectedTicket.id}`,
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status: newStatus }),
-        },
-      );
-
+  const updateStatus = useMutation({
+    mutationFn: async ({
+      ticketId,
+      newStatus,
+    }: {
+      ticketId: string;
+      newStatus: string;
+    }) => {
+      const response = await fetch(`/api/staff/support-tickets/${ticketId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: newStatus }),
+      });
       if (!response.ok) throw new Error("Failed to update status");
-
+    },
+    onSuccess: () => {
       toast({ title: "Success", description: "Status updated successfully" });
-      fetchTickets();
-      fetchTicketDetail(selectedTicket.id);
-    } catch (error) {
-      console.error("Error updating status:", error);
+      queryClient.invalidateQueries({ queryKey: ["staff-tickets"] });
+      queryClient.invalidateQueries({ queryKey: ["staff-ticket-detail"] });
+    },
+    onError: () => {
       toast({
         title: "Error",
         description: "Failed to update status",
         variant: "destructive",
       });
-    } finally {
-      setUpdatingStatus(false);
-    }
+    },
+  });
+
+  const handleUpdateStatus = (newStatus: string) => {
+    if (!selectedTicket) return;
+    updateStatus.mutate({ ticketId: selectedTicket.id, newStatus });
   };
+  const updatingStatus = updateStatus.isPending;
 
   // Send reply
-  const handleSendReply = async () => {
-    if (!selectedTicket || !replyText.trim()) return;
-    setSendingReply(true);
-    try {
+  const sendReply = useMutation({
+    mutationFn: async ({
+      ticketId,
+      message,
+      isInternal,
+    }: {
+      ticketId: string;
+      message: string;
+      isInternal: boolean;
+    }) => {
       const response = await fetch(
-        `/api/staff/support-tickets/${selectedTicket.id}/responses`,
+        `/api/staff/support-tickets/${ticketId}/responses`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            message: replyText,
-            isInternal: isInternalNote,
-          }),
+          body: JSON.stringify({ message, isInternal }),
         },
       );
-
       if (!response.ok) throw new Error("Failed to send reply");
-
+    },
+    onSuccess: (_data, variables) => {
       toast({
         title: "Success",
-        description: isInternalNote ? "Internal note added" : "Reply sent",
+        description: variables.isInternal ? "Internal note added" : "Reply sent",
       });
       setReplyText("");
       setIsInternalNote(false);
-      fetchTicketDetail(selectedTicket.id);
-      fetchTickets();
-    } catch (error) {
-      console.error("Error sending reply:", error);
+      queryClient.invalidateQueries({ queryKey: ["staff-ticket-detail"] });
+      queryClient.invalidateQueries({ queryKey: ["staff-tickets"] });
+    },
+    onError: () => {
       toast({
         title: "Error",
         description: "Failed to send reply",
         variant: "destructive",
       });
-    } finally {
-      setSendingReply(false);
-    }
+    },
+  });
+
+  const handleSendReply = () => {
+    if (!selectedTicket || !replyText.trim()) return;
+    sendReply.mutate({
+      ticketId: selectedTicket.id,
+      message: replyText,
+      isInternal: isInternalNote,
+    });
   };
+  const sendingReply = sendReply.isPending;
 
   // Quick actions
-  const handleQuickAction = async (
-    ticketId: string,
-    action: string,
-    e: React.MouseEvent,
-  ) => {
-    e.stopPropagation();
-    try {
+  const quickAction = useMutation({
+    mutationFn: async ({
+      ticketId,
+      action,
+    }: {
+      ticketId: string;
+      action: string;
+    }) => {
       if (action === "close") {
-        await fetch(`/api/staff/support-tickets/${ticketId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status: "CLOSED" }),
-        });
+        const response = await fetch(
+          `/api/staff/support-tickets/${ticketId}`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ status: "CLOSED" }),
+          },
+        );
+        if (!response.ok) throw new Error("Failed to close ticket");
+      } else if (action === "resolve") {
+        const response = await fetch(
+          `/api/staff/support-tickets/${ticketId}`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ status: "RESOLVED" }),
+          },
+        );
+        if (!response.ok) throw new Error("Failed to resolve ticket");
+      }
+      return action;
+    },
+    onSuccess: (action) => {
+      if (action === "close") {
         toast({ title: "Success", description: "Ticket closed" });
       } else if (action === "resolve") {
-        await fetch(`/api/staff/support-tickets/${ticketId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status: "RESOLVED" }),
-        });
         toast({ title: "Success", description: "Ticket resolved" });
       }
-      fetchTickets();
-    } catch (error) {
-      console.error("Error:", error);
+      queryClient.invalidateQueries({ queryKey: ["staff-tickets"] });
+    },
+    onError: () => {
       toast({
         title: "Error",
         description: "Action failed",
         variant: "destructive",
       });
-    }
+    },
+  });
+
+  const handleQuickAction = (
+    ticketId: string,
+    action: string,
+    e: React.MouseEvent,
+  ) => {
+    e.stopPropagation();
+    quickAction.mutate({ ticketId, action });
   };
 
   const columns: ResponsiveColumn<Ticket>[] = [
@@ -452,13 +482,17 @@ export default function SupportTicketsPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
+      <DashboardHeader
         title="Support Tickets"
-        description="Manage and respond to user support requests"
+        subtitle="Manage and respond to user support requests"
         actions={
-          <Button variant="outline" onClick={fetchTickets} disabled={loading}>
+          <Button
+            variant="outline"
+            onClick={() => refetch()}
+            disabled={isFetching}
+          >
             <RefreshCw
-              className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`}
+              className={`h-4 w-4 mr-2 ${isFetching ? "animate-spin" : ""}`}
             />
             Refresh
           </Button>
@@ -555,7 +589,23 @@ export default function SupportTicketsPage() {
       {/* Tickets Table */}
       <Card>
         <CardContent className="p-4">
-          {loading ? (
+          {isError && !data ? (
+            <div className="flex flex-col items-center justify-center h-64 gap-3 text-center">
+              <div className="flex items-center gap-2 text-destructive">
+                <AlertCircle className="h-5 w-5" />
+                <span>Failed to load support tickets.</span>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-2"
+                onClick={() => refetch()}
+              >
+                <RefreshCw className="h-4 w-4" />
+                Retry
+              </Button>
+            </div>
+          ) : isPending ? (
             <div className="flex items-center justify-center h-64">
               <Loader2 className="h-8 w-8 animate-spin text-muted-foreground/70" />
             </div>
@@ -600,7 +650,6 @@ export default function SupportTicketsPage() {
         open={!!selectedTicket}
         onOpenChange={() => {
           setSelectedTicket(null);
-          setTicketDetail(null);
           setReplyText("");
         }}
       >
@@ -608,6 +657,22 @@ export default function SupportTicketsPage() {
           {loadingDetail ? (
             <div className="flex items-center justify-center h-64">
               <Loader2 className="h-8 w-8 animate-spin text-muted-foreground/70" />
+            </div>
+          ) : isDetailError && !ticketDetail ? (
+            <div className="flex flex-col items-center justify-center h-64 gap-3 text-center">
+              <div className="flex items-center gap-2 text-destructive">
+                <AlertCircle className="h-5 w-5" />
+                <span>Failed to load ticket details.</span>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-2"
+                onClick={() => refetchDetail()}
+              >
+                <RefreshCw className="h-4 w-4" />
+                Retry
+              </Button>
             </div>
           ) : ticketDetail ? (
             <>
@@ -947,7 +1012,6 @@ export default function SupportTicketsPage() {
                   variant="outline"
                   onClick={() => {
                     setSelectedTicket(null);
-                    setTicketDetail(null);
                     setReplyText("");
                   }}
                 >

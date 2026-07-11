@@ -15,11 +15,11 @@
 
 import { use, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useRequireFinanceSurface } from "../../useOrgRole";
+import { useRequireOrgAccess } from "../../useOrgRole";
 import {
   DashboardHeader,
   DashboardContent,
-} from "@/components/dashboard/DashboardShell";
+} from "@/components/dashboard/PageScaffold";
 import {
   Card,
   CardContent,
@@ -60,7 +60,7 @@ type PageProps = { params: Promise<{ orgId: string }> };
 
 export default function DataExportsPage({ params }: Readonly<PageProps>) {
   const { orgId } = use(params);
-  const { allowed, isLoading: isGateLoading } = useRequireFinanceSurface(orgId);
+  const { allowed, isLoading: isGateLoading } = useRequireOrgAccess(orgId, { permission: "integrations.read" });
   const qc = useQueryClient();
   const [requestError, setRequestError] = useState<string | null>(null);
 

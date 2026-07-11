@@ -347,7 +347,7 @@ export async function readConsulteeEvents(
         orderBy: { createdAt: "desc" },
         take: EVENTS_TAKE,
       }),
-      // Trial sessions: Free trials requested by the consultee
+      // Trial sessions requested by the consultee
       prisma.trialSession.findMany({
         where: {
           consulteeProfileId: consulteeId,

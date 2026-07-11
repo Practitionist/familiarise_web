@@ -113,6 +113,25 @@ const classInclude = {
   },
 } satisfies Prisma.ClassInclude;
 
+// Trials ride the subscription plan's materials + the single trial
+// appointment's recordings — same shape as consultations.
+const trialInclude = {
+  subscriptionPlan: {
+    include: {
+      materials: {
+        select: planMaterialSelect,
+        orderBy: { order: "asc" as const },
+      },
+      consultantProfile: {
+        include: { user: { select: consultantUserSelect } },
+      },
+    },
+  },
+  appointment: {
+    include: slotsWithRecordings,
+  },
+} satisfies Prisma.TrialSessionInclude;
+
 // Derived via the extended client — raw GetPayload would re-introduce
 // bigint money/fileSize fields (#780).
 type ConsultationWithResources = Prisma.Result<
@@ -133,6 +152,11 @@ type WebinarWithResources = Prisma.Result<
 type ClassWithResources = Prisma.Result<
   typeof prisma.class,
   { include: typeof classInclude },
+  "findFirstOrThrow"
+>;
+type TrialWithResources = Prisma.Result<
+  typeof prisma.trialSession,
+  { include: typeof trialInclude },
   "findFirstOrThrow"
 >;
 
@@ -188,8 +212,8 @@ export async function GET(
       classPlanIds: paidClassPlanIds,
     } = await RecordingService.getPaidPlanIds(userId);
 
-    const [consultations, subscriptions, webinars, classes] = await Promise.all(
-      [
+    const [consultations, subscriptions, webinars, classes, trials] =
+      await Promise.all([
         prisma.consultation.findMany({
           where: { requestedById: consulteeId },
           include: consultationInclude,
@@ -291,8 +315,13 @@ export async function GET(
           include: classInclude,
           orderBy: { createdAt: "desc" },
         }),
-      ],
-    );
+
+        prisma.trialSession.findMany({
+          where: { consulteeProfileId: consulteeId },
+          include: trialInclude,
+          orderBy: { requestedAt: "desc" },
+        }),
+      ]);
 
     // Include if COMPLETED or has at least 1 material/recording
     type TransformedEvent = {
@@ -369,6 +398,25 @@ export async function GET(
               cl.createdAt,
             materials: cl.classPlan.materials,
             recordings: await extractRecordings(cl.appointments),
+          })),
+        )
+      ).filter(shouldInclude),
+      trials: (
+        await Promise.all(
+          trials.map(async (t: TrialWithResources) => ({
+            id: t.id,
+            planTitle: `Trial: ${t.subscriptionPlan.title}`,
+            consultantName:
+              t.subscriptionPlan.consultantProfile?.user.name ?? null,
+            consultantImage:
+              t.subscriptionPlan.consultantProfile?.user.image ?? null,
+            status: t.status,
+            date:
+              t.appointment?.slotsOfAppointment?.[0]?.startsAt || t.requestedAt,
+            materials: t.subscriptionPlan.materials,
+            recordings: await extractRecordings(
+              t.appointment ? [t.appointment] : [],
+            ),
           })),
         )
       ).filter(shouldInclude),

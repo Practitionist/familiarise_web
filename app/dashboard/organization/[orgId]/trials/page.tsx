@@ -8,17 +8,18 @@
 
 import { use } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useRequireOrgAccess } from "../useOrgRole";
 import { useSearchParams } from "next/navigation";
 import { format } from "date-fns";
 import { Badge } from "@/components/ui/badge";
 import {
   DashboardHeader,
   DashboardContent,
-} from "@/components/dashboard/DashboardShell";
+} from "@/components/dashboard/PageScaffold";
 import {
   ScopedListTable,
   type Column,
-} from "@/components/enterprise/ScopedListTable";
+} from "@/components/dashboard/ScopedListTable";
 
 interface TrialRow {
   id: string;
@@ -68,10 +69,16 @@ export default function OrgTrialsPage({
   params: Promise<{ orgId: string }>;
 }) {
   const { orgId } = use(params);
+  // Page-level mirror of the API gate — previously this page had NO
+  // guard and rendered an error shell for unauthorized roles (#audit F8).
+  const { allowed } = useRequireOrgAccess(orgId, {
+    permission: "operations.read",
+  });
   const searchParams = useSearchParams();
   const page = Number(searchParams?.get("page") ?? "1") || 1;
 
   const { data, isLoading, isError } = useQuery<TrialsResponse>({
+    enabled: allowed,
     queryKey: ["org-trials", orgId, page],
     queryFn: async () => {
       const res = await fetch(
@@ -86,7 +93,7 @@ export default function OrgTrialsPage({
     <>
       <DashboardHeader
         title="Trials"
-        subtitle="Free trial sessions taken by this organization's members. Useful for sales pipeline reporting."
+        subtitle="Trial sessions taken by this organization's members. Useful for sales pipeline reporting."
       />
       <DashboardContent>
         <ScopedListTable

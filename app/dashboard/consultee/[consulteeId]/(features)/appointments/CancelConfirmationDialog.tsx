@@ -20,6 +20,12 @@ interface CancelConfirmationDialogProps {
   consultant: string;
   appointmentType: string;
   isLoading?: boolean;
+  /**
+   * Booking is APPROVED_PENDING_PAYMENT — nothing has been charged, so the
+   * dialog reads as "cancel the request" rather than warning about an
+   * irreversible cancellation of a paid session.
+   */
+  isPendingPayment?: boolean;
 }
 
 export function CancelConfirmationDialog({
@@ -30,6 +36,7 @@ export function CancelConfirmationDialog({
   consultant,
   appointmentType,
   isLoading = false,
+  isPendingPayment = false,
 }: Readonly<CancelConfirmationDialogProps>) {
   return (
     <AlertDialog open={isOpen} onOpenChange={(open) => !open && onCancel()}>
@@ -37,7 +44,9 @@ export function CancelConfirmationDialog({
         <AlertDialogHeader>
           <AlertDialogTitle className="flex items-center gap-2">
             <AlertTriangle className="h-5 w-5 text-red-500" />
-            Cancel {appointmentType}?
+            {isPendingPayment
+              ? `Cancel ${appointmentType} request?`
+              : `Cancel ${appointmentType}?`}
           </AlertDialogTitle>
           <AlertDialogDescription asChild>
             <div className="space-y-2">
@@ -46,9 +55,16 @@ export function CancelConfirmationDialog({
                 <strong>&quot;{title}&quot;</strong> with{" "}
                 <strong>{consultant}</strong>?
               </p>
-              <p className="text-red-600 font-medium">
-                This action cannot be undone.
-              </p>
+              {isPendingPayment ? (
+                <p className="text-muted-foreground">
+                  You haven&apos;t been charged — this releases the approved
+                  request without any payment.
+                </p>
+              ) : (
+                <p className="text-red-600 font-medium">
+                  This action cannot be undone.
+                </p>
+              )}
             </div>
           </AlertDialogDescription>
         </AlertDialogHeader>

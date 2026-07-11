@@ -1,23 +1,21 @@
 "use client";
 
-import * as Sentry from "@sentry/nextjs";
 import { useMemo } from "react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { useToast } from "@/components/ui/use-toast";
 // #248: do NOT statically import the Stream SDK (useStreamVideoClient) or
 // lib/meeting (which imports the SDK) here — that would pull the heavy SDK into
 // the dashboard-HOME bundle / critical path. The video client + meeting helper
 // are acquired lazily inside the Join handler (only when a user clicks Join).
-import { waitForGlobalVideoClient } from "@/lib/stream/disconnect";
+import { useLazyJoinMeeting } from "../shared/hooks/useLazyJoinMeeting";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import {
   DashboardHeader,
   DashboardContent,
-} from "@/components/dashboard/DashboardShell";
+} from "@/components/dashboard/PageScaffold";
 import { DataCard, EmptyState } from "@/components/dashboard/DataCard";
 import {
   Calendar,
@@ -28,6 +26,7 @@ import {
   Building2,
 } from "lucide-react";
 import { useSession } from "@/lib/auth-client";
+import { resolveSponsoringOrgName as resolveSponsoringOrgNameShared } from "@/lib/labels/session-labels";
 import {
   Tooltip,
   TooltipContent,
@@ -52,7 +51,10 @@ import {
   getRoleBadgeStyle,
 } from "../../utils/appointmentHelpers";
 
-import { getBadgeStyle } from "../../types";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { eventUnionStatusBadge } from "@/lib/appointments/status";
+import { getProximityLabel } from "@/lib/appointments/slots";
+import { getAppointmentLifecycleStatus } from "@/lib/appointments/map-consultant";
 import { TAppointment } from "@/types/appointment";
 import { getJoinableSlot } from "../../utils/joinState";
 import { getInitials } from "@/utils/formatting";
@@ -95,67 +97,23 @@ export function HomeTab({
   financialSummary,
 }: Readonly<HomeTabProps>) {
   const router = useRouter();
-  const { toast } = useToast();
+  const joinMeeting = useLazyJoinMeeting();
   const { data: session } = useSession();
   // Sponsoring-org lookup for the indigo "Sponsored · <Org>" badge —
   // shows on org-funded appointments only, mirroring the consultee
-  // dashboard convention.
+  // dashboard convention. Resolution lives in session-labels so every
+  // surface renders the same name.
   const orgMemberships = session?.user?.organizationMemberships ?? [];
-  const resolveSponsoringOrgName = (
-    orgId: string | null | undefined,
-  ): string | null => {
-    if (!orgId) return null;
-    return (
-      orgMemberships.find((m) => m.organizationId === orgId)?.organizationName ??
-      "the organization"
-    );
-  };
+  const resolveSponsoringOrgName = (orgId: string | null | undefined) =>
+    resolveSponsoringOrgNameShared(orgId, orgMemberships);
 
-  const handleJoinMeeting = async (
+  // #248: the shared hook reads the connected client singleton at click
+  // time and lazy-imports lib/meeting, keeping the Stream SDK off the home
+  // bundle. This used to be a private copy of that pattern.
+  const handleJoinMeeting = (
     appointment: TAppointment,
     joinableSlot?: TAppointment["slotsOfAppointment"][number],
-  ) => {
-    // #248: read the already-connected video client singleton at click time
-    // (same instance <StreamVideo> uses) instead of via useStreamVideoClient,
-    // so the SDK stays off the home bundle. The video connect is now deferred
-    // to requestIdleCallback, so a fast Join click can land before the client
-    // exists — briefly wait for it instead of immediately erroring.
-    const client = await waitForGlobalVideoClient();
-    if (!client) {
-      toast({
-        title: "Connecting…",
-        description: "Setting up your meeting client. Please try Join again.",
-      });
-      return;
-    }
-    const relevantSlot =
-      joinableSlot ?? appointment.slotsOfAppointment?.[0];
-    if (!relevantSlot) {
-      toast({
-        title: "Error",
-        description: "Slot information missing.",
-      });
-      return;
-    }
-
-    try {
-      // #248: lazy-import the meeting helper (it imports the SDK) on demand.
-      const { getOrCreateAppointmentMeeting } = await import("@/lib/meeting");
-      const meetingId = await getOrCreateAppointmentMeeting(
-        client,
-        appointment,
-        relevantSlot,
-      );
-      router.push(`/meetings/${meetingId}`);
-    } catch (_error) {
-      Sentry.captureException(_error instanceof Error ? _error : new Error(String(_error)), { tags: { subsystem: "client" } });
-      toast({
-        title: "Error",
-        description: "Failed to join meeting.",
-        variant: "destructive",
-      });
-    }
-  };
+  ) => void joinMeeting(appointment, joinableSlot);
 
   const expandedAppointments = useMemo(() => appointments || [], [appointments]);
 
@@ -241,7 +199,6 @@ export function HomeTab({
                   <div className="divide-y divide-zinc-100">
                     {todayAppointments.map((appointment) => {
                       const userName = getConsumeeName(appointment);
-                      const status = getAppointmentStatus(appointment);
                       const startTime = getStartTime(appointment);
                       const joinableSlot = getJoinableSlot(
                         appointment.slotsOfAppointment ?? [],
@@ -315,11 +272,25 @@ export function HomeTab({
                             </span>
                           </div>
 
-                          <Badge
-                            className={`flex-shrink-0 ${getBadgeStyle(status)}`}
-                          >
-                            {status}
-                          </Badge>
+                          <div className="flex flex-col items-end gap-0.5 flex-shrink-0">
+                            <StatusBadge
+                              {...eventUnionStatusBadge(
+                                getAppointmentLifecycleStatus(appointment),
+                              )}
+                              withDot
+                              size="sm"
+                            />
+                            {(() => {
+                              const proximity = getProximityLabel(
+                                getNextUpcomingSlotTime(appointment),
+                              );
+                              return proximity ? (
+                                <span className="text-[10px] text-zinc-400">
+                                  {proximity}
+                                </span>
+                              ) : null;
+                            })()}
+                          </div>
 
                           {(isDev || isJoinable) && (
                             <TooltipProvider>
@@ -400,7 +371,6 @@ export function HomeTab({
                         groupKey.startsWith("class-");
                       const firstAppointment = groupAppointments[0];
                       const userName = getConsumeeName(firstAppointment);
-                      const status = getAppointmentStatus(firstAppointment);
                       const startTime = isRecurring
                         ? getNextUpcomingSlotTime(firstAppointment)
                         : getStartTime(firstAppointment);
@@ -488,9 +458,25 @@ export function HomeTab({
                             )}
                           </div>
 
-                          <Badge className={getBadgeStyle(status)}>
-                            {status}
-                          </Badge>
+                          <div className="flex flex-col items-end gap-0.5 flex-shrink-0">
+                            <StatusBadge
+                              {...eventUnionStatusBadge(
+                                getAppointmentLifecycleStatus(firstAppointment),
+                              )}
+                              withDot
+                              size="sm"
+                            />
+                            {(() => {
+                              const proximity = getProximityLabel(
+                                startTime ?? null,
+                              );
+                              return proximity ? (
+                                <span className="text-[10px] text-zinc-400">
+                                  {proximity}
+                                </span>
+                              ) : null;
+                            })()}
+                          </div>
 
                           <ChevronRight className="h-5 w-5 text-zinc-300 group-hover:text-zinc-500 transition-colors" />
                         </motion.div>

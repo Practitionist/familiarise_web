@@ -423,8 +423,9 @@ erDiagram
         int callsPerWeek
         int durationInMonths
         int totalSessions
-        boolean freeTrialEnabled
-        int freeTrialDurationMinutes
+        boolean trialEnabled
+        int trialDurationMinutes
+        int trialPriceInPaise
         OrgPlanVisibility visibility
     }
     WebinarPlan {
@@ -615,7 +616,8 @@ erDiagram
         string id
         string consultantProfileId
         int price
-        boolean freeTrialEnabled
+        boolean trialEnabled
+        int trialPriceInPaise
         int callsPerWeek
         int durationInMonths
     }
@@ -637,7 +639,13 @@ erDiagram
         string appointmentId
         string convertedToSubscriptionId
         string organizationId
+        string pendingPaymentUrl
+        string paymentId
         TrialSessionStatus status
+    }
+    PlatformPricingConfig {
+        string id
+        int minTrialPriceInPaise
     }
 
     ConsulteeProfile ||--o{ Consultation : "requests"
@@ -1216,6 +1224,7 @@ erDiagram
         MemberStatus status
         PayoutRecipient payoutRecipient
         string rateCardOverrideId
+        boolean exclusiveEngagement
         string departmentLabel
         string betterAuthMemberId
     }
@@ -1374,6 +1383,11 @@ erDiagram
         string name
         datetime configLockedAt
         datetime archivedAt
+    }
+    ProgramConsultantAllowlist {
+        string id
+        string programId
+        string consultantProfileId
     }
     LicensedSeatConfig {
         string programId

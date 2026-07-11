@@ -1,6 +1,12 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState } from "react";
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import {
   Card,
   CardContent,
@@ -21,7 +27,7 @@ import {
 } from "@/components/ui/responsive-modal";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { PageHeader } from "@/components/ui/page-header";
+import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Search,
@@ -38,6 +44,7 @@ import {
   Loader2,
   RefreshCw,
   ExternalLink,
+  AlertTriangle,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import type {
@@ -99,114 +106,101 @@ export default function ContentModerationPage() {
     useState<ProfileVerification | null>(null);
   const [moderationNote, setModerationNote] = useState("");
 
-  // Data states
-  const [reports, setReports] = useState<ModerationReport[]>([]);
-  const [profiles, setProfiles] = useState<ProfileVerification[]>([]);
-  const [reviews, setReviews] = useState<ModerationReview[]>([]);
-  const [stats, setStats] = useState<ModerationStats | null>(null);
-
-  // Loading states
-  const [loadingReports, setLoadingReports] = useState(true);
-  const [loadingProfiles, setLoadingProfiles] = useState(true);
-  const [loadingReviews, setLoadingReviews] = useState(true);
-  const [loadingStats, setLoadingStats] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
-
   const { toast } = useToast();
+  const queryClient = useQueryClient();
 
   // Fetch moderation stats
-  const fetchStats = async () => {
-    try {
-      setLoadingStats(true);
+  const {
+    data: stats,
+    isPending: loadingStats,
+    isFetching: fetchingStats,
+    refetch: refetchStats,
+  } = useQuery({
+    queryKey: ["staff-moderation-stats"],
+    queryFn: async (): Promise<ModerationStats> => {
       const response = await fetch("/api/staff/moderation/stats");
       if (!response.ok) throw new Error("Failed to fetch stats");
-      const data = await response.json();
-      setStats(data);
-    } catch (error) {
-      console.error("Error fetching stats:", error);
-    } finally {
-      setLoadingStats(false);
-    }
-  };
+      return response.json();
+    },
+  });
 
   // Fetch moderation reports
-  const fetchReports = useCallback(async () => {
-    try {
-      setLoadingReports(true);
+  const {
+    data: reportsData,
+    isPending: loadingReports,
+    isFetching: fetchingReports,
+    isError: reportsError,
+    refetch: refetchReports,
+  } = useQuery({
+    queryKey: ["staff-moderation-reports", "PENDING"],
+    queryFn: async (): Promise<{ reports: ModerationReport[] }> => {
       const response = await fetch(
         "/api/staff/moderation/reports?status=PENDING",
       );
       if (!response.ok) throw new Error("Failed to fetch reports");
-      const data = await response.json();
-      setReports(data.reports || []);
-    } catch (error) {
-      console.error("Error fetching reports:", error);
-      toast({
-        title: "Error",
-        description: "Failed to load moderation reports",
-        variant: "destructive",
-      });
-    } finally {
-      setLoadingReports(false);
-    }
-  }, [toast]);
+      return response.json();
+    },
+    placeholderData: keepPreviousData,
+  });
+  const reports = reportsData?.reports ?? [];
 
   // Fetch profile verifications
-  const fetchProfiles = useCallback(async () => {
-    try {
-      setLoadingProfiles(true);
+  const {
+    data: profilesData,
+    isPending: loadingProfiles,
+    isFetching: fetchingProfiles,
+    isError: profilesError,
+    refetch: refetchProfiles,
+  } = useQuery({
+    queryKey: ["staff-moderation-profiles", "PENDING"],
+    queryFn: async (): Promise<{ verifications: ProfileVerification[] }> => {
       const response = await fetch(
         "/api/staff/moderation/profiles?status=PENDING",
       );
       if (!response.ok) throw new Error("Failed to fetch profiles");
-      const data = await response.json();
-      setProfiles(data.verifications || []);
-    } catch (error) {
-      console.error("Error fetching profiles:", error);
-      toast({
-        title: "Error",
-        description: "Failed to load profile verifications",
-        variant: "destructive",
-      });
-    } finally {
-      setLoadingProfiles(false);
-    }
-  }, [toast]);
+      return response.json();
+    },
+    placeholderData: keepPreviousData,
+  });
+  const profiles = profilesData?.verifications ?? [];
 
   // Fetch reviews
-  const fetchReviews = useCallback(async () => {
-    try {
-      setLoadingReviews(true);
+  const {
+    data: reviewsData,
+    isPending: loadingReviews,
+    isFetching: fetchingReviews,
+    isError: reviewsError,
+    refetch: refetchReviews,
+  } = useQuery({
+    queryKey: ["staff-moderation-reviews", 10],
+    queryFn: async (): Promise<{ reviews: ModerationReview[] }> => {
       const response = await fetch("/api/staff/moderation/reviews?limit=10");
       if (!response.ok) throw new Error("Failed to fetch reviews");
-      const data = await response.json();
-      setReviews(data.reviews || []);
-    } catch (error) {
-      console.error("Error fetching reviews:", error);
-      toast({
-        title: "Error",
-        description: "Failed to load reviews",
-        variant: "destructive",
-      });
-    } finally {
-      setLoadingReviews(false);
-    }
-  }, [toast]);
+      return response.json();
+    },
+    placeholderData: keepPreviousData,
+  });
+  const reviews = reviewsData?.reviews ?? [];
 
-  useEffect(() => {
-    fetchStats();
-    fetchReports();
-    fetchProfiles();
-    fetchReviews();
-  }, [fetchReports, fetchProfiles, fetchReviews]);
+  const isRefreshing =
+    fetchingStats || fetchingReports || fetchingProfiles || fetchingReviews;
+
+  const handleRefreshAll = () => {
+    refetchStats();
+    refetchReports();
+    refetchProfiles();
+    refetchReviews();
+  };
 
   // Handle report action (dismiss or take action)
-  const handleReportAction = async (
-    reportId: string,
-    action: "DISMISS" | "WARN" | "SUSPEND" | "BAN",
-  ) => {
-    try {
-      setSubmitting(true);
+  const reportActionMutation = useMutation({
+    mutationFn: async ({
+      reportId,
+      action,
+    }: {
+      reportId: string;
+      action: "DISMISS" | "WARN" | "SUSPEND" | "BAN";
+    }) => {
       const response = await fetch(
         `/api/staff/moderation/reports/${reportId}/action`,
         {
@@ -220,7 +214,8 @@ export default function ContentModerationPage() {
       );
 
       if (!response.ok) throw new Error("Failed to process action");
-
+    },
+    onSuccess: (_data, { action }) => {
       toast({
         title: "Action Completed",
         description: `Report has been ${action === "DISMISS" ? "dismissed" : "processed"} successfully`,
@@ -228,26 +223,34 @@ export default function ContentModerationPage() {
 
       setSelectedReport(null);
       setModerationNote("");
-      fetchReports();
-      fetchStats();
-    } catch (_error) {
+      queryClient.invalidateQueries({
+        queryKey: ["staff-moderation-reports"],
+      });
+      queryClient.invalidateQueries({ queryKey: ["staff-moderation-stats"] });
+    },
+    onError: () => {
       toast({
         title: "Error",
         description: "Failed to process action",
         variant: "destructive",
       });
-    } finally {
-      setSubmitting(false);
-    }
-  };
+    },
+  });
+
+  const handleReportAction = (
+    reportId: string,
+    action: "DISMISS" | "WARN" | "SUSPEND" | "BAN",
+  ) => reportActionMutation.mutate({ reportId, action });
 
   // Handle profile verification
-  const handleProfileVerification = async (
-    verificationId: string,
-    status: "APPROVED" | "REJECTED" | "NEEDS_INFO",
-  ) => {
-    try {
-      setSubmitting(true);
+  const profileVerificationMutation = useMutation({
+    mutationFn: async ({
+      verificationId,
+      status,
+    }: {
+      verificationId: string;
+      status: "APPROVED" | "REJECTED" | "NEEDS_INFO";
+    }) => {
       const response = await fetch(
         `/api/staff/moderation/profiles/${verificationId}`,
         {
@@ -268,7 +271,8 @@ export default function ContentModerationPage() {
       );
 
       if (!response.ok) throw new Error("Failed to update verification");
-
+    },
+    onSuccess: (_data, { status }) => {
       const statusMessages = {
         APPROVED: "approved",
         REJECTED: "rejected",
@@ -282,22 +286,28 @@ export default function ContentModerationPage() {
 
       setSelectedProfile(null);
       setModerationNote("");
-      fetchProfiles();
-      fetchStats();
-    } catch (_error) {
+      queryClient.invalidateQueries({
+        queryKey: ["staff-moderation-profiles"],
+      });
+      queryClient.invalidateQueries({ queryKey: ["staff-moderation-stats"] });
+    },
+    onError: () => {
       toast({
         title: "Error",
         description: "Failed to update profile verification",
         variant: "destructive",
       });
-    } finally {
-      setSubmitting(false);
-    }
-  };
+    },
+  });
+
+  const handleProfileVerification = (
+    verificationId: string,
+    status: "APPROVED" | "REJECTED" | "NEEDS_INFO",
+  ) => profileVerificationMutation.mutate({ verificationId, status });
 
   // Handle review deletion
-  const handleDeleteReview = async (reviewId: string) => {
-    try {
+  const deleteReviewMutation = useMutation({
+    mutationFn: async (reviewId: string) => {
       const response = await fetch(
         `/api/staff/moderation/reviews/${reviewId}`,
         {
@@ -306,22 +316,29 @@ export default function ContentModerationPage() {
       );
 
       if (!response.ok) throw new Error("Failed to delete review");
-
+    },
+    onSuccess: () => {
       toast({
         title: "Review Deleted",
         description: "The review has been removed",
       });
 
-      fetchReviews();
-      fetchStats();
-    } catch (_error) {
+      queryClient.invalidateQueries({
+        queryKey: ["staff-moderation-reviews"],
+      });
+      queryClient.invalidateQueries({ queryKey: ["staff-moderation-stats"] });
+    },
+    onError: () => {
       toast({
         title: "Error",
         description: "Failed to delete review",
         variant: "destructive",
       });
-    }
-  };
+    },
+  });
+
+  const handleDeleteReview = (reviewId: string) =>
+    deleteReviewMutation.mutate(reviewId);
 
   // Filter reports by search
   const filteredReports = searchQuery
@@ -339,23 +356,18 @@ export default function ContentModerationPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <PageHeader
+      <DashboardHeader
         title="Content Moderation"
-        description="Review and moderate platform content"
+        subtitle="Review and moderate platform content"
         actions={
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => {
-              fetchStats();
-              fetchReports();
-              fetchProfiles();
-              fetchReviews();
-            }}
-            disabled={loadingStats}
+            onClick={handleRefreshAll}
+            disabled={isRefreshing}
           >
             <RefreshCw
-              className={`h-4 w-4 ${loadingStats ? "animate-spin" : ""}`}
+              className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`}
             />
           </Button>
         }
@@ -475,7 +487,23 @@ export default function ContentModerationPage() {
             </CardContent>
           </Card>
 
-          {loadingReports ? (
+          {reportsError && !reportsData ? (
+            <div className="flex flex-col items-center justify-center py-8 gap-3 text-center">
+              <div className="flex items-center gap-2 text-destructive">
+                <AlertTriangle className="h-5 w-5" />
+                <span>Failed to load moderation reports.</span>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-2"
+                onClick={() => refetchReports()}
+              >
+                <RefreshCw className="h-4 w-4" />
+                Retry
+              </Button>
+            </div>
+          ) : loadingReports ? (
             <div className="flex items-center justify-center py-8">
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
             </div>
@@ -541,7 +569,23 @@ export default function ContentModerationPage() {
 
         {/* Profiles Tab */}
         <TabsContent value="profiles" className="space-y-4">
-          {loadingProfiles ? (
+          {profilesError && !profilesData ? (
+            <div className="flex flex-col items-center justify-center py-8 gap-3 text-center">
+              <div className="flex items-center gap-2 text-destructive">
+                <AlertTriangle className="h-5 w-5" />
+                <span>Failed to load profile verifications.</span>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-2"
+                onClick={() => refetchProfiles()}
+              >
+                <RefreshCw className="h-4 w-4" />
+                Retry
+              </Button>
+            </div>
+          ) : loadingProfiles ? (
             <div className="flex items-center justify-center py-8">
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
             </div>
@@ -631,7 +675,23 @@ export default function ContentModerationPage() {
 
         {/* Reviews Tab */}
         <TabsContent value="reviews" className="space-y-4">
-          {loadingReviews ? (
+          {reviewsError && !reviewsData ? (
+            <div className="flex flex-col items-center justify-center py-8 gap-3 text-center">
+              <div className="flex items-center gap-2 text-destructive">
+                <AlertTriangle className="h-5 w-5" />
+                <span>Failed to load reviews.</span>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-2"
+                onClick={() => refetchReviews()}
+              >
+                <RefreshCw className="h-4 w-4" />
+                Retry
+              </Button>
+            </div>
+          ) : loadingReviews ? (
             <div className="flex items-center justify-center py-8">
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
             </div>
@@ -784,7 +844,7 @@ export default function ContentModerationPage() {
                 <Button
                   variant="outline"
                   onClick={() => setSelectedReport(null)}
-                  disabled={submitting}
+                  disabled={reportActionMutation.isPending}
                 >
                   Cancel
                 </Button>
@@ -794,9 +854,9 @@ export default function ContentModerationPage() {
                   onClick={() =>
                     handleReportAction(selectedReport.id, "DISMISS")
                   }
-                  disabled={submitting}
+                  disabled={reportActionMutation.isPending}
                 >
-                  {submitting ? (
+                  {reportActionMutation.isPending ? (
                     <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                   ) : (
                     <CheckCircle2 className="h-4 w-4 mr-2" />
@@ -806,9 +866,9 @@ export default function ContentModerationPage() {
                 <Button
                   variant="destructive"
                   onClick={() => handleReportAction(selectedReport.id, "WARN")}
-                  disabled={submitting}
+                  disabled={reportActionMutation.isPending}
                 >
-                  {submitting ? (
+                  {reportActionMutation.isPending ? (
                     <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                   ) : (
                     <XCircle className="h-4 w-4 mr-2" />
@@ -960,7 +1020,7 @@ export default function ContentModerationPage() {
                 <Button
                   variant="outline"
                   onClick={() => setSelectedProfile(null)}
-                  disabled={submitting}
+                  disabled={profileVerificationMutation.isPending}
                 >
                   Cancel
                 </Button>
@@ -970,9 +1030,9 @@ export default function ContentModerationPage() {
                   onClick={() =>
                     handleProfileVerification(selectedProfile.id, "REJECTED")
                   }
-                  disabled={submitting}
+                  disabled={profileVerificationMutation.isPending}
                 >
-                  {submitting ? (
+                  {profileVerificationMutation.isPending ? (
                     <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                   ) : (
                     <XCircle className="h-4 w-4 mr-2" />
@@ -985,14 +1045,17 @@ export default function ContentModerationPage() {
                   onClick={() =>
                     handleProfileVerification(selectedProfile.id, "NEEDS_INFO")
                   }
-                  disabled={submitting || !moderationNote.trim()}
+                  disabled={
+                    profileVerificationMutation.isPending ||
+                    !moderationNote.trim()
+                  }
                   title={
                     !moderationNote.trim()
                       ? "Add a note explaining what information is needed"
                       : ""
                   }
                 >
-                  {submitting ? (
+                  {profileVerificationMutation.isPending ? (
                     <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                   ) : (
                     <MessageSquare className="h-4 w-4 mr-2" />
@@ -1004,9 +1067,9 @@ export default function ContentModerationPage() {
                   onClick={() =>
                     handleProfileVerification(selectedProfile.id, "APPROVED")
                   }
-                  disabled={submitting}
+                  disabled={profileVerificationMutation.isPending}
                 >
-                  {submitting ? (
+                  {profileVerificationMutation.isPending ? (
                     <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                   ) : (
                     <CheckCircle2 className="h-4 w-4 mr-2" />

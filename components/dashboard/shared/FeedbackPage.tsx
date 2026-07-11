@@ -1,6 +1,12 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState } from "react";
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { useDebouncedCallback } from "use-debounce";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -18,7 +24,7 @@ import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
-import { PageHeader } from "@/components/ui/page-header";
+import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 import {
   ResponsiveModal,
   ResponsiveModalContent,
@@ -49,6 +55,21 @@ import { useToast } from "@/hooks/use-toast";
 import { FeedbackStatus } from "@prisma/client";
 import type { Feedback, FeedbackCounts } from "@/types/feedback";
 
+interface FeedbackListResponse {
+  feedbacks: Feedback[];
+  counts: FeedbackCounts;
+  pagination: { totalPages: number };
+}
+
+const EMPTY_COUNTS: FeedbackCounts = {
+  total: 0,
+  pending: 0,
+  acknowledged: 0,
+  inProgress: 0,
+  resolved: 0,
+  closed: 0,
+};
+
 const STATUS_OPTIONS: { value: FeedbackStatus | "all"; label: string }[] = [
   { value: "all", label: "All Status" },
   { value: "PENDING", label: "Pending" },
@@ -69,9 +90,9 @@ const getStatusColor = (status: FeedbackStatus) => {
     case "RESOLVED":
       return "bg-green-100 text-green-700 border-green-200";
     case "CLOSED":
-      return "bg-zinc-100 text-zinc-600 border-zinc-200";
+      return "bg-muted text-muted-foreground border-border";
     default:
-      return "bg-zinc-100 text-zinc-600 border-zinc-200";
+      return "bg-muted text-muted-foreground border-border";
   }
 };
 
@@ -87,7 +108,7 @@ const getStatusIcon = (status: FeedbackStatus) => {
     case "CLOSED":
       return <CheckCircle2 className="h-4 w-4 text-green-500" />;
     default:
-      return <AlertCircle className="h-4 w-4 text-zinc-500" />;
+      return <AlertCircle className="h-4 w-4 text-muted-foreground" />;
   }
 };
 
@@ -119,25 +140,15 @@ export function FeedbackPage({
   description = "Manage and respond to user feedback across the platform",
 }: FeedbackPageProps) {
   const { toast } = useToast();
-  const [feedbacks, setFeedbacks] = useState<Feedback[]>([]);
-  const [counts, setCounts] = useState<FeedbackCounts>({
-    total: 0,
-    pending: 0,
-    acknowledged: 0,
-    inProgress: 0,
-    resolved: 0,
-    closed: 0,
-  });
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
+
   const [statusFilter, setStatusFilter] = useState("all");
   const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
 
   // Detail view state
   const [selectedFeedback, setSelectedFeedback] = useState<Feedback | null>(
     null,
   );
-  const [updatingStatus, setUpdatingStatus] = useState(false);
 
   // Debounced search
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -153,9 +164,15 @@ export function FeedbackPage({
     debouncedSetSearch(value);
   };
 
-  const fetchFeedbacks = useCallback(async () => {
-    setLoading(true);
-    try {
+  const { data, isPending, isFetching, isError, refetch } = useQuery({
+    queryKey: [
+      "admin-feedbacks",
+      apiEndpoint,
+      page,
+      statusFilter,
+      debouncedSearch,
+    ],
+    queryFn: async (): Promise<FeedbackListResponse> => {
       const params = new URLSearchParams({
         page: page.toString(),
         limit: "20",
@@ -165,57 +182,52 @@ export function FeedbackPage({
 
       const response = await fetch(`${apiEndpoint}?${params}`);
       if (!response.ok) throw new Error("Failed to fetch feedbacks");
+      return response.json();
+    },
+    placeholderData: keepPreviousData,
+  });
 
-      const data = await response.json();
-      setFeedbacks(data.feedbacks);
-      setCounts(data.counts);
-      setTotalPages(data.pagination.totalPages);
-    } catch (error) {
-      console.error("Error fetching feedbacks:", error);
-      toast({
-        title: "Error",
-        description: "Failed to load feedbacks",
-        variant: "destructive",
-      });
-    } finally {
-      setLoading(false);
-    }
-  }, [page, statusFilter, debouncedSearch, toast, apiEndpoint]);
+  const feedbacks = data?.feedbacks ?? [];
+  const counts = data?.counts ?? EMPTY_COUNTS;
+  const totalPages = data?.pagination.totalPages ?? 1;
 
-  useEffect(() => {
-    fetchFeedbacks();
-  }, [fetchFeedbacks]);
-
-  const handleUpdateStatus = async (
-    feedbackId: string,
-    newStatus: FeedbackStatus,
-  ) => {
-    setUpdatingStatus(true);
-    try {
+  const updateStatus = useMutation({
+    mutationFn: async ({
+      feedbackId,
+      newStatus,
+    }: {
+      feedbackId: string;
+      newStatus: FeedbackStatus;
+    }) => {
       const response = await fetch(`${apiEndpoint}/${feedbackId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: newStatus }),
       });
-
       if (!response.ok) throw new Error("Failed to update status");
-
+      return { feedbackId, newStatus };
+    },
+    onSuccess: ({ feedbackId, newStatus }) => {
       toast({ title: "Success", description: "Status updated successfully" });
-      fetchFeedbacks();
-      if (selectedFeedback?.id === feedbackId) {
-        setSelectedFeedback({ ...selectedFeedback, status: newStatus });
-      }
-    } catch (error) {
-      console.error("Error updating status:", error);
+      queryClient.invalidateQueries({ queryKey: ["admin-feedbacks"] });
+      // Keep the open detail modal in sync without waiting for the refetch.
+      setSelectedFeedback((current) =>
+        current?.id === feedbackId
+          ? { ...current, status: newStatus }
+          : current,
+      );
+    },
+    onError: () => {
       toast({
         title: "Error",
         description: "Failed to update status",
         variant: "destructive",
       });
-    } finally {
-      setUpdatingStatus(false);
-    }
-  };
+    },
+  });
+
+  const handleUpdateStatus = (feedbackId: string, newStatus: FeedbackStatus) =>
+    updateStatus.mutate({ feedbackId, newStatus });
 
   const renderRowActions = (feedback: Feedback) => (
     <DropdownMenu>
@@ -338,13 +350,18 @@ export function FeedbackPage({
   return (
     <div className="space-y-6">
       {/* Header */}
-      <PageHeader
+      <DashboardHeader
         title={title}
-        description={description}
+        subtitle={description}
         actions={
-          <Button onClick={fetchFeedbacks} variant="outline" size="sm">
+          <Button
+            onClick={() => refetch()}
+            variant="outline"
+            size="sm"
+            disabled={isFetching}
+          >
             <RefreshCw
-              className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`}
+              className={`h-4 w-4 mr-2 ${isFetching ? "animate-spin" : ""}`}
             />
             Refresh
           </Button>
@@ -443,7 +460,13 @@ export function FeedbackPage({
                 className="pl-10"
               />
             </div>
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <Select
+              value={statusFilter}
+              onValueChange={(v) => {
+                setStatusFilter(v);
+                setPage(1);
+              }}
+            >
               <SelectTrigger className="w-full sm:w-48">
                 <SelectValue placeholder="Filter by status" />
               </SelectTrigger>
@@ -462,7 +485,23 @@ export function FeedbackPage({
       {/* Feedback Table */}
       <Card className="border-0 shadow-sm">
         <CardContent className="p-0 sm:p-6">
-          {loading ? (
+          {isError && !data ? (
+            <div className="flex flex-col items-center justify-center py-12 gap-3 text-center">
+              <div className="flex items-center gap-2 text-destructive">
+                <AlertCircle className="h-5 w-5" />
+                <span>Failed to load feedback.</span>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-2"
+                onClick={() => refetch()}
+              >
+                <RefreshCw className="h-4 w-4" />
+                Retry
+              </Button>
+            </div>
+          ) : isPending ? (
             <div className="flex items-center justify-center py-12">
               <Loader2 className="h-8 w-8 animate-spin text-muted-foreground/70" />
             </div>
@@ -598,7 +637,7 @@ export function FeedbackPage({
                         value as FeedbackStatus,
                       )
                     }
-                    disabled={updatingStatus}
+                    disabled={updateStatus.isPending}
                   >
                     <SelectTrigger>
                       <SelectValue />

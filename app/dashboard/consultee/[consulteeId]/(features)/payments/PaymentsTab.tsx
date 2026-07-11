@@ -5,15 +5,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { motion } from "framer-motion";
 import { useCurrency } from "@/hooks/useCurrency";
 import { cn } from "@/utils/tailwind";
-import {
-  CreditCard,
-  Gift,
-  Download,
-  FileText,
-  Tag,
-  ArrowUpDown,
-  Building2,
-} from "lucide-react";
+import { CreditCard, Gift, Tag, ArrowUpDown, Building2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { useSession } from "@/lib/auth-client";
 import { Button } from "@/components/ui/button";
@@ -34,7 +26,21 @@ import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
-import { PageHeader } from "@/components/ui/page-header";
+import { DashboardHeader } from "@/components/dashboard/PageScaffold";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import {
+  paymentStatusBadge,
+  refundStatusBadge,
+  resolveSponsoringOrgName,
+} from "@/lib/labels/session-labels";
+
+interface RefundItem {
+  id: string;
+  amountPaise: number;
+  status: string;
+  reason: string | null;
+  createdAt: string;
+}
 
 interface PaymentItem {
   id: string;
@@ -53,25 +59,13 @@ interface PaymentItem {
     type: string;
     value: number;
   } | null;
+  refunds: RefundItem[];
+  refundedPaise: number;
+  /** Server-derived: REFUNDED | PARTIALLY_REFUNDED | PaymentStatus. */
+  displayStatus: string;
   receiptUrl: string | null;
   expiresAt: string | null;
   createdAt: string;
-}
-
-interface InvoiceItem {
-  id: string;
-  paymentId: string | null;
-  invoiceNumber: string;
-  amount: number;
-  taxAmount: number | null;
-  status: string;
-  createdAt: string;
-  payment: {
-    id: string;
-    amount: number;
-    currency: string;
-    paymentStatus: string;
-  } | null;
 }
 
 interface CreditItem {
@@ -99,7 +93,6 @@ interface CreditUsageItem {
 
 interface PaymentsData {
   payments: PaymentItem[];
-  invoices: InvoiceItem[];
   credits: CreditItem[];
   creditUsages: CreditUsageItem[];
   creditSummary: {
@@ -160,18 +153,37 @@ function formatRelativeTime(date: Date): string {
 }
 
 /**
- * Derive UI display status: if PENDING but expiresAt is past, show EXPIRED
- * so the user doesn't see a misleading amber "PENDING" badge while the
- * cleanup cron hasn't run yet.
+ * Derive UI display status: start from the server's refund-aware
+ * `displayStatus` (REFUNDED / PARTIALLY_REFUNDED / PaymentStatus); if
+ * PENDING but expiresAt is past, show EXPIRED so the user doesn't see a
+ * misleading amber "PENDING" badge while the cleanup cron hasn't run yet.
  */
 function getDisplayStatus(payment: PaymentItem): string {
-  if (payment.status !== "PENDING") return payment.status;
+  const base = payment.displayStatus ?? payment.status;
+  if (base !== "PENDING") return base;
 
   const expiresAt = payment.expiresAt
     ? new Date(payment.expiresAt)
     : new Date(new Date(payment.createdAt).getTime() + 30 * 60 * 1000);
 
   return expiresAt <= new Date() ? "EXPIRED" : "PENDING";
+}
+
+/**
+ * Format an amount in ITS OWN currency (no cross-currency conversion) —
+ * used by the per-currency summary so a USD payment is never summed or
+ * displayed as INR.
+ */
+function formatAmountInCurrency(paise: number, currency: string): string {
+  try {
+    return new Intl.NumberFormat(currency === "INR" ? "en-IN" : "en-US", {
+      style: "currency",
+      currency,
+      maximumFractionDigits: 2,
+    }).format(paise / 100);
+  } catch {
+    return `${currency} ${(paise / 100).toFixed(2)}`;
+  }
 }
 
 function getExpiryInfo(payment: PaymentItem): {
@@ -193,34 +205,6 @@ function getExpiryInfo(payment: PaymentItem): {
   };
 }
 
-// Semantic status colors kept (green=success, amber=pending, red=failed);
-// off-brand emerald collapses to green and the generic blue REFUNDED accent
-// goes monochrome neutral.
-const STATUS_STYLES: Record<string, string> = {
-  SUCCEEDED: "bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-300",
-  COMPLETED: "bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-300",
-  PENDING: "bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300",
-  EXPIRED: "bg-muted text-muted-foreground",
-  FAILED: "bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-300",
-  REFUNDED: "bg-muted text-foreground",
-  CANCELLED: "bg-muted text-muted-foreground",
-  PAID: "bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-300",
-  UNPAID: "bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300",
-};
-
-function StatusBadge({ status }: { status: string }) {
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium",
-        STATUS_STYLES[status] || "bg-muted text-muted-foreground",
-      )}
-    >
-      {status}
-    </span>
-  );
-}
-
 export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
   const { formatPrice } = useCurrency();
   const { data: session } = useSession();
@@ -228,34 +212,20 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
   // the "Sponsored · <Org>" badge — same convention as the appointments
   // / home surfaces.
   const orgMemberships = session?.user?.organizationMemberships ?? [];
-  const resolveSponsoringOrgName = (
-    orgId: string | null | undefined,
-  ): string | null => {
-    if (!orgId) return null;
-    return (
-      orgMemberships.find((m) => m.organizationId === orgId)?.organizationName ??
-      "the organization"
-    );
-  };
 
-  // Build a map from paymentId → invoice for quick lookup
-  const invoiceByPaymentId = useMemo(() => {
-    if (!data) return new Map<string, InvoiceItem>();
-    const map = new Map<string, InvoiceItem>();
-    for (const inv of data.invoices) {
-      if (inv.paymentId) {
-        map.set(inv.paymentId, inv);
-      }
+  // Net successful spend grouped per currency — a USD payment must never be
+  // summed into an INR total, and refunded amounts don't count as spend.
+  const totalsByCurrency = useMemo(() => {
+    const map = new Map<string, { total: number; count: number }>();
+    for (const p of data?.payments ?? []) {
+      if (p.status !== "SUCCEEDED") continue;
+      const currency = p.currency || "INR";
+      const entry = map.get(currency) ?? { total: 0, count: 0 };
+      entry.total += p.amount - (p.refundedPaise ?? 0);
+      entry.count += 1;
+      map.set(currency, entry);
     }
     return map;
-  }, [data]);
-
-  // TODO: currently sums all currencies as INR — add multi-currency support later
-  const totalSpent = useMemo(() => {
-    if (!data) return 0;
-    return data.payments
-      .filter((p) => p.status === "SUCCEEDED")
-      .reduce((sum, p) => sum + p.amount, 0);
   }, [data]);
 
   const [statusFilter, setStatusFilter] = useState<string>("all");
@@ -293,6 +263,7 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
           {(() => {
             const sponsoringOrgName = resolveSponsoringOrgName(
               payment.organizationId,
+              orgMemberships,
             );
             return sponsoringOrgName ? (
               <Badge
@@ -315,20 +286,6 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
           {formatDate(payment.createdAt)}
         </span>
       ),
-    },
-    {
-      key: "invoiceNo",
-      header: "Invoice #",
-      cell: (payment) => {
-        const invoice = invoiceByPaymentId.get(payment.id);
-        return (
-          <span className="font-mono text-xs text-muted-foreground whitespace-nowrap">
-            {invoice?.invoiceNumber || (
-              <span className="text-muted-foreground/70">&mdash;</span>
-            )}
-          </span>
-        );
-      },
     },
     {
       key: "type",
@@ -389,7 +346,51 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
     {
       key: "status",
       header: "Status",
-      cell: (payment) => <StatusBadge status={getDisplayStatus(payment)} />,
+      cell: (payment) => {
+        const displayStatus = getDisplayStatus(payment);
+        return (
+          <div className="space-y-1">
+            <StatusBadge {...paymentStatusBadge(displayStatus)} size="sm" />
+            {payment.refundedPaise > 0 && (
+              <span className="block text-xs text-muted-foreground whitespace-nowrap">
+                {formatAmountInCurrency(payment.refundedPaise, payment.currency)}{" "}
+                refunded
+              </span>
+            )}
+          </div>
+        );
+      },
+    },
+    {
+      key: "refunds",
+      header: "Refunds",
+      cell: (payment) => {
+        if (payment.refunds.length === 0) {
+          return <span className="text-muted-foreground/70">&mdash;</span>;
+        }
+        return (
+          <ul className="space-y-1.5">
+            {payment.refunds.map((refund) => (
+              <li key={refund.id} className="whitespace-nowrap">
+                <StatusBadge {...refundStatusBadge(refund.status)} size="sm" />
+                <span className="ml-1.5 text-xs text-muted-foreground">
+                  {formatAmountInCurrency(refund.amountPaise, payment.currency)}
+                  {" · "}
+                  {formatDate(refund.createdAt)}
+                </span>
+                {refund.reason && (
+                  <span
+                    className="block text-xs text-muted-foreground/70 max-w-[200px] truncate"
+                    title={refund.reason}
+                  >
+                    {refund.reason}
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        );
+      },
     },
     {
       key: "expires",
@@ -415,54 +416,6 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
               {expiry.relative}
             </span>
           </div>
-        );
-      },
-    },
-    {
-      key: "invoice",
-      header: "Invoice",
-      headClassName: "text-center",
-      className: "text-center",
-      cell: (payment) => {
-        const invoice = invoiceByPaymentId.get(payment.id);
-        const displayStatus = getDisplayStatus(payment);
-        if (invoice) {
-          return (
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="text-muted-foreground hover:text-foreground"
-                    onClick={() => {
-                      window.open(`/api/invoices/${invoice.id}/pdf`, "_blank");
-                    }}
-                  >
-                    <Download className="w-4 h-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>Download invoice PDF</p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          );
-        }
-        if (displayStatus === "FAILED" || displayStatus === "EXPIRED") {
-          return <span className="text-xs text-muted-foreground/70">&mdash;</span>;
-        }
-        return (
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <FileText className="w-4 h-4 text-muted-foreground/50 mx-auto" />
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>Invoice pending</p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
         );
       },
     },
@@ -560,11 +513,12 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3 }}
     >
-      <PageHeader
-        className="mb-6"
-        title="Payments"
-        description="Your payment history and credits"
-      />
+      <div className="mb-6">
+        <DashboardHeader
+          title="Payments"
+          subtitle="Your payment history and credits"
+        />
+      </div>
 
       {/* Summary Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
@@ -578,16 +532,34 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
                 </p>
               </TooltipTrigger>
               <TooltipContent>
-                <p>Only includes successful payments</p>
+                <p>
+                  Successful payments net of refunds. Multi-currency spend is
+                  totalled per currency, never converted.
+                </p>
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>
-          <p className="text-2xl font-bold text-foreground">
-            {formatPrice(totalSpent)}
-          </p>
+          {totalsByCurrency.size === 0 ? (
+            <p className="text-2xl font-bold text-foreground">
+              {formatPrice(0)}
+            </p>
+          ) : (
+            <div className="space-y-0.5">
+              {Array.from(totalsByCurrency.entries()).map(([currency, entry]) => (
+                <p
+                  key={currency}
+                  className="text-2xl font-bold text-foreground leading-tight"
+                >
+                  {formatAmountInCurrency(entry.total, currency)}
+                </p>
+              ))}
+            </div>
+          )}
           <p className="text-xs text-muted-foreground/70 mt-1">
             {(() => {
-              const count = data.payments.filter((p) => p.status === "SUCCEEDED").length;
+              const count = data.payments.filter(
+                (p) => p.status === "SUCCEEDED",
+              ).length;
               return `${count} successful ${count === 1 ? "transaction" : "transactions"} `;
             })()}
             &middot; {data.payments.length} total
@@ -638,6 +610,10 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
                   <SelectContent>
                     <SelectItem value="all">All statuses</SelectItem>
                     <SelectItem value="SUCCEEDED">Succeeded</SelectItem>
+                    <SelectItem value="REFUNDED">Refunded</SelectItem>
+                    <SelectItem value="PARTIALLY_REFUNDED">
+                      Partially refunded
+                    </SelectItem>
                     <SelectItem value="PENDING">Pending</SelectItem>
                     <SelectItem value="FAILED">Failed</SelectItem>
                     <SelectItem value="EXPIRED">Expired</SelectItem>

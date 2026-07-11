@@ -42,6 +42,13 @@ export interface EarningsSummary {
   readyEarnings: number;
   paidEarnings: number;
   heldEarnings: number;
+  /**
+   * Earnings accrued from a not-yet-verified INVOICE-funded org (see
+   * EarningStatus.PENDING_TRUST). Deliberately EXCLUDED from
+   * totalEarnings — the money isn't cleared until the org is verified
+   * or pays; the dashboard surfaces it as its own bucket.
+   */
+  pendingTrustEarnings: number;
 }
 
 /** Resolved 3-way split for a canHost=true org consultant */
@@ -833,7 +840,7 @@ export async function releaseEarningsFromHold(): Promise<number> {
 export async function getConsultantEarningsSummary(
   consultantProfileId: string,
 ): Promise<EarningsSummary> {
-  const [pending, ready, paid, held] = await Promise.all([
+  const [pending, ready, paid, held, pendingTrust] = await Promise.all([
     prisma.consultantEarnings.aggregate({
       where: { consultantProfileId, status: EarningStatus.PENDING },
       _sum: { consultantSharePaise: true },
@@ -850,12 +857,19 @@ export async function getConsultantEarningsSummary(
       where: { consultantProfileId, status: EarningStatus.HELD },
       _sum: { consultantSharePaise: true },
     }),
+    prisma.consultantEarnings.aggregate({
+      where: { consultantProfileId, status: EarningStatus.PENDING_TRUST },
+      _sum: { consultantSharePaise: true },
+    }),
   ]);
 
   const pendingEarnings = sumPaise(pending._sum.consultantSharePaise);
   const readyEarnings = sumPaise(ready._sum.consultantSharePaise);
   const paidEarnings = sumPaise(paid._sum.consultantSharePaise);
   const heldEarnings = sumPaise(held._sum.consultantSharePaise);
+  const pendingTrustEarnings = sumPaise(
+    pendingTrust._sum.consultantSharePaise,
+  );
 
   return {
     consultantProfileId,
@@ -865,6 +879,7 @@ export async function getConsultantEarningsSummary(
     readyEarnings,
     paidEarnings,
     heldEarnings,
+    pendingTrustEarnings,
   };
 }
 

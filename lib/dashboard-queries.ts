@@ -22,6 +22,7 @@ import type {
   PlannerWebinarEvent,
   PlannerClassEvent,
 } from "@/app/dashboard/consultant/[consultantId]/(features)/planner/types/event";
+import type { RecordingData } from "@/app/dashboard/consultant/[consultantId]/(features)/recordings/components/RecordingCard";
 
 // =============================================================================
 // Types
@@ -31,6 +32,29 @@ interface PlannerData {
   webinars: PlannerWebinarEvent[];
   classes: PlannerClassEvent[];
   participantCounts: Record<string, number>;
+}
+
+export interface ConsultantRecordingsParams {
+  type?: "webinar" | "class" | null;
+  page?: number;
+  limit?: number;
+  search?: string;
+}
+
+interface ConsultantRecordingsResponse {
+  recordings: RecordingData[];
+  totalPages?: number;
+  total?: number;
+}
+
+/**
+ * Shape of GET /api/waitlist — the consumer narrows entry details itself;
+ * `status` is the full WaitlistStatus enum (WAITING/NOTIFIED/BOOKED/…),
+ * not just the waiting states.
+ */
+interface ConsulteeWaitlistsResponse {
+  webinars: Array<Record<string, unknown>>;
+  classes: Array<Record<string, unknown>>;
 }
 
 // =============================================================================
@@ -86,6 +110,21 @@ export const consultantFetchers = {
         : `/api/dashboard/consultant/${consultantId}/documents`,
       "Documents fetch failed",
     ),
+
+  recordings: (
+    consultantId: string,
+    { type, page = 1, limit = 12, search }: ConsultantRecordingsParams = {},
+  ) => {
+    const params = new URLSearchParams();
+    if (type) params.set("type", type);
+    params.set("page", String(page));
+    params.set("limit", String(limit));
+    if (search) params.set("search", search);
+    return fetchWithErrorHandling<ConsultantRecordingsResponse>(
+      `/api/consultants/${consultantId}/recordings?${params.toString()}`,
+      "Recordings fetch failed",
+    );
+  },
 };
 
 // Consultee fetchers
@@ -123,11 +162,12 @@ export const consulteeFetchers = {
       "Support tickets fetch failed",
     ),
 
-  messages: (consulteeId: string) =>
-    fetchWithErrorHandling<Record<string, unknown>[]>(
-      `/api/dashboard/consultee/${consulteeId}/messages`,
-      "Messages fetch failed",
-    ).catch((): Record<string, unknown>[] => []),
+  /** GET /api/waitlist is session-scoped; returns { webinars, classes }. */
+  waitlists: () =>
+    fetchWithErrorHandling<ConsulteeWaitlistsResponse>(
+      `/api/waitlist`,
+      "Waitlists fetch failed",
+    ),
 };
 
 // User fetchers (shared)
@@ -218,6 +258,24 @@ export function createConsultantQueries(
       gcTime: GC_TIME,
       retry: 2,
     },
+
+    // Recordings (server-paginated). Unlike its static siblings this entry
+    // is a function: page/type/search come from component state, and each
+    // combination must be its own cache entry. The recordings endpoint has
+    // no org-scope support, so scopeKey is deliberately absent from the key.
+    recordings: (params: ConsultantRecordingsParams = {}) => ({
+      queryKey: [
+        "consultant-recordings",
+        consultantId,
+        params.type ?? "all",
+        params.page ?? 1,
+        params.search ?? "",
+      ] as const,
+      queryFn: () => consultantFetchers.recordings(consultantId, params),
+      staleTime: STALE_TIMES.SHORT,
+      gcTime: GC_TIME,
+      retry: 2,
+    }),
   };
 }
 
@@ -274,13 +332,15 @@ export function createConsulteeQueries(
       retry: 2,
     },
 
-    // Messages
-    messages: {
-      queryKey: ["consultee-messages", consulteeId] as const,
-      queryFn: () => consulteeFetchers.messages(consulteeId),
+    // Waitlist entries (webinars + classes). The endpoint is session-scoped;
+    // consulteeId is in the key purely for cache hygiene across accounts.
+    waitlists: {
+      queryKey: ["consultee-waitlists", consulteeId] as const,
+      queryFn: () => consulteeFetchers.waitlists(),
       staleTime: STALE_TIMES.SHORT,
       gcTime: GC_TIME,
       retry: 2,
+      refetchOnWindowFocus: true,
     },
 
     // Settings (uses same endpoint as profile, typed with education/work includes)
