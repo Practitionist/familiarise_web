@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import {
   requireApiAuth,
@@ -8,6 +9,8 @@ import {
   forbiddenResponse,
 } from "@/lib/auth-helpers";
 import { recomputeConsultantRating } from "@/lib/reviews";
+import { withSerializableRetry } from "@/lib/db/serializable-retry";
+import { UpdateReviewSchema } from "@/schemas/feedbacks";
 
 // GET: Public read (for trust/SEO purposes)
 export async function GET(
@@ -73,26 +76,41 @@ export async function PUT(
       return forbiddenResponse("You can only update your own reviews");
     }
 
-    const body = await req.json();
+    const parsed = UpdateReviewSchema.safeParse(await req.json());
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: "Validation failed", details: parsed.error.issues },
+        { status: 400 },
+      );
+    }
+    const body = parsed.data;
+
     // Update + rating recompute in one transaction — ConsultantProfile.rating
     // is denormalized for explore sort/filter and must track every mutation.
-    const updatedReview = await prisma.$transaction(async (tx) => {
-      const updated = await tx.consultantReview.update({
-        where: { id: id },
-        data: {
-          rating: body.rating,
-          reviewDescription: body.reviewDescription,
-        },
-        include: {
-          consultantProfile: true,
-          consulteeProfile: true,
-        },
-      });
+    // Serializable + retry so concurrent review writes for the same consultant
+    // can't lose-update the recomputed average (P2034 aborts one, retry blocks).
+    const updatedReview = await withSerializableRetry(() =>
+      prisma.$transaction(
+        async (tx) => {
+          const updated = await tx.consultantReview.update({
+            where: { id: id },
+            data: {
+              rating: body.rating,
+              reviewDescription: body.reviewDescription,
+            },
+            include: {
+              consultantProfile: true,
+              consulteeProfile: true,
+            },
+          });
 
-      await recomputeConsultantRating(tx, review.consultantProfileId);
+          await recomputeConsultantRating(tx, review.consultantProfileId);
 
-      return updated;
-    });
+          return updated;
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      ),
+    );
 
     return NextResponse.json(updatedReview, { status: 200 });
   } catch (error) {
@@ -139,12 +157,17 @@ export async function DELETE(
     }
 
     // Delete + rating recompute in one transaction — see PUT.
-    await prisma.$transaction(async (tx) => {
-      await tx.consultantReview.delete({
-        where: { id: id },
-      });
-      await recomputeConsultantRating(tx, review.consultantProfileId);
-    });
+    await withSerializableRetry(() =>
+      prisma.$transaction(
+        async (tx) => {
+          await tx.consultantReview.delete({
+            where: { id: id },
+          });
+          await recomputeConsultantRating(tx, review.consultantProfileId);
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      ),
+    );
 
     return NextResponse.json(
       { message: "Review deleted successfully" },

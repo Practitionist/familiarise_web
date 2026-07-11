@@ -11,6 +11,7 @@ import {
   hasCompletedBookingWith,
   recomputeConsultantRating,
 } from "@/lib/reviews";
+import { withSerializableRetry } from "@/lib/db/serializable-retry";
 
 export async function GET(req: NextRequest) {
   try {
@@ -140,8 +141,11 @@ export async function POST(req: NextRequest) {
     }
 
     // Create + rating recompute in one transaction so the denormalized
-    // ConsultantProfile.rating (explore sort/filter) never drifts.
-    const newReview = await prisma.$transaction(async (tx) => {
+    // ConsultantProfile.rating (explore sort/filter) never drifts. Serializable
+    // + retry so two concurrent reviews for the same consultant can't lose-update
+    // the recomputed average (P2034 aborts one, retry then sees the committed row).
+    const newReview = await withSerializableRetry(() =>
+      prisma.$transaction(async (tx) => {
       const created = await tx.consultantReview.create({
         data: {
           rating: validatedData.rating,
@@ -175,7 +179,10 @@ export async function POST(req: NextRequest) {
       await recomputeConsultantRating(tx, created.consultantProfileId);
 
       return created;
-    });
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      ),
+    );
 
     // Notify the consultant about the new review
     void notifyNewReview(newReview.consultantProfile.userId, {
