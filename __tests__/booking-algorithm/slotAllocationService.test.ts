@@ -2213,8 +2213,12 @@ describe("Manual allocation - distributed lock", () => {
       slots: ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"],
     });
 
-    // Lock should have been acquired with the consultant profile ID
-    expect(lockAutoAllocate).toHaveBeenCalledWith("consultant-profile-1");
+    // Lock should have been acquired with the consultant profile ID,
+    // day-sharded (#860) by the earliest target slot's day.
+    expect(lockAutoAllocate).toHaveBeenCalledWith(
+      "consultant-profile-1",
+      "2025-01-06",
+    );
     // Lock should have been released in finally block
     expect(unlockAutoAllocate).toHaveBeenCalled();
   });
