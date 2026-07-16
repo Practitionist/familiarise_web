@@ -4,6 +4,11 @@ import { APIError } from "better-auth/api";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import { nextCookies } from "better-auth/next-js";
 import { admin, customSession, organization } from "better-auth/plugins";
+import {
+  adminAc,
+  userAc,
+  defaultAc,
+} from "better-auth/plugins/admin/access";
 import { sso } from "@better-auth/sso";
 import bcrypt from "bcrypt";
 import { Prisma } from "@prisma/client";
@@ -19,6 +24,13 @@ import { shouldRejectSession, lookupEnforcedOrg } from "@/lib/sso/enforce-sessio
 import { applyMembershipRoleEffects } from "@/lib/api/organizations/membership-transitions";
 import { buildConsentArtifact } from "@/lib/compliance/dpdp";
 import { PURPOSE_CODES } from "@/lib/compliance/purpose-codes";
+
+// STAFF = moderator: ban/list/get/set-role over users + session control
+// (a subset of the full admin AC). Shares defaultAc so statements line up.
+const staffAc = defaultAc.newRole({
+  user: ["list", "ban", "get", "set-role"],
+  session: ["list", "revoke", "delete"],
+});
 
 export const auth = betterAuth({
   secret: process.env.BETTER_AUTH_SECRET,
@@ -402,6 +414,9 @@ export const auth = betterAuth({
     admin({
       defaultRole: "CONSULTEE",
       adminRoles: ["ADMIN", "STAFF"],
+      // adminRoles must map to keys in `roles` or the plugin throws at
+      // module load. STAFF = moderator: a subset of full admin capability.
+      roles: { ADMIN: adminAc, STAFF: staffAc, user: userAc },
       bannedUserMessage:
         "Your account has been suspended. If you believe this is a mistake, please contact support.",
     }),
