@@ -36,6 +36,7 @@ export const getHomeExperts = unstable_cache(
         subDomains: { select: { id: true, name: true } },
         tags: { select: { id: true, name: true } },
         reviews: {
+          where: { deletedAt: null },
           select: { rating: true },
           take: 10,
         },
@@ -67,7 +68,12 @@ export const getHomeReviews = unstable_cache(
   async () => {
     const reviews = await prisma.consultantReview.findMany({
       // #781 §B — soft-deleted profiles leave public surfaces
-      where: { rating: { gte: 4 }, consultantProfile: { deletedAt: null } },
+      // #693 — moderation-removed reviews leave public surfaces too
+      where: {
+        rating: { gte: 4 },
+        deletedAt: null,
+        consultantProfile: { deletedAt: null },
+      },
       take: 20,
       include: {
         consultantProfile: {

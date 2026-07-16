@@ -43,9 +43,9 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
         where: { id: reviewId },
       });
 
-      // Recalculate average rating
+      // Recalculate average rating (#693 — soft-removed reviews don't count)
       const remainingReviews = await tx.consultantReview.aggregate({
-        where: { consultantProfileId: review.consultantProfileId },
+        where: { consultantProfileId: review.consultantProfileId, deletedAt: null },
         _avg: { rating: true },
         _count: { id: true },
       });

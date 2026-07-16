@@ -37,7 +37,7 @@ export const consultantListInclude = {
   domain: { select: { id: true, name: true } },
   subDomains: { select: { id: true, name: true } },
   tags: { select: { id: true, name: true } },
-  reviews: { select: { rating: true }, take: 10 },
+  reviews: { where: { deletedAt: null }, select: { rating: true }, take: 10 },
   subscriptionPlans: {
     select: {
       id: true,
@@ -318,7 +318,12 @@ const getCachedRecentReviews = unstable_cache(
   async (limit: number) => {
     return prisma.consultantReview.findMany({
       // #781 §B — soft-deleted profiles leave public surfaces
-      where: { rating: { gte: 4 }, consultantProfile: { deletedAt: null } },
+      // #693 — moderation-removed reviews leave public surfaces too
+      where: {
+        rating: { gte: 4 },
+        deletedAt: null,
+        consultantProfile: { deletedAt: null },
+      },
       orderBy: { createdAt: "desc" },
       take: limit,
       include: {

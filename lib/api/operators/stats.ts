@@ -204,6 +204,7 @@ export async function getStaffDashboardStats(): Promise<StaffDashboardStats> {
     prisma.consultantReview.count({
       where: {
         createdAt: { gte: weekStart },
+        deletedAt: null,
       },
     }),
     prisma.supportTicket.count({
