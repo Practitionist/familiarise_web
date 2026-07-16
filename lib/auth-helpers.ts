@@ -24,7 +24,7 @@ export async function requireApiAuth(): Promise<
   }
   // #693 defense-in-depth — ban-time session deletion + the sign-in gate
   // cover the normal paths; this catches a session minted in the race window.
-  if (session.user.banned) {
+  if (session.user.banned === true) {
     return {
       error: NextResponse.json(
         { error: "Account suspended" },

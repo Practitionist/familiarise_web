@@ -5,6 +5,8 @@ import { UserRole } from "@prisma/client";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
 import { sumPaise } from "@/lib/payments/utils/money";
 
+export const dynamic = "force-dynamic";
+
 export async function GET() {
   try {
     const auth = await requirePrivilegedAuth();
