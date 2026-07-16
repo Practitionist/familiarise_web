@@ -37,7 +37,10 @@ import {
   isUserEnrolled,
   countWebinarParticipants,
 } from "@/lib/payments/utils/participants";
-import { markWaitlistAsBooked } from "@/lib/waitlist/slot-handler";
+import {
+  markWaitlistAsBooked,
+  countWaitlistHolds,
+} from "@/lib/waitlist/slot-handler";
 import { getExchangeRates } from "@/lib/currency";
 import {
   applyCreditsToPayment,
@@ -51,6 +54,8 @@ import {
   type AppointmentType,
 } from "@/lib/payments/payouts";
 import { walletDebit } from "@/lib/api/organizations/wallet";
+import { isWalletFrozen, WalletFrozenError } from "@/lib/payments/wallet-freeze";
+import { recordSystemError } from "@/lib/enterprise/system-events";
 import {
   recordBookingUtilization,
   ProgramAssignmentLimitError,
@@ -65,7 +70,10 @@ import {
 } from "@/lib/payments/validation/currency-guards";
 import { checkPaymentLegsSumToAmount } from "@/lib/payments/payment-legs";
 import { recordOverageAtCheckout } from "@/lib/payments/billing/overage-settlement";
-import { getInvoiceCreditLimitPaise } from "@/lib/enterprise/governance";
+import {
+  getInvoiceCreditLimitPaise,
+  assertVerifiedDomainOrThrow,
+} from "@/lib/enterprise/governance";
 import {
   notifyOrgProgramExhausted,
   notifyOrgProgramCapNear,
@@ -1041,41 +1049,51 @@ async function verifyPlanExistsInsideLock(
   tx: Tx,
   appointmentType: string,
   planId: string,
-): Promise<void> {
-  let planExists = false;
+): Promise<{
+  consultantProfileId: string | null;
+  organizationId: string | null;
+}> {
+  // ADR 18 — also surface the plan's consultant + org ownership so the
+  // allowlist/exclusivity checks below reuse this lookup.
+  const select = { consultantProfileId: true, organizationId: true } as const;
+  let plan: {
+    consultantProfileId: string | null;
+    organizationId: string | null;
+  } | null = null;
 
   switch (appointmentType) {
     case "CONSULTATION":
-      planExists = !!(await tx.consultationPlan.findUnique({
+      plan = await tx.consultationPlan.findUnique({
         where: { id: planId },
-        select: { id: true },
-      }));
+        select,
+      });
       break;
     case "SUBSCRIPTION":
-      planExists = !!(await tx.subscriptionPlan.findUnique({
+      plan = await tx.subscriptionPlan.findUnique({
         where: { id: planId },
-        select: { id: true },
-      }));
+        select,
+      });
       break;
     case "WEBINAR":
-      planExists = !!(await tx.webinarPlan.findUnique({
+      plan = await tx.webinarPlan.findUnique({
         where: { id: planId },
-        select: { id: true },
-      }));
+        select,
+      });
       break;
     case "CLASS":
-      planExists = !!(await tx.classPlan.findUnique({
+      plan = await tx.classPlan.findUnique({
         where: { id: planId },
-        select: { id: true },
-      }));
+        select,
+      });
       break;
   }
 
-  if (!planExists) {
+  if (!plan) {
     throw new Error(
       "This plan is no longer available. Please refresh and try again.",
     );
   }
+  return plan;
 }
 
 /**
@@ -1085,6 +1103,9 @@ async function verifyPlanExistsInsideLock(
 async function revalidateInsideLock(
   data: CheckoutInput,
   userId: string,
+  // ADR 18 — Program funding this org-sponsored booking; null for
+  // PERSONAL/marketplace checkouts. Drives the curated-panel check.
+  programId: string | null = null,
 ): Promise<void> {
   // Re-run the same validation as calculateAmountAndValidate
   // but this time we're inside the lock, so it's safe
@@ -1100,7 +1121,52 @@ async function revalidateInsideLock(
     }
 
     // BUG-E: Re-validate plan still exists (could be deleted between initial validation and lock)
-    await verifyPlanExistsInsideLock(tx, data.appointmentType, data.planId);
+    const plan = await verifyPlanExistsInsideLock(
+      tx,
+      data.appointmentType,
+      data.planId,
+    );
+
+    // ADR 18 — curated-panel enforcement (#971 shipped the stub). Rows on
+    // the funding Program restrict org-sponsored bookings to listed
+    // consultants; zero rows keep the sponsor network open. Checked under
+    // the distributed lock to close the check-then-book race.
+    if (programId) {
+      const panel = await tx.programConsultantAllowlist.findMany({
+        where: { programId },
+        select: { consultantProfileId: true },
+      });
+      if (
+        panel.length > 0 &&
+        !panel.some(
+          (row) => row.consultantProfileId === plan.consultantProfileId,
+        )
+      ) {
+        throw new Error(
+          "This consultant is not on your organization's approved panel for this program. Choose a listed consultant or ask your organization admin.",
+        );
+      }
+    }
+
+    // ADR 18 — exclusiveEngagement blocks the consultant's independent
+    // plans (no org ownership) while an ACTIVE membership declares
+    // exclusivity. Org-owned plans stay bookable. The "hide" half
+    // (marketplace visibility filtering) remains future work per the ADR.
+    if (plan.consultantProfileId && !plan.organizationId) {
+      const exclusive = await tx.membership.findFirst({
+        where: {
+          consultantProfileId: plan.consultantProfileId,
+          exclusiveEngagement: true,
+          status: "ACTIVE",
+        },
+        select: { id: true },
+      });
+      if (exclusive) {
+        throw new Error(
+          "This consultant works exclusively through their organization; their independent plans cannot be booked.",
+        );
+      }
+    }
 
     // FIX #548: Validate waitlist entry if this checkout originates from a waitlist offer.
     // Verify the entry belongs to this user, is in NOTIFIED status, and hasn't expired.
@@ -1274,7 +1340,18 @@ async function revalidateInsideLock(
           [consultantUserId || ""],
         );
 
-        if (currentParticipants >= webinar.webinarPlan.maxParticipants) {
+        // #837 — count NOTIFIED waitlist holds (seats offered to waitlisted
+        // users) so an FCFS buyer can't take one; exclude this buyer's own hold
+        // so a waitlisted user's fromWaitlist checkout still fits.
+        const webinarHolds = await countWaitlistHolds(tx, {
+          webinarId: data.eventId,
+          excludeUserId: userId,
+        });
+
+        if (
+          currentParticipants + webinarHolds >=
+          webinar.webinarPlan.maxParticipants
+        ) {
           throw new Error("Webinar is full");
         }
         break;
@@ -1310,7 +1387,16 @@ async function revalidateInsideLock(
           ownerUserId ? [ownerUserId] : [],
         );
 
-        if (currentParticipants >= classInstance.classPlan.maxParticipants) {
+        // #837 — count NOTIFIED waitlist holds; exclude this buyer's own.
+        const classHolds = await countWaitlistHolds(tx, {
+          classId: data.eventId,
+          excludeUserId: userId,
+        });
+
+        if (
+          currentParticipants + classHolds >=
+          classInstance.classPlan.maxParticipants
+        ) {
           throw new Error("Class is full");
         }
         break;
@@ -1600,10 +1686,17 @@ export async function handleWebinarCheckout(
     consultantUserId || "",
   ]);
 
+  // #837 — NOTIFIED waitlist holds occupy seats; exclude this buyer's own hold
+  // so a waitlisted user's fromWaitlist checkout still fits.
+  const webinarHolds = await countWaitlistHolds(tx, {
+    webinarId: webinar.id,
+    excludeUserId: userId,
+  });
+
   // Check if max participants reached
   // NOTE: Waitlist creation happens OUTSIDE the transaction in handleCheckout's catch block,
   // because creating it here (inside the transaction) would be rolled back on throw.
-  if (currentParticipants >= plan.maxParticipants) {
+  if (currentParticipants + webinarHolds >= plan.maxParticipants) {
     throw new Error("Webinar is full");
   }
 
@@ -1725,10 +1818,16 @@ export async function handleClassCheckout(
     consultantUserId ? [consultantUserId] : [],
   );
 
+  // #837 — NOTIFIED waitlist holds occupy seats; exclude this buyer's own.
+  const classHolds = await countWaitlistHolds(tx, {
+    classId: classInstance.id,
+    excludeUserId: userId,
+  });
+
   // Check if max participants reached
   // NOTE: Waitlist creation happens OUTSIDE the transaction in handleCheckout's catch block,
   // because creating it here (inside the transaction) would be rolled back on throw.
-  if (currentParticipants >= plan.maxParticipants) {
+  if (currentParticipants + classHolds >= plan.maxParticipants) {
     throw new Error("Class is full");
   }
 
@@ -1849,6 +1948,9 @@ export async function handleCheckout(
   let fundingSource: "PERSONAL" | "WALLET" | "INVOICE" | "LICENSE" | null =
     null;
   let programAssignmentId: string | null = null;
+  // ADR 18 — Program behind the assignment above; feeds the curated-panel
+  // check in revalidateInsideLock.
+  let fundingProgramId: string | null = null;
   let callerMembershipId: string | null = null;
   // #785 B6 — effective INVOICE credit limit; threaded to the Serializable
   // booking tx for a race-safe re-check (the pre-lock check below is fast-fail only).
@@ -1938,6 +2040,12 @@ export async function handleCheckout(
     // book-everything-then-ghost abuse pattern. The cap auto-lifts
     // once the org is verified OR pays its first invoice.
     if (fundingSource === "INVOICE") {
+      // K-02 / #687 — an org may not accrue INVOICE debt without a verified
+      // domain. The credit-limit gate below caps unverified-STATUS orgs; this
+      // asserts the orthogonal domain-ownership proof (OrgDomainClaim), the
+      // gate governance.ts documents for INVOICE funding but had no caller.
+      await assertVerifiedDomainOrThrow(prisma, org.id, "INVOICE_FUNDING");
+
       const explicitLimit = org.billingAccount?.creditLimit ?? null;
       const isVerified = org.status === "ACTIVE";
       const governanceLimit = isVerified ? null : getInvoiceCreditLimitPaise();
@@ -2009,7 +2117,7 @@ export async function handleCheckout(
           },
         },
         orderBy: { periodEnd: "desc" },
-        select: { id: true },
+        select: { id: true, programId: true },
       });
 
       if (!assignment) {
@@ -2021,13 +2129,13 @@ export async function handleCheckout(
       }
       programAssignmentId = assignment.id;
 
-      // ADR 18 — future curated-panel enforcement. The Program is resolved
-      // HERE, but the authoritative check belongs inside
-      // revalidateInsideLock, where the plan's consultant is already loaded
-      // and the distributed lock closes the TOCTOU window: allowlist rows
-      // exist for the resolved Program ⇒ the booked plan's consultant must
-      // be listed. Absent rows keep the network open — sponsors fund any
-      // marketplace consultant by design.
+      // ADR 18 — the Program is resolved HERE, but the authoritative
+      // curated-panel check runs inside revalidateInsideLock, where the
+      // plan's consultant is loaded and the distributed lock closes the
+      // TOCTOU window: allowlist rows exist for the resolved Program ⇒ the
+      // booked plan's consultant must be listed. Absent rows keep the
+      // network open — sponsors fund any marketplace consultant by design.
+      fundingProgramId = assignment.programId;
     }
   }
 
@@ -2091,7 +2199,7 @@ export async function handleCheckout(
     );
 
     // STEP 3: RE-VALIDATE INSIDE LOCK (critical for preventing TOCTOU race conditions)
-    await revalidateInsideLock(validatedData, userId);
+    await revalidateInsideLock(validatedData, userId, fundingProgramId);
 
     console.log(
       JSON.stringify({
@@ -2366,6 +2474,13 @@ export async function handleCheckout(
           // Triggered only when we also have a resolved program assignment,
           // which guarantees the booking is actually sponsored.
           if (isOrgWalletPayment && billingAccountId) {
+            // #837 — refuse to spend a wallet whose cache drifted from the
+            // journal (frozen by the ledger-reconcile job): the balance can't
+            // be trusted until ops reconciles. Chargeback recovery is NOT gated
+            // (see wallet-freeze.ts).
+            if (await isWalletFrozen(tx, billingAccountId)) {
+              throw new WalletFrozenError(billingAccountId);
+            }
             await walletDebit(tx, {
               billingAccountId,
               amountPaise: amount,
@@ -2883,15 +2998,29 @@ export async function handleCheckout(
             }
           }
         } catch (earningsError) {
-          // Log but don't fail — sync-payment-earnings job will pick up the gap
+          // C-01 #837 — payment + booking are committed but earnings + the
+          // BOOKING journal are not. Real money moved, so we don't roll back
+          // and we don't pretend success with a silent warning: page (ERROR)
+          // and durably record the ledger gap. The healer is the data-state
+          // sync-payment-earnings scan (SUCCEEDED payment + earnings:none),
+          // keyed on row state — not on this marker — so it's guaranteed and
+          // idempotent even if this alert is lost.
+          await recordSystemError({
+            category: "PAYOUT",
+            summary: `Earnings + booking journal not written for committed payment ${paymentResponse!.id} (checkout mock/zero/sponsored path)`,
+            err: earningsError,
+            correlationId: paymentResponse!.id,
+            context: {
+              paymentIntent: paymentResponse!.id,
+              userId,
+              appointmentType: validatedData.appointmentType,
+              path: "checkout",
+            },
+          });
           console.error(
             `⚠️ Failed to create earnings for mock payment:`,
             earningsError,
           );
-          Sentry.captureException(earningsError instanceof Error ? earningsError : new Error(String(earningsError)), {
-            tags: { subsystem: "payments" },
-            level: "warning",
-          });
         }
 
         // FIX #437: Consultant qualifying action (receiving first paid booking)
@@ -3034,6 +3163,13 @@ export async function handleCheckout(
             level: "warning",
           });
         }
+      }
+
+      // #837 — WalletFrozenError carries httpStatus=409 + an actionable reason;
+      // don't let it collapse into the generic "Failed to record payment
+      // information" below. Rethrow so the route surfaces the 409.
+      if (dbError instanceof WalletFrozenError) {
+        throw dbError;
       }
 
       // Preserve specific error messages (duplicate registration, full capacity, etc.)

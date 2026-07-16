@@ -125,7 +125,8 @@ export async function GET(request: NextRequest) {
       conditions.push({
         OR: [
           { user: { name: { contains: search, mode: "insensitive" } } },
-          { user: { email: { contains: search, mode: "insensitive" } } },
+          // No email match here — this is a public endpoint and email
+          // substring search is a PII enumeration key.
           { description: { contains: search, mode: "insensitive" } },
           { headline: { contains: search, mode: "insensitive" } },
           { domain: { name: { contains: search, mode: "insensitive" } } },

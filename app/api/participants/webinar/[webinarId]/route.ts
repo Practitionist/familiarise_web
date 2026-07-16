@@ -40,16 +40,31 @@ export async function GET(
 
   try {
     const { webinarId } = await params;
-    // Non-privileged users can only view participants for webinars they own as consultant
-    const webinarEvent = await prisma.webinar.findUnique({
+    // Non-privileged users can view the roster if they own the plan OR are an
+    // accepted collaborator granted canSeeAttendees (#768). Everyone else 404s.
+    const webinarEvent = await prisma.webinar.findFirst({
       where: {
         id: webinarId,
         ...(isPrivileged(session.user.role)
           ? {}
           : {
               webinarPlan: {
-                consultantProfileId:
-                  session.user.consultantProfileId ?? "__none__",
+                OR: [
+                  {
+                    consultantProfileId:
+                      session.user.consultantProfileId ?? "__none__",
+                  },
+                  {
+                    collaborators: {
+                      some: {
+                        consultantProfileId:
+                          session.user.consultantProfileId ?? "__none__",
+                        status: "ACCEPTED",
+                        canSeeAttendees: true,
+                      },
+                    },
+                  },
+                ],
               },
             }),
       },
@@ -140,7 +155,7 @@ export async function DELETE(
     // Ownership check only — the old shape loaded the entire roster
     // (every slot × every full User row) just to find the one participant
     // being removed.
-    const webinarEvent = await prisma.webinar.findUnique({
+    const webinarEvent = await prisma.webinar.findFirst({
       where: {
         id: webinarId,
         ...(isPrivileged(session.user.role)

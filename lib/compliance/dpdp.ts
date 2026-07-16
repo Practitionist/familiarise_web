@@ -1,9 +1,12 @@
 /**
- * DPDP (Digital Personal Data Protection Act, 2023) — INDIA COMPLIANCE STUB.
+ * DPDP (Digital Personal Data Protection Act, 2023) — INDIA COMPLIANCE.
  *
- * STATUS: stub. `recordConsent` creates a ConsentArtifact row with a mock
- * hash; `checkConsent` returns `true` unconditionally. Live impl lands in
- * a follow-up PR.
+ * STATUS: consent primitives are LIVE. `recordConsent` writes a ConsentArtifact
+ * row with a real SHA-256 payload hash; `checkConsent` is fail-closed — it
+ * returns `true` only when a non-withdrawn, non-expired artifact exists for the
+ * (user, purpose) pair, else `false`. The substantive operator obligations
+ * below (Consent Manager registration, breach reporting, rights fulfilment)
+ * remain follow-up work.
  *
  * ─────────────────────────────────────────────────────────────────────────
  * LIVE IMPLEMENTATION REQUIREMENTS (follow-up PR)

@@ -54,8 +54,6 @@ graph TB
     subgraph "Payments"
         A --> I[Razorpay - India UPI/Cards]
         A --> J[Stripe - International]
-        A --> K[Lemon Squeezy - SaaS Billing]
-        A --> L[Xflow - Regional]
     end
 
     subgraph "Communications"
@@ -817,8 +815,6 @@ graph TD
 |---------|--------|----------------|-----------|
 | **Razorpay** | India | UPI, debit/credit cards, netbanking, wallets | Indian consultees paying in INR |
 | **Stripe** | International | Credit/debit cards, ACH, SEPA | Non-Indian consultees |
-| **Lemon Squeezy** | Global | Cards, PayPal | SaaS-style billing (future) |
-| **Xflow** | Regional | Regional methods | Region-specific payments (future) |
 
 ### Payment States
 

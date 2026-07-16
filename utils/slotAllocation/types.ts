@@ -38,6 +38,9 @@ export interface AllocationRequest {
   eventId: string;
   mode: AllocationMode;
   slots?: string[]; // ISO date strings for manual allocation
+  // #837 — client-supplied dedupe key (Idempotency-Key header). A double-submit
+  // carrying the same key returns the first batch instead of allocating twice.
+  idempotencyKey?: string;
 }
 
 /**

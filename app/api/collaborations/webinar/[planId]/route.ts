@@ -84,7 +84,15 @@ export async function POST(
       );
     }
 
-    const { consultantProfileId, role, revenueSharePercentage } = parsed.data;
+    const {
+      consultantProfileId,
+      role,
+      revenueSharePercentage,
+      canApprovePayment,
+      canViewAnalytics,
+      canEditEvent,
+      canSeeAttendees,
+    } = parsed.data;
 
     if (consultantProfileId === ownerProfile.id) {
       return NextResponse.json(
@@ -117,6 +125,7 @@ export async function POST(
       role,
       revenueSharePercentage,
       ownerProfile.id,
+      { canApprovePayment, canViewAnalytics, canEditEvent, canSeeAttendees },
     );
 
     if (!collab) {

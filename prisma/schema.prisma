@@ -2367,10 +2367,13 @@ model ConsultantReview {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // One review per consultee per consultant — POST maps P2002 here to 409.
+  @@unique([consultantProfileId, consulteeProfileId])
   // #696 — explore "trending" sort orders ConsultantProfile by
   // reviews._count; without this the per-profile aggregate seq-scans the
   // whole review table. Also serves the FK join + rating>=4 social-proof reads.
-  @@index([consultantProfileId])
+  // (The @@unique above already prefixes consultantProfileId, so no separate
+  // single-column index is needed for it.)
   @@index([consulteeProfileId])
 }
 
@@ -3799,8 +3802,7 @@ enum PaymentLegSource {
 enum PaymentGateway {
   STRIPE
   RAZORPAY
-  LEMON_SQUEEZY
-  XFLOW
+  DODO_PAYMENTS // post-MVP: evaluation pending
   CARD
 }
 
@@ -3913,7 +3915,12 @@ enum EarningStatus {
   PENDING // In hold period
   HELD // Extended hold (dispute)
   READY // Ready for payout
-  PAID // Successfully paid
+  /// #837 E-03/E-04 — rolled into a payout batch but cash has NOT left yet
+  /// (batch exists / gateway not wired / ENABLE_LIVE_PAYOUTS off). Distinct
+  /// from PAID so finance exports + dashboards don't claim money moved before
+  /// the payout reaches COMPLETED with a UTR. Excluded from batch-eligibility.
+  BATCHED
+  PAID // Cash actually disbursed (payout COMPLETED + UTR)
   REFUNDED // Refunded to consultee
   /// Earnings accrued from a PENDING_VERIFICATION INVOICE-funded org
   /// before the org has been verified or paid its first invoice. The

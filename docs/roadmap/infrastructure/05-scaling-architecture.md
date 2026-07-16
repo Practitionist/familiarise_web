@@ -365,7 +365,7 @@ export const inngest = new Inngest({
 type Events = {
   "payment/webhook.received": {
     data: {
-      gateway: "stripe" | "razorpay" | "lemonsqueezy";
+      gateway: "stripe" | "razorpay";
       eventId: string;
       eventType: string;
       payload: unknown;

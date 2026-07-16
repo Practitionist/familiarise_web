@@ -57,7 +57,7 @@ app/api/organizations/
         └── [endpointId]/deliveries/route.ts · [deliveryId]/redeliver
 app/api/overage/route.ts · [overageEventId]/order/route.ts
 app/api/admin/organizations/route.ts · [orgId]/verify/route.ts        # admin verify
-app/api/webhooks/razorpay|stripe|xflow|lemon-squeezy|directus/route.ts
+app/api/webhooks/razorpay|stripe|directus/route.ts
 
 app/dashboard/organization/[orgId]/        # 27 pages
   home · members · learners · experts · invitations · contracts · programs ·

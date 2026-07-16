@@ -173,15 +173,18 @@ the session check into a guaranteed two-query round-trip on *every* page
 load and API call. With `cookieCache.maxAge = 5 min`, most requests are
 served from the signed cookie and skip the DB entirely. The cost is a
 bounded staleness window: a role change can take up to 5 minutes to
-surface. We accept that ceiling because the only *dangerous* staleness —
-a downgraded OWNER still acting as OWNER, or a removed member still
-inside — is handled out-of-band by an explicit `revokeSession` kill on
-the removal path, not by waiting for the cache to expire. So the 5-minute
-window applies to benign role *changes*, where "your new capabilities
-appear within a few minutes, no re-login" is the right UX. Shrink
-`maxAge` toward zero and you trade DB load for fresher roles; the current
-value says throughput wins for the benign case and the kill-switch covers
-the dangerous one.
+surface. We accept that ceiling for benign role *changes*, where "your new
+capabilities appear within a few minutes, no re-login" is the right UX. The
+*dangerous* staleness — a downgraded OWNER still acting as OWNER, or a
+removed member still inside — is bounded by the **same** window rather than
+cut short by a hard kill: there is no server-side revoke-by-userId
+available (BetterAuth's `admin` plugin, which exposes `revokeUserSessions`,
+is not installed, and core `revokeSession` needs the target's own token),
+so removal also relies on the `sessionGeneration` bump and refetches on the
+next cookie-cache miss, worst case at BetterAuth's 24h `updateAge`
+rotation. Shrink `maxAge` toward zero and you trade DB load for fresher
+roles; the current value says throughput wins for the benign case, and the
+removal window is a known limitation rather than a kill switch.
 
 ### Why a counter, not a boolean
 
@@ -196,11 +199,15 @@ against the current row value, unambiguously.
 
 The UX cost of "you've been signed out, please log in again" is high
 relative to the marginal security benefit. The catastrophic case is
-role downgrade with stale OWNER session — and that's already followed
-by a member-removal flow which calls BetterAuth's `revokeSession` as a
-deliberate kill.
+role downgrade with a stale OWNER session, or a removed member still
+inside — and that is handled by the same `sessionGeneration` bump, not a
+hard kill: no server-side revoke-by-userId is available (BetterAuth's
+`admin` plugin is not installed, and core `revokeSession` needs the
+target's own session token). So removal, downgrade, and soft-suspend all
+bump the generation and refetch on the next cookie-cache miss, worst case
+at the 24h `updateAge` rotation.
 
-The `sessionGeneration` bump handles the middle case: the membership
+The `sessionGeneration` bump also handles the middle case: the membership
 is still active, but the role / status changed. Next request reflects
 the new permissions; no UX disruption.
 

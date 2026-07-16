@@ -51,69 +51,6 @@ export interface MeetingAppointment {
 }
 
 /**
- * Creates a new meeting (This function might need less usage now)
- * @param client The Stream Video client
- * @param options Meeting options. `organizationId` (optional) stamps the
- *   Stream Video call's `custom.organizationId` for #B2 enterprise tagging
- *   so org workspace operators can later list calls scoped to their org. Omit (or pass
- *   `null`) for personal meetings — the key is left out entirely so older
- *   calls don't accumulate stray null fields.
- * @returns The meeting ID (Stream Call ID)
- */
-export const createMeeting = async (
-  client: StreamVideoClient,
-  options: {
-    title: string;
-    dateTime?: Date;
-    description?: string;
-    link?: string;
-    organizationId?: string | null;
-  },
-) => {
-  if (!client) {
-    throw new Error("Stream client not initialized");
-  }
-
-  try {
-    const id = crypto.randomUUID();
-    const call: Call = client.call("default", id);
-
-    if (!call) {
-      throw new Error("Failed to create call");
-    }
-
-    const startsAt =
-      options.dateTime?.toISOString() ?? new Date(Date.now()).toISOString();
-    const description = options.description ?? "Instant Meeting";
-
-    // Build custom payload — only include `organizationId` when set so
-    // legacy calls (no org) remain shape-compatible. camelCase here mirrors
-    // the existing video-call custom data convention (appointmentId/slotId).
-    const custom: Record<string, unknown> = {
-      title: options.title,
-      description: description,
-      link: options.link,
-      ...(options.organizationId
-        ? { organizationId: options.organizationId }
-        : {}),
-    };
-
-    await call.getOrCreate({
-      data: {
-        starts_at: startsAt,
-        custom,
-      },
-    });
-
-    return id;
-  } catch (error) {
-    console.error("Error creating meeting:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
-    throw error;
-  }
-};
-
-/**
  * Gets an existing meeting session ID from the DB or creates a new Stream call
  * and corresponding DB session if one doesn't exist for the appointment slot.
  * Uses server actions for DB operations.

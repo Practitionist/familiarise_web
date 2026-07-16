@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { recomputeConsultantRating } from "@/lib/reviews";
 interface RouteParams {
   params: Promise<{ reviewId: string }>;
 }
@@ -38,24 +39,10 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
 
     // Delete review and recalculate consultant rating
     await prisma.$transaction(async (tx) => {
-      // Delete the review
       await tx.consultantReview.delete({
         where: { id: reviewId },
       });
-
-      // Recalculate average rating (#693 — soft-removed reviews don't count)
-      const remainingReviews = await tx.consultantReview.aggregate({
-        where: { consultantProfileId: review.consultantProfileId, deletedAt: null },
-        _avg: { rating: true },
-        _count: { id: true },
-      });
-
-      await tx.consultantProfile.update({
-        where: { id: review.consultantProfileId },
-        data: {
-          rating: remainingReviews._avg.rating || 0,
-        },
-      });
+      await recomputeConsultantRating(tx, review.consultantProfileId);
     });
 
     return NextResponse.json({

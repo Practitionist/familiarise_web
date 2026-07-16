@@ -9,6 +9,7 @@ Key characteristics:
 - Applies to webinars and classes only (not 1:1 consultations)
 - Priority ordering: higher `priority` value goes first; ties broken by earliest `joinedAt`
 - 48-hour response window on spot availability notifications
+- The notified seat is soft-held for the duration of that window: a `NOTIFIED` entry inside its window is counted against capacity, so the "your spot is available" offer is a genuine, exclusive reservation rather than a first-come-first-served race. If the entry expires, is declined, or is skipped, the hold drops and the seat passes to the next person in the queue.
 - Automatic expiration processing via cron job
 - Integrates with checkout flow for payment completion
 
@@ -326,4 +327,4 @@ if (available) -> show "Book Now"
 else           -> show "Join Waitlist" (with waitlistCount display)
 ```
 
-For webinars, participant count is based on `slotsOfAppointment.length`. For classes, it counts unique users across all appointments to avoid double-counting participants enrolled in multiple sessions.
+For webinars, participant count is based on `slotsOfAppointment.length`. For classes, it counts unique users across all appointments to avoid double-counting participants enrolled in multiple sessions. In both cases the availability test also adds the live waitlist holds -- `available` is `currentParticipants + countWaitlistHolds() < maxParticipants` -- so a seat that has been offered to a notified waitlisted user is reported as unavailable to a first-come buyer until that offer lapses. A notified user checking out via `fromWaitlist` has their own hold excluded from the count, so it never blocks them from claiming the seat they were offered.

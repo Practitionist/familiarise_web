@@ -1,16 +1,13 @@
-name: Cleanup Abandoned Payments
+name: Detect Consultant No-Shows
 
 on:
   schedule:
-    # Run every 15 minutes
-    - cron: "6-59/15 * * * *"
+    # Run hourly (offset to avoid colliding with other :00/:07 crons)
+    - cron: "17 * * * *"
   workflow_dispatch: # Allow manual triggering
-  push:
-    branches:
-      - dev
 
 jobs:
-  cleanup-abandoned-payments:
+  detect-consultant-no-shows:
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -18,14 +15,17 @@ jobs:
       # Database connection (required for Prisma)
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       DIRECT_URL: ${{ secrets.DIRECT_URL }}
-      # #476 — fail-closed cron lock: without these the job refuses to run.
+      # #476 cron locks load lib/redis at import — every job entry needs these
       UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
       UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
-
-      # Payment gateway credentials for cancelling abandoned payment intents
+      # #471 auto-refund reuses refundPayment (#990) — gateway creds for parity
+      # with the other money jobs (reconcile-pending-refunds).
       STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
       RAZORPAY_KEY_ID: ${{ secrets.RAZORPAY_KEY_ID }}
       RAZORPAY_SECRET: ${{ secrets.RAZORPAY_SECRET }}
+      # Both-party no-show + refund notifications
+      NOVU_SECRET_KEY: ${{ secrets.NOVU_SECRET_KEY }}
+      NEXT_PUBLIC_APP_URL: ${{ secrets.NEXT_PUBLIC_APP_URL }}
 
     steps:
       - name: Checkout code
@@ -43,11 +43,11 @@ jobs:
       - name: Generate Prisma client
         run: npx prisma generate
 
-      - name: Run abandoned payment cleanup
-        run: npx tsx jobs/payments/cleanup-abandoned-payments.ts
+      - name: Detect consultant no-shows
+        run: npx tsx jobs/appointments/detect-consultant-no-shows.ts
 
       - name: Notify on failure
         if: failure()
         env:
           SLACK_OPS_WEBHOOK_URL: ${{ secrets.SLACK_OPS_WEBHOOK_URL }}
-        run: bash scripts/ci/notify-ops-failure.sh "cleanup-abandoned-payments"
+        run: bash scripts/ci/notify-ops-failure.sh "detect-consultant-no-shows"

@@ -54,7 +54,9 @@ const PAYOUT: Row = {
   tdsDeducted: 1000,
   tdsRateAppliedBps: 100,
   tdsFinancialYear: "2026-27",
-  earnings: [{ id: "ce_1", payoutId: "po_1", status: "READY" }],
+  // #993 — a PROCESSING payout's earnings were staged READY→BATCHED at batch
+  // creation; the COMPLETED webhook flips BATCHED→PAID.
+  earnings: [{ id: "ce_1", payoutId: "po_1", status: "BATCHED" }],
 };
 
 let payoutRow: Row;
@@ -96,7 +98,7 @@ import { handlePayoutWebhook } from "../../lib/payments/payouts/payout-service";
 
 beforeEach(() => {
   jest.clearAllMocks();
-  payoutRow = { ...PAYOUT, earnings: [{ id: "ce_1", payoutId: "po_1", status: "READY" }] };
+  payoutRow = { ...PAYOUT, earnings: [{ id: "ce_1", payoutId: "po_1", status: "BATCHED" }] };
 });
 
 describe("PM-15 — handlePayoutWebhook records TDS + ledger on COMPLETED", () => {
@@ -119,11 +121,13 @@ describe("PM-15 — handlePayoutWebhook records TDS + ledger on COMPLETED", () =
       idempotencyKey: "payout:po_1",
     });
 
-    // Canonical state landed: COMPLETED + earnings PAID.
+    // Canonical state landed: COMPLETED + earnings BATCHED→PAID. #993 — the PAID
+    // flip is CAS-guarded on the BATCHED from-state (staged at batch creation),
+    // so only genuinely-batched earnings settle at completion.
     expect(payoutRow.status).toBe("COMPLETED");
     expect(prismaStub.consultantEarnings.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { payoutId: "po_1" },
+        where: { payoutId: "po_1", status: "BATCHED" },
         data: expect.objectContaining({ status: "PAID" }),
       }),
     );

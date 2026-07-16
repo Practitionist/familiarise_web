@@ -75,10 +75,12 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       "transfer-expiring-recordings",
       { failMode: "open" },
       async () => {
-        // Phase 1: Auto-transfer SUPABASE_PERMANENT recordings
+        // Phase 1: Auto-transfer SUPABASE_PERMANENT recordings.
+        // #899 — 14-day window sweeps every READY permanent recording
+        // (near-ready transfer), matching the GH Actions entry.
         const transferResult =
           await RecordingTransferService.processExpiringRecordings(
-            5, // 5 days before expiry
+            14, // days before expiry (= full Stream URL lifetime)
             10, // batch size
             "SUPABASE_PERMANENT",
           );

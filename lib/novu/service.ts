@@ -4,6 +4,7 @@
  * Non-throwing: logs errors and returns success/failure status.
  * Pattern follows lib/email.ts (graceful degradation).
  */
+import { createHash } from "node:crypto";
 import * as Sentry from "@sentry/nextjs";
 import { getNovuClient, isNovuConfigured } from "./client";
 import {
@@ -54,13 +55,51 @@ interface TriggerResult {
   error?: Error | string;
 }
 
+// Unconfigured Novu in a deployed env means notifications silently vanish —
+// a console.warn nobody reads is not enough. Local dev stays console-only.
+function reportNotConfigured(workflowId: string): void {
+  console.warn(`[Novu] Not configured. Skipped workflow: ${workflowId}`);
+  if (process.env.NODE_ENV === "production") {
+    Sentry.captureMessage(`[Novu] Not configured — dropped ${workflowId}`, {
+      level: "warning",
+      tags: { subsystem: "novu" },
+    });
+  }
+}
+
+// Deterministic transactionId so app-level retries can't double-notify: Novu
+// rejects a repeated transactionId. Derived from recipient(s) + workflow +
+// canonical payload (the payloads carry the entity ids). `dedupeKey` lets a
+// caller that legitimately re-sends an identical payload (e.g. 24h vs 1h
+// appointment reminders) disambiguate the sends.
+function deriveTransactionId(
+  workflowId: string,
+  recipients: string | string[],
+  payload: NovuPayload,
+  dedupeKey?: string,
+): string {
+  const canonicalPayload = JSON.stringify(
+    Object.fromEntries(
+      Object.entries(payload).sort(([a], [b]) => a.localeCompare(b)),
+    ),
+  );
+  const recipientKey = Array.isArray(recipients)
+    ? recipients.toSorted((a, b) => a.localeCompare(b)).join(",")
+    : recipients;
+  const hash = createHash("sha256")
+    .update(`${workflowId}|${recipientKey}|${dedupeKey ?? canonicalPayload}`)
+    .digest("hex");
+  return `${workflowId}:${hash.slice(0, 32)}`;
+}
+
 async function triggerWorkflow<T extends NovuPayload>(
   workflowId: string,
   subscriberId: string,
   payload: T,
+  dedupeKey?: string,
 ): Promise<TriggerResult> {
   if (!isNovuConfigured()) {
-    console.warn(`[Novu] Not configured. Skipped workflow: ${workflowId}`);
+    reportNotConfigured(workflowId);
     return { success: false, error: "Novu not configured" };
   }
 
@@ -70,6 +109,12 @@ async function triggerWorkflow<T extends NovuPayload>(
       workflowId,
       to: subscriberId,
       payload,
+      transactionId: deriveTransactionId(
+        workflowId,
+        subscriberId,
+        payload,
+        dedupeKey,
+      ),
     });
     console.log(`[Novu] Triggered ${workflowId} for ${subscriberId}`);
     return { success: true };
@@ -94,9 +139,10 @@ async function triggerForMultiple<T extends NovuPayload>(
   workflowId: string,
   userIds: string[],
   payload: T,
+  dedupeKey?: string,
 ): Promise<TriggerResult[]> {
   if (!isNovuConfigured()) {
-    console.warn(`[Novu] Not configured. Skipped workflow: ${workflowId}`);
+    reportNotConfigured(workflowId);
     return userIds.map(() => ({
       success: false,
       error: "Novu not configured" as const,
@@ -105,7 +151,7 @@ async function triggerForMultiple<T extends NovuPayload>(
 
   if (userIds.length === 0) return [];
   if (userIds.length === 1)
-    return [await triggerWorkflow(workflowId, userIds[0], payload)];
+    return [await triggerWorkflow(workflowId, userIds[0], payload, dedupeKey)];
 
   const BATCH_SIZE = 100;
   const results: TriggerResult[] = [];
@@ -118,6 +164,12 @@ async function triggerForMultiple<T extends NovuPayload>(
         workflowId,
         to: batch,
         payload,
+        transactionId: deriveTransactionId(
+          workflowId,
+          batch,
+          payload,
+          dedupeKey,
+        ),
       });
       console.log(
         `[Novu] Triggered ${workflowId} for ${batch.length} subscribers`,
@@ -145,7 +197,7 @@ async function triggerBroadcastWorkflow<T extends NovuPayload>(
   payload: T,
 ): Promise<TriggerResult> {
   if (!isNovuConfigured()) {
-    console.warn(`[Novu] Not configured. Skipped broadcast: ${workflowId}`);
+    reportNotConfigured(workflowId);
     return { success: false, error: "Novu not configured" };
   }
 
@@ -214,14 +266,18 @@ export async function notifyAppointmentCompleted(
   );
 }
 
+// `dedupeKey` (appointment + window) keeps the 1h reminder from being
+// swallowed as a duplicate of the 24h one — their payloads are identical.
 export async function notifyAppointmentReminder(
   userIds: string[],
   payload: AppointmentPayload,
+  dedupeKey?: string,
 ) {
   return triggerForMultiple(
     NOVU_WORKFLOWS.APPOINTMENT_REMINDER,
     userIds,
     payload,
+    dedupeKey,
   );
 }
 

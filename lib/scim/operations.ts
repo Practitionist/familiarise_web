@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import type { PrismaLike } from "@/lib/prisma";
 /**
  * SCIM 2.0 User operations — `createUser`, `patchUser`, `deprovisionUser`,
@@ -26,6 +27,11 @@ import {
   bumpUserSessionGeneration,
 } from "@/lib/api/organizations/membership-transitions";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import {
+  DomainVerificationRequiredError,
+  UNVERIFIED_ORG_SEAT_CAP,
+  hasVerifiedDomain,
+} from "@/lib/enterprise/governance";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 import { resolveRoleFromGroupNames } from "./resource-user";
 
@@ -108,6 +114,12 @@ export async function createOrReprovisionScimUser(
     return { kind: "USER_ERASED", userId: existingUser.id };
   }
 
+  // Serializable, matching the invite path (organizations/[orgId]/
+  // invitations): the seat-cap gate below is a count-then-create TOCTOU
+  // that a parallel IdP provisioning burst could slip past at READ
+  // COMMITTED. Serializable makes concurrent transactions that both read
+  // the seat counts and insert fail one side at commit (P2034) instead of
+  // both overshooting UNVERIFIED_ORG_SEAT_CAP.
   return prisma.$transaction(async (tx) => {
     const user = existingUser
       ? await tx.user.update({
@@ -203,6 +215,25 @@ export async function createOrReprovisionScimUser(
       } satisfies ScimUserOpResult;
     }
 
+    // #675 parity with the invite path — an unverified org is hard-capped at
+    // UNVERIFIED_ORG_SEAT_CAP seats; SCIM auto-provisioning must honor the same
+    // gate or an IdP could bulk-provision straight past it. Only brand-new
+    // seats count (reprovisions returned above). Throw (not a CONFLICT return)
+    // so the User/profile writes above roll back instead of orphaning.
+    if (!(await hasVerifiedDomain(tx, organizationId))) {
+      const [activeMembers, pendingInvites] = await Promise.all([
+        tx.membership.count({
+          where: { organizationId, status: "ACTIVE" },
+        }),
+        tx.invitation.count({
+          where: { organizationId, status: "pending" },
+        }),
+      ]);
+      if (activeMembers + pendingInvites >= UNVERIFIED_ORG_SEAT_CAP) {
+        throw new DomainVerificationRequiredError("BULK_SEATS");
+      }
+    }
+
     const created = await tx.membership.create({
       data: {
         organizationId,
@@ -252,7 +283,7 @@ export async function createOrReprovisionScimUser(
       role: created.role,
       status: created.status,
     } satisfies ScimUserOpResult;
-  });
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 }
 
 /**
