@@ -84,7 +84,7 @@ function deriveTransactionId(
     ),
   );
   const recipientKey = Array.isArray(recipients)
-    ? recipients.toSorted().join(",")
+    ? recipients.toSorted((a, b) => a.localeCompare(b)).join(",")
     : recipients;
   const hash = createHash("sha256")
     .update(`${workflowId}|${recipientKey}|${dedupeKey ?? canonicalPayload}`)
