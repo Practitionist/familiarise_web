@@ -43,7 +43,18 @@ type WorkItem =
   | { kind: "webinar-event" | "class-event"; id: string }
   | { kind: "webinar-attendance" | "class-attendance"; id: string };
 
+type FutureSlotFilter = {
+  completionStatus: "SCHEDULED";
+  startsAt: { gt: Date };
+};
+
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+const captureModerationError = (error: unknown) =>
+  Sentry.captureException(
+    error instanceof Error ? error : new Error(String(error)),
+    { tags: { subsystem: "moderation" } },
+  );
 
 export async function cancelFutureEngagementsForUser(
   targetUserId: string,
@@ -65,107 +76,24 @@ export async function cancelFutureEngagementsForUser(
   });
   if (!target) return summary;
 
-  const futureSlot = {
-    completionStatus: "SCHEDULED" as const,
+  const futureSlot: FutureSlotFilter = {
+    completionStatus: "SCHEDULED",
     startsAt: { gt: new Date() },
   };
 
   const work: WorkItem[] = [];
-
   if (target.consulteeProfileId) {
-    const [consultations, subscriptions, attendedSlots] = await Promise.all([
-      prisma.consultation.findMany({
-        where: {
-          requestedById: target.consulteeProfileId,
-          status: { in: [...CANCELLABLE_FROM] },
-          appointment: { slotsOfAppointment: { some: futureSlot } },
-        },
-        select: { id: true },
-      }),
-      prisma.subscription.findMany({
-        where: {
-          requestedById: target.consulteeProfileId,
-          status: { in: [...CANCELLABLE_FROM] },
-          appointments: { some: { slotsOfAppointment: { some: futureSlot } } },
-        },
-        select: { id: true },
-      }),
-      // Group events the target merely attends — remove + refund just them.
-      prisma.slotOfAppointment.findMany({
-        where: {
-          ...futureSlot,
-          user: { some: { id: targetUserId } },
-          appointment: {
-            OR: [{ webinarId: { not: null } }, { classId: { not: null } }],
-          },
-        },
-        select: {
-          appointment: { select: { webinarId: true, classId: true } },
-        },
-      }),
-    ]);
     work.push(
-      ...consultations.map((c) => ({ kind: "consultation" as const, id: c.id })),
-      ...subscriptions.map((s) => ({ kind: "subscription" as const, id: s.id })),
-    );
-    const webinarIds = new Set<string>();
-    const classIds = new Set<string>();
-    for (const slot of attendedSlots) {
-      if (slot.appointment?.webinarId) webinarIds.add(slot.appointment.webinarId);
-      if (slot.appointment?.classId) classIds.add(slot.appointment.classId);
-    }
-    work.push(
-      ...Array.from(webinarIds, (id) => ({
-        kind: "webinar-attendance" as const,
-        id,
-      })),
-      ...Array.from(classIds, (id) => ({
-        kind: "class-attendance" as const,
-        id,
-      })),
+      ...(await collectConsulteeWork(
+        target.consulteeProfileId,
+        targetUserId,
+        futureSlot,
+      )),
     );
   }
-
   if (target.consultantProfileId) {
-    const [consultations, subscriptions, webinars, classes] = await Promise.all([
-      prisma.consultation.findMany({
-        where: {
-          consultationPlan: { consultantProfileId: target.consultantProfileId },
-          status: { in: [...CANCELLABLE_FROM] },
-          appointment: { slotsOfAppointment: { some: futureSlot } },
-        },
-        select: { id: true },
-      }),
-      prisma.subscription.findMany({
-        where: {
-          subscriptionPlan: { consultantProfileId: target.consultantProfileId },
-          status: { in: [...CANCELLABLE_FROM] },
-          appointments: { some: { slotsOfAppointment: { some: futureSlot } } },
-        },
-        select: { id: true },
-      }),
-      prisma.webinar.findMany({
-        where: {
-          webinarPlan: { consultantProfileId: target.consultantProfileId },
-          status: { in: EVENT_ALLOWED_FROM.CANCELLED },
-          appointment: { slotsOfAppointment: { some: futureSlot } },
-        },
-        select: { id: true },
-      }),
-      prisma.class.findMany({
-        where: {
-          classPlan: { consultantProfileId: target.consultantProfileId },
-          status: { in: CLASS_EVENT_ALLOWED_FROM.CANCELLED },
-          appointments: { some: { slotsOfAppointment: { some: futureSlot } } },
-        },
-        select: { id: true },
-      }),
-    ]);
     work.push(
-      ...consultations.map((c) => ({ kind: "consultation" as const, id: c.id })),
-      ...subscriptions.map((s) => ({ kind: "subscription" as const, id: s.id })),
-      ...webinars.map((w) => ({ kind: "webinar-event" as const, id: w.id })),
-      ...classes.map((c) => ({ kind: "class-event" as const, id: c.id })),
+      ...(await collectConsultantWork(target.consultantProfileId, futureSlot)),
     );
   }
 
@@ -178,42 +106,163 @@ export async function cancelFutureEngagementsForUser(
       );
       break;
     }
-    const item = work[i];
-    try {
-      switch (item.kind) {
-        case "consultation":
-        case "subscription":
-          await cancelExclusiveEngagement(item.kind, item.id, {
-            initiatedByUserId,
-            notes,
-            summary,
-          });
-          break;
-        case "webinar-event":
-        case "class-event":
-          await cancelGroupEvent(item.kind, item.id, {
-            initiatedByUserId,
-            summary,
-          });
-          break;
-        case "webinar-attendance":
-        case "class-attendance":
-          await removeAttendee(item.kind, item.id, targetUserId, {
-            initiatedByUserId,
-            summary,
-          });
-          break;
-      }
-    } catch (error) {
-      summary.failures.push({ kind: item.kind, id: item.id, error: errMsg(error) });
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        { tags: { subsystem: "moderation" } },
-      );
-    }
+    await runWorkItem(work[i], targetUserId, {
+      initiatedByUserId,
+      notes,
+      summary,
+    });
   }
 
   return summary;
+}
+
+// Engagements where the target is the buyer (consultee): exclusive
+// consultations/subscriptions they own, plus group events they merely attend.
+async function collectConsulteeWork(
+  consulteeProfileId: string,
+  targetUserId: string,
+  futureSlot: FutureSlotFilter,
+): Promise<WorkItem[]> {
+  const [consultations, subscriptions, attendedSlots] = await Promise.all([
+    prisma.consultation.findMany({
+      where: {
+        requestedById: consulteeProfileId,
+        status: { in: [...CANCELLABLE_FROM] },
+        appointment: { slotsOfAppointment: { some: futureSlot } },
+      },
+      select: { id: true },
+    }),
+    prisma.subscription.findMany({
+      where: {
+        requestedById: consulteeProfileId,
+        status: { in: [...CANCELLABLE_FROM] },
+        appointments: { some: { slotsOfAppointment: { some: futureSlot } } },
+      },
+      select: { id: true },
+    }),
+    // Group events the target merely attends — remove + refund just them.
+    prisma.slotOfAppointment.findMany({
+      where: {
+        ...futureSlot,
+        user: { some: { id: targetUserId } },
+        appointment: {
+          OR: [{ webinarId: { not: null } }, { classId: { not: null } }],
+        },
+      },
+      select: {
+        appointment: { select: { webinarId: true, classId: true } },
+      },
+    }),
+  ]);
+
+  const work: WorkItem[] = [
+    ...consultations.map((c) => ({ kind: "consultation" as const, id: c.id })),
+    ...subscriptions.map((s) => ({ kind: "subscription" as const, id: s.id })),
+  ];
+  const webinarIds = new Set<string>();
+  const classIds = new Set<string>();
+  for (const slot of attendedSlots) {
+    if (slot.appointment?.webinarId) webinarIds.add(slot.appointment.webinarId);
+    if (slot.appointment?.classId) classIds.add(slot.appointment.classId);
+  }
+  work.push(
+    ...Array.from(webinarIds, (id) => ({
+      kind: "webinar-attendance" as const,
+      id,
+    })),
+    ...Array.from(classIds, (id) => ({
+      kind: "class-attendance" as const,
+      id,
+    })),
+  );
+  return work;
+}
+
+// Engagements the target hosts (consultant): exclusive engagements plus whole
+// group events they run — every attendee is refunded when these cancel.
+async function collectConsultantWork(
+  consultantProfileId: string,
+  futureSlot: FutureSlotFilter,
+): Promise<WorkItem[]> {
+  const [consultations, subscriptions, webinars, classes] = await Promise.all([
+    prisma.consultation.findMany({
+      where: {
+        consultationPlan: { consultantProfileId },
+        status: { in: [...CANCELLABLE_FROM] },
+        appointment: { slotsOfAppointment: { some: futureSlot } },
+      },
+      select: { id: true },
+    }),
+    prisma.subscription.findMany({
+      where: {
+        subscriptionPlan: { consultantProfileId },
+        status: { in: [...CANCELLABLE_FROM] },
+        appointments: { some: { slotsOfAppointment: { some: futureSlot } } },
+      },
+      select: { id: true },
+    }),
+    prisma.webinar.findMany({
+      where: {
+        webinarPlan: { consultantProfileId },
+        status: { in: EVENT_ALLOWED_FROM.CANCELLED },
+        appointment: { slotsOfAppointment: { some: futureSlot } },
+      },
+      select: { id: true },
+    }),
+    prisma.class.findMany({
+      where: {
+        classPlan: { consultantProfileId },
+        status: { in: CLASS_EVENT_ALLOWED_FROM.CANCELLED },
+        appointments: { some: { slotsOfAppointment: { some: futureSlot } } },
+      },
+      select: { id: true },
+    }),
+  ]);
+  return [
+    ...consultations.map((c) => ({ kind: "consultation" as const, id: c.id })),
+    ...subscriptions.map((s) => ({ kind: "subscription" as const, id: s.id })),
+    ...webinars.map((w) => ({ kind: "webinar-event" as const, id: w.id })),
+    ...classes.map((c) => ({ kind: "class-event" as const, id: c.id })),
+  ];
+}
+
+// Dispatch a single work item; every failure is recorded and swallowed so the
+// budgeted loop continues to the next engagement.
+async function runWorkItem(
+  item: WorkItem,
+  targetUserId: string,
+  ctx: { initiatedByUserId: string; notes?: string; summary: BulkCancelSummary },
+): Promise<void> {
+  const { initiatedByUserId, notes, summary } = ctx;
+  try {
+    switch (item.kind) {
+      case "consultation":
+      case "subscription":
+        await cancelExclusiveEngagement(item.kind, item.id, {
+          initiatedByUserId,
+          notes,
+          summary,
+        });
+        break;
+      case "webinar-event":
+      case "class-event":
+        await cancelGroupEvent(item.kind, item.id, {
+          initiatedByUserId,
+          summary,
+        });
+        break;
+      case "webinar-attendance":
+      case "class-attendance":
+        await removeAttendee(item.kind, item.id, targetUserId, {
+          initiatedByUserId,
+          summary,
+        });
+        break;
+    }
+  } catch (error) {
+    summary.failures.push({ kind: item.kind, id: item.id, error: errMsg(error) });
+    captureModerationError(error);
+  }
 }
 
 interface NormalizedEngagement {
