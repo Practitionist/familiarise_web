@@ -900,7 +900,7 @@ export default function ContentModerationPage() {
                         // NaN sentinel lets the field be cleared while typing;
                         // the Suspend button disables until a valid number is back
                         if (e.target.value === "") {
-                          setSuspensionDays(NaN);
+                          setSuspensionDays(Number.NaN);
                           return;
                         }
                         const v = parseInt(e.target.value, 10);
