@@ -312,7 +312,7 @@ await chatClient.upsertUser({
   id: user.id,
   name: user.name,
   image: user.image,
-  role: mapRoleToStream(user.role), // ⚠️ Currently returns "admin" for all
+  role: mapRoleToStream(user.role), // "admin" only for staff/admins, "user" for everyone else
 });
 ```
 
@@ -536,22 +536,28 @@ export async function tokenProvider(userId: string) {
 
 ## Security Considerations
 
-### 🔴 CRITICAL: Universal Admin Role
+### Least-Privilege Stream Roles (#899)
 
-**Current:** All users get "admin" role in Stream
+**Current:** Only platform staff and admins get Stream's global `admin` role. Everyone else, consultants included, is mapped to the plain `user` role.
 
 ```typescript
-// File: lib/user.ts:98-115
-export function mapRoleToStream(role: string): string {
-  return "admin"; // ⚠️ Everyone is admin!
+// File: lib/user.ts
+export function mapRoleToStream(role: string | null | undefined): string {
+  switch (role?.toUpperCase()) {
+    case "ADMIN":
+    case "STAFF":
+      return "admin";
+    default:
+      return "user";
+  }
 }
 ```
 
-**Impact:**
+**How hosts get moderation:**
 
-- No permission enforcement
-- All users can moderate channels
-- Potential data access issues
+- Channel creation is performed server-side
+- Each host receives a channel-scoped `channel_moderator` grant on their own host channels at creation time
+- No global admin grant, and no moderation rights over unrelated peer direct-message channels
 
 **See:** [Troubleshooting - Universal Admin Role](./troubleshooting.md#universal-admin-role-critical)
 

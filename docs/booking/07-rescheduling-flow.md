@@ -345,8 +345,8 @@ sequenceDiagram
     RescheduleAPI->>RescheduleAPI: Filter slots to requested slotIds
     RescheduleAPI->>RescheduleAPI: Validate 24-hour window for each slot
 
-    RescheduleAPI->>DB: UPDATE slots SET isTentative = true<br/>WHERE id IN (s1, s2, s3)
-    RescheduleAPI->>DB: UPDATE subscription SET status = PENDING
+    RescheduleAPI->>DB: UPDATE slots SET isTentative = true, completionStatus = RESCHEDULED<br/>WHERE id IN (s1, s2, s3)
+    Note over RescheduleAPI,DB: Partial reschedule (slotIds): subscription status left unchanged.<br/>Only a full reschedule (no slotIds) sets status = PENDING.
     RescheduleAPI->>DB: COMMIT TRANSACTION
 
     RescheduleAPI-->>Frontend: success, rescheduleType = multiple_sessions,<br/>slotsAffected = 3
@@ -551,9 +551,9 @@ Each of the 6 slots is checked. If `slot_5a` starts in 18 hours, the entire requ
 
 Only the 6 requested slots have `isTentative` set to `true`. The other 90 slots remain `isTentative: false`.
 
-**Step 7: Update subscription status.**
+**Step 7: Subscription status is left untouched.**
 
-The subscription's `status` is set to `PENDING`. (Note: this is a known issue -- it should arguably remain `APPROVED` for partial reschedules. See [Known Issues](#known-issues).)
+A partial reschedule of specific sessions no longer flips the whole subscription back to `PENDING`. The subscription keeps its existing status (for example `APPROVED`), and only the rescheduled slots are re-tentatived; session-level state is tracked on the slots via their `completionStatus` (`RESCHEDULED`). Only an entire-subscription reschedule (no `slotIds`) genuinely re-enters `PENDING`.
 
 **Step 8: Response.**
 
@@ -755,7 +755,7 @@ The entire operation runs inside a Prisma `$transaction` with a 60-second timeou
 | Event Type       | Partial reschedule? | Status field updated | New status value | Notes                                                                                                        |
 | ---------------- | ------------------- | -------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------ |
 | **Consultation** | No (always entire)  | `status`      | `PENDING`        | Single session, single appointment. All slots marked tentative.                                              |
-| **Subscription** | Yes (via `slotIds`) | `status`      | `PENDING`        | Supports all three reschedule types. See Known Issues for status behavior on partial reschedule.             |
+| **Subscription** | Yes (via `slotIds`) | `status` (entire reschedule only) | `PENDING`        | Supports all three reschedule types. Only an entire reschedule (no `slotIds`) reverts `status` to `PENDING`; a partial reschedule of specific sessions leaves the subscription status unchanged and re-tentatives only the selected slots. |
 | **Webinar**      | No (always entire)  | `status`             | `SCHEDULED`      | All slots marked tentative. Uses `status` not `status` because webinars have a different state model. |
 | **Class**        | No (always entire)  | `status`             | `SCHEDULED`      | Same as webinar. Uses `status` instead of `status`.                                                   |
 
@@ -1047,17 +1047,17 @@ Five issues have been validated against the codebase. All are legitimate and tra
 
 ### Issue 2: Status Always Set to PENDING
 
-**Priority:** HIGH | **Status:** Tracked in [#448](https://github.com/Practitionist/familiarise_web/issues/448).
+**Priority:** HIGH | **Status:** FIXED — a partial reschedule no longer flips the whole subscription to `PENDING`.
 
-**The problem:** When a subscription reschedule occurs, the subscription's `status` is unconditionally set to `PENDING`, regardless of whether it is a partial or full reschedule.
+**The former problem:** A subscription reschedule used to set the subscription's `status` to `PENDING` unconditionally, regardless of whether it was a partial or full reschedule.
 
-**Why this matters:** Consider a 48-session subscription where the consultee reschedules 1 session. Setting the entire subscription to `PENDING` implies the whole subscription needs re-approval, which:
+**Why this mattered:** Consider a 48-session subscription where the consultee reschedules 1 session. Setting the entire subscription to `PENDING` implied the whole subscription needed re-approval, which:
 
-- Removes it from the "active" list and places it in the "pending" queue.
-- May confuse the consultant into thinking the entire subscription needs attention.
-- The other 47 sessions are fully confirmed and should not appear to need action.
+- Removed it from the "active" list and placed it in the "pending" queue.
+- Could confuse the consultant into thinking the entire subscription needed attention.
+- The other 47 sessions were fully confirmed and should not have appeared to need action.
 
-**Planned fix:** For partial reschedules (`individual_session` or `multiple_sessions`), keep the subscription status as `APPROVED` and rely on the `isTentative` flags to indicate which specific slots need attention. Only set `PENDING` for `entire_booking` reschedules.
+**The fix:** For partial reschedules (`individual_session` or `multiple_sessions`), the subscription keeps its existing status (for example `APPROVED`) and only the rescheduled slots are re-tentatived and stamped `completionStatus = RESCHEDULED`. Only an entire (`entire_booking`) reschedule re-enters `PENDING`.
 
 ### Issue 3: No Partial Reschedule Tracking Field
 
@@ -1110,7 +1110,7 @@ In practice, this edge case is unlikely because sessions rarely span midnight. B
 
 | Phase   | Scope                       | Issues Fixed                                    | Breaking Change? |
 | ------- | --------------------------- | ----------------------------------------------- | ---------------- |
-| Phase 1 | API response + status logic | #2 (PENDING status), #5 (slot vs session count) | No               |
+| Phase 1 | API response + status logic | #2 (PENDING status, fixed), #5 (slot vs session count) | No               |
 | Phase 2 | Schema migration            | #3 (tracking field)                             | No (additive)    |
 | Phase 3 | New endpoint                | #1 (slotIds to appointmentIds)                  | Yes              |
 | Phase 4 | Optimization                | #4 (session-aware validation)                   | No               |

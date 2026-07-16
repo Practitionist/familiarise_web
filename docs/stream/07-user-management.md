@@ -121,15 +121,9 @@ Stream Chat uses a role-based permission system. The `mapRoleToStream` function 
 
 **Location:** `/lib/user.ts` (lines 98-115)
 
-### CRITICAL BUG
+### Least-Privilege Mapping (#899)
 
-> **SECURITY ISSUE:** Currently, ALL users are mapped to the "admin" role in Stream Chat, regardless of their actual role in the application. This grants every user full permissions including the ability to create, read, update, and delete channels.
->
-> **Risk Level:** HIGH
->
-> **Impact:** Users have more permissions than intended, potentially allowing unauthorized access to channels and administrative functions.
->
-> **Recommendation:** Implement proper role mapping with custom roles configured in the Stream Chat dashboard, or use Stream's built-in roles more appropriately.
+The mapping now follows least privilege. Only platform staff and admins receive Stream's global `admin` role; every other user, consultants included, is mapped to the plain `user` role. Consultants no longer get a blanket administrative grant. Instead, channel creation happens server-side and each host is given a channel-scoped `channel_moderator` grant on their own host channels at creation time, rather than a global moderation grant that would also cover peer direct-message channels.
 
 ### Current Implementation
 
@@ -145,27 +139,18 @@ export function mapRoleToStream(role: string | null | undefined): string;
 
 **Returns:**
 
-- `string`: The Stream Chat role (currently always returns "admin")
+- `string`: The Stream Chat role — `admin` for staff and admins, and `user` for everyone else
 
 **Current Behavior:**
 
 ```typescript
 export function mapRoleToStream(role: string | null | undefined): string {
-  if (!role) return "admin"; // Default to admin for team channel access
-
-  switch (role.toUpperCase()) {
+  switch (role?.toUpperCase()) {
     case "ADMIN":
-      return "admin";
-    case "CONSULTANT":
-      // Consultants need to create and manage their event channels
-      return "admin";
-    case "CONSULTEE":
-      // Consultees need to read and participate in team channels they join
-      return "admin";
-    case "USER":
+    case "STAFF":
       return "admin";
     default:
-      return "admin";
+      return "user";
   }
 }
 ```
@@ -181,29 +166,9 @@ Stream Chat provides the following standard roles:
 | `guest`     | Limited permissions                                                  |
 | `anonymous` | Very limited permissions                                             |
 
-### Recommended Implementation
+### Channel-Scoped Moderation
 
-```typescript
-// RECOMMENDED: Fix the role mapping
-export function mapRoleToStream(role: string | null | undefined): string {
-  if (!role) return "user"; // Default to user, not admin
-
-  switch (role.toUpperCase()) {
-    case "ADMIN":
-      return "admin";
-    case "CONSULTANT":
-      // Use custom role configured in Stream dashboard
-      return "consultant"; // or "channel_moderator"
-    case "CONSULTEE":
-      // Regular user role with channel participation
-      return "user";
-    case "USER":
-      return "user";
-    default:
-      return "user";
-  }
-}
-```
+Consultants are mapped to the plain `user` role globally and instead receive a channel-scoped `channel_moderator` grant on their own host channels at creation time. This gives a host moderation authority over the channels they own without granting global admin permissions or moderation rights over unrelated peer direct-message channels.
 
 ---
 

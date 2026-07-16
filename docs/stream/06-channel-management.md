@@ -283,6 +283,16 @@ export const syncUserEventChannels = async (userId: string) => {
 
 ## Channel Membership Rules
 
+### Who May Talk to Whom (Policy)
+
+The platform deliberately supports only three conversation shapes. First, a consultant and a consultee who transact together share exactly one direct-message channel: consultations, subscriptions, and ad-hoc DMs between the same pair all reuse the deterministic `dm-<idA>-<idB>` channel id (the two user ids are sorted before joining, so the pair can never produce a duplicate channel regardless of who initiates). Second, group events — webinars and classes — put every booked attendee and the host into one shared event channel, and this is the sanctioned space where consultees can talk alongside other consultees. Third, consultants collaborating on a joint webinar or class get a plan-scoped `collab-{webinar|class}-{planId}` channel that is reconciled against the accepted collaborator list.
+
+Consultee↔consultee direct messages are intentionally not supported. This is a decision, not a gap: peer-to-peer DMs on a marketplace are only safe with mature moderation infrastructure, and the block stays until the moderation enforcement shipped for #693 and the #899 hardening have settled in production. The full rationale is recorded in `docs/decisions/2026-07-11-moderation-enforcement-and-peer-chat-block.md`. There is no consultee↔consultee code path to disable — reviewers should keep it that way.
+
+### Server-Side Authorization for Membership Changes
+
+Stream's server-side API bypasses its own permission system whenever a valid API secret is presented, so every membership mutation must be authorized in our application layer before the Stream call. The `addMemberToChannel` server action requires a signed-in session and allows only admins, staff, or the channel's creator to add members; non-privileged callers can no longer lazily create channels they do not own. The channel-creation route applies the same rule: event channels require the caller to be the event's creator (or privileged), and custom channels are admin/staff-only.
+
 ### Waitlist Channel Membership
 
 Only waitlist users with status `BOOKED` are included in event channel membership. Users with WAITING or NOTIFIED status are not added to Stream channels. This prevents users who have not yet confirmed their booking from accessing event chat.

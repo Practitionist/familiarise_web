@@ -570,7 +570,10 @@ export async function DELETE(
               purchaseOrders: { where: { remainingAmountPaise: { gt: 0 } } },
               earnings: {
                 where: {
-                  status: { in: ["PENDING_TRUST", "PENDING", "HELD", "READY"] },
+                  // #837 — BATCHED is unsettled (payout in flight, cash not moved yet).
+                  status: {
+                    in: ["PENDING_TRUST", "PENDING", "HELD", "READY", "BATCHED"],
+                  },
                 },
               },
               payouts: {

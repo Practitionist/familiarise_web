@@ -36,7 +36,7 @@ export default function RecordingsPage({ params }: RecordingsPageProps) {
         onValueChange={(v) => setActiveTab(v as "all" | "webinar" | "class")}
         className="space-y-6"
       >
-        <TabsList className="grid w-full max-w-[400px] grid-cols-3">
+        <TabsList className="grid w-full max-w-full grid-cols-3 sm:max-w-[400px]">
           <TabsTrigger value="all" className="flex items-center gap-2">
             <Video className="w-4 h-4" />
             <span>All</span>

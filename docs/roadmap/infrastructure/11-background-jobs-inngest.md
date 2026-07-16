@@ -55,8 +55,7 @@ Inngest provides serverless background job processing with TypeScript-first deve
 Inngest Jobs:
 ├── Payment Webhooks
 │   ├── Stripe webhook processing
-│   ├── Razorpay webhook processing
-│   └── LemonSqueezy webhook processing
+│   └── Razorpay webhook processing
 ├── Email
 │   ├── Welcome emails
 │   ├── Booking confirmations
@@ -113,7 +112,7 @@ type Events = {
   // Payment events
   "payment/webhook.received": {
     data: {
-      gateway: "stripe" | "razorpay" | "lemonsqueezy";
+      gateway: "stripe" | "razorpay";
       eventId: string;
       eventType: string;
       payload: Record<string, unknown>;

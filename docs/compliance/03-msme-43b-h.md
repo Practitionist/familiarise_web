@@ -38,7 +38,7 @@ Udyam registration number format: `UDYAM-XX-NN-NNNNNNN` (19 chars: `UDYAM` + 2-c
 ### B2C (consumer marketplace)
 
 - **N/A on the consumer leg.** The consumer pays the platform; there's no buyer-supplier relationship between consumer and consultant under 43B(h).
-- **N/A on the platform-to-consultant payout leg either** — Familiarise pays from the consumer's payment within days, well inside any 15/45 window. The platform's books bear the disallowance risk, but it is mathematically not breached when payouts run weekly/monthly.
+- **N/A on the platform-to-consultant payout leg either** — Practitionist pays from the consumer's payment within days, well inside any 15/45 window. The platform's books bear the disallowance risk, but it is mathematically not breached when payouts run weekly/monthly.
 
 So 43B(h) is effectively a **B2B-only** compliance — but the schema fields (`msmeStatus`, etc.) sit on `ConsultantProfile` regardless of rail because the same consultant may earn through both rails.
 
@@ -85,7 +85,7 @@ So 43B(h) is effectively a **B2B-only** compliance — but the schema fields (`m
 
 ## Related disclosure (not 43B(h), but adjacent)
 
-**Form MSME-1** is the half-yearly ROC/MCA return (Companies Act, not Income-tax Act) disclosing payments to Micro & Small suppliers **outstanding beyond 45 days**. Due **31 Oct** (Apr–Sep half) and **30 Apr** (Oct–Mar half). It is a *company-law* obligation that runs parallel to 43B(h); if Familiarise (the company) ever owes an MSE supplier past 45 days it must file MSME-1. Tracked in the [compliance calendar (doc 12)](./12-india-compliance-calendar.md). Penalty: ₹20,000 + ₹1,000/day continuing (cap ₹3 lakh) under Companies Act §405(4).
+**Form MSME-1** is the half-yearly ROC/MCA return (Companies Act, not Income-tax Act) disclosing payments to Micro & Small suppliers **outstanding beyond 45 days**. Due **31 Oct** (Apr–Sep half) and **30 Apr** (Oct–Mar half). It is a *company-law* obligation that runs parallel to 43B(h); if Practitionist (the company) ever owes an MSE supplier past 45 days it must file MSME-1. Tracked in the [compliance calendar (doc 12)](./12-india-compliance-calendar.md). Penalty: ₹20,000 + ₹1,000/day continuing (cap ₹3 lakh) under Companies Act §405(4).
 
 ## References
 

@@ -67,8 +67,11 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     // Update ticket status to IN_PROGRESS if it was OPEN
     // Only update if this is not an internal note
     if (ticket.status === "OPEN" && !validatedData.isInternal) {
-      await prisma.supportTicket.update({
-        where: { id: ticketId },
+      // Status-guarded CAS: a concurrent staff edit that already moved the
+      // ticket off OPEN must not be clobbered back. updateMany is a no-op
+      // (count 0) when the guard misses, so the loser silently yields.
+      await prisma.supportTicket.updateMany({
+        where: { id: ticketId, status: "OPEN" },
         data: {
           status: "IN_PROGRESS",
           // Auto-assign to responding staff if not already assigned

@@ -193,6 +193,20 @@ export async function addUserToEventChannel(
       },
     );
 
+    // Lazy-create bypasses createChannel, so the #899 channel-scoped host
+    // grant is repeated here. Non-fatal: chat still works without it.
+    try {
+      await channelWithData.assignRoles([
+        { user_id: consultantId, channel_role: "channel_moderator" },
+      ]);
+    } catch (grantError) {
+      streamLogger.warn("Failed to grant channel_moderator to event host", {
+        channelId,
+        consultantId,
+        error: grantError,
+      });
+    }
+
     markChannelExists(channelType, channelId);
     markMembership(channelId, userId, true);
     created = true;
@@ -822,6 +836,20 @@ async function addUserToDmChannel(
       throw new StreamUnavailableError();
     },
   );
+
+  // Lazy-create bypasses createChannel, so the #899 channel-scoped host
+  // grant is repeated here. Non-fatal: chat still works without it.
+  try {
+    await channelWithData.assignRoles([
+      { user_id: consultantUserId, channel_role: "channel_moderator" },
+    ]);
+  } catch (grantError) {
+    streamLogger.warn("Failed to grant channel_moderator to DM consultant", {
+      channelId,
+      consultantUserId,
+      error: grantError,
+    });
+  }
 
   markChannelExists(channelType, channelId);
   markMembership(channelId, currentUserId, true);

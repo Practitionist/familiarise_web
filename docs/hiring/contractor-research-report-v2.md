@@ -618,7 +618,7 @@ Given your 10% commission structure, even 5 active consultants referring 2 other
 
 **Priority:** CRITICAL / IMMEDIATE | **Budget:** ₹20,000–60,000 for full package | **Hire By:** Week 1–2
 
-**Why:** Distinct from the generalist Legal contractor in V1. A marketplace handling Stripe, Razorpay, Lemon Squeezy, Xflow, consultant data, and video recordings (via Stream.io) needs a SaaS contract specialist who understands:
+**Why:** Distinct from the generalist Legal contractor in V1. A marketplace handling Stripe, Razorpay, consultant data, and video recordings (via Stream.io) needs a SaaS contract specialist who understands:
 - India's **DPDP Act 2025** (fines up to ₹250 crore; Rules notified November 2025)
 - **GDPR** for international consultees (Data Processing Agreements)
 - **Data Processing Agreements** for Stream.io (video = sensitive data under DPDP) and Supabase

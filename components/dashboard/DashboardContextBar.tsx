@@ -11,6 +11,14 @@ export interface DashboardContextBarBadge {
   className: string;
 }
 
+export type DashboardBreadcrumb =
+  | string
+  | {
+      label: string;
+      /** When set, the crumb is a clickable link (use for parents of the current page). */
+      href?: string;
+    };
+
 export interface DashboardContextBarProps {
   identity: {
     name: string;
@@ -27,9 +35,10 @@ export interface DashboardContextBarProps {
   badges?: DashboardContextBarBadge[];
   /**
    * Ordered breadcrumb segments from root to current page.
-   * The last entry is highlighted as the active page.
+   * The last entry is highlighted as the active page unless it has an href
+   * (parent of a nested record id that was stripped from the trail).
    */
-  breadcrumbs?: string[];
+  breadcrumbs?: DashboardBreadcrumb[];
   /**
    * Escape hatch rendered at the far left (e.g. "← Personal" from an org
    * dashboard). Hidden when omitted — personal dashboards have nothing to
@@ -40,20 +49,17 @@ export interface DashboardContextBarProps {
   rightSlot?: React.ReactNode;
 }
 
+function normalizeCrumb(crumb: DashboardBreadcrumb): {
+  label: string;
+  href?: string;
+} {
+  return typeof crumb === "string" ? { label: crumb } : crumb;
+}
+
 /**
  * Sticky info strip at the top of every dashboard page — the generalized
  * successor of the org-only OrgContextBar, shared by the organization,
  * consultant, and consultee shells.
- *
- * Responsibility: orientation (which context, which page) via identity +
- * badges + breadcrumbs. Context-SWITCHING (personal dashboard, other orgs,
- * sign out) deliberately lives in the sidebar's bottom user chip so all
- * navigation is in one discoverable place.
- *
- * Desktop (md+): identity name text is hidden because the sidebar header
- * already shows it — no duplication. Mobile: name text is shown because
- * the sidebar is hidden. Height is h-14 to pixel-match the sidebar header
- * so the border intersection lines up at the crossroad.
  */
 export function DashboardContextBar({
   identity,
@@ -113,21 +119,28 @@ export function DashboardContextBar({
           aria-label="Breadcrumb"
           className="flex items-center gap-1 min-w-0 shrink"
         >
-          {breadcrumbs.map((crumb, i) => {
+          {breadcrumbs.map((raw, i) => {
+            const crumb = normalizeCrumb(raw);
             const isLast = i === breadcrumbs.length - 1;
+            const className = isLast && !crumb.href
+              ? "text-zinc-900 dark:text-zinc-100 font-semibold truncate"
+              : "text-zinc-500 dark:text-zinc-400 truncate hover:text-zinc-800 dark:hover:text-zinc-200 transition-colors";
+
             return (
-              <span key={i} className="flex items-center gap-1 min-w-0">
+              <span key={`${crumb.label}-${i}`} className="flex items-center gap-1 min-w-0">
                 <ChevronRight className="h-3.5 w-3.5 text-zinc-300 dark:text-zinc-600 shrink-0" />
-                <span
-                  className={
-                    isLast
-                      ? "text-zinc-900 dark:text-zinc-100 font-semibold truncate"
-                      : "text-zinc-500 dark:text-zinc-400 truncate"
-                  }
-                  aria-current={isLast ? "page" : undefined}
-                >
-                  {crumb}
-                </span>
+                {crumb.href ? (
+                  <Link href={crumb.href} className={className}>
+                    {crumb.label}
+                  </Link>
+                ) : (
+                  <span
+                    className={className}
+                    aria-current={isLast ? "page" : undefined}
+                  >
+                    {crumb.label}
+                  </span>
+                )}
               </span>
             );
           })}

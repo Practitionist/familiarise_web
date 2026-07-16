@@ -110,8 +110,8 @@ export function ConsultantResponseUpload({
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && handleClose()}>
-      <DialogContent className="sm:max-w-[500px]">
-        <DialogHeader>
+      <DialogContent className="sm:max-w-[500px] max-h-[90dvh] overflow-hidden flex flex-col">
+        <DialogHeader className="shrink-0">
           <DialogTitle>
             {responseToDocument
               ? "Upload Response Document"
@@ -124,7 +124,7 @@ export function ConsultantResponseUpload({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4 py-4">
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto py-4">
           {/* Show original document info if this is a response */}
           {responseToDocument && (
             <div className="bg-muted p-3 rounded-lg">
@@ -199,7 +199,7 @@ export function ConsultantResponseUpload({
           )}
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="shrink-0">
           <Button
             variant="outline"
             onClick={handleClose}

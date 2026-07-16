@@ -389,8 +389,6 @@ export function DisputesPage({
                 <SelectItem value="all">All Gateways</SelectItem>
                 <SelectItem value="STRIPE">Stripe</SelectItem>
                 <SelectItem value="RAZORPAY">Razorpay</SelectItem>
-                <SelectItem value="LEMON_SQUEEZY">Lemon Squeezy</SelectItem>
-                <SelectItem value="XFLOW">xFlow</SelectItem>
               </SelectContent>
             </Select>
           </div>

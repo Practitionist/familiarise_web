@@ -26,7 +26,9 @@ business fastest.
 Both contexts POST `/api/checkout` for the identical consultant slot, then
 both complete sandbox payments so both `payment.captured` webhooks land. The
 pass condition is exactly one confirmed slot, with the loser's payment
-surfaced for refund (a `CONFIRMATION_BLOCKED_DOUBLE_BOOKING` system event).
+**auto-refunded** — a `CONFIRMATION_BLOCKED_DOUBLE_BOOKING` system event
+followed by a `refundPayment` call in the webhook handler, with
+`REQUIRES_MANUAL_RECOVERY` recorded only if that refund call itself fails.
 This exercises the #827 confirm-time recheck end to end.
 
 **2. Webinar capacity overrun (k6 or Playwright, N+1 concurrent, ~20 min).**
@@ -141,8 +143,9 @@ the webhook is always ACKed 2xx, the payment never stays PENDING, and
 the end state is exactly one of three consistent outcomes — cancel wins
 (EXPIRED, slots deleted, parent CANCELLED), webhook wins (SUCCEEDED,
 slots confirmed, cancel gets 409), or documented late-capture orphan
-(SUCCEEDED after a 200 cancel; reconciler flags for refund, never a
-half-confirmed booking). Second leg: two concurrent `DELETE` calls on
+(SUCCEEDED after a 200 cancel; the webhook handler auto-refunds it via
+`refundPayment`, never a half-confirmed booking, with
+`REQUIRES_MANUAL_RECOVERY` recorded only if that refund call fails). Second leg: two concurrent `DELETE` calls on
 the same PENDING payment — exactly one 200, the loser 409 (CAS
 cancel-vs-cancel guard). Tracked by #849.
 

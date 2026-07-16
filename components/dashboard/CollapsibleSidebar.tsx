@@ -3,6 +3,7 @@
 import { cn } from "@/utils/tailwind";
 import { ChevronLeft, ChevronRight, ChevronDown, ChevronsUpDown, LogOut, type LucideIcon } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { LinkPendingIcon } from "@/components/ui/NavLink";
@@ -153,6 +154,7 @@ export function CollapsibleSidebar({
   onSignOut,
   className,
 }: CollapsibleSidebarProps) {
+  const router = useRouter();
   const [collapsed, setCollapsed] = useState(false);
 
   // Per-group collapsed map, keyed by the group's label. Defaults to
@@ -170,6 +172,13 @@ export function CollapsibleSidebar({
   );
 
   const isActive = (path: string) => isActiveRoute(pathname, basePath, path);
+
+  /** Navigate to the tab root even when already under a nested child route. */
+  const goToNavPath = (path: string) => {
+    const href = path ? `${basePath}/${path}` : basePath;
+    if (pathname === href) return;
+    router.push(href);
+  };
 
   const fallbackChar =
     avatarFallback ??
@@ -322,7 +331,7 @@ export function CollapsibleSidebar({
             // visibility. When the whole sidebar is in icon-only mode,
             // group headers hide and all items render flat so the user
             // can still navigate via tooltips.
-            <div className="space-y-2 px-2">
+            <div className="space-y-3 px-3">
               {groups.map((group, gi) => {
                 const isHeaderless = !group.label;
                 const isGroupCollapsed =
@@ -360,6 +369,10 @@ export function CollapsibleSidebar({
                               <TooltipTrigger asChild>
                                 <Link
                                   href={`${basePath}/${item.path}`}
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    goToNavPath(item.path);
+                                  }}
                                   aria-label={collapsed ? item.name : undefined}
                                   aria-current={
                                     isActive(item.path) ? "page" : undefined
@@ -407,13 +420,17 @@ export function CollapsibleSidebar({
               })}
             </div>
           ) : (
-            <ul className="space-y-1 px-2">
+            <ul className="space-y-1.5 px-3">
               {(items ?? []).map((item) => (
                 <li key={item.path}>
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Link
                         href={`${basePath}/${item.path}`}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          goToNavPath(item.path);
+                        }}
                         aria-label={collapsed ? item.name : undefined}
                         aria-current={isActive(item.path) ? "page" : undefined}
                         className={cn(

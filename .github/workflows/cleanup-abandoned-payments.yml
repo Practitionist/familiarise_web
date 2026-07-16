@@ -26,8 +26,6 @@ jobs:
       STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
       RAZORPAY_KEY_ID: ${{ secrets.RAZORPAY_KEY_ID }}
       RAZORPAY_SECRET: ${{ secrets.RAZORPAY_SECRET }}
-      LEMON_SQUEEZY_API_KEY: ${{ secrets.LEMON_SQUEEZY_API_KEY }}
-      XFLOW_SECRET_KEY: ${{ secrets.XFLOW_SECRET_KEY }}
 
     steps:
       - name: Checkout code

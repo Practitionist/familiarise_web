@@ -55,9 +55,12 @@ export async function POST(request: NextRequest) {
     });
 
     if (!result.success) {
+      // Friendly 409 for the already-on-waitlist conflict (incl. the concurrent
+      // double-join race that P2002 catches); everything else is a 400.
+      const status = result.code === "ALREADY_ON_WAITLIST" ? 409 : 400;
       return NextResponse.json(
         { success: false, error: result.message },
-        { status: 400 },
+        { status },
       );
     }
 

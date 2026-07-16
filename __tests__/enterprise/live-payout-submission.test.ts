@@ -280,10 +280,12 @@ describe("processOrgPayout — live submission gating", () => {
       }),
     );
 
-    // Earnings release: PAID → READY, orgPayoutId nulled.
+    // #993 — a PROCESSING→FAILED submission never reached PAID: batch creation
+    // staged the earnings READY→BATCHED, so the failure release is BATCHED→READY
+    // (orgPayoutId nulled), not PAID→READY.
     expect(mockedPrisma.organizationEarnings.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { orgPayoutId: PAYOUT_ID, status: "PAID" },
+        where: { orgPayoutId: PAYOUT_ID, status: "BATCHED" },
         data: { status: "READY", orgPayoutId: null },
       }),
     );

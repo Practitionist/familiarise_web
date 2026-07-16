@@ -49,7 +49,7 @@ Interest on shortfall under §424/§425 of the 2025 Act (was §234B/§234C) at 1
 
 ## MSME Form MSME-1 (half-yearly ROC return)
 
-Verified 2026-06-05. Companies Act (MCA), **not** Income-tax — discloses payments to Micro & Small suppliers **outstanding beyond 45 days**. Applies to Familiarise (the company) whenever it owes an MSE supplier past 45 days.
+Verified 2026-06-05. Companies Act (MCA), **not** Income-tax — discloses payments to Micro & Small suppliers **outstanding beyond 45 days**. Applies to Practitionist (the company) whenever it owes an MSE supplier past 45 days.
 
 | Half-year period | Filing due |
 |---|---|

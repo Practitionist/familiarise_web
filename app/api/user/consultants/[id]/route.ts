@@ -228,6 +228,7 @@ export async function GET(
           ? { where: planVisibilityFilter }
           : true,
         reviews: {
+          where: { deletedAt: null },
           select: { id: true, rating: true },
           take: 5,
         },
@@ -555,7 +556,7 @@ export async function PUT(
         },
         webinarPlans: true,
         classPlans: true,
-        reviews: true,
+        reviews: { where: { deletedAt: null } },
       },
     });
 

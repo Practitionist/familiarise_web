@@ -37,6 +37,7 @@ const EARNING_STATUS_LABEL: Record<string, string> = {
   HELD: "On hold",
   PENDING: "Pending (hold window)",
   PENDING_TRUST: "Pending (trust window)",
+  BATCHED: "Processing payout", // #837 — batched, cash not yet disbursed
   PAID: "Paid",
   REFUNDED: "Refunded",
 };

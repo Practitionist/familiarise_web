@@ -137,7 +137,7 @@ model ConsultantEarnings {
   shareBps             Int    // multi-collaborator split, basis points
   platformFeePaise     Int
   consultantSharePaise Int
-  status               EarningStatus  // PENDING → READY → HELD → PAID
+  status               EarningStatus  // PENDING → READY → BATCHED → PAID (HELD on dispute)
   holdUntil            DateTime?
 }
 ```
