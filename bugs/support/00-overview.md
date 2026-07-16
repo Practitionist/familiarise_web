@@ -29,7 +29,7 @@ Triaged 2026-07-12 against real code (3 verifier agents cross-checked every clai
 ## Unhappy paths & user psychology
 
 - User pays twice, opens two tickets + Razorpay dispute — three teams, no single owner.
-- HIGH priority ticket sits over weekend — no paging.
+- HIGH-priority ticket sits over weekend — no paging.
 - Attachment upload fails on flaky mobile network — no resumable upload.
 - Staff internal note accidentally non-internal — user sees raw ops language.
 
