@@ -10,7 +10,7 @@ import {
   disconnectDatabase,
   type NoShowResult,
 } from "../../scripts/appointments/detect-consultant-no-shows";
-import fs from "fs";
+import fs from "node:fs";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
 import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
 import * as Sentry from "@sentry/nextjs";

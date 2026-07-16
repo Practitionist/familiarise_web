@@ -903,7 +903,7 @@ export default function ContentModerationPage() {
                           setSuspensionDays(Number.NaN);
                           return;
                         }
-                        const v = parseInt(e.target.value, 10);
+                        const v = Number.parseInt(e.target.value, 10);
                         if (Number.isFinite(v))
                           setSuspensionDays(Math.min(365, Math.max(1, v)));
                       }}
