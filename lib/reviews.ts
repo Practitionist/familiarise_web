@@ -12,7 +12,9 @@ export async function recomputeConsultantRating(
   consultantProfileId: string,
 ): Promise<void> {
   const agg = await tx.consultantReview.aggregate({
-    where: { consultantProfileId },
+    // #693 — soft-removed reviews (deletedAt set) must not count toward the
+    // denormalized rating.
+    where: { consultantProfileId, deletedAt: null },
     _avg: { rating: true },
   });
 

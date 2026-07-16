@@ -732,34 +732,39 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
 
   // --- Novu notifications (M5 FIX: moved outside transaction) ---
   try {
+    // #734 — the notification only needs the consultant's id/name; the old
+    // 4-level include dragged full User + profile rows for all four shapes.
+    const consultantUserSelect = {
+      select: { user: { select: { id: true, name: true } } },
+    } as const;
     const appointmentForNotif = await prisma.appointment.findUnique({
       where: { id: appointmentId },
-      include: {
+      select: {
         consultation: {
-          include: {
+          select: {
             consultationPlan: {
-              include: { consultantProfile: { include: { user: true } } },
+              select: { consultantProfile: consultantUserSelect },
             },
           },
         },
         subscription: {
-          include: {
+          select: {
             subscriptionPlan: {
-              include: { consultantProfile: { include: { user: true } } },
+              select: { consultantProfile: consultantUserSelect },
             },
           },
         },
         webinar: {
-          include: {
+          select: {
             webinarPlan: {
-              include: { consultantProfile: { include: { user: true } } },
+              select: { consultantProfile: consultantUserSelect },
             },
           },
         },
         class: {
-          include: {
+          select: {
             classPlan: {
-              include: { consultantProfile: { include: { user: true } } },
+              select: { consultantProfile: consultantUserSelect },
             },
           },
         },
@@ -906,37 +911,35 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
  */
 export async function handlePaymentFailure(paymentIntentId: string) {
   return await prisma.$transaction(async (tx) => {
+    // #734 — narrowed from a 5-level include; the failure path only reads
+    // the payer's email/name and the consultant's name for notifications.
+    const consultantUserSelect = {
+      select: {
+        consultantProfile: {
+          select: { user: { select: { id: true, name: true } } },
+        },
+      },
+    } as const;
     const payment = await tx.payment.findUnique({
       where: { paymentIntent: paymentIntentId },
-      include: {
-        user: true,
+      select: {
+        id: true,
+        paymentStatus: true,
+        userId: true,
+        appointmentId: true,
+        amount: true,
+        currency: true,
+        description: true,
+        user: { select: { email: true, name: true } },
         appointment: {
-          include: {
+          select: {
+            id: true,
+            appointmentType: true,
             consultation: {
-              include: {
-                consultationPlan: {
-                  include: {
-                    consultantProfile: {
-                      include: {
-                        user: true,
-                      },
-                    },
-                  },
-                },
-              },
+              select: { consultationPlan: consultantUserSelect },
             },
             subscription: {
-              include: {
-                subscriptionPlan: {
-                  include: {
-                    consultantProfile: {
-                      include: {
-                        user: true,
-                      },
-                    },
-                  },
-                },
-              },
+              select: { subscriptionPlan: consultantUserSelect },
             },
           },
         },
@@ -1776,73 +1779,31 @@ async function sendPaymentSuccessNotification(
  */
 async function sendPaymentFailureNotification(
   tx: Tx,
-  payment: MoneyAsNumber<
-    Prisma.PaymentGetPayload<{
-      include: {
-        user: true;
-        appointment: {
-          include: {
-            consultation: {
-              include: {
-                consultationPlan: {
-                  include: {
-                    consultantProfile: {
-                      include: {
-                        user: true;
-                      };
-                    };
-                  };
-                };
-              };
-            };
-            subscription: {
-              include: {
-                subscriptionPlan: {
-                  include: {
-                    consultantProfile: {
-                      include: {
-                        user: true;
-                      };
-                    };
-                  };
-                };
-              };
-            };
-          };
-        };
-      };
-    }>
-  >,
+  payment: {
+    id: string;
+    appointmentId: string | null;
+    amount: number;
+    currency: string;
+    description: string | null;
+    user: { email: string | null; name: string | null };
+  },
 ) {
   try {
+    const consultantUserSelect = {
+      select: {
+        consultantProfile: {
+          select: { user: { select: { name: true } } },
+        },
+      },
+    } as const;
     const appointment = await tx.appointment.findUnique({
       where: { id: payment.appointmentId || "" },
-      include: {
+      select: {
         consultation: {
-          include: {
-            consultationPlan: {
-              include: {
-                consultantProfile: {
-                  include: {
-                    user: true,
-                  },
-                },
-              },
-            },
-          },
+          select: { id: true, consultationPlan: consultantUserSelect },
         },
         subscription: {
-          include: {
-            subscriptionPlan: {
-              include: {
-                consultantProfile: {
-                  include: {
-                    user: true,
-                  },
-                },
-              },
-            },
-          },
+          select: { id: true, subscriptionPlan: consultantUserSelect },
         },
       },
     });

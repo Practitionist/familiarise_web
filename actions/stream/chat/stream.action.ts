@@ -19,15 +19,21 @@ const userIdSchema = z.string().min(1, "User ID is required");
 
 /**
  * Tokens may only be minted for the caller's own userId (staff/admin may mint
- * for anyone) — Stream's server-side API skips all permission checks, so this
- * session bind is the only gate against identity spoofing (#899).
+ * for anyone), and never for a banned user — Stream's server-side API skips all
+ * permission checks, so this session bind is the only gate against identity
+ * spoofing and re-minting a revoked/suspended identity (#693/#899).
  */
 async function assertCanMintToken(forUserId: string): Promise<void> {
-  // Bypass the cookie-session cache so a just-demoted staff/admin can't keep
-  // minting cross-user tokens until the cache expires (#899).
+  // Bypass the cookie-session cache so a just-demoted staff/admin (or a
+  // just-banned user) can't keep minting cross-user tokens until the cache
+  // expires (#899).
   const session = await getSession(true);
   if (!session?.user?.id) {
     throw new Error("Unauthorized: sign in to request a Stream token");
+  }
+  // Never mint for a banned/suspended user (#693).
+  if (session.user.banned) {
+    throw new Error("Forbidden: account suspended");
   }
   if (session.user.id !== forUserId && !isPrivileged(session.user.role)) {
     throw new Error("Forbidden: cannot mint a token for another user");

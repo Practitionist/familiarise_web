@@ -44,6 +44,8 @@ export async function GET(req: NextRequest) {
       };
     }
 
+    // #693 — moderation-removed reviews stay hidden
+    whereClause.deletedAt = null;
     const reviews = await prisma.consultantReview.findMany({
       where: whereClause,
       take: 50,

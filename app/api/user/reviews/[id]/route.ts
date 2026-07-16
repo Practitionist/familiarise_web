@@ -28,7 +28,8 @@ export async function GET(
       },
     });
 
-    if (!review) {
+    // #693 — a moderation-removed review reads as gone
+    if (!review || review.deletedAt) {
       return NextResponse.json({ error: "Review not found" }, { status: 404 });
     }
 
@@ -59,10 +60,15 @@ export async function PUT(
     // Fetch the review to check ownership
     const review = await prisma.consultantReview.findUnique({
       where: { id: id },
-      select: { consulteeProfileId: true, consultantProfileId: true },
+      select: {
+        consulteeProfileId: true,
+        consultantProfileId: true,
+        deletedAt: true,
+      },
     });
 
-    if (!review) {
+    // #693 — a moderation-removed review cannot be edited back into view
+    if (!review || review.deletedAt) {
       return NextResponse.json({ error: "Review not found" }, { status: 404 });
     }
 

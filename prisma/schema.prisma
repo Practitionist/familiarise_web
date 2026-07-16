@@ -106,6 +106,14 @@ model User {
   // events back to a (deterministic) actor without exposing PII.
   pseudonymousId String?   @unique
 
+  // BetterAuth admin-plugin fields (#693 moderation, starts #725 Tier-1).
+  // Suspension = banned:true + banExpires set (lazy expiry, plugin auto-unbans
+  // at sign-in); permanent ban = banned:true + banExpires:null. Who/when/why
+  // lives in ModerationAction, not here.
+  banned     Boolean?  @default(false)
+  banReason  String?
+  banExpires DateTime? @db.Timestamptz
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -266,6 +274,9 @@ enum CancellationReason {
   CONSULTANT_ISSUE
   TECHNICAL_ISSUE
 
+  // Moderation-initiated (#693) — staff suspend/ban bulk-cancels
+  MODERATION
+
   // Other
   OTHER
 }
@@ -406,6 +417,9 @@ model Session {
   updatedAt DateTime @updatedAt
 
   activeOrganizationId String?
+  // Required by the BetterAuth admin plugin's generated queries; impersonation
+  // itself is not enabled (#693).
+  impersonatedBy       String?
 
   @@index([userId])
   @@map("sessions")
@@ -2345,6 +2359,10 @@ model ConsultantReview {
 
   consulteeProfile   ConsulteeProfile @relation(fields: [consulteeProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consulteeProfileId String
+
+  // Moderation CONTENT_REMOVED soft-delete (#693); public reads filter on
+  // null, staff moderation surfaces keep seeing the row.
+  deletedAt DateTime? @db.Timestamptz
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -4752,6 +4770,11 @@ model ModerationAction {
   // Staff who took the action
   takenById String
   takenBy   User   @relation(fields: [takenById], references: [id], onUpdate: Cascade, onDelete: Cascade)
+
+  // Post-hoc record of which side-effects actually executed (sessions
+  // revoked, appointments cancelled, refund totals, per-step failures) —
+  // best-effort steps can partially fail, and staff needs to see what stuck.
+  sideEffects Json?
 
   createdAt DateTime @default(now())
 

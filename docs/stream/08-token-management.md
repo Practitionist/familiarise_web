@@ -639,6 +639,12 @@ if (requestedUserId !== session.user.id) {
 }
 ```
 
+This is implemented in the `tokenProvider` and `chatTokenProvider` server actions (`actions/stream/chat/stream.action.ts`): both require a session, refuse to mint a token for a different user unless the caller is admin or staff, and refuse banned users outright. The banned-user check matters because Stream token revocation is timestamp-based — a moderated user could otherwise immediately re-mint a fresh token dated after the revocation and reconnect.
+
+### Moderation: Revocation and Deactivation
+
+When staff suspend a user, the moderation pipeline (`lib/moderation/side-effects.ts`, #693) calls `revokeUserToken(userId, new Date())`, which expires every token issued before that moment. Suspension recovery is automatic: once `banExpires` passes, the sign-in gate lifts and the token provider mints a fresh token that post-dates the revocation timestamp, so no un-revoke call is needed. A permanent ban additionally calls `deactivateUser` (with `mark_messages_deleted: false`), which blocks the user from connecting to Stream at all while preserving their message history for other channel members. Reinstating a banned user requires a symmetric `reactivateUser` call — tracked as a follow-up in the moderation ADR.
+
 ### Use Environment Variables
 
 Store API credentials securely:
