@@ -202,8 +202,8 @@ export function PlanMaterialsUpload({
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-[600px] max-h-[80vh] overflow-y-auto">
-        <DialogHeader>
+      <DialogContent className="sm:max-w-[600px] max-h-[90dvh] overflow-hidden flex flex-col">
+        <DialogHeader className="shrink-0">
           <DialogTitle>Plan Materials</DialogTitle>
           <DialogDescription>
             Upload materials for &ldquo;{planTitle}&rdquo;. These materials will
@@ -211,7 +211,7 @@ export function PlanMaterialsUpload({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-6 py-4">
+        <div className="min-h-0 flex-1 space-y-6 overflow-y-auto py-4">
           {/* Upload Section */}
           <div className="space-y-4">
             <h3 className="text-sm font-medium">Upload New Material</h3>
@@ -355,7 +355,7 @@ export function PlanMaterialsUpload({
           </div>
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="shrink-0 border-t pt-4">
           <Button variant="outline" onClick={onClose}>
             Close
           </Button>
