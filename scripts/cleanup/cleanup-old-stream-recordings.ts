@@ -35,6 +35,104 @@ export interface StreamRetentionResult {
   errors: string[];
 }
 
+type OrgRetention = { id: string; streamRecordingRetentionDays: number };
+type RecordingCandidate = { id: string; supabasePath: string | null };
+
+function recordOrgOutcome(
+  result: StreamRetentionResult,
+  org: OrgRetention,
+  expiredCount: number,
+): void {
+  result.cutoffsByOrg.push({
+    organizationId: org.id,
+    retentionDays: org.streamRecordingRetentionDays,
+    expiredCount,
+  });
+}
+
+// #899 — resolve which candidates are ready to tombstone. Rows without a
+// Supabase object tombstone directly. Rows with one must have their storage
+// object deleted first (DPDP) — an EXPIRED row with bytes still in the bucket is
+// orphaned storage and a retention violation. The network-bound deletes run in
+// bounded chunks (mirroring processExpiringRecordings' transfer sweep) so a large
+// candidate set can't serialise into a timeout or exhaust the pool. A failed
+// delete keeps its row un-tombstoned so tomorrow's run retries the pair together.
+async function collectTombstoneIds(
+  org: OrgRetention,
+  candidates: RecordingCandidate[],
+  result: StreamRetentionResult,
+): Promise<string[]> {
+  const tombstoneIds: string[] = [];
+
+  // Rows without a Supabase object need no storage call — tombstone directly.
+  for (const candidate of candidates) {
+    if (!candidate.supabasePath) {
+      tombstoneIds.push(candidate.id);
+    }
+  }
+
+  const supabaseCandidates = candidates.filter((c) => c.supabasePath);
+  const CONCURRENCY = 5;
+  for (let i = 0; i < supabaseCandidates.length; i += CONCURRENCY) {
+    const chunk = supabaseCandidates.slice(i, i + CONCURRENCY);
+    await Promise.all(
+      chunk.map(async (candidate) => {
+        // #899 — delete only the storage object here; the row's status flip
+        // + audit log land together in the transaction below so a partial
+        // failure can't tombstone the row before the audit write (which the
+        // `notIn [EXPIRED]` candidate filter would then never retry).
+        const del = await RecordingTransferService.deleteSupabaseObject(
+          candidate.supabasePath!,
+        );
+        if (del.success) {
+          tombstoneIds.push(candidate.id);
+        } else {
+          result.success = false;
+          result.errors.push(
+            `org=${org.id} recording=${candidate.id}: ${del.error}`,
+          );
+        }
+      }),
+    );
+  }
+
+  return tombstoneIds;
+}
+
+// Tombstone + clear the now-deleted Supabase pointers atomically with the audit
+// log (the storage object was removed above). storageType reflects that only
+// Stream's S3 copy — if any — remains.
+async function tombstoneRecordings(
+  org: OrgRetention,
+  tombstoneIds: string[],
+  cutoff: Date,
+): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    await tx.recording.updateMany({
+      where: { id: { in: tombstoneIds } },
+      data: {
+        status: "EXPIRED",
+        supabaseUrl: null,
+        supabasePath: null,
+        storageType: "STREAM_S3",
+      },
+    });
+    await tx.orgAuditLog.create({
+      data: {
+        organizationId: org.id,
+        category: "SYSTEM",
+        action: AUDIT_ACTIONS.SYSTEM.STREAM_RECORDING_DELETED,
+        description: `Tombstoned ${tombstoneIds.length} recording(s) past ${org.streamRecordingRetentionDays}d retention`,
+        details: {
+          cutoff: cutoff.toISOString(),
+          retentionDays: org.streamRecordingRetentionDays,
+          count: tombstoneIds.length,
+        },
+      },
+    });
+  });
+}
+
 // #476 — locked at the core so every entry (GH Actions / HTTP) shares one
 // mutual exclusion; fail-open: repeat-safe side effects, lock is belt-and-braces.
 export async function cleanupOldStreamRecordings(): Promise<StreamRetentionResult> {
@@ -81,97 +179,21 @@ async function cleanupOldStreamRecordingsUnlocked(): Promise<StreamRetentionResu
     });
     result.scanned += candidates.length;
     if (candidates.length === 0) {
-      result.cutoffsByOrg.push({
-        organizationId: org.id,
-        retentionDays: org.streamRecordingRetentionDays,
-        expiredCount: 0,
-      });
+      recordOrgOutcome(result, org, 0);
       continue;
     }
 
-    // DPDP (#899) — purge the Supabase object before tombstoning the row; an
-    // EXPIRED row with bytes still in the bucket is orphaned storage and a
-    // retention violation. A failed delete keeps its row un-tombstoned so
-    // tomorrow's run retries the pair together.
-    const tombstoneIds: string[] = [];
-
-    // Rows without a Supabase object need no storage call — tombstone directly.
-    for (const candidate of candidates) {
-      if (!candidate.supabasePath) {
-        tombstoneIds.push(candidate.id);
-      }
-    }
-
-    // #899 — network-bound Supabase deletes (read + storage remove + write) in
-    // bounded chunks, mirroring processExpiringRecordings' transfer sweep, so a
-    // large candidate set can't serialise into a timeout or exhaust the pool.
-    const supabaseCandidates = candidates.filter((c) => c.supabasePath);
-    const CONCURRENCY = 5;
-    for (let i = 0; i < supabaseCandidates.length; i += CONCURRENCY) {
-      const chunk = supabaseCandidates.slice(i, i + CONCURRENCY);
-      await Promise.all(
-        chunk.map(async (candidate) => {
-          // #899 — delete only the storage object here; the row's status flip
-          // + audit log land together in the transaction below so a partial
-          // failure can't tombstone the row before the audit write (which the
-          // `notIn [EXPIRED]` candidate filter would then never retry).
-          const del = await RecordingTransferService.deleteSupabaseObject(
-            candidate.supabasePath!,
-          );
-          if (del.success) {
-            tombstoneIds.push(candidate.id);
-          } else {
-            result.success = false;
-            result.errors.push(
-              `org=${org.id} recording=${candidate.id}: ${del.error}`,
-            );
-          }
-        }),
-      );
-    }
+    // DPDP (#899) — purge the Supabase object before tombstoning the row.
+    const tombstoneIds = await collectTombstoneIds(org, candidates, result);
     if (tombstoneIds.length === 0) {
-      result.cutoffsByOrg.push({
-        organizationId: org.id,
-        retentionDays: org.streamRecordingRetentionDays,
-        expiredCount: 0,
-      });
+      recordOrgOutcome(result, org, 0);
       continue;
     }
 
     try {
-      await prisma.$transaction(async (tx) => {
-        await tx.recording.updateMany({
-          where: { id: { in: tombstoneIds } },
-          // Tombstone + clear the now-deleted Supabase pointers atomically
-          // (the storage object was removed above). storageType reflects that
-          // only Stream's S3 copy — if any — remains.
-          data: {
-            status: "EXPIRED",
-            supabaseUrl: null,
-            supabasePath: null,
-            storageType: "STREAM_S3",
-          },
-        });
-        await tx.orgAuditLog.create({
-          data: {
-            organizationId: org.id,
-            category: "SYSTEM",
-            action: AUDIT_ACTIONS.SYSTEM.STREAM_RECORDING_DELETED,
-            description: `Tombstoned ${tombstoneIds.length} recording(s) past ${org.streamRecordingRetentionDays}d retention`,
-            details: {
-              cutoff: cutoff.toISOString(),
-              retentionDays: org.streamRecordingRetentionDays,
-              count: tombstoneIds.length,
-            },
-          },
-        });
-      });
+      await tombstoneRecordings(org, tombstoneIds, cutoff);
       result.expired += tombstoneIds.length;
-      result.cutoffsByOrg.push({
-        organizationId: org.id,
-        retentionDays: org.streamRecordingRetentionDays,
-        expiredCount: tombstoneIds.length,
-      });
+      recordOrgOutcome(result, org, tombstoneIds.length);
     } catch (err) {
       result.success = false;
       const msg = err instanceof Error ? err.message : String(err);

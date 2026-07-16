@@ -60,21 +60,12 @@ export async function detectConsultantNoShows(): Promise<NoShowResult> {
   );
 }
 
-async function detectConsultantNoShowsUnlocked(): Promise<NoShowResult> {
-  const errors: string[] = [];
-  let detected = 0;
-  let refunded = 0;
-
-  const graceCutoff = new Date(Date.now() - NO_SHOW_GRACE_MINUTES * 60 * 1000);
-
-  console.log("🔍 Scanning for consultant no-shows...");
-  console.log(`   Grace window: ${NO_SHOW_GRACE_MINUTES} min after session end`);
-
-  // Candidate consultations: still active (not already cancelled/completed),
-  // paid, whose slots have all ended past the grace window and where a
-  // MeetingSession actually happened (the call took place — a precondition for
-  // "the consultee showed up but the consultant didn't").
-  const candidates = await prisma.consultation.findMany({
+// Candidate consultations: still active (not already cancelled/completed),
+// paid, whose slots have all ended past the grace window and where a
+// MeetingSession actually happened (the call took place — a precondition for
+// "the consultee showed up but the consultant didn't").
+function findNoShowCandidates(graceCutoff: Date) {
+  return prisma.consultation.findMany({
     where: {
       status: { in: [AppointmentStatus.APPROVED, AppointmentStatus.SCHEDULED] },
       appointment: {
@@ -119,145 +110,209 @@ async function detectConsultantNoShowsUnlocked(): Promise<NoShowResult> {
       },
     },
   });
+}
+
+type NoShowCandidate = Awaited<ReturnType<typeof findNoShowCandidates>>[number];
+type NoShowParty = {
+  consultantUserId: string;
+  consulteeUserId: string;
+  appointmentId: string;
+};
+type PaidPayment = NonNullable<
+  NoShowCandidate["appointment"]
+>["payment"][number];
+
+// Returns the party ids when `consultation` is a confirmed CONSULTANT no-show,
+// or null to skip. Conservative definition: the consultee has a recorded join
+// (positive evidence they showed up) AND the consultant has no MeetingAttendance
+// row at all (firstJoinedAt is only ever written on a join, so an absent row
+// means they never arrived). Neither-showed and consultee-no-show cases are
+// intentionally excluded — no consultant-fault refund there.
+function evaluateConsultantNoShow(
+  consultation: NoShowCandidate,
+): NoShowParty | null {
+  const consultantUserId =
+    consultation.consultationPlan?.consultantProfile?.userId;
+  const consulteeUserId = consultation.requestedBy?.userId;
+  const appointmentId = consultation.appointment?.id;
+  if (!consultantUserId || !consulteeUserId || !appointmentId) {
+    // Cannot attribute presence without both user ids, and an undefined
+    // appointmentId would drop the where-filter on the slot updateMany below
+    // (Prisma ignores undefined) — skip, don't guess.
+    return null;
+  }
+
+  // Presence across every session tied to this booking's slots.
+  const sessions = (consultation.appointment?.slotsOfAppointment ?? [])
+    .map((s) => s.meetingSession)
+    .filter((m): m is NonNullable<typeof m> => !!m);
+  if (sessions.length === 0) return null;
+
+  const consultantJoined = sessions.some((s) =>
+    s.attendances.some((a) => a.userId === consultantUserId),
+  );
+  const consulteeJoined = sessions.some((s) =>
+    s.attendances.some((a) => a.userId === consulteeUserId),
+  );
+
+  if (!consulteeJoined || consultantJoined) return null;
+
+  return { consultantUserId, consulteeUserId, appointmentId };
+}
+
+// Claim it: CAS active → CANCELLED. This is the idempotency gate — the detection
+// query only reads APPROVED/SCHEDULED, so once flipped a later run (or the
+// auto-complete cron) cannot re-process it. A concurrent cancel landing here wins
+// and this returns false → skip. On a successful claim we also reflect the
+// no-show on the slots (no NO_SHOW slot status exists — schema frozen, #471 —
+// CANCELLED is the closest; only move slots left SCHEDULED/UNVERIFIED).
+async function claimConsultantNoShow(
+  consultationId: string,
+  appointmentId: string,
+): Promise<boolean> {
+  const claimed = await prisma.consultation.updateMany({
+    where: { id: consultationId, status: { in: CANCELLABLE_FROM } },
+    data: {
+      status: AppointmentStatus.CANCELLED,
+      cancellationReason: CancellationReason.CONSULTANT_UNAVAILABLE,
+      cancellationNotes: "#471 consultant no-show — auto-cancelled + refunded",
+      cancelledAt: new Date(),
+    },
+  });
+  if (claimed.count === 0) return false;
+
+  await prisma.slotOfAppointment.updateMany({
+    where: {
+      appointmentId,
+      completionStatus: {
+        in: [SlotCompletionStatus.SCHEDULED, SlotCompletionStatus.UNVERIFIED],
+      },
+    },
+    data: { completionStatus: SlotCompletionStatus.CANCELLED },
+  });
+  return true;
+}
+
+// Full refund, reusing B1's refundPayment path (#990). Idempotent:
+// refundPayment's refundable-balance guard throws if already refunded, so even a
+// stale re-entry cannot double-refund. On failure we surface for ops (the
+// cancellation stands) rather than silently swallowing. Returns the refunded
+// amount, whether refundPayment succeeded, and the payment (for notifications).
+async function refundNoShowConsultation(
+  consultation: NoShowCandidate,
+  errors: string[],
+): Promise<{
+  refundedPaise: number;
+  succeeded: boolean;
+  paidPayment: PaidPayment | undefined;
+}> {
+  const paidPayment = consultation.appointment?.payment?.find(
+    (p) => p.paymentStatus === PaymentStatus.SUCCEEDED && p.amount > 0,
+  );
+  if (!paidPayment) {
+    const msg = `No refundable payment for no-show consultation ${consultation.id}`;
+    console.warn(`   ⚠️ ${msg}`);
+    errors.push(msg);
+    return { refundedPaise: 0, succeeded: false, paidPayment: undefined };
+  }
+  try {
+    const r = await refundPayment({
+      paymentId: paidPayment.id,
+      reason: "consultant no-show (#471)",
+      initiatedByUserId: null,
+    });
+    console.log(`   💸 Refunded ${r.amountRefundedPaise}p`);
+    return {
+      refundedPaise: r.amountRefundedPaise,
+      succeeded: true,
+      paidPayment,
+    };
+  } catch (refundErr) {
+    const msg = `Failed to refund no-show consultation ${consultation.id} (payment ${paidPayment.id}): ${refundErr}`;
+    console.error(`   ❌ ${msg}`);
+    errors.push(msg);
+    return { refundedPaise: 0, succeeded: false, paidPayment };
+  }
+}
+
+// Fire-and-forget notifications (non-blocking, reusing the Novu service).
+function notifyNoShowParties(
+  consultation: NoShowCandidate,
+  party: NoShowParty,
+  refundedPaise: number,
+  paidPayment: PaidPayment | undefined,
+): void {
+  const consultantName =
+    consultation.consultationPlan?.consultantProfile?.user?.name ??
+    "Consultant";
+  const consulteeName = consultation.requestedBy?.user?.name ?? "Consultee";
+  const planTitle = consultation.consultationPlan?.title ?? "Consultation";
+  const dashboardUrl = `${getAppUrl()}/dashboard`;
+
+  void notifyAppointmentCancelled(
+    [party.consultantUserId, party.consulteeUserId],
+    {
+      appointmentId: party.appointmentId,
+      appointmentType: "consultation",
+      consultantName,
+      consulteeName,
+      planTitle,
+      dashboardUrl,
+      cancelledBy: "system",
+      reason: "Consultant did not attend the scheduled session.",
+    },
+  ).catch((e) => console.error(`[no-show] cancellation notify failed:`, e));
+
+  if (refundedPaise > 0 && paidPayment) {
+    void notifyRefundProcessed(party.consulteeUserId, {
+      amount: refundedPaise,
+      currency: paidPayment.currency,
+      reason: "consultant no-show",
+      appointmentType: "consultation",
+      consultantName,
+      dashboardUrl,
+    }).catch((e) => console.error(`[no-show] refund notify failed:`, e));
+  }
+}
+
+async function detectConsultantNoShowsUnlocked(): Promise<NoShowResult> {
+  const errors: string[] = [];
+  let detected = 0;
+  let refunded = 0;
+
+  const graceCutoff = new Date(Date.now() - NO_SHOW_GRACE_MINUTES * 60 * 1000);
+
+  console.log("🔍 Scanning for consultant no-shows...");
+  console.log(`   Grace window: ${NO_SHOW_GRACE_MINUTES} min after session end`);
+
+  const candidates = await findNoShowCandidates(graceCutoff);
 
   console.log(`Found ${candidates.length} paid, ended candidates to check`);
 
   for (const consultation of candidates) {
     try {
-      const consultantUserId =
-        consultation.consultationPlan?.consultantProfile?.userId;
-      const consulteeUserId = consultation.requestedBy?.userId;
-      const appointmentId = consultation.appointment?.id;
-      if (!consultantUserId || !consulteeUserId || !appointmentId) {
-        // Cannot attribute presence without both user ids, and an undefined
-        // appointmentId would drop the where-filter on the slot updateMany
-        // below (Prisma ignores undefined) — skip, don't guess.
-        continue;
-      }
-
-      // Presence across every session tied to this booking's slots.
-      const sessions = (consultation.appointment?.slotsOfAppointment ?? [])
-        .map((s) => s.meetingSession)
-        .filter((m): m is NonNullable<typeof m> => !!m);
-      if (sessions.length === 0) continue;
-
-      const consultantJoined = sessions.some((s) =>
-        s.attendances.some((a) => a.userId === consultantUserId),
-      );
-      const consulteeJoined = sessions.some((s) =>
-        s.attendances.some((a) => a.userId === consulteeUserId),
-      );
-
-      // Conservative definition of a CONSULTANT no-show: the consultee has a
-      // recorded join (positive evidence they showed up) AND the consultant has
-      // no MeetingAttendance row at all (firstJoinedAt is only ever written on a
-      // join, so an absent row means they never arrived). Neither-showed and
-      // consultee-no-show cases are intentionally excluded — no consultant-fault
-      // refund there.
-      if (!consulteeJoined || consultantJoined) continue;
+      const party = evaluateConsultantNoShow(consultation);
+      if (!party) continue;
 
       detected++;
       console.log(`\n🚫 Consultant no-show: consultation ${consultation.id}`);
       console.log(`   Plan: ${consultation.consultationPlan?.title}`);
 
-      // Claim it: CAS active → CANCELLED. This is the idempotency gate — the
-      // detection query only reads APPROVED/SCHEDULED, so once flipped a later
-      // run (or the auto-complete cron) cannot re-process it. A concurrent
-      // cancel landing here wins and this returns 0 → skip.
-      const claimed = await prisma.consultation.updateMany({
-        where: { id: consultation.id, status: { in: CANCELLABLE_FROM } },
-        data: {
-          status: AppointmentStatus.CANCELLED,
-          cancellationReason: CancellationReason.CONSULTANT_UNAVAILABLE,
-          cancellationNotes: "#471 consultant no-show — auto-cancelled + refunded",
-          cancelledAt: new Date(),
-        },
-      });
-      if (claimed.count === 0) {
+      const claimed = await claimConsultantNoShow(
+        consultation.id,
+        party.appointmentId,
+      );
+      if (!claimed) {
         console.log(`   ⏭️ Skipped — status changed since scan`);
         detected--;
         continue;
       }
 
-      // Reflect the no-show on the slots. No NO_SHOW slot status exists (schema
-      // frozen — #471 uses existing values); CANCELLED is the closest. Only move
-      // slots the auto-complete cron left SCHEDULED/UNVERIFIED.
-      await prisma.slotOfAppointment.updateMany({
-        where: {
-          appointmentId,
-          completionStatus: {
-            in: [SlotCompletionStatus.SCHEDULED, SlotCompletionStatus.UNVERIFIED],
-          },
-        },
-        data: { completionStatus: SlotCompletionStatus.CANCELLED },
-      });
+      const { refundedPaise, succeeded, paidPayment } =
+        await refundNoShowConsultation(consultation, errors);
+      if (succeeded) refunded++;
 
-      // Full refund, reusing B1's refundPayment path (#990). Idempotent:
-      // refundPayment's refundable-balance guard throws if already refunded, so
-      // even a stale re-entry cannot double-refund. On failure we surface for ops
-      // (the cancellation stands) rather than silently swallowing — same doctrine
-      // as the manual cancel route.
-      const paidPayment = consultation.appointment?.payment?.find(
-        (p) => p.paymentStatus === PaymentStatus.SUCCEEDED && p.amount > 0,
-      );
-      let refundedPaise = 0;
-      if (paidPayment) {
-        try {
-          const r = await refundPayment({
-            paymentId: paidPayment.id,
-            reason: "consultant no-show (#471)",
-            initiatedByUserId: null,
-          });
-          refundedPaise = r.amountRefundedPaise;
-          refunded++;
-          console.log(`   💸 Refunded ${refundedPaise}p`);
-        } catch (refundErr) {
-          const msg = `Failed to refund no-show consultation ${consultation.id} (payment ${paidPayment.id}): ${refundErr}`;
-          console.error(`   ❌ ${msg}`);
-          errors.push(msg);
-        }
-      } else {
-        const msg = `No refundable payment for no-show consultation ${consultation.id}`;
-        console.warn(`   ⚠️ ${msg}`);
-        errors.push(msg);
-      }
-
-      // Fire-and-forget notifications (non-blocking, reusing the Novu service).
-      const consultantName =
-        consultation.consultationPlan?.consultantProfile?.user?.name ??
-        "Consultant";
-      const consulteeName = consultation.requestedBy?.user?.name ?? "Consultee";
-      const planTitle = consultation.consultationPlan?.title ?? "Consultation";
-      const dashboardUrl = `${getAppUrl()}/dashboard`;
-
-      void notifyAppointmentCancelled(
-        [consultantUserId, consulteeUserId],
-        {
-          appointmentId,
-          appointmentType: "consultation",
-          consultantName,
-          consulteeName,
-          planTitle,
-          dashboardUrl,
-          cancelledBy: "system",
-          reason: "Consultant did not attend the scheduled session.",
-        },
-      ).catch((e) =>
-        console.error(`[no-show] cancellation notify failed:`, e),
-      );
-
-      if (refundedPaise > 0 && paidPayment) {
-        void notifyRefundProcessed(consulteeUserId, {
-          amount: refundedPaise,
-          currency: paidPayment.currency,
-          reason: "consultant no-show",
-          appointmentType: "consultation",
-          consultantName,
-          dashboardUrl,
-        }).catch((e) =>
-          console.error(`[no-show] refund notify failed:`, e),
-        );
-      }
+      notifyNoShowParties(consultation, party, refundedPaise, paidPayment);
     } catch (error) {
       const msg = `Failed to handle candidate consultation ${consultation.id}: ${error}`;
       console.error(`   ❌ ${msg}`);

@@ -546,19 +546,139 @@ async function submitVerificationRequest(
 // MAIN ENTRY POINT
 // ============================================================================
 
-export async function processOnboardingData(
-  userId: string,
-  body: unknown,
-  // Return type: `user` is a Prisma User with deeply-included relations
-  // (consultantProfile, consulteeProfile, slots, domain, etc.). Typing it
-  // precisely would require a shared Prisma payload type across server/action/client
-  // layers — not worth the coupling. Callers only read a few string IDs from it.
-): Promise<{
+const onboardingUserInclude = {
+  consultantProfile: {
+    include: {
+      slotsOfAvailabilityWeekly: true,
+      slotsOfAvailabilityCustom: true,
+      domain: true,
+      subDomains: true,
+      tags: true,
+    },
+  },
+  consulteeProfile: true,
+  workExperiences: true,
+  education: true,
+  certifications: true,
+  staffProfile: true,
+  adminProfile: true,
+} satisfies Prisma.UserInclude;
+
+type OnboardingUser = Prisma.UserGetPayload<{
+  include: typeof onboardingUserInclude;
+}>;
+
+type OnboardingResult = {
   success: boolean;
+  // `user` is a Prisma User with deeply-included relations (consultantProfile,
+  // consulteeProfile, slots, domain, etc.). Typing it precisely would require a
+  // shared Prisma payload type across server/action/client layers — not worth
+  // the coupling. Callers only read a few string IDs from it.
   user?: Record<string, unknown>;
   error?: string;
   verificationWarning?: string;
-}> {
+};
+
+async function runOnboardingTransaction(
+  userId: string,
+  validatedBody: OnboardingData,
+  body: unknown,
+): Promise<OnboardingUser> {
+  return prisma.$transaction(
+    async (tx) => {
+      const baseUserData: Prisma.UserUpdateInput = {
+        ...buildUserUpdateData(validatedBody),
+        // Reset profile IDs (will be set by profileFkData)
+        consultantProfileId: null,
+        consulteeProfileId: null,
+        staffProfileId: null,
+        adminProfileId: null,
+      };
+
+      const profileFkData = await upsertProfileByRole(
+        userId,
+        validatedBody,
+        tx,
+      );
+
+      await persistProfessionalBackground(
+        userId,
+        profileFkData.consultantProfileId,
+        body as Record<string, unknown>,
+        tx,
+      );
+
+      const user = await tx.user.update({
+        // #724, #840: CAS guard — only apply the role/profile transition
+        // while the user is still un-onboarded, so two devices onboarding
+        // the same email can't last-write-wins each other. A no-match
+        // throws P2025 and rolls back the whole tx (incl. profile upserts).
+        where: { id: userId, onboardingCompleted: { not: true } },
+        data: { ...baseUserData, ...profileFkData },
+        include: onboardingUserInclude,
+      });
+
+      return user;
+    },
+    { maxWait: 15000, timeout: 45000 },
+  );
+}
+
+// #724, #840: another device already completed onboarding for this user; treat
+// as idempotent success rather than clobbering their transition. Returns the
+// success result on a P2025-after-completion, or null to signal a rethrow.
+async function recoverIdempotentOnboarding(
+  userId: string,
+  error: unknown,
+): Promise<OnboardingResult | null> {
+  if (
+    error instanceof Prisma.PrismaClientKnownRequestError &&
+    error.code === "P2025"
+  ) {
+    const existing = await prisma.user.findUnique({
+      where: { id: userId },
+      include: onboardingUserInclude,
+    });
+    if (existing?.onboardingCompleted) {
+      return { success: true, user: existing };
+    }
+  }
+  return null;
+}
+
+// Post-transaction consultant verification. Returns a warning string when the
+// profile saved but the verification submission failed, else undefined.
+async function maybeSubmitConsultantVerification(
+  userId: string,
+  updatedUser: OnboardingUser,
+  body: unknown,
+  role: OnboardingData["role"],
+): Promise<string | undefined> {
+  if (role !== UserRole.CONSULTANT || !updatedUser.consultantProfileId) {
+    return undefined;
+  }
+  try {
+    await submitVerificationRequest(
+      userId,
+      updatedUser.consultantProfileId,
+      body as VerificationBody,
+      updatedUser.name || "",
+      updatedUser.email || "",
+    );
+    return undefined;
+  } catch (verificationError) {
+    console.error(
+      "Failed to create verification request:",
+      verificationError,
+    );
+    return "Your profile was saved but verification submission failed. Please contact support.";
+  }
+}
+
+export async function processOnboardingData(
+  userId: string,
+  body: unknown,
+): Promise<OnboardingResult> {
   const { validateOnboardingData } = await import("./onboarding");
 
   try {
@@ -591,107 +711,21 @@ export async function processOnboardingData(
     // onboardingCompleted flag at launch. This path now only handles
     // CONSULTANT / CONSULTEE / STAFF / ADMIN profiles.
 
-    const onboardingUserInclude = {
-      consultantProfile: {
-        include: {
-          slotsOfAvailabilityWeekly: true,
-          slotsOfAvailabilityCustom: true,
-          domain: true,
-          subDomains: true,
-          tags: true,
-        },
-      },
-      consulteeProfile: true,
-      workExperiences: true,
-      education: true,
-      certifications: true,
-      staffProfile: true,
-      adminProfile: true,
-    } satisfies Prisma.UserInclude;
-
-    let updatedUser: Prisma.UserGetPayload<{
-      include: typeof onboardingUserInclude;
-    }>;
+    let updatedUser: OnboardingUser;
     try {
-      updatedUser = await prisma.$transaction(
-        async (tx) => {
-          const baseUserData: Prisma.UserUpdateInput = {
-            ...buildUserUpdateData(validatedBody),
-            // Reset profile IDs (will be set by profileFkData)
-            consultantProfileId: null,
-            consulteeProfileId: null,
-            staffProfileId: null,
-            adminProfileId: null,
-          };
-
-          const profileFkData = await upsertProfileByRole(
-            userId,
-            validatedBody,
-            tx,
-          );
-
-          await persistProfessionalBackground(
-            userId,
-            profileFkData.consultantProfileId,
-            body as Record<string, unknown>,
-            tx,
-          );
-
-          const user = await tx.user.update({
-            // #724, #840: CAS guard — only apply the role/profile transition
-            // while the user is still un-onboarded, so two devices onboarding
-            // the same email can't last-write-wins each other. A no-match
-            // throws P2025 and rolls back the whole tx (incl. profile upserts).
-            where: { id: userId, onboardingCompleted: { not: true } },
-            data: { ...baseUserData, ...profileFkData },
-            include: onboardingUserInclude,
-          });
-
-          return user;
-        },
-        { maxWait: 15000, timeout: 45000 },
-      );
+      updatedUser = await runOnboardingTransaction(userId, validatedBody, body);
     } catch (error: unknown) {
-      // #724, #840: another device already completed onboarding for this user;
-      // treat as idempotent success rather than clobbering their transition.
-      if (
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === "P2025"
-      ) {
-        const existing = await prisma.user.findUnique({
-          where: { id: userId },
-          include: onboardingUserInclude,
-        });
-        if (existing?.onboardingCompleted) {
-          return { success: true, user: existing };
-        }
-      }
+      const recovered = await recoverIdempotentOnboarding(userId, error);
+      if (recovered) return recovered;
       throw error;
     }
 
-    // Post-transaction: consultant verification
-    let verificationWarning: string | undefined;
-    if (
-      validatedBody.role === UserRole.CONSULTANT &&
-      updatedUser.consultantProfileId
-    ) {
-      try {
-        await submitVerificationRequest(
-          userId,
-          updatedUser.consultantProfileId,
-          body as VerificationBody,
-          updatedUser.name || "",
-          updatedUser.email || "",
-        );
-      } catch (verificationError) {
-        console.error(
-          "Failed to create verification request:",
-          verificationError,
-        );
-        verificationWarning =
-          "Your profile was saved but verification submission failed. Please contact support.";
-      }
-    }
+    const verificationWarning = await maybeSubmitConsultantVerification(
+      userId,
+      updatedUser,
+      body,
+      validatedBody.role,
+    );
 
     return { success: true, user: updatedUser, verificationWarning };
   } catch (error: unknown) {
