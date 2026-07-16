@@ -903,9 +903,16 @@ export default function ContentModerationPage() {
                           setSuspensionDays(Number.NaN);
                           return;
                         }
-                        const v = Number.parseInt(e.target.value, 10);
-                        if (Number.isFinite(v))
-                          setSuspensionDays(Math.min(365, Math.max(1, v)));
+                        // Reject decimals (e.g. "7.5") rather than truncating
+                        // them; invalid input falls back to the NaN sentinel so
+                        // the Suspend button stays disabled until a valid whole
+                        // number in range is entered.
+                        const v = Number(e.target.value);
+                        setSuspensionDays(
+                          Number.isInteger(v)
+                            ? Math.min(365, Math.max(1, v))
+                            : Number.NaN,
+                        );
                       }}
                       disabled={reportActionMutation.isPending}
                       aria-label="Custom suspension days"
