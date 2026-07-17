@@ -26,6 +26,7 @@ export async function GET(req: NextRequest) {
     const type = searchParams.get("type") as ModerationReportType | null;
     const status = searchParams.get("status") as ModerationReportStatus | null;
     const assignedToId = searchParams.get("assignedToId");
+    const search = searchParams.get("search");
     const page = parseInt(searchParams.get("page") || "1");
     const limit = parseInt(searchParams.get("limit") || "20");
     const offset = (page - 1) * limit;
@@ -36,6 +37,17 @@ export async function GET(req: NextRequest) {
     if (status) where.status = status;
     if (assignedToId) {
       where.assignedToId = assignedToId === "unassigned" ? null : assignedToId;
+    }
+    // #997 secondary findings — the client used to fetch every PENDING
+    // report and substring-search on every keystroke. Search server-side
+    // over the same fields the old client filter checked.
+    if (search) {
+      where.OR = [
+        { id: { contains: search, mode: "insensitive" } },
+        { reason: { contains: search, mode: "insensitive" } },
+        { reportedBy: { name: { contains: search, mode: "insensitive" } } },
+        { targetUser: { name: { contains: search, mode: "insensitive" } } },
+      ];
     }
 
     const [reports, total] = await Promise.all([

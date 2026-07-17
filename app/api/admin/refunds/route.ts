@@ -35,28 +35,37 @@ export async function GET(req: NextRequest) {
       };
     }
 
-    // Fetch refunds with pagination
-    const [refunds, total] = await Promise.all([
-      prisma.refund.findMany({
-        where,
-        skip: (page - 1) * limit,
-        take: limit,
-        orderBy: { createdAt: "desc" },
-        include: {
-          payment: {
-            select: {
-              id: true,
-              paymentIntent: true,
+    // Fetch refunds with pagination. pending/succeeded/failed counts are
+    // dashboard-wide (unfiltered by search/gateway) — #997 secondary
+    // findings: the stat cards used to `.filter()` the current page's
+    // `refunds` array, so they silently showed ≤`limit` (20) instead of the
+    // true platform-wide count.
+    const [refunds, total, pendingCount, succeededCount, failedCount] =
+      await Promise.all([
+        prisma.refund.findMany({
+          where,
+          skip: (page - 1) * limit,
+          take: limit,
+          orderBy: { createdAt: "desc" },
+          include: {
+            payment: {
+              select: {
+                id: true,
+                paymentIntent: true,
+              },
             },
           },
-        },
-      }),
-      prisma.refund.count({ where }),
-    ]);
+        }),
+        prisma.refund.count({ where }),
+        prisma.refund.count({ where: { status: "PENDING" } }),
+        prisma.refund.count({ where: { status: "SUCCEEDED" } }),
+        prisma.refund.count({ where: { status: "FAILED" } }),
+      ]);
 
     return NextResponse.json({
       refunds,
       total,
+      stats: { pendingCount, succeededCount, failedCount },
       page,
       limit,
       totalPages: Math.ceil(total / limit),
