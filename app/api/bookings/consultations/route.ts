@@ -1,5 +1,9 @@
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
+import {
+  PROFILE_WITH_USER_SELECT,
+  APPOINTMENT_LIST_SELECT,
+} from "@/lib/booking/list-selects";
 import { AppointmentStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { transitionConsultationRequest } from "@/lib/booking/transitions";
@@ -119,43 +123,11 @@ export async function GET(request: NextRequest) {
               title: true,
               durationInHours: true,
               consultantProfileId: true,
-              consultantProfile: {
-                select: {
-                  id: true,
-                  user: { select: { id: true, name: true, image: true } },
-                },
-              },
+              consultantProfile: PROFILE_WITH_USER_SELECT,
             },
           },
-          requestedBy: {
-            select: {
-              id: true,
-              user: { select: { id: true, name: true, image: true } },
-            },
-          },
-          appointment: {
-            select: {
-              id: true,
-              organizationId: true,
-              slotsOfAppointment: {
-                select: {
-                  id: true,
-                  startsAt: true,
-                  endsAt: true,
-                  isTentative: true,
-                },
-                orderBy: { startsAt: "asc" },
-              },
-              payment: {
-                select: {
-                  id: true,
-                  paymentStatus: true,
-                  amount: true,
-                  currency: true,
-                },
-              },
-            },
-          },
+          requestedBy: PROFILE_WITH_USER_SELECT,
+          appointment: APPOINTMENT_LIST_SELECT,
         },
         orderBy: {
           requestedAt: "desc",
