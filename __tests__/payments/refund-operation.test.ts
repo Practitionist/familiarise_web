@@ -828,6 +828,54 @@ describe("refundPayment — M1 gateway wiring", () => {
     expect(state.refunds[0]?.cascadedAt).toBeTruthy();
   });
 
+  it("release #1014 review — gateway metadata MERGES into the row, preserving Phase-1 audit keys", async () => {
+    seedSinglePartyWalletPayment({});
+    // Razorpay always returns notes (reason at minimum), so this is the
+    // every-refund path, not an edge case.
+    mockCreateGatewayRefund.mockResolvedValueOnce({
+      refundId: "rfnd_gw_meta",
+      amount: 10000,
+      currency: "INR",
+      status: "SUCCEEDED",
+      metadata: { reason: "customer request", gw_key: "gw_val" },
+    });
+
+    await refundPayment({
+      paymentId: "pay-1",
+      reason: "customer request",
+      initiatedByUserId: "admin-1",
+    });
+
+    const meta = state.refunds[0]?.metadata as Record<string, unknown>;
+    // Phase-1 keys survive the gateway-id binding...
+    expect(meta.initiatedByUserId).toBe("admin-1");
+    expect(meta.source).toBe("app");
+    // ...and the gateway keys land alongside them.
+    expect(meta.gw_key).toBe("gw_val");
+    expect(meta.reason).toBe("customer request");
+  });
+
+  it("release #1014 review — falsy gateway id keeps the pending_ placeholder and omits gatewayRefundId", async () => {
+    seedSinglePartyWalletPayment({});
+    mockCreateGatewayRefund.mockResolvedValueOnce({
+      refundId: "",
+      amount: 10000,
+      currency: "INR",
+      status: "PENDING",
+    });
+
+    const result = await refundPayment({
+      paymentId: "pay-1",
+      reason: "id-less gateway ack",
+    });
+
+    expect(result.status).toBe("PENDING");
+    // Contract: absent, never "".
+    expect(result.gatewayRefundId).toBeUndefined();
+    // Row keeps the placeholder the reconcile cron matches on.
+    expect(String(state.refunds[0]?.refundId)).toMatch(/^pending_/);
+  });
+
   it("gateway throw keeps a pending_ placeholder, runs NO cascade, and surfaces RefundGatewayError", async () => {
     seedSinglePartyWalletPayment({});
     mockCreateGatewayRefund.mockRejectedValueOnce(
