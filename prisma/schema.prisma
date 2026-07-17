@@ -2205,6 +2205,8 @@ model DpdpGrievance {
   resolvedAt  DateTime?       @db.Timestamptz
 
   @@index([status, createdAt])
+  // Postgres does not auto-index FKs; the Cascade delete scans by userId.
+  @@index([userId])
 }
 
 enum GrievanceStatus {

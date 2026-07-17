@@ -23,7 +23,16 @@ export async function POST(req: NextRequest) {
   if (limited) return limited;
 
   try {
-    const parsed = GrievanceSchema.safeParse(await req.json());
+    let payload: unknown;
+    try {
+      payload = await req.json();
+    } catch {
+      return NextResponse.json(
+        { error: "Malformed JSON request body" },
+        { status: 400 },
+      );
+    }
+    const parsed = GrievanceSchema.safeParse(payload);
     if (!parsed.success) {
       return NextResponse.json(
         { error: parsed.error.issues[0]?.message ?? "Invalid request" },
@@ -40,12 +49,14 @@ export async function POST(req: NextRequest) {
       select: { id: true, status: true, createdAt: true },
     });
 
-    // Ops visibility — engineering-facing, not rendered to the user.
-    void recordSystemEvent({
+    // Ops visibility — engineering-facing, not rendered to the user. Awaited so
+    // the insert completes before the serverless function freezes (this is a
+    // low-volume compliance surface, so the extra insert is cheap).
+    await recordSystemEvent({
       category: "COMPLIANCE",
       message: `DPDP grievance ${grievance.id} filed by user ${userId}`,
       context: { grievanceId: grievance.id, userId },
-    }).catch(() => {});
+    });
 
     return NextResponse.json({ grievance }, { status: 201 });
   } catch (error) {

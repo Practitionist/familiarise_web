@@ -22,6 +22,21 @@ export const TERMINAL_DISPUTE_STATUSES: DisputeStatus[] = [
   "CLOSED",
 ];
 
+/**
+ * #1019 — statuses that must NOT block an app refund or an appointment mutation.
+ * The terminal verdicts plus WARNING_CLOSED: a closed early-fraud warning is
+ * treated as resolved (handleDisputeUpdated already releases held earnings on
+ * it). It can re-escalate to NEEDS_RESPONSE later, but the refundable
+ * computation nets a subsequent LOST/CHARGE_REFUNDED at that point, so a
+ * resolved warning must not strand a legitimate refund or freeze the
+ * appointment. Active warnings (WARNING_NEEDS_RESPONSE / WARNING_UNDER_REVIEW)
+ * are deliberately absent — those still block while under review.
+ */
+export const DISPUTE_INACTIVE_FOR_GATING: DisputeStatus[] = [
+  ...TERMINAL_DISPUTE_STATUSES,
+  "WARNING_CLOSED",
+];
+
 /** Allowed forward transitions. Same-status is handled separately (idempotent). */
 const ALLOWED: Record<DisputeStatus, DisputeStatus[]> = {
   WARNING_NEEDS_RESPONSE: [

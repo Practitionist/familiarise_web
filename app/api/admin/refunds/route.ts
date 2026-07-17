@@ -113,7 +113,16 @@ export async function POST(req: NextRequest) {
     const auth = await requirePrivilegedAuth();
     if (auth.error) return auth.error;
 
-    const parsed = RefundBodySchema.safeParse(await req.json());
+    let payload: unknown;
+    try {
+      payload = await req.json();
+    } catch {
+      return NextResponse.json(
+        { error: "Malformed JSON request body" },
+        { status: 400 },
+      );
+    }
+    const parsed = RefundBodySchema.safeParse(payload);
     if (!parsed.success) {
       return NextResponse.json(
         { error: parsed.error.issues[0]?.message ?? "Invalid request" },

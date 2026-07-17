@@ -114,11 +114,14 @@ async function buildBundleFor(organizationId: string): Promise<ExportBundle> {
     }),
   ]);
 
+  const seenUserIds = new Set<string>();
   const allMembers = memberships
     .map((m) => m.user)
-    .filter(
-      (u, idx, arr) => arr.findIndex((x) => x.id === u.id) === idx,
-    );
+    .filter((u) => {
+      if (!u || seenUserIds.has(u.id)) return false;
+      seenUserIds.add(u.id);
+      return true;
+    });
 
   // #701 — DPDP: withhold PII for members who have withdrawn core-processing
   // consent. Their name/email are dropped from `members` and scrubbed from the

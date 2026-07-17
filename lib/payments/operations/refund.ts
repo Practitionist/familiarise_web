@@ -51,7 +51,7 @@ import { createRefund as createGatewayRefund } from "@/lib/payments";
 import { walletCredit } from "@/lib/api/organizations/wallet";
 import { reverseBookingUtilization } from "@/lib/api/organizations/program-helpers";
 import { transitionOverage } from "@/lib/payments/billing/overage-transitions";
-import { TERMINAL_DISPUTE_STATUSES } from "@/lib/payments/dispute-status";
+import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
 import { assertEarningStatusTransitionLegal } from "@/lib/payments/payouts/earning-status";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
@@ -208,7 +208,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
   const liveDispute = await prisma.dispute.findFirst({
     where: {
       paymentId: input.paymentId,
-      status: { notIn: TERMINAL_DISPUTE_STATUSES },
+      status: { notIn: DISPUTE_INACTIVE_FOR_GATING },
     },
     select: { status: true },
   });
@@ -282,7 +282,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
       const liveDisputeNow = await tx.dispute.findFirst({
         where: {
           paymentId: input.paymentId,
-          status: { notIn: TERMINAL_DISPUTE_STATUSES },
+          status: { notIn: DISPUTE_INACTIVE_FOR_GATING },
         },
         select: { id: true },
       });

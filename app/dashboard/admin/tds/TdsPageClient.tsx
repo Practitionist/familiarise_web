@@ -178,9 +178,9 @@ export default function TdsPageClient() {
                 </tr>
               </thead>
               <tbody>
-                {(consultants.data?.consultants ?? []).map((c, i) => (
+                {(consultants.data?.consultants ?? []).map((c) => (
                   <tr
-                    key={`${c.consultantProfileId}-${c.tdsRateBps}-${i}`}
+                    key={`${c.consultantProfileId}-${c.tdsRateBps}`}
                     className="border-b last:border-0"
                   >
                     <td className="py-2 pr-4 font-mono text-xs">

@@ -1,5 +1,5 @@
 import prisma from "@/lib/prisma";
-import { TERMINAL_DISPUTE_STATUSES } from "./dispute-status";
+import { DISPUTE_INACTIVE_FOR_GATING } from "./dispute-status";
 
 /**
  * #1008 — true when a non-terminal (live) dispute exists on any payment for the
@@ -16,7 +16,7 @@ export async function hasActiveDisputeForAppointment(
   const dispute = await prisma.dispute.findFirst({
     where: {
       payment: { appointmentId },
-      status: { notIn: TERMINAL_DISPUTE_STATUSES },
+      status: { notIn: DISPUTE_INACTIVE_FOR_GATING },
     },
     select: { id: true },
   });
