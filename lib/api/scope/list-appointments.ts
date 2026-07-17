@@ -43,14 +43,15 @@ export interface ListAppointmentsResult {
  * Build the Prisma `where` clause for the requested scope.
  *
  *   - `personal`: rows with `organizationId IS NULL` AND the user
- *     participates (consultee on Consultation/Subscription/Trial OR
- *     consultant on the linked plan). v1 narrows to consultee for
- *     simplicity; consultant-side filtering can layer on later.
+ *     participates — either as the consultee (booked the session) OR as the
+ *     consultant (owns the linked plan). Both sides are covered (#674): a
+ *     consultant's own B2C sessions appear in their personal list; org-hosted
+ *     sessions carry an organizationId and fall under `org` scope instead.
  *   - `org`: rows where `organizationId = orgId`. No user filter —
  *     MANAGER+ sees the org's full activity.
  *   - `all`: no scope filter; admin-only.
  */
-function buildWhere(
+export function buildWhere(
   params: ListAppointmentsParams,
 ): Prisma.AppointmentWhereInput {
   const base: Prisma.AppointmentWhereInput = {
@@ -60,13 +61,30 @@ function buildWhere(
   };
 
   if (params.scope.kind === "personal") {
+    // Consultee arms stay scoped to non-org bookings: a learner's sponsored
+    // sessions are org business (they surface on the home dashboard with a
+    // "Sponsored · Org" pill and under org scope), deliberately kept out of the
+    // personal LIST. Consultant arms are NOT so constrained — an independent
+    // consultant (or a host EXPERT) has no org-scope access, so every session
+    // they DELIVER must appear here, sponsored or not. The org relation is
+    // included so the client can badge the sponsored ones.
+    const uid = params.userId;
     return {
       ...base,
-      organizationId: null,
       OR: [
-        { consultation: { requestedBy: { userId: params.userId } } },
-        { subscription: { requestedBy: { userId: params.userId } } },
-        { trialSession: { consulteeProfile: { userId: params.userId } } },
+        // Consultee side — self-funded (non-org) bookings only.
+        { organizationId: null, consultation: { requestedBy: { userId: uid } } },
+        { organizationId: null, subscription: { requestedBy: { userId: uid } } },
+        {
+          organizationId: null,
+          trialSession: { consulteeProfile: { userId: uid } },
+        },
+        // Consultant side (#674) — every session the user delivers.
+        { consultation: { consultationPlan: { consultantProfile: { userId: uid } } } },
+        { subscription: { subscriptionPlan: { consultantProfile: { userId: uid } } } },
+        { trialSession: { consultantProfile: { userId: uid } } },
+        { webinar: { webinarPlan: { consultantProfile: { userId: uid } } } },
+        { class: { classPlan: { consultantProfile: { userId: uid } } } },
       ],
     };
   }
