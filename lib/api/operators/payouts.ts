@@ -135,7 +135,13 @@ export async function getOperatorPayouts(
           select: { id: true },
         },
       },
-      orderBy: { createdAt: "desc" },
+      // #863 — MSME §43B(h): pay micro/small vendors within their statutory
+      // window first. Order by mustPayByDate ascending (soonest deadline on top,
+      // nulls last), then newest. Gives ops a due-date-first work queue.
+      orderBy: [
+        { mustPayByDate: { sort: "asc", nulls: "last" } },
+        { createdAt: "desc" },
+      ],
       take: limit,
       skip: offset,
     }),
@@ -161,6 +167,8 @@ export async function getOperatorPayouts(
       processedAt: p.processedAt,
       failureReason: p.failureReason,
       createdAt: p.createdAt,
+      // #863 — MSME statutory pay-by date (null for non-MSME vendors).
+      mustPayByDate: p.mustPayByDate,
     })),
     stats,
     pagination: {
