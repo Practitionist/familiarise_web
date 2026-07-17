@@ -47,6 +47,8 @@ import {
   ALLOCATION_APPROVABLE_FROM,
   transitionConsultationRequest,
   transitionSubscriptionRequest,
+  transitionWebinarEvent,
+  transitionClassEvent,
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import {
@@ -2070,22 +2072,49 @@ export class SlotAllocationService {
     // helper's upsert preserves the first-create priceAtBookingPaise.
     const existingUtil = await tx.bookingUtilization.findUnique({
       where: { paymentId: orgPayment.id },
-      select: { id: true },
+      select: { id: true, appointmentIds: true },
     });
     const priceAtBookingPaise = existingUtil ? 0 : orgPayment.amount;
+
+    // Re-allocation deletes counted appointments and recreates them with
+    // fresh ids, so an id-set diff alone re-debits every replaced session.
+    // Substitute stale tracked ids (no longer live on this subscription)
+    // with incoming ids 1:1 WITHOUT debiting; only ids beyond the
+    // substitution budget are genuinely additional sessions.
+    let idsToDebit = newAppointmentIds;
+    if (existingUtil) {
+      const liveIds = new Set(subscription!.appointments.map((a) => a.id));
+      const trackedLive = existingUtil.appointmentIds.filter((id) =>
+        liveIds.has(id),
+      );
+      const staleCount = existingUtil.appointmentIds.length - trackedLive.length;
+      if (staleCount > 0) {
+        const alreadyTracked = new Set(trackedLive);
+        const incomingNew = newAppointmentIds.filter(
+          (id) => !alreadyTracked.has(id),
+        );
+        const substituted = incomingNew.slice(0, staleCount);
+        idsToDebit = incomingNew.slice(staleCount);
+        await tx.bookingUtilization.update({
+          where: { id: existingUtil.id },
+          data: { appointmentIds: [...trackedLive, ...substituted] },
+        });
+        if (idsToDebit.length === 0) return;
+      }
+    }
 
     try {
       await recordBookingUtilization(tx, {
         programAssignmentId: assignment.id,
         paymentId: orgPayment.id,
-        engagementsConsumed: newAppointmentIds.length,
+        engagementsConsumed: idsToDebit.length,
         priceAtBookingPaise,
         // PR-1e (G3): pass the appointment ids so re-allocation
         // (delete+recreate of the same slot) can't double-debit. The
         // helper computes the set diff against
         // BookingUtilization.appointmentIds and increments only by the
         // genuinely-new ids.
-        appointmentIds: newAppointmentIds,
+        appointmentIds: idsToDebit,
       });
     } catch (err) {
       if (err instanceof ProgramAssignmentLimitError) {
@@ -2432,10 +2461,12 @@ export class SlotAllocationService {
 
       case "webinar":
         // Webinar model does NOT have startDate/endDate fields
-        // Start date is stored in the Appointment's slots
-        await tx.webinar.update({
+        // Start date is stored in the Appointment's slots.
+        // Guarded transition — an unguarded update let allocation racing a
+        // cancel resurrect a CANCELLED (or re-open a COMPLETED) webinar.
+        await transitionWebinarEvent(tx, {
           where: { id: eventId },
-          data: { status: "SCHEDULED" },
+          to: "SCHEDULED",
         });
         break;
 
@@ -2444,10 +2475,11 @@ export class SlotAllocationService {
         // FIX: Only set schedulingPeriod if not already configured — same guard as SUBSCRIPTION.
         // Overwriting an explicitly-set period on re-allocation shifts the window, allowing
         // slots outside the original range to pass the scheduling-period validation check.
-        await tx.class.update({
+        // Guarded transition — same resurrection hazard as WEBINAR above.
+        await transitionClassEvent(tx, {
           where: { id: eventId },
+          to: "SCHEDULED",
           data: {
-            status: "SCHEDULED",
             ...(!config.schedulingPeriodStartsAt ||
             !config.schedulingPeriodEndsAt
               ? {

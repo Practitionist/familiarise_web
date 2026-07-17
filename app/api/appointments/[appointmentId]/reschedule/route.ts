@@ -206,12 +206,14 @@ export async function POST(
             ? allSubscriptionSlots
             : appointment.slotsOfAppointment;
 
-        // For SUBSCRIPTION with slotIds, only reschedule the specific slots
+        // For SUBSCRIPTION/CLASS with slotIds, only reschedule the specific
+        // slots. CLASS previously fell through to the whole-class branch, so
+        // a per-session class reschedule silently escalated to every session.
         if (
-          derivedType === "SUBSCRIPTION" &&
           slotIds &&
           slotIds.length > 0 &&
-          appointment.subscription
+          ((derivedType === "SUBSCRIPTION" && appointment.subscription) ||
+            (derivedType === "CLASS" && appointment.class))
         ) {
           // Filter to only the requested slots from ALL subscription slots
           slotsToReschedule = allSubscriptionSlots.filter((s) =>
@@ -243,10 +245,10 @@ export async function POST(
 
         // Mark the appropriate slots as tentative
         if (
-          derivedType === "SUBSCRIPTION" &&
           slotIds &&
           slotIds.length > 0 &&
-          appointment.subscription
+          ((derivedType === "SUBSCRIPTION" && appointment.subscription) ||
+            (derivedType === "CLASS" && appointment.class))
         ) {
           // Individual/multiple session reschedule - mark ALL slots of the affected appointments
           // (e.g. a 1.5h session has 3 consecutive slots; all must be marked tentative together)
