@@ -51,6 +51,7 @@ import { createRefund as createGatewayRefund } from "@/lib/payments";
 import { walletCredit } from "@/lib/api/organizations/wallet";
 import { reverseBookingUtilization } from "@/lib/api/organizations/program-helpers";
 import { transitionOverage } from "@/lib/payments/billing/overage-transitions";
+import { TERMINAL_DISPUTE_STATUSES } from "@/lib/payments/dispute-status";
 import { assertEarningStatusTransitionLegal } from "@/lib/payments/payouts/earning-status";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
@@ -199,6 +200,25 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
     );
   }
 
+  // #1008 — block an app-initiated refund while a dispute is LIVE (non-terminal)
+  // on this payment: the gateway may still pull the money via the dispute, so
+  // refunding now risks paying the customer twice. Terminal disputes already
+  // reduce `refundable` above. Gateway-webhook-driven cascades (applyRefundCascade
+  // directly) bypass this — they reflect money the bank already moved.
+  const liveDispute = await prisma.dispute.findFirst({
+    where: {
+      paymentId: input.paymentId,
+      status: { notIn: TERMINAL_DISPUTE_STATUSES },
+    },
+    select: { status: true },
+  });
+  if (liveDispute) {
+    throw new RefundValidationError(
+      `Payment ${input.paymentId} has an open dispute (${liveDispute.status}); resolve it before refunding`,
+      "REFUND_BLOCKED_BY_DISPUTE",
+    );
+  }
+
   const requested = input.amountPaise ?? refundable;
   if (requested <= 0) {
     throw new RefundValidationError(
@@ -252,6 +272,24 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
         throw new RefundValidationError(
           `Race-loss: refund amount ${requested} exceeds refundable ${remainingNow} on payment ${input.paymentId}`,
           "AMOUNT_EXCEEDS_REFUNDABLE",
+        );
+      }
+
+      // #1008 — re-check for a live dispute inside the Serializable tx. Reading
+      // the dispute table here makes SSI abort the loser when a dispute-status
+      // change (handleDisputeUpdated, also Serializable) interleaves between the
+      // outer read and this reservation.
+      const liveDisputeNow = await tx.dispute.findFirst({
+        where: {
+          paymentId: input.paymentId,
+          status: { notIn: TERMINAL_DISPUTE_STATUSES },
+        },
+        select: { id: true },
+      });
+      if (liveDisputeNow) {
+        throw new RefundValidationError(
+          `Payment ${input.paymentId} has an open dispute; resolve it before refunding`,
+          "REFUND_BLOCKED_BY_DISPUTE",
         );
       }
 

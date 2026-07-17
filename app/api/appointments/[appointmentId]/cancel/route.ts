@@ -16,6 +16,7 @@ import {
   refundWholeEventPayments,
   type WholeEventRefundSummary,
 } from "@/lib/payments/operations/event-refunds";
+import { hasActiveDisputeForAppointment } from "@/lib/payments/dispute-guard";
 import {
   computeRefundPct,
   parsePolicySnapshot,
@@ -188,6 +189,19 @@ export async function POST(
       consulteeName =
         appointment.subscription.requestedBy?.user?.name || undefined;
       planTitle = appointment.subscription.subscriptionPlan?.title;
+    }
+
+    // #1008 — refuse to cancel while a dispute is live on this appointment: the
+    // cancel would fire refunds that double-pay against a gateway chargeback.
+    if (await hasActiveDisputeForAppointment(appointmentId)) {
+      return NextResponse.json(
+        {
+          error:
+            "This appointment has an open payment dispute and can't be cancelled until it resolves.",
+          code: "DISPUTE_ACTIVE",
+        },
+        { status: 409 },
+      );
     }
 
     // Prepare cancellation data
