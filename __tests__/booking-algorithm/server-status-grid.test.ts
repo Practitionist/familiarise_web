@@ -8,7 +8,7 @@
  * Covers the PURE aggregation helpers extracted for the consultant
  * Allocate-Slots calendar's server-side move:
  *
- *  - computeWeeklyConfirmedCallCounts (app/api/slots/appointments/route.ts):
+ *  - computeWeeklyConfirmedCallCounts (lib/booking/weekly-call-counts.ts):
  *    Phase 3's per-week confirmed-call aggregate, parity-checked against
  *    SlotCalculationService.weekKey — the SAME key the interactive weekly-
  *    limit guard and the server validator (SubscriptionValidationService) use.
@@ -32,7 +32,7 @@ jest.mock("../../lib/auth-server", () => ({
 }));
 
 import { SlotCalculationService } from "@/utils/slotAllocation/SlotCalculationService";
-import { computeWeeklyConfirmedCallCounts } from "@/app/api/slots/appointments/route";
+import { computeWeeklyConfirmedCallCounts } from "@/lib/booking/weekly-call-counts";
 import {
   buildOverlapMetaIndex,
   overlapMetaCandidatesFor,
