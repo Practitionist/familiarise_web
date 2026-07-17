@@ -39,6 +39,10 @@ export interface UseCalendarDataOptions {
   mode: "view" | "select" | "allocate";
   allowedStart?: Date;
   allowedEnd?: Date;
+  /** #997 Phase 3 — subscription per-call slot count, sent to the event-slots
+   * fetch so the server can bucket `weeklyConfirmedCallCounts` the same way
+   * the interactive weekly-limit guard needs it. Ignored for other event types. */
+  sessionDurationInHours?: number;
 }
 
 export interface TimeSlot {
@@ -113,6 +117,15 @@ export interface RawSlotData {
   dayOfWeek?: string;
   localStartTime?: string;
   localEndTime?: string;
+  /** #997 Phase 2 — server-precomputed tooltip metadata for this interval
+   * (title/participant of any overlapping appointment). Only present because
+   * fetchAvailabilitySlots requests `includeAppointmentDetails`. */
+  overlappingAppointments?: Array<{
+    id: string;
+    type: string;
+    title: string;
+    with?: string;
+  }>;
 }
 
 /**
@@ -142,7 +155,6 @@ interface SlotStatusResult {
 interface CalendarData {
   consultantDetails: ConsultantData | null;
   availableSlots: TimeSlot[];
-  existingAppointments: Appointment[];
   rawAvailabilitySlots: {
     weekly: RawSlotData[];
     custom: RawSlotData[];
@@ -151,6 +163,11 @@ interface CalendarData {
   // This event's OWN tentative slots (being rescheduled) — rendered as a distinct
   // "Rescheduling" state, separate from confirmed eventSlots and foreign bookings.
   eventTentativeSlots: TimeSlot[];
+  // #997 Phase 3 — confirmed (non-tentative) call counts for THIS event,
+  // bucketed by scheduling-timezone week key (ADR B9). Server-computed
+  // alongside eventSlots; replaces re-deriving this from a separate
+  // whole-window appointment fetch on every slot click.
+  weeklyConfirmedCallCounts: Record<string, number>;
   loading: boolean;
   error: string | null;
 }
@@ -159,7 +176,6 @@ export interface UseCalendarDataReturn extends CalendarData {
   refetch: () => Promise<void>;
   refetchConsultant: () => Promise<void>;
   refetchAvailability: () => Promise<void>;
-  refetchAppointments: () => Promise<void>;
   refetchEventSlots: () => Promise<void>;
   getSlotStatusForInterval: (
     interval: { hour: number; minute: number },
@@ -190,6 +206,7 @@ export function useCalendarData(
     currentDate,
     mode,
     allowedEnd,
+    sessionDurationInHours,
   } = options;
   const { toast } = useToast();
 
@@ -200,14 +217,15 @@ export function useCalendarData(
     weekly: RawSlotData[];
     custom: RawSlotData[];
   }>({ weekly: [], custom: [] });
-  const [existingAppointments, setExistingAppointments] = useState<
-    Appointment[]
-  >([]);
   const [eventSlots, setEventSlots] = useState<TimeSlot[]>([]);
   // The current event's OWN tentative slots (being rescheduled). Tracked
   // separately from eventSlots (confirmed) so the calendar can render them as a
   // distinct "Rescheduling" state instead of mislabeling them as foreign "Booked".
   const [eventTentativeSlots, setEventTentativeSlots] = useState<TimeSlot[]>([]);
+  // #997 Phase 3 — see CalendarData.weeklyConfirmedCallCounts.
+  const [weeklyConfirmedCallCounts, setWeeklyConfirmedCallCounts] = useState<
+    Record<string, number>
+  >({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -268,10 +286,16 @@ export function useCalendarData(
             ? endOfWeek(currentDate)
             : endOfMonth(currentDate);
 
+      // #997 Phase 2 — this hook only ever backs the consultant's OWN
+      // Allocate-Slots calendar (never the public consultee/trials one), so
+      // always request the server-computed tooltip/orphan-slot detail. The
+      // route re-verifies ownership server-side regardless of this flag.
       const data = await AllocationService.fetchAvailabilitySlots(
         consultantId,
         startDate,
         endDate,
+        undefined,
+        true,
       );
 
       // Defensive: Validate data structure before using
@@ -323,102 +347,6 @@ export function useCalendarData(
     }
   }, [consultantId, toast, view, currentDate, mode, allowedEnd]);
 
-  // FIXED: Proper date range filtering for appointments to prevent "stray slots"
-  const fetchExistingAppointments = useCallback(async (): Promise<void> => {
-    if (!consultantId) return;
-
-    try {
-      // Always start from the view's natural start so pre-period weeks have
-      // appointment data for conflict detection (mirrors availability fix).
-      const startDate =
-        view === "week" ? startOfWeek(currentDate) : startOfMonth(currentDate);
-      // End at allowedEnd in allocate mode.
-      const endDate =
-        mode === "allocate" && allowedEnd
-          ? allowedEnd
-          : view === "week"
-            ? endOfWeek(currentDate)
-            : endOfMonth(currentDate);
-
-      const data = await AllocationService.fetchAppointments(
-        consultantId,
-        startDate,
-        endDate,
-      );
-
-      // Defensive: Validate data is an array before using
-      if (!Array.isArray(data)) {
-        console.warn("⚠️ fetchExistingAppointments: Data is not an array");
-        setExistingAppointments([]);
-        return;
-      }
-
-      // Defensive: Filter out invalid appointments
-      const validatedAppointments = data.filter((appt: Appointment) => {
-        if (!appt || !appt.id) {
-          console.warn(
-            "⚠️ fetchExistingAppointments: Filtering out appointment without id",
-          );
-          return false;
-        }
-
-        // If appointment has slots, validate them
-        if (appt.slotsOfAppointment && Array.isArray(appt.slotsOfAppointment)) {
-          appt.slotsOfAppointment = appt.slotsOfAppointment.filter(
-            (slot: AppointmentSlotRaw) => {
-              if (!slot || !slot.startsAt || !slot.endsAt) {
-                console.warn(
-                  `⚠️ fetchExistingAppointments: Filtering out invalid slot in appointment ${appt.id}`,
-                  { slot },
-                );
-                return false;
-              }
-              return true;
-            },
-          );
-        }
-
-        return true;
-      });
-
-      // Filter out cancelled/rejected/expired appointments so they don't show as "Booked"
-      const activeAppointments = validatedAppointments.filter((appt: Appointment) => {
-        const inactiveRequestStatuses = ["REJECTED", "CANCELLED", "EXPIRED"];
-        // Check consultation status
-        if (appt.consultation?.status) {
-          if (inactiveRequestStatuses.includes(appt.consultation.status))
-            return false;
-        }
-        // Check subscription status
-        if (appt.subscription?.status) {
-          if (inactiveRequestStatuses.includes(appt.subscription.status))
-            return false;
-        }
-        // Check webinar status
-        if (appt.webinar?.status) {
-          if (appt.webinar.status === "CANCELLED") return false;
-        }
-        // Check class status
-        if (appt.class?.status) {
-          if (appt.class.status === "CANCELLED") return false;
-        }
-        return true;
-      });
-
-      setExistingAppointments(activeAppointments);
-    } catch (error) {
-      console.error("Error fetching appointments:", error);
-      const errorMessage =
-        error instanceof Error ? error.message : "Failed to fetch appointments";
-      setError(errorMessage);
-      toast({
-        variant: "destructive",
-        title: "Error",
-        description: errorMessage,
-      });
-    }
-  }, [consultantId, toast, view, currentDate, mode, allowedEnd]);
-
   const fetchEventSlots = useCallback(async (): Promise<void> => {
     // Fetch event slots for ALL event types (subscription, consultation, webinar, class)
     // This allows the calendar to show "This Event" (black) instead of "Booked" (gray)
@@ -426,11 +354,25 @@ export function useCalendarData(
     if (!eventType || !eventId) {
       setEventSlots([]);
       setEventTentativeSlots([]);
+      setWeeklyConfirmedCallCounts({});
       return;
     }
 
     try {
-      const data = await AllocationService.fetchEventSlots(eventType, eventId, consultantId);
+      // #997 Phase 3 — pass slotsPerCall (subscriptions only) so the server
+      // can also return weeklyConfirmedCallCounts alongside this event's slots.
+      const slotsPerCall =
+        eventType === "subscription"
+          ? Math.ceil((sessionDurationInHours || 1) / 0.5)
+          : undefined;
+      const { data, weeklyConfirmedCallCounts: weeklyCounts } =
+        await AllocationService.fetchEventSlots(
+          eventType,
+          eventId,
+          consultantId,
+          slotsPerCall,
+        );
+      setWeeklyConfirmedCallCounts(weeklyCounts);
 
       if (data && Array.isArray(data) && data.length > 0) {
         // Filter out cancelled/rejected appointments from event slots
@@ -503,51 +445,9 @@ export function useCalendarData(
       console.error("Error fetching event slots:", error);
       setEventSlots([]);
       setEventTentativeSlots([]);
+      setWeeklyConfirmedCallCounts({});
     }
-  }, [eventType, eventId, consultantId]);
-
-  /**
-   * Helper function to extract appointment plan title
-   */
-  const extractAppointmentTitle = (appointment: Appointment): string => {
-    if (!appointment) return "Unknown";
-
-    switch (appointment.appointmentType) {
-      case "CONSULTATION":
-        return (
-          appointment.consultation?.consultationPlan?.title || "Consultation"
-        );
-      case "SUBSCRIPTION":
-        return (
-          appointment.subscription?.subscriptionPlan?.title || "Subscription"
-        );
-      case "WEBINAR":
-        return appointment.webinar?.webinarPlan?.title || "Webinar";
-      case "CLASS":
-        return appointment.class?.classPlan?.title || "Class";
-      default:
-        return appointment.appointmentType || "Unknown";
-    }
-  };
-
-  /**
-   * Helper function to extract appointment participant name
-   */
-  const extractAppointmentParticipant = (appointment: Appointment): string => {
-    if (!appointment) return "";
-
-    switch (appointment.appointmentType) {
-      case "CONSULTATION":
-        return appointment.consultation?.requestedBy?.user?.name || "";
-      case "SUBSCRIPTION":
-        return appointment.subscription?.requestedBy?.user?.name || "";
-      case "WEBINAR":
-      case "CLASS":
-        return appointment.slotsOfAppointment?.[0]?.user?.[0]?.name || "";
-      default:
-        return "";
-    }
-  };
+  }, [eventType, eventId, consultantId, sessionDurationInHours]);
 
   /**
    * PERFORMANCE: Compute visible dates for the current view so the slotStatusMap
@@ -571,37 +471,72 @@ export function useCalendarData(
   }, [currentDate, view]);
 
   /**
-   * PERFORMANCE: Pre-parse raw slot and appointment times once, then reuse across
-   * all 336+ cell computations instead of re-parsing per cell.
+   * #997 Phase 2 — the server (availability-with-allocation, requested with
+   * includeAppointmentDetails) already returns bookingStatus AND
+   * overlappingAppointments per 30-min interval. Index it ONCE by UTC ISO
+   * start so every cell below is an O(1) lookup instead of the old
+   * O(cells × (availabilitySlots + appointments)) cross-reference join.
    */
-  const parsedRawSlots = useMemo(() => {
+  const serverGridByISO = useMemo(() => {
+    const map = new Map<string, RawSlotData>();
     const allRaw = [
       ...(rawAvailabilitySlots.weekly || []),
       ...(rawAvailabilitySlots.custom || []),
     ];
-    return allRaw.map((slot) => ({
-      start: new Date(slot.startsAt).getTime(),
-      end: new Date(slot.endsAt).getTime(),
-      bookingStatus: slot.bookingStatus || "available",
-    }));
+    for (const slot of allRaw) {
+      map.set(new Date(slot.startsAt).toISOString(), slot);
+    }
+    return map;
   }, [rawAvailabilitySlots]);
 
-  const parsedAppointmentSlots = useMemo(() => {
-    return existingAppointments.flatMap((appointment) =>
-      (appointment.slotsOfAppointment || []).map((slt: AppointmentSlotRaw) => ({
-        start: new Date(slt.startsAt).getTime(),
-        end: new Date(slt.endsAt).getTime(),
-        appointmentId: appointment.id,
-        appointmentType: appointment.appointmentType,
-        title: extractAppointmentTitle(appointment),
-        with: extractAppointmentParticipant(appointment),
-      })),
-    );
-  }, [existingAppointments]);
+  /**
+   * Derives the cell's display status from ONE server grid lookup. The
+   * server already resolved bookingStatus (incl. the "appointment with no
+   * backing availability row" edge case via a synthesized fully-booked
+   * entry, #997 Phase 2) — only past/disabled stay client-computed since
+   * they depend on wall-clock "now", not on server-fetched data.
+   */
+  const deriveStatusFromServerGrid = useCallback(
+    (localStart: Date, localEnd: Date, now: number): SlotStatusResult => {
+      const serverSlot = serverGridByISO.get(localStart.toISOString());
+
+      let isAvailable = false;
+      let isBookedForDisplay = false;
+      let isPartiallyBooked = false;
+      let overlappingAppointments: SlotStatusResult["overlappingAppointments"] =
+        [];
+
+      if (serverSlot) {
+        isAvailable = serverSlot.bookingStatus === "available";
+        isBookedForDisplay = serverSlot.bookingStatus === "fully-booked";
+        isPartiallyBooked = serverSlot.bookingStatus === "partially-booked";
+        overlappingAppointments = serverSlot.overlappingAppointments || [];
+      }
+
+      const endMs = localEnd.getTime();
+      const isInPast = endMs < now;
+      const isDisabled = !isAvailable || isBookedForDisplay || isInPast;
+
+      return {
+        isAvailable,
+        isBooked: isBookedForDisplay || isPartiallyBooked,
+        isBookedForDisplay,
+        isPartiallyBooked,
+        isDisabled,
+        isInPast,
+        intervalStartUTCString: localStart.toISOString(),
+        intervalEndUTCString: localEnd.toISOString(),
+        localStartTime: localStart,
+        localEndTime: localEnd,
+        overlappingAppointments,
+      };
+    },
+    [serverGridByISO],
+  );
 
   /**
    * PERFORMANCE: Precompute slot status for every visible cell.
-   * Converts 336 × O(W+C+A×S) → 1 precomputation + 336 × O(1) Map lookups.
+   * Converts 336 × O(W+C+A×S) → 1 index build + 336 × O(1) Map lookups.
    * Key format: `${year}-${month}-${day}-${hour}-${minute}`
    */
   const slotStatusMap = useMemo((): Map<string, SlotStatusResult> => {
@@ -627,63 +562,13 @@ export function useCalendarData(
           0,
         );
         const localEnd = new Date(localStart.getTime() + 30 * 60 * 1000);
-        const startMs = localStart.getTime();
-        const endMs = localEnd.getTime();
 
-        // Find overlapping raw availability slots
-        const overlappingSlots = parsedRawSlots.filter(
-          (s) => startMs < s.end && s.start < endMs,
-        );
-
-        // Find overlapping appointments for tooltip
-        const overlappingAppointments = parsedAppointmentSlots
-          .filter((s) => startMs < s.end && s.start < endMs)
-          .map((s) => ({
-            id: s.appointmentId,
-            type: s.appointmentType,
-            title: s.title,
-            with: s.with,
-          }));
-
-        // Determine booking status from server-calculated data
-        let isAvailable = false;
-        let isBookedForDisplay = false;
-        let isPartiallyBooked = false;
-
-        if (overlappingSlots.length > 0) {
-          const bookingStatus = overlappingSlots[0].bookingStatus;
-          isAvailable = bookingStatus === "available";
-          isBookedForDisplay = bookingStatus === "fully-booked";
-          isPartiallyBooked = bookingStatus === "partially-booked";
-        }
-
-        // Ensure appointments without availability slots still show as booked
-        if (!isBookedForDisplay && overlappingAppointments.length > 0) {
-          isBookedForDisplay = true;
-          isAvailable = false;
-        }
-
-        const isInPast = endMs < now;
-        const isDisabled = !isAvailable || isBookedForDisplay || isInPast;
-
-        map.set(key, {
-          isAvailable,
-          isBooked: isBookedForDisplay || isPartiallyBooked,
-          isBookedForDisplay,
-          isPartiallyBooked,
-          isDisabled,
-          isInPast,
-          intervalStartUTCString: localStart.toISOString(),
-          intervalEndUTCString: localEnd.toISOString(),
-          localStartTime: localStart,
-          localEndTime: localEnd,
-          overlappingAppointments,
-        });
+        map.set(key, deriveStatusFromServerGrid(localStart, localEnd, now));
       }
     }
 
     return map;
-  }, [visibleDates, parsedRawSlots, parsedAppointmentSlots]);
+  }, [visibleDates, deriveStatusFromServerGrid]);
 
   /**
    * SLOT STATUS LOOKUP — O(1) via precomputed Map.
@@ -706,57 +591,13 @@ export function useCalendarData(
         localIntervalStartDate.getTime() + 30 * 60 * 1000,
       );
 
-      const startMs = localIntervalStartDate.getTime();
-      const endMs = localIntervalEndDate.getTime();
-
-      const overlappingSlots = parsedRawSlots.filter(
-        (s) => startMs < s.end && s.start < endMs,
+      return deriveStatusFromServerGrid(
+        localIntervalStartDate,
+        localIntervalEndDate,
+        Date.now(),
       );
-
-      const overlappingAppointments = parsedAppointmentSlots
-        .filter((s) => startMs < s.end && s.start < endMs)
-        .map((s) => ({
-          id: s.appointmentId,
-          type: s.appointmentType,
-          title: s.title,
-          with: s.with,
-        }));
-
-      let isAvailable = false;
-      let isBookedForDisplay = false;
-      let isPartiallyBooked = false;
-
-      if (overlappingSlots.length > 0) {
-        const bookingStatus = overlappingSlots[0].bookingStatus;
-        isAvailable = bookingStatus === "available";
-        isBookedForDisplay = bookingStatus === "fully-booked";
-        isPartiallyBooked = bookingStatus === "partially-booked";
-      }
-
-      if (!isBookedForDisplay && overlappingAppointments.length > 0) {
-        isBookedForDisplay = true;
-        isAvailable = false;
-      }
-
-      const now = new Date();
-      const isInPast = localIntervalEndDate < now;
-      const isDisabled = !isAvailable || isBookedForDisplay || isInPast;
-
-      return {
-        isAvailable,
-        isBooked: isBookedForDisplay || isPartiallyBooked,
-        isBookedForDisplay,
-        isPartiallyBooked,
-        isDisabled,
-        isInPast,
-        intervalStartUTCString: localIntervalStartDate.toISOString(),
-        intervalEndUTCString: localIntervalEndDate.toISOString(),
-        localStartTime: localIntervalStartDate,
-        localEndTime: localIntervalEndDate,
-        overlappingAppointments,
-      };
     },
-    [slotStatusMap, parsedRawSlots, parsedAppointmentSlots],
+    [slotStatusMap, deriveStatusFromServerGrid],
   );
 
   // PERFORMANCE: Fetch all data function with parallel API calls
@@ -771,7 +612,6 @@ export function useCalendarData(
       await Promise.all([
         fetchConsultantDetails(),
         fetchAvailabilitySlots(),
-        fetchExistingAppointments(),
         fetchEventSlots(),
       ]);
     } catch (error) {
@@ -784,13 +624,7 @@ export function useCalendarData(
     } finally {
       setLoading(false);
     }
-  }, [
-    consultantId,
-    fetchConsultantDetails,
-    fetchAvailabilitySlots,
-    fetchExistingAppointments,
-    fetchEventSlots,
-  ]);
+  }, [consultantId, fetchConsultantDetails, fetchAvailabilitySlots, fetchEventSlots]);
 
   // PERFORMANCE: Split into two effects so date-independent fetches don't re-fire on week navigation.
 
@@ -822,7 +656,7 @@ export function useCalendarData(
       }
       setError(null);
 
-      Promise.all([fetchAvailabilitySlots(), fetchExistingAppointments()])
+      fetchAvailabilitySlots()
         .catch((error) => {
           console.error("Error fetching date-dependent data:", error);
           setError(
@@ -841,7 +675,6 @@ export function useCalendarData(
     consultantDetails,
     weeklySlotCount,
     fetchAvailabilitySlots,
-    fetchExistingAppointments,
   ]);
 
   // ENHANCEMENT: Individual refetch functions for granular control
@@ -863,15 +696,6 @@ export function useCalendarData(
     }
   }, [fetchAvailabilitySlots]);
 
-  const refetchAppointments = useCallback(async (): Promise<void> => {
-    setLoading(true);
-    try {
-      await fetchExistingAppointments();
-    } finally {
-      setLoading(false);
-    }
-  }, [fetchExistingAppointments]);
-
   const refetchEventSlots = useCallback(async (): Promise<void> => {
     setLoading(true);
     try {
@@ -885,10 +709,10 @@ export function useCalendarData(
     // Data
     consultantDetails,
     availableSlots,
-    existingAppointments,
     rawAvailabilitySlots,
     eventSlots,
     eventTentativeSlots,
+    weeklyConfirmedCallCounts,
     loading,
     error,
 
@@ -896,7 +720,6 @@ export function useCalendarData(
     refetch: fetchAllData,
     refetchConsultant,
     refetchAvailability,
-    refetchAppointments,
     refetchEventSlots,
     getSlotStatusForInterval, // KEY: Unified slot status calculation
     slotStatusMap, // PERFORMANCE: Precomputed status map for O(1) lookups

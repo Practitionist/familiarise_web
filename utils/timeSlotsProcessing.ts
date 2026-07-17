@@ -63,7 +63,10 @@ export interface AppointmentSlot {
 // actually overlap it. Every SlotOfAppointment is exactly 30 min and 30-min
 // aligned, so a 30-min bucket is exact; the multi-bucket span below keeps it
 // correct even for legacy/longer rows.
-const THIRTY_MIN_MS = 30 * 60 * 1000;
+// #997 Phase 2 — exported so the availability-with-allocation route can bucket
+// its OWN overlap-metadata index (title/participant for tooltips) using the
+// exact same alignment as isSlotAllocated/getSlotBookingStatus below.
+export const THIRTY_MIN_MS = 30 * 60 * 1000;
 export type AppointmentIndex = Map<number, AppointmentSlot[]>;
 
 export function buildAppointmentIndex(
@@ -130,7 +133,9 @@ const WEEKDAY_TO_INDEX: Record<string, number> = {
   Sat: 6,
 };
 
-function makeLocalizer(timezone: string) {
+// #997 Phase 2 — exported so route.ts can localize synthetic (orphan)
+// appointment-only intervals with the exact same dateKey/timeP format used here.
+export function makeLocalizer(timezone: string) {
   const timeFmt = new Intl.DateTimeFormat("en-US", {
     timeZone: timezone,
     hour: "numeric",

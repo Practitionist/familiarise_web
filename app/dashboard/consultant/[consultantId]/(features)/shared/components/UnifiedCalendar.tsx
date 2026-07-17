@@ -142,51 +142,6 @@ function areSlotsEqual(slots1: TimeSlot[], slots2: TimeSlot[]): boolean {
 }
 
 /**
- * Counts completed calls (appointments with a full slot block) for a given
- * subscription inside a specific week window.
- */
-interface CalendarAppointmentSlot {
-  startsAt: string;
-  endsAt: string;
-  isTentative?: boolean;
-}
-
-interface CalendarAppointment {
-  id: string;
-  appointmentType: string;
-  subscription?: { id?: string };
-  slotsOfAppointment?: CalendarAppointmentSlot[];
-}
-
-function countCompletedCallsForWeek(
-  existingAppointments: CalendarAppointment[],
-  subscriptionId: string,
-  slotsPerCall: number,
-  targetWeekKey: string,
-  schedulingTimezone?: string,
-): number {
-  if (!Array.isArray(existingAppointments)) return 0;
-
-  return existingAppointments.filter((appt: CalendarAppointment) => {
-    if (appt.appointmentType !== "SUBSCRIPTION") return false;
-    if (!appt.subscription || appt.subscription.id !== subscriptionId)
-      return false;
-    const slots = appt.slotsOfAppointment || [];
-    // Skip tentative appointments — during rescheduling, tentative slots are the
-    // OLD slots being replaced and should not count toward the weekly limit.
-    if (slots.some((s: CalendarAppointmentSlot) => s.isTentative)) return false;
-    // A completed call is an appointment that has exactly the per-call slot count
-    if (slots.length !== slotsPerCall) return false;
-    return (
-      SlotCalculationService.weekKey(
-        new Date(slots[0].startsAt),
-        schedulingTimezone,
-      ) === targetWeekKey
-    );
-  }).length;
-}
-
-/**
  * Counts completed calls from the user's current selection for a specific week.
  * A completed call is exactly `slotsPerCall` consecutive 30-min slots on the same day.
  */
@@ -428,14 +383,14 @@ export function UnifiedCalendar({
   const {
     consultantDetails,
     availableSlots,
-    existingAppointments,
     eventSlots,
     eventTentativeSlots = [],
+    weeklyConfirmedCallCounts,
     loading,
     error,
     refetch,
     refetchEventSlots,
-    refetchAppointments,
+    refetchAvailability,
     getSlotStatusForInterval,
   } = useCalendarData({
     consultantId,
@@ -446,14 +401,17 @@ export function UnifiedCalendar({
     mode,
     allowedStart,
     allowedEnd,
+    sessionDurationInHours,
   });
 
   // Wrap onAllocationComplete to refetch data before calling parent callback
   const handleAllocationSuccess = useCallback(
     async (result: AllocationResponse) => {
       try {
-        // Refetch event slots and appointments so newly allocated slots appear correctly
-        await Promise.all([refetchEventSlots(), refetchAppointments()]);
+        // Refetch event slots (weeklyConfirmedCallCounts) and availability
+        // (server-computed status grid/tooltips, #997 Phase 2) so newly
+        // allocated slots appear correctly.
+        await Promise.all([refetchEventSlots(), refetchAvailability()]);
       } catch (error) {
         Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
         console.error(
@@ -465,7 +423,7 @@ export function UnifiedCalendar({
       // Call parent callback
       onAllocationComplete?.(result);
     },
-    [refetchEventSlots, refetchAppointments, onAllocationComplete],
+    [refetchEventSlots, refetchAvailability, onAllocationComplete],
   );
 
   // Count past confirmed event slots for in-progress recurring events
@@ -749,13 +707,12 @@ export function UnifiedCalendar({
             schedulingTimezone,
           );
           const slotsPerCall = getSlotsPerCall(sessionDurationInHours);
-          const completedCalls = countCompletedCallsForWeek(
-            existingAppointments,
-            eventId,
-            slotsPerCall,
-            targetWeekKey,
-            schedulingTimezone,
-          );
+          // #997 Phase 3 — server-precomputed confirmed-call count for this
+          // week (bucketed with the SAME SlotCalculationService.weekKey the
+          // server validator uses), fetched alongside eventSlots. Replaces
+          // re-deriving this from a separate whole-window appointment fetch
+          // on every slot click.
+          const completedCalls = weeklyConfirmedCallCounts[targetWeekKey] || 0;
 
           // Also include already selected complete calls in this same week
           const selectedCompleted = countCompletedSelectedCallsForWeek(
@@ -860,7 +817,7 @@ export function UnifiedCalendar({
       allowedStart,
       allowedEnd,
       selectedSlots,
-      existingAppointments,
+      weeklyConfirmedCallCounts,
       eventSlotsSet,
       eventTentativeSlotsSet,
       toast,
