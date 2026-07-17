@@ -262,6 +262,9 @@ export const auth = betterAuth({
               for (const purposeCode of [
                 PURPOSE_CODES.PRIMARY_PROCESSING,
                 PURPOSE_CODES.STREAM_DATA_PROCESSING,
+                // #701 — session-booking consent, gated fail-closed at
+                // org-sponsored checkout. Granted at signup like the others.
+                PURPOSE_CODES.SESSION_BOOKING,
               ] as const) {
                 const draft = buildConsentArtifact({
                   userId: user.id,

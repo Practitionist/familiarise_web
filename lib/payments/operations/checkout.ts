@@ -74,6 +74,8 @@ import {
   getInvoiceCreditLimitPaise,
   assertVerifiedDomainOrThrow,
 } from "@/lib/enterprise/governance";
+import { checkConsent } from "@/lib/compliance/dpdp";
+import { PURPOSE_CODES } from "@/lib/compliance/purpose-codes";
 import {
   notifyOrgProgramExhausted,
   notifyOrgProgramCapNear,
@@ -2021,6 +2023,27 @@ export async function handleCheckout(
     });
     if (!callerMembership || callerMembership.status !== "ACTIVE") {
       throw new Error("You are not an active member of this organization.");
+    }
+
+    // #701 — DPDP consent gate. The member is having a session booked + paid on
+    // their behalf by the org; require a live SESSION_BOOKING consent artifact
+    // before processing it. Fail-closed (checkConsent is false with no artifact).
+    if (
+      !(await checkConsent({
+        userId,
+        purposeCode: PURPOSE_CODES.SESSION_BOOKING,
+      }))
+    ) {
+      throw Object.assign(
+        new Error(
+          "Consent required before your organization can book sessions for you. Grant session-booking consent in your organization's privacy settings.",
+        ),
+        {
+          httpStatus: 403,
+          code: "CONSENT_REQUIRED",
+          purposeCode: "SESSION_BOOKING",
+        },
+      );
     }
 
     organizationId = org.id;
