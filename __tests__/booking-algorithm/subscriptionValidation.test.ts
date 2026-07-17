@@ -114,9 +114,9 @@ describe("Bug B Fix: Appointment counting (1 appointment = 1 call)", () => {
 
     const result = await service.validateSubscriptionSlots("sub-1", []);
 
-    // The week containing Jan 6 should show 1 existing call, not 2
-    // Use startOfWeekSunday to compute expected week start (local midnight, not UTC)
-    const expectedWeekStart = SlotCalculationService.startOfWeekSunday(
+    // The week containing Jan 6 should show 1 existing call, not 2.
+    // Weeks are scheduling-timezone Sundays (ADR B9) — match the instant.
+    const expectedWeekStart = SlotCalculationService.startOfWeekSundayInTz(
       new Date("2025-01-06T10:00:00.000Z"),
     );
     const weekOfJan5 = result.weeklyInfo.find(
@@ -193,9 +193,9 @@ describe("Bug B Fix: Appointment counting (1 appointment = 1 call)", () => {
     );
 
     const result = await service.validateSubscriptionSlots("sub-1", []);
-    // Should use 13:30 (earliest) to determine week
-    // Use startOfWeekSunday to compute expected week start (local midnight, not UTC)
-    const expectedWeekStart = SlotCalculationService.startOfWeekSunday(
+    // Should use 13:30 (earliest) to determine week.
+    // Weeks are scheduling-timezone Sundays (ADR B9) — match the instant.
+    const expectedWeekStart = SlotCalculationService.startOfWeekSundayInTz(
       new Date("2025-01-06T13:30:00.000Z"),
     );
     const weekOfJan5 = result.weeklyInfo.find(
@@ -425,7 +425,13 @@ describe("Weekly info generation", () => {
 
     const result = await service.validateSubscriptionSlots("sub-1", []);
     expect(result.weeklyInfo.length).toBe(1);
-    expect(result.weeklyInfo[0].weekStart.getDay()).toBe(0); // Sunday
+    // weekStart is Sunday 00:00 in the SCHEDULING timezone (ADR B9) — assert
+    // via Intl, not local getDay(), so the test passes on any CI timezone.
+    const weekdayInSchedulingTz = new Intl.DateTimeFormat("en-US", {
+      timeZone: SlotCalculationService.DEFAULT_SCHEDULING_TIMEZONE,
+      weekday: "short",
+    }).format(result.weeklyInfo[0].weekStart);
+    expect(weekdayInSchedulingTz).toBe("Sun");
     expect(result.weeklyInfo[0].maxCalls).toBe(1);
   });
 

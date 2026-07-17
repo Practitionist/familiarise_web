@@ -16,7 +16,10 @@ stateDiagram-v2
     PENDING --> REFUNDED: Payment Refunded
 
     READY --> HELD: Dispute Opened
-    READY --> PAID: Payout Completed
+    READY --> BATCHED: Rolled into payout batch
+
+    BATCHED --> PAID: Payout Completed (COMPLETED + UTR)
+    BATCHED --> READY: Batch failed or rejected
 
     HELD --> READY: Dispute Resolved (favor consultant)
     HELD --> REFUNDED: Dispute Resolved (favor customer)
@@ -49,7 +52,8 @@ stateDiagram-v2
 | **PENDING**  | Earnings created, within hold period    | Wait for hold expiry |
 | **READY**    | Hold period passed, eligible for payout | Include in batch     |
 | **HELD**     | Frozen due to dispute                   | Await resolution     |
-| **PAID**     | Successfully paid to consultant         | Terminal state       |
+| **BATCHED**  | Rolled into a payout batch, but cash has not left yet | Await payout completion |
+| **PAID**     | Successfully paid to consultant (payout reached COMPLETED with a UTR) | Terminal state       |
 | **REFUNDED** | Payment was refunded                    | Terminal state       |
 
 ---
@@ -381,7 +385,8 @@ enum EarningStatus {
   PENDING   // Within hold period
   READY     // Eligible for payout
   HELD      // Frozen due to dispute
-  PAID      // Payout completed
+  BATCHED   // Rolled into a payout batch; cash has not been disbursed yet
+  PAID      // Payout completed (reached COMPLETED with a UTR)
   REFUNDED  // Payment was refunded
 }
 ```

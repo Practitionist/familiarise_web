@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { AppointmentsType, PaymentGateway } from "@prisma/client";
+import { AppointmentsType } from "@prisma/client";
 import { validateSlotTiming } from "@/lib/payments/utils/slot-validation";
 
 // Base schemas for individual components
@@ -14,10 +14,14 @@ export const appointmentTypeSchema = z.enum([
 export const paymentGatewaySchema = z.enum([
   "STRIPE",
   "RAZORPAY",
-  "LEMON_SQUEEZY",
-  "XFLOW",
   "CARD",
 ]);
+
+// The implemented checkout gateways — a strict subset of the PaymentGateway
+// Prisma enum. Post-MVP stubs (e.g. DODO_PAYMENTS, #984) are NOT valid at
+// checkout, so everything flowing into CheckoutInput.paymentGateway uses this
+// narrow type, never the full enum.
+export type SupportedCheckoutGateway = z.infer<typeof paymentGatewaySchema>;
 
 // Search params validation (URL query parameters)
 export const searchParamsSchema = z.object({
@@ -298,7 +302,7 @@ export const validateSearchParamsForAppointmentType = (
 export const createCheckoutData = (params: {
   appointmentType: AppointmentsType;
   planId: string;
-  paymentGateway: PaymentGateway;
+  paymentGateway: SupportedCheckoutGateway;
   eventId?: string;
   startsAt?: string;
   endsAt?: string;

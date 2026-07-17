@@ -41,7 +41,7 @@ The recording system enables consultants to record webinars and classes for late
 - **Consultant-only recording control** - Only the session host can start/stop
 - **Automatic webhook processing** - Recording lifecycle managed via webhooks
 - **Idempotent operations** - Safe to receive duplicate webhook events
-- **Automatic transfer** - Cron job transfers recordings before expiration
+- **Automatic transfer** - The `recording_ready` webhook enqueues the permanent-storage transfer immediately (via Next.js `after()`), and a cron job runs as a backstop sweeper that picks up any recording the webhook missed before its Stream URL expires
 - **Role-based access** - Different permissions for consultants, consultees, and admins
 
 ---
@@ -494,7 +494,7 @@ sequenceDiagram
     participant Stream as Stream S3
     participant Supa as Supabase Storage
 
-    Cron->>DB: Get expiring recordings (3 days out)
+    Cron->>DB: Get READY permanent recordings (14-day window)
     DB-->>Cron: Recording list
 
     loop Each Recording
@@ -502,7 +502,7 @@ sequenceDiagram
         Transfer->>DB: Update status = TRANSFERRING
 
         Transfer->>Stream: Download video file
-        Stream-->>Transfer: Video data (blob)
+        Stream-->>Transfer: Video data (streamed body, #899)
 
         alt File too large (>500MB)
             Transfer->>DB: Revert to READY
@@ -524,7 +524,7 @@ sequenceDiagram
 | ------------------- | ------------ | ------------------------------------- |
 | `MAX_TRANSFER_SIZE` | 500MB        | Maximum file size for direct transfer |
 | `RECORDINGS_BUCKET` | "recordings" | Supabase storage bucket name          |
-| `daysBeforeExpiry`  | 3            | Days before expiry to start transfer  |
+| `daysBeforeExpiry`  | 5            | Days before expiry to start transfer (default). The production jobs pass 14 — the full Stream URL lifetime — so every READY permanent recording is swept near-ready rather than near-expiry (#899). |
 | `batchSize`         | 10           | Max recordings per cron run           |
 
 ### Storage Path Format
@@ -874,7 +874,7 @@ import { RecordingTransferService } from "@/lib/stream/recording-transfer-servic
 
 async function processExpiringRecordings() {
   const result = await RecordingTransferService.processExpiringRecordings(
-    3, // daysBeforeExpiry
+    14, // daysBeforeExpiry — full Stream URL lifetime, sweeps near-ready (#899)
     10, // batchSize
   );
 

@@ -57,37 +57,6 @@ export async function cancelPaymentIntent(
         await cancelRazorpayOrder(paymentIntent);
         break;
 
-      case PaymentGateway.LEMON_SQUEEZY:
-        if (process.env.LEMON_SQUEEZY_API_KEY) {
-          const response = await fetch(
-            `https://api.lemonsqueezy.com/v1/payments/${paymentIntent}`,
-            {
-              method: "DELETE",
-              headers: {
-                Authorization: `Bearer ${process.env.LEMON_SQUEEZY_API_KEY}`,
-                "Content-Type": "application/json",
-              },
-            },
-          );
-          if (response.ok) {
-            console.log(`✅ Cancelled Lemon Squeezy payment: ${paymentIntent}`);
-          } else {
-            throw new Error(`HTTP ${response.status}`);
-          }
-        } else {
-          console.warn("⚠️ LEMON_SQUEEZY_API_KEY not configured");
-        }
-        break;
-
-      case PaymentGateway.XFLOW:
-        if (process.env.XFLOW_SECRET_KEY) {
-          // Add Xflow cancellation logic here when available
-          console.log(`✅ Cancelled Xflow payment: ${paymentIntent}`);
-        } else {
-          console.warn("⚠️ XFLOW_SECRET_KEY not configured");
-        }
-        break;
-
       default:
         console.warn(`⚠️ Unknown payment gateway: ${gateway}`);
     }

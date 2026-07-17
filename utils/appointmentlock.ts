@@ -575,9 +575,18 @@ export async function unlockTrialSlot(lock: ApprovalLock): Promise<void> {
  */
 export async function lockAutoAllocate(
   consultantProfileId: string,
+  // #860 — optional day/slot-range scope. When the target day is known upfront
+  // (manual allocation), sharding the key lets non-overlapping-day allocations
+  // for one consultant run in parallel instead of all serializing. autoAllocate
+  // omits it (slots are discovered dynamically UNDER the lock) and stays
+  // consultant-wide. #440's GiST exclusion constraint is the correctness
+  // backstop for any residual cross-day overlap.
+  scope?: string,
   ttl: number = 150000, // 150s — 30s buffer over 120s transaction timeout (after 1% drift: ~148.5s)
 ): Promise<ApprovalLock> {
-  const key = `auto-allocate:${consultantProfileId}`;
+  const key = scope
+    ? `auto-allocate:${consultantProfileId}:${scope}`
+    : `auto-allocate:${consultantProfileId}`;
   try {
     return await acquireLockWithRetry(key, ttl);
   } catch (error) {

@@ -28,12 +28,12 @@ This affects every marketplace that today receives consumer payments and pays ou
 |---|---|---|
 | **C — Operating account + separate licensed payout** | Consumer → PA → platform's operating account (platform IS the merchant). Platform separately uses a licensed FAA (e.g. RazorpayX Bulk Payouts) to pay consultants from operating funds. | Two separate RBI-licensed flows. Consultant is NOT settled by the PA — they're paid by us via a different licensed product. |
 
-## What architecture does Familiarise actually use?
+## What architecture does Practitionist actually use?
 
 Verified at `lib/payments/payouts/razorpay-payouts.ts`:
 
-```
-Consumer → Razorpay PG (PA license) → Familiarise operating account (we are the merchant)
+```text
+Consumer → Razorpay PG (PA license) → Practitionist operating account (we are the merchant)
                                                 ↓
                 Cron → RazorpayX Payouts API (FAA license) → consultant bank / UPI / Stripe
 ```
@@ -123,7 +123,7 @@ This is a forward-looking note: the auto-top-up cron exists in schema, but live 
 Add `docs/payments/06-pa-master-direction-architecture.md` (or similar):
 
 1. The four paths permitted (A / B / C and C-prime).
-2. The path Familiarise uses (Path C).
+2. The path Practitionist uses (Path C).
 3. Why Path C is consistent with the Sep 2025 direction.
 4. What still applies even on Path C (refund SLA, chargeback handling, PCI-DSS, etc.).
 5. The fact-specific risks: a regulator could reclassify the platform as a deemed PA if circumstantial evidence (volume, marketing language, brand integration) suggests we're aggregating rather than facilitating. Mitigate by clear marketing + ToS that we are a marketplace, not a payment intermediary.

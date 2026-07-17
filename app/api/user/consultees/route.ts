@@ -29,7 +29,7 @@ export async function GET(request: NextRequest) {
 
     const consultees = await prisma.consulteeProfile.findMany({
       include: {
-        consultantReviews: true,
+        consultantReviews: { where: { deletedAt: null } },
         user: {
           select: {
             id: true,

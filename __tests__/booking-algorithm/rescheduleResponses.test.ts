@@ -155,6 +155,10 @@ function makeMockTx(appointmentData: any) {
       update: jest.fn(),
       // B2 — the cancel/reschedule CAS guards use updateMany.
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      // #448 — a PARTIAL (slotIds) subscription reschedule only terminal-guards
+      // via count (no status write); positive count keeps the route on the
+      // happy path without flipping the whole subscription to PENDING.
+      count: jest.fn().mockResolvedValue(1),
     },
     webinar: {
       update: jest.fn(),

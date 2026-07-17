@@ -6,7 +6,8 @@
  * row. The creation path is deliberately admin-gated and narrow:
  *   1. Pick all READY earnings in [periodStart, periodEnd).
  *   2. Create the payout with aggregated totals (gross/fee/refunds/net).
- *   3. Attach those earnings to the payout + flip their status to PAID.
+ *   3. Attach those earnings to the payout + flip their status to BATCHED
+ *      (#837 — not PAID; PAID happens only at payout COMPLETED + UTR).
  *
  * Actual fund-movement (RazorpayX / Cashfree) happens asynchronously in
  * jobs/payouts/** — this endpoint only records the intent and reserves the
@@ -39,8 +40,6 @@ const PayoutStatusSchema = z.enum([
 const PaymentGatewaySchema = z.enum([
   "STRIPE",
   "RAZORPAY",
-  "LEMON_SQUEEZY",
-  "XFLOW",
   "CARD",
 ]);
 
@@ -168,7 +167,7 @@ export async function POST(
       //       earning.
       //   (3) Re-read the claimed rows (authoritatively scoped by orgPayoutId),
       //       compute totals, and patch the payout row with the real numbers.
-      //   (4) Flip the claimed rows READY → PAID in the same tx.
+      //   (4) Flip the claimed rows READY → BATCHED in the same tx (#837).
       // If no rows are claimed, throw to abort the tx so the placeholder
       // payout row is rolled back too.
       const created = await tx.organizationPayout.create({
@@ -268,11 +267,12 @@ export async function POST(
         },
       });
 
-      // Flip the claimed earnings READY → PAID. The cron that flips the
-      // payout to COMPLETED does not touch earnings.status.
+      // #837 E-03/E-04 — batch creation only STAGES the earnings; cash has not
+      // left. Flip READY → BATCHED, not PAID. markOrgPayoutCompleted performs
+      // the BATCHED → PAID flip when the payout reaches COMPLETED (+ UTR).
       await tx.organizationEarnings.updateMany({
         where: { orgPayoutId: created.id, status: "READY" },
-        data: { status: "PAID" },
+        data: { status: "BATCHED" },
       });
 
       await tx.orgAuditLog.create({

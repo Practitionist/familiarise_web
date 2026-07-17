@@ -92,6 +92,11 @@ export const tokenProvider = async (userId: string): Promise<string>
 ```typescript
 export const tokenProvider = async (userId: string) => {
   try {
+    // 0. Session bind (#899): a token may only be minted for the authenticated
+    //    session user; staff/admins may mint for anyone. Stream's server-side
+    //    API skips permission checks, so this is the only guard against spoofing.
+    await assertCanMintToken(userId);
+
     // 1. Verify user exists
     const userDetails = await fetchUserDetails(userId);
     if (!userDetails) throw new Error("User not found");
@@ -135,9 +140,10 @@ export const tokenProvider = async (userId: string) => {
 ```typescript
 import { tokenProvider } from "@/actions/stream/chat/stream.action";
 
-// Generate video token for user
+// Generate video token for the authenticated session user.
+// Passing another user's ID throws unless the caller is staff/admin (#899).
 try {
-  const token = await tokenProvider("user-123");
+  const token = await tokenProvider(sessionUser.id);
   console.log("Video token generated successfully");
 } catch (error) {
   console.error("Token generation failed:", error);
@@ -165,6 +171,10 @@ export const chatTokenProvider = async (userId: string): Promise<string>
 ```typescript
 export const chatTokenProvider = async (userId: string) => {
   try {
+    // 0. Session bind (#899): mint only for the authenticated session user
+    //    (staff/admins may mint for anyone).
+    await assertCanMintToken(userId);
+
     // 1. Validate API credentials
     if (!apiKey) throw new Error("Stream API key not configured");
     if (!apiSecret) throw new Error("Stream API secret not configured");
@@ -192,9 +202,10 @@ export const chatTokenProvider = async (userId: string) => {
 ```typescript
 import { chatTokenProvider } from "@/actions/stream/chat/stream.action";
 
-// Generate chat token for user
+// Generate chat token for the authenticated session user.
+// Passing another user's ID throws unless the caller is staff/admin (#899).
 try {
-  const token = await chatTokenProvider("user-123");
+  const token = await chatTokenProvider(sessionUser.id);
   console.log("Chat token generated successfully");
 } catch (error) {
   console.error("Token generation failed:", error);
@@ -627,6 +638,12 @@ if (requestedUserId !== session.user.id) {
   return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 }
 ```
+
+This is implemented in the `tokenProvider` and `chatTokenProvider` server actions (`actions/stream/chat/stream.action.ts`): both require a session, refuse to mint a token for a different user unless the caller is admin or staff, and refuse banned users outright. The banned-user check matters because Stream token revocation is timestamp-based — a moderated user could otherwise immediately re-mint a fresh token dated after the revocation and reconnect.
+
+### Moderation: Revocation and Deactivation
+
+When staff suspend a user, the moderation pipeline (`lib/moderation/side-effects.ts`, #693) calls `revokeUserToken(userId, new Date())`, which expires every token issued before that moment. Suspension recovery is automatic: once `banExpires` passes, the sign-in gate lifts and the token provider mints a fresh token that post-dates the revocation timestamp, so no un-revoke call is needed. A permanent ban additionally calls `deactivateUser` (with `mark_messages_deleted: false`), which blocks the user from connecting to Stream at all while preserving their message history for other channel members. Reinstating a banned user requires a symmetric `reactivateUser` call — tracked as a follow-up in the moderation ADR.
 
 ### Use Environment Variables
 

@@ -38,6 +38,14 @@ export interface AllocationRequest {
   eventId: string;
   mode: AllocationMode;
   slots?: string[]; // ISO date strings for manual allocation
+  // #837 — client-supplied dedupe key (Idempotency-Key header). A double-submit
+  // carrying the same key returns the first batch instead of allocating twice.
+  idempotencyKey?: string;
+  // Multi-tab guard — when true, reject (409) if the event already has
+  // confirmed slots instead of replacing them. Auto and manual take different
+  // Redis lock keys (#860), so a cross-mode race from two tabs otherwise ends
+  // in the manual path silently deleting the winner's allocation.
+  initialAllocation?: boolean;
 }
 
 /**
@@ -151,4 +159,7 @@ export interface EventConfig {
   totalSessions?: number; // Authoritative session count from subscription plan
   schedulingPeriodStartsAt?: Date; // For subscriptions/classes
   schedulingPeriodEndsAt?: Date; // For subscriptions/classes
+  // Timezone defining the limit day/week buckets (ADR B9). Subscription/Class
+  // column; consultations/webinars fall back to the helper default.
+  schedulingTimezone?: string;
 }

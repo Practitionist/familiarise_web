@@ -1,8 +1,9 @@
 // Company Information - Update these values with your actual business details
 export const COMPANY_INFO = {
-  name: "[COMPANY NAME]",
-  address: "[ADDRESS]",
+  name: "Practitionist",
+  // TODO: real contact email before launch
   email: "[EMAIL]",
+  // TODO: real contact email before launch
   supportEmail: "[SUPPORT_EMAIL]",
   phone: "[PHONE]",
   jurisdiction: "[JURISDICTION]",

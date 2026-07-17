@@ -104,7 +104,8 @@ export const getConsultantDetail = cache(async (consultantId: string) => {
 export const getConsultantReviews = cache(
   async (consultantProfileId: string) => {
     const reviews = await prisma.consultantReview.findMany({
-      where: { consultantProfileId },
+      // #693 — moderation-removed reviews stay hidden from the public page
+      where: { consultantProfileId, deletedAt: null },
       take: 20,
       include: {
         consultantProfile: {

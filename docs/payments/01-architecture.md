@@ -19,7 +19,7 @@
 
 ## Overview
 
-The payment system uses **Razorpay** as the sole active payment gateway (Stripe, Lemon Squeezy, and XFlow removed — see [gateways/gateway-evaluation-mar-2026.md](./gateways/gateway-evaluation-mar-2026.md)). It handles four appointment types:
+The payment system uses **Razorpay** as the sole active payment gateway (Lemon Squeezy and XFlow removed, Stripe retained but inactive — see [gateways/gateway-evaluation-mar-2026.md](./gateways/gateway-evaluation-mar-2026.md)). It handles four appointment types:
 
 | Type             | Description          | Slot Handling                      |
 | ---------------- | -------------------- | ---------------------------------- |
@@ -1183,7 +1183,6 @@ AppointmentStatus:
 |  |        DATABASE_URL, DIRECT_URL                                         |      |
 |  |        STRIPE_SECRET_KEY                                                |      |
 |  |        RAZORPAY_KEY_ID, RAZORPAY_SECRET                                 |      |
-|  |        LEMON_SQUEEZY_API_KEY, XFLOW_SECRET_KEY                          |      |
 |  +-------------------------------------------------------------------------+      |
 +-----------------------------------------------------------------------------------+
 

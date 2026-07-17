@@ -50,10 +50,16 @@ skip-the-refetch fast-path — that optimization is noted as future work in
 (`session.cookieCache`, `maxAge: 5 min`) can serve a cached session shape
 for up to five minutes before `customSession` re-runs, so a benign role
 *change* surfaces within a few minutes. The dangerous case — a downgraded
-OWNER or a removed member — is not left to the cache: the member-removal
-path additionally calls BetterAuth's `revokeSession` as a deliberate kill
-switch, so the catastrophic staleness is handled out-of-band while the
-counter handles the safe middle case.
+OWNER or a removed member — is handled by the **same** generation bump, not
+by a hard session kill. There is no server-side revoke-by-userId available:
+BetterAuth's `admin` plugin (which exposes `revokeUserSessions`) is not
+installed, and core `revokeSession` needs the target user's own session
+token, which an admin removing someone else does not hold. So removal,
+downgrade, and soft-suspend all bump `sessionGeneration` too; the removed
+member keeps their old payload only until their next request misses the
+5-minute cookie cache, with BetterAuth's 24h `updateAge` rotation as the
+worst-case ceiling. That residual window is a known limitation, not a hard
+kill switch.
 
 ## Alternatives considered
 
@@ -61,10 +67,12 @@ We considered revoking the session on every role change (full logout,
 re-authenticate). It lost on UX cost relative to the marginal security
 benefit. For the common case — a benign promotion or department move —
 logging the user out mid-session is a heavy, jarring interruption
-(potentially mid-call), and the new capabilities don't justify it.
-Revocation is therefore reserved for the one case that warrants it
-(removal/downgrade, via the explicit `revokeSession` kill), not applied to
-every mutation.
+(potentially mid-call), and the new capabilities don't justify it. A hard
+logout is not used for any mutation, removal/downgrade included — not
+because it wouldn't be warranted there, but because no server-side revoke
+is available (the `admin` plugin is not installed, and core `revokeSession`
+needs the target's own token). The generation bump, bounded by the
+cookie-cache / 24h `updateAge` ceiling, is what handles every case.
 
 We considered short session TTLs — make the cookie expire quickly so stale
 roles can't persist. It lost on UX and load together: a short TTL forces
@@ -78,9 +86,10 @@ unconditionally with no cookie cache. It lost on database load: it turns
 the session check into a guaranteed two-query round-trip (live user row +
 `memberships.findMany`) on *every* page load and API call. The 5-minute
 cookie cache lets most requests be served from the signed cookie and skip
-the database entirely; the price is a bounded staleness window we accept
-for benign changes because the dangerous case is covered by the kill
-switch.
+the database entirely; the price is a bounded staleness window — the same
+cookie-cache / 24h `updateAge` ceiling — that applies to the dangerous
+removal/downgrade case as well, since no hard kill is available to shorten
+it.
 
 A design note on *why a counter and not a boolean*: concurrent role
 mutations (a script bulk-promoting interns) race against a boolean "stale"
@@ -94,9 +103,11 @@ unambiguously compare "I've seen up to N" against the current row value.
 The real cost is the up-to-5-minute staleness window for benign role
 changes: a freshly promoted member may not see their new capabilities for
 a few minutes if their requests keep hitting the cookie cache. We accept
-that ceiling because the only *dangerous* staleness is handled by the
-explicit `revokeSession` on removal, not by waiting for the cache to
-expire. A second cost is the discipline requirement: every
+that ceiling for benign changes; the *dangerous* staleness — a downgraded
+OWNER or a removed member still acting — is bounded by the same
+cookie-cache / 24h `updateAge` window rather than eliminated by a hard
+kill, because no server-side revoke is available (the `admin` plugin is not
+installed). A second cost is the discipline requirement: every
 permission-affecting mutation path must remember to call
 `bumpUserSessionGeneration` inside its transaction; forget it on one path
 and that mutation's effect is delayed all the way to BetterAuth's 24h

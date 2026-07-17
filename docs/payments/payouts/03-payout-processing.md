@@ -87,7 +87,7 @@ sequenceDiagram
                 end
 
                 PS->>DB: Link earnings to payout by ID
-                Note over DB: Set payoutId on each earning
+                Note over DB: Set payoutId and status = BATCHED<br/>on each earning (cash has not left yet)
                 PS->>PS: Count-mismatch guard
                 Note over PS: Verify linked count == expected count
             end
@@ -98,7 +98,7 @@ sequenceDiagram
     PS-->>GH: Batch complete
 ```
 
-> **Batch Integrity (Mar 2026):** Each consultant's payout is now wrapped in a `$transaction` that re-queries exact READY earnings, sums them, creates the payout, and links earnings by ID -- all atomically. A count-mismatch guard ensures the number of linked earnings matches expectations, preventing partial batches from concurrent modifications.
+> **Batch Integrity (Mar 2026):** Each consultant's payout is now wrapped in a `$transaction` that re-queries exact READY earnings, sums them, creates the payout, and links earnings by ID while moving them to `BATCHED` (the cash has not left yet, so they are not yet `PAID`) -- all atomically. A count-mismatch guard ensures the number of linked earnings matches expectations, preventing partial batches from concurrent modifications.
 
 ### Eligibility Criteria
 

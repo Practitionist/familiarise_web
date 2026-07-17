@@ -16,6 +16,7 @@ import {
   checkoutResponseSchema,
   consultationSearchParamsSchema,
   createCheckoutData,
+  type SupportedCheckoutGateway,
 } from "@/schemas/checkout";
 import {
   MINIMUM_BOOKING_LEAD_TIME_MS,
@@ -28,7 +29,6 @@ import {
   ConsultantProfile,
   ConsultantReview,
   ConsultationPlan,
-  PaymentGateway,
 } from "@prisma/client";
 import { CreditCard as CreditCardIcon } from "lucide-react";
 import { CompanyLogo } from "@/components/ui/company-logo";
@@ -265,7 +265,7 @@ export default function ConsultationCheckoutPage({
   );
 
   const handleCheckout = useCallback(
-    async (gateway: PaymentGateway, isMockPayment: boolean = false) => {
+    async (gateway: SupportedCheckoutGateway, isMockPayment: boolean = false) => {
       // Block checkout during maintenance mode
       if (isMaintenanceBlocked) {
         toast({
@@ -299,7 +299,7 @@ export default function ConsultationCheckoutPage({
         const checkoutData = createCheckoutData({
           appointmentType: "CONSULTATION",
           planId: resolvedParams.planId,
-          paymentGateway: gateway as PaymentGateway,
+          paymentGateway: gateway,
           startsAt: validatedSearchParams.startsAt,
           endsAt: validatedSearchParams.endsAt,
           slotOfAvailabilityWeeklyId:

@@ -286,7 +286,12 @@ longer matches its journal postings.
    `jobs/reconcile/reconcile-ledgers.ts` cron entry point):
    - `WALLET_BALANCE_DRIFT` — `BillingAccount.walletBalance` cache
      disagrees with the signed balance of the org's WALLET
-     `LedgerAccount` (`ledgerBalancePaise`).
+     `LedgerAccount` (`ledgerBalancePaise`). The nightly cron fails
+     closed on this finding (#837): it freezes that `BillingAccount`'s
+     discretionary wallet spend (a `WALLET_FREEZE` `SystemEvent`) and
+     pages P0, so no further checkout debits draw down an untrusted
+     balance until an operator reconciles the drift and clears the
+     freeze with a `WALLET_UNFREEZE`. Top-up credits are not gated.
    - `LEDGER_TXN_IMBALANCE` — a `LedgerTransaction` has
      `Σ DEBIT ≠ Σ CREDIT` across its `LedgerEntry` rows. Should be
      impossible (`postLedgerTxn` rejects unbalanced postings) — a hit
@@ -314,7 +319,9 @@ balanced **counter-transaction** (Σ DEBIT == Σ CREDIT) that reverses the
 bad legs, then re-run reconcile. `WALLET_BALANCE_DRIFT` is the lone
 exception: the balance is a derived cache, so re-deriving it from the
 WALLET account is a legitimate repair (the journal is the source of
-truth).
+truth). Once the cache is re-derived and reconcile is clean, clear the
+cron's protective spend-freeze on that account with a `WALLET_UNFREEZE`
+so bookings can debit the wallet again.
 
 **Never** auto-close a finding. Every row represents real money drift.
 

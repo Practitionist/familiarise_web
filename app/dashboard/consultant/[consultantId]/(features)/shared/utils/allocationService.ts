@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { TimeSlot } from "./calendarUtils";
 import type { SlotConflictResult } from "@/utils/slotAllocation/types";
 
@@ -17,12 +18,34 @@ export interface AllocationRequest {
   isAuto: boolean;
   slots?: string[];
   useRequestedSlots?: boolean;
+  /** Reject (409) if the event already has confirmed slots — sent by the
+   * Allocate Slots dialog so a stale tab can't silently replace another
+   * tab's allocation. Reschedule flows omit it. */
+  initialAllocation?: boolean;
+}
+
+/** What the allocate endpoints actually return in `data`: the created (or
+ * approved) Appointment rows. Kept loose — callers only read identity. */
+export interface AllocatedAppointmentDto {
+  id: string;
+  [key: string]: unknown;
 }
 
 export interface AllocationResponse {
   success: boolean;
-  data?: Record<string, RawAvailabilityApiSlot[]>;
+  data?: AllocatedAppointmentDto[];
   error?: string;
+  /** HTTP status of the failed response — 409 means "allocated elsewhere". */
+  httpStatus?: number;
+}
+
+export interface AllocationCallOptions {
+  isAuto?: boolean;
+  useRequestedSlots?: boolean;
+  initialAllocation?: boolean;
+  /** Sent as the Idempotency-Key header; the server replays the original
+   * batch for a repeated key instead of double-booking (#837). */
+  idempotencyKey?: string;
 }
 
 export interface ValidationResponse {
@@ -64,30 +87,35 @@ export interface ValidationResponse {
  */
 export class AllocationService {
   /**
-   * Allocates slots for consultations
+   * Shared PATCH for all four allocate endpoints.
    */
-  static async allocateConsultationSlots(
-    consultationId: string,
+  private static async patchAllocation(
+    url: string,
     request: AllocationRequest,
+    fallbackError: string,
+    idempotencyKey?: string,
   ): Promise<AllocationResponse> {
     try {
-      const response = await fetch(
-        `/api/bookings/consultations/${consultationId}/allocate`,
-        {
-          method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(request),
-        },
-      );
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+      if (idempotencyKey) {
+        headers["Idempotency-Key"] = idempotencyKey;
+      }
+
+      const response = await fetch(url, {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify(request),
+      });
 
       const data = await response.json();
 
       if (!response.ok) {
         return {
           success: false,
-          error: data.error || "Failed to allocate consultation slots",
+          error: data.error || fallbackError,
+          httpStatus: response.status,
         };
       }
 
@@ -96,7 +124,11 @@ export class AllocationService {
         data: data.data,
       };
     } catch (error) {
-      console.error("Error allocating consultation slots:", error);
+      console.error(`Allocation request failed (${url}):`, error);
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "client", feature: "slot-allocation" } },
+      );
       return {
         success: false,
         error:
@@ -148,48 +180,6 @@ export class AllocationService {
   }
 
   /**
-   * Allocates slots for subscriptions
-   */
-  static async allocateSubscriptionSlots(
-    subscriptionId: string,
-    request: AllocationRequest,
-  ): Promise<AllocationResponse> {
-    try {
-      const response = await fetch(
-        `/api/bookings/subscriptions/${subscriptionId}/allocate`,
-        {
-          method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(request),
-        },
-      );
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        return {
-          success: false,
-          error: data.error || "Failed to allocate subscription slots",
-        };
-      }
-
-      return {
-        success: true,
-        data: data.data,
-      };
-    } catch (error) {
-      console.error("Error allocating subscription slots:", error);
-      return {
-        success: false,
-        error:
-          error instanceof Error ? error.message : "Network error occurred",
-      };
-    }
-  }
-
-  /**
    * Validates slots for subscriptions
    */
   static async validateSubscriptionSlots(
@@ -232,97 +222,13 @@ export class AllocationService {
   }
 
   /**
-   * Allocates slots for webinars
-   */
-  static async allocateWebinarSlots(
-    webinarId: string,
-    request: AllocationRequest,
-  ): Promise<AllocationResponse> {
-    try {
-      const response = await fetch(
-        `/api/bookings/webinars/${webinarId}/allocate`,
-        {
-          method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(request),
-        },
-      );
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        return {
-          success: false,
-          error: data.error || "Failed to allocate webinar slots",
-        };
-      }
-
-      return {
-        success: true,
-        data: data.data,
-      };
-    } catch (error) {
-      console.error("Error allocating webinar slots:", error);
-      return {
-        success: false,
-        error:
-          error instanceof Error ? error.message : "Network error occurred",
-      };
-    }
-  }
-
-  /**
-   * Allocates slots for classes
-   */
-  static async allocateClassSlots(
-    classId: string,
-    request: AllocationRequest,
-  ): Promise<AllocationResponse> {
-    try {
-      const response = await fetch(`/api/bookings/classes/${classId}/allocate`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(request),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        return {
-          success: false,
-          error: data.error || "Failed to allocate class slots",
-        };
-      }
-
-      return {
-        success: true,
-        data: data.data,
-      };
-    } catch (error) {
-      console.error("Error allocating class slots:", error);
-      return {
-        success: false,
-        error:
-          error instanceof Error ? error.message : "Network error occurred",
-      };
-    }
-  }
-
-  /**
-   * Generic allocation method that routes to the appropriate service
+   * Generic allocation method that routes to the appropriate endpoint
    */
   static async allocateSlots(
     eventType: "consultation" | "subscription" | "webinar" | "class",
     eventId: string,
     slots: TimeSlot[],
-    allocationOptions?: {
-      isAuto?: boolean;
-      useRequestedSlots?: boolean;
-    },
+    allocationOptions?: AllocationCallOptions,
   ): Promise<AllocationResponse> {
     const slotStrings = slots.map((slot) => slot.startTime.toISOString());
 
@@ -331,27 +237,30 @@ export class AllocationService {
       isAuto: allocationOptions?.isAuto || false,
       slots: slotStrings,
       useRequestedSlots: allocationOptions?.useRequestedSlots,
+      initialAllocation: allocationOptions?.initialAllocation,
     };
 
-    switch (eventType) {
-      case "consultation":
-        return this.allocateConsultationSlots(eventId, request);
+    const paths = {
+      consultation: "consultations",
+      subscription: "subscriptions",
+      webinar: "webinars",
+      class: "classes",
+    } as const;
 
-      case "subscription":
-        return this.allocateSubscriptionSlots(eventId, request);
-
-      case "webinar":
-        return this.allocateWebinarSlots(eventId, request);
-
-      case "class":
-        return this.allocateClassSlots(eventId, request);
-
-      default:
-        return {
-          success: false,
-          error: "Invalid event type",
-        };
+    const path = paths[eventType];
+    if (!path) {
+      return {
+        success: false,
+        error: "Invalid event type",
+      };
     }
+
+    return this.patchAllocation(
+      `/api/bookings/${path}/${eventId}/allocate`,
+      request,
+      `Failed to allocate ${eventType} slots`,
+      allocationOptions?.idempotencyKey,
+    );
   }
 
   /**
@@ -444,14 +353,6 @@ export class AllocationService {
     slots: TimeSlot[],
   ): Promise<ValidationResponse> {
     const slotStrings = slots.map((slot) => slot.startTime.toISOString());
-
-    console.log(
-      `[AllocationService] Validating ${slotStrings.length} slots for ${eventType}:`,
-      {
-        eventId,
-        slots: slotStrings.slice(0, 3), // Log first 3 for debugging
-      },
-    );
 
     switch (eventType) {
       case "consultation":

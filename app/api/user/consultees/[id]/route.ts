@@ -119,7 +119,7 @@ export async function POST(
         user: { connect: { id: id } },
       },
       include: {
-        consultantReviews: true,
+        consultantReviews: { where: { deletedAt: null } },
         user: true,
       },
     });
@@ -190,7 +190,7 @@ export async function PATCH(
         budgetPreference: body.budgetPreference,
       },
       include: {
-        consultantReviews: true,
+        consultantReviews: { where: { deletedAt: null } },
         user: true,
       },
     });
@@ -251,7 +251,7 @@ export async function DELETE(
     const deletedConsultee = await prisma.consulteeProfile.delete({
       where: { id: id },
       include: {
-        consultantReviews: true,
+        consultantReviews: { where: { deletedAt: null } },
         user: true,
       },
     });

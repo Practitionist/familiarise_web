@@ -289,7 +289,7 @@ export default function AdminHomePageClient() {
           <motion.div variants={fadeInUp}>
             <DataCard title="Payment Gateway Status" icon={Zap}>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                {["STRIPE", "RAZORPAY", "LEMON_SQUEEZY", "XFLOW"].map(
+                {["STRIPE", "RAZORPAY"].map(
                   (gateway) => {
                     const isActive =
                       gateway === "STRIPE" || gateway === "RAZORPAY";

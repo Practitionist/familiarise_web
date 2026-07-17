@@ -1,12 +1,12 @@
 # Cron Jobs Reference
 
-All 27 scheduled jobs run as GitHub Actions workflows, executing standalone Node.js scripts that connect directly to PostgreSQL via Prisma. They bypass the Next.js middleware entirely, but **all jobs call `abortIfMaintenance()` at startup** (`lib/maintenance-cron.ts`) — a clean exit (0) on OFFLINE mode, a logged warning on DEGRADED. The middleware bypass means they must check Redis themselves, which is exactly what this guard does.
+All 28 scheduled jobs run as GitHub Actions workflows, executing standalone Node.js scripts that connect directly to PostgreSQL via Prisma. They bypass the Next.js middleware entirely, but **all jobs call `abortIfMaintenance()` at startup** (`lib/maintenance-cron.ts`) — a clean exit (0) on OFFLINE mode, a logged warning on DEGRADED. The middleware bypass means they must check Redis themselves, which is exactly what this guard does.
 
 ## Summary by Category
 
 | Category     | Count | Most Critical                                        |
 | ------------ | ----- | ---------------------------------------------------- |
-| Appointments | 6     | Reconcile Slot Availability, Cleanup Tentative Slots |
+| Appointments | 7     | Reconcile Slot Availability, Cleanup Tentative Slots |
 | Payments     | 3     | Cleanup Abandoned Payments, Reconcile Payment Status |
 | Payouts      | 4     | Process Payouts, Create Payout Batch                 |
 | Disputes     | 3     | Handle Lost Disputes                                 |
@@ -90,9 +90,21 @@ All 27 scheduled jobs run as GitHub Actions workflows, executing standalone Node
 | **Maintenance Risk** | **CRITICAL** -- Running during migration may detect false anomalies and "fix" them, corrupting slot state            |
 | **Safe to skip?**    | Yes, but run manually post-maintenance. Slot integrity depends on this job.                                          |
 
+### 7. Detect Consultant No-Shows
+
+| Field                | Value                                                                                                                |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| **Schedule**         | `17 * * * *` (hourly, at :17)                                                                                        |
+| **Script**           | `jobs/appointments/detect-consultant-no-shows.ts`                                                                    |
+| **Description**      | Detects confirmed CONSULTATION sessions where the consultant did not attend (past a 120-minute grace window), auto-refunds the consultee via `refundPayment`, marks the booking cancelled, and notifies both parties. Subscriptions are not yet covered. |
+| **DB Connection**    | Yes (Prisma)                                                                                                         |
+| **External APIs**    | Payment gateway (refunds), Novu (notifications)                                                                      |
+| **Maintenance Risk** | HIGH -- This job moves money (auto-refund). It runs under a fail-closed cron lock and refuses to run without a real Redis lock. |
+| **Safe to skip?**    | Yes -- catch-up on next run. No-shows are detected on the next hourly cycle.                                         |
+
 ## Payments
 
-### 7. Alert Orphaned Payments
+### 8. Alert Orphaned Payments
 
 | Field                | Value                                                                                                                            |
 | -------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
@@ -100,11 +112,11 @@ All 27 scheduled jobs run as GitHub Actions workflows, executing standalone Node
 | **Script**           | `jobs/alerts/alert-orphaned-payments.ts`                                                                                         |
 | **Description**      | Detects payments recorded in payment gateways but with no corresponding appointment created. Sends alerts for orphaned payments. |
 | **DB Connection**    | Yes (Prisma)                                                                                                                     |
-| **External APIs**    | Stripe, Razorpay, Lemon Squeezy, Xflow                                                                                           |
+| **External APIs**    | Stripe, Razorpay                                                                                                                  |
 | **Maintenance Risk** | LOW -- Read-only detection, but may generate false alerts during maintenance                                                     |
 | **Safe to skip?**    | Yes -- alerts delayed but no data corruption.                                                                                    |
 
-### 8. Cleanup Abandoned Payments
+### 9. Cleanup Abandoned Payments
 
 | Field                | Value                                                                                                                        |
 | -------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
@@ -112,11 +124,11 @@ All 27 scheduled jobs run as GitHub Actions workflows, executing standalone Node
 | **Script**           | `jobs/payments/cleanup-abandoned-payments.ts`                                                                                |
 | **Description**      | Cancels payment intents abandoned >30 min with no confirmed appointment. Also resets approval-pending consultation requests. |
 | **DB Connection**    | Yes (Prisma)                                                                                                                 |
-| **External APIs**    | Stripe, Razorpay, Lemon Squeezy, Xflow                                                                                       |
+| **External APIs**    | Stripe, Razorpay                                                                                                              |
 | **Maintenance Risk** | **CRITICAL** -- May cancel valid payment intents where appointment creation was delayed by maintenance downtime              |
 | **Safe to skip?**    | Must skip during maintenance. Run post-maintenance catch-up after confirming no in-flight payments.                          |
 
-### 9. Reconcile Payment Status
+### 10. Reconcile Payment Status
 
 | Field                | Value                                                                                                |
 | -------------------- | ---------------------------------------------------------------------------------------------------- |
@@ -130,7 +142,7 @@ All 27 scheduled jobs run as GitHub Actions workflows, executing standalone Node
 
 ## Payouts
 
-### 10. Create Payout Batch
+### 11. Create Payout Batch
 
 | Field                | Value                                                                                                   |
 | -------------------- | ------------------------------------------------------------------------------------------------------- |
@@ -142,7 +154,7 @@ All 27 scheduled jobs run as GitHub Actions workflows, executing standalone Node
 | **Maintenance Risk** | HIGH -- May create batch from incomplete/corrupted earnings data                                        |
 | **Safe to skip?**    | Yes -- batch creation can be triggered manually. Payouts delayed by one week if missed.                 |
 
-### 11. Process Payouts
+### 12. Process Payouts
 
 | Field                | Value                                                                                |
 | -------------------- | ------------------------------------------------------------------------------------ |
@@ -154,7 +166,7 @@ All 27 scheduled jobs run as GitHub Actions workflows, executing standalone Node
 | **Maintenance Risk** | **CRITICAL** -- May send incorrect amounts or process payouts based on stale data    |
 | **Safe to skip?**    | Must skip during maintenance. Payouts are irreversible once sent to payment gateway. |
 
-### 12. Handle Stuck Payouts
+### 13. Handle Stuck Payouts
 
 | Field                | Value                                                                                                 |
 | -------------------- | ----------------------------------------------------------------------------------------------------- |
@@ -166,7 +178,7 @@ All 27 scheduled jobs run as GitHub Actions workflows, executing standalone Node
 | **Maintenance Risk** | MEDIUM -- May retry payouts that should remain paused during maintenance                              |
 | **Safe to skip?**    | Yes -- stuck payouts will be retried on next cycle.                                                   |
 
-### 13. Reconcile Payout Status
+### 14. Reconcile Payout Status
 
 | Field                | Value                                                                                        |
 | -------------------- | -------------------------------------------------------------------------------------------- |
@@ -180,7 +192,7 @@ All 27 scheduled jobs run as GitHub Actions workflows, executing standalone Node
 
 ## Disputes
 
-### 14. Alert Dispute Deadlines
+### 15. Alert Dispute Deadlines
 
 | Field                | Value                                                                                                        |
 | -------------------- | ------------------------------------------------------------------------------------------------------------ |
@@ -192,7 +204,7 @@ All 27 scheduled jobs run as GitHub Actions workflows, executing standalone Node
 | **Maintenance Risk** | LOW -- Alert-only, no state changes                                                                          |
 | **Safe to skip?**    | Yes -- alerts delayed but dispute deadlines are external.                                                    |
 
-### 15. Handle Lost Disputes
+### 16. Handle Lost Disputes
 
 | Field                | Value                                                                                                          |
 | -------------------- | -------------------------------------------------------------------------------------------------------------- |
@@ -204,7 +216,7 @@ All 27 scheduled jobs run as GitHub Actions workflows, executing standalone Node
 | **Maintenance Risk** | HIGH -- May incorrectly process earnings if data is in flux                                                    |
 | **Safe to skip?**    | Yes -- lost disputes can wait 6 hours. Run manually if urgent.                                                 |
 
-### 16. Reconcile Disputes
+### 17. Reconcile Disputes
 
 | Field                | Value                                                                                 |
 | -------------------- | ------------------------------------------------------------------------------------- |
@@ -218,7 +230,7 @@ All 27 scheduled jobs run as GitHub Actions workflows, executing standalone Node
 
 ## Refunds
 
-### 17. Cascade Refund to Earnings
+### 18. Cascade Refund to Earnings
 
 | Field                | Value                                                                                                          |
 | -------------------- | -------------------------------------------------------------------------------------------------------------- |
@@ -230,7 +242,7 @@ All 27 scheduled jobs run as GitHub Actions workflows, executing standalone Node
 | **Maintenance Risk** | HIGH -- May incorrectly adjust earnings if refund/earnings tables are being migrated                           |
 | **Safe to skip?**    | Yes -- earnings adjustments delayed but caught on next run.                                                    |
 
-### 18. Reconcile Pending Refunds
+### 19. Reconcile Pending Refunds
 
 | Field                | Value                                                                                          |
 | -------------------- | ---------------------------------------------------------------------------------------------- |
@@ -244,7 +256,7 @@ All 27 scheduled jobs run as GitHub Actions workflows, executing standalone Node
 
 ## Earnings
 
-### 19. Sync Payment-Earning
+### 20. Sync Payment-Earning
 
 | Field                | Value                                                                                          |
 | -------------------- | ---------------------------------------------------------------------------------------------- |
@@ -256,7 +268,7 @@ All 27 scheduled jobs run as GitHub Actions workflows, executing standalone Node
 | **Maintenance Risk** | HIGH -- May create incorrect earnings if payment/earnings tables are being migrated            |
 | **Safe to skip?**    | Yes -- earnings sync delayed but caught on next run.                                           |
 
-### 20. Release Earnings from Hold
+### 21. Release Earnings from Hold
 
 | Field                | Value                                                                                                 |
 | -------------------- | ----------------------------------------------------------------------------------------------------- |
@@ -270,7 +282,7 @@ All 27 scheduled jobs run as GitHub Actions workflows, executing standalone Node
 
 ## Cleanup
 
-### 21. Deactivate Expired Discounts
+### 22. Deactivate Expired Discounts
 
 | Field                | Value                                                                                      |
 | -------------------- | ------------------------------------------------------------------------------------------ |
@@ -282,7 +294,7 @@ All 27 scheduled jobs run as GitHub Actions workflows, executing standalone Node
 | **Maintenance Risk** | LOW -- Simple status update, unlikely to conflict                                          |
 | **Safe to skip?**    | Yes -- expired discounts persist one extra day. Minimal impact.                            |
 
-### 22. Document Storage Reconciliation
+### 23. Document Storage Reconciliation
 
 | Field                | Value                                                                                                   |
 | -------------------- | ------------------------------------------------------------------------------------------------------- |
@@ -294,7 +306,7 @@ All 27 scheduled jobs run as GitHub Actions workflows, executing standalone Node
 | **Maintenance Risk** | MEDIUM -- May incorrectly identify files as orphaned if document table is being migrated                |
 | **Safe to skip?**    | Yes -- orphaned files persist one extra day. Run manually post-maintenance.                             |
 
-### 23. Archive Webhook Events
+### 24. Archive Webhook Events
 
 | Field                | Value                                                                                             |
 | -------------------- | ------------------------------------------------------------------------------------------------- |
@@ -306,7 +318,7 @@ All 27 scheduled jobs run as GitHub Actions workflows, executing standalone Node
 | **Maintenance Risk** | LOW -- Cleanup of old data, not time-sensitive                                                    |
 | **Safe to skip?**    | Yes -- old events persist one extra week.                                                         |
 
-### 24. Cleanup Auth Tokens
+### 25. Cleanup Auth Tokens
 
 | Field                | Value                                                                                              |
 | -------------------- | -------------------------------------------------------------------------------------------------- |
@@ -320,7 +332,7 @@ All 27 scheduled jobs run as GitHub Actions workflows, executing standalone Node
 
 ## Stream
 
-### 25. Stream User Sync
+### 26. Stream User Sync
 
 | Field                | Value                                                                                                                         |
 | -------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
@@ -334,7 +346,7 @@ All 27 scheduled jobs run as GitHub Actions workflows, executing standalone Node
 
 ## Waitlist
 
-### 26. Send Waitlist Expiration Reminders
+### 27. Send Waitlist Expiration Reminders
 
 | Field                | Value                                                                                                            |
 | -------------------- | ---------------------------------------------------------------------------------------------------------------- |
@@ -346,7 +358,7 @@ All 27 scheduled jobs run as GitHub Actions workflows, executing standalone Node
 | **Maintenance Risk** | LOW -- Email sending, DB reads for waitlist entries                                                              |
 | **Safe to skip?**    | Yes -- users miss one reminder but have 24h total offer window.                                                  |
 
-### 27. Process Waitlist Expirations
+### 28. Process Waitlist Expirations
 
 | Field                | Value                                                                                                           |
 | -------------------- | --------------------------------------------------------------------------------------------------------------- |
