@@ -19,7 +19,7 @@ import type {
   OrgStatus,
 } from "@prisma/client";
 
-import { useOrgRole, useRequireOrgRole } from "../useOrgRole";
+import { useOrgRole, useRequireOrgAccess } from "../useOrgRole";
 import { orgDetailsQueryKey } from "@/lib/api/organizations/org-details";
 import {
   DashboardHeader,
@@ -142,7 +142,7 @@ export default function OrgSettingsPage({
 }) {
   const { orgId } = use(params);
   const { isAtLeast } = useOrgRole(orgId);
-  const { allowed } = useRequireOrgRole(orgId, "MAINTAINER");
+  const { allowed } = useRequireOrgAccess(orgId, { permission: "settings.manage" });
   const queryClient = useQueryClient();
 
   const { data, isLoading } = useQuery({

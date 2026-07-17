@@ -327,7 +327,7 @@ export function EventManagementDashboard({
     fetchTrialCounts();
   }, [fetchTrialCounts, subscriptionPlans]);
 
-  // Redirect to Free Trials tab when clicking trial button
+  // Redirect to Trials tab when clicking trial button
   const handleTrialsClick = () => {
     router.push(`/dashboard/consultant/${consultantId}/trials`);
   };
@@ -533,18 +533,22 @@ export function EventManagementDashboard({
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3 }}
-          className="mb-8 flex flex-wrap items-center gap-2 sm:gap-3"
+          className="mb-8 flex flex-wrap items-center gap-2 sm:mb-10 sm:gap-3"
         >
-          <div className="flex items-center gap-2 px-3 sm:px-4 py-1.5 sm:py-2 rounded-full bg-zinc-100 border border-zinc-200/60">
-            <LayoutTemplate className="h-4 w-4 text-zinc-600" />
-            <span className="text-xs sm:text-sm font-medium text-zinc-700">
-              {totalPlans} Plans
+          <div className="flex items-center gap-2 rounded-xl border border-zinc-200/80 bg-white px-3.5 py-2 shadow-sm">
+            <LayoutTemplate className="h-4 w-4 text-zinc-500" />
+            <span className="text-sm font-medium text-zinc-800">
+              {totalPlans}{" "}
+              <span className="font-normal text-zinc-500">Plans</span>
             </span>
           </div>
-          <div className="flex items-center gap-2 px-3 sm:px-4 py-1.5 sm:py-2 rounded-full bg-zinc-100 border border-zinc-200/60">
-            <Radio className="h-4 w-4 text-zinc-600" />
-            <span className="text-xs sm:text-sm font-medium text-zinc-700">
-              {totalSessions} Upcoming Sessions
+          <div className="flex items-center gap-2 rounded-xl border border-zinc-200/80 bg-white px-3.5 py-2 shadow-sm">
+            <Radio className="h-4 w-4 text-zinc-500" />
+            <span className="text-sm font-medium text-zinc-800">
+              {totalSessions}{" "}
+              <span className="font-normal text-zinc-500">
+                Upcoming Sessions
+              </span>
             </span>
           </div>
         </motion.div>
@@ -554,55 +558,49 @@ export function EventManagementDashboard({
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.4, delay: 0.1 }}
-          className="mb-10 sm:mb-16"
+          className="mb-12 sm:mb-16"
         >
-          {/* Section Header */}
-          <div className="flex items-center gap-3 sm:gap-4 mb-6 sm:mb-8">
-            <div className="flex h-10 w-10 sm:h-12 sm:w-12 items-center justify-center rounded-xl bg-zinc-900 shrink-0">
-              <LayoutTemplate className="h-5 w-5 sm:h-6 sm:w-6 text-white" />
-            </div>
-            <div className="min-w-0">
-              <h2 className="text-xl sm:text-2xl font-bold text-zinc-900">
-                Plan Templates
-              </h2>
-              <p className="text-xs sm:text-sm text-zinc-500">
-                Create reusable service templates
-              </p>
-            </div>
-            <div className="flex-1 h-px bg-gradient-to-r from-zinc-200 to-transparent hidden sm:block" />
+          <div className="mb-6 sm:mb-8">
+            <h2 className="text-lg font-semibold tracking-tight text-zinc-900 sm:text-xl">
+              Plan Templates
+            </h2>
+            <p className="mt-0.5 text-sm text-zinc-500">
+              Create reusable service templates
+            </p>
           </div>
 
           {/* Consultation Plans */}
-          <div className="mb-6 sm:mb-10 bg-zinc-50/50 border border-zinc-100 rounded-xl p-4 sm:p-6">
-            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-4 sm:mb-6">
+          <div className="mb-8 sm:mb-10">
+            <div className="mb-4 flex flex-col gap-3 sm:mb-5 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-3">
-                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-50 shrink-0">
-                  <MessageSquare className="h-4 w-4 sm:h-5 sm:w-5 text-blue-600" />
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-sky-50 ring-1 ring-sky-100">
+                  <MessageSquare className="h-4 w-4 text-sky-700" />
                 </div>
                 <div>
-                  <h3 className="text-base sm:text-lg font-semibold text-zinc-900">
+                  <h3 className="text-sm font-semibold text-zinc-900 sm:text-base">
                     Consultation Plans
                   </h3>
-                  <p className="text-xs sm:text-sm text-zinc-500">
+                  <p className="text-xs text-zinc-500 sm:text-sm">
                     One-on-one session templates
                   </p>
                 </div>
               </div>
               <Button
                 onClick={() => setIsConsultationDialogOpen(true)}
-                className="bg-zinc-900 hover:bg-zinc-800 text-white font-medium gap-2 w-full sm:w-auto"
+                variant="outline"
+                className="w-full gap-2 border-zinc-200 bg-white font-medium text-zinc-900 hover:bg-zinc-50 sm:w-auto"
               >
                 <Plus className="h-4 w-4" />
                 New Plan
               </Button>
             </div>
             {consultationPlansLoading ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4 sm:gap-5 lg:gap-6">
-                {[...Array(4)].map((_, i) => (
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-5 xl:grid-cols-3">
+                {[...Array(3)].map((_, i) => (
                   <div
                     key={i}
-                    className="h-56 sm:h-64 bg-zinc-200 rounded-xl animate-pulse"
-                  ></div>
+                    className="h-52 animate-pulse rounded-2xl bg-zinc-100"
+                  />
                 ))}
               </div>
             ) : (
@@ -625,36 +623,37 @@ export function EventManagementDashboard({
           </div>
 
           {/* Subscription Plans */}
-          <div className="bg-zinc-50/50 border border-zinc-100 rounded-xl p-4 sm:p-6">
-            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-4 sm:mb-6">
+          <div>
+            <div className="mb-4 flex flex-col gap-3 sm:mb-5 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-3">
-                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-purple-50 shrink-0">
-                  <CalendarRange className="h-4 w-4 sm:h-5 sm:w-5 text-purple-600" />
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-teal-50 ring-1 ring-teal-100">
+                  <CalendarRange className="h-4 w-4 text-teal-700" />
                 </div>
                 <div>
-                  <h3 className="text-base sm:text-lg font-semibold text-zinc-900">
+                  <h3 className="text-sm font-semibold text-zinc-900 sm:text-base">
                     Subscription Plans
                   </h3>
-                  <p className="text-xs sm:text-sm text-zinc-500">
+                  <p className="text-xs text-zinc-500 sm:text-sm">
                     Recurring mentorship offerings
                   </p>
                 </div>
               </div>
               <Button
                 onClick={() => setIsSubscriptionDialogOpen(true)}
-                className="bg-zinc-900 hover:bg-zinc-800 text-white font-medium gap-2 w-full sm:w-auto"
+                variant="outline"
+                className="w-full gap-2 border-zinc-200 bg-white font-medium text-zinc-900 hover:bg-zinc-50 sm:w-auto"
               >
                 <Plus className="h-4 w-4" />
                 New Plan
               </Button>
             </div>
             {subscriptionPlansLoading ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4 sm:gap-5 lg:gap-6">
-                {[...Array(4)].map((_, i) => (
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-5 xl:grid-cols-3">
+                {[...Array(3)].map((_, i) => (
                   <div
                     key={i}
-                    className="h-56 sm:h-64 bg-zinc-200 rounded-xl animate-pulse"
-                  ></div>
+                    className="h-52 animate-pulse rounded-2xl bg-zinc-100"
+                  />
                 ))}
               </div>
             ) : (
@@ -684,43 +683,37 @@ export function EventManagementDashboard({
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.4, delay: 0.2 }}
-          className="mb-10 sm:mb-16"
+          className="mb-12 sm:mb-16"
         >
-          {/* Section Header */}
-          <div className="flex items-center gap-3 sm:gap-4 mb-6 sm:mb-8">
-            <div className="flex h-10 w-10 sm:h-12 sm:w-12 items-center justify-center rounded-xl bg-zinc-900 shrink-0">
-              <Radio className="h-5 w-5 sm:h-6 sm:w-6 text-white" />
-            </div>
-            <div className="min-w-0">
-              <h2 className="text-xl sm:text-2xl font-bold text-zinc-900">
-                Live Sessions
-              </h2>
-              <p className="text-xs sm:text-sm text-zinc-500">
-                Schedule and manage your live events
-              </p>
-            </div>
-            <div className="flex-1 h-px bg-gradient-to-r from-zinc-200 to-transparent hidden sm:block" />
+          <div className="mb-6 sm:mb-8">
+            <h2 className="text-lg font-semibold tracking-tight text-zinc-900 sm:text-xl">
+              Live Sessions
+            </h2>
+            <p className="mt-0.5 text-sm text-zinc-500">
+              Schedule and manage your live events
+            </p>
           </div>
 
           {/* Webinar Events */}
-          <div className="mb-6 sm:mb-10 bg-zinc-50/50 border border-zinc-100 rounded-xl p-4 sm:p-6">
-            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-4 sm:mb-6">
+          <div className="mb-8 sm:mb-10">
+            <div className="mb-4 flex flex-col gap-3 sm:mb-5 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-3">
-                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-50 shrink-0">
-                  <Video className="h-4 w-4 sm:h-5 sm:w-5 text-emerald-600" />
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-50 ring-1 ring-emerald-100">
+                  <Video className="h-4 w-4 text-emerald-700" />
                 </div>
                 <div>
-                  <h3 className="text-base sm:text-lg font-semibold text-zinc-900">
+                  <h3 className="text-sm font-semibold text-zinc-900 sm:text-base">
                     Webinar Events
                   </h3>
-                  <p className="text-xs sm:text-sm text-zinc-500">
+                  <p className="text-xs text-zinc-500 sm:text-sm">
                     Live sessions with multiple participants
                   </p>
                 </div>
               </div>
               <Button
                 onClick={() => setIsWebinarDialogOpen(true)}
-                className="bg-zinc-900 hover:bg-zinc-800 text-white font-medium gap-2 w-full sm:w-auto"
+                variant="outline"
+                className="w-full gap-2 border-zinc-200 bg-white font-medium text-zinc-900 hover:bg-zinc-50 sm:w-auto"
               >
                 <Plus className="h-4 w-4" />
                 New Webinar
@@ -739,24 +732,25 @@ export function EventManagementDashboard({
           </div>
 
           {/* Class Events */}
-          <div className="bg-zinc-50/50 border border-zinc-100 rounded-xl p-4 sm:p-6">
-            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-4 sm:mb-6">
+          <div>
+            <div className="mb-4 flex flex-col gap-3 sm:mb-5 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-3">
-                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber-50 shrink-0">
-                  <GraduationCap className="h-4 w-4 sm:h-5 sm:w-5 text-amber-600" />
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-50 ring-1 ring-amber-100">
+                  <GraduationCap className="h-4 w-4 text-amber-700" />
                 </div>
                 <div>
-                  <h3 className="text-base sm:text-lg font-semibold text-zinc-900">
+                  <h3 className="text-sm font-semibold text-zinc-900 sm:text-base">
                     Class Events
                   </h3>
-                  <p className="text-xs sm:text-sm text-zinc-500">
+                  <p className="text-xs text-zinc-500 sm:text-sm">
                     Multi-session structured learning
                   </p>
                 </div>
               </div>
               <Button
                 onClick={() => setIsClassDialogOpen(true)}
-                className="bg-zinc-900 hover:bg-zinc-800 text-white font-medium gap-2 w-full sm:w-auto"
+                variant="outline"
+                className="w-full gap-2 border-zinc-200 bg-white font-medium text-zinc-900 hover:bg-zinc-50 sm:w-auto"
               >
                 <Plus className="h-4 w-4" />
                 New Class

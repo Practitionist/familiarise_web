@@ -241,7 +241,7 @@ export async function logTrialRequested(
 ) {
   return logActivity({
     activityType: "TRIAL_REQUESTED",
-    description: `${actor.name} requested a free trial: ${planTitle}`,
+    description: `${actor.name} requested a trial: ${planTitle}`,
     actorId: actor.id,
     actorName: actor.name,
     actorImage: actor.image,

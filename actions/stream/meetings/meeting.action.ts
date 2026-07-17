@@ -103,7 +103,9 @@ export async function createDbMeetingSession(
   if (slot.appointmentId) {
     const appointment = await prisma.appointment.findUnique({
       where: { id: slot.appointmentId },
-      select: { organizationId: true },
+      select: {
+        organizationId: true,
+      },
     });
     organizationId = appointment?.organizationId ?? null;
   }

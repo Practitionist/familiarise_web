@@ -4,8 +4,8 @@
  */
 
 import * as Sentry from "@sentry/nextjs";
-import prisma from "@/lib/prisma";
-import { WaitlistStatus } from "@prisma/client";
+import prisma, { type PrismaLike } from "@/lib/prisma";
+import { Prisma, WaitlistStatus } from "@prisma/client";
 import {
   getNextBatchInQueue,
   updatePositions,
@@ -16,6 +16,40 @@ import { countWebinarParticipants } from "@/lib/payments/utils/participants";
 
 // Notification window in hours (48 hours to respond)
 const NOTIFICATION_WINDOW_HOURS = 48;
+
+/**
+ * #837 seat soft-hold. A NOTIFIED waitlist entry inside its response window IS
+ * the held seat — the notified user has an exclusive offer to take it, so
+ * capacity checks must count these holds or an FCFS buyer grabs a seat already
+ * promised to a waitlisted user. Release needs no explicit step: decline/skip/
+ * leave/expire all move the row out of NOTIFIED (or past expiresAt), dropping
+ * the count. Webinar/class seats are shared-slot user-connections (isTentative
+ * is per-slot, not per-user), so the NOTIFIED status — not a tentative slot —
+ * is the only schema-free way to hold one seat for one user.
+ *
+ * `excludeUserId` drops the caller's OWN hold so a notified user's fromWaitlist
+ * checkout isn't rejected by the very seat being reserved for them.
+ */
+export async function countWaitlistHolds(
+  db: PrismaLike,
+  params: {
+    webinarId?: string | null;
+    classId?: string | null;
+    excludeUserId?: string;
+  },
+): Promise<number> {
+  const { webinarId, classId, excludeUserId } = params;
+  if (!webinarId && !classId) return 0;
+  return db.waitlist.count({
+    where: {
+      status: WaitlistStatus.NOTIFIED,
+      ...(webinarId ? { webinarId } : { classId }),
+      ...(excludeUserId ? { userId: { not: excludeUserId } } : {}),
+      // A NOTIFIED row past its window isn't a live hold (expiry cron can lag).
+      OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+    },
+  });
+}
 
 // Type for slot opening params
 export interface SlotOpeningParams {
@@ -224,9 +258,10 @@ export async function handleWaitlistResponse(params: {
 
   switch (action) {
     case "ACCEPT": {
-      // Mark as accepted (actual booking will happen through checkout)
-      // We don't mark as BOOKED yet - that happens after successful payment
-      // For now, redirect them to checkout with a reserved spot
+      // #837 — the seat is already held: the entry stays NOTIFIED through the
+      // response window and countWaitlistHolds() blocks FCFS buyers from taking
+      // it at checkout. So we can safely redirect to checkout without racing.
+      // Booking is stamped BOOKED only after successful payment.
 
       const eventType = entry.webinarId ? "webinar" : "class";
       const planId = entry.webinar?.webinarPlan.id || entry.class?.classPlan.id;
@@ -407,8 +442,12 @@ export async function checkEventAvailability(params: {
     );
     const maxParticipants = webinar.webinarPlan.maxParticipants;
 
+    // #837 — held seats (NOTIFIED offers) count against availability so we
+    // don't tell a new user "register directly" for a seat already reserved.
+    const holds = await countWaitlistHolds(prisma, { webinarId });
+
     return {
-      available: currentParticipants < maxParticipants,
+      available: currentParticipants + holds < maxParticipants,
       currentParticipants,
       maxParticipants,
       waitlistCount: webinar.waitlist.length,
@@ -460,8 +499,11 @@ export async function checkEventAvailability(params: {
     const currentParticipants = uniqueParticipantIds.size;
     const maxParticipants = classInstance.classPlan.maxParticipants;
 
+    // #837 — held seats (NOTIFIED offers) count against availability.
+    const holds = await countWaitlistHolds(prisma, { classId });
+
     return {
-      available: currentParticipants < maxParticipants,
+      available: currentParticipants + holds < maxParticipants,
       currentParticipants,
       maxParticipants,
       waitlistCount: classInstance.waitlist.length,
@@ -483,6 +525,8 @@ export async function joinWaitlist(params: {
   success: boolean;
   waitlistId?: string;
   position?: number;
+  // Set on friendly conflicts so the route can map to HTTP 409, not a 500.
+  code?: "ALREADY_ON_WAITLIST";
   message: string;
 }> {
   const { userId, webinarId, classId, preferences } = params;
@@ -514,6 +558,7 @@ export async function joinWaitlist(params: {
   if (existingEntry) {
     return {
       success: false,
+      code: "ALREADY_ON_WAITLIST",
       message: "You are already on the waitlist for this event",
     };
   }
@@ -529,16 +574,34 @@ export async function joinWaitlist(params: {
     };
   }
 
-  // Create waitlist entry
-  const entry = await prisma.waitlist.create({
-    data: {
-      userId,
-      webinarId,
-      classId,
-      preferences: preferences as object | undefined,
-      status: WaitlistStatus.WAITING,
-    },
-  });
+  // Create waitlist entry. The WAITING/NOTIFIED pre-check above is a race
+  // window — two concurrent joins both pass it, then @@unique([userId,
+  // webinarId])/([userId, classId]) rejects the loser with P2002. Catch it and
+  // return the same friendly conflict instead of a generic 500.
+  let entry: Awaited<ReturnType<typeof prisma.waitlist.create>>;
+  try {
+    entry = await prisma.waitlist.create({
+      data: {
+        userId,
+        webinarId,
+        classId,
+        preferences: preferences as object | undefined,
+        status: WaitlistStatus.WAITING,
+      },
+    });
+  } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    ) {
+      return {
+        success: false,
+        code: "ALREADY_ON_WAITLIST",
+        message: "You are already on the waitlist for this event",
+      };
+    }
+    throw error;
+  }
 
   // Calculate position using priority-based queue
   const position = await calculatePosition(entry.id);

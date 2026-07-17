@@ -188,7 +188,6 @@ export const paymentGateways = [
     description: "UPI, cards & bank transfer",
     gateway: "RAZORPAY" as const,
   },
-  // TODO: Add Lemon Squeezy and XFlow when webhook appointment creation is implemented
 ];
 
 // Default success and error handlers for StripeCheckout component

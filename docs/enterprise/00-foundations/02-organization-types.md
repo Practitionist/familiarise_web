@@ -18,7 +18,6 @@ via `deriveCapabilityKind()` in `lib/labels/org-labels.ts`.
 model Organization {
   canSponsor Boolean @default(true)
   canHost    Boolean @default(false)
-  capabilitiesExtra Json?   // escape hatch, e.g. { "RESELL": true }
   ...
 }
 ```
@@ -63,11 +62,12 @@ SDE can open the dashboard for any capability shape without hand-crafting a
 fixture. The hypothetical conglomerate case (a Wipro-style parent with
 subsidiary orgs) is [hierarchy](06-hierarchy.md) — schema-only in v1.
 
-`capabilitiesExtra` is a JSON blob reserved for one-off capabilities
-(e.g. an org that also resells third-party content) so future additions
-don't need a migration. The 90% path is covered by the two typed
-booleans; consumers that care about the typed booleans must not read
-`capabilitiesExtra` — its shape is deliberately undocumented.
+A `capabilitiesExtra` JSON escape hatch for one-off capabilities (e.g. an
+org that also resells third-party content) was sketched during design but
+was never added to the schema, and no code reads it (ADR 18 confirmed
+this and retired the idea from these docs). If a third capability ever
+becomes real, add a typed boolean; the JSON blob remains a rejected
+option, not a dormant field.
 
 ## Why booleans and not an enum
 
@@ -91,7 +91,7 @@ Columns are the two candidate designs; rows are the concrete extensibility and c
 
 | | Single `OrganizationKind` enum (rejected) | Two booleans (shipped) |
 |---|---|---|
-| Add a 4th capability (e.g. RESELL) | new enum value → migration + every `switch` re-audited for exhaustiveness | a 3rd boolean, or the `capabilitiesExtra` JSON escape hatch — no migration |
+| Add a 4th capability (e.g. RESELL) | new enum value → migration + every `switch` re-audited for exhaustiveness | a 3rd typed boolean — one additive column, no consumer re-audit |
 | "Does it buy?" check | must special-case BUYER **and** HYBRID | `canSponsor` — one column |
 | HYBRID | a distinct value every consumer must remember to handle | falls out for free (both booleans true) |
 | Cost we pay back | — | two columns can drift into the INERT `false/false` combo, so every write path needs the guard below; and `deriveCapabilityKind` exists solely to re-derive the label the enum used to store |

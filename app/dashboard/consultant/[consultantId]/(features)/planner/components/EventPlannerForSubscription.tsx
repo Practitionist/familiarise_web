@@ -35,6 +35,7 @@ import {
   FormLabel,
   FormMessage,
 } from "@/components/ui/form";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -103,13 +104,30 @@ export function EventPlannerForSubscription({
     fetchTopics();
   }, [toast]);
 
-  // State for free trial (not in the Zod schema, handled separately)
-  const [freeTrialEnabled, setFreeTrialEnabled] = useState(
-    initialData?.subscriptionPlan?.freeTrialEnabled ?? false,
+  // State for the trial offer (kept outside the react-hook-form state)
+  const [trialEnabled, setTrialEnabled] = useState(
+    initialData?.subscriptionPlan?.trialEnabled ?? false,
   );
-  const [freeTrialDurationMinutes, setFreeTrialDurationMinutes] = useState(
-    initialData?.subscriptionPlan?.freeTrialDurationMinutes ?? 30,
+  const [trialDurationMinutes, setTrialDurationMinutes] = useState(
+    initialData?.subscriptionPlan?.trialDurationMinutes ?? 30,
   );
+  // Rupee text input; paise derived below. Free by default until paid-trial
+  // checkout is wired (the wiring PR flips this to ₹100 with the schema).
+  const [trialPriceInput, setTrialPriceInput] = useState(
+    String((initialData?.subscriptionPlan?.trialPriceInPaise ?? 0) / 100),
+  );
+  // ₹0 is allowed but must be an explicit choice, not a default slide-through.
+  const [freeTrialAcknowledged, setFreeTrialAcknowledged] = useState(false);
+
+  const trialPriceRupees = Number(trialPriceInput);
+  const trialPriceValid =
+    trialPriceInput.trim() !== "" &&
+    Number.isFinite(trialPriceRupees) &&
+    trialPriceRupees >= 0;
+  const trialPriceInPaise = trialPriceValid
+    ? Math.round(trialPriceRupees * 100)
+    : 0;
+  const isFreeTrial = trialPriceValid && trialPriceInPaise === 0;
 
   // State for subscription contents/roadmap (not in Zod schema)
   const [subscriptionContents, setSubscriptionContents] = useState<
@@ -182,13 +200,17 @@ export function EventPlannerForSubscription({
         learningOutcomes: initialData.subscriptionPlan.learningOutcomes ?? [],
         topics: initialData.subscriptionPlan.topics ?? [],
       });
-      // Reset free trial and subscription contents state
-      setFreeTrialEnabled(
-        initialData.subscriptionPlan.freeTrialEnabled ?? false,
+      // Reset trial and subscription contents state
+      setTrialEnabled(
+        initialData.subscriptionPlan.trialEnabled ?? false,
       );
-      setFreeTrialDurationMinutes(
-        initialData.subscriptionPlan.freeTrialDurationMinutes ?? 30,
+      setTrialDurationMinutes(
+        initialData.subscriptionPlan.trialDurationMinutes ?? 30,
       );
+      setTrialPriceInput(
+        String((initialData.subscriptionPlan.trialPriceInPaise ?? 10000) / 100),
+      );
+      setFreeTrialAcknowledged(false);
       setSubscriptionContents(
         initialData.subscriptionPlan.subscriptionContents ?? [],
       );
@@ -197,6 +219,24 @@ export function EventPlannerForSubscription({
 
   const handleFormSubmit = form.handleSubmit(
     async () => {
+      if (trialEnabled && !trialPriceValid) {
+        toast({
+          title: "Invalid trial price",
+          description: "Enter a trial price of ₹0 or more.",
+          variant: "destructive",
+        });
+        return;
+      }
+      // Friction, not a hard block — a ₹0 trial needs explicit confirmation.
+      if (trialEnabled && isFreeTrial && !freeTrialAcknowledged) {
+        toast({
+          title: "Confirm free trial",
+          description:
+            'Tick "I understand, keep this trial free" to save a ₹0 trial.',
+          variant: "destructive",
+        });
+        return;
+      }
       setShowConfirmation(true);
     },
     (errors) => {
@@ -259,8 +299,9 @@ export function EventPlannerForSubscription({
           consultantProfile: null,
           subscriptions: initialData?.subscriptionPlan?.subscriptions ?? [],
           sessionDurationInHours: formData.sessionDurationInHours ?? 1,
-          freeTrialEnabled,
-          freeTrialDurationMinutes,
+          trialEnabled,
+          trialDurationMinutes,
+          trialPriceInPaise,
           subscriptionContents: subscriptionContents.map((content, index) => ({
             ...content,
             order: index + 1,
@@ -339,8 +380,8 @@ export function EventPlannerForSubscription({
           if (!open) onClose();
         }}
       >
-        <ResponsiveModalContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
-          <ResponsiveModalHeader>
+        <ResponsiveModalContent className="max-w-3xl max-h-[90dvh] overflow-hidden flex flex-col">
+          <ResponsiveModalHeader className="shrink-0">
             <ResponsiveModalTitle className="text-xl">
               {initialData ? "Edit" : "Create New"} Subscription Plan
             </ResponsiveModalTitle>
@@ -362,7 +403,8 @@ export function EventPlannerForSubscription({
           </ResponsiveModalHeader>
 
           <Form {...form}>
-            <form onSubmit={handleFormSubmit} className="space-y-6 py-4">
+            <form onSubmit={handleFormSubmit} className="flex min-h-0 flex-1 flex-col">
+              <div className="min-h-0 flex-1 space-y-6 overflow-y-auto py-4">
               {/* Basic Information Section */}
               <FormSection
                 title="Basic Information"
@@ -560,49 +602,97 @@ export function EventPlannerForSubscription({
                 </div>
               </FormSection>
 
-              {/* Free Trial Section */}
+              {/* Trial Section */}
               <FormSection
-                title="Free Trial"
-                description="Offer a free trial session to potential subscribers"
+                title="Trial Session"
+                description="Offer a trial session to potential subscribers"
                 icon={Gift}
               >
                 <div className="flex flex-row items-center justify-between rounded-lg border p-4">
                   <div className="space-y-0.5">
                     <FormLabel className="text-base">
-                      Enable Free Trial
+                      Enable Trial
                     </FormLabel>
                     <FormDescription>
-                      Allow potential subscribers to book a free trial session
+                      Allow potential subscribers to book a trial session
                     </FormDescription>
                   </div>
                   <Switch
-                    checked={freeTrialEnabled}
-                    onCheckedChange={setFreeTrialEnabled}
+                    checked={trialEnabled}
+                    onCheckedChange={setTrialEnabled}
                   />
                 </div>
 
-                {freeTrialEnabled && (
-                  <div className="mt-4">
-                    <FormLabel>Trial Duration</FormLabel>
-                    <Select
-                      value={freeTrialDurationMinutes.toString()}
-                      onValueChange={(value) =>
-                        setFreeTrialDurationMinutes(Number.parseInt(value))
-                      }
-                    >
-                      <SelectTrigger className="mt-2">
-                        <SelectValue placeholder="Select duration" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="30">30 minutes</SelectItem>
-                        <SelectItem value="45">45 minutes</SelectItem>
-                        <SelectItem value="60">60 minutes</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <FormDescription className="mt-2">
-                      Duration of the free trial session
-                    </FormDescription>
-                  </div>
+                {trialEnabled && (
+                  <>
+                    <div className="mt-4">
+                      <FormLabel>Trial Duration</FormLabel>
+                      <Select
+                        value={trialDurationMinutes.toString()}
+                        onValueChange={(value) =>
+                          setTrialDurationMinutes(Number.parseInt(value))
+                        }
+                      >
+                        <SelectTrigger className="mt-2">
+                          <SelectValue placeholder="Select duration" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="30">30 minutes</SelectItem>
+                          <SelectItem value="45">45 minutes</SelectItem>
+                          <SelectItem value="60">60 minutes</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormDescription className="mt-2">
+                        Duration of the trial session
+                      </FormDescription>
+                    </div>
+
+                    <div className="mt-4">
+                      <FormLabel htmlFor="trial-price">
+                        Trial Price (₹)
+                      </FormLabel>
+                      <Input
+                        id="trial-price"
+                        type="number"
+                        min={0}
+                        step={1}
+                        inputMode="numeric"
+                        value={trialPriceInput}
+                        onChange={(e) => setTrialPriceInput(e.target.value)}
+                        className="mt-2"
+                      />
+                      <FormDescription className="mt-2">
+                        We recommend charging at least ₹100–₹200 — paid trials
+                        get far fewer no-shows.
+                      </FormDescription>
+                    </div>
+
+                    {isFreeTrial && (
+                      <div className="mt-4 space-y-2 rounded-lg border border-amber-300 bg-amber-50 dark:border-amber-900/40 dark:bg-amber-900/20 p-4">
+                        <p className="text-sm font-semibold text-amber-900 dark:text-amber-300">
+                          Free trials attract no-shows and low-intent bookings
+                        </p>
+                        <p className="text-sm text-amber-800 dark:text-amber-300">
+                          Charging even ₹100 filters for consultees who are
+                          serious about subscribing.
+                        </p>
+                        <label
+                          htmlFor="free-trial-acknowledged"
+                          className="flex items-start gap-2 pt-1 text-sm font-medium text-amber-900 dark:text-amber-300"
+                        >
+                          <Checkbox
+                            id="free-trial-acknowledged"
+                            checked={freeTrialAcknowledged}
+                            onCheckedChange={(checked) =>
+                              setFreeTrialAcknowledged(checked === true)
+                            }
+                            className="mt-0.5 border-amber-600 data-[state=checked]:bg-amber-600"
+                          />
+                          I understand, keep this trial free
+                        </label>
+                      </div>
+                    )}
+                  </>
                 )}
               </FormSection>
 
@@ -850,7 +940,8 @@ export function EventPlannerForSubscription({
                 </FormSection>
               )}
 
-              <ResponsiveModalFooter className="pt-6 border-t">
+              </div>
+              <ResponsiveModalFooter className="shrink-0 border-t pt-4">
                 <Button
                   type="button"
                   variant="outline"

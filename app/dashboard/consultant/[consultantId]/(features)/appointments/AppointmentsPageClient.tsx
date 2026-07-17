@@ -1,12 +1,16 @@
 "use client";
 
+import { useMemo } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { CalendarX } from "lucide-react";
+import { useSearchParams } from "next/navigation";
+import { AlertTriangle, CalendarX } from "lucide-react";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 import { EmptyState } from "@/components/dashboard/DataCard";
 import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
+import { AppointmentsShell } from "@/components/appointments/AppointmentsShell";
+import { AppointmentsPageSkeleton } from "@/components/appointments/skeletons";
+import { mapConsultantAppointments } from "@/lib/appointments/map-consultant";
 import { createConsultantQueries } from "@/lib/dashboard-queries";
 import { useOrgScope } from "@/hooks/useOrgScope";
 import {
@@ -15,18 +19,37 @@ import {
   ORG_FILTER_PERSONAL,
   type OrgContextFilterValue,
 } from "@/components/dashboard/OrgContextFilter";
-import { AppointmentsTab } from "./AppointmentsTab";
+import { useConsultantAppointmentsAdapter } from "./ConsultantAppointmentsAdapter";
 
-function AppointmentsListSkeleton() {
+/** Old HomeTab deep-links carry groupRecurringAppointments keys — map the
+ *  non-recurring "single-<appointmentId>" form onto the VM row id. */
+function normalizeHighlight(param: string | null): string | null {
+  if (!param) return null;
+  if (param.startsWith("single-")) {
+    return `appointment-${param.slice("single-".length)}`;
+  }
+  return param;
+}
+
+function SideQueryNotice({
+  label,
+  onRetry,
+}: {
+  label: string;
+  onRetry: () => void;
+}) {
   return (
-    <div className="rounded-xl border border-zinc-200/80 bg-white shadow-sm p-4 sm:p-6 space-y-4">
-      <Skeleton className="h-6 w-48" />
-      <Skeleton className="h-10 w-full" />
-      <div className="space-y-3">
-        {[1, 2, 3, 4].map((i) => (
-          <Skeleton key={i} className="h-24 w-full rounded-xl" />
-        ))}
-      </div>
+    <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 dark:border-amber-900/40 dark:bg-amber-900/20 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
+      <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+      <span className="flex-1">{label} couldn&apos;t be loaded.</span>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-6 px-2 text-xs"
+        onClick={onRetry}
+      >
+        Retry
+      </Button>
     </div>
   );
 }
@@ -35,8 +58,7 @@ export default function AppointmentsPageClient({
   consultantId,
 }: Readonly<{ consultantId: string }>) {
   // Default to "All activity" so a panel expert lands on the union view
-  // (sponsored + personal) without a manual toggle every visit. Matches
-  // the consultee /appointments choice we shipped earlier this branch.
+  // (sponsored + personal) without a manual toggle every visit.
   const { scope, setScope } = useOrgScope({ defaultForOrgMember: "all" });
   const orgScopeParam =
     scope.kind === "personal"
@@ -46,6 +68,10 @@ export default function AppointmentsPageClient({
         : scope.orgId;
   const orgScopeQueryParam =
     orgScopeParam && orgScopeParam !== "personal" ? orgScopeParam : null;
+  const searchParams = useSearchParams();
+  const highlightedId = normalizeHighlight(
+    searchParams?.get("highlight") ?? null,
+  );
 
   const filterValue: OrgContextFilterValue =
     scope.kind === "personal"
@@ -59,13 +85,9 @@ export default function AppointmentsPageClient({
     else setScope({ kind: "org", orgId: next });
   };
 
-  // Use the centralized query configuration.
   // keepPreviousData: org-scope filter changes show the previous list while
-  // the new one loads instead of a skeleton flash (the documents-page idiom,
-  // #346).
-  // #890 — the server page prefetches the "personal"-scope view; this query
-  // hydrates from that cache when the resolved scope is personal, and falls
-  // back to a client fetch for any other scope (org / all).
+  // the new one loads instead of a skeleton flash (#346). The server page
+  // prefetches the "personal" scope (#890).
   const appointmentsQuery = createConsultantQueries(
     consultantId,
     orgScopeParam,
@@ -80,12 +102,10 @@ export default function AppointmentsPageClient({
     placeholderData: keepPreviousData,
   });
 
-  // Auxiliary sections each carry their own query state into the tab so a
-  // slow or failed trials/classes/webinars read can't blank the main list
-  // (previously ONE loading flag gated the entire page).
+  // Side queries keep their own state so a slow/failed trials or
+  // classes/webinars read degrades to a notice instead of blanking the list.
   const {
     data: trialsData,
-    isLoading: trialsLoading,
     isError: trialsError,
     refetch: refetchTrials,
   } = useQuery({
@@ -106,7 +126,6 @@ export default function AppointmentsPageClient({
 
   const {
     data: classEventsData,
-    isLoading: classesLoading,
     isError: classesError,
     refetch: refetchClasses,
   } = useQuery({
@@ -129,7 +148,6 @@ export default function AppointmentsPageClient({
 
   const {
     data: webinarEventsData,
-    isLoading: webinarsLoading,
     isError: webinarsError,
     refetch: refetchWebinars,
   } = useQuery({
@@ -154,6 +172,44 @@ export default function AppointmentsPageClient({
     },
   });
 
+  const adapter = useConsultantAppointmentsAdapter(consultantId);
+
+  const vms = useMemo(
+    () =>
+      mapConsultantAppointments({
+        appointments: appointments ?? [],
+        scheduledTrials: trialsData ?? [],
+        unscheduledClasses: classEventsData ?? [],
+        unscheduledWebinars: webinarEventsData ?? [],
+        consultantId,
+      }),
+    [appointments, trialsData, classEventsData, webinarEventsData, consultantId],
+  );
+
+  const notices =
+    trialsError || classesError || webinarsError ? (
+      <div className="space-y-2">
+        {trialsError && (
+          <SideQueryNotice
+            label="Trials"
+            onRetry={() => void refetchTrials()}
+          />
+        )}
+        {classesError && (
+          <SideQueryNotice
+            label="Unscheduled classes"
+            onRetry={() => void refetchClasses()}
+          />
+        )}
+        {webinarsError && (
+          <SideQueryNotice
+            label="Unscheduled webinars"
+            onRetry={() => void refetchWebinars()}
+          />
+        )}
+      </div>
+    ) : null;
+
   return (
     <DashboardErrorBoundary>
       <DashboardHeader
@@ -161,8 +217,8 @@ export default function AppointmentsPageClient({
         subtitle="Your consultations, subscriptions, webinars, and classes"
       />
       <div className="pt-6">
-        {isLoading ? (
-          <AppointmentsListSkeleton />
+        {isLoading && !appointments ? (
+          <AppointmentsPageSkeleton />
         ) : error ? (
           <EmptyState
             icon={CalendarX}
@@ -182,28 +238,12 @@ export default function AppointmentsPageClient({
             }
           />
         ) : (
-          <AppointmentsTab
-            appointments={appointments || []}
-            scheduledTrials={trialsData || []}
-            trialsState={{
-              isLoading: trialsLoading,
-              isError: trialsError,
-              onRetry: () => void refetchTrials(),
-            }}
-            consultantId={consultantId}
-            unscheduledClasses={classEventsData || []}
-            unscheduledClassesState={{
-              isLoading: classesLoading,
-              isError: classesError,
-              onRetry: () => void refetchClasses(),
-            }}
-            unscheduledWebinars={webinarEventsData || []}
-            unscheduledWebinarsState={{
-              isLoading: webinarsLoading,
-              isError: webinarsError,
-              onRetry: () => void refetchWebinars(),
-            }}
-            headerSlot={
+          <AppointmentsShell
+            vms={vms}
+            adapter={adapter}
+            highlightedId={highlightedId}
+            notices={notices}
+            orgFilterSlot={
               <OrgContextFilter
                 value={filterValue}
                 onChange={handleFilterChange}

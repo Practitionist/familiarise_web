@@ -179,6 +179,19 @@ export const SubscriptionPlanSchema = z.object({
     .max(24, "Duration cannot exceed 24 months"),
   price: z.number().min(0, "Price must be non-negative"),
   priceCurrency: z.nativeEnum(Currency).default(Currency.INR),
+  trialEnabled: z.boolean().optional(),
+  trialDurationMinutes: z
+    .number()
+    .int("Trial duration must be a whole number of minutes")
+    .min(15, "Trial duration must be at least 15 minutes")
+    .max(120, "Trial duration cannot exceed 120 minutes")
+    .optional(),
+  // ₹0 stays allowed — the plan form adds deliberate friction instead.
+  trialPriceInPaise: z
+    .number()
+    .int("Trial price must be a whole paise amount")
+    .min(0, "Trial price must be non-negative")
+    .optional(),
   callsPerWeek: z
     .number()
     .min(0, "Calls per week cannot be negative")

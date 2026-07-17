@@ -101,7 +101,10 @@ export const moneyResultExtensions = {
   },
   ledgerEntry: { amountPaise: f("amountPaise") },
   consultationPlan: { price: f("price") },
-  subscriptionPlan: { price: f("price") },
+  subscriptionPlan: {
+    price: f("price"),
+    trialPriceInPaise: f("trialPriceInPaise"),
+  },
   webinarPlan: { price: f("price") },
   classPlan: { price: f("price") },
   recording: { fileSize: fn("fileSize") },
@@ -153,6 +156,9 @@ export const moneyResultExtensions = {
     monthlyBudgetPaise: fn("monthlyBudgetPaise"),
     currentMonthSpentPaise: f("currentMonthSpentPaise"),
     referrerRewardPaise: f("referrerRewardPaise"),
+  },
+  platformPricingConfig: {
+    minTrialPriceInPaise: f("minTrialPriceInPaise"),
   },
   referralCode: {
     referrerReward: fn("referrerReward"),

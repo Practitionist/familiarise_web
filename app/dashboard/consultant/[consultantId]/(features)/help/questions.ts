@@ -236,27 +236,27 @@ export const faqs: FAQ[] = [
     category: "Collaborations",
   },
 
-  // Free Trials
+  // Trials
   {
-    id: "how-free-trials-work",
-    question: "How do free trials work?",
+    id: "how-trials-work",
+    question: "How do trials work?",
     answer:
-      "You can offer free trial sessions to let potential consultees experience your services before committing. Consultees request a trial from your profile, and you can approve or decline the request from the Home tab or the relevant service section.",
-    category: "Free Trials",
+      "You can offer trial sessions to let potential consultees experience your services before committing. You set the trial price on each subscription plan — we recommend charging at least ₹100–₹200, since paid trials get far fewer no-shows — though you can still make a trial free. Consultees request a trial from your profile, and you can approve or decline the request from the Home tab or the relevant service section.",
+    category: "Trials",
   },
   {
     id: "manage-trial-requests",
     question: "How do I manage trial requests?",
     answer:
-      "Trial requests appear alongside your regular appointment requests. You can approve or decline them based on your availability. Approved trials are scheduled like regular sessions but with no charge to the consultee.",
-    category: "Free Trials",
+      "Trial requests appear alongside your regular appointment requests. You can approve or decline them based on your availability. Approved trials are scheduled like regular sessions.",
+    category: "Trials",
   },
   {
     id: "after-trial-completed",
     question: "What happens after a trial is completed?",
     answer:
-      "After a trial session, the consultee can choose to book a paid session with you. Trial sessions help build trust and showcase your expertise, often leading to long-term client relationships.",
-    category: "Free Trials",
+      "After a trial session, the consultee can choose to book a full subscription with you. Trial sessions help build trust and showcase your expertise, often leading to long-term client relationships.",
+    category: "Trials",
   },
 ];
 

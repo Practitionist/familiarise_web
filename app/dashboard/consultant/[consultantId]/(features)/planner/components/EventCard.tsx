@@ -55,7 +55,6 @@ function formatCollaboratorRole(role: string): string {
   return labels[role] || role;
 }
 
-// Type guards
 function isWebinarEvent(event: Event): event is WebinarEvent {
   return event.type === "webinar";
 }
@@ -72,48 +71,50 @@ function isSubscriptionPlanEvent(event: Event): event is SubscriptionPlanEvent {
   return event.type === "subscription";
 }
 
-// Event type configuration
 const eventTypeConfig: Record<
   EventType,
   {
     icon: typeof MessageSquare;
     iconBg: string;
     iconColor: string;
-    gradientColor: string;
+    accent: string;
+    label: string;
   }
 > = {
   consultation: {
     icon: MessageSquare,
-    iconBg: "bg-blue-50",
-    iconColor: "text-blue-600",
-    gradientColor: "from-blue-100/50",
+    iconBg: "bg-sky-50",
+    iconColor: "text-sky-700",
+    accent: "bg-sky-600",
+    label: "Consultation",
   },
   subscription: {
     icon: CalendarRange,
-    iconBg: "bg-purple-50",
-    iconColor: "text-purple-600",
-    gradientColor: "from-purple-100/50",
+    iconBg: "bg-teal-50",
+    iconColor: "text-teal-700",
+    accent: "bg-teal-600",
+    label: "Subscription",
   },
   webinar: {
     icon: Video,
     iconBg: "bg-emerald-50",
-    iconColor: "text-emerald-600",
-    gradientColor: "from-emerald-100/50",
+    iconColor: "text-emerald-700",
+    accent: "bg-emerald-600",
+    label: "Webinar",
   },
   class: {
     icon: GraduationCap,
     iconBg: "bg-amber-50",
-    iconColor: "text-amber-600",
-    gradientColor: "from-amber-100/50",
+    iconColor: "text-amber-700",
+    accent: "bg-amber-600",
+    label: "Class",
   },
 };
 
-// Currency formatting utility — prices are stored in smallest unit (paise for INR)
 const formatCurrency = (price: number, currency: string) => {
   return formatCurrencyAmount(price, currency);
 };
 
-// Helper functions for extracting event data
 function getEventTitle(event: Event): string {
   if (isWebinarEvent(event)) return event.webinarPlan.title;
   if (isClassEvent(event)) return event.classPlan.title;
@@ -173,7 +174,6 @@ function getEventDuration(event: Event): string {
 function getMaxParticipants(event: Event): number {
   if (isWebinarEvent(event)) return event.webinarPlan.maxParticipants;
   if (isClassEvent(event)) return event.classPlan.maxParticipants;
-  // Consultations and subscriptions are 1-on-1
   return 1;
 }
 
@@ -257,192 +257,195 @@ export function EventCard({
   const isLiveSession = eventType === "webinar" || eventType === "class";
   const durationSuffix = isRecurringEventType(eventType) ? "/mo" : "";
 
-  // Check if subscription plan has free trial enabled
-  const hasFreeTrialEnabled =
-    isSubscriptionPlanEvent(event) && event.subscriptionPlan.freeTrialEnabled;
+  const hasTrialEnabled =
+    isSubscriptionPlanEvent(event) && event.subscriptionPlan.trialEnabled;
 
   return (
     <motion.div
-      whileHover={{ y: -4, boxShadow: "0 12px 40px -12px rgba(0, 0, 0, 0.15)" }}
+      whileHover={{ y: -2 }}
       transition={{ duration: 0.2 }}
-      className="group relative overflow-hidden rounded-xl border border-zinc-200/80 bg-white p-5 sm:p-6 h-full flex flex-col"
+      className="group relative flex h-full flex-col overflow-hidden rounded-2xl border border-zinc-200/80 bg-white shadow-sm transition-shadow hover:shadow-md"
     >
-      {/* Decorative gradient blob */}
-      <div
-        className={cn(
-          "absolute -right-8 -top-8 h-24 w-24 rounded-full bg-gradient-to-br to-transparent opacity-60",
-          config.gradientColor,
-        )}
-      />
+      {/* Accent strip */}
+      <div className={cn("h-1 w-full shrink-0", config.accent)} />
 
-      {/* Hover action buttons - hidden for collaborated plans */}
-      {!isCollaborated && (
-        <div className="absolute top-3 right-3 sm:top-4 sm:right-4 flex items-center gap-1.5 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all duration-200 sm:transform sm:translate-y-1 sm:group-hover:translate-y-0 z-10">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8 sm:h-9 sm:w-9 bg-white/90 backdrop-blur-sm shadow-sm hover:bg-white border border-zinc-200/60"
-            aria-label={`Edit ${title}`}
-            title={`Edit ${title}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              onEdit();
-            }}
-          >
-            <Edit className="h-4 w-4 text-zinc-600" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8 sm:h-9 sm:w-9 bg-white/90 backdrop-blur-sm shadow-sm hover:bg-red-50 border border-zinc-200/60"
-            aria-label={`Delete ${title}`}
-            title={`Delete ${title}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              onDelete();
-            }}
-          >
-            <Trash2 className="h-4 w-4 text-zinc-400 hover:text-red-500" />
-          </Button>
-        </div>
-      )}
-
-      {/* Main content */}
-      <div className="flex items-start gap-3 sm:gap-4">
-        {/* Icon badge */}
-        <div
-          className={cn(
-            "flex h-10 w-10 sm:h-12 sm:w-12 items-center justify-center rounded-xl shrink-0",
-            config.iconBg,
-          )}
-        >
-          <Icon className={cn("h-5 w-5 sm:h-6 sm:w-6", config.iconColor)} />
-        </div>
-
-        {/* Content area */}
-        <div className="flex-1 min-w-0 pr-12 sm:pr-16">
-          <h3 className="font-semibold text-zinc-900 text-base sm:text-lg leading-tight line-clamp-2">
-            {title}
-          </h3>
-          {collaboratorRole && (
-            <span
-              className={`inline-block mt-1 text-xs font-medium px-2 py-0.5 rounded-full ${
-                isCollaborated
-                  ? "bg-purple-50 text-purple-700"
-                  : "bg-zinc-100 text-zinc-600"
-              }`}
-            >
-              {formatCollaboratorRole(collaboratorRole)}
-            </span>
-          )}
-        </div>
-      </div>
-
-      {/* Description - expanded */}
-      <p className="text-sm text-zinc-500 line-clamp-3 mt-3 flex-grow">
-        {description || "No description provided"}
-      </p>
-
-      {/* Live session info (webinar/class only) */}
-      {isLiveSession && (
-        <div className="mt-4 flex items-center gap-2 flex-wrap">
-          <span className="text-xs sm:text-sm text-zinc-500 font-medium">
-            {formatDateTime(startDate)}
-          </span>
-          {status && (
-            <Badge variant={getStatusVariant(status)} className="text-xs">
-              {status.toString().replace("_", " ")}
-            </Badge>
-          )}
-        </div>
-      )}
-
-      {/* Join Meeting button for live sessions */}
-      {isLiveSession && onJoinMeeting && (
-        <div className="mt-3">
-          <Button
-            onClick={(e) => {
-              e.stopPropagation();
-              onJoinMeeting();
-            }}
-            disabled={
-              process.env.NODE_ENV === "production"
-                ? !canJoinNow || isJoiningMeeting
-                : isJoiningMeeting
-            }
+      <div className="flex flex-1 flex-col p-4 sm:p-5">
+        {/* Header */}
+        <div className="flex items-start gap-3">
+          <div
             className={cn(
-              "w-full gap-2 font-medium",
-              canJoinNow
-                ? "bg-emerald-600 hover:bg-emerald-700 text-white"
-                : "bg-zinc-100 text-zinc-500",
+              "flex h-10 w-10 shrink-0 items-center justify-center rounded-xl",
+              config.iconBg,
             )}
-            size="sm"
           >
-            {isJoiningMeeting ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Joining...
-              </>
-            ) : (
-              <>
-                <Video className="h-4 w-4" />
-                {process.env.NODE_ENV === "production"
-                  ? canJoinNow
-                    ? "Join Meeting"
-                    : "Not Available Yet"
-                  : "Join (Dev)"}
-              </>
-            )}
-          </Button>
-        </div>
-      )}
+            <Icon className={cn("h-5 w-5", config.iconColor)} />
+          </div>
 
-      {/* Participants row - only for multi-participant event types */}
-      {(eventType === "webinar" || eventType === "class") && (
-        <div className="mt-3 flex items-center gap-1.5 text-xs sm:text-sm text-zinc-500">
-          <Users className="h-4 w-4" />
-          <span>
-            {participantCount}/{maxParticipants} participants
-          </span>
-        </div>
-      )}
+          <div className="min-w-0 flex-1">
+            <div className="mb-1 flex flex-wrap items-center gap-1.5">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
+                {config.label}
+              </span>
+              {collaboratorRole && (
+                <span
+                  className={cn(
+                    "rounded-md px-1.5 py-0.5 text-[10px] font-medium",
+                    isCollaborated
+                      ? "bg-teal-50 text-teal-800"
+                      : "bg-zinc-100 text-zinc-600",
+                  )}
+                >
+                  {formatCollaboratorRole(collaboratorRole)}
+                </span>
+              )}
+            </div>
+            <h3
+              className="text-[15px] font-semibold leading-snug tracking-tight text-zinc-900"
+              title={title}
+            >
+              {title}
+            </h3>
+          </div>
 
-      {/* Free Trial Button (subscription plans with trial enabled) */}
-      {hasFreeTrialEnabled && onTrialsClick && (
-        <div className="mt-3">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={(e) => {
-              e.stopPropagation();
-              onTrialsClick();
-            }}
-            className="w-full gap-2 border-purple-200 text-purple-700 hover:bg-purple-50 hover:border-purple-300"
-          >
-            <Gift className="h-4 w-4" />
-            {pendingTrialCount && pendingTrialCount > 0
-              ? `${pendingTrialCount} Trial Request${pendingTrialCount > 1 ? "s" : ""}`
-              : "Free Trials"}
-          </Button>
-        </div>
-      )}
-
-      {/* Price/Duration row */}
-      <div className="mt-4 pt-4 border-t border-zinc-100 flex items-center justify-between">
-        <div className="flex items-baseline gap-1">
-          <span className="text-lg sm:text-xl font-bold tracking-tight text-zinc-900">
-            {formatCurrency(price, currency)}
-          </span>
-          {durationSuffix && (
-            <span className="text-xs sm:text-sm text-zinc-400">
-              {durationSuffix}
-            </span>
+          {!isCollaborated && (
+            <div className="flex shrink-0 items-center gap-0.5 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
+                aria-label={`Edit ${title}`}
+                title={`Edit ${title}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onEdit();
+                }}
+              >
+                <Edit className="h-3.5 w-3.5" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 text-zinc-400 hover:bg-red-50 hover:text-red-600"
+                aria-label={`Delete ${title}`}
+                title={`Delete ${title}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDelete();
+                }}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            </div>
           )}
         </div>
 
-        <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-zinc-100 text-zinc-600">
-          <Clock className="h-3.5 w-3.5" />
-          <span className="text-xs font-medium">{duration}</span>
+        {/* Description — 2 lines max, full title always visible above */}
+        <p className="mt-3 line-clamp-2 text-sm leading-relaxed text-zinc-500">
+          {description || "No description provided"}
+        </p>
+
+        {isLiveSession && (
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <span className="text-xs font-medium text-zinc-500">
+              {formatDateTime(startDate)}
+            </span>
+            {status && (
+              <Badge variant={getStatusVariant(status)} className="text-[10px]">
+                {status.toString().replace("_", " ")}
+              </Badge>
+            )}
+          </div>
+        )}
+
+        {isLiveSession && onJoinMeeting && (
+          <div className="mt-3">
+            <Button
+              onClick={(e) => {
+                e.stopPropagation();
+                onJoinMeeting();
+              }}
+              disabled={
+                process.env.NODE_ENV === "production"
+                  ? !canJoinNow || isJoiningMeeting
+                  : isJoiningMeeting
+              }
+              className={cn(
+                "w-full gap-2 font-medium",
+                canJoinNow
+                  ? "bg-emerald-600 text-white hover:bg-emerald-700"
+                  : "bg-zinc-100 text-zinc-500",
+              )}
+              size="sm"
+            >
+              {isJoiningMeeting ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Joining...
+                </>
+              ) : (
+                <>
+                  <Video className="h-4 w-4" />
+                  {process.env.NODE_ENV === "production"
+                    ? canJoinNow
+                      ? "Join Meeting"
+                      : "Not Available Yet"
+                    : "Join (Dev)"}
+                </>
+              )}
+            </Button>
+          </div>
+        )}
+
+        {(eventType === "webinar" || eventType === "class") && (
+          <div className="mt-3 flex items-center gap-1.5 text-xs text-zinc-500">
+            <Users className="h-3.5 w-3.5" />
+            <span>
+              {participantCount}/{maxParticipants} participants
+            </span>
+          </div>
+        )}
+
+        {hasTrialEnabled && onTrialsClick && (
+          <div className="mt-3">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={(e) => {
+                e.stopPropagation();
+                onTrialsClick();
+              }}
+              className="w-full gap-2 border-teal-200 text-teal-800 hover:border-teal-300 hover:bg-teal-50"
+            >
+              <Gift className="h-4 w-4" />
+              {pendingTrialCount && pendingTrialCount > 0
+                ? `${pendingTrialCount} Trial Request${pendingTrialCount > 1 ? "s" : ""}`
+                : "Trials"}
+            </Button>
+          </div>
+        )}
+
+        {/* Footer */}
+        <div className="mt-auto flex items-end justify-between gap-3 border-t border-zinc-100 pt-4">
+          <div className="min-w-0">
+            <p className="text-[10px] font-medium uppercase tracking-wider text-zinc-400">
+              Price
+            </p>
+            <div className="mt-0.5 flex items-baseline gap-1">
+              <span className="text-lg font-semibold tracking-tight text-zinc-900">
+                {formatCurrency(price, currency)}
+              </span>
+              {durationSuffix && (
+                <span className="text-xs text-zinc-400">{durationSuffix}</span>
+              )}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1.5 rounded-lg bg-zinc-50 px-2.5 py-1.5 text-zinc-600 ring-1 ring-zinc-100">
+            <Clock className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
+            <span className="whitespace-nowrap text-xs font-medium">
+              {duration}
+            </span>
+          </div>
         </div>
       </div>
     </motion.div>

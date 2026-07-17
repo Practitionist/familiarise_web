@@ -8,6 +8,7 @@ import {
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth-server";
 import { EventCheckoutLockUnavailableError } from "@/utils/appointmentlock";
+import { WalletFrozenError } from "@/lib/payments/wallet-freeze";
 import { checkoutLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { ZodError } from "zod";
 import { Prisma } from "@prisma/client";
@@ -127,6 +128,21 @@ export async function POST(req: NextRequest) {
           error:
             "The booking system is briefly busy and your card was not charged. Please try again in a moment.",
           errorType: error.code,
+          timestamp: new Date().toISOString(),
+        },
+        { status: error.httpStatus },
+      );
+    }
+
+    // #837 — a frozen wallet (ledger drift caught by reconcile) is a specific,
+    // retryable 409, not a generic 500. classifyError is message-only and would
+    // mislabel it; honor the structured httpStatus like the lock error above.
+    if (error instanceof WalletFrozenError) {
+      return NextResponse.json(
+        {
+          error:
+            "This organization's wallet is temporarily on hold pending a balance review. Your card was not charged. Please try again shortly or contact support.",
+          errorType: "WALLET_FROZEN",
           timestamp: new Date().toISOString(),
         },
         { status: error.httpStatus },

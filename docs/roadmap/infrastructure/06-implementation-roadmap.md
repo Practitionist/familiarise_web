@@ -70,7 +70,6 @@ This roadmap provides a prioritized action plan for preparing the SaaS applicati
 | DB-02  | N+1 query problems          | 02-database  | 2 days  |
 | DB-03  | Race conditions             | 02-database  | 1 day   |
 | PAY-03 | Slot overlap detection bug  | 03-payment   | 2 hours |
-| PAY-04 | LemonSqueezy incomplete     | 03-payment   | 4 hours |
 | RL-01  | Auth endpoint rate limiting | 04-ratelimit | 4 hours |
 | RL-02  | Webhook rate limiting       | 04-ratelimit | 2 hours |
 
@@ -358,18 +357,12 @@ await prisma.webhookLog.create({
 // Continue with processing...
 ```
 
-### 5.4 Complete LemonSqueezy Implementation
-
-**File:** `app/api/webhooks/lemon-squeezy/route.ts:230-236`
-
-Replace TODO with actual appointment creation logic.
 
 ### 5.5 Verification Checklist
 
 - [ ] Refund calculation includes PENDING
 - [ ] Slot overlap detection covers all cases
 - [ ] Webhook idempotency prevents duplicates
-- [ ] LemonSqueezy creates appointments
 - [ ] Concurrent refund test passes
 
 ---

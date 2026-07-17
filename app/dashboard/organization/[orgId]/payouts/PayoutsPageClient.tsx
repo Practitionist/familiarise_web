@@ -124,7 +124,7 @@ export function PayoutsPageClient({
   const { orgId } = use(params);
   const { isAtLeast } = useOrgRole(orgId);
   const { allowed } = useRequireOrgAccess(orgId, {
-    minRole: "MANAGER",
+    permission: "payouts.read",
     canHost: true,
   });
   const queryClient = useQueryClient();

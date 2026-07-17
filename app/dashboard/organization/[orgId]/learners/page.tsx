@@ -50,7 +50,7 @@ export default function OrgLearnersPage({
 }) {
   const { orgId } = use(params);
   const { allowed } = useRequireOrgAccess(orgId, {
-    minRole: "MANAGER",
+    permission: "learners.read",
     canSponsor: true,
   });
 

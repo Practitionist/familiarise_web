@@ -44,7 +44,8 @@ export type TTrialWithPlan = {
   subscriptionPlan: {
     id: string;
     title: string;
-    freeTrialDurationMinutes: number;
+    trialDurationMinutes: number;
+    trialPriceInPaise: number;
     consultantProfile: {
       id: string;
       user: {

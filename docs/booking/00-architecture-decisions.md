@@ -57,9 +57,9 @@ The decision to share one helper rather than re-implement the expiry check on ea
 
 ## ADR B7 — Redis locks plus database constraints
 
-Operations that could race — concurrent allocations for the same consultant, a checkout completing while a reschedule runs — are serialised by a consultant-level Redis distributed lock acquired before the transaction, and the database carries the constraints that make a double-book impossible even if a lock is ever missed.
+Operations that could race — concurrent allocations for the same consultant, a checkout completing while a reschedule runs — are serialised by a Redis distributed lock acquired before the transaction, and the database carries the constraints that make a double-book impossible even if a lock is ever missed. Auto-allocation, which discovers its slots dynamically under the lock, holds a consultant-wide key. Manual allocation, where the target day is known up front, shards the key by that day (`auto-allocate:{consultantProfileId}:{day}`) so that allocations for different days no longer serialise against one another; same-day requests, which are the actual duplicate risk, still share the key.
 
-The decision is defence in depth rather than relying on either mechanism alone. The lock removes the common-case contention cheaply, and the constraints are the correctness backstop. See [12-concurrency-and-locking.md](./12-concurrency-and-locking.md) for the lock keys and the reconciliation job that detects any overlap the locks did not prevent.
+The decision is defence in depth rather than relying on either mechanism alone. The lock removes the common-case contention cheaply, and the constraints are the correctness backstop. Allocation is additionally idempotent: a client-supplied `Idempotency-Key` (persisted as a unique `Appointment.allocationIdempotencyKey`) makes a retried or double-submitted allocation return the original result instead of allocating a second time. See [12-concurrency-and-locking.md](./12-concurrency-and-locking.md) for the lock keys and the reconciliation job that detects any overlap the locks did not prevent.
 
 ## ADR B8 — GitHub Actions cron for background jobs
 

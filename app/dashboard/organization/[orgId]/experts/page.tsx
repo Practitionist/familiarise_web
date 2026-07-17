@@ -68,7 +68,7 @@ export default function OrgExpertsPage({
 }) {
   const { orgId } = use(params);
   const { allowed } = useRequireOrgAccess(orgId, {
-    minRole: "MANAGER",
+    permission: "experts.read",
     canHost: true,
   });
 

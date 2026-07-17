@@ -93,7 +93,7 @@ MUST item is the actual law of the land in 2026.
   professional 10% (1027/1028). Low blast radius (194-O is the default),
   but the 194J override path over-withholds on technical-service consultants.
 - `Organization.gstStateCode` is the buyer state; `SUPPLIER_STATE_CODE`
-  env is the seller (Familiarise) state. Don't conflate.
+  env is the seller (Practitionist) state. Don't conflate.
 - DPDP consent is fail-closed for `STREAM_DATA_PROCESSING`. A user who
   has explicitly withdrawn that consent will be silently dropped from
   Stream channel upserts; surface this clearly in any new UX that

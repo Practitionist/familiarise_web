@@ -533,7 +533,11 @@ page it lands on and the reason for that choice.
 
 Both `/my-program` and `/my-arrangement` are read-only in v1. A LEARNER
 cannot self-assign to a Program; an EXPERT cannot flip their own
-`payoutRecipient`. Mutations remain on operator pages. The "Personal
+`payoutRecipient`. Mutations remain on operator pages. Membership also
+carries an `exclusiveEngagement` boolean (ADR 18) recording an
+org-declared exclusivity arrangement for internal consultants; it is an
+unenforced schema stub today and must not surface in any UI until an
+enforcement feature ships. The "Personal
 Dashboard" footer chip on the sidebar (`resolvePersonalDashboardHref`)
 stays so consumers can hop back to their personal surface without
 hunting for the URL.

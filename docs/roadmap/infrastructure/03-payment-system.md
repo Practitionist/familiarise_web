@@ -6,7 +6,7 @@
 
 ## Executive Summary
 
-The payment system supports multiple gateways (Stripe, Razorpay, LemonSqueezy) with comprehensive webhook handling. However, critical vulnerabilities exist around idempotency, race conditions, and refund processing that must be addressed before production.
+The payment system supports multiple gateways (Stripe, Razorpay) with comprehensive webhook handling. However, critical vulnerabilities exist around idempotency, race conditions, and refund processing that must be addressed before production.
 
 ---
 
@@ -31,8 +31,6 @@ The payment system supports multiple gateways (Stripe, Razorpay, LemonSqueezy) w
 | ------------ | ----------- | ---------------------------- |
 | Stripe       | Complete    | Full feature support         |
 | Razorpay     | Complete    | Full feature support         |
-| LemonSqueezy | Partial     | Missing appointment creation |
-| XFlow        | Unknown     | Limited documentation        |
 | Mock         | Development | Testing only                 |
 
 ### 1.2 File Structure
@@ -53,8 +51,6 @@ lib/payments/
 app/api/webhooks/
 ├── stripe/route.ts         # Stripe webhook handler
 ├── razorpay/route.ts       # Razorpay webhook handler
-├── lemon-squeezy/route.ts  # LemonSqueezy webhook handler
-├── xflow/route.ts          # XFlow webhook handler
 └── utils.ts                # Shared webhook utilities
 ```
 
@@ -143,7 +139,7 @@ Webhook 2 (event: abc123) → Process → DUPLICATE PROCESSING
 model WebhookLog {
   id          String   @id @default(cuid())
   eventId     String
-  gateway     String   // STRIPE, RAZORPAY, LEMONSQUEEZY
+  gateway     String   // STRIPE, RAZORPAY
   eventType   String   // payment_intent.succeeded, etc.
   payload     Json?
   processed   Boolean  @default(true)
@@ -600,19 +596,6 @@ function usePaymentExpiration(payment: Payment) {
 }
 ```
 
-### 6.4 LemonSqueezy Incomplete Implementation
-
-**File:** `app/api/webhooks/lemon-squeezy/route.ts:230-236`
-
-```typescript
-// TODO: Implement appointment creation based on stored payment data
-console.warn("Lemon Squeezy appointment creation needs implementation...");
-```
-
-**Impact:** LemonSqueezy payments succeed but appointments are not created.
-
----
-
 ## 7. Fraud Prevention
 
 ### 7.1 Current State
@@ -809,12 +792,6 @@ model Appointment {
   version Int @default(0)
 }
 ```
-
-#### Implement LemonSqueezy Appointment Creation
-
-**File:** `app/api/webhooks/lemon-squeezy/route.ts`
-
-Complete the TODO implementation for appointment creation.
 
 ### 8.3 Priority 3: Medium (Fix This Sprint)
 

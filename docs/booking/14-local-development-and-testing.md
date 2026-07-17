@@ -172,7 +172,7 @@ Prisma Studio lets you browse all tables, filter by fields like `isTentative`, `
 1. **POST** to `/api/appointments/{appointmentId}/reschedule?type=SUBSCRIPTION` with optional `slotIds` array in the body.
    - No `slotIds`: marks **all** subscription slots as tentative (entire booking reschedule).
    - With `slotIds`: marks only specified slots as tentative (individual/multiple session reschedule).
-2. **Verify**: Affected slots have `isTentative = true`, subscription `status` reverts to `PENDING`.
+2. **Verify**: Affected slots have `isTentative = true`. Only an entire-subscription reschedule (no `slotIds`) reverts the subscription `status` to `PENDING`; a partial reschedule of specific sessions (with `slotIds`) leaves the subscription status untouched and re-tentatives only those slots.
 3. **Re-allocate**: Consultant selects new slots via the Requests tab (uses `mode: "requested"`).
 
 **24-hour restriction**: Rescheduling is blocked if any affected slot starts within 24 hours. The API returns a `400` with details.

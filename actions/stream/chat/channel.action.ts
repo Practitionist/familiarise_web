@@ -8,6 +8,8 @@ import { markChannelExists } from "@/lib/stream-cache";
 import { upsertUsersToStream } from "./user.action";
 import { getDmChannelId } from "@/lib/stream-utils";
 import { getChannelTypeFromId } from "@/lib/stream-channel-ids";
+import { getSession } from "@/lib/auth-server";
+import { isPrivileged } from "@/lib/auth-helpers";
 import * as Sentry from "@sentry/nextjs";
 
 // Input validation schemas
@@ -30,6 +32,29 @@ const createChannelSchema = z.object({
   // (non-org) channels keep their existing shape (no stray null field).
   organizationId: z.string().min(1).nullable().optional(),
 });
+
+/**
+ * Best-effort channel-scoped `channel_moderator` grant (#899). Non-fatal: chat
+ * still works without it. Shared by createChannel and the collaborator-channel
+ * path so the grant contract lives in one place.
+ */
+async function grantChannelModerator(
+  channel: ReturnType<ReturnType<typeof getStreamChatClient>["channel"]>,
+  userId: string,
+  channelId: string,
+): Promise<void> {
+  try {
+    await channel.assignRoles([
+      { user_id: userId, channel_role: "channel_moderator" },
+    ]);
+  } catch (error) {
+    streamLogger.warn("Failed to grant channel_moderator to channel host", {
+      channelId,
+      userId,
+      error,
+    });
+  }
+}
 
 /**
  * Generic function to create a channel
@@ -97,6 +122,23 @@ export async function createChannel(input: {
   );
 
   const channelData = await channel.create();
+
+  // Channel-scoped moderation replaces the old global-admin Stream role
+  // (#899). Only the channel HOST may moderate — never an arbitrary creator:
+  //  - team channels (webinar/class): the creator IS the consultant host.
+  //  - messaging channels: only consultation/subscription DMs carry a
+  //    `dm_consultant_user_id`; grant moderation to that consultant. Peer DMs
+  //    (createDirectMessageChannel) have no host, so `moderatorId` is
+  //    undefined and no grant is issued — this prevents a consultee who
+  //    opens a 1:1 DM from being able to mute/remove the consultant (#981).
+  const moderatorId =
+    validated.channelType === "team"
+      ? validated.createdById
+      : (mergedAdditionalData.dm_consultant_user_id as string | undefined);
+
+  if (moderatorId) {
+    await grantChannelModerator(channel, moderatorId, validated.channelId);
+  }
 
   // Cache the channel existence
   markChannelExists(validated.channelType, validated.channelId);
@@ -747,6 +789,10 @@ export async function createCollaboratorChannel(
   await channel.create();
   markChannelExists("messaging", channelId);
 
+  // Host moderates their own collab channel — this path bypasses
+  // createChannel, so the #899 channel-scoped grant is repeated here.
+  await grantChannelModerator(channel, hostUserId, channelId);
+
   // Query current channel membership for diffing
   const channelData = await channel.query();
   const currentMemberIds = (channelData.members ?? [])
@@ -794,7 +840,12 @@ export async function createCollaboratorChannel(
 }
 
 /**
- * Adds a user to a specific channel
+ * Adds a user to a specific channel.
+ *
+ * Stream's server-side API bypasses its permission system entirely, so the
+ * authz gate lives here (#899): ADMIN/STAFF may add to any channel; anyone
+ * else only to a channel they created — mirroring the create-route checks.
+ * Non-privileged callers never lazily create channels they don't own.
  */
 export async function addMemberToChannel(
   channelId: string,
@@ -803,6 +854,11 @@ export async function addMemberToChannel(
 ) {
   channelIdSchema.parse(channelId);
   memberIdSchema.parse(userId);
+
+  const session = await getSession();
+  if (!session?.user?.id) {
+    throw new Error("Unauthorized: sign in to manage channel members");
+  }
 
   const client = getStreamChatClient();
 
@@ -816,7 +872,18 @@ export async function addMemberToChannel(
 
   try {
     const channel = client.channel(resolvedChannelType, channelId);
-    await channel.create(); // Creates if doesn't exist, no-op if exists
+    const privileged = isPrivileged(session.user.role);
+    if (privileged) {
+      await channel.create(); // Creates if doesn't exist, no-op if exists
+    } else {
+      const state = await channel.query({});
+      const createdById = state.channel?.created_by?.id;
+      if (createdById !== session.user.id) {
+        throw new Error(
+          "Forbidden: only the channel creator or staff may add members",
+        );
+      }
+    }
 
     const response = await channel.addMembers([userId]);
 

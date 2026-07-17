@@ -18,10 +18,10 @@ import prisma from "../../lib/prisma";
 import { UserWithProfiles } from "./1a-create-users";
 import { config, getTotalAppointments } from "./config";
 
-// #780 — the extended client reads plan `price` as number; the raw model
-// types still say bigint.
-type PlanRead<T extends { price: bigint }> = Omit<T, "price"> & {
-  price: number;
+// #780 — the extended client reads plan money columns (price,
+// trialPriceInPaise) as number; the raw model types still say bigint.
+type PlanRead<T extends { price: bigint }> = {
+  [K in keyof T]: T[K] extends bigint ? number : T[K];
 };
 
 // Appointment volumes - configurable via SEED_MODE environment variable

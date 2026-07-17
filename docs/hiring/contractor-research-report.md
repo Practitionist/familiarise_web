@@ -157,7 +157,7 @@ The cold-start problem (0 consultants → 0 users → no launch) is the single e
 ### Documents Needed
 
 1. **Terms of Service** — two-sided marketplace liability, IT Act + Consumer Protection (E-Commerce) Rules 2020, dispute resolution, session IP for recorded calls, payment terms, refund policy
-2. **Privacy Policy** — DPDPA 2023 compliant (NOT just GDPR); covers PAN/bank data, Stream.io session recordings, Razorpay/Lemon Squeezy/Xflow data sharing, grievance officer appointment
+2. **Privacy Policy** — DPDPA 2023 compliant (NOT just GDPR); covers PAN/bank data, Stream.io session recordings, Razorpay data sharing, grievance officer appointment
 3. **Consultant Agreement** — 80/20 revenue split, IP ownership of recorded sessions, TDS disclosure (Section 194-O), non-compete scope, code of conduct
 4. **Data Processing Agreement (DPA)** — GDPR Article 28 for EU/UK users; maps to DPDPA Data Fiduciary ↔ Processor for Razorpay, Stream.io, Novu, Supabase
 

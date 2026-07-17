@@ -40,6 +40,8 @@ export interface EarningsSummary {
   totalEarnings: number;
   pendingEarnings: number;
   readyEarnings: number;
+  /** #837 — in a payout batch, cash not yet disbursed (distinct from PAID). */
+  batchedEarnings: number;
   paidEarnings: number;
   heldEarnings: number;
   /**
@@ -70,6 +72,8 @@ interface OrgEarningsSummary {
   totalEarnings: number;
   pendingEarnings: number;
   readyEarnings: number;
+  /** #837 — in a payout batch, cash not yet disbursed (distinct from PAID). */
+  batchedEarnings: number;
   paidEarnings: number;
   heldEarnings: number;
 }
@@ -310,6 +314,41 @@ export async function createEarningsFromPayment({
             payment.createdAt,
           );
 
+          // #687 E-01/E-02 — the PENDING_TRUST park keys on the SPONSORING org
+          // (the org that OWES the invoice = payment.organizationId), NOT the
+          // expert's HOST org from resolveOrgSplit. An unverified sponsor that
+          // may never pay its invoice must not let consultant OR org earnings
+          // clear. Decide ONCE here and apply to every row this booking writes
+          // (consultant, primary-org, collaborator-org).
+          // Only INVOICE (NET-X postpaid) funding creates a receivable the
+          // sponsor might never settle — PERSONAL/WALLET/LICENSE are already
+          // paid, so an org id retained on those legs must NOT park. Gate on
+          // the charged billing account's fundingSource, not on organizationId
+          // alone.
+          const sponsorOrgId = payment.organizationId;
+          let parkForTrust = false;
+          if (sponsorOrgId && payment.billingAccountId) {
+            const billingAccount = await tx.billingAccount.findUnique({
+              where: { id: payment.billingAccountId },
+              select: { fundingSource: true },
+            });
+            if (billingAccount?.fundingSource === "INVOICE") {
+              const sponsorOrg = await tx.organization.findUnique({
+                where: { id: sponsorOrgId },
+                select: { status: true },
+              });
+              if (sponsorOrg?.status === "PENDING_VERIFICATION") {
+                const paidInvoiceCount = await tx.organizationInvoice.count({
+                  where: { organizationId: sponsorOrgId, status: "PAID" },
+                });
+                parkForTrust = paidInvoiceCount === 0;
+              }
+            }
+          }
+          const initialEarningStatus: EarningStatus = parkForTrust
+            ? EarningStatus.PENDING_TRUST
+            : EarningStatus.PENDING;
+
           // Determine platform fee and consultant pool based on whether org split applies.
           // #778 §C-2 — floor the marketplace fee (was Math.round); the shaved paisa
           // stays in the consultant pool (gross − fee), the pool's residual party.
@@ -427,7 +466,10 @@ export async function createEarningsFromPayment({
                   consultantSharePaise: creditedShare,
                   role: isOwner ? EarningRole.OWNER : EarningRole.COLLABORATOR,
                   shareBps,
-                  status: EarningStatus.PENDING,
+                  // #687 E-02 — park consultant payables too when the sponsor
+                  // is an unverified INVOICE org; else the platform owes real
+                  // money for a ghost sponsor's booking.
+                  status: initialEarningStatus,
                   holdUntil,
                   currency: "INR",
                 },
@@ -450,7 +492,8 @@ export async function createEarningsFromPayment({
                 grossAmount,
                 platformFeePaise,
                 consultantSharePaise: totalConsultantPool,
-                status: EarningStatus.PENDING,
+                // #687 E-02 — see multi-party branch above.
+                status: initialEarningStatus,
                 holdUntil,
                 currency: "INR",
               },
@@ -463,28 +506,12 @@ export async function createEarningsFromPayment({
           // Skip when orgShare is 0 (Platform-only mode: platformCommissionRate = 1.0)
           // — creating 0-value rows adds noise without value.
           //
-          // PR-1d / #687: if the sponsoring org is still PENDING_VERIFICATION
+          // PR-1d / #687: if the SPONSORING org (payment.organizationId, resolved
+          // above into initialEarningStatus — E-01) is still PENDING_VERIFICATION
           // and has never paid an invoice, accruals start in PENDING_TRUST
           // instead of PENDING. The `release-pending-trust-earnings` cron
           // promotes them once the org is verified or first invoice clears.
           if (orgSplit && orgSplit.orgShare > 0) {
-            const sponsorOrg = await tx.organization.findUnique({
-              where: { id: orgSplit.organizationId },
-              select: { status: true },
-            });
-            let initialStatus: EarningStatus = EarningStatus.PENDING;
-            if (sponsorOrg?.status === "PENDING_VERIFICATION") {
-              const paidInvoiceCount = await tx.organizationInvoice.count({
-                where: {
-                  organizationId: orgSplit.organizationId,
-                  status: "PAID",
-                },
-              });
-              if (paidInvoiceCount === 0) {
-                initialStatus = EarningStatus.PENDING_TRUST;
-              }
-            }
-
             await tx.organizationEarnings.create({
               data: {
                 organizationId: orgSplit.organizationId,
@@ -494,7 +521,7 @@ export async function createEarningsFromPayment({
                 orgSharePaise: orgSplit.orgShare,
                 consultantSharePaise: orgSplit.consultantSharePaise,
                 refundedAmountPaise: 0,
-                status: initialStatus,
+                status: initialEarningStatus,
                 holdUntil,
                 currency: "INR",
                 // Rate-card snapshot: persist the exact split applied so
@@ -538,24 +565,9 @@ export async function createEarningsFromPayment({
               continue;
             }
 
-            // PR-1d / #687 — same PENDING_TRUST gate as the primary org above.
-            const collabSponsorOrg = await tx.organization.findUnique({
-              where: { id: s.orgSplit.organizationId },
-              select: { status: true },
-            });
-            let collabInitialStatus: EarningStatus = EarningStatus.PENDING;
-            if (collabSponsorOrg?.status === "PENDING_VERIFICATION") {
-              const paidInvoiceCount = await tx.organizationInvoice.count({
-                where: {
-                  organizationId: s.orgSplit.organizationId,
-                  status: "PAID",
-                },
-              });
-              if (paidInvoiceCount === 0) {
-                collabInitialStatus = EarningStatus.PENDING_TRUST;
-              }
-            }
-
+            // #687 E-01 — same sponsor-scoped PENDING_TRUST gate as the primary
+            // org above; the park keys on the SPONSOR (payment.organizationId,
+            // via initialEarningStatus), not this collaborator's host org.
             await tx.organizationEarnings.create({
               data: {
                 organizationId: s.orgSplit.organizationId,
@@ -568,7 +580,7 @@ export async function createEarningsFromPayment({
                 orgSharePaise: s.orgSplit.orgShare,
                 consultantSharePaise: s.orgSplit.consultantSharePaise,
                 refundedAmountPaise: 0,
-                status: collabInitialStatus,
+                status: initialEarningStatus,
                 holdUntil,
                 currency: "INR",
                 rateCardIdApplied: s.orgSplit.rateCardIdApplied,
@@ -840,31 +852,37 @@ export async function releaseEarningsFromHold(): Promise<number> {
 export async function getConsultantEarningsSummary(
   consultantProfileId: string,
 ): Promise<EarningsSummary> {
-  const [pending, ready, paid, held, pendingTrust] = await Promise.all([
-    prisma.consultantEarnings.aggregate({
-      where: { consultantProfileId, status: EarningStatus.PENDING },
-      _sum: { consultantSharePaise: true },
-    }),
-    prisma.consultantEarnings.aggregate({
-      where: { consultantProfileId, status: EarningStatus.READY },
-      _sum: { consultantSharePaise: true },
-    }),
-    prisma.consultantEarnings.aggregate({
-      where: { consultantProfileId, status: EarningStatus.PAID },
-      _sum: { consultantSharePaise: true },
-    }),
-    prisma.consultantEarnings.aggregate({
-      where: { consultantProfileId, status: EarningStatus.HELD },
-      _sum: { consultantSharePaise: true },
-    }),
-    prisma.consultantEarnings.aggregate({
-      where: { consultantProfileId, status: EarningStatus.PENDING_TRUST },
-      _sum: { consultantSharePaise: true },
-    }),
-  ]);
+  const [pending, ready, batched, paid, held, pendingTrust] =
+    await Promise.all([
+      prisma.consultantEarnings.aggregate({
+        where: { consultantProfileId, status: EarningStatus.PENDING },
+        _sum: { consultantSharePaise: true },
+      }),
+      prisma.consultantEarnings.aggregate({
+        where: { consultantProfileId, status: EarningStatus.READY },
+        _sum: { consultantSharePaise: true },
+      }),
+      prisma.consultantEarnings.aggregate({
+        where: { consultantProfileId, status: EarningStatus.BATCHED },
+        _sum: { consultantSharePaise: true },
+      }),
+      prisma.consultantEarnings.aggregate({
+        where: { consultantProfileId, status: EarningStatus.PAID },
+        _sum: { consultantSharePaise: true },
+      }),
+      prisma.consultantEarnings.aggregate({
+        where: { consultantProfileId, status: EarningStatus.HELD },
+        _sum: { consultantSharePaise: true },
+      }),
+      prisma.consultantEarnings.aggregate({
+        where: { consultantProfileId, status: EarningStatus.PENDING_TRUST },
+        _sum: { consultantSharePaise: true },
+      }),
+    ]);
 
   const pendingEarnings = sumPaise(pending._sum.consultantSharePaise);
   const readyEarnings = sumPaise(ready._sum.consultantSharePaise);
+  const batchedEarnings = sumPaise(batched._sum.consultantSharePaise);
   const paidEarnings = sumPaise(paid._sum.consultantSharePaise);
   const heldEarnings = sumPaise(held._sum.consultantSharePaise);
   const pendingTrustEarnings = sumPaise(
@@ -873,10 +891,16 @@ export async function getConsultantEarningsSummary(
 
   return {
     consultantProfileId,
+    // #837 — batched money is real cleared earnings in transit; keep it in the total.
     totalEarnings:
-      pendingEarnings + readyEarnings + paidEarnings + heldEarnings,
+      pendingEarnings +
+      readyEarnings +
+      batchedEarnings +
+      paidEarnings +
+      heldEarnings,
     pendingEarnings,
     readyEarnings,
+    batchedEarnings,
     paidEarnings,
     heldEarnings,
     pendingTrustEarnings,
@@ -1211,7 +1235,7 @@ export async function releaseHeldEarnings(
  * Get earnings statistics for admin dashboard
  */
 export async function getEarningsStats() {
-  const [pending, ready, paid, held, refunded] = await Promise.all([
+  const [pending, ready, batched, paid, held, refunded] = await Promise.all([
     prisma.consultantEarnings.aggregate({
       where: { status: EarningStatus.PENDING },
       _sum: { consultantSharePaise: true, platformFeePaise: true },
@@ -1219,6 +1243,11 @@ export async function getEarningsStats() {
     }),
     prisma.consultantEarnings.aggregate({
       where: { status: EarningStatus.READY },
+      _sum: { consultantSharePaise: true, platformFeePaise: true },
+      _count: true,
+    }),
+    prisma.consultantEarnings.aggregate({
+      where: { status: EarningStatus.BATCHED },
       _sum: { consultantSharePaise: true, platformFeePaise: true },
       _count: true,
     }),
@@ -1250,6 +1279,12 @@ export async function getEarningsStats() {
       consultantSharePaise: sumPaise(ready._sum.consultantSharePaise),
       platformFeePaise: sumPaise(ready._sum.platformFeePaise),
     },
+    // #837 — batched, cash not yet disbursed (was previously counted under ready).
+    batched: {
+      count: batched._count,
+      consultantSharePaise: sumPaise(batched._sum.consultantSharePaise),
+      platformFeePaise: sumPaise(batched._sum.platformFeePaise),
+    },
     paid: {
       count: paid._count,
       consultantSharePaise: sumPaise(paid._sum.consultantSharePaise),
@@ -1265,8 +1300,11 @@ export async function getEarningsStats() {
       consultantSharePaise: sumPaise(refunded._sum.consultantSharePaise),
       platformFeePaise: sumPaise(refunded._sum.platformFeePaise),
     },
+    // #837 — platform fee is earned once the sale settles (READY); batched/paid
+    // are downstream of READY, so include all three to keep recognized revenue whole.
     totalPlatformRevenue:
       sumPaise(paid._sum.platformFeePaise) +
+      sumPaise(batched._sum.platformFeePaise) +
       sumPaise(ready._sum.platformFeePaise),
   };
 }
@@ -1281,13 +1319,17 @@ export async function getEarningsStats() {
 export async function getOrgEarningsSummary(
   organizationId: string,
 ): Promise<OrgEarningsSummary> {
-  const [pending, ready, paid, held] = await Promise.all([
+  const [pending, ready, batched, paid, held] = await Promise.all([
     prisma.organizationEarnings.aggregate({
       where: { organizationId, status: EarningStatus.PENDING },
       _sum: { orgSharePaise: true },
     }),
     prisma.organizationEarnings.aggregate({
       where: { organizationId, status: EarningStatus.READY },
+      _sum: { orgSharePaise: true },
+    }),
+    prisma.organizationEarnings.aggregate({
+      where: { organizationId, status: EarningStatus.BATCHED },
       _sum: { orgSharePaise: true },
     }),
     prisma.organizationEarnings.aggregate({
@@ -1302,15 +1344,22 @@ export async function getOrgEarningsSummary(
 
   const pendingEarnings = sumPaise(pending._sum.orgSharePaise);
   const readyEarnings = sumPaise(ready._sum.orgSharePaise);
+  const batchedEarnings = sumPaise(batched._sum.orgSharePaise);
   const paidEarnings = sumPaise(paid._sum.orgSharePaise);
   const heldEarnings = sumPaise(held._sum.orgSharePaise);
 
   return {
     organizationId,
+    // #837 — batched money is real cleared earnings in transit; keep it in the total.
     totalEarnings:
-      pendingEarnings + readyEarnings + paidEarnings + heldEarnings,
+      pendingEarnings +
+      readyEarnings +
+      batchedEarnings +
+      paidEarnings +
+      heldEarnings,
     pendingEarnings,
     readyEarnings,
+    batchedEarnings,
     paidEarnings,
     heldEarnings,
   };

@@ -275,7 +275,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Verify the subscription plan exists and has free trial enabled
+    // Verify the subscription plan exists and has trials enabled
     const subscriptionPlan = await prisma.subscriptionPlan.findUnique({
       where: { id: subscriptionPlanId },
       include: {
@@ -301,9 +301,19 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!subscriptionPlan.freeTrialEnabled) {
+    if (!subscriptionPlan.trialEnabled) {
       return NextResponse.json(
-        { error: "Free trial is not available for this plan" },
+        { error: "A trial is not available for this plan" },
+        { status: 400 },
+      );
+    }
+
+    // Paid-trial checkout isn't wired yet (createApprovalPaymentIntent must
+    // accept TRIAL first) — fail closed rather than booking an uncollected
+    // paid trial. The wiring PR removes this gate.
+    if (subscriptionPlan.trialPriceInPaise > 0) {
+      return NextResponse.json(
+        { error: "Paid trials are not yet available. Please check back soon." },
         { status: 400 },
       );
     }
@@ -331,8 +341,8 @@ export async function POST(request: NextRequest) {
 
     // Enterprise: if the caller passed `organizationId`, verify they're
     // an ACTIVE LEARNER (or higher) member of that org before we stamp
-    // attribution. Trials are free, so this is org-tagging for analytics
-    // (conversion-rate per org) — never a payment claim. Silently
+    // attribution. This is org-tagging for analytics (conversion-rate
+    // per org) — never a payment claim. Silently
     // dropping the field on membership mismatch would let a curious
     // user forge org-tagged trial attribution; we return 403 instead so
     // the client bug becomes obvious. `findFirst` with `userId`

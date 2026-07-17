@@ -98,7 +98,7 @@ export const createMockRoleMapper = () => ({
       ADMIN: "admin",
       CONSULTANT: "user",
       CONSULTEE: "user",
-      STAFF: "user",
+      STAFF: "admin",
     };
     return mapping[role] || "user";
   }),

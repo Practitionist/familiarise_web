@@ -11,10 +11,13 @@ export default async function OrgAnalyticsPage({
 }) {
   const { orgId } = await params;
 
-  // Mirror GET /api/organizations/[orgId]/analytics (MANAGER) — the SSR
-  // prefetch reads org-scoped analytics directly, so without this the
-  // dehydrated payload would embed manager-only data for any member.
-  const access = await requireOrgAccess(orgId, "MANAGER");
+  // Mirror GET /api/organizations/[orgId]/analytics (operations.read, incl.
+  // the SUPPORT carve-out) — the SSR prefetch reads org-scoped analytics
+  // directly, so without this the dehydrated payload would embed
+  // operations-only data for any member.
+  const access = await requireOrgAccess(orgId, {
+    permission: "operations.read",
+  });
   if (access.error) redirect(`/dashboard/organization/${orgId}/home`);
 
   const queryClient = new QueryClient();

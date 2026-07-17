@@ -106,6 +106,14 @@ model User {
   // events back to a (deterministic) actor without exposing PII.
   pseudonymousId String?   @unique
 
+  // BetterAuth admin-plugin fields (#693 moderation, starts #725 Tier-1).
+  // Suspension = banned:true + banExpires set (lazy expiry, plugin auto-unbans
+  // at sign-in); permanent ban = banned:true + banExpires:null. Who/when/why
+  // lives in ModerationAction, not here.
+  banned     Boolean?  @default(false)
+  banReason  String?
+  banExpires DateTime? @db.Timestamptz
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -116,9 +124,9 @@ model User {
   /// distinguishes it from `erasureRequests` above (requests filed
   /// against this user) — Prisma requires the disambiguation since
   /// both edges target ErasureRequest.
-  erasureRequestsProcessed ErasureRequest[] @relation("ErasureRequestProcessor")
+  erasureRequestsProcessed ErasureRequest[]      @relation("ErasureRequestProcessor")
   // Disputes this admin owns (#269).
-  disputesAssigned         Dispute[]        @relation("DisputeAssignee")
+  disputesAssigned         Dispute[]             @relation("DisputeAssignee")
   // A8 — documents this consultant reviewed (back-relation for the FK-ified
   // AppointmentDocument.reviewedById; named to avoid the implicit-relation guess).
   documentsReviewed        AppointmentDocument[] @relation("DocumentReviewer")
@@ -266,6 +274,9 @@ enum CancellationReason {
   CONSULTANT_ISSUE
   TECHNICAL_ISSUE
 
+  // Moderation-initiated (#693) — staff suspend/ban bulk-cancels
+  MODERATION
+
   // Other
   OTHER
 }
@@ -406,6 +417,9 @@ model Session {
   updatedAt DateTime @updatedAt
 
   activeOrganizationId String?
+  // Required by the BetterAuth admin plugin's generated queries; impersonation
+  // itself is not enabled (#693).
+  impersonatedBy       String?
 
   @@index([userId])
   @@map("sessions")
@@ -741,6 +755,14 @@ model Membership {
   payoutRecipient    PayoutRecipient @default(SELF)
   rateCardOverrideId String?
   rateCardOverride   RateCard?       @relation("MembershipRateCardOverride", fields: [rateCardOverrideId], references: [id], onUpdate: Cascade, onDelete: SetNull)
+
+  /// ADR 18 — org-declared exclusivity for internal consultants (pairs with
+  /// payoutRecipient=ORGANIZATION). Schema stub, UNENFORCED: nothing hides or
+  /// blocks the consultant's independent B2C plans yet; the flag exists now
+  /// because the schema freezes before launch. Enforcement (hide/block
+  /// independent plans while an exclusive engagement is active) is a future
+  /// feature gated on org demand.
+  exclusiveEngagement Boolean @default(false)
 
   // Entitlement tracking
   programAssignments ProgramAssignment[]
@@ -1132,6 +1154,9 @@ model Program {
 
   assignments ProgramAssignment[]
 
+  /// ADR 18 — unenforced curated-panel stub; empty = open network.
+  consultantAllowlist ProgramConsultantAllowlist[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1307,6 +1332,26 @@ model BookingUtilization {
   // #781 §D — createdAt-ordered utilization scans (statements / reconcile). The
   // composite also serves programAssignmentId-only lookups (leftmost prefix).
   @@index([programAssignmentId, createdAt])
+}
+
+/// ADR 18 — optional curated consultant panel for a Program. Schema stub,
+/// UNENFORCED: the sponsor network stays open (a Program with zero rows
+/// imposes no restriction, and checkout does not consult this table yet).
+/// When a sponsor asks for a curated panel, enforcement slots into the
+/// checkout org-resolution block right after the ProgramAssignment is
+/// validated (see the ADR-18 comment in lib/payments/operations/checkout.ts):
+/// rows present ⇒ the booked plan's consultant must be listed.
+model ProgramConsultantAllowlist {
+  id                  String            @id @default(uuid())
+  programId           String
+  program             Program           @relation(fields: [programId], references: [id], onDelete: Cascade)
+  consultantProfileId String
+  consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([programId, consultantProfileId])
+  @@index([consultantProfileId])
 }
 
 enum ProgramType {
@@ -1515,7 +1560,7 @@ model OrganizationPayout {
   // India statutory (fields final; cron + derivation stubbed in v1)
   tdsSectionApplied String? // "194J" | "194O" | "194C"
   tdsAmountPaise    BigInt?
-  mustPayByDate     DateTime? @db.Timestamptz // derived from MSME 15/45-day rule
+  mustPayByDate     DateTime?           @db.Timestamptz // derived from MSME 15/45-day rule
   // #781 §A — rail the batch was (or will be) submitted on.
   paRouteProvider   PayoutRailProvider?
   paReferenceId     String?
@@ -2197,6 +2242,9 @@ model ConsultantProfile {
   trialSessions TrialSession[]
   activityLogs  ActivityLog[]
 
+  // ADR 18 — program curated-panel stub (unenforced)
+  programAllowlists ProgramConsultantAllowlist[]
+
   // Note: Professional background (workExperiences, certifications, education)
   // has been consolidated to User level for DRY principle
 
@@ -2312,13 +2360,20 @@ model ConsultantReview {
   consulteeProfile   ConsulteeProfile @relation(fields: [consulteeProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consulteeProfileId String
 
+  // Moderation CONTENT_REMOVED soft-delete (#693); public reads filter on
+  // null, staff moderation surfaces keep seeing the row.
+  deletedAt DateTime? @db.Timestamptz
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // One review per consultee per consultant — POST maps P2002 here to 409.
+  @@unique([consultantProfileId, consulteeProfileId])
   // #696 — explore "trending" sort orders ConsultantProfile by
   // reviews._count; without this the per-profile aggregate seq-scans the
   // whole review table. Also serves the FK join + rating>=4 social-proof reads.
-  @@index([consultantProfileId])
+  // (The @@unique above already prefixes consultantProfileId, so no separate
+  // single-column index is needed for it.)
   @@index([consulteeProfileId])
 }
 
@@ -2689,9 +2744,14 @@ model SubscriptionPlan {
   learningOutcomes       String[]         @default([])
   topics                 Topic[]          @relation("TopicToSubscriptionPlan")
 
-  // Free trial fields
-  freeTrialEnabled         Boolean @default(false)
-  freeTrialDurationMinutes Int     @default(30) // 30 or 60 minutes
+  // Trial session offer. Free by default ONLY until paid-trial checkout is
+  // wired (booking rejects paid trials today); the wiring PR flips the
+  // default to 10000 (₹100) and removes that gate together. ₹0 stays
+  // allowed after the flip but the UI adds friction. Admin floor lives in
+  // PlatformPricingConfig.minTrialPriceInPaise.
+  trialEnabled         Boolean @default(false)
+  trialDurationMinutes Int     @default(30) // 30 or 60 minutes
+  trialPriceInPaise    BigInt  @default(0) // 0 = free trial
 
   consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultantProfileId String
@@ -2774,7 +2834,7 @@ enum AppointmentStatus {
   @@map("RequestStatus")
 }
 
-// Free trial session tracking for subscriptions
+// Trial session tracking for subscriptions
 
 model TrialSession {
   id     String             @id @default(cuid())
@@ -2795,17 +2855,27 @@ model TrialSession {
   appointment   Appointment? @relation(fields: [appointmentId], references: [id])
   appointmentId String?      @unique
 
+  // Paid-trial pay-link (mirrors Consultation/Subscription). Column frozen
+  // now (schema gate); wiring needs createApprovalPaymentIntent to accept
+  // TRIAL — deliberate lib/payments change, tracked as a follow-up.
+  pendingPaymentUrl String?
+
+  // Ledger truth once a paid trial settles (pendingPaymentUrl is only the
+  // checkout hand-off). Frozen with the wiring follow-up, same as above.
+  payment   Payment? @relation("TrialSessionPayment", fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: SetNull)
+  paymentId String?  @unique
+
   // Outcome tracking
   convertedToSubscription   Subscription? @relation(fields: [convertedToSubscriptionId], references: [id])
   convertedToSubscriptionId String?       @unique
 
   // Enterprise (arch-4) — optional org tag. Set when the trial booker
   // is a LEARNER of an active org, so analytics can answer "how many
-  // trials did Wipro's members take, and how many converted?". Trials
-  // are free — no money moves, the org pays nothing — so this is pure
-  // *attribution*, not sponsorship. Full BookingUtilization integration
-  // (sub-trial-pool consumption, if we ever introduce paid trial pools)
-  // is deferred to Programs v2.
+  // trials did Wipro's members take, and how many converted?". The org
+  // pays nothing either way (a paid trial charges the consultee), so
+  // this is pure *attribution*, not sponsorship. Full BookingUtilization
+  // integration (sub-trial-pool consumption / org-sponsored trials) is
+  // deferred to Programs v2.
   organization   Organization? @relation("TrialsByOrg", fields: [organizationId], references: [id], onDelete: SetNull)
   organizationId String?
 
@@ -3258,7 +3328,7 @@ model AppointmentDocument {
   // A8 — FK-ified from a raw `reviewedBy String?` (#676). SetNull keeps the
   // document if the reviewing user is deleted; the review history survives.
   reviewedById String?
-  reviewedBy   User?     @relation("DocumentReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedBy   User?                @relation("DocumentReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
 
   // Upload role - who uploaded this document
   uploadedByRole DocumentUploadRole @default(CONSULTEE)
@@ -3626,6 +3696,7 @@ model Payment {
   // Back-relations for org settlement flows
   organizationEarnings       OrganizationEarnings[] // PROVIDER/HYBRID 3-way split (one per org)
   organizationInvoiceSettled OrganizationInvoice?   @relation("OrgInvoicePayment") // back-relation for OrganizationInvoice.payment
+  trialSessionPaid           TrialSession?          @relation("TrialSessionPayment") // back-relation for TrialSession.payment
   bookingUtilization         BookingUtilization?    @relation("PaymentBookingUtilization") // Program entitlement usage
   invoiceLineItems           InvoiceLineItem[] // back-relation for InvoiceLineItem.payment
 
@@ -3731,8 +3802,7 @@ enum PaymentLegSource {
 enum PaymentGateway {
   STRIPE
   RAZORPAY
-  LEMON_SQUEEZY
-  XFLOW
+  DODO_PAYMENTS // post-MVP: evaluation pending
   CARD
 }
 
@@ -3845,7 +3915,12 @@ enum EarningStatus {
   PENDING // In hold period
   HELD // Extended hold (dispute)
   READY // Ready for payout
-  PAID // Successfully paid
+  /// #837 E-03/E-04 — rolled into a payout batch but cash has NOT left yet
+  /// (batch exists / gateway not wired / ENABLE_LIVE_PAYOUTS off). Distinct
+  /// from PAID so finance exports + dashboards don't claim money moved before
+  /// the payout reaches COMPLETED with a UTR. Excluded from batch-eligibility.
+  BATCHED
+  PAID // Cash actually disbursed (payout COMPLETED + UTR)
   REFUNDED // Refunded to consultee
   /// Earnings accrued from a PENDING_VERIFICATION INVOICE-funded org
   /// before the org has been verified or paid its first invoice. The
@@ -4430,6 +4505,17 @@ model ReferralProgramConfig {
   updatedAt              DateTime @updatedAt
 }
 
+// Single-row platform pricing config (fixed id), mirroring
+// ReferralProgramConfig. Admin/staff-editable floor under every plan's
+// trialPriceInPaise: 0 keeps free trials allowed; raising it forces a
+// minimum paid trial platform-wide without touching existing plans.
+model PlatformPricingConfig {
+  id                   String   @id @default("singleton")
+  minTrialPriceInPaise BigInt   @default(0)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+}
+
 enum ReferralStatus {
   SIGNED_UP
   QUALIFIED
@@ -4684,6 +4770,11 @@ model ModerationAction {
   // Staff who took the action
   takenById String
   takenBy   User   @relation(fields: [takenById], references: [id], onUpdate: Cascade, onDelete: Cascade)
+
+  // Post-hoc record of which side-effects actually executed (sessions
+  // revoked, appointments cancelled, refund totals, per-step failures) —
+  // best-effort steps can partially fail, and staff needs to see what stuck.
+  sideEffects Json?
 
   createdAt DateTime @default(now())
 

@@ -61,9 +61,18 @@ export function CancelConfirmationDialog({
                   request without any payment.
                 </p>
               ) : (
-                <p className="text-red-600 font-medium">
-                  This action cannot be undone.
-                </p>
+                <>
+                  <p className="text-red-600 font-medium">
+                    This action cannot be undone.
+                  </p>
+                  {(appointmentType === "Consultation" ||
+                    appointmentType === "Subscription") && (
+                    <p className="text-muted-foreground text-sm">
+                      If a payment was captured, any refund follows the
+                      booking&apos;s cancellation policy.
+                    </p>
+                  )}
+                </>
               )}
             </div>
           </AlertDialogDescription>

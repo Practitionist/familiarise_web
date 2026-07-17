@@ -20,7 +20,6 @@ import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
-import { isAtLeastRole } from "@/lib/auth/role-ranks";
 import {
   sanitizeAuditDescription,
   sanitizeAuditDetails,
@@ -79,16 +78,11 @@ export async function GET(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  // #777 — SUPPORT (rank 30) gets read-only audit access for L1/L2 ticket
-  // investigation, alongside MAINTAINER+. Mirrors the sidebar + page gate.
-  const access = await requireOrgAccess(orgId);
+  // audit.read (OWNER/MAINTAINER/SUPPORT) — same matrix entry as the
+  // sidebar + page gate, incl. the SUPPORT L1/L2 read carve-out. The CSV
+  // export route keeps its MAINTAINER floor (bulk PII is governance).
+  const access = await requireOrgAccess(orgId, { permission: "audit.read" });
   if (access.error) return access.error;
-  if (
-    access.member.role !== "SUPPORT" &&
-    !isAtLeastRole(access.member.role, "MAINTAINER")
-  ) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
 
   const url = new URL(req.url);
   const parsed = QuerySchema.safeParse(

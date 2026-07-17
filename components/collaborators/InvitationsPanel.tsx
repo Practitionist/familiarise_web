@@ -152,14 +152,17 @@ export function InvitationsPanel() {
 
   return (
     <TooltipProvider>
-      <div className="space-y-6">
+      <div className="space-y-8">
         {/* ── Host section: My Plans with Collaborators ── */}
         {hostedPlans.length > 0 && (
           <div>
-            <h2 className="text-base font-semibold text-zinc-700 mb-3">
-              My Plans with Collaborators ({hostedPlans.length})
+            <h2 className="mb-4 text-sm font-semibold tracking-tight text-zinc-900">
+              My Plans with Collaborators{" "}
+              <span className="font-normal text-zinc-400">
+                ({hostedPlans.length})
+              </span>
             </h2>
-            <div className="space-y-2">
+            <div className="space-y-3">
               {hostedPlans.map((plan) => (
                 <HostedPlanCard
                   key={`${plan.planType}-${plan.webinarPlan?.id ?? plan.classPlan?.id}`}
@@ -173,14 +176,17 @@ export function InvitationsPanel() {
 
         {/* ── Collaborator section: Pending Invitations ── */}
         <div>
-          <h2 className="text-base font-semibold text-zinc-700 mb-3">
-            Pending Invitations ({pending.length})
+          <h2 className="mb-4 text-sm font-semibold tracking-tight text-zinc-900">
+            Pending Invitations{" "}
+            <span className="font-normal text-zinc-400">
+              ({pending.length})
+            </span>
           </h2>
           {pending.length === 0 ? (
-            <div className="text-center py-8 text-zinc-500 border border-dashed border-zinc-200 rounded-lg">
-              <Inbox className="w-8 h-8 mx-auto mb-2 text-zinc-300" />
+            <div className="rounded-xl border border-dashed border-zinc-200 py-10 text-center text-zinc-500">
+              <Inbox className="mx-auto mb-2 h-8 w-8 text-zinc-300" />
               <p className="text-sm font-medium">No pending invitations</p>
-              <p className="text-xs mt-1 max-w-xs mx-auto">
+              <p className="mx-auto mt-1 max-w-xs text-xs">
                 When another consultant invites you to co-host a webinar or
                 class, the invitation will appear here.
               </p>
@@ -202,10 +208,13 @@ export function InvitationsPanel() {
         {/* ── Collaborator section: Active Collaborations ── */}
         {accepted.length > 0 && (
           <div>
-            <h2 className="text-base font-semibold text-zinc-700 mb-3">
-              Active Collaborations ({accepted.length})
+            <h2 className="mb-4 text-sm font-semibold tracking-tight text-zinc-900">
+              Active Collaborations{" "}
+              <span className="font-normal text-zinc-400">
+                ({accepted.length})
+              </span>
             </h2>
-            <div className="space-y-2">
+            <div className="space-y-3">
               {accepted.map((collab) => (
                 <ActiveCollaborationCard
                   key={collab.id}

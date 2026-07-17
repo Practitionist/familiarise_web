@@ -1,8 +1,8 @@
 /**
  * Release PENDING_TRUST earnings — invoice-fraud guard release valve (#687).
  *
- * Promotes OrganizationEarnings rows from PENDING_TRUST → PENDING when
- * the sponsoring org has either:
+ * Promotes both OrganizationEarnings AND ConsultantEarnings rows (#687 E-02)
+ * from PENDING_TRUST → PENDING when the sponsoring org has either:
  *   1. transitioned to status=ACTIVE (admin verification), or
  *   2. paid at least one OrganizationInvoice.
  *
@@ -79,28 +79,55 @@ async function runReleasePendingTrustEarningsUnlocked(): Promise<ReleasePendingT
     return result;
   }
 
-  const candidates = await prisma.organizationEarnings.findMany({
-    where: {
-      status: EarningStatus.PENDING_TRUST,
-      organizationId: { in: unlockedOrgIds },
-    },
-    select: { id: true },
-  });
-  result.scanned = candidates.length;
+  // Org rows carry organizationId directly. Consultant rows (#687 E-02) do
+  // NOT — the sponsor lives on the Payment, so join through it. Both are
+  // parked/released as one booking, so an unlocked sponsor promotes both.
+  const [orgCandidates, consultantCandidates] = await Promise.all([
+    prisma.organizationEarnings.findMany({
+      where: {
+        status: EarningStatus.PENDING_TRUST,
+        organizationId: { in: unlockedOrgIds },
+      },
+      select: { id: true },
+    }),
+    prisma.consultantEarnings.findMany({
+      where: {
+        status: EarningStatus.PENDING_TRUST,
+        payment: { organizationId: { in: unlockedOrgIds } },
+      },
+      select: { id: true },
+    }),
+  ]);
+  result.scanned = orgCandidates.length + consultantCandidates.length;
 
-  if (candidates.length === 0) {
+  if (result.scanned === 0) {
     return result;
   }
 
+  // CAS on status inside each updateMany so a concurrent refund/hold that
+  // moved a row out of PENDING_TRUST between the scan and the write is not
+  // clobbered back to PENDING.
   try {
-    const update = await prisma.organizationEarnings.updateMany({
-      where: {
-        id: { in: candidates.map((c) => c.id) },
-        status: EarningStatus.PENDING_TRUST,
-      },
-      data: { status: EarningStatus.PENDING },
-    });
-    result.released = update.count;
+    if (orgCandidates.length > 0) {
+      const orgUpdate = await prisma.organizationEarnings.updateMany({
+        where: {
+          id: { in: orgCandidates.map((c) => c.id) },
+          status: EarningStatus.PENDING_TRUST,
+        },
+        data: { status: EarningStatus.PENDING },
+      });
+      result.released += orgUpdate.count;
+    }
+    if (consultantCandidates.length > 0) {
+      const consultantUpdate = await prisma.consultantEarnings.updateMany({
+        where: {
+          id: { in: consultantCandidates.map((c) => c.id) },
+          status: EarningStatus.PENDING_TRUST,
+        },
+        data: { status: EarningStatus.PENDING },
+      });
+      result.released += consultantUpdate.count;
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     result.errors.push(message);

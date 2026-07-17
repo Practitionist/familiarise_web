@@ -1,6 +1,6 @@
 /**
  * Payments Module - Main Exports
- * Unified payment gateway abstraction for Stripe, Razorpay, LemonSqueezy, and XFlow
+ * Unified payment gateway abstraction for Stripe and Razorpay
  */
 
 import { PaymentGateway } from "@prisma/client";
@@ -73,22 +73,6 @@ export async function createPaymentIntent(
 
     case "RAZORPAY":
       return createRazorpayOrder(params);
-
-    case "LEMON_SQUEEZY":
-      // TODO: Implement when LemonSqueezy KYC is complete
-      throw new PaymentError(
-        "LemonSqueezy integration not yet available - KYC pending",
-        "NOT_IMPLEMENTED",
-        "LEMON_SQUEEZY",
-      );
-
-    case "XFLOW":
-      // TODO: Implement when XFlow is ready for production
-      throw new PaymentError(
-        "XFlow integration not yet available",
-        "NOT_IMPLEMENTED",
-        "XFLOW",
-      );
 
     default:
       throw new PaymentError(
@@ -315,8 +299,6 @@ export function getPaymentGateway(paymentIntentId: string): PaymentGateway {
     // Extract gateway from mock ID
     if (paymentIntentId.includes("cs_mock")) return "STRIPE";
     if (paymentIntentId.includes("order_mock")) return "RAZORPAY";
-    if (paymentIntentId.includes("ls_mock")) return "LEMON_SQUEEZY";
-    if (paymentIntentId.includes("xf_mock")) return "XFLOW";
   }
 
   if (paymentIntentId.startsWith("cs_") || paymentIntentId.startsWith("pi_")) {

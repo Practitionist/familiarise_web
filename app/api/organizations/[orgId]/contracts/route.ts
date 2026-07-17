@@ -63,7 +63,7 @@ export async function GET(
 ) {
   const { orgId } = await params;
   const access = await requireOrgAccess(orgId, {
-    minimumRole: "MAINTAINER",
+    permission: "contracts.read",
     canSponsor: true,
   });
   if (access.error) return access.error;
@@ -113,7 +113,7 @@ export async function POST(
   // Contracts are commercial agreements — nothing should bind the
   // platform to an org that hasn't cleared verification yet.
   const access = await requireOrgAccess(orgId, {
-    minimumRole: "OWNER",
+    permission: "contracts.manage",
     canSponsor: true,
     requireActive: true,
   });

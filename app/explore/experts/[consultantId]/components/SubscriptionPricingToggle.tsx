@@ -40,8 +40,8 @@ interface SubscriptionPlanDetails {
   id: string;
   title: string;
   durationInMonths: number;
-  freeTrialEnabled?: boolean;
-  freeTrialDurationMinutes?: number | null;
+  trialEnabled?: boolean;
+  trialDurationMinutes?: number | null;
   subscriptionContents?: SubscriptionContentItem[] | null;
 }
 
@@ -88,7 +88,7 @@ export default function SubscriptionPricingToggle({
   const [selectedTrialPlan, setSelectedTrialPlan] = useState<{
     id: string;
     title: string;
-    freeTrialDurationMinutes: number;
+    trialDurationMinutes: number;
   } | null>(null);
   const [trialEligibility, setTrialEligibility] = useState<{
     isEligible: boolean;
@@ -115,7 +115,7 @@ export default function SubscriptionPricingToggle({
       if (
         !session?.user?.id ||
         !selectedPlanDetails?.id ||
-        !selectedPlanDetails?.freeTrialEnabled
+        !selectedPlanDetails?.trialEnabled
       ) {
         return;
       }
@@ -168,7 +168,7 @@ export default function SubscriptionPricingToggle({
   }, [
     session?.user?.id,
     selectedPlanDetails?.id,
-    selectedPlanDetails?.freeTrialEnabled,
+    selectedPlanDetails?.trialEnabled,
     consultantDetails?.id,
   ]);
 
@@ -176,14 +176,14 @@ export default function SubscriptionPricingToggle({
   useEffect(() => {
     if (
       autoOpenTrial &&
-      selectedPlanDetails?.freeTrialEnabled &&
+      selectedPlanDetails?.trialEnabled &&
       trialEligibility.isEligible &&
       !trialEligibility.isLoading
     ) {
       setSelectedTrialPlan({
         id: selectedPlanDetails.id,
         title: selectedPlanDetails.title,
-        freeTrialDurationMinutes: selectedPlanDetails.freeTrialDurationMinutes ?? 0,
+        trialDurationMinutes: selectedPlanDetails.trialDurationMinutes ?? 0,
       });
       setIsTrialModalOpen(true);
     }
@@ -371,8 +371,8 @@ export default function SubscriptionPricingToggle({
 
             {/* Button stack with proper spacing */}
             <div className="space-y-2.5">
-              {/* Free Trial Button */}
-              {selectedPlanDetails?.freeTrialEnabled && (
+              {/* Trial Button */}
+              {selectedPlanDetails?.trialEnabled && (
                 <Button
                   className={`w-full font-semibold rounded-xl h-12 text-sm transition-all duration-200 ${
                     trialEligibility.isEligible && !trialEligibility.isLoading
@@ -396,8 +396,8 @@ export default function SubscriptionPricingToggle({
                     setSelectedTrialPlan({
                       id: selectedPlanDetails.id,
                       title: selectedPlanDetails.title,
-                      freeTrialDurationMinutes:
-                        selectedPlanDetails.freeTrialDurationMinutes ?? 0,
+                      trialDurationMinutes:
+                        selectedPlanDetails.trialDurationMinutes ?? 0,
                     });
                     setIsTrialModalOpen(true);
                   }}
@@ -406,7 +406,7 @@ export default function SubscriptionPricingToggle({
                   {trialEligibility.isLoading
                     ? "Checking eligibility..."
                     : trialEligibility.isEligible
-                      ? `Book Free Trial (${selectedPlanDetails.freeTrialDurationMinutes ?? 0} min)`
+                      ? `Book Trial (${selectedPlanDetails.trialDurationMinutes ?? 0} min)`
                       : "Trial Already Requested"}
                 </Button>
               )}
@@ -565,7 +565,7 @@ export default function SubscriptionPricingToggle({
           consultantName={consultantDetails?.user?.name || "Consultant"}
           subscriptionPlanId={selectedTrialPlan.id}
           planTitle={selectedTrialPlan.title}
-          trialDurationMinutes={selectedTrialPlan.freeTrialDurationMinutes}
+          trialDurationMinutes={selectedTrialPlan.trialDurationMinutes}
         />
       )}
 
