@@ -47,6 +47,7 @@ import {
   RefundStatus,
 } from "@prisma/client";
 
+import { createRefund as createGatewayRefund } from "@/lib/payments";
 import { walletCredit } from "@/lib/api/organizations/wallet";
 import { reverseBookingUtilization } from "@/lib/api/organizations/program-helpers";
 import { assertEarningStatusTransitionLegal } from "@/lib/payments/payouts/earning-status";
@@ -78,6 +79,12 @@ export type RefundResult = {
   consultantEarningsReversed: number;
   organizationEarningsReversed: number;
   clawbackInitiated: boolean;
+  /** SUCCEEDED = gateway confirmed and the cascade ran; PENDING = the
+   * gateway accepted the refund but hasn't settled it — the refund webhook
+   * (or the cascadedAt backstop cron) completes it. */
+  status: "SUCCEEDED" | "PENDING";
+  /** Real gateway refund id (re_xxx / rfnd_xxx / mock_re_xxx). */
+  gatewayRefundId: string;
 };
 
 export class RefundValidationError extends Error {
@@ -87,6 +94,21 @@ export class RefundValidationError extends Error {
   ) {
     super(message);
     this.name = "RefundValidationError";
+  }
+}
+
+/** Gateway rejected or errored on the refund call. The Refund row is kept
+ * (PENDING with a `pending_` placeholder, or FAILED when the gateway
+ * definitively declined) so the reconcile cron / failed-refund notifier own
+ * recovery — callers must NOT retry the gateway themselves. */
+export class RefundGatewayError extends Error {
+  constructor(
+    message: string,
+    public code: string,
+    public refundRowId: string,
+  ) {
+    super(message);
+    this.name = "RefundGatewayError";
   }
 }
 
@@ -114,6 +136,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
       currency: true,
       paymentStatus: true,
       paymentGateway: true,
+      paymentIntent: true,
       displayCurrencyAtCheckout: true,
       exchangeRateAtCheckout: true,
       refunds: { select: { amountPaise: true, status: true } },
@@ -186,7 +209,13 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
     );
   }
 
-  return prisma.$transaction(
+  // PHASE 1 — reserve. Create the Refund row in PENDING with a `pending_`
+  // placeholder id inside a Serializable tx: the balance re-check and the
+  // reservation are atomic, so racing refunds can't oversubscribe, and the
+  // placeholder is exactly what `reconcile-pending-refunds` recovers if we
+  // crash between the gateway call and Phase 3 (the "two-phase refund
+  // pattern" that cron documents).
+  const reserved = await prisma.$transaction(
     async (tx) => {
       // Re-derive `refundable` inside the Serializable tx — defends
       // against two refunds racing through the outer read. Must mirror the
@@ -222,21 +251,14 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
         );
       }
 
-      // Create the Refund row in PENDING (the schema's pre-success
-      // state — there is no PROCESSING enum value). We use a synthetic
-      // `refundId` keyed `app_<uuid>` so it's distinguishable from
-      // gateway IDs (`re_xxx`/`rfnd_xxx`) and from the
-      // reconciliation-script placeholders (`pending_xxx`). Callers
-      // that bind to a real gateway refund (Stripe `re_xxx`) should
-      // update this row's `refundId` after the gateway call returns.
-      const created = await tx.refund.create({
+      return tx.refund.create({
         data: {
           paymentId: input.paymentId,
           amountPaise: requested,
           currency: payment.currency,
           reason: input.reason,
           status: RefundStatus.PENDING,
-          refundId: `app_${globalThis.crypto.randomUUID()}`,
+          refundId: `pending_${globalThis.crypto.randomUUID()}`,
           paymentGateway: payment.paymentGateway,
           exchangeRateAtRefund: payment.exchangeRateAtCheckout,
           displayCurrency: payment.displayCurrencyAtCheckout,
@@ -246,24 +268,119 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
           } as Prisma.InputJsonValue,
         },
       });
+    },
+    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+  );
 
+  // PHASE 2 — the actual gateway refund (M1: this call was previously
+  // missing entirely — refunds were marked SUCCEEDED without the customer's
+  // card ever being credited). Runs OUTSIDE any transaction: external I/O
+  // must not sit inside a Serializable tx, and an SSI retry must not re-hit
+  // the gateway. Mirrors actions/maintenance/freeze-appointments.ts.
+  let gateway: Awaited<ReturnType<typeof createGatewayRefund>>;
+  try {
+    gateway = await createGatewayRefund({
+      paymentIntentId: payment.paymentIntent,
+      amount: requested,
+      reason: input.reason,
+    });
+  } catch (err) {
+    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), {
+      tags: { subsystem: "payments", feature: "refund" },
+      extra: { paymentId: input.paymentId, refundRowId: reserved.id },
+    });
+    // Keep the PENDING placeholder: the reconcile cron matches it against
+    // the gateway (covers "call actually landed but we never heard back")
+    // or FAILs it after 24h, which triggers the payer notification (#779).
+    await prisma.refund
+      .update({
+        where: { id: reserved.id },
+        data: {
+          metadata: {
+            initiatedByUserId: input.initiatedByUserId ?? null,
+            source: "app",
+            gateway_error: err instanceof Error ? err.message : String(err),
+          } as Prisma.InputJsonValue,
+        },
+      })
+      .catch(() => undefined); // best-effort annotation only
+    throw new RefundGatewayError(
+      `Gateway refund failed for payment ${input.paymentId}: ${err instanceof Error ? err.message : String(err)}`,
+      "GATEWAY_REFUND_FAILED",
+      reserved.id,
+    );
+  }
+
+  // PHASE 3a — bind the outcome OUTSIDE the cascade tx. If the cascade
+  // below fails and rolls back, the row still points at the real gateway
+  // refund, so the refund webhook / cascadedAt backstop cron complete it by
+  // id — no heuristic amount+time matching needed.
+  if (gateway.status === "FAILED") {
+    await prisma.refund.update({
+      where: { id: reserved.id },
+      data: {
+        refundId: gateway.refundId || reserved.refundId,
+        status: RefundStatus.FAILED,
+        failureReason: "Gateway declined the refund",
+        failedAt: new Date(),
+      },
+    });
+    throw new RefundGatewayError(
+      `Gateway declined refund for payment ${input.paymentId}`,
+      "GATEWAY_REFUND_DECLINED",
+      reserved.id,
+    );
+  }
+
+  await prisma.refund.update({
+    where: { id: reserved.id },
+    data: {
+      refundId: gateway.refundId,
+      ...(gateway.metadata
+        ? { metadata: gateway.metadata as Prisma.InputJsonValue }
+        : {}),
+    },
+  });
+
+  if (gateway.status !== "SUCCEEDED") {
+    // Money not settled yet — no cascade, row stays PENDING under its real
+    // gateway id so the webhook reconciles instead of duplicating.
+    return {
+      refundId: reserved.id,
+      amountRefundedPaise: requested,
+      legsReversed: 0,
+      consultantEarningsReversed: 0,
+      organizationEarningsReversed: 0,
+      clawbackInitiated: false,
+      status: "PENDING" as const,
+      gatewayRefundId: gateway.refundId,
+    };
+  }
+
+  // PHASE 3b — settle: cascade + SUCCEEDED atomically. A throw here rolls
+  // back the cascade AND the cascadedAt claim, leaving the row PENDING under
+  // its gateway id for the webhook redelivery / backstop cron to re-drive.
+  return prisma.$transaction(
+    async (tx) => {
       const cascade = await applyRefundCascade(tx, {
         paymentId: input.paymentId,
-        refundId: created.id,
+        refundId: reserved.id,
         amountPaise: requested,
         reason: input.reason,
         initiatedByUserId: input.initiatedByUserId ?? null,
       });
 
       await tx.refund.update({
-        where: { id: created.id },
+        where: { id: reserved.id },
         data: { status: RefundStatus.SUCCEEDED },
       });
 
       return {
-        refundId: created.id,
+        refundId: reserved.id,
         amountRefundedPaise: requested,
         ...cascade,
+        status: "SUCCEEDED" as const,
+        gatewayRefundId: gateway.refundId,
       };
     },
     { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
