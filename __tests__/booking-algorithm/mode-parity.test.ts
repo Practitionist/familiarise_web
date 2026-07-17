@@ -32,7 +32,7 @@ let mockAllocateSlots: jest.SpyInstance;
 beforeEach(() => {
   mockAllocateSlots = jest
     .spyOn(AllocationService, "allocateSlots")
-    .mockResolvedValue({ success: true, data: {} });
+    .mockResolvedValue({ success: true, data: [] });
 });
 
 afterEach(() => {

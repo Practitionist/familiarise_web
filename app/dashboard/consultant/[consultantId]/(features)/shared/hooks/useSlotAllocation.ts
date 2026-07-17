@@ -300,12 +300,17 @@ export function computeAttemptFingerprint(
 let attemptKeyCounter = 0;
 
 function generateIdempotencyKey(): string {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return crypto.randomUUID();
+  // Feature-detect via optional access: lib.dom types every Crypto member as
+  // present, so `"x" in crypto` narrowing collapses the else branch to never.
+  const cryptoObj = typeof crypto !== "undefined" ? crypto : undefined;
+  if (cryptoObj?.randomUUID) {
+    return cryptoObj.randomUUID();
   }
-  if (typeof crypto !== "undefined" && "getRandomValues" in crypto) {
-    const bytes = crypto.getRandomValues(new Uint8Array(16));
-    return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  if (cryptoObj?.getRandomValues) {
+    const bytes = cryptoObj.getRandomValues(new Uint8Array(16));
+    return Array.from(bytes)
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
   }
   // Ancient-runtime fallback: uniqueness (not secrecy) is all the key needs.
   attemptKeyCounter += 1;
