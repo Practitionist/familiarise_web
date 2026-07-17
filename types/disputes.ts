@@ -35,6 +35,12 @@ export interface DisputeListResponse {
   disputes: Dispute[];
   total: number;
   urgentDisputes: number;
+  // #997 secondary findings — dashboard-wide counts (unfiltered by the
+  // current search/status/gateway), like `urgentDisputes` above.
+  stats: {
+    underReviewCount: number;
+    wonCount: number;
+  };
   page: number;
   limit: number;
   totalPages: number;
