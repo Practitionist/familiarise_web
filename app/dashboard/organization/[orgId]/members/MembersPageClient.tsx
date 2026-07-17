@@ -15,6 +15,7 @@ import {
   AddMemberPayloadSchema,
   MembersListResponseSchema,
   UpdateMemberPayloadSchema,
+  ORG_MEMBERS_PER_PAGE,
   type MemberRow,
 } from "@/schemas/organizations";
 import {
@@ -233,7 +234,7 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
   // input; `debouncedSearch` is what actually hits the API (250ms) so a
   // fast typist doesn't fire a request per keystroke. Page resets to 1
   // whenever the search term changes.
-  const PER_PAGE = 20;
+  const PER_PAGE = ORG_MEMBERS_PER_PAGE;
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [page, setPage] = useState(1);

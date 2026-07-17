@@ -17,11 +17,14 @@
  * `OrganizationEarnings`), code paths, and API routes for hosting orgs
  * all exist in this codebase but are gated by this flag. When false (the
  * default pre-MVP):
- *   - POST /api/organizations rejects `canHost=true` with 501
- *   - POST /api/organizations/[id]/members rejects `role === "EXPERT"` with 501
- *   - The org-create wizard hides the "host experts" capability checkbox
- *   - /api/organizations/[id]/{payouts,payout-account,earnings,rate-cards}
- *     return 501
+ *   - POST /api/organizations rejects `canHost=true` with 400 HOST_ORGS_GATED
+ *   - POST /api/organizations/[id]/members rejects `role === "EXPERT"`
+ *   - The org-create wizard hides the "host consultants" capability checkbox
+ *     (the render sites read this server flag and pass hostOrgsEnabled to the
+ *     wizard; the 400 gate above stays as the server-side backstop) — #863
+ *   - The public /explore/enterprise/organisations directory shows an honest
+ *     "coming soon" state instead of a silently-empty grid — #863
+ *   - The host earnings/payout surfaces stay gated
  *   - /dashboard/organization/[id]/{experts,payouts} nav links hidden
  *   - The earnings split in lib/payments/payouts/earnings-service.ts takes
  *     the sponsor-only path even if the org has `canHost=true`
