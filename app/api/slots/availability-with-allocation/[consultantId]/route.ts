@@ -3,12 +3,134 @@ import prisma from "@/lib/prisma";
 import {
   AppointmentSlot,
   CustomSlot,
+  dayMap,
+  makeLocalizer,
   processAvailabilitySlots,
+  THIRTY_MIN_MS,
   WeeklySlot,
 } from "@/utils/timeSlotsProcessing";
 import { NextRequest, NextResponse } from "next/server";
 import { buildOccupiedAppointmentFilter } from "@/utils/slotAllocation/occupancyPolicy";
 import { minuteUtcToDate } from "@/utils/slotAllocation/slotTimeUtils";
+import { getSession } from "@/lib/auth-server";
+import { isPrivileged } from "@/lib/auth-helpers";
+import type { TSlotTiming } from "@/types/slots";
+import type { BookingStatus } from "@/utils/timeSlotsProcessing";
+
+/** #997 Phase 2 — tooltip display metadata for a booked slot. Only computed
+ * (and only ever returned) when the caller is the owning consultant/staff —
+ * this route is otherwise PUBLIC/unauthenticated (consultee browsing), so
+ * participant names must never leak onto that path. */
+export interface OverlapAppointmentMeta {
+  id: string;
+  type: string;
+  title: string;
+  with?: string;
+}
+
+type SlotTimingWithOverlap = TSlotTiming & {
+  isAllocated: boolean;
+  bookingStatus: BookingStatus;
+  overlappingAppointments?: OverlapAppointmentMeta[];
+};
+
+/** Minimal shape the overlap-metadata builder needs — a subset of the
+ * detail-mode Prisma appointment include. */
+interface AppointmentForOverlapMeta {
+  id: string;
+  appointmentType: string;
+  slotsOfAppointment: { id: string; startsAt: Date; endsAt: Date }[];
+  consultation?: {
+    consultationPlan?: { title?: string | null } | null;
+    requestedBy?: { user?: { name?: string | null } | null } | null;
+  } | null;
+  subscription?: {
+    subscriptionPlan?: { title?: string | null } | null;
+    requestedBy?: { user?: { name?: string | null } | null } | null;
+  } | null;
+  webinar?: { webinarPlan?: { title?: string | null } | null } | null;
+  class?: { classPlan?: { title?: string | null } | null } | null;
+}
+
+export function extractOverlapTitleAndParticipant(
+  appt: AppointmentForOverlapMeta,
+): { title: string; with?: string } {
+  switch (appt.appointmentType) {
+    case "CONSULTATION":
+      return {
+        title: appt.consultation?.consultationPlan?.title || "Consultation",
+        with: appt.consultation?.requestedBy?.user?.name || undefined,
+      };
+    case "SUBSCRIPTION":
+      return {
+        title: appt.subscription?.subscriptionPlan?.title || "Subscription",
+        with: appt.subscription?.requestedBy?.user?.name || undefined,
+      };
+    case "WEBINAR":
+      return { title: appt.webinar?.webinarPlan?.title || "Webinar" };
+    case "CLASS":
+      return { title: appt.class?.classPlan?.title || "Class" };
+    default:
+      return { title: appt.appointmentType || "Unknown" };
+  }
+}
+
+/** Buckets each appointment's display metadata by every 30-min epoch bucket
+ * its slot spans — mirrors buildAppointmentIndex's alignment so a lookup with
+ * {@link overlapMetaCandidatesFor} finds the same overlaps getSlotBookingStatus
+ * would. */
+export function buildOverlapMetaIndex(
+  appointments: AppointmentForOverlapMeta[],
+): Map<number, OverlapAppointmentMeta[]> {
+  const index = new Map<number, OverlapAppointmentMeta[]>();
+  for (const appt of appointments) {
+    const { title, with: withUser } = extractOverlapTitleAndParticipant(appt);
+    const meta: OverlapAppointmentMeta = {
+      id: appt.id,
+      type: appt.appointmentType,
+      title,
+      with: withUser,
+    };
+    for (const slot of appt.slotsOfAppointment) {
+      if (!slot.startsAt || !slot.endsAt) continue;
+      const startMs = new Date(slot.startsAt).getTime();
+      const endMs = new Date(slot.endsAt).getTime();
+      if (isNaN(startMs) || isNaN(endMs) || endMs <= startMs) continue;
+      const firstBucket = Math.floor(startMs / THIRTY_MIN_MS);
+      const lastBucket = Math.floor((endMs - 1) / THIRTY_MIN_MS);
+      for (let b = firstBucket; b <= lastBucket; b++) {
+        const bucket = index.get(b);
+        if (bucket) bucket.push(meta);
+        else index.set(b, [meta]);
+      }
+    }
+  }
+  return index;
+}
+
+/** Dedupe-by-id overlap lookup spanning every 30-min bucket [startMs, endMs)
+ * touches — safe even if the interval isn't itself epoch-aligned. */
+export function overlapMetaCandidatesFor(
+  index: Map<number, OverlapAppointmentMeta[]>,
+  startMs: number,
+  endMs: number,
+): OverlapAppointmentMeta[] {
+  const firstBucket = Math.floor(startMs / THIRTY_MIN_MS);
+  const lastBucket = Math.floor((endMs - 1) / THIRTY_MIN_MS);
+  const seen = new Set<string>();
+  const out: OverlapAppointmentMeta[] = [];
+  for (let b = firstBucket; b <= lastBucket; b++) {
+    const bucket = index.get(b);
+    if (!bucket) continue;
+    for (const m of bucket) {
+      if (!seen.has(m.id)) {
+        seen.add(m.id);
+        out.push(m);
+      }
+    }
+  }
+  return out;
+}
 
 // Helper function to check if a slot is a legitimate overnight slot
 function isValidOvernightSlot(startTime: Date, endTime: Date): boolean {
@@ -58,6 +180,27 @@ export async function GET(
     const endDateInUtc =
       searchParams.get("endDateInUtc") || searchParams.get("endDate");
     const timezone = searchParams.get("timezone") || "UTC";
+
+    // #997 Phase 2 — explicit opt-in for the consultant Allocate-Slots
+    // calendar's per-interval tooltip metadata (title/participant name).
+    // This route is otherwise PUBLIC (consultee/trials browsing, see
+    // middleware.ts) so the richer include is gated behind BOTH the flag
+    // AND session ownership — a consultee's request never satisfies the
+    // ownership check, so their response is byte-identical to before.
+    const includeAppointmentDetailsRequested =
+      searchParams.get("includeAppointmentDetails") === "true";
+    let includeAppointmentDetails = false;
+    if (includeAppointmentDetailsRequested) {
+      const session = await getSession(true);
+      const isOwner = session?.user?.consultantProfileId === consultantId;
+      if (!session?.user?.id || (!isOwner && !isPrivileged(session.user.role))) {
+        return NextResponse.json(
+          { error: "Forbidden: appointment details require consultant ownership" },
+          { status: 403 },
+        );
+      }
+      includeAppointmentDetails = true;
+    }
 
     if (!startDateInUtc || !endDateInUtc) {
       return NextResponse.json(
@@ -121,42 +264,77 @@ export async function GET(
 
     // 2. Fetch all appointments to find allocated slots
     // FIX Bug #15: Use centralized occupancy policy for consistent conflict detection
-    const appointments = await prisma.appointment.findMany({
-      where: {
-        OR: buildOccupiedAppointmentFilter(consultantId),
-        slotsOfAppointment: {
-          some: {
-            OR: [
-              {
-                startsAt: {
-                  gte: startDate,
-                  lt: endDate,
-                },
+    const occupiedAppointmentWhere = {
+      OR: buildOccupiedAppointmentFilter(consultantId),
+      slotsOfAppointment: {
+        some: {
+          OR: [
+            {
+              startsAt: {
+                gte: startDate,
+                lt: endDate,
               },
-              {
-                endsAt: {
-                  gt: startDate,
-                  lte: endDate,
-                },
+            },
+            {
+              endsAt: {
+                gt: startDate,
+                lte: endDate,
               },
-              {
-                startsAt: { lte: startDate },
-                endsAt: { gte: endDate },
-              },
-            ],
-          },
+            },
+            {
+              startsAt: { lte: startDate },
+              endsAt: { gte: endDate },
+            },
+          ],
         },
       },
-      include: {
-        slotsOfAppointment: true,
-      },
-    });
+    };
+
+    // #997 Phase 2 — two separate queries (rather than one conditionally-built
+    // `include`) so the PUBLIC path (majority of traffic — consultee/trials
+    // browsing) never pays for the extra plan-title/participant-name joins.
+    let rawSlotsOfAppointment: { id: string; startsAt: Date; endsAt: Date }[];
+    let overlapMetaIndex: Map<number, OverlapAppointmentMeta[]> = new Map();
+    let detailAppointments: AppointmentForOverlapMeta[] = [];
+    if (includeAppointmentDetails) {
+      detailAppointments = await prisma.appointment.findMany({
+        where: occupiedAppointmentWhere,
+        include: {
+          slotsOfAppointment: true,
+          consultation: {
+            select: {
+              consultationPlan: { select: { title: true } },
+              requestedBy: { select: { user: { select: { name: true } } } },
+            },
+          },
+          subscription: {
+            select: {
+              subscriptionPlan: { select: { title: true } },
+              requestedBy: { select: { user: { select: { name: true } } } },
+            },
+          },
+          webinar: { select: { webinarPlan: { select: { title: true } } } },
+          class: { select: { classPlan: { select: { title: true } } } },
+        },
+      });
+      rawSlotsOfAppointment = detailAppointments.flatMap(
+        (appt) => appt.slotsOfAppointment,
+      );
+      overlapMetaIndex = buildOverlapMetaIndex(detailAppointments);
+    } else {
+      const appointments = await prisma.appointment.findMany({
+        where: occupiedAppointmentWhere,
+        include: { slotsOfAppointment: true },
+      });
+      rawSlotsOfAppointment = appointments.flatMap(
+        (appt) => appt.slotsOfAppointment,
+      );
+    }
 
     // Extract appointment slots using flatMap with defensive filtering
     // Defensive Programming: Filter out corrupt appointment slots
-    const appointmentSlots: AppointmentSlot[] = appointments.flatMap((appt) =>
-      appt.slotsOfAppointment
-        .filter((slot) => {
+    const appointmentSlots: AppointmentSlot[] = rawSlotsOfAppointment
+      .filter((slot) => {
           // Validate slot has required fields
           if (!slot.startsAt || !slot.endsAt) {
             console.warn(
@@ -215,13 +393,12 @@ export async function GET(
             return false;
           }
 
-          return true;
-        })
-        .map((slot) => ({
-          startsAt: slot.startsAt,
-          endsAt: slot.endsAt,
-        })),
-    );
+        return true;
+      })
+      .map((slot) => ({
+        startsAt: slot.startsAt,
+        endsAt: slot.endsAt,
+      }));
 
     // Convert to utility interfaces with defensive validation
     // Weekly slots now use Int (minutes since midnight UTC 0-1439) instead of DateTime
@@ -361,14 +538,78 @@ export async function GET(
       consultant.scheduleType === "CUSTOM" ? customSlots : [];
 
     // Process slots using the unified utility with filtered slots
-    const slotsByDate = processAvailabilitySlots(
-      filteredWeeklySlots,
-      filteredCustomSlots,
-      appointmentSlots,
-      startDate,
-      endDate,
-      timezone,
-    );
+    const slotsByDate: Record<string, SlotTimingWithOverlap[]> =
+      processAvailabilitySlots(
+        filteredWeeklySlots,
+        filteredCustomSlots,
+        appointmentSlots,
+        startDate,
+        endDate,
+        timezone,
+      );
+
+    // #997 Phase 2 — attach per-interval tooltip metadata AND synthesize
+    // "orphan" cells: a booked appointment slot whose availability row was
+    // edited/removed after booking has no availability-derived entry above,
+    // so without this the consultant calendar would silently show it as
+    // pickable. This mirrors the client patch it replaces (previously in
+    // useCalendarData.ts's slotStatusMap: "ensure appointments without
+    // availability slots still show as booked").
+    if (includeAppointmentDetails) {
+      const coveredStartsMs = new Set<number>();
+      for (const dateKey of Object.keys(slotsByDate)) {
+        for (const slot of slotsByDate[dateKey]) {
+          const startMs = new Date(slot.startsAt).getTime();
+          coveredStartsMs.add(startMs);
+          const endMs = new Date(slot.endsAt).getTime();
+          slot.overlappingAppointments = overlapMetaCandidatesFor(
+            overlapMetaIndex,
+            startMs,
+            endMs,
+          );
+        }
+      }
+
+      const loc = makeLocalizer(timezone);
+      for (const apptSlot of rawSlotsOfAppointment) {
+        const start = new Date(apptSlot.startsAt);
+        const end = new Date(apptSlot.endsAt);
+        if (isNaN(start.getTime()) || isNaN(end.getTime())) continue;
+        if (start < startDate || start >= endDate) continue;
+        const startMs = start.getTime();
+        if (coveredStartsMs.has(startMs)) continue;
+        coveredStartsMs.add(startMs); // de-dupe overlapping appointment rows onto one cell
+
+        const dateKey = loc.dateKey(start);
+        const synthetic: SlotTimingWithOverlap = {
+          slotId: `orphan-${startMs}`,
+          dateInISO: start.toISOString(),
+          dayOfWeek: dayMap[loc.dayIndex(start)],
+          startsAt: start.toISOString(),
+          endsAt: end.toISOString(),
+          slotOfAvailabilityId: "",
+          slotOfAppointmentId: "",
+          localStartTime: loc.timeP(start),
+          localEndTime: loc.timeP(end),
+          type: "CUSTOM",
+          isAllocated: true,
+          bookingStatus: "fully-booked",
+          overlappingAppointments: overlapMetaCandidatesFor(
+            overlapMetaIndex,
+            startMs,
+            end.getTime(),
+          ),
+        };
+        (slotsByDate[dateKey] ||= []).push(synthetic);
+      }
+
+      // Re-sort days that received synthetic entries.
+      for (const dateKey of Object.keys(slotsByDate)) {
+        slotsByDate[dateKey].sort(
+          (a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
+        );
+      }
+    }
 
     return NextResponse.json({ data: slotsByDate }, { status: 200 });
   } catch (error) {

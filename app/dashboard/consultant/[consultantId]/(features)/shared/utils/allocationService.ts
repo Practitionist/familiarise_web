@@ -2,6 +2,15 @@ import * as Sentry from "@sentry/nextjs";
 import { TimeSlot } from "./calendarUtils";
 import type { SlotConflictResult } from "@/utils/slotAllocation/types";
 
+/** #997 Phase 2 — tooltip display metadata for a booked slot, computed
+ * server-side (only present when `includeAppointmentDetails` was authorized). */
+export interface OverlappingAppointmentMeta {
+  id: string;
+  type: string;
+  title: string;
+  with?: string;
+}
+
 /** Shape of a raw availability slot returned from the availability-with-allocation API */
 interface RawAvailabilityApiSlot {
   slotId: string;
@@ -12,6 +21,9 @@ interface RawAvailabilityApiSlot {
   dayOfWeek?: string;
   localStartTime?: string;
   localEndTime?: string;
+  /** #997 Phase 2 — server-precomputed status-grid tooltip data; only
+   * populated when the calendar requested `includeAppointmentDetails`. */
+  overlappingAppointments?: OverlappingAppointmentMeta[];
 }
 
 export interface AllocationRequest {
@@ -408,6 +420,15 @@ export class AllocationService {
      * the API response aligned with the user's calendar view.
      */
     timezone?: string,
+    /**
+     * #997 Phase 2 — requests the server-computed status grid's per-interval
+     * `overlappingAppointments` tooltip metadata + "orphan booked slot"
+     * synthesis. The route re-checks ownership server-side regardless of
+     * this flag (it's an opt-in signal, not the authorization itself) — the
+     * consultee/trials calendars never pass it, so their response shape is
+     * unchanged.
+     */
+    includeAppointmentDetails?: boolean,
   ) {
     if (!consultantId) {
       throw new Error("Consultant ID is required");
@@ -430,6 +451,9 @@ export class AllocationService {
         endDateInUtc: endDate.toISOString(),
         timezone: tz,
       });
+      if (includeAppointmentDetails) {
+        params.set("includeAppointmentDetails", "true");
+      }
       const response = await fetch(
         `/api/slots/availability-with-allocation/${consultantId}?${params}`,
       );
@@ -456,44 +480,20 @@ export class AllocationService {
   }
 
   /**
-   * Fetches all appointments for a consultant
-   */
-  static async fetchAppointments(
-    consultantId: string,
-    startDate: Date,
-    endDate: Date,
-  ) {
-    if (!consultantId) {
-      throw new Error("Consultant ID is required");
-    }
-
-    try {
-      const params = new URLSearchParams({
-        consultantProfileId: consultantId,
-        startDate: startDate.toISOString(),
-        endDate: endDate.toISOString(),
-      });
-      const response = await fetch(`/api/slots/appointments?${params}`);
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || "Failed to fetch appointments");
-      }
-      const { data } = await response.json();
-      return data || [];
-    } catch (error) {
-      console.error("Error fetching appointments:", error);
-      throw error;
-    }
-  }
-
-  /**
    * Fetches specific event slots for any event type
    * Used to display "This Event" (black) instead of "Booked" (gray) in calendar
+   *
+   * #997 Phase 3 — when `slotsPerCall` is given for a subscription, the
+   * response also carries `weeklyConfirmedCallCounts` (server-bucketed by
+   * scheduling-timezone week, ADR B9) so the calendar's interactive
+   * weekly-limit guard no longer needs a separate whole-window appointment
+   * fetch to re-derive it.
    */
   static async fetchEventSlots(
     eventType: "consultation" | "subscription" | "webinar" | "class",
     eventId: string,
     consultantProfileId: string,
+    slotsPerCall?: number,
   ) {
     try {
       const params = new URLSearchParams({
@@ -508,6 +508,9 @@ export class AllocationService {
         params.append("classId", eventId);
       } else if (eventType === "subscription") {
         params.append("subscriptionId", eventId);
+        if (slotsPerCall && slotsPerCall > 0) {
+          params.append("slotsPerCall", String(slotsPerCall));
+        }
       } else if (eventType === "consultation") {
         params.append("consultationId", eventId);
       }
@@ -518,8 +521,13 @@ export class AllocationService {
         throw new Error("Failed to fetch event slots");
       }
 
-      const { data } = await response.json();
-      return data || [];
+      const { data, weeklyConfirmedCallCounts } = await response.json();
+      return {
+        data: data || [],
+        weeklyConfirmedCallCounts:
+          (weeklyConfirmedCallCounts as Record<string, number> | undefined) ||
+          {},
+      };
     } catch (error) {
       console.error("Error fetching event slots:", error);
       throw error;

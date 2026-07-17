@@ -4,6 +4,43 @@ import { AppointmentsType, Prisma } from "@prisma/client";
 import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
 import { resolveOrgScope } from "@/lib/api/scope/parse";
 import { getConsultantAppointments } from "@/lib/data/consultant-appointments";
+import { SlotCalculationService } from "@/utils/slotAllocation/SlotCalculationService";
+
+/**
+ * #997 Phase 3 — one confirmed (non-tentative) appointment whose slot count
+ * matches slotsPerCall = one completed call. Bucketed by the SAME
+ * scheduling-timezone week key (ADR B9) the server validator uses, so the
+ * interactive weekly-limit guard can do an O(1) lookup instead of
+ * re-deriving this from a separate whole-window appointment fetch on every
+ * slot click (previously UnifiedCalendar's countCompletedCallsForWeek).
+ */
+export function computeWeeklyConfirmedCallCounts(
+  appointments: Array<{
+    appointmentType: string;
+    subscription?: { id?: string; schedulingTimezone?: string | null } | null;
+    slotsOfAppointment?: Array<{ startsAt: Date | string; isTentative?: boolean }>;
+  }>,
+  subscriptionId: string,
+  slotsPerCall: number,
+): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const appt of appointments) {
+    if (appt.appointmentType !== "SUBSCRIPTION") continue;
+    if (appt.subscription?.id !== subscriptionId) continue;
+    const slots = appt.slotsOfAppointment || [];
+    // Tentative slots are the OLD slots mid-reschedule — never a completed call.
+    if (slots.some((s) => s.isTentative)) continue;
+    if (slots.length !== slotsPerCall) continue;
+    const firstSlot = slots[0];
+    if (!firstSlot?.startsAt) continue;
+    const weekKey = SlotCalculationService.weekKey(
+      new Date(firstSlot.startsAt),
+      appt.subscription?.schedulingTimezone || undefined,
+    );
+    counts[weekKey] = (counts[weekKey] || 0) + 1;
+  }
+  return counts;
+}
 
 export async function GET(request: NextRequest) {
   const authResult = await requireApiAuth();
@@ -160,7 +197,26 @@ export async function GET(request: NextRequest) {
       orgScopeFilter: apptOrgFilter,
     });
 
-    return NextResponse.json({ data: appointments });
+    // #997 Phase 3 — opt-in aggregate, only computed when the caller scopes
+    // to a single subscription and states its per-call slot count (both
+    // already known client-side from the plan config — no extra DB read).
+    const slotsPerCallParam = searchParams.get("slotsPerCall");
+    const slotsPerCall = slotsPerCallParam
+      ? parseInt(slotsPerCallParam, 10)
+      : NaN;
+    const weeklyConfirmedCallCounts =
+      subscriptionId && Number.isFinite(slotsPerCall) && slotsPerCall > 0
+        ? computeWeeklyConfirmedCallCounts(
+            appointments,
+            subscriptionId,
+            slotsPerCall,
+          )
+        : undefined;
+
+    return NextResponse.json({
+      data: appointments,
+      ...(weeklyConfirmedCallCounts ? { weeklyConfirmedCallCounts } : {}),
+    });
   } catch (error) {
     console.error("Error fetching appointments:", error);
     return NextResponse.json(
