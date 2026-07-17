@@ -267,6 +267,10 @@ export class AllocationAlgorithms {
    * 3. Smart scoring system for optimal slot selection
    * 4. Intelligent spacing for recurring events
    */
+  // #997 Phase 1 — product code now calls the SERVER's isAuto mode; this
+  // client implementation is retained as the test oracle that pins parity
+  // between auto-picked schedules and the manual validators (see
+  // mode-parity.test.ts) until phases 2-3 retire the client engine.
   static async autoAllocate(
     availableSlots: TimeSlot[],
     options: AllocationOptions,

@@ -1,5 +1,9 @@
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
+import {
+  PROFILE_WITH_USER_SELECT,
+  APPOINTMENT_LIST_SELECT,
+} from "@/lib/booking/list-selects";
 import { AppointmentStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { transitionConsultationRequest } from "@/lib/booking/transitions";
@@ -35,11 +39,10 @@ export async function GET(request: NextRequest) {
     // ownership filter and serving every consultant's consultations.
     if (!isPrivileged(session.user.role)) {
       if (session.user.role === "CONSULTANT") {
-        // Consultants can only see their own consultations
+        // Consultants can only see their own consultations. Filter on the
+        // plan's scalar FK (indexed) instead of joining consultantProfile.
         whereClause.consultationPlan = {
-          consultantProfile: {
-            id: session.user.consultantProfileId ?? "__none__",
-          },
+          consultantProfileId: session.user.consultantProfileId ?? "__none__",
         };
       } else if (session.user.role === "CONSULTEE") {
         // Consultees can only see their own consultations
@@ -106,36 +109,25 @@ export async function GET(request: NextRequest) {
     }
 
     const [consultations, total] = await Promise.all([
+      // #997 Phase 0 — narrow SELECT (see subscriptions route for rationale).
       prisma.consultation.findMany({
         where: whereClause,
-        include: {
+        select: {
+          id: true,
+          status: true,
+          requestedAt: true,
+          bookingSource: true,
           consultationPlan: {
-            include: {
-              consultantProfile: {
-                include: {
-                  user: { select: { id: true, name: true, email: true, image: true, role: true, phone: true } },
-                },
-              },
+            select: {
+              id: true,
+              title: true,
+              durationInHours: true,
+              consultantProfileId: true,
+              consultantProfile: PROFILE_WITH_USER_SELECT,
             },
           },
-          requestedBy: {
-            include: {
-              user: { select: { id: true, name: true, email: true, image: true, role: true, phone: true } },
-            },
-          },
-          appointment: {
-            include: {
-              slotsOfAppointment: {
-                include: {
-                  user: { select: { id: true, name: true, email: true, image: true, role: true, phone: true } },
-                },
-                orderBy: {
-                  startsAt: "asc",
-                },
-              },
-              payment: { select: { id: true, paymentStatus: true, amount: true, currency: true } },
-            },
-          },
+          requestedBy: PROFILE_WITH_USER_SELECT,
+          appointment: APPOINTMENT_LIST_SELECT,
         },
         orderBy: {
           requestedAt: "desc",
