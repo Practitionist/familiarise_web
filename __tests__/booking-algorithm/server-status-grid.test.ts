@@ -38,7 +38,7 @@ import {
   overlapMetaCandidatesFor,
   extractOverlapTitleAndParticipant,
   type OverlapAppointmentMeta,
-} from "@/app/api/slots/availability-with-allocation/[consultantId]/route";
+} from "@/lib/booking/overlap-meta";
 
 // ─── computeWeeklyConfirmedCallCounts (Phase 3) ─────────────────────────────
 
