@@ -35,11 +35,10 @@ export async function GET(request: NextRequest) {
     // ownership filter and serving every consultant's consultations.
     if (!isPrivileged(session.user.role)) {
       if (session.user.role === "CONSULTANT") {
-        // Consultants can only see their own consultations
+        // Consultants can only see their own consultations. Filter on the
+        // plan's scalar FK (indexed) instead of joining consultantProfile.
         whereClause.consultationPlan = {
-          consultantProfile: {
-            id: session.user.consultantProfileId ?? "__none__",
-          },
+          consultantProfileId: session.user.consultantProfileId ?? "__none__",
         };
       } else if (session.user.role === "CONSULTEE") {
         // Consultees can only see their own consultations
@@ -106,34 +105,55 @@ export async function GET(request: NextRequest) {
     }
 
     const [consultations, total] = await Promise.all([
+      // #997 Phase 0 — narrow SELECT (see subscriptions route for rationale).
       prisma.consultation.findMany({
         where: whereClause,
-        include: {
+        select: {
+          id: true,
+          status: true,
+          requestedAt: true,
+          bookingSource: true,
           consultationPlan: {
-            include: {
+            select: {
+              id: true,
+              title: true,
+              durationInHours: true,
+              consultantProfileId: true,
               consultantProfile: {
-                include: {
-                  user: { select: { id: true, name: true, email: true, image: true, role: true, phone: true } },
+                select: {
+                  id: true,
+                  user: { select: { id: true, name: true, image: true } },
                 },
               },
             },
           },
           requestedBy: {
-            include: {
-              user: { select: { id: true, name: true, email: true, image: true, role: true, phone: true } },
+            select: {
+              id: true,
+              user: { select: { id: true, name: true, image: true } },
             },
           },
           appointment: {
-            include: {
+            select: {
+              id: true,
+              organizationId: true,
               slotsOfAppointment: {
-                include: {
-                  user: { select: { id: true, name: true, email: true, image: true, role: true, phone: true } },
+                select: {
+                  id: true,
+                  startsAt: true,
+                  endsAt: true,
+                  isTentative: true,
                 },
-                orderBy: {
-                  startsAt: "asc",
+                orderBy: { startsAt: "asc" },
+              },
+              payment: {
+                select: {
+                  id: true,
+                  paymentStatus: true,
+                  amount: true,
+                  currency: true,
                 },
               },
-              payment: { select: { id: true, paymentStatus: true, amount: true, currency: true } },
             },
           },
         },

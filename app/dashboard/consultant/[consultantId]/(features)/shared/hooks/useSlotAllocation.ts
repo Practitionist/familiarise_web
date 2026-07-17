@@ -8,7 +8,6 @@ import {
   AllocationResult,
 } from "../utils/allocationAlgorithms";
 import { AllocationService } from "../utils/allocationService";
-import type { RawSlotData } from "./useCalendarData";
 import { isRecurringEventType } from "@/utils/slotAllocation/types";
 import {
   ValidationResult,
@@ -980,18 +979,18 @@ export function useEventSlotAllocation(
    * Auto-allocate using available slots
    */
   const autoAllocate = useCallback(
-    async (availableSlots: TimeSlot[]) => {
+    // #997 Phase 1 — auto-allocation runs SERVER-side (isAuto mode: Redis
+    // locks, tz-aware caps, initialAllocation guard, idempotent replay).
+    // The old path fetched the consultant's entire scheduling period of
+    // availability into the browser and ran AllocationAlgorithms here.
+    // The parameter is kept for interface stability with UnifiedCalendar.
+    async (_availableSlots: TimeSlot[]) => {
       setIsAllocating(true);
       setAllocationError(null);
 
       try {
-        const sessionDuration =
-          eventType === "consultation" || eventType === "webinar"
-            ? options.durationInHours
-            : options.sessionDurationInHours;
-
-        // Slots are picked inside the algorithm, so the fingerprint covers
-        // mode + event only: a double-click replays, a later re-run (after a
+        // Slots are picked server-side, so the fingerprint covers mode +
+        // event only: a double-click replays, a later re-run (after a
         // failure changed nothing) also replays, which is safe either way.
         const attempt = resolveAttemptKey(
           attemptKeyRef.current,
@@ -999,66 +998,52 @@ export function useEventSlotAllocation(
         );
         attemptKeyRef.current = attempt;
 
-        const allocationOptions: AllocationOptions = {
+        const response = await AllocationService.allocateSlots(
           eventType,
           eventId,
-          durationInMonths: options.durationInMonths,
-          callsPerWeek: options.callsPerWeek,
-          durationInHours: sessionDuration,
-          sessionDurationInHours: sessionDuration,
-          startDate: options.startDate,
-          endDate: options.endDate,
-          totalSessions: options.maxTotalCalls, // maxTotalCalls is already totalSessions-aware
-          pastConfirmedSlotCount: options.pastConfirmedSlotCount,
-          // Per-day caps so auto-allocate respects the same limit as the manual
-          // path (subscription 1/day, class 2/day).
-          maxCallsPerDay: options.maxCallsPerDay,
-          maxSessionsPerDay: options.maxSessionsPerDay,
-          schedulingTimezone: options.schedulingTimezone,
-          idempotencyKey: attempt.key,
-          initialAllocation: options.initialAllocation || undefined,
-        };
-
-        // For recurring events (subscription/class), the calendar UI only
-        // provides slots for the currently viewed week, but the algorithm
-        // needs slots spanning the entire scheduling period. Fetch them.
-        let slotsForAllocation = availableSlots;
-        if (
-          isRecurringEventType(eventType) &&
-          options.startDate &&
-          options.endDate &&
-          options.consultantId
-        ) {
-          const fullPeriodData = await AllocationService.fetchAvailabilitySlots(
-            options.consultantId,
-            options.startDate,
-            options.endDate,
-          );
-          const allRawSlots = [
-            ...(fullPeriodData.weekly || []),
-            ...(fullPeriodData.custom || []),
-          ];
-          slotsForAllocation = allRawSlots.map((slot: RawSlotData) => ({
-            startTime: new Date(slot.startsAt),
-            endTime: new Date(slot.endsAt),
-            isAvailable:
-              slot.bookingStatus === "available" ||
-              slot.bookingStatus === "partially-booked",
-            isBooked: slot.bookingStatus === "fully-booked",
-          }));
-        }
-
-        const result = await AllocationAlgorithms.autoAllocate(
-          slotsForAllocation,
-          allocationOptions,
+          [],
+          {
+            isAuto: true,
+            idempotencyKey: attempt.key,
+            initialAllocation: options.initialAllocation || undefined,
+          },
         );
 
-        if (result.success) {
-          setSelectedSlots(result.selectedSlots);
+        if (response.success) {
+          // Reflect the server's picks on the grid (best-effort — the host
+          // closes the dialog via onSuccess either way).
+          const pickedSlots: TimeSlot[] = (response.data ?? [])
+            .flatMap(
+              (appointment) =>
+                (appointment.slotsOfAppointment as
+                  | { startsAt: string; endsAt: string }[]
+                  | undefined) ?? [],
+            )
+            .map((slot) => ({
+              startTime: new Date(slot.startsAt),
+              endTime: new Date(slot.endsAt),
+              isAvailable: true,
+              isBooked: false,
+            }));
+          if (pickedSlots.length > 0) {
+            setSelectedSlots(pickedSlots);
+          }
           toast(autoScheduled());
-          onSuccess?.(result);
+          onSuccess?.({
+            success: true,
+            selectedSlots: pickedSlots,
+            strategy: "server-auto",
+          });
         } else {
-          handleAllocationFailure(result, "Auto allocation failed");
+          handleAllocationFailure(
+            {
+              success: false,
+              selectedSlots: [],
+              error: response.error,
+              httpStatus: response.httpStatus,
+            },
+            "Auto allocation failed",
+          );
         }
       } catch (error) {
         const errorMessage =
