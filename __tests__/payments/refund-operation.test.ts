@@ -253,6 +253,12 @@ function txStub() {
         return u;
       }),
     },
+    // #715/#716 — the cascade's overage credit-back step. These base tests
+    // register no overage events, so findFirst→null / updateMany→0 rows.
+    overageEvent: {
+      findFirst: jest.fn(async () => null),
+      updateMany: jest.fn(async () => ({ count: 0 })),
+    },
     programAssignment: {
       update: jest.fn(async ({ where, data }: any) => {
         const a = state.programAssignments.get(where.id);

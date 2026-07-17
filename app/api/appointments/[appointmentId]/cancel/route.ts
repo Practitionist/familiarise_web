@@ -13,6 +13,10 @@ import { getSession } from "@/lib/auth-server";
 import { isPrivileged } from "@/lib/auth-helpers";
 import { refundPayment } from "@/lib/payments/operations/refund";
 import {
+  refundWholeEventPayments,
+  type WholeEventRefundSummary,
+} from "@/lib/payments/operations/event-refunds";
+import {
   computeRefundPct,
   parsePolicySnapshot,
 } from "@/lib/payments/operations/cancellation-policy";
@@ -303,8 +307,9 @@ export async function POST(
     // B1 — policy-driven refund, AFTER the cancel tx commits (refundPayment
     // runs its own Serializable tx; the CAS above guarantees this block runs
     // at most once per appointment — a second cancel 409s before reaching it).
-    // Scope: consultation/subscription. Webinar/class buyer refunds belong to
-    // the participant-removal flow, not whole-event cancellation.
+    // Scope here: consultation/subscription (single-payment, policy-tiered).
+    // Whole-event class/webinar refunds are handled just below via the
+    // reversal engine (#776 §C).
     let refund: { amountRefundedPaise: number; refundPct: number } | null =
       null;
     const isExclusiveType =
@@ -354,6 +359,23 @@ export async function POST(
       } else {
         refund = { amountRefundedPaise: 0, refundPct };
       }
+    }
+
+    // #776 §C — whole-event (class/webinar) cancellation refunds every attendee
+    // in full through the reversal engine: org-funded seats reverse in-ledger
+    // (CLASS_MULTI), card/mock seats credit the gateway. Same at-most-once CAS
+    // guarantee as the block above. Attendees didn't leave voluntarily (the
+    // event was cancelled on them), so this is a full refund, not policy-tiered.
+    let eventRefund: WholeEventRefundSummary | null = null;
+    if (appointment.class || appointment.webinar) {
+      const eventKind = appointment.class ? "class" : "webinar";
+      const eventId = appointment.class?.id ?? appointment.webinar!.id;
+      eventRefund = await refundWholeEventPayments(
+        eventKind,
+        eventId,
+        `whole-event ${eventKind} cancellation (${validatedData.reason ?? "cancelled"})`,
+        session.user.id,
+      );
     }
 
     // Notification metadata (for fire-and-forget notifications after transaction)
@@ -432,7 +454,7 @@ export async function POST(
     // Waitlist notifications should only fire when a participant leaves an
     // otherwise-active event (handled in participant removal flow).
 
-    return NextResponse.json({ ...result, refund });
+    return NextResponse.json({ ...result, refund, eventRefund });
   } catch (error) {
     if (error instanceof Error && "httpStatus" in error) {
       const status =

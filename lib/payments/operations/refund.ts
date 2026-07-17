@@ -940,13 +940,17 @@ export async function applyRefundCascade(
   // A CHARGE_MEMBER side-payment refunding ITSELF (whether via the credit-back
   // above or a direct refund) flips its own event. Keyed by paymentId —
   // side-charges carry no bookingUtilization, so the branch above misses them.
-  await transitionOverage(
-    tx,
-    { paymentId: payment.id, overageBehavior: "CHARGE_MEMBER" },
-    "REVERSED",
-    { reversedAt: new Date() },
-    { fromIn: ["CHARGED"] },
-  );
+  // Scoped to side-charges (parentPaymentId set) so normal booking refunds skip
+  // this write entirely.
+  if (payment.parentPaymentId) {
+    await transitionOverage(
+      tx,
+      { paymentId: payment.id, overageBehavior: "CHARGE_MEMBER" },
+      "REVERSED",
+      { reversedAt: new Date() },
+      { fromIn: ["CHARGED"] },
+    );
+  }
 
   // #738-A — TCS u/s 52 parity: if collection ever stamped this payment
   // (flag-gated, schema-live), the refund must net it out of the next GSTR-8.

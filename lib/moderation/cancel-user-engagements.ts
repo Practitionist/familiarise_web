@@ -13,6 +13,7 @@ import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { notifyAppointmentCancelled } from "@/lib/novu";
 import { refundPayment } from "@/lib/payments/operations/refund";
+import { refundWholeEventPayments } from "@/lib/payments/operations/event-refunds";
 import { handleSlotOpening } from "@/lib/waitlist";
 import {
   CANCELLABLE_FROM,
@@ -439,22 +440,32 @@ async function cancelGroupEvent(
 
   ctx.summary.engagementsCancelled += 1;
 
-  // Whole-event moderation cancel refunds EVERY attendee in full — unlike the
-  // consultant-initiated cancel route, which defers buyer refunds to the
-  // participant-removal flow.
-  const payments = await prisma.payment.findMany({
+  // Whole-event moderation cancel refunds EVERY attendee in full via the
+  // reversal engine (#776 §C): org-funded seats reverse in-ledger (CLASS_MULTI),
+  // card/mock seats credit the gateway. The old per-payment refundPayment loop
+  // failed org-funded seats (createRefund → UNKNOWN_GATEWAY on a synthetic id).
+  const eventRefund = await refundWholeEventPayments(
+    isWebinar ? "webinar" : "class",
+    eventId,
+    "moderation (100% — platform-initiated cancellation)",
+    ctx.initiatedByUserId,
+  );
+  ctx.summary.refundsIssued += eventRefund.refundsIssued;
+  ctx.summary.refundedPaise += eventRefund.refundedPaise;
+  for (const f of eventRefund.failures) {
+    ctx.summary.failures.push({ kind: "refund", id: f.paymentId, error: f.error });
+  }
+
+  // Light query for attendee notification (the helper doesn't return userIds).
+  const attendees = await prisma.payment.findMany({
     where: {
       appointment: isWebinar ? { webinarId: eventId } : { classId: eventId },
       paymentStatus: "SUCCEEDED",
       amount: { gt: 0 },
     },
-    select: { id: true, userId: true },
+    select: { userId: true },
   });
-  for (const payment of payments) {
-    await issueFullRefund(payment.id, ctx.initiatedByUserId, ctx.summary);
-  }
-
-  const attendeeIds = Array.from(new Set(payments.map((p) => p.userId)));
+  const attendeeIds = Array.from(new Set(attendees.map((p) => p.userId)));
   if (attendeeIds.length > 0) {
     void notifyAppointmentCancelled(attendeeIds, {
       appointmentType: isWebinar ? "WEBINAR" : "CLASS",

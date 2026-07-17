@@ -20,6 +20,18 @@ import type { Tx } from "@/lib/prisma";
  * it's proven and heavily tested; this engine DISPATCHES to it rather than
  * re-implementing it. New capability here: CLASS_MULTI (fan a single logical
  * refund across the child payments of a consolidated CLASS purchase).
+ *
+ * Production callers (#776 §C):
+ *   - CLASS_MULTI       — `refundWholeEventPayments` (lib/payments/operations/
+ *                         event-refunds.ts), for the INTERNAL (org-funded) seats
+ *                         of a cancelled class/webinar. Gateway/card seats do NOT
+ *                         come here — they credit the card via `refundPayment`,
+ *                         which this engine never calls (reverseClassMulti marks
+ *                         its child refunds SUCCEEDED with no gateway leg).
+ *   - PAYOUT_CLAWBACK   — the dispute-lost branch of handleDisputeUpdated.
+ *   - BOOKING / OVERAGE — single-payment reversals still flow through
+ *                         `refundPayment` (it owns the gateway phases); nothing
+ *                         calls applyReversal for those from a route.
  */
 
 import { Prisma, RefundStatus } from "@prisma/client";
@@ -53,6 +65,8 @@ export interface ApplyReversalResult {
   kind: ReversalSource["kind"];
   /** Per-cascade results (one per payment touched). */
   cascades: ApplyRefundCascadeResult[];
+  /** Child Refund row ids created by CLASS_MULTI (one per reversed child). */
+  childRefundIds: string[];
   /** True if a payout clawback ledger posting was made. */
   clawbackPosted: boolean;
 }
@@ -74,7 +88,12 @@ export async function applyReversal(
         reason: input.reason,
         initiatedByUserId: input.initiatedByUserId ?? null,
       });
-      return { kind: "BOOKING", cascades: [cascade], clawbackPosted: false };
+      return {
+        kind: "BOOKING",
+        cascades: [cascade],
+        childRefundIds: [],
+        clawbackPosted: false,
+      };
     }
 
     case "OVERAGE": {
@@ -86,16 +105,26 @@ export async function applyReversal(
         reason: input.reason,
         initiatedByUserId: input.initiatedByUserId ?? null,
       });
-      return { kind: "OVERAGE", cascades: [cascade], clawbackPosted: false };
+      return {
+        kind: "OVERAGE",
+        cascades: [cascade],
+        childRefundIds: [],
+        clawbackPosted: false,
+      };
     }
 
     case "CLASS_MULTI": {
-      const cascades = await reverseClassMulti(
+      const { cascades, childRefundIds } = await reverseClassMulti(
         tx,
         input,
         input.source.paymentIds,
       );
-      return { kind: "CLASS_MULTI", cascades, clawbackPosted: false };
+      return {
+        kind: "CLASS_MULTI",
+        cascades,
+        childRefundIds,
+        clawbackPosted: false,
+      };
     }
 
     case "PAYOUT_CLAWBACK": {
@@ -105,7 +134,12 @@ export async function applyReversal(
         input.source.orgPayoutId,
         input.source.organizationId,
       );
-      return { kind: "PAYOUT_CLAWBACK", cascades: [], clawbackPosted: posted };
+      return {
+        kind: "PAYOUT_CLAWBACK",
+        cascades: [],
+        childRefundIds: [],
+        clawbackPosted: posted,
+      };
     }
 
     default: {
@@ -129,8 +163,11 @@ async function reverseClassMulti(
   tx: Tx,
   input: ApplyReversalInput,
   paymentIds: string[],
-): Promise<ApplyRefundCascadeResult[]> {
-  if (paymentIds.length === 0) return [];
+): Promise<{
+  cascades: ApplyRefundCascadeResult[];
+  childRefundIds: string[];
+}> {
+  if (paymentIds.length === 0) return { cascades: [], childRefundIds: [] };
 
   const payments = await tx.payment.findMany({
     where: { id: { in: paymentIds } },
@@ -145,7 +182,7 @@ async function reverseClassMulti(
     },
   });
   const totalAmount = payments.reduce((s, p) => s + p.amount, 0);
-  if (totalAmount <= 0) return [];
+  if (totalAmount <= 0) return { cascades: [], childRefundIds: [] };
 
   // Fail fast on an over-refund. Without this the per-child floor shares would
   // exceed their own amounts and crash deep inside a child cascade (after some
@@ -176,6 +213,7 @@ async function reverseClassMulti(
   }
 
   const results: ApplyRefundCascadeResult[] = [];
+  const childRefundIds: string[] = [];
   for (const { payment, share } of shares) {
     if (share <= 0) continue;
     // One Refund row per child so partial-class refunds reverse cleanly and a
@@ -211,8 +249,9 @@ async function reverseClassMulti(
       data: { status: RefundStatus.SUCCEEDED },
     });
     results.push(cascade);
+    childRefundIds.push(childRefund.id);
   }
-  return results;
+  return { cascades: results, childRefundIds };
 }
 
 /**
