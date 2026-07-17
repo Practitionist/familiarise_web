@@ -457,6 +457,19 @@ function restoreState(snapshot: Store): void {
 // Audit-actions module is pure constants; no mock needed.
 
 // ---------------------------------------------------------------------------
+// Mock the gateway layer — refundPayment now calls the REAL gateway (M1). The
+// default resolves an immediately-processed Razorpay refund so the existing
+// cascade tests exercise the same synchronous path as before; individual
+// tests override per-case (pending / declined / thrown).
+// ---------------------------------------------------------------------------
+
+const mockCreateGatewayRefund = jest.fn();
+jest.mock("../../lib/payments", () => ({
+  __esModule: true,
+  createRefund: (...args: unknown[]) => mockCreateGatewayRefund(...args),
+}));
+
+// ---------------------------------------------------------------------------
 // Imports under test (after the prisma mock is registered).
 // ---------------------------------------------------------------------------
 
@@ -464,6 +477,7 @@ import {
   refundPayment,
   applyRefundCascade,
   RefundValidationError,
+  RefundGatewayError,
 } from "@/lib/payments/operations/refund";
 import prisma from "@/lib/prisma";
 
@@ -510,6 +524,7 @@ function seedSinglePartyWalletPayment({
     currency: "INR",
     paymentStatus: "SUCCEEDED",
     paymentGateway: "RAZORPAY",
+    paymentIntent: "pay_intent_seed",
     displayCurrencyAtCheckout: null,
     exchangeRateAtCheckout: null,
     organizationId,
@@ -560,6 +575,12 @@ beforeEach(() => {
   state = newStore();
   uuidCounter = 0;
   jest.clearAllMocks();
+  mockCreateGatewayRefund.mockResolvedValue({
+    refundId: "rfnd_gw_1",
+    amount: 0,
+    currency: "INR",
+    status: "SUCCEEDED",
+  });
 });
 
 // ===========================================================================
@@ -665,6 +686,7 @@ describe("refundPayment — multi-collaborator refund balances the ledger (#813 
       currency: "INR",
       paymentStatus: "SUCCEEDED",
       paymentGateway: "RAZORPAY",
+      paymentIntent: "pay_intent_seed",
       displayCurrencyAtCheckout: null,
       exchangeRateAtCheckout: null,
       organizationId: null,
@@ -769,10 +791,132 @@ describe("refundPayment — multi-collaborator refund balances the ledger (#813 
     // No leg reversal persisted — only the original WALLET leg remains.
     expect(state.paymentLegs).toHaveLength(1);
     expect(state.paymentLegs[0]?.id).toBe("leg-mc");
-    // No refund row persisted (created PENDING inside the tx, then rolled back).
-    expect(state.refunds).toHaveLength(0);
+    // M1 three-phase semantics: the gateway ALREADY moved the money, so the
+    // Refund row must SURVIVE the cascade rollback — PENDING, bound to the
+    // real gateway id, cascadedAt reverted — so the webhook redelivery /
+    // backstop cron re-drive the cascade durably.
+    expect(state.refunds).toHaveLength(1);
+    expect(state.refunds[0]?.status).toBe("PENDING");
+    expect(state.refunds[0]?.refundId).toBe("rfnd_gw_1");
+    expect(state.refunds[0]?.cascadedAt ?? null).toBeNull();
     // Payment row untouched (no amountRefundedPaise written by the cascade).
     expect(state.payments.get("pay-mc")?.amountRefundedPaise).toBeUndefined();
+  });
+});
+
+describe("refundPayment — M1 gateway wiring", () => {
+  it("calls the gateway before marking SUCCEEDED and binds the gateway refund id", async () => {
+    seedSinglePartyWalletPayment({});
+
+    const result = await refundPayment({
+      paymentId: "pay-1",
+      reason: "customer request",
+      initiatedByUserId: "admin-1",
+    });
+
+    expect(mockCreateGatewayRefund).toHaveBeenCalledTimes(1);
+    expect(mockCreateGatewayRefund).toHaveBeenCalledWith({
+      paymentIntentId: "pay_intent_seed",
+      amount: 10000,
+      reason: "customer request",
+    });
+    expect(result.status).toBe("SUCCEEDED");
+    expect(result.gatewayRefundId).toBe("rfnd_gw_1");
+    expect(state.refunds).toHaveLength(1);
+    expect(state.refunds[0]?.refundId).toBe("rfnd_gw_1");
+    expect(state.refunds[0]?.status).toBe("SUCCEEDED");
+    expect(state.refunds[0]?.cascadedAt).toBeTruthy();
+  });
+
+  it("gateway throw keeps a pending_ placeholder, runs NO cascade, and surfaces RefundGatewayError", async () => {
+    seedSinglePartyWalletPayment({});
+    mockCreateGatewayRefund.mockRejectedValueOnce(
+      new Error("gateway unreachable"),
+    );
+
+    await expect(
+      refundPayment({ paymentId: "pay-1", reason: "net-down" }),
+    ).rejects.toThrow(RefundGatewayError);
+
+    expect(state.refunds).toHaveLength(1);
+    const row = state.refunds[0];
+    // Placeholder id is what reconcile-pending-refunds matches on.
+    expect(String(row?.refundId)).toMatch(/^pending_/);
+    expect(row?.status).toBe("PENDING");
+    expect(row?.cascadedAt ?? null).toBeNull();
+    // No money-side effects ran.
+    expect(state.consultantEarnings.get("ce-1")?.refundedShareAmount).toBe(0);
+    expect(state.billingAccounts.get("ba-1")?.walletBalance).toBe(50000);
+    expect(state.paymentLegs).toHaveLength(1);
+  });
+
+  it("gateway-PENDING refund defers the cascade to the webhook path (no double-post)", async () => {
+    seedSinglePartyWalletPayment({});
+    mockCreateGatewayRefund.mockResolvedValueOnce({
+      refundId: "rfnd_gw_slow",
+      amount: 10000,
+      currency: "INR",
+      status: "PENDING",
+    });
+
+    const result = await refundPayment({
+      paymentId: "pay-1",
+      reason: "slow gateway",
+    });
+
+    expect(result.status).toBe("PENDING");
+    expect(result.legsReversed).toBe(0);
+    const row = state.refunds[0];
+    expect(row?.refundId).toBe("rfnd_gw_slow"); // webhook finds it by THIS id
+    expect(row?.status).toBe("PENDING");
+    expect(row?.cascadedAt ?? null).toBeNull();
+    expect(state.consultantEarnings.get("ce-1")?.refundedShareAmount).toBe(0);
+
+    // Webhook-style completion: the cascade applies exactly once against the
+    // SAME row — and a second application no-ops on the cascadedAt claim.
+    const first = await applyRefundCascade(tx, {
+      paymentId: "pay-1",
+      refundId: String(row?.id),
+      amountPaise: 10000,
+      reason: "Gateway refund",
+      initiatedByUserId: null,
+    });
+    expect(first.legsReversed).toBeGreaterThan(0);
+    const second = await applyRefundCascade(tx, {
+      paymentId: "pay-1",
+      refundId: String(row?.id),
+      amountPaise: 10000,
+      reason: "Gateway refund",
+      initiatedByUserId: null,
+    });
+    expect(second.legsReversed).toBe(0);
+  });
+
+  it("gateway-declined refund marks the row FAILED and restores the refundable balance", async () => {
+    seedSinglePartyWalletPayment({});
+    mockCreateGatewayRefund.mockResolvedValueOnce({
+      refundId: "rfnd_gw_declined",
+      amount: 10000,
+      currency: "INR",
+      status: "FAILED",
+    });
+
+    await expect(
+      refundPayment({ paymentId: "pay-1", reason: "declined" }),
+    ).rejects.toMatchObject({
+      name: "RefundGatewayError",
+      code: "GATEWAY_REFUND_DECLINED",
+    });
+
+    const row = state.refunds[0];
+    expect(row?.status).toBe("FAILED");
+    expect(row?.failureReason).toBeTruthy();
+    expect(row?.failedAt).toBeTruthy();
+    expect(state.consultantEarnings.get("ce-1")?.refundedShareAmount).toBe(0);
+
+    // FAILED rows don't consume the refundable balance — a retry succeeds.
+    const retry = await refundPayment({ paymentId: "pay-1", reason: "retry" });
+    expect(retry.status).toBe("SUCCEEDED");
   });
 });
 
@@ -814,6 +958,7 @@ describe("refundPayment — multi-leg WALLET + REFERRAL_CREDIT", () => {
       currency: "INR",
       paymentStatus: "SUCCEEDED",
       paymentGateway: "RAZORPAY",
+      paymentIntent: "pay_intent_seed",
       displayCurrencyAtCheckout: null,
       exchangeRateAtCheckout: null,
       organizationId: null,
@@ -1016,6 +1161,7 @@ describe("refundPayment — #778 §C-1 negative platform plug posts, never skips
       currency: "INR",
       paymentStatus: "SUCCEEDED",
       paymentGateway: "RAZORPAY",
+      paymentIntent: "pay_intent_seed",
       displayCurrencyAtCheckout: null,
       exchangeRateAtCheckout: null,
       organizationId: null,
@@ -1088,6 +1234,7 @@ describe("applyRefundCascade — #786 reversal legs for unbilled accruals", () =
       currency: "INR",
       paymentStatus: "SUCCEEDED",
       paymentGateway: "RAZORPAY",
+      paymentIntent: "pay_intent_seed",
       displayCurrencyAtCheckout: null,
       exchangeRateAtCheckout: null,
       organizationId: "org-1",
