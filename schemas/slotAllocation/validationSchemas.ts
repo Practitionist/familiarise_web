@@ -43,6 +43,15 @@ export const allocationRequestSchema = z
       })
       .optional(),
 
+    // Multi-tab guard: reject with 409 if the event already has confirmed
+    // (non-tentative) slots. Sent by dialog-initiated FRESH allocations only;
+    // reschedule/re-allocation flows omit it to keep replace semantics.
+    initialAllocation: z
+      .boolean({
+        invalid_type_error: "'initialAllocation' must be a boolean",
+      })
+      .optional(),
+
     slots: z
       .array(
         z.string().datetime({

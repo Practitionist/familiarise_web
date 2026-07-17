@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import {
   TimeSlot,
   calculateRequiredSlots,
@@ -48,13 +49,23 @@ export interface AllocationOptions {
   // (subscription default 1, class default 2).
   maxCallsPerDay?: number; // subscriptions
   maxSessionsPerDay?: number; // classes
+  // Idempotency-Key for the allocate request; a double-submit replays the
+  // original batch server-side instead of double-booking (#837).
+  idempotencyKey?: string;
+  // Reject with 409 if the event already has confirmed slots (multi-tab guard).
+  initialAllocation?: boolean;
+  // Timezone defining the limit day/week buckets (ADR B9); defaults to
+  // Asia/Kolkata in the shared helpers.
+  schedulingTimezone?: string;
 }
 
 export interface AllocationResult {
   success: boolean;
   selectedSlots: TimeSlot[];
   error?: string;
-  strategy?: string; // ENHANCEMENT: Track which allocation strategy was used
+  strategy?: string;
+  /** HTTP status of a failed allocate call — 409 means "allocated elsewhere". */
+  httpStatus?: number;
 }
 
 /**
@@ -170,6 +181,7 @@ export class AllocationAlgorithms {
         const distributionValidation = validateSlotDistribution(
           selectedSlots,
           slotsPerWeek,
+          options.schedulingTimezone,
         );
 
         if (!distributionValidation.isValid) {
@@ -186,6 +198,10 @@ export class AllocationAlgorithms {
         options.eventType,
         options.eventId,
         selectedSlots,
+        {
+          idempotencyKey: options.idempotencyKey,
+          initialAllocation: options.initialAllocation,
+        },
       );
 
       if (!allocationResult.success) {
@@ -193,6 +209,7 @@ export class AllocationAlgorithms {
           success: false,
           selectedSlots: [],
           error: allocationResult.error,
+          httpStatus: allocationResult.httpStatus,
         };
       }
 
@@ -203,6 +220,13 @@ export class AllocationAlgorithms {
       };
     } catch (error) {
       console.warn("Manual allocation error:", error);
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        {
+          tags: { subsystem: "client", feature: "slot-allocation" },
+          extra: { eventType: options.eventType, mode: "manual" },
+        },
+      );
       return {
         success: false,
         selectedSlots: [],
@@ -326,6 +350,12 @@ export class AllocationAlgorithms {
         options.eventType,
         options.eventId,
         selectedSlots,
+        {
+          // NOT isAuto — the slots were computed client-side and are submitted
+          // as an explicit manual batch; isAuto would make the server re-pick.
+          idempotencyKey: options.idempotencyKey,
+          initialAllocation: options.initialAllocation,
+        },
       );
 
       if (!allocationResult.success) {
@@ -333,6 +363,7 @@ export class AllocationAlgorithms {
           success: false,
           selectedSlots: [],
           error: allocationResult.error,
+          httpStatus: allocationResult.httpStatus,
         };
       }
 
@@ -343,6 +374,13 @@ export class AllocationAlgorithms {
       };
     } catch (error) {
       console.warn("Auto allocation error:", error);
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        {
+          tags: { subsystem: "client", feature: "slot-allocation" },
+          extra: { eventType: options.eventType, mode: "auto" },
+        },
+      );
       return {
         success: false,
         selectedSlots: [],
@@ -353,9 +391,10 @@ export class AllocationAlgorithms {
   }
 
   /**
-   * Pre-allocate using requested slots from the consultee
+   * Allocate using the slots the consultee requested (the server's
+   * "requested" mode). Formerly named preAllocate.
    */
-  static async preAllocate(
+  static async allocateRequestedSlots(
     options: AllocationOptions,
   ): Promise<AllocationResult> {
     try {
@@ -367,9 +406,10 @@ export class AllocationAlgorithms {
         };
       }
 
-      // Calculate required slots for validation
-      // Pass durationInHours for consultations/webinars, sessionDurationInHours for subscriptions/classes
-      const requiredSlots = calculateRequiredSlots(
+      // Same required-count math as manual/auto, including the in-progress
+      // reschedule reduction — the requested path previously skipped it and
+      // rejected valid partial reschedules.
+      const rawRequired = calculateRequiredSlots(
         options.eventType,
         options.durationInMonths,
         options.callsPerWeek,
@@ -378,6 +418,12 @@ export class AllocationAlgorithms {
         options.endDate,
         options.totalSessions,
       );
+
+      const pastCount = options.pastConfirmedSlotCount || 0;
+      const requiredSlots =
+        isRecurringEventType(options.eventType) && pastCount > 0
+          ? Math.max(0, rawRequired - pastCount)
+          : rawRequired;
 
       if (options.requestedSlots.length !== requiredSlots) {
         return {
@@ -392,7 +438,11 @@ export class AllocationAlgorithms {
         options.eventType,
         options.eventId,
         options.requestedSlots,
-        { useRequestedSlots: true },
+        {
+          useRequestedSlots: true,
+          idempotencyKey: options.idempotencyKey,
+          initialAllocation: options.initialAllocation,
+        },
       );
 
       if (!allocationResult.success) {
@@ -400,6 +450,7 @@ export class AllocationAlgorithms {
           success: false,
           selectedSlots: [],
           error: allocationResult.error,
+          httpStatus: allocationResult.httpStatus,
         };
       }
 
@@ -409,11 +460,21 @@ export class AllocationAlgorithms {
         strategy: "requested-slots",
       };
     } catch (error) {
-      console.warn("Pre-allocation error:", error);
+      console.warn("Requested-slots allocation error:", error);
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        {
+          tags: { subsystem: "client", feature: "slot-allocation" },
+          extra: { eventType: options.eventType, mode: "requested" },
+        },
+      );
       return {
         success: false,
         selectedSlots: [],
-        error: error instanceof Error ? error.message : "Pre-allocation failed",
+        error:
+          error instanceof Error
+            ? error.message
+            : "Requested-slots allocation failed",
       };
     }
   }
@@ -621,19 +682,12 @@ export class AllocationAlgorithms {
       return startsAfterOrOnBegin && endsBeforeOrOnEnd;
     });
 
-    // Group slots by week
-    const slotsByWeek = new Map<string, TimeSlot[]>();
-    futureSlots.forEach((slot) => {
-      const weekStart = SlotCalculationService.startOfWeekSunday(
-        slot.startTime,
-      );
-      const weekKey = weekStart.toISOString();
-
-      if (!slotsByWeek.has(weekKey)) {
-        slotsByWeek.set(weekKey, []);
-      }
-      slotsByWeek.get(weekKey)!.push(slot);
-    });
+    // Group slots by scheduling-timezone week (ADR B9)
+    const slotsByWeek = SlotCalculationService.groupSlotsByWeek(
+      futureSlots,
+      options.schedulingTimezone ??
+        SlotCalculationService.DEFAULT_SCHEDULING_TIMEZONE,
+    );
 
     const sortedWeeks = Array.from(slotsByWeek.keys()).sort();
     const totalWeeks = countSundayWeeksInclusive(
@@ -670,6 +724,7 @@ export class AllocationAlgorithms {
         slotsPerCall,
         preferences.minTimeBetweenSessions || 2,
         maxCallsPerDay,
+        options.schedulingTimezone,
       );
 
       selectedCalls.push(...callsThisWeek);
@@ -692,12 +747,12 @@ export class AllocationAlgorithms {
     slotsPerCall: number,
     minHoursBetween: number,
     maxCallsPerDay: number,
+    schedulingTimezone?: string,
   ): TimeSlot[][] {
     const calls: TimeSlot[][] = [];
     const usedSlotIndices = new Set<number>();
-    // Track calls already placed per local day so we don't exceed the per-day
-    // cap. Local day-key (toDateString) mirrors the manual interactive guard in
-    // useSlotAllocation; see the keying note at the cap check below (#898).
+    // Calls already placed per scheduling-timezone day; must use the same key
+    // as the manual interactive guard AND the server's per-day cap (ADR B9).
     const callsPerDay = new Map<string, number>();
     const minMsBetween = minHoursBetween * 60 * 60 * 1000;
 
@@ -734,11 +789,14 @@ export class AllocationAlgorithms {
 
       const blockStart = sortedSlots[blockIndices[0]].startTime;
 
-      // Enforce the per-day cap (subscription 1/day, class 2/day) — must mirror
-      // the manual interactive guard in useSlotAllocation, which buckets by
-      // local day (toDateString). This runs client-side, so the local day is
-      // the consultant's; a UTC key disagreed at the IST/UTC boundary (#898).
-      const dayKey = blockStart.toDateString();
+      // Per-day cap (subscription 1/day, class 2/day), bucketed by the
+      // event's scheduling timezone — the same key
+      // SlotValidationService.validatePerDaySessionCap uses, so auto-picked
+      // schedules can't be rejected server-side.
+      const dayKey = SlotCalculationService.dayKey(
+        blockStart,
+        schedulingTimezone,
+      );
       if ((callsPerDay.get(dayKey) || 0) >= maxCallsPerDay) continue;
 
       // Check spacing against already selected calls

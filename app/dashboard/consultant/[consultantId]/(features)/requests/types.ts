@@ -58,4 +58,6 @@ export interface SubscriptionApiResponse {
   // Correct field names from Prisma Subscription model
   schedulingPeriodStartsAt?: string;
   schedulingPeriodEndsAt?: string;
+  /** Defines the limit day/week buckets (ADR B9); column default Asia/Kolkata. */
+  schedulingTimezone?: string;
 }

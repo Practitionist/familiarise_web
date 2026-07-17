@@ -85,6 +85,7 @@ export class SlotAllocationService {
             request.eventType,
             request.eventId,
             request.idempotencyKey,
+            request.initialAllocation,
           );
 
         case "manual":
@@ -101,12 +102,14 @@ export class SlotAllocationService {
             request.eventId,
             request.slots,
             request.idempotencyKey,
+            request.initialAllocation,
           );
 
         case "requested":
           return await this.useRequestedSlots(
             request.eventType,
             request.eventId,
+            request.initialAllocation,
           );
 
         default:
@@ -260,6 +263,39 @@ export class SlotAllocationService {
   }
 
   /**
+   * Multi-tab guard for `initialAllocation` requests. Auto locks the whole
+   * consultant while manual shards by day (#860) — different Redis keys — and
+   * group events have no consultee lock, so a cross-mode race from two tabs
+   * can slip past the locks; without this the manual path would silently
+   * delete-and-replace the winner's allocation. Any confirmed (non-tentative)
+   * slot means the event was already allocated elsewhere → typed 409.
+   * Called out-of-txn under the locks AND re-checked inside the write txn.
+   */
+  private static async assertNoConfirmedSlots(
+    db: PrismaLike,
+    eventType: EventType,
+    eventId: string,
+  ): Promise<void> {
+    const relationField = this.getEventRelationField(eventType);
+    const confirmed = await db.slotOfAppointment.count({
+      where: {
+        isTentative: false,
+        deletedAt: null,
+        appointment: {
+          [`${relationField}Id`]: eventId,
+          deletedAt: null,
+        } as Prisma.AppointmentWhereInput,
+      },
+    });
+    if (confirmed > 0) {
+      throw new AllocationConflictError(
+        `This ${eventType} was already allocated in another session ` +
+          `(${confirmed} confirmed slot(s) exist).`,
+      );
+    }
+  }
+
+  /**
    * AUTO ALLOCATION: Find and allocate first available consecutive slots
    *
    * FIX Issue #1 from Architecture Review (#446):
@@ -319,6 +355,7 @@ export class SlotAllocationService {
     eventType: EventType,
     eventId: string,
     idempotencyKey?: string,
+    initialAllocation?: boolean,
   ): Promise<AllocationResult> {
     // #837 — return the prior batch on a double-submit before doing any work.
     const replay = await this.findIdempotentAllocation(
@@ -367,6 +404,12 @@ export class SlotAllocationService {
         idempotencyKey,
       );
       if (lockedReplay) return lockedReplay;
+
+      // Multi-tab guard: a fresh dialog allocation must 409 if another
+      // session already allocated this event (re-checked in-txn below).
+      if (initialAllocation) {
+        await this.assertNoConfirmedSlots(prisma, eventType, eventId);
+      }
 
       // #908 — read/search/validate run OUTSIDE the write transaction, but still
       // UNDER the locks acquired above. An interactive txn pins its pooled
@@ -561,6 +604,16 @@ export class SlotAllocationService {
             );
           }
 
+          // In-txn re-check of the multi-tab guard (group events don't share
+          // a lock across modes, so the out-of-txn check alone can race).
+          if (initialAllocation) {
+            await SlotAllocationService.assertNoConfirmedSlots(
+              tx,
+              eventType,
+              eventId,
+            );
+          }
+
           // CRITICAL FIX: Delete existing appointments before creating new ones
           // For reschedules: only delete appointments with tentative slots (preserve confirmed ones)
           // For in-progress: only delete future slots (preserve past confirmed ones)
@@ -655,6 +708,7 @@ export class SlotAllocationService {
     eventId: string,
     slotStrings: string[],
     idempotencyKey?: string,
+    initialAllocation?: boolean,
   ): Promise<AllocationResult> {
     // #837 — return the prior batch on a double-submit before doing any work.
     const replay = await this.findIdempotentAllocation(
@@ -713,6 +767,12 @@ export class SlotAllocationService {
         idempotencyKey,
       );
       if (lockedReplay) return lockedReplay;
+
+      // Multi-tab guard: a fresh dialog allocation must 409 if another
+      // session already allocated this event (re-checked in-txn below).
+      if (initialAllocation) {
+        await this.assertNoConfirmedSlots(prisma, eventType, eventId);
+      }
 
       // #908 — slot parsing, count checks and validation run OUTSIDE the write
       // transaction (but under the locks above), so the heavy conflict read no
@@ -902,6 +962,16 @@ export class SlotAllocationService {
             );
           }
 
+          // In-txn re-check of the multi-tab guard (group events don't share
+          // a lock across modes, so the out-of-txn check alone can race).
+          if (initialAllocation) {
+            await SlotAllocationService.assertNoConfirmedSlots(
+              tx,
+              eventType,
+              eventId,
+            );
+          }
+
           // Delete existing appointments
           // For reschedules: only delete tentative slots (preserve confirmed ones)
           // For in-progress: only delete future slots (preserve past confirmed ones)
@@ -986,9 +1056,21 @@ export class SlotAllocationService {
   private static async useRequestedSlots(
     eventType: EventType,
     eventId: string,
+    initialAllocation?: boolean,
   ): Promise<AllocationResult> {
     return await prisma.$transaction(
       async (tx) => {
+        // Multi-tab guard: another session already confirmed slots for this
+        // event → typed 409 instead of re-approving over it. In-txn, so it
+        // can't race the manual/auto write transactions.
+        if (initialAllocation) {
+          await SlotAllocationService.assertNoConfirmedSlots(
+            tx,
+            eventType,
+            eventId,
+          );
+        }
+
         // Fetch event with requested slots
         const eventData = await this.fetchEventData(tx, eventType, eventId);
         if (!eventData) {
@@ -1397,17 +1479,21 @@ export class SlotAllocationService {
       const firstSlot = apt.slotsOfAppointment.reduce((earliest, s) =>
         new Date(s.startsAt) < new Date(earliest.startsAt) ? s : earliest,
       );
-      const weekStart = SlotCalculationService.startOfWeekSunday(
+      // ADR B9 — weekly buckets in the event's scheduling timezone
+      const weekKey = SlotCalculationService.weekKey(
         new Date(firstSlot.startsAt),
+        config.schedulingTimezone,
       );
-      const weekKey = weekStart.toISOString();
       existingCallsPerWeek.set(
         weekKey,
         (existingCallsPerWeek.get(weekKey) || 0) + 1,
       );
     }
 
-    let currentWeek = SlotCalculationService.startOfWeekSunday(startDate);
+    let currentWeek = SlotCalculationService.startOfWeekSundayInTz(
+      startDate,
+      config.schedulingTimezone,
+    );
     const totalWeeks = SlotCalculationService.countWeeks(startDate, endDate);
 
     for (
@@ -1416,7 +1502,10 @@ export class SlotAllocationService {
       week++
     ) {
       // Initialize with existing confirmed calls (important during partial reschedule)
-      const weekKey = currentWeek.toISOString();
+      const weekKey = SlotCalculationService.weekKey(
+        currentWeek,
+        config.schedulingTimezone,
+      );
       let callsThisWeek = existingCallsPerWeek.get(weekKey) || 0;
 
       for (let day = 0; day < 7 && callsThisWeek < callsPerWeek; day++) {
@@ -2400,6 +2489,7 @@ export class SlotAllocationService {
           totalSessions: event.subscriptionPlan?.totalSessions,
           schedulingPeriodStartsAt: event.schedulingPeriodStartsAt ?? undefined,
           schedulingPeriodEndsAt: event.schedulingPeriodEndsAt ?? undefined,
+          schedulingTimezone: event.schedulingTimezone ?? undefined,
         };
         consulteeUserId = event.requestedBy?.user?.id;
         requestedSlots = event.appointments?.flatMap((app) =>
@@ -2465,6 +2555,7 @@ export class SlotAllocationService {
           totalSessions: event.classPlan?.totalSessions,
           schedulingPeriodStartsAt: event.schedulingPeriodStartsAt ?? undefined,
           schedulingPeriodEndsAt: event.schedulingPeriodEndsAt ?? undefined,
+          schedulingTimezone: event.schedulingTimezone ?? undefined,
         };
         // #768 — CLASS sessions inherit host-org from the plan; locked
         // even on reschedule. Marketplace classes stay null.

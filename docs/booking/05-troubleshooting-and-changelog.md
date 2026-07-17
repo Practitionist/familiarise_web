@@ -51,6 +51,12 @@ All allocations run in 60-second Prisma transactions. Large allocations (200+ sl
 **Progress showing wrong count**
 `calculateProgress` counts **completed calls** (consecutive groups of `slotsPerSession` slots), not raw slot count. Ensure selected slots form complete sessions.
 
+**Historical: the calendar accepted a selection the server then rejected near midnight IST**
+Before July 2026 the client bucketed daily and weekly limits by the browser's local day while the server bucketed by its own (UTC in production), so for slots between 00:00 and 05:30 IST the two sides disagreed — the calendar would allow a selection that the allocate endpoint rejected with a `WEEKLY_LIMIT` or `DAILY_LIMIT` error (or, in the other direction, block a selection the server would have accepted). Both sides now bucket with `SlotCalculationService.dayKey()`/`weekKey()` in the event's scheduling timezone (ADR B9). If this symptom reappears, look for a new call site that buckets with `toDateString()`, date-fns `startOfWeek`, or local `getDay()` instead of the shared helpers.
+
+**"Already allocated" toast when clicking Allocate**
+The Allocate Slots dialog sends `initialAllocation: true`, so the server returns 409 when the request already has confirmed slots — typically because the same request was allocated from another tab or by another teammate moments earlier (ADR B10). The dialog closes and the request list refreshes; this is the intended outcome, not an error to investigate. Reschedule flows do not send the flag and are unaffected.
+
 ## Debugging Strategy
 
 ```mermaid
@@ -76,6 +82,22 @@ flowchart TD
 1. **Layer 1 (Zod)**: Is the request format valid? Check `allocationRequestSchema` or `validationRequestSchema`.
 2. **Layer 2 (Business rules)**: Does the request meet business constraints? Check `SlotValidationService` universal + event-specific validators.
 3. **Layer 3 (Database)**: Are there constraint violations? Check Prisma transaction logs.
+
+---
+
+## Changelog: July 2026
+
+Booking-calendar correctness sweep (branch `fix/booking-algorithm-calendar`, tracking the Request Calendar work under #997).
+
+| Fix                                     | Severity | Description                                                                                                                                                                                                                                                                                                       | Files / PRs                                                                              |
+| --------------------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Scheduling-timezone limit bucketing (ADR B9) | Critical | All daily/weekly limit bucketing unified on `SlotCalculationService.dayKey()`/`weekKey()` in the event's `schedulingTimezone` (default Asia/Kolkata) across the client guards, the client auto-allocator, and the server validators. Removes the client/server verdict divergence near day boundaries AND makes "one session per day" match the day Indian customers see. Display stays viewer-local. | `useSlotAllocation.ts`, `slotSelectionValidation.ts`, `UnifiedCalendar.tsx`, `allocationAlgorithms.ts`, `calendarUtils.ts`, `SlotValidationService.ts`, `subscriptionValidation.ts` |
+| `initialAllocation` multi-tab guard (ADR B10) | Critical | Fresh dialog allocations 409 instead of silently replacing an allocation that landed from another tab; checked under the locks and re-checked in-transaction for all three modes.                                                                                                                                     | `SlotAllocationService.ts`, allocate routes, `validationSchemas.ts`                       |
+| Client Idempotency-Key wiring           | High     | Every client allocate path now sends an `Idempotency-Key` (reused when the identical payload is retried), activating the existing #837 replay path; previously no client sent the header. 409s surface a dedicated "already allocated" toast, close the dialog, and refresh the list; window focus also refetches. | `allocationService.ts`, `useSlotAllocation.ts`, `RequestSlotAllocationTab.tsx`            |
+| Requested-path parity                   | High     | The requested-slots path (formerly `preAllocate`, renamed `allocateRequestedSlots`) now honors the plan's `totalSessions` and subtracts `pastConfirmedSlotCount`, matching manual/auto; it previously rejected valid in-progress reschedules.                                                                          | `allocationAlgorithms.ts`, `useSlotAllocation.ts`                                         |
+| 4-weeks/month fallback removed          | Medium   | A subscription with neither `totalSessions` nor a scheduling period now renders a disabled "plan configuration incomplete" row (with a Sentry event) instead of guessing `callsPerWeek × 4 × months`, which the server rejected anyway.                                                                              | `RequestSlotAllocationTab.tsx`                                                            |
+| Toast queue                             | Medium   | The allocation hook queues toasts instead of holding one pending slot, so same-tick messages no longer overwrite each other; all wording now comes from one `allocationMessages` catalog shared by the week view, month view, and requests table.                                                                     | `useSlotAllocation.ts`, `allocationMessages.ts`                                           |
+| Dead code removed                       | Low      | Unused `_validateSessionDistribution`/`_validateDailyCalls`/`_validateTotalCalls`, the duplicated local-week `groupSlotsByWeek`, and the four copy-pasted per-type allocate fetch methods were deleted; selection validators extracted to `slotSelectionValidation.ts` (unit-tested, and the seed for #997 Phase 3). | Shared calendar utils                                                                     |
 
 ---
 
