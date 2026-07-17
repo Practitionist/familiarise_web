@@ -123,15 +123,19 @@ flowchart LR
 
 ## Grouping Functions
 
-### `groupSlotsByDay(slots)`
+### `dayKey(date, timeZone?)` and `weekKey(date, timeZone?)`
 
-Groups slots by `startTime.toDateString()`. Returns `Map<string, TimeSlot[]>`.
+These two helpers are the canonical bucketing keys for every daily and weekly limit (ADR B9). Both return `YYYY-MM-DD` calendar dates evaluated in the event's scheduling timezone — `dayKey` the date containing the instant, `weekKey` the date of the Sunday that starts its week. The timezone defaults to `SlotCalculationService.DEFAULT_SCHEDULING_TIMEZONE` (Asia/Kolkata) and is overridden by the event's `schedulingTimezone` column. The client's interactive guards, the auto-allocation algorithm, and the server validators all bucket with these keys, so their verdicts cannot diverge by machine timezone. `startOfWeekSundayInTz(date, timeZone?)` returns the same week boundary as a UTC instant for code that needs Date ranges (the weekly-info generator).
+
+### `groupSlotsByDay(slots, timeZone?)`
+
+Groups slots by `dayKey(startTime, timeZone)`. Returns `Map<string, TimeSlot[]>`.
 
 Used by: daily call limits (subscription), session count (class), completed-calls counting.
 
-### `groupSlotsByWeek(slots)`
+### `groupSlotsByWeek(slots, timeZone?)`
 
-Groups slots by their Sunday week start (ISO string). Returns `Map<string, TimeSlot[]>`.
+Groups slots by `weekKey(startTime, timeZone)`. Returns `Map<string, TimeSlot[]>`.
 
 Used by: weekly distribution validation, weekly limit checks.
 

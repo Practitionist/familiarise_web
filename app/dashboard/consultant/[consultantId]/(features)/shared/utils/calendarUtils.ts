@@ -9,6 +9,7 @@ import {
 import { startOfWeek } from "date-fns";
 import { SlotCalculationService } from "@/utils/slotAllocation/SlotCalculationService";
 import { minuteUtcToDate } from "@/utils/slotAllocation/slotTimeUtils";
+import { formatDayKey, formatWeekKey } from "./allocationMessages";
 
 // Core types for the unified calendar system
 export interface TimeSlot {
@@ -394,11 +395,15 @@ export function validateSelectedSlots(
         };
       }
 
-      // FIXED: Check same-day requirement FIRST (before consecutive check)
+      // Same-UTC-day requirement first (before consecutive check) — matches
+      // the server's same-day rule.
       if (selectedSlots.length > 1) {
-        const firstSlotDay = selectedSlots[0].startTime.toDateString();
+        const firstSlotDay = SlotCalculationService.dayKey(
+          selectedSlots[0].startTime,
+        );
         const allSameDay = selectedSlots.every(
-          (slot) => slot.startTime.toDateString() === firstSlotDay,
+          (slot) =>
+            SlotCalculationService.dayKey(slot.startTime) === firstSlotDay,
         );
         if (!allSameDay) {
           return {
@@ -487,14 +492,20 @@ export function validateSelectedSlots(
 }
 
 /**
- * Groups slots by week for subscription/class validation
+ * Groups slots by UTC Sunday week for subscription/class validation — the
+ * same bucketing the server validates with.
  */
-export function groupSlotsByWeek(slots: TimeSlot[]): Map<string, TimeSlot[]> {
+export function groupSlotsByWeek(
+  slots: TimeSlot[],
+  schedulingTimezone?: string,
+): Map<string, TimeSlot[]> {
   const slotsByWeek = new Map<string, TimeSlot[]>();
 
   slots.forEach((slot) => {
-    const weekStart = startOfWeek(slot.startTime);
-    const weekKey = weekStart.toISOString();
+    const weekKey = SlotCalculationService.weekKey(
+      slot.startTime,
+      schedulingTimezone,
+    );
 
     if (!slotsByWeek.has(weekKey)) {
       slotsByWeek.set(weekKey, []);
@@ -511,15 +522,15 @@ export function groupSlotsByWeek(slots: TimeSlot[]): Map<string, TimeSlot[]> {
 export function validateSlotDistribution(
   slots: TimeSlot[],
   slotsPerWeek: number,
+  schedulingTimezone?: string,
 ): { isValid: boolean; errorMessage?: string } {
-  const slotsByWeek = groupSlotsByWeek(slots);
+  const slotsByWeek = groupSlotsByWeek(slots, schedulingTimezone);
 
   for (const [weekKey, weekSlots] of Array.from(slotsByWeek.entries())) {
     if (weekSlots.length > slotsPerWeek) {
-      const weekDate = new Date(weekKey);
       return {
         isValid: false,
-        errorMessage: `Too many slots selected for week of ${weekDate.toLocaleDateString()} (max ${slotsPerWeek} allowed)`,
+        errorMessage: `Too many slots selected for the ${formatWeekKey(weekKey)} (max ${slotsPerWeek} allowed)`,
       };
     }
   }
@@ -569,17 +580,25 @@ export function getAppointmentUser(appointment: Appointment): string {
  * This function checks if all slots are consecutive (end time of one slot = start time of next slot)
  * Uses tolerance for timezone/precision issues (within 1 second)
  */
-export function validateDayBasedConsecutiveSlots(slots: TimeSlot[]): boolean {
+export function validateDayBasedConsecutiveSlots(
+  slots: TimeSlot[],
+  schedulingTimezone?: string,
+): boolean {
   if (slots.length <= 1) return true;
 
   const sortedSlots = [...slots].sort(
     (a, b) => a.startTime.getTime() - b.startTime.getTime(),
   );
 
-  // Check that all slots are on the same day
-  const firstSlotDay = sortedSlots[0].startTime.toDateString();
+  // Check that all slots are on the same scheduling-timezone day (server parity)
+  const firstSlotDay = SlotCalculationService.dayKey(
+    sortedSlots[0].startTime,
+    schedulingTimezone,
+  );
   const allSameDay = sortedSlots.every(
-    (slot) => slot.startTime.toDateString() === firstSlotDay,
+    (slot) =>
+      SlotCalculationService.dayKey(slot.startTime, schedulingTimezone) ===
+      firstSlotDay,
   );
   if (!allSameDay) {
     return false;
@@ -611,6 +630,7 @@ export function calculateCallProgress(
   slots: TimeSlot[],
   sessionDurationInHours?: number,
   maxTotalCalls?: number,
+  schedulingTimezone?: string,
 ): string {
   if (slots.length === 0) {
     return "No slots selected";
@@ -620,10 +640,13 @@ export function calculateCallProgress(
   const completedCalls = Math.floor(slots.length / slotsPerCall);
   const incompleteCallSlots = slots.length % slotsPerCall;
 
-  // Group by day
+  // Group by scheduling-timezone day
   const slotsByDay = new Map<string, TimeSlot[]>();
   slots.forEach((slot) => {
-    const dayKey = slot.startTime.toDateString();
+    const dayKey = SlotCalculationService.dayKey(
+      slot.startTime,
+      schedulingTimezone,
+    );
     if (!slotsByDay.has(dayKey)) {
       slotsByDay.set(dayKey, []);
     }
@@ -650,11 +673,7 @@ export function calculateCallProgress(
   if (incompleteCallSlots > 0 && incompleteDays.length > 0) {
     const [incompleteDay, incompleteDaySlots] = incompleteDays[0];
     const needed = slotsPerCall - incompleteDaySlots.length;
-    const date = new Date(incompleteDay).toLocaleDateString(undefined, {
-      weekday: "short",
-      month: "short",
-      day: "numeric",
-    });
+    const date = formatDayKey(incompleteDay);
     const duration = sessionDurationInHours || 1;
     const durationText = duration === 1 ? "1 hour" : `${duration} hours`;
 

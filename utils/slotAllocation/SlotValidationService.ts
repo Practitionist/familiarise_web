@@ -6,12 +6,7 @@
  */
 
 import prisma, { type PrismaLike } from "@/lib/prisma";
-import {
-  PrismaClient,
-  Prisma,
-  AppointmentStatus,
-  ScheduleType,
-} from "@prisma/client";
+import { AppointmentStatus, ScheduleType } from "@prisma/client";
 import {
   EventType,
   ValidationResult,
@@ -594,20 +589,29 @@ export class SlotValidationService {
   }
 
   /**
-   * UNIVERSAL VALIDATOR: Check if all slots are on the same day
+   * UNIVERSAL VALIDATOR: Check if all slots are on the same scheduling-
+   * timezone day (ADR B9). The key never depends on the server's own
+   * timezone and matches the client's dayKey check.
    */
-  private validateSameDaySlots(slots: Date[]): ValidationResult {
+  private validateSameDaySlots(
+    slots: Date[],
+    schedulingTimezone?: string,
+  ): ValidationResult {
     if (slots.length <= 1) {
       return { isValid: true, errors: [], warnings: [] };
     }
 
-    const firstSlotDay = slots[0].toDateString();
+    const firstSlotDay = SlotCalculationService.dayKey(
+      slots[0],
+      schedulingTimezone,
+    );
     const errors: string[] = [];
 
     for (const slot of slots) {
-      if (slot.toDateString() !== firstSlotDay) {
+      const slotDay = SlotCalculationService.dayKey(slot, schedulingTimezone);
+      if (slotDay !== firstSlotDay) {
         errors.push(
-          `[VALIDATION] All slots must be on the same day. Found slots on ${firstSlotDay} and ${slot.toDateString()}`,
+          `[VALIDATION] All slots must be on the same day. Found slots on ${firstSlotDay} and ${slotDay}`,
         );
       }
     }
@@ -660,7 +664,10 @@ export class SlotValidationService {
     }
 
     // Check same day (BEFORE consecutive check - more important)
-    const sameDayCheck = this.validateSameDaySlots(slots);
+    const sameDayCheck = this.validateSameDaySlots(
+      slots,
+      config?.schedulingTimezone,
+    );
     if (!sameDayCheck.isValid) {
       errors.push(
         "[VALIDATION] Consultation is a one-day event - all slots must be on the same day",
@@ -778,6 +785,7 @@ export class SlotValidationService {
       slots,
       slotsPerSession,
       MAX_SUBSCRIPTION_SESSIONS_PER_DAY,
+      config.schedulingTimezone,
     );
 
     return {
@@ -951,7 +959,8 @@ export class SlotValidationService {
     ]);
 
     // One confirmed appointment = one session, keyed by its earliest slot's
-    // week (same key the allocator and groupSlotsByWeek use).
+    // week (same scheduling-timezone key the allocator and groupSlotsByWeek
+    // use, ADR B9).
     const existingSessionsPerWeek = new Map<string, number>();
     for (const appt of classAppointments) {
       if (excludeSet.has(appt.id)) continue;
@@ -959,9 +968,10 @@ export class SlotValidationService {
       const firstSlot = appt.slotsOfAppointment.reduce((earliest, s) =>
         new Date(s.startsAt) < new Date(earliest.startsAt) ? s : earliest,
       );
-      const weekKey = SlotCalculationService.startOfWeekSunday(
+      const weekKey = SlotCalculationService.weekKey(
         new Date(firstSlot.startsAt),
-      ).toISOString();
+        config.schedulingTimezone,
+      );
       existingSessionsPerWeek.set(
         weekKey,
         (existingSessionsPerWeek.get(weekKey) || 0) + 1,
@@ -976,6 +986,8 @@ export class SlotValidationService {
         isAvailable: true,
         isBooked: false,
       })),
+      config.schedulingTimezone ??
+        SlotCalculationService.DEFAULT_SCHEDULING_TIMEZONE,
     );
 
     slotsByWeek.forEach((weekSlots, weekKey) => {
@@ -984,7 +996,7 @@ export class SlotValidationService {
         proposedSessions + (existingSessionsPerWeek.get(weekKey) || 0);
       if (sessionsThisWeek > config.callsPerWeek!) {
         errors.push(
-          `[WEEKLY_LIMIT] Week of ${new Date(weekKey).toLocaleDateString()} has ${sessionsThisWeek} sessions but max is ${config.callsPerWeek}`,
+          `[WEEKLY_LIMIT] Week of ${weekKey} has ${sessionsThisWeek} sessions but max is ${config.callsPerWeek}`,
         );
       }
     });
@@ -1000,6 +1012,7 @@ export class SlotValidationService {
         slots,
         slotsPerSession,
         MAX_CLASS_SESSIONS_PER_DAY,
+        config.schedulingTimezone,
       ),
     );
 
@@ -1011,13 +1024,13 @@ export class SlotValidationService {
   }
 
   /**
-   * #898 follow-up — server-side per-DAY session cap. The per-day limit
-   * (subscription 1/day, class 2/day) was only enforced at allocation-selection
-   * time + the client guard, not in validation, so a hand-crafted manual
-   * allocate could stack same-day sessions. Mirrors the weekly seed/group logic
-   * but keyed by local day (same convention as allocationAlgorithms
-   * `selectCallsFromWeek`'s toDateString day-key). One Appointment = one session,
-   * keyed by its first slot's day; tentative/excluded appointments are skipped.
+   * #898 follow-up — server-side per-DAY session cap (subscription 1/day,
+   * class 2/day). Keyed by the event's scheduling-timezone day via
+   * SlotCalculationService.dayKey (ADR B9) — the same key the client guards
+   * and auto-allocate use. The old toDateString() key depended on the
+   * server's local timezone, so verdicts could differ between environments
+   * and from the client. One Appointment = one session, keyed by its first
+   * slot's day; tentative/excluded appointments are skipped.
    */
   private validatePerDaySessionCap(
     existingAppointments: {
@@ -1028,6 +1041,7 @@ export class SlotValidationService {
     slots: Date[],
     slotsPerSession: number,
     maxPerDay: number,
+    schedulingTimezone?: string,
   ): string[] {
     const errors: string[] = [];
     const existingPerDay = new Map<string, number>();
@@ -1037,12 +1051,21 @@ export class SlotValidationService {
       const firstSlot = appt.slotsOfAppointment.reduce((earliest, s) =>
         new Date(s.startsAt) < new Date(earliest.startsAt) ? s : earliest,
       );
-      const dayKey = new Date(firstSlot.startsAt).toDateString();
+      const dayKey = SlotCalculationService.dayKey(
+        new Date(firstSlot.startsAt),
+        schedulingTimezone,
+      );
       existingPerDay.set(dayKey, (existingPerDay.get(dayKey) || 0) + 1);
     }
+    // Sort a copy first — stepping by slotsPerSession assumes session-ordered
+    // input, and requested-mode slots come from the DB unordered.
+    const orderedSlots = [...slots].sort((a, b) => a.getTime() - b.getTime());
     const proposedPerDay = new Map<string, number>();
-    for (let i = 0; i < slots.length; i += slotsPerSession) {
-      const dayKey = slots[i].toDateString();
+    for (let i = 0; i < orderedSlots.length; i += slotsPerSession) {
+      const dayKey = SlotCalculationService.dayKey(
+        orderedSlots[i],
+        schedulingTimezone,
+      );
       proposedPerDay.set(dayKey, (proposedPerDay.get(dayKey) || 0) + 1);
     }
     proposedPerDay.forEach((count, dayKey) => {

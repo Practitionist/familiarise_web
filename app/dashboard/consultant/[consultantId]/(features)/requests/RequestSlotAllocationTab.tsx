@@ -23,7 +23,7 @@ import { toast } from "@/components/ui/use-toast";
 import { AppointmentsType, AppointmentStatus } from "@prisma/client";
 import { AlertTriangle, CheckCircle2, RefreshCw } from "lucide-react";
 import { useParams } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { RequestedSlotsDialog } from "./components/RequestedSlotsDialog";
 import { PaymentRequiredBadge } from "./components/PaymentRequiredBadge";
 import { SafeUnifiedCalendar } from "../shared/components/SafeUnifiedCalendar";
@@ -33,19 +33,16 @@ import {
   SubscriptionApiResponse,
 } from "./types";
 import { countSundayWeeksInclusive } from "../shared/utils/calendarUtils";
-
-// --- API Response Type Definitions ---
-// interface UserInfo { ... } // Removed
-// interface RequestedBy { ... } // Removed
-// interface ConsultationPlanInfo { ... } // Removed
-// interface SubscriptionPlanInfo { ... } // Removed
-// interface AppointmentSlot { ... } // Removed (part of SlotInterval now)
-// interface AppointmentInfo { ... } // Removed
-// interface ConsultationApiResponse { ... } // Removed
-// interface SubscriptionApiResponse { ... } // Removed
-// interface AvailabilityApiResponse extends AppointmentSlot { } // Removed
-// interface ConsultantApiResponse { ... } // Removed
-// --- End API Response Type Definitions ---
+import {
+  allocatedElsewhere,
+  allocationFailed,
+  planConfigIncomplete,
+} from "../shared/utils/allocationMessages";
+import {
+  computeAttemptFingerprint,
+  resolveAttemptKey,
+  type AllocationAttemptKey,
+} from "../shared/hooks/useSlotAllocation";
 
 // Slot with tentative status for reschedule visibility
 interface RequestedSlot {
@@ -62,7 +59,9 @@ interface Request {
   requestedTimes?: string[]; // Kept for backward compatibility
   requestedSlots?: RequestedSlot[]; // New: includes isTentative flag
   status: AppointmentStatus;
-  requiredSlots: number;
+  /** undefined = plan data is incomplete (no totalSessions AND no scheduling
+   * period) — the server would reject any allocation, so actions are disabled. */
+  requiredSlots?: number;
   allocatedSlots?: string[];
   durationInMonths?: number;
   callsPerWeek?: number;
@@ -70,6 +69,8 @@ interface Request {
   durationInHours?: number;
   startDate?: Date;
   endDate?: Date;
+  /** Limit day/week bucket timezone (ADR B9); Subscription column default. */
+  schedulingTimezone?: string;
   bookingSource?: "DIRECT_CHECKOUT" | "REQUEST_SUBMITTED"; // Booking source - direct checkout or request submitted
   totalSessions?: number; // Authoritative session count from plan (overrides weeks × callsPerWeek)
   // Reschedule info
@@ -287,13 +288,21 @@ export function RequestSlotAllocationTab({
                         );
                         return weeks * callsPerWeek * slotsPerSession;
                       }
-                      return (
-                        callsPerWeek *
-                          4 *
-                          (subscription.subscriptionPlan?.durationInMonths ??
-                            0) *
-                          slotsPerSession || 0
+                      // No totalSessions AND no period: the server throws for
+                      // such subscriptions, so any client guess (the old
+                      // callsPerWeek×4×months) produced an allocation the
+                      // server rejected. Surface a degraded state instead.
+                      Sentry.captureMessage(
+                        "Subscription plan missing totalSessions and scheduling period",
+                        {
+                          tags: {
+                            subsystem: "client",
+                            feature: "slot-allocation",
+                          },
+                          extra: { subscriptionId: subscription.id },
+                        },
                       );
+                      return undefined;
                     })(),
               totalSessions:
                 tentativeCount > 0
@@ -309,6 +318,7 @@ export function RequestSlotAllocationTab({
               endDate: subscription.schedulingPeriodEndsAt
                 ? new Date(subscription.schedulingPeriodEndsAt)
                 : undefined,
+              schedulingTimezone: subscription.schedulingTimezone,
               bookingSource: subscription.bookingSource,
               tentativeSlotCount: tentativeCount,
               totalSlotCount: totalCount,
@@ -349,8 +359,38 @@ export function RequestSlotAllocationTab({
       if (!document.hidden) fetchData();
     }, REQUEST_POLL_INTERVAL);
 
-    return () => clearInterval(interval);
+    // Multi-tab self-heal: a tab returning to focus refetches so requests
+    // allocated/declined elsewhere disappear without waiting for the poll.
+    const onFocus = () => fetchData();
+    window.addEventListener("focus", onFocus);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("focus", onFocus);
+    };
   }, [fetchData]);
+
+  // Idempotency key for the requested-times flow; a retry of the same request
+  // reuses the key so the server replays instead of double-booking (#837).
+  // A ref, not state — two clicks before a rerender must see the same key.
+  const attemptKeyRef = useRef<AllocationAttemptKey | null>(null);
+
+  /** Shared 409 handling: another session already allocated this request. */
+  const handleConflict = useCallback(
+    (requestId?: string) => {
+      toast(allocatedElsewhere());
+      setDialogOpen(false);
+      setSelectedRequest(null);
+      setRequestedSlotsDialogOpen(false);
+      setSelectedRequestForDialog(null);
+      if (requestId) {
+        setRequests((prev) => prev.filter((r) => r.id !== requestId));
+      }
+      fetchData();
+      onUpdate();
+    },
+    [fetchData, onUpdate],
+  );
 
   const handleRequestedAllocation = async (override: boolean) => {
     if (!selectedRequestForDialog) return;
@@ -361,19 +401,40 @@ export function RequestSlotAllocationTab({
           ? `/api/bookings/subscriptions/${selectedRequestForDialog.id}/allocate`
           : `/api/bookings/consultations/${selectedRequestForDialog.id}/allocate`;
 
+      const attempt = resolveAttemptKey(
+        attemptKeyRef.current,
+        computeAttemptFingerprint(
+          "requested",
+          selectedRequestForDialog.id,
+          [],
+        ),
+      );
+      attemptKeyRef.current = attempt;
+
       const response = await fetch(endpoint, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
+          "Idempotency-Key": attempt.key,
         },
         body: JSON.stringify({
           isAuto: false,
           useRequestedSlots: true,
           override,
+          // Fresh allocations only — partial reschedules legitimately have
+          // confirmed slots and must not trip the already-allocated guard.
+          initialAllocation:
+            (selectedRequestForDialog.tentativeSlotCount ?? 0) === 0 ||
+            undefined,
         }),
       });
 
       const data = await response.json();
+
+      if (response.status === 409) {
+        handleConflict(selectedRequestForDialog.id);
+        return;
+      }
 
       if (!response.ok) {
         throw new Error(data.error || "Failed to allocate slots");
@@ -398,13 +459,12 @@ export function RequestSlotAllocationTab({
       // Notify parent
       onUpdate();
     } catch (error) {
-      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
-      toast({
-        title: "Error",
-        description:
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client", feature: "slot-allocation" } });
+      toast(
+        allocationFailed(
           error instanceof Error ? error.message : "Failed to allocate slots",
-        variant: "destructive",
-      });
+        ),
+      );
     }
   };
 
@@ -642,7 +702,7 @@ export function RequestSlotAllocationTab({
       header: "Required Slots",
       headClassName: "w-[90px] text-center",
       className: "text-center",
-      cell: (request) => request.requiredSlots,
+      cell: (request) => request.requiredSlots ?? "—",
     },
     {
       key: "status",
@@ -666,33 +726,41 @@ export function RequestSlotAllocationTab({
       cell: (request) =>
         request.status === AppointmentStatus.PENDING ? (
           <div className="flex flex-col gap-1.5">
-            {/* Hide "Use Requested Times" for directly booked consultations (Bug #8 fix) */}
-            {request.requestedTimes &&
-              request.requestedTimes.length > 0 &&
-              request.bookingSource === "REQUEST_SUBMITTED" && (
+            {request.requiredSlots === undefined ? (
+              <p className="text-xs text-muted-foreground">
+                {planConfigIncomplete().description}
+              </p>
+            ) : (
+              <>
+                {/* Hide "Use Requested Times" for directly booked consultations (Bug #8 fix) */}
+                {request.requestedTimes &&
+                  request.requestedTimes.length > 0 &&
+                  request.bookingSource === "REQUEST_SUBMITTED" && (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      className="w-full"
+                      onClick={() => {
+                        setSelectedRequestForDialog(request);
+                        setRequestedSlotsDialogOpen(true);
+                      }}
+                    >
+                      Use Requested Times
+                    </Button>
+                  )}
                 <Button
-                  variant="secondary"
+                  variant="outline"
                   size="sm"
                   className="w-full"
                   onClick={() => {
-                    setSelectedRequestForDialog(request);
-                    setRequestedSlotsDialogOpen(true);
+                    setSelectedRequest(request);
+                    setDialogOpen(true);
                   }}
                 >
-                  Use Requested Times
+                  Allocate Slots
                 </Button>
-              )}
-            <Button
-              variant="outline"
-              size="sm"
-              className="w-full"
-              onClick={() => {
-                setSelectedRequest(request);
-                setDialogOpen(true);
-              }}
-            >
-              Allocate Slots
-            </Button>
+              </>
+            )}
             {request.type === AppointmentsType.CONSULTATION && (
               <Button
                 variant="destructive"
@@ -800,6 +868,10 @@ export function RequestSlotAllocationTab({
                 eventId={selectedRequest.id}
                 mode="allocate"
                 onAllocationComplete={handleAllocationComplete}
+                onAllocationConflict={() => handleConflict(selectedRequest.id)}
+                initialAllocation={
+                  (selectedRequest.tentativeSlotCount ?? 0) === 0
+                }
                 showAllocationButtons={true}
                 durationInMonths={
                   selectedRequest.type === "SUBSCRIPTION"
@@ -823,6 +895,7 @@ export function RequestSlotAllocationTab({
                 }
                 allowedStart={selectedRequest.startDate}
                 allowedEnd={selectedRequest.endDate}
+                schedulingTimezone={selectedRequest.schedulingTimezone}
                 totalSessions={
                   selectedRequest.type === "SUBSCRIPTION"
                     ? selectedRequest.totalSessions

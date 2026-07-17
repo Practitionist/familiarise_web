@@ -7,10 +7,86 @@
 
 import { EventType, EventConfig, TimeSlot, ProgressInfo } from "./types";
 
+/** Weekday name → index for Intl "short" weekday parts. */
+const WEEKDAY_INDEX: Record<string, number> = {
+  Sun: 0,
+  Mon: 1,
+  Tue: 2,
+  Wed: 3,
+  Thu: 4,
+  Fri: 5,
+  Sat: 6,
+};
+
 /**
  * Service for calculating slots, weeks, and progress
  */
 export class SlotCalculationService {
+  /**
+   * Timezone that defines a "day" and a "week" for booking limits when the
+   * event carries no explicit schedulingTimezone (ADR B9). Matches the
+   * Subscription/Class column default.
+   */
+  static readonly DEFAULT_SCHEDULING_TIMEZONE = "Asia/Kolkata";
+
+  // Intl.DateTimeFormat construction is expensive and the keys are computed
+  // in per-click loops; cache one formatter per timezone.
+  private static readonly dateFormatters = new Map<string, Intl.DateTimeFormat>();
+
+  private static getDateFormatter(timeZone: string): Intl.DateTimeFormat {
+    let formatter = this.dateFormatters.get(timeZone);
+    if (!formatter) {
+      formatter = new Intl.DateTimeFormat("en-US", {
+        timeZone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        weekday: "short",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+      });
+      this.dateFormatters.set(timeZone, formatter);
+    }
+    return formatter;
+  }
+
+  /** Offset (minutes, positive east of UTC) of a timezone at an instant.
+   * Intl-only so this module stays dependency-free (it is imported by pure
+   * client code and by jsdom tests that stub Prisma). */
+  private static tzOffsetMinutes(timeZone: string, at: Date): number {
+    const parts = this.getDateFormatter(timeZone).formatToParts(at);
+    const get = (type: string) =>
+      Number(parts.find((p) => p.type === type)?.value ?? 0);
+    // Intl reports 24 for midnight with hourCycle h24 quirks; normalize.
+    const hour = get("hour") % 24;
+    const wallAsUtc = Date.UTC(
+      get("year"),
+      get("month") - 1,
+      get("day"),
+      hour,
+      get("minute"),
+      get("second"),
+    );
+    return Math.round((wallAsUtc - at.getTime()) / 60_000);
+  }
+
+  /** Calendar date {year, month(1-12), day, weekday(0=Sun)} of an instant in a timezone. */
+  private static getCalendarParts(
+    d: Date,
+    timeZone: string,
+  ): { year: number; month: number; day: number; weekday: number } {
+    const parts = this.getDateFormatter(timeZone).formatToParts(d);
+    const get = (type: string) =>
+      parts.find((p) => p.type === type)?.value ?? "";
+    return {
+      year: Number(get("year")),
+      month: Number(get("month")),
+      day: Number(get("day")),
+      weekday: WEEKDAY_INDEX[get("weekday")] ?? 0,
+    };
+  }
   /**
    * Count the number of distinct Sunday-start weeks overlapping [start, end].
    * This is the SINGLE implementation used across the entire app.
@@ -64,6 +140,60 @@ export class SlotCalculationService {
         0,
       ),
     );
+  }
+
+  /**
+   * Canonical day key ("YYYY-MM-DD") for daily-limit bucketing, in the
+   * event's scheduling timezone (ADR B9). Client and server must share this
+   * key or verdicts diverge near day boundaries; "one session per day" means
+   * one session per calendar day AS THE CUSTOMER SEES IT.
+   */
+  static dayKey(
+    d: Date,
+    timeZone: string = this.DEFAULT_SCHEDULING_TIMEZONE,
+  ): string {
+    const { year, month, day } = this.getCalendarParts(d, timeZone);
+    return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  }
+
+  /**
+   * Canonical week key ("YYYY-MM-DD" of the Sunday starting the week, as a
+   * calendar date in the event's scheduling timezone) for weekly-limit
+   * bucketing (ADR B9).
+   */
+  static weekKey(
+    d: Date,
+    timeZone: string = this.DEFAULT_SCHEDULING_TIMEZONE,
+  ): string {
+    const { year, month, day, weekday } = this.getCalendarParts(d, timeZone);
+    // Date.UTC normalizes day-of-month underflow; noon avoids any ±offset
+    // spill when reading the parts back with UTC getters.
+    const sunday = new Date(Date.UTC(year, month - 1, day - weekday, 12));
+    return `${sunday.getUTCFullYear()}-${String(sunday.getUTCMonth() + 1).padStart(2, "0")}-${String(sunday.getUTCDate()).padStart(2, "0")}`;
+  }
+
+  /**
+   * The UTC instant at which the week containing `d` starts — Sunday 00:00
+   * in the given timezone. Used where week buckets must be Date ranges
+   * (e.g. the server's weekly-info generator) rather than string keys.
+   */
+  static startOfWeekSundayInTz(
+    d: Date,
+    timeZone: string = this.DEFAULT_SCHEDULING_TIMEZONE,
+  ): Date {
+    const { year, month, day, weekday } = this.getCalendarParts(d, timeZone);
+    const sundayLocalMidnightAsUtc = Date.UTC(year, month - 1, day - weekday);
+    // Zoned-midnight → UTC instant, two-pass to absorb a DST edge at the boundary.
+    const offset = this.tzOffsetMinutes(
+      timeZone,
+      new Date(sundayLocalMidnightAsUtc),
+    );
+    let instant = sundayLocalMidnightAsUtc - offset * 60_000;
+    const offsetAtInstant = this.tzOffsetMinutes(timeZone, new Date(instant));
+    if (offsetAtInstant !== offset) {
+      instant = sundayLocalMidnightAsUtc - offsetAtInstant * 60_000;
+    }
+    return new Date(instant);
   }
 
   /**
@@ -365,15 +495,16 @@ export class SlotCalculationService {
   }
 
   /**
-   * Group time slots by day
+   * Group time slots by scheduling-timezone day
    */
-  static groupSlotsByDay(slots: TimeSlot[]): Map<string, TimeSlot[]> {
+  static groupSlotsByDay(
+    slots: TimeSlot[],
+    timeZone: string = this.DEFAULT_SCHEDULING_TIMEZONE,
+  ): Map<string, TimeSlot[]> {
     const slotsByDay = new Map<string, TimeSlot[]>();
 
     for (const slot of slots) {
-      // Use ISO date string for UTC-consistent grouping across server and client.
-      // toDateString() uses local timezone, causing different grouping on different machines.
-      const dayKey = slot.startTime.toISOString().split("T")[0];
+      const dayKey = this.dayKey(slot.startTime, timeZone);
       if (!slotsByDay.has(dayKey)) {
         slotsByDay.set(dayKey, []);
       }
@@ -384,16 +515,16 @@ export class SlotCalculationService {
   }
 
   /**
-   * Group time slots by week (Sunday-Saturday)
+   * Group time slots by scheduling-timezone week (Sunday-Saturday)
    */
-  static groupSlotsByWeek(slots: TimeSlot[]): Map<string, TimeSlot[]> {
+  static groupSlotsByWeek(
+    slots: TimeSlot[],
+    timeZone: string = this.DEFAULT_SCHEDULING_TIMEZONE,
+  ): Map<string, TimeSlot[]> {
     const slotsByWeek = new Map<string, TimeSlot[]>();
 
     for (const slot of slots) {
-      const weekStart = SlotCalculationService.startOfWeekSunday(
-        slot.startTime,
-      );
-      const weekKey = weekStart.toISOString();
+      const weekKey = this.weekKey(slot.startTime, timeZone);
 
       if (!slotsByWeek.has(weekKey)) {
         slotsByWeek.set(weekKey, []);

@@ -44,7 +44,17 @@ import {
 import { useCalendarData } from "../hooks/useCalendarData";
 import { useEventSlotAllocation } from "../hooks/useSlotAllocation";
 import type { AllocationResponse } from "../utils/allocationService";
-// Note: remove unused imports to keep the component lean
+import { SlotCalculationService } from "@/utils/slotAllocation/SlotCalculationService";
+import {
+  outsideSchedulingWindow,
+  weeklyLimitReached,
+  pastSlotBlocked,
+  pastSessionBlocked,
+  sessionTooSoon,
+  sessionBeingRescheduled,
+  slotUnavailable,
+  notEnoughConsecutive,
+} from "../utils/allocationMessages";
 import { useToast } from "@/hooks/use-toast";
 
 /**
@@ -152,8 +162,8 @@ function countCompletedCallsForWeek(
   existingAppointments: CalendarAppointment[],
   subscriptionId: string,
   slotsPerCall: number,
-  weekStart: Date,
-  weekEnd: Date,
+  targetWeekKey: string,
+  schedulingTimezone?: string,
 ): number {
   if (!Array.isArray(existingAppointments)) return 0;
 
@@ -167,8 +177,12 @@ function countCompletedCallsForWeek(
     if (slots.some((s: CalendarAppointmentSlot) => s.isTentative)) return false;
     // A completed call is an appointment that has exactly the per-call slot count
     if (slots.length !== slotsPerCall) return false;
-    const start = new Date(slots[0].startsAt);
-    return start >= weekStart && start <= weekEnd;
+    return (
+      SlotCalculationService.weekKey(
+        new Date(slots[0].startsAt),
+        schedulingTimezone,
+      ) === targetWeekKey
+    );
   }).length;
 }
 
@@ -179,17 +193,21 @@ function countCompletedCallsForWeek(
 function countCompletedSelectedCallsForWeek(
   selectedSlots: TimeSlot[],
   slotsPerCall: number,
-  weekStart: Date,
-  weekEnd: Date,
+  targetWeekKey: string,
+  schedulingTimezone?: string,
 ): number {
   if (!selectedSlots?.length) return 0;
 
-  // Group selected slots by day within the target week
+  // Group selected slots by scheduling-timezone day within the target week
   const byDay = new Map<string, TimeSlot[]>();
   for (const s of selectedSlots) {
     const start = s.startTime;
-    if (start < weekStart || start > weekEnd) continue;
-    const key = start.toDateString();
+    if (
+      SlotCalculationService.weekKey(start, schedulingTimezone) !==
+      targetWeekKey
+    )
+      continue;
+    const key = SlotCalculationService.dayKey(start, schedulingTimezone);
     if (!byDay.has(key)) byDay.set(key, []);
     byDay.get(key)!.push(s);
   }
@@ -197,7 +215,8 @@ function countCompletedSelectedCallsForWeek(
   let completed = 0;
   byDay.forEach((daySlots) => {
     if (daySlots.length !== slotsPerCall) return;
-    if (validateDayBasedConsecutiveSlots(daySlots)) completed += 1;
+    if (validateDayBasedConsecutiveSlots(daySlots, schedulingTimezone))
+      completed += 1;
   });
   return completed;
 }
@@ -262,12 +281,13 @@ function computeSubscriptionFooter(
 function countCompletedSelectedClasses(
   selectedSlots: TimeSlot[],
   slotsPerSession: number,
+  schedulingTimezone?: string,
 ): number {
   if (!selectedSlots?.length) return 0;
-  // Group by day and count full consecutive runs
+  // Group by scheduling-timezone day and count full consecutive runs
   const byDay = new Map<string, TimeSlot[]>();
   for (const s of selectedSlots) {
-    const key = s.startTime.toDateString();
+    const key = SlotCalculationService.dayKey(s.startTime, schedulingTimezone);
     if (!byDay.has(key)) byDay.set(key, []);
     byDay.get(key)!.push(s);
   }
@@ -300,17 +320,20 @@ function computeClassFooter(params: {
   sessionDurationInHours?: number;
   totalSessions?: number;
   pastCompletedSessions?: number;
+  schedulingTimezone?: string;
 }): string {
   const {
     selectedSlots,
     sessionDurationInHours,
     totalSessions,
     pastCompletedSessions = 0,
+    schedulingTimezone,
   } = params;
   const slotsPerSession = Math.ceil((sessionDurationInHours || 1) / 0.5);
   const scheduled = countCompletedSelectedClasses(
     selectedSlots,
     slotsPerSession,
+    schedulingTimezone,
   );
   const totalScheduled = scheduled + pastCompletedSessions;
 
@@ -346,6 +369,12 @@ export interface UnifiedCalendarProps {
   mode: "view" | "select" | "allocate";
   onSlotsSelected?: (slots: TimeSlot[]) => void;
   onAllocationComplete?: (result: AllocationResponse) => void;
+  /** Called when the server reports the event was already allocated in
+   * another session (409) — host should close the dialog and refetch. */
+  onAllocationConflict?: () => void;
+  /** Reject allocations if the event already has confirmed slots (fresh
+   * PENDING allocations only; reschedule hosts must not set this). */
+  initialAllocation?: boolean;
   onClose?: () => void;
   showAllocationButtons?: boolean;
   preSelectedSlots?: TimeSlot[];
@@ -355,6 +384,9 @@ export interface UnifiedCalendarProps {
   allowedStart?: Date;
   allowedEnd?: Date;
   totalSessions?: number; // Authoritative session count from plan (overrides weeks × callsPerWeek)
+  /** Event's scheduling timezone — defines the limit day/week buckets
+   * (ADR B9). Defaults to Asia/Kolkata in the shared helpers. */
+  schedulingTimezone?: string;
 }
 
 export function UnifiedCalendar({
@@ -368,6 +400,8 @@ export function UnifiedCalendar({
   mode = "view",
   onSlotsSelected,
   onAllocationComplete,
+  onAllocationConflict,
+  initialAllocation,
   onClose,
   showAllocationButtons = false,
   preSelectedSlots = [],
@@ -376,6 +410,7 @@ export function UnifiedCalendar({
   allowedStart,
   allowedEnd,
   totalSessions,
+  schedulingTimezone,
 }: UnifiedCalendarProps) {
   const { toast } = useToast();
   // State
@@ -453,7 +488,7 @@ export function UnifiedCalendar({
     isSlotSelected,
     manualAllocate,
     autoAllocate,
-    preAllocate,
+    allocateRequestedSlots,
     slotLimits,
   } = useEventSlotAllocation({
     eventType,
@@ -478,7 +513,10 @@ export function UnifiedCalendar({
     pastConfirmedSlotCount: isRecurringEventType(eventType)
       ? pastEventSlotCount
       : undefined,
+    initialAllocation,
+    schedulingTimezone,
     onSuccess: handleAllocationSuccess,
+    onConflict: onAllocationConflict,
   });
 
   // PERFORMANCE: Pre-compute a Set of event slot timestamps (rounded to seconds)
@@ -540,7 +578,9 @@ export function UnifiedCalendar({
     }
   }, [eventType, durationInHours, sessionDurationInHours]);
 
-  // Week view dates
+  // Week view dates. Deliberately LOCAL time: the grid renders in the
+  // consultant's timezone. Limit BUCKETING is UTC (SlotCalculationService) —
+  // do not "unify" these; display and bucketing are different concerns.
   const weekDates = useMemo(() => {
     const startDate = startOfWeek(currentDate);
     return [...Array(7)].map((_, i) => addDays(startDate, i));
@@ -558,15 +598,18 @@ export function UnifiedCalendar({
       if (!targetSize || targetSize <= 1) return [clickedSlot];
 
       const clickedLocalStart = new Date(clickedSlot.startTime);
-      const _clickedDayString = clickedDate.toDateString();
 
       // Check if a candidate slot at a given offset is eligible for auto-expansion
       const getEligibleSlot = (offsetSteps: number): TimeSlot | null => {
         const offsetMs = offsetSteps * 30 * 60 * 1000;
         const targetTime = new Date(clickedLocalStart.getTime() + offsetMs);
 
-        // Same-day constraint
-        if (targetTime.toDateString() !== clickedLocalStart.toDateString())
+        // Same-day constraint in the event's scheduling timezone — a session
+        // must not straddle the limit-bucket day boundary (ADR B9).
+        if (
+          SlotCalculationService.dayKey(targetTime, schedulingTimezone) !==
+          SlotCalculationService.dayKey(clickedLocalStart, schedulingTimezone)
+        )
           return null;
 
         const interval = {
@@ -641,6 +684,7 @@ export function UnifiedCalendar({
       selectedSlots,
       allowedStart,
       allowedEnd,
+      schedulingTimezone,
     ],
   );
 
@@ -671,21 +715,17 @@ export function UnifiedCalendar({
       if (allowedStart || allowedEnd) {
         const intervalStart = new Date(status.intervalStartUTCString);
         if (isOutsideAllowedRange(intervalStart, allowedStart, allowedEnd)) {
-          const _label =
-            eventType === "subscription"
-              ? "subscription"
-              : eventType === "class"
-                ? "class"
-                : "event";
-          toast({
-            variant: "destructive",
-            title: "Outside scheduling window",
-            description: `You can only schedule between ${formatAllowedRange(allowedStart, allowedEnd)}.`,
-          });
+          toast(
+            outsideSchedulingWindow(
+              formatAllowedRange(allowedStart, allowedEnd),
+            ),
+          );
           return;
         }
       }
-      // Weekly limit guard for subscriptions: fire on FIRST slot of a new day (prevents overbooking a week)
+      // Weekly limit guard for subscriptions: fire on FIRST slot of a new day.
+      // Bucketed by the event's scheduling-timezone week (ADR B9) — the SAME
+      // definition the server validates with.
       if (
         eventType === "subscription" &&
         eventId &&
@@ -693,37 +733,42 @@ export function UnifiedCalendar({
         sessionDurationInHours
       ) {
         const intervalStart = new Date(status.intervalStartUTCString);
+        const targetDayKey = SlotCalculationService.dayKey(
+          intervalStart,
+          schedulingTimezone,
+        );
         const isStartingNewDay = !selectedSlots.some(
-          (s) => s.startTime.toDateString() === intervalStart.toDateString(),
+          (s) =>
+            SlotCalculationService.dayKey(s.startTime, schedulingTimezone) ===
+            targetDayKey,
         );
 
         if (isStartingNewDay) {
-          const weekStart = startOfWeek(intervalStart);
-          const weekEnd = endOfWeek(intervalStart);
+          const targetWeekKey = SlotCalculationService.weekKey(
+            intervalStart,
+            schedulingTimezone,
+          );
           const slotsPerCall = getSlotsPerCall(sessionDurationInHours);
           const completedCalls = countCompletedCallsForWeek(
             existingAppointments,
             eventId,
             slotsPerCall,
-            weekStart,
-            weekEnd,
+            targetWeekKey,
+            schedulingTimezone,
           );
 
           // Also include already selected complete calls in this same week
           const selectedCompleted = countCompletedSelectedCallsForWeek(
             selectedSlots,
             slotsPerCall,
-            weekStart,
-            weekEnd,
+            targetWeekKey,
+            schedulingTimezone,
           );
           const totalCompletedThisWeek = completedCalls + selectedCompleted;
 
-          if (totalCompletedThisWeek >= (callsPerWeek || 1)) {
-            toast({
-              variant: "destructive",
-              title: "Weekly limit reached",
-              description: `You've scheduled ${totalCompletedThisWeek} sessions this week (max ${callsPerWeek}). Choose a different week.`,
-            });
+          // callsPerWeek is guaranteed truthy by the enclosing guard
+          if (totalCompletedThisWeek >= callsPerWeek) {
+            toast(weeklyLimitReached(callsPerWeek));
             return;
           }
         }
@@ -738,12 +783,7 @@ export function UnifiedCalendar({
           toggleSlot(slot);
           return;
         }
-        toast({
-          variant: "destructive",
-          title: "Past session",
-          description:
-            "This session has already passed. Navigate to a future week to schedule a replacement.",
-        });
+        toast(pastSessionBlocked());
         return;
       }
 
@@ -754,23 +794,14 @@ export function UnifiedCalendar({
           now.getTime() + TWENTY_FOUR_HOURS_IN_MS,
         );
         if (slot.startTime < imminentCutoff) {
-          toast({
-            variant: "destructive",
-            title: "Session too soon",
-            description:
-              "This session starts within 24 hours and cannot be rescheduled.",
-          });
+          toast(sessionTooSoon());
           return;
         }
       }
 
       // Block selection of unavailable, booked, or past non-event slots
       if (status.isInPast) {
-        toast({
-          variant: "destructive",
-          title: "Slot has passed",
-          description: "This slot is no longer available.",
-        });
+        toast(pastSlotBlocked());
         return;
       }
 
@@ -778,11 +809,7 @@ export function UnifiedCalendar({
       // booking. Don't show "already booked"; guide the consultant to pick a new
       // time. The old slot is freed when the re-allocation completes.
       if (isCurrentEventTentative) {
-        toast({
-          title: "Session being rescheduled",
-          description:
-            "This is the session you're rescheduling — pick a new available time for it.",
-        });
+        toast(sessionBeingRescheduled());
         return;
       }
 
@@ -791,13 +818,7 @@ export function UnifiedCalendar({
         !isCurrentEventSlot &&
         (!status.isAvailable || status.isBookedForDisplay)
       ) {
-        toast({
-          variant: "destructive",
-          title: "Slot unavailable",
-          description: status.isBookedForDisplay
-            ? "This slot is already booked."
-            : "This slot is not available.",
-        });
+        toast(slotUnavailable(Boolean(status.isBookedForDisplay)));
         return;
       }
 
@@ -816,12 +837,7 @@ export function UnifiedCalendar({
           // Block selection if we can't find enough consecutive slots for a complete session
           const requiredSlots = slotLimits.slotsPerSession;
           if (requiredSlots > 1 && expandedGroup.length < requiredSlots) {
-            const sessionHours = (requiredSlots * 30) / 60; // Convert slots to hours
-            toast({
-              variant: "destructive",
-              title: "Not enough consecutive slots",
-              description: `Each session requires ${sessionHours} hours (${requiredSlots} consecutive slots). Only ${expandedGroup.length} available here.`,
-            });
+            toast(notEnoughConsecutive(requiredSlots, expandedGroup.length));
             return;
           }
 
@@ -840,6 +856,7 @@ export function UnifiedCalendar({
       eventId,
       callsPerWeek,
       sessionDurationInHours,
+      schedulingTimezone,
       allowedStart,
       allowedEnd,
       selectedSlots,
@@ -1347,6 +1364,7 @@ export function UnifiedCalendar({
                     selectedSlots,
                     sessionDurationInHours,
                     slotLimits.maxSlots,
+                    schedulingTimezone,
                   );
                 } else if (eventType === "class") {
                   const slotsPerSession = Math.ceil(
@@ -1360,6 +1378,7 @@ export function UnifiedCalendar({
                       pastEventSlotCount > 0
                         ? Math.floor(pastEventSlotCount / slotsPerSession)
                         : 0,
+                    schedulingTimezone,
                   });
                 }
 
@@ -1431,7 +1450,7 @@ export function UnifiedCalendar({
             <Button
               variant="default"
               size="sm"
-              onClick={() => preAllocate(requestedSlots)}
+              onClick={() => allocateRequestedSlots(requestedSlots)}
               disabled={isAllocating}
             >
               <Clock className="h-4 w-4 mr-2" />

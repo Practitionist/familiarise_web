@@ -58,8 +58,8 @@ Recurring sessions over a period of months. Most complex event type.
 **Rules**:
 
 - All slots within scheduling period [startDate, endDate]
-- Max 1 call per **local** day (consecutive slots within that call). The same-day check runs against the browser's local calendar day via `Date.toDateString()` (see `useSlotAllocation.ts`), so a session that straddles midnight UTC is still one local day for the user; it is not a UTC-day check.
-- Weekly limit: `callsPerWeek` calls per Sunday-Saturday week
+- Max 1 call per **scheduling-timezone** day (consecutive slots within that call). The same-day check buckets by `SlotCalculationService.dayKey()` in the event's `schedulingTimezone` (default Asia/Kolkata) on both the client and the server (ADR B9), so the verdict is identical everywhere; the old browser-local `toDateString()` bucketing disagreed with the server's for slots near day boundaries.
+- Weekly limit: `callsPerWeek` calls per Sunday-Saturday **scheduling-timezone** week (`SlotCalculationService.weekKey()`)
 - Weekly distribution validation counts **calls** (complete session groups), not raw slots
 
 **Important**: Total weeks uses `SlotCalculationService.countWeeks()`, not `durationInMonths * 4`. A 6-month subscription has ~26 weeks, not 24.
@@ -76,8 +76,8 @@ flowchart TD
     E -->|Yes| F[Group by week]
     F --> G{Weekly limit respected?}
     G -->|No| X4[Error: too many calls/week]
-    G -->|Yes| H{Max 1 call per local day?}
-    H -->|No| X5[Error: multiple calls same local day]
+    G -->|Yes| H{Max 1 call per scheduling-timezone day?}
+    H -->|No| X5[Error: multiple calls on one day]
     H -->|Yes| I[Valid]
 ```
 
