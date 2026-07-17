@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   keepPreviousData,
   useMutation,
@@ -99,6 +99,10 @@ const formatDate = (dateString: string) => {
 export default function ContentModerationPage() {
   const [activeTab, setActiveTab] = useState("reports");
   const [searchQuery, setSearchQuery] = useState("");
+  // #997 secondary findings — the reports list used to fetch all PENDING
+  // reports and substring-search every keystroke client-side. Debounce and
+  // send the query to the server instead.
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [selectedReport, setSelectedReport] = useState<ModerationReport | null>(
     null,
   );
@@ -109,6 +113,11 @@ export default function ContentModerationPage() {
 
   const { toast } = useToast();
   const queryClient = useQueryClient();
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(searchQuery), 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
 
   // Fetch moderation stats
   const {
@@ -133,10 +142,12 @@ export default function ContentModerationPage() {
     isError: reportsError,
     refetch: refetchReports,
   } = useQuery({
-    queryKey: ["staff-moderation-reports", "PENDING"],
+    queryKey: ["staff-moderation-reports", "PENDING", debouncedSearch],
     queryFn: async (): Promise<{ reports: ModerationReport[] }> => {
+      const params = new URLSearchParams({ status: "PENDING" });
+      if (debouncedSearch) params.set("search", debouncedSearch);
       const response = await fetch(
-        "/api/staff/moderation/reports?status=PENDING",
+        `/api/staff/moderation/reports?${params}`,
       );
       if (!response.ok) throw new Error("Failed to fetch reports");
       return response.json();
@@ -372,18 +383,8 @@ export default function ContentModerationPage() {
   const handleDeleteReview = (reviewId: string) =>
     deleteReviewMutation.mutate(reviewId);
 
-  // Filter reports by search
-  const filteredReports = searchQuery
-    ? reports.filter(
-        (r) =>
-          r.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          r.reason.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          r.reporter.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          r.reportedUser.name
-            ?.toLowerCase()
-            .includes(searchQuery.toLowerCase()),
-      )
-    : reports;
+  // #997 secondary findings — search now happens server-side (debounced
+  // above); `reports` is already the filtered set.
 
   return (
     <div className="space-y-6">
@@ -539,13 +540,13 @@ export default function ContentModerationPage() {
             <div className="flex items-center justify-center py-8">
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
             </div>
-          ) : filteredReports.length === 0 ? (
+          ) : reports.length === 0 ? (
             <p className="text-center text-muted-foreground py-8">
               No pending reports
             </p>
           ) : (
             <div className="space-y-3">
-              {filteredReports.map((report) => (
+              {reports.map((report) => (
                 <Card
                   key={report.id}
                   className="cursor-pointer hover:shadow-md transition-shadow"

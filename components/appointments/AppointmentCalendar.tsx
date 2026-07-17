@@ -4,7 +4,6 @@ import { useMemo, useState } from "react";
 import {
   addMonths,
   format,
-  isSameDay,
   isSameMonth,
   isToday,
   startOfMonth,
@@ -79,10 +78,25 @@ export function AppointmentCalendar({
     });
   }, [month]);
 
+  // #997 secondary findings — `eventsOf` used to re-filter+sort the whole
+  // `events` array once per grid cell (42x per render). Pre-index once into
+  // a Map keyed by local day, so each cell is an O(1) lookup.
+  const eventsByDay = useMemo(() => {
+    const map = new Map<string, CalendarEvent[]>();
+    for (const event of events) {
+      const key = format(event.start, "yyyy-MM-dd");
+      const bucket = map.get(key);
+      if (bucket) bucket.push(event);
+      else map.set(key, [event]);
+    }
+    map.forEach((bucket) => {
+      bucket.sort((a, b) => a.start.getTime() - b.start.getTime());
+    });
+    return map;
+  }, [events]);
+
   const eventsOf = (date: Date) =>
-    events
-      .filter((e) => isSameDay(e.start, date))
-      .sort((a, b) => a.start.getTime() - b.start.getTime());
+    eventsByDay.get(format(date, "yyyy-MM-dd")) ?? [];
 
   return (
     <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">

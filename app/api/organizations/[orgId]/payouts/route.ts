@@ -27,6 +27,8 @@ import { requireOrgAccess, requireOrgOwner } from "@/lib/auth-helpers";
 // requireOrgOwner so BILLING_ADMIN can trigger payouts without escalation.
 import { requireOrgBillingAdminOrOwner } from "@/lib/auth/billing-admin-gate";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { sumPaise } from "@/lib/payments/utils/money";
+import type { PayoutStatus } from "@prisma/client";
 
 const PayoutStatusSchema = z.enum([
   "PENDING",
@@ -59,7 +61,12 @@ const QuerySchema = z.object({
   from: z.coerce.date().optional(),
   to: z.coerce.date().optional(),
   limit: z.coerce.number().int().min(1).max(100).default(25),
+  offset: z.coerce.number().int().min(0).default(0),
 });
+
+// In-flight = held/reserved but not yet disbursed (mirrors the client's
+// former "Pending" card definition).
+const IN_FLIGHT_STATUSES: PayoutStatus[] = ["PENDING", "APPROVED", "PROCESSING"];
 
 export async function GET(
   req: NextRequest,
@@ -88,27 +95,71 @@ export async function GET(
   }
   const q = parsedQuery.data;
 
-  const payouts = await prisma.organizationPayout.findMany({
-    where: {
-      organizationId: orgId,
-      ...(q.status && { status: q.status }),
-      ...(q.from || q.to
-        ? {
-            createdAt: {
-              ...(q.from && { gte: q.from }),
-              ...(q.to && { lt: q.to }),
-            },
-          }
-        : {}),
+  const where = {
+    organizationId: orgId,
+    ...(q.status && { status: q.status }),
+    ...(q.from || q.to
+      ? {
+          createdAt: {
+            ...(q.from && { gte: q.from }),
+            ...(q.to && { lt: q.to }),
+          },
+        }
+      : {}),
+  };
+
+  // #997 secondary findings: this used to fetch every payout for the org
+  // (no offset) and reduce totals client-side every render. Pagination now
+  // bounds the list; `stats` below is server-aggregated and org-wide
+  // (ignores status/date filters) so the summary cards don't shift as the
+  // table is filtered/paged — matching the client's original "stay on the
+  // full set" intent.
+  const [payouts, total, paidAgg, pendingAgg, statusCounts] =
+    await Promise.all([
+      prisma.organizationPayout.findMany({
+        where,
+        orderBy: { createdAt: "desc" },
+        take: q.limit,
+        skip: q.offset,
+        include: {
+          _count: { select: { earnings: true } },
+        },
+      }),
+      prisma.organizationPayout.count({ where }),
+      prisma.organizationPayout.aggregate({
+        where: { organizationId: orgId, status: "COMPLETED" },
+        _sum: { netPayoutPaise: true },
+      }),
+      prisma.organizationPayout.aggregate({
+        where: { organizationId: orgId, status: { in: IN_FLIGHT_STATUSES } },
+        _sum: { netPayoutPaise: true },
+      }),
+      prisma.organizationPayout.groupBy({
+        by: ["status"],
+        where: { organizationId: orgId },
+        _count: { id: true },
+      }),
+    ]);
+
+  const counts = Object.fromEntries(
+    statusCounts.map((s) => [s.status, s._count.id]),
+  ) as Partial<Record<PayoutStatus, number>>;
+  const totalCount = statusCounts.reduce((sum, s) => sum + s._count.id, 0);
+
+  return NextResponse.json({
+    data: payouts,
+    pagination: {
+      total,
+      limit: q.limit,
+      offset: q.offset,
+      hasMore: q.offset + q.limit < total,
     },
-    orderBy: { createdAt: "desc" },
-    take: q.limit,
-    include: {
-      _count: { select: { earnings: true } },
+    stats: {
+      totalPaidPaise: sumPaise(paidAgg._sum.netPayoutPaise),
+      pendingPaise: sumPaise(pendingAgg._sum.netPayoutPaise),
+      counts: { ...counts, total: totalCount },
     },
   });
-
-  return NextResponse.json({ data: payouts });
 }
 
 export async function POST(
