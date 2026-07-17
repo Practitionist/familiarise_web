@@ -6,6 +6,7 @@ import {
   validateSlotDistribution,
 } from "./calendarUtils";
 import { SlotCalculationService } from "@/utils/slotAllocation/SlotCalculationService";
+import { countSessionsForDay } from "./slotSelectionValidation";
 import { isRecurringEventType } from "@/utils/slotAllocation/types";
 import { AllocationService } from "./allocationService";
 
@@ -192,16 +193,18 @@ export class AllocationAlgorithms {
           };
         }
 
-        // Every scheduling-timezone day must hold complete sessions only —
-        // scattered single atoms can reach the required TOTAL while forming
-        // no complete session, which the server then rejects.
+        // Every scheduling-timezone day must decompose into complete
+        // CONSECUTIVE sessions — a length-modulo check would let scattered
+        // fragments reach the required total while forming no real session,
+        // which the server then rejects.
         const byDay = SlotCalculationService.groupSlotsByDay(
           selectedSlots,
           options.schedulingTimezone ??
             SlotCalculationService.DEFAULT_SCHEDULING_TIMEZONE,
         );
         for (const [, daySlots] of Array.from(byDay)) {
-          if (daySlots.length % slotsPerSession !== 0) {
+          const { sessions } = countSessionsForDay(daySlots, slotsPerSession);
+          if (sessions * slotsPerSession !== daySlots.length) {
             return {
               success: false,
               selectedSlots: [],

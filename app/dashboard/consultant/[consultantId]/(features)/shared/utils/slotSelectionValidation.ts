@@ -661,12 +661,17 @@ function validateClassSelection(
     timeZone,
   );
 
-  // Days with a slot count that isn't a multiple of slotsPerSession are
-  // in-progress; informational only — interactive blocking happens in
-  // toggleSlot so users can start a class by selecting the first slot.
+  // A day is in-progress unless its complete CONSECUTIVE sessions consume
+  // every selected slot — a bare length-modulo check would let two
+  // disconnected fragments masquerade as one session. Informational only:
+  // interactive blocking happens in toggleSlot so users can start a class
+  // by selecting the first slot.
   const byDay = groupSlotsByDay(slots, timeZone);
   const hasInProgress = Array.from(byDay.values()).some(
-    (count) => count.length % slotsPerSession !== 0,
+    (daySlots) =>
+      countSessionsForDay(daySlots, slotsPerSession).sessions *
+        slotsPerSession !==
+      daySlots.length,
   );
 
   const sessionsPerDayOk = validateClassSessionDistributionByCount(

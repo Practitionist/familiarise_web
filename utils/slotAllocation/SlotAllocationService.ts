@@ -278,16 +278,26 @@ export class SlotAllocationService {
    * either commits (group events don't share a Redis lock across modes), so
    * the count alone is not atomic. The advisory xact lock serializes the
    * guarded transactions per event: the loser blocks until the winner
-   * commits, then its count sees the winner's slots and 409s. Raw SQL is
-   * unavoidable here — Prisma has no advisory-lock API.
+   * commits. After the lock, a same-key double submit must REPLAY the
+   * winner's committed batch (the base-client read sees it post-commit)
+   * rather than trip the guard with a 409; only a different-key submit gets
+   * the conflict. Raw SQL is unavoidable — Prisma has no advisory-lock API.
    */
-  private static async assertNoConfirmedSlotsInTx(
+  private static async guardInitialAllocationInTx(
     tx: Tx,
     eventType: EventType,
     eventId: string,
-  ): Promise<void> {
+    idempotencyKey?: string,
+  ): Promise<AllocationResult | null> {
     await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`initial-allocation:${eventType}:${eventId}`}, 42))`;
+    const lockedReplay = await this.findIdempotentAllocation(
+      eventType,
+      eventId,
+      idempotencyKey,
+    );
+    if (lockedReplay) return lockedReplay;
     await this.assertNoConfirmedSlots(tx, eventType, eventId);
+    return null;
   }
 
   private static async assertNoConfirmedSlots(
@@ -624,13 +634,17 @@ export class SlotAllocationService {
           }
 
           // In-txn re-check of the multi-tab guard, serialized per event via
-          // an advisory xact lock (see assertNoConfirmedSlotsInTx).
+          // an advisory xact lock; a same-key double submit replays instead
+          // of 409ing (see guardInitialAllocationInTx).
           if (initialAllocation) {
-            await SlotAllocationService.assertNoConfirmedSlotsInTx(
-              tx,
-              eventType,
-              eventId,
-            );
+            const lockedReplay =
+              await SlotAllocationService.guardInitialAllocationInTx(
+                tx,
+                eventType,
+                eventId,
+                idempotencyKey,
+              );
+            if (lockedReplay) return lockedReplay;
           }
 
           // CRITICAL FIX: Delete existing appointments before creating new ones
@@ -982,13 +996,17 @@ export class SlotAllocationService {
           }
 
           // In-txn re-check of the multi-tab guard, serialized per event via
-          // an advisory xact lock (see assertNoConfirmedSlotsInTx).
+          // an advisory xact lock; a same-key double submit replays instead
+          // of 409ing (see guardInitialAllocationInTx).
           if (initialAllocation) {
-            await SlotAllocationService.assertNoConfirmedSlotsInTx(
-              tx,
-              eventType,
-              eventId,
-            );
+            const lockedReplay =
+              await SlotAllocationService.guardInitialAllocationInTx(
+                tx,
+                eventType,
+                eventId,
+                idempotencyKey,
+              );
+            if (lockedReplay) return lockedReplay;
           }
 
           // Delete existing appointments
@@ -1091,13 +1109,17 @@ export class SlotAllocationService {
       async (tx) => {
         // Multi-tab guard: another tab already confirmed slots for this
         // event → typed 409 instead of re-approving over it. Advisory-locked
-        // in-txn so it can't race the manual/auto write transactions.
+        // in-txn so it can't race the manual/auto write transactions; a
+        // same-key retry that lost the pre-txn race replays the winner.
         if (initialAllocation) {
-          await SlotAllocationService.assertNoConfirmedSlotsInTx(
-            tx,
-            eventType,
-            eventId,
-          );
+          const lockedReplay =
+            await SlotAllocationService.guardInitialAllocationInTx(
+              tx,
+              eventType,
+              eventId,
+              idempotencyKey,
+            );
+          if (lockedReplay) return lockedReplay;
         }
 
         // Fetch event with requested slots
