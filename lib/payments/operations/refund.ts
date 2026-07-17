@@ -83,8 +83,11 @@ export type RefundResult = {
    * gateway accepted the refund but hasn't settled it — the refund webhook
    * (or the cascadedAt backstop cron) completes it. */
   status: "SUCCEEDED" | "PENDING";
-  /** Real gateway refund id (re_xxx / rfnd_xxx / mock_re_xxx). */
-  gatewayRefundId: string;
+  /** Real gateway refund id (re_xxx / rfnd_xxx / mock_re_xxx). Absent when
+   * the gateway accepted but returned no id — the Refund row then keeps its
+   * `pending_` placeholder and the reconcile cron owns recovery (release
+   * #1014 review: never surface "" as a gateway id). */
+  gatewayRefundId?: string;
 };
 
 export class RefundValidationError extends Error {
@@ -335,9 +338,24 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
   await prisma.refund.update({
     where: { id: reserved.id },
     data: {
-      refundId: gateway.refundId,
+      // Falsy gateway id keeps the pending_ placeholder (mirrors the FAILED
+      // branch) so the reconcile cron still matches the row — and the
+      // non-nullable unique column never gets "".
+      refundId: gateway.refundId || reserved.refundId,
+      // Merge, not replace: Phase 1's audit keys (initiatedByUserId, source)
+      // must survive gateway-id binding — the Razorpay path always returns
+      // notes, so a bare assign wiped them (release #1014 review).
       ...(gateway.metadata
-        ? { metadata: gateway.metadata as Prisma.InputJsonValue }
+        ? {
+            metadata: {
+              ...(reserved.metadata &&
+              typeof reserved.metadata === "object" &&
+              !Array.isArray(reserved.metadata)
+                ? reserved.metadata
+                : {}),
+              ...(gateway.metadata as Record<string, unknown>),
+            } as Prisma.InputJsonValue,
+          }
         : {}),
     },
   });
@@ -353,7 +371,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
       organizationEarningsReversed: 0,
       clawbackInitiated: false,
       status: "PENDING" as const,
-      gatewayRefundId: gateway.refundId,
+      gatewayRefundId: gateway.refundId || undefined,
     };
   }
 
@@ -380,7 +398,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
         amountRefundedPaise: requested,
         ...cascade,
         status: "SUCCEEDED" as const,
-        gatewayRefundId: gateway.refundId,
+        gatewayRefundId: gateway.refundId || undefined,
       };
     },
     { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
