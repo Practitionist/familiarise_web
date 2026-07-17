@@ -5,7 +5,7 @@ import {
 import { emptyOnTransientDbError } from "@/lib/data/fail-open";
 import { unstable_cache } from "next/cache";
 import prisma from "@/lib/prisma";
-import { getSession } from "@/lib/auth-helpers";
+import { getSession } from "@/lib/auth-server";
 import ProgramsInteractiveContent from "./ProgramsInteractiveContent";
 
 // #664 — the viewer's ACTIVE org memberships, as { orgId: orgName }. Viewer-

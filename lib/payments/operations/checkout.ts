@@ -76,6 +76,7 @@ import {
 } from "@/lib/enterprise/governance";
 import { checkConsent } from "@/lib/compliance/dpdp";
 import { PURPOSE_CODES } from "@/lib/compliance/purpose-codes";
+import { ENABLE_DUNNING_SUSPEND } from "@/lib/feature-flags";
 import {
   notifyOrgProgramExhausted,
   notifyOrgProgramCapNear,
@@ -1997,7 +1998,7 @@ export async function handleCheckout(
     // unpaid past the grace window; while any such invoice is still OVERDUE, new
     // sponsored bookings for the org are blocked until it is paid. Paying the
     // invoice clears its OVERDUE status, which lifts this gate naturally.
-    if (process.env.ENABLE_DUNNING_SUSPEND === "true") {
+    if (ENABLE_DUNNING_SUSPEND) {
       const suspended = await prisma.organizationInvoice.findFirst({
         where: {
           organizationId: org.id,
