@@ -31,7 +31,7 @@ export class SlotCalculationService {
 
   // Intl.DateTimeFormat construction is expensive and the keys are computed
   // in per-click loops; cache one formatter per timezone.
-  private static dateFormatters = new Map<string, Intl.DateTimeFormat>();
+  private static readonly dateFormatters = new Map<string, Intl.DateTimeFormat>();
 
   private static getDateFormatter(timeZone: string): Intl.DateTimeFormat {
     let formatter = this.dateFormatters.get(timeZone);

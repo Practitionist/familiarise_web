@@ -93,7 +93,7 @@ describe("auto-allocate output passes manual validation (UTC bucketing)", () => 
 
       expect(result.success).toBe(true);
       const picked = result.selectedSlots;
-      expect(picked.length).toBe(totalSessions * slotsPerCall);
+      expect(picked).toHaveLength(totalSessions * slotsPerCall);
 
       // The same selection must pass the interactive validators…
       const validationOptions = {
@@ -129,7 +129,58 @@ describe("auto-allocate output passes manual validation (UTC bucketing)", () => 
     },
   );
 
-  it("class: per-UTC-day cap of 2 sessions holds in the auto output", async () => {
+  it("explicit non-default timezone is honored end-to-end (America/New_York)", async () => {
+    const schedulingTimezone = "America/New_York";
+    const startDate = new Date("2026-08-02T00:00:00.000Z");
+    const endDate = new Date("2026-08-29T23:59:59.000Z");
+    const options: AllocationOptions = {
+      eventType: "subscription",
+      eventId: "sub-tz",
+      callsPerWeek: 1,
+      sessionDurationInHours: 1,
+      startDate,
+      endDate,
+      totalSessions: 4,
+      maxCallsPerDay: 1,
+      schedulingTimezone,
+    };
+
+    const result = await AllocationAlgorithms.autoAllocate(
+      makeAvailabilityGrid(FUTURE_SUNDAY, 28, 6),
+      options,
+    );
+    expect(result.success).toBe(true);
+
+    const validationOptions = {
+      callsPerWeek: 1,
+      sessionDurationInHours: 1,
+      maxTotalCalls: 4,
+      startDate,
+      endDate,
+      schedulingTimezone,
+    };
+    const verdict = validateEventSlots(
+      result.selectedSlots,
+      "subscription",
+      getEventConstraints("subscription", validationOptions),
+      getSlotLimits("subscription", validationOptions),
+      validationOptions,
+    );
+    expect(verdict.errors).toEqual([]);
+
+    // Per-day cap holds under the SAME (non-default) timezone the allocator used
+    groupSlotsByDay(result.selectedSlots, schedulingTimezone).forEach(
+      (daySlots) => {
+        expect(daySlots.length).toBeLessThanOrEqual(2);
+      },
+    );
+    expect(
+      validateSlotDistribution(result.selectedSlots, 2, schedulingTimezone)
+        .isValid,
+    ).toBe(true);
+  });
+
+  it("class: per-day cap of 2 sessions holds in the auto output", async () => {
     const startDate = new Date("2026-08-02T00:00:00.000Z");
     const endDate = new Date("2026-08-29T23:59:59.000Z");
     const options: AllocationOptions = {
@@ -222,6 +273,21 @@ describe("required-count parity across the three modes", () => {
       requestedSlots: fourSlots,
     });
     expect(requested.success).toBe(true);
+  });
+});
+
+describe("getSlotLimits defensive bounds", () => {
+  it("maxSlots floors at 0 when past sessions exceed the plan total (over-allocated data)", () => {
+    const limits = getSlotLimits("subscription", {
+      sessionDurationInHours: 1,
+      maxTotalCalls: 4,
+      // 6 past sessions × 2 atoms — more than the plan's 4 sessions
+      pastConfirmedSlotCount: 12,
+      callsPerWeek: 1,
+      startDate: new Date("2026-08-02T00:00:00.000Z"),
+      endDate: new Date("2026-08-29T23:59:59.000Z"),
+    });
+    expect(limits.maxSlots).toBe(0);
   });
 });
 

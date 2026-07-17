@@ -580,7 +580,10 @@ export function getAppointmentUser(appointment: Appointment): string {
  * This function checks if all slots are consecutive (end time of one slot = start time of next slot)
  * Uses tolerance for timezone/precision issues (within 1 second)
  */
-export function validateDayBasedConsecutiveSlots(slots: TimeSlot[]): boolean {
+export function validateDayBasedConsecutiveSlots(
+  slots: TimeSlot[],
+  schedulingTimezone?: string,
+): boolean {
   if (slots.length <= 1) return true;
 
   const sortedSlots = [...slots].sort(
@@ -588,9 +591,14 @@ export function validateDayBasedConsecutiveSlots(slots: TimeSlot[]): boolean {
   );
 
   // Check that all slots are on the same scheduling-timezone day (server parity)
-  const firstSlotDay = SlotCalculationService.dayKey(sortedSlots[0].startTime);
+  const firstSlotDay = SlotCalculationService.dayKey(
+    sortedSlots[0].startTime,
+    schedulingTimezone,
+  );
   const allSameDay = sortedSlots.every(
-    (slot) => SlotCalculationService.dayKey(slot.startTime) === firstSlotDay,
+    (slot) =>
+      SlotCalculationService.dayKey(slot.startTime, schedulingTimezone) ===
+      firstSlotDay,
   );
   if (!allSameDay) {
     return false;
@@ -622,6 +630,7 @@ export function calculateCallProgress(
   slots: TimeSlot[],
   sessionDurationInHours?: number,
   maxTotalCalls?: number,
+  schedulingTimezone?: string,
 ): string {
   if (slots.length === 0) {
     return "No slots selected";
@@ -634,7 +643,10 @@ export function calculateCallProgress(
   // Group by scheduling-timezone day
   const slotsByDay = new Map<string, TimeSlot[]>();
   slots.forEach((slot) => {
-    const dayKey = SlotCalculationService.dayKey(slot.startTime);
+    const dayKey = SlotCalculationService.dayKey(
+      slot.startTime,
+      schedulingTimezone,
+    );
     if (!slotsByDay.has(dayKey)) {
       slotsByDay.set(dayKey, []);
     }

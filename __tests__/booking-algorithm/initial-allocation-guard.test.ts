@@ -27,6 +27,19 @@ jest.mock("../../lib/prisma", () => ({
   ALLOCATION_TX_TIMEOUT_MS: 30000,
 }));
 
+// Mock SlotValidationService so the race-window test can reach the write
+// transaction without a full availability fixture (same pattern as
+// slotAllocationService.test.ts).
+const mockValidateFn = jest.fn();
+const mockRevalidateConflictsFn = jest.fn();
+jest.mock("../../utils/slotAllocation/SlotValidationService", () => ({
+  ...jest.requireActual("../../utils/slotAllocation/SlotValidationService"),
+  SlotValidationService: jest.fn().mockImplementation(() => ({
+    validate: mockValidateFn,
+    revalidateConflicts: mockRevalidateConflictsFn,
+  })),
+}));
+
 // Mock appointmentlock to avoid @upstash/redis ESM import issues in Jest
 jest.mock("../../utils/appointmentlock", () => ({
   lockAutoAllocate: jest
@@ -121,6 +134,62 @@ describe("manual allocation with initialAllocation", () => {
   });
 });
 
+describe("manual allocation: transaction race window", () => {
+  it("409s when the pre-lock count sees zero but the in-txn count sees confirmed slots", async () => {
+    // Tab B commits between tab A's out-of-txn guard and its write txn: the
+    // first count returns 0, the advisory-locked in-txn count returns 2.
+    mockPrisma.slotOfAppointment.count.mockResolvedValueOnce(0);
+    mockPrisma.subscription.findUnique.mockResolvedValue({
+      subscriptionPlan: {
+        consultantProfileId: "cp-1",
+        consultantProfile: {
+          user: { id: "consultant-user-1" },
+          scheduleType: "WEEKLY",
+          slotsOfAvailabilityWeekly: [],
+          slotsOfAvailabilityCustom: [],
+        },
+        durationInMonths: 1,
+        callsPerWeek: 1,
+        sessionDurationInHours: 1,
+        totalSessions: 1,
+      },
+      requestedBy: { user: { id: "user-1" } },
+      appointments: [],
+      schedulingPeriodStartsAt: new Date("2026-08-02T00:00:00.000Z"),
+      schedulingPeriodEndsAt: new Date("2026-08-29T23:59:59.000Z"),
+      schedulingTimezone: "Asia/Kolkata",
+    });
+    mockValidateFn.mockResolvedValue({
+      isValid: true,
+      errors: [],
+      warnings: [],
+    });
+    mockRevalidateConflictsFn.mockResolvedValue({ isValid: true, errors: [] });
+
+    const mockTx = {
+      $queryRaw: jest.fn().mockResolvedValue([]),
+      slotOfAppointment: { count: jest.fn().mockResolvedValue(2) },
+    };
+    mockPrisma.$transaction.mockImplementation(
+      async (fn: (tx: unknown) => Promise<unknown>) => fn(mockTx),
+    );
+
+    const result = await SlotAllocationService.allocate({
+      eventType: "subscription",
+      eventId: "sub-1",
+      mode: "manual",
+      slots: FUTURE_SLOTS,
+      initialAllocation: true,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.httpStatus).toBe(409);
+    // The advisory lock is taken before the in-txn count
+    expect(mockTx.$queryRaw).toHaveBeenCalled();
+    expect(mockTx.slotOfAppointment.count).toHaveBeenCalled();
+  });
+});
+
 describe("auto allocation with initialAllocation", () => {
   it("returns a typed 409 when another session already confirmed slots", async () => {
     mockPrisma.slotOfAppointment.count.mockResolvedValue(2);
@@ -141,6 +210,8 @@ describe("auto allocation with initialAllocation", () => {
 describe("requested allocation with initialAllocation", () => {
   it("re-checks the guard INSIDE the transaction and 409s", async () => {
     const mockTx = {
+      // Advisory xact lock taken before the guard count (ADR B10 atomicity)
+      $queryRaw: jest.fn().mockResolvedValue([]),
       slotOfAppointment: { count: jest.fn().mockResolvedValue(2) },
     };
     mockPrisma.$transaction.mockImplementation(

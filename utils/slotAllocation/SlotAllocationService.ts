@@ -110,6 +110,7 @@ export class SlotAllocationService {
             request.eventType,
             request.eventId,
             request.initialAllocation,
+            request.idempotencyKey,
           );
 
         default:
@@ -271,6 +272,24 @@ export class SlotAllocationService {
    * slot means the event was already allocated elsewhere → typed 409.
    * Called out-of-txn under the locks AND re-checked inside the write txn.
    */
+  /**
+   * In-transaction variant of the guard. Under Read Committed, two
+   * concurrent transactions could BOTH count zero confirmed slots before
+   * either commits (group events don't share a Redis lock across modes), so
+   * the count alone is not atomic. The advisory xact lock serializes the
+   * guarded transactions per event: the loser blocks until the winner
+   * commits, then its count sees the winner's slots and 409s. Raw SQL is
+   * unavoidable here — Prisma has no advisory-lock API.
+   */
+  private static async assertNoConfirmedSlotsInTx(
+    tx: Tx,
+    eventType: EventType,
+    eventId: string,
+  ): Promise<void> {
+    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`initial-allocation:${eventType}:${eventId}`}, 42))`;
+    await this.assertNoConfirmedSlots(tx, eventType, eventId);
+  }
+
   private static async assertNoConfirmedSlots(
     db: PrismaLike,
     eventType: EventType,
@@ -604,10 +623,10 @@ export class SlotAllocationService {
             );
           }
 
-          // In-txn re-check of the multi-tab guard (group events don't share
-          // a lock across modes, so the out-of-txn check alone can race).
+          // In-txn re-check of the multi-tab guard, serialized per event via
+          // an advisory xact lock (see assertNoConfirmedSlotsInTx).
           if (initialAllocation) {
-            await SlotAllocationService.assertNoConfirmedSlots(
+            await SlotAllocationService.assertNoConfirmedSlotsInTx(
               tx,
               eventType,
               eventId,
@@ -962,10 +981,10 @@ export class SlotAllocationService {
             );
           }
 
-          // In-txn re-check of the multi-tab guard (group events don't share
-          // a lock across modes, so the out-of-txn check alone can race).
+          // In-txn re-check of the multi-tab guard, serialized per event via
+          // an advisory xact lock (see assertNoConfirmedSlotsInTx).
           if (initialAllocation) {
-            await SlotAllocationService.assertNoConfirmedSlots(
+            await SlotAllocationService.assertNoConfirmedSlotsInTx(
               tx,
               eventType,
               eventId,
@@ -1057,14 +1076,24 @@ export class SlotAllocationService {
     eventType: EventType,
     eventId: string,
     initialAllocation?: boolean,
+    idempotencyKey?: string,
   ): Promise<AllocationResult> {
+    // #837 — a retry whose first response was lost must replay the approved
+    // batch, not trip the initial-allocation guard with a 409.
+    const replay = await this.findIdempotentAllocation(
+      eventType,
+      eventId,
+      idempotencyKey,
+    );
+    if (replay) return replay;
+
     return await prisma.$transaction(
       async (tx) => {
-        // Multi-tab guard: another session already confirmed slots for this
-        // event → typed 409 instead of re-approving over it. In-txn, so it
-        // can't race the manual/auto write transactions.
+        // Multi-tab guard: another tab already confirmed slots for this
+        // event → typed 409 instead of re-approving over it. Advisory-locked
+        // in-txn so it can't race the manual/auto write transactions.
         if (initialAllocation) {
-          await SlotAllocationService.assertNoConfirmedSlots(
+          await SlotAllocationService.assertNoConfirmedSlotsInTx(
             tx,
             eventType,
             eventId,
@@ -1158,6 +1187,26 @@ export class SlotAllocationService {
           },
           data: { isTentative: false },
         });
+
+        // #837 — stamp the batch's key on the FIRST appointment so a retry
+        // replays this approval instead of re-running it (mirrors
+        // createAppointments). The @unique index turns a concurrent
+        // duplicate submit into a typed 409.
+        if (idempotencyKey) {
+          try {
+            await tx.appointment.update({
+              where: { id: appointmentIds[0] },
+              data: { allocationIdempotencyKey: idempotencyKey },
+            });
+          } catch (err) {
+            if (isUniqueViolation(err)) {
+              throw new AllocationConflictError(
+                "This allocation was already submitted; the original result applies.",
+              );
+            }
+            throw err;
+          }
+        }
 
         return {
           success: true,

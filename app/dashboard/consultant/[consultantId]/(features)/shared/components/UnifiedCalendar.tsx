@@ -215,7 +215,8 @@ function countCompletedSelectedCallsForWeek(
   let completed = 0;
   byDay.forEach((daySlots) => {
     if (daySlots.length !== slotsPerCall) return;
-    if (validateDayBasedConsecutiveSlots(daySlots)) completed += 1;
+    if (validateDayBasedConsecutiveSlots(daySlots, schedulingTimezone))
+      completed += 1;
   });
   return completed;
 }
@@ -603,8 +604,12 @@ export function UnifiedCalendar({
         const offsetMs = offsetSteps * 30 * 60 * 1000;
         const targetTime = new Date(clickedLocalStart.getTime() + offsetMs);
 
-        // Same-day constraint
-        if (targetTime.toDateString() !== clickedLocalStart.toDateString())
+        // Same-day constraint in the event's scheduling timezone — a session
+        // must not straddle the limit-bucket day boundary (ADR B9).
+        if (
+          SlotCalculationService.dayKey(targetTime, schedulingTimezone) !==
+          SlotCalculationService.dayKey(clickedLocalStart, schedulingTimezone)
+        )
           return null;
 
         const interval = {
@@ -679,6 +684,7 @@ export function UnifiedCalendar({
       selectedSlots,
       allowedStart,
       allowedEnd,
+      schedulingTimezone,
     ],
   );
 
@@ -760,8 +766,9 @@ export function UnifiedCalendar({
           );
           const totalCompletedThisWeek = completedCalls + selectedCompleted;
 
-          if (totalCompletedThisWeek >= (callsPerWeek || 1)) {
-            toast(weeklyLimitReached(callsPerWeek || 1));
+          // callsPerWeek is guaranteed truthy by the enclosing guard
+          if (totalCompletedThisWeek >= callsPerWeek) {
+            toast(weeklyLimitReached(callsPerWeek));
             return;
           }
         }
@@ -1357,6 +1364,7 @@ export function UnifiedCalendar({
                     selectedSlots,
                     sessionDurationInHours,
                     slotLimits.maxSlots,
+                    schedulingTimezone,
                   );
                 } else if (eventType === "class") {
                   const slotsPerSession = Math.ceil(

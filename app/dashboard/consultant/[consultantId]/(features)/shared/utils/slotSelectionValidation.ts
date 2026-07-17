@@ -146,6 +146,9 @@ export function getSlotLimits(
     duration,
     options.startDate,
     options.endDate,
+    // Plan total is authoritative — without it a 5-week period demands 5
+    // sessions from a 4-session plan.
+    options.maxTotalCalls,
   );
 
   switch (eventType) {
@@ -191,7 +194,9 @@ export function getSlotLimits(
       );
       return {
         minSlots: requiredSlots,
-        maxSlots: rawMaxCalls - pastSessions,
+        // Floor at 0 — over-allocated data (past sessions > plan total) must
+        // read as "nothing left", not a negative cap.
+        maxSlots: Math.max(0, rawMaxCalls - pastSessions),
         slotsPerSession: subscriptionSessionSlots,
         totalSessions: totalCalls,
       };
@@ -540,7 +545,6 @@ export function validateSubscriptionSlots(
     if (daySlots.length > 1 && !isCompleteCall(daySlots, slotsPerCall)) {
       dailyCallsValid = false;
       dailyCallsError = `Slots for ${formatDayKey(day)} must be consecutive and complete (${slotsPerCall} slots total).`;
-      return;
     }
   });
 
@@ -555,7 +559,6 @@ export function validateSubscriptionSlots(
     if (completeCalls > callsPerWeek) {
       weeklyCallsValid = false;
       weeklyCallsError = `The ${formatWeekKey(wk)} has ${completeCalls} complete calls. Maximum ${callsPerWeek} calls per week allowed.`;
-      return;
     }
   });
 
@@ -581,7 +584,246 @@ export function validateSubscriptionSlots(
 }
 
 /**
- * Validate slots based on event-specific rules
+ * Basic count bounds: max hard error, min soft warning. Subscriptions count
+ * complete calls; other types count raw slots.
+ */
+function validateSelectionCounts(
+  slots: TimeSlot[],
+  eventType: ClientEventType,
+  limits: SlotLimits,
+  result: ValidationResult,
+  timeZone?: string,
+): void {
+  if (eventType === "subscription") {
+    const completeCalls = countCompleteCallsInMap(
+      groupSlotsByDay(slots, timeZone),
+      limits.slotsPerSession,
+    );
+
+    if (completeCalls > limits.maxSlots) {
+      result.isValid = false;
+      result.errors.push(
+        `Maximum ${limits.maxSlots} calls allowed for this subscription (${completeCalls} complete calls selected)`,
+      );
+    }
+
+    const requiredCalls = Math.ceil(limits.minSlots / limits.slotsPerSession);
+    if (completeCalls < requiredCalls) {
+      result.warnings.push(
+        `Need ${requiredCalls - completeCalls} more calls for this subscription (${completeCalls}/${requiredCalls} complete calls selected)`,
+      );
+    }
+    return;
+  }
+
+  if (slots.length > limits.maxSlots) {
+    result.isValid = false;
+    result.errors.push(
+      `Maximum ${limits.maxSlots} slots allowed for this ${eventType} (${slots.length} selected)`,
+    );
+  }
+
+  if (slots.length < limits.minSlots) {
+    result.warnings.push(
+      `Need ${limits.minSlots - slots.length} more slots for this ${eventType} (${slots.length}/${limits.minSlots} selected)`,
+    );
+  }
+}
+
+function validateWebinarSelection(
+  slots: TimeSlot[],
+  limits: SlotLimits,
+  result: ValidationResult,
+): void {
+  result.consecutiveSlotsValid = validateConsecutiveSlots(slots);
+
+  // Only enforce error if user has selected all required slots
+  if (slots.length >= limits.minSlots && !result.consecutiveSlotsValid) {
+    result.isValid = false;
+    result.errors.push("Webinar slots must be consecutive");
+  } else if (!result.consecutiveSlotsValid && slots.length > 1) {
+    result.warnings.push("Select consecutive slots to complete the webinar");
+  }
+}
+
+function validateClassSelection(
+  slots: TimeSlot[],
+  constraints: EventConstraints,
+  limits: SlotLimits,
+  options: SlotValidationOptions,
+  result: ValidationResult,
+  timeZone?: string,
+): void {
+  const slotsPerSession = limits.slotsPerSession;
+  result.dailyHoursValid = validateDailyHours(
+    slots,
+    constraints.maxHoursPerDay!,
+    timeZone,
+  );
+
+  // Days with a slot count that isn't a multiple of slotsPerSession are
+  // in-progress; informational only — interactive blocking happens in
+  // toggleSlot so users can start a class by selecting the first slot.
+  const byDay = groupSlotsByDay(slots, timeZone);
+  const hasInProgress = Array.from(byDay.values()).some(
+    (count) => count.length % slotsPerSession !== 0,
+  );
+
+  const sessionsPerDayOk = validateClassSessionDistributionByCount(
+    slots,
+    constraints.maxSessionsPerDay || 2,
+    slotsPerSession,
+    timeZone,
+  );
+
+  const weeklyOk = validateWeeklySessionsDistribution(
+    slots,
+    options.callsPerWeek || 1,
+    slotsPerSession,
+    timeZone,
+  );
+
+  result.sessionDistributionValid = sessionsPerDayOk;
+  result.weeklyDistributionValid = weeklyOk;
+
+  if (!result.dailyHoursValid) {
+    result.isValid = false;
+    result.errors.push(
+      `Maximum ${constraints.maxHoursPerDay} hours per day exceeded`,
+    );
+  }
+  if (hasInProgress) {
+    result.warnings.push(
+      `A class is in progress. Select the adjacent slot to complete it.`,
+    );
+  }
+  if (!sessionsPerDayOk) {
+    result.isValid = false;
+    result.errors.push(
+      `Maximum ${constraints.maxSessionsPerDay || 2} classes per day exceeded`,
+    );
+  }
+  if (!weeklyOk) {
+    result.isValid = false;
+    result.errors.push(
+      `Maximum ${options.callsPerWeek || 1} classes per week exceeded`,
+    );
+  }
+}
+
+function validateSubscriptionSelection(
+  slots: TimeSlot[],
+  options: SlotValidationOptions,
+  limits: SlotLimits,
+  result: ValidationResult,
+): void {
+  const subscriptionValidation = validateSubscriptionSlots(
+    slots,
+    options,
+    limits,
+  );
+  result.dailyCallsValid = subscriptionValidation.dailyCallsValid;
+  result.totalCallsValid = subscriptionValidation.totalCallsValid;
+  result.weeklyDistributionValid = subscriptionValidation.weeklyCallsValid;
+
+  if (!result.dailyCallsValid) {
+    result.isValid = false;
+    result.errors.push(
+      subscriptionValidation.dailyCallsError || "Daily call limit exceeded",
+    );
+  }
+
+  if (!result.totalCallsValid) {
+    result.isValid = false;
+    result.errors.push(
+      subscriptionValidation.totalCallsError || "Total call limit exceeded",
+    );
+  }
+
+  if (!result.weeklyDistributionValid) {
+    result.isValid = false;
+    result.errors.push(
+      subscriptionValidation.weeklyCallsError || "Weekly call limit exceeded",
+    );
+  }
+
+  if (subscriptionValidation.incompleteCallWarning) {
+    result.warnings.push(subscriptionValidation.incompleteCallWarning);
+  }
+}
+
+function validateConsultationSelection(
+  slots: TimeSlot[],
+  result: ValidationResult,
+  timeZone?: string,
+): void {
+  // Same scheduling-timezone day first (matches the server's same-day rule),
+  // then consecutiveness.
+  if (slots.length <= 1) return;
+
+  const firstSlotDay = dayKey(slots[0].startTime, timeZone);
+  const allSameDay = slots.every(
+    (slot) => dayKey(slot.startTime, timeZone) === firstSlotDay,
+  );
+  if (!allSameDay) {
+    result.isValid = false;
+    result.errors.push(
+      "Consultation is a one-day event - all slots must be on the same day",
+    );
+  }
+
+  result.consecutiveSlotsValid = validateConsecutiveSlots(slots);
+  if (!result.consecutiveSlotsValid) {
+    result.isValid = false;
+    result.errors.push(
+      "Consultation slots must be consecutive within the same day",
+    );
+  }
+}
+
+/** Soft weekly-spread warnings for recurring events. */
+function warnOnWeeklyDistribution(
+  slots: TimeSlot[],
+  eventType: ClientEventType,
+  limits: SlotLimits,
+  options: SlotValidationOptions,
+  result: ValidationResult,
+  timeZone?: string,
+): void {
+  if (!options.callsPerWeek || slots.length === 0) return;
+
+  if (eventType === "subscription") {
+    result.weeklyDistributionValid = validateWeeklyDistribution(
+      slots,
+      options.callsPerWeek,
+      limits.slotsPerSession,
+      timeZone,
+    );
+    if (!result.weeklyDistributionValid) {
+      result.warnings.push(
+        `Consider distributing calls more evenly across weeks`,
+      );
+    }
+  } else if (eventType === "class") {
+    const ok = validateWeeklySessionsDistribution(
+      slots,
+      options.callsPerWeek,
+      limits.slotsPerSession,
+      timeZone,
+    );
+    if (!ok) {
+      result.weeklyDistributionValid = false;
+      result.warnings.push(
+        `Consider distributing classes more evenly across weeks`,
+      );
+    }
+  }
+}
+
+/**
+ * Validate slots based on event-specific rules. Thin dispatcher — the rules
+ * live in the per-event validators above (Sonar complexity cap, and the
+ * seam for the #997 server-side migration).
  */
 export function validateEventSlots(
   slots: TimeSlot[],
@@ -603,217 +845,24 @@ export function validateEventSlots(
 
   const timeZone = options.schedulingTimezone;
 
-  // Basic slot count validation
-  if (eventType === "subscription") {
-    // Subscriptions validate on complete call count, not slot count
-    const slotsByDay = groupSlotsByDay(slots, timeZone);
-    const completeCalls = countCompleteCallsInMap(
-      slotsByDay,
-      limits.slotsPerSession,
-    );
+  validateSelectionCounts(slots, eventType, limits, result, timeZone);
 
-    if (completeCalls > limits.maxSlots) {
-      result.isValid = false;
-      result.errors.push(
-        `Maximum ${limits.maxSlots} calls allowed for this subscription (${completeCalls} complete calls selected)`,
-      );
-    }
-
-    const requiredCalls = Math.ceil(limits.minSlots / limits.slotsPerSession);
-
-    if (completeCalls < requiredCalls) {
-      result.warnings.push(
-        `Need ${requiredCalls - completeCalls} more calls for this subscription (${completeCalls}/${requiredCalls} complete calls selected)`,
-      );
-    }
-  } else {
-    if (slots.length > limits.maxSlots) {
-      result.isValid = false;
-      result.errors.push(
-        `Maximum ${limits.maxSlots} slots allowed for this ${eventType} (${slots.length} selected)`,
-      );
-    }
-
-    if (slots.length < limits.minSlots) {
-      result.warnings.push(
-        `Need ${limits.minSlots - slots.length} more slots for this ${eventType} (${slots.length}/${limits.minSlots} selected)`,
-      );
-    }
-  }
-
-  // Event-specific validation
   switch (eventType) {
     case "webinar":
-      result.consecutiveSlotsValid = validateConsecutiveSlots(slots);
-
-      // Only enforce error if user has selected all required slots
-      if (slots.length >= limits.minSlots && !result.consecutiveSlotsValid) {
-        result.isValid = false;
-        result.errors.push("Webinar slots must be consecutive");
-      } else if (!result.consecutiveSlotsValid && slots.length > 1) {
-        result.warnings.push(
-          "Select consecutive slots to complete the webinar",
-        );
-      }
+      validateWebinarSelection(slots, limits, result);
       break;
-
-    case "class": {
-      const slotsPerSession = limits.slotsPerSession;
-      result.dailyHoursValid = validateDailyHours(
-        slots,
-        constraints.maxHoursPerDay!,
-        timeZone,
-      );
-
-      // Days with a slot count that isn't a multiple of slotsPerSession are
-      // in-progress; informational only — interactive blocking happens in
-      // toggleSlot so users can start a class by selecting the first slot.
-      const byDay = groupSlotsByDay(slots, timeZone);
-      const hasInProgress = Array.from(byDay.values()).some(
-        (count) => count.length % slotsPerSession !== 0,
-      );
-
-      const sessionsPerDayOk = validateClassSessionDistributionByCount(
-        slots,
-        constraints.maxSessionsPerDay || 2,
-        slotsPerSession,
-        timeZone,
-      );
-
-      const weeklyOk = validateWeeklySessionsDistribution(
-        slots,
-        options.callsPerWeek || 1,
-        slotsPerSession,
-        timeZone,
-      );
-
-      result.sessionDistributionValid = sessionsPerDayOk;
-      result.weeklyDistributionValid = weeklyOk;
-
-      if (!result.dailyHoursValid) {
-        result.isValid = false;
-        result.errors.push(
-          `Maximum ${constraints.maxHoursPerDay} hours per day exceeded`,
-        );
-      }
-      if (hasInProgress) {
-        result.warnings.push(
-          `A class is in progress. Select the adjacent slot to complete it.`,
-        );
-      }
-      if (!sessionsPerDayOk) {
-        result.isValid = false;
-        result.errors.push(
-          `Maximum ${constraints.maxSessionsPerDay || 2} classes per day exceeded`,
-        );
-      }
-      if (!weeklyOk) {
-        result.isValid = false;
-        result.errors.push(
-          `Maximum ${options.callsPerWeek || 1} classes per week exceeded`,
-        );
-      }
+    case "class":
+      validateClassSelection(slots, constraints, limits, options, result, timeZone);
       break;
-    }
-
-    case "subscription": {
-      const subscriptionValidation = validateSubscriptionSlots(
-        slots,
-        options,
-        limits,
-      );
-      result.dailyCallsValid = subscriptionValidation.dailyCallsValid;
-      result.totalCallsValid = subscriptionValidation.totalCallsValid;
-      result.weeklyDistributionValid = subscriptionValidation.weeklyCallsValid;
-
-      if (!result.dailyCallsValid) {
-        result.isValid = false;
-        result.errors.push(
-          subscriptionValidation.dailyCallsError || "Daily call limit exceeded",
-        );
-      }
-
-      if (!result.totalCallsValid) {
-        result.isValid = false;
-        result.errors.push(
-          subscriptionValidation.totalCallsError || "Total call limit exceeded",
-        );
-      }
-
-      if (!result.weeklyDistributionValid) {
-        result.isValid = false;
-        result.errors.push(
-          subscriptionValidation.weeklyCallsError ||
-            "Weekly call limit exceeded",
-        );
-      }
-
-      if (subscriptionValidation.incompleteCallWarning) {
-        result.warnings.push(subscriptionValidation.incompleteCallWarning);
-      }
+    case "subscription":
+      validateSubscriptionSelection(slots, options, limits, result);
       break;
-    }
-
     case "consultation":
-      // Same scheduling-timezone day first (matches the server's same-day
-      // rule), then consecutiveness.
-      if (slots.length > 1) {
-        const firstSlotDay = dayKey(slots[0].startTime, timeZone);
-        const allSameDay = slots.every(
-          (slot) => dayKey(slot.startTime, timeZone) === firstSlotDay,
-        );
-        if (!allSameDay) {
-          result.isValid = false;
-          result.errors.push(
-            "Consultation is a one-day event - all slots must be on the same day",
-          );
-        }
-
-        result.consecutiveSlotsValid = validateConsecutiveSlots(slots);
-        if (!result.consecutiveSlotsValid) {
-          result.isValid = false;
-          result.errors.push(
-            "Consultation slots must be consecutive within the same day",
-          );
-        }
-      }
+      validateConsultationSelection(slots, result, timeZone);
       break;
   }
 
-  // Weekly distribution soft check for subscriptions
-  if (
-    eventType === "subscription" &&
-    options.callsPerWeek &&
-    slots.length > 0
-  ) {
-    result.weeklyDistributionValid = validateWeeklyDistribution(
-      slots,
-      options.callsPerWeek,
-      limits.slotsPerSession,
-      timeZone,
-    );
-    if (!result.weeklyDistributionValid) {
-      result.warnings.push(
-        `Consider distributing calls more evenly across weeks`,
-      );
-    }
-  }
-
-  if (eventType === "class" && options.callsPerWeek && slots.length > 0) {
-    const slotsPerSession = limits.slotsPerSession;
-    const ok = validateWeeklySessionsDistribution(
-      slots,
-      options.callsPerWeek,
-      slotsPerSession,
-      timeZone,
-    );
-    if (!ok) {
-      result.weeklyDistributionValid = false;
-      result.warnings.push(
-        `Consider distributing classes more evenly across weeks`,
-      );
-    }
-  }
+  warnOnWeeklyDistribution(slots, eventType, limits, options, result, timeZone);
 
   return result;
 }

@@ -264,10 +264,9 @@ export function enqueueToast(
 ): AllocationToast[] {
   const last = queue[queue.length - 1];
   if (
-    last &&
-    last.title === message.title &&
-    last.description === message.description &&
-    last.variant === message.variant
+    last?.title === message.title &&
+    last?.description === message.description &&
+    last?.variant === message.variant
   ) {
     return queue;
   }
@@ -291,17 +290,26 @@ export function computeAttemptFingerprint(
 ): string {
   const slotPart = slots
     .map((s) => s.startTime.toISOString())
-    .sort()
+    // Explicit code-unit compare — deterministic for ISO-8601 strings on
+    // every runtime locale.
+    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
     .join(",");
   return `${mode}|${eventId}|${slotPart}`;
 }
+
+let attemptKeyCounter = 0;
 
 function generateIdempotencyKey(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
     return crypto.randomUUID();
   }
-  // Non-secure fallback for very old runtimes; uniqueness is all we need.
-  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  if (typeof crypto !== "undefined" && "getRandomValues" in crypto) {
+    const bytes = crypto.getRandomValues(new Uint8Array(16));
+    return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  }
+  // Ancient-runtime fallback: uniqueness (not secrecy) is all the key needs.
+  attemptKeyCounter += 1;
+  return `${Date.now()}-${attemptKeyCounter}`;
 }
 
 /**
@@ -312,7 +320,7 @@ export function resolveAttemptKey(
   previous: AllocationAttemptKey | null,
   fingerprint: string,
 ): AllocationAttemptKey {
-  if (previous && previous.fingerprint === fingerprint) {
+  if (previous?.fingerprint === fingerprint) {
     return previous;
   }
   return { fingerprint, key: generateIdempotencyKey() };

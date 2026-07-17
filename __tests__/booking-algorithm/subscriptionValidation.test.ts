@@ -425,7 +425,13 @@ describe("Weekly info generation", () => {
 
     const result = await service.validateSubscriptionSlots("sub-1", []);
     expect(result.weeklyInfo.length).toBe(1);
-    expect(result.weeklyInfo[0].weekStart.getDay()).toBe(0); // Sunday
+    // weekStart is Sunday 00:00 in the SCHEDULING timezone (ADR B9) — assert
+    // via Intl, not local getDay(), so the test passes on any CI timezone.
+    const weekdayInSchedulingTz = new Intl.DateTimeFormat("en-US", {
+      timeZone: SlotCalculationService.DEFAULT_SCHEDULING_TIMEZONE,
+      weekday: "short",
+    }).format(result.weeklyInfo[0].weekStart);
+    expect(weekdayInSchedulingTz).toBe("Sun");
     expect(result.weeklyInfo[0].maxCalls).toBe(1);
   });
 

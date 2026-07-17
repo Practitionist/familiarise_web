@@ -23,7 +23,7 @@ import { toast } from "@/components/ui/use-toast";
 import { AppointmentsType, AppointmentStatus } from "@prisma/client";
 import { AlertTriangle, CheckCircle2, RefreshCw } from "lucide-react";
 import { useParams } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { RequestedSlotsDialog } from "./components/RequestedSlotsDialog";
 import { PaymentRequiredBadge } from "./components/PaymentRequiredBadge";
 import { SafeUnifiedCalendar } from "../shared/components/SafeUnifiedCalendar";
@@ -372,9 +372,8 @@ export function RequestSlotAllocationTab({
 
   // Idempotency key for the requested-times flow; a retry of the same request
   // reuses the key so the server replays instead of double-booking (#837).
-  const [attemptKey, setAttemptKey] = useState<AllocationAttemptKey | null>(
-    null,
-  );
+  // A ref, not state — two clicks before a rerender must see the same key.
+  const attemptKeyRef = useRef<AllocationAttemptKey | null>(null);
 
   /** Shared 409 handling: another session already allocated this request. */
   const handleConflict = useCallback(
@@ -403,14 +402,14 @@ export function RequestSlotAllocationTab({
           : `/api/bookings/consultations/${selectedRequestForDialog.id}/allocate`;
 
       const attempt = resolveAttemptKey(
-        attemptKey,
+        attemptKeyRef.current,
         computeAttemptFingerprint(
           "requested",
           selectedRequestForDialog.id,
           [],
         ),
       );
-      setAttemptKey(attempt);
+      attemptKeyRef.current = attempt;
 
       const response = await fetch(endpoint, {
         method: "PATCH",

@@ -24,9 +24,16 @@ export interface AllocationRequest {
   initialAllocation?: boolean;
 }
 
+/** What the allocate endpoints actually return in `data`: the created (or
+ * approved) Appointment rows. Kept loose — callers only read identity. */
+export interface AllocatedAppointmentDto {
+  id: string;
+  [key: string]: unknown;
+}
+
 export interface AllocationResponse {
   success: boolean;
-  data?: Record<string, RawAvailabilityApiSlot[]>;
+  data?: AllocatedAppointmentDto[];
   error?: string;
   /** HTTP status of the failed response — 409 means "allocated elsewhere". */
   httpStatus?: number;

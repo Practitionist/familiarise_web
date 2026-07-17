@@ -1057,10 +1057,13 @@ export class SlotValidationService {
       );
       existingPerDay.set(dayKey, (existingPerDay.get(dayKey) || 0) + 1);
     }
+    // Sort a copy first — stepping by slotsPerSession assumes session-ordered
+    // input, and requested-mode slots come from the DB unordered.
+    const orderedSlots = [...slots].sort((a, b) => a.getTime() - b.getTime());
     const proposedPerDay = new Map<string, number>();
-    for (let i = 0; i < slots.length; i += slotsPerSession) {
+    for (let i = 0; i < orderedSlots.length; i += slotsPerSession) {
       const dayKey = SlotCalculationService.dayKey(
-        slots[i],
+        orderedSlots[i],
         schedulingTimezone,
       );
       proposedPerDay.set(dayKey, (proposedPerDay.get(dayKey) || 0) + 1);

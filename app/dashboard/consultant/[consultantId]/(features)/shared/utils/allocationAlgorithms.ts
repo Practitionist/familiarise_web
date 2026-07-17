@@ -191,6 +191,24 @@ export class AllocationAlgorithms {
             error: distributionValidation.errorMessage,
           };
         }
+
+        // Every scheduling-timezone day must hold complete sessions only —
+        // scattered single atoms can reach the required TOTAL while forming
+        // no complete session, which the server then rejects.
+        const byDay = SlotCalculationService.groupSlotsByDay(
+          selectedSlots,
+          options.schedulingTimezone ??
+            SlotCalculationService.DEFAULT_SCHEDULING_TIMEZONE,
+        );
+        for (const [, daySlots] of Array.from(byDay)) {
+          if (daySlots.length % slotsPerSession !== 0) {
+            return {
+              success: false,
+              selectedSlots: [],
+              error: `Each session needs ${slotsPerSession} consecutive slots on one day; an incomplete session is selected.`,
+            };
+          }
+        }
       }
 
       // Call the allocation service
