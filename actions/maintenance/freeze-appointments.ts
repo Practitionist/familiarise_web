@@ -370,7 +370,11 @@ export async function freezeAppointments(
 
   // Issue refunds AFTER the transaction commits.
   // The Payment records still exist (appointments with payments were not deleted).
-  // On gateway failure a PENDING placeholder is created for the reconcile cron to retry.
+  // On gateway failure a PENDING placeholder is created for the
+  // reconcile-pending-refunds cron, which RECONCILES (matches an existing
+  // gateway refund by amount + time window) or marks the row FAILED after
+  // 24h and notifies the payer (#779) — it does NOT re-initiate the gateway
+  // call, so a throw here means no money moved until an operator retries.
   for (const payment of pendingRefunds) {
     try {
       const result = await createRefund({
