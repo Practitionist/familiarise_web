@@ -43,6 +43,7 @@ describe("#829 — cleanup delete re-states the tentative + unpaid guards", () =
         id: "slot-1",
         appointmentId: "appt-1",
         createdAt: new Date("2026-05-01T00:00:00Z"),
+        updatedAt: new Date("2026-05-01T00:00:00Z"),
         startsAt: new Date("2026-05-02T10:00:00Z"),
         endsAt: new Date("2026-05-02T11:00:00Z"),
         appointment: { payment: [], consultation: null, subscription: null },

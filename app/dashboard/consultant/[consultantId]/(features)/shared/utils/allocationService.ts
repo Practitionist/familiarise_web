@@ -232,10 +232,11 @@ export class AllocationService {
   ): Promise<AllocationResponse> {
     const slotStrings = slots.map((slot) => slot.startTime.toISOString());
 
-    // Build the request object consistently for all event types
+    // Build the request object consistently for all event types. Auto mode
+    // omits `slots` entirely — the server discovers them (#997 Phase 1).
     const request: AllocationRequest = {
       isAuto: allocationOptions?.isAuto || false,
-      slots: slotStrings,
+      slots: allocationOptions?.isAuto ? undefined : slotStrings,
       useRequestedSlots: allocationOptions?.useRequestedSlots,
       initialAllocation: allocationOptions?.initialAllocation,
     };

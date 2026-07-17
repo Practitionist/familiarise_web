@@ -1,5 +1,9 @@
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
+import {
+  PROFILE_WITH_USER_SELECT,
+  APPOINTMENT_LIST_SELECT,
+} from "@/lib/booking/list-selects";
 import { Prisma, AppointmentStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { addMonths } from "date-fns";
@@ -42,11 +46,10 @@ export async function GET(request: NextRequest) {
     // ownership filter and serving every consultant's subscriptions.
     if (!isPrivileged(session.user.role)) {
       if (session.user.role === "CONSULTANT") {
-        // Consultants can only see their own subscriptions
+        // Consultants can only see their own subscriptions. Filter on the
+        // plan's scalar FK (indexed) instead of joining consultantProfile.
         whereClause.subscriptionPlan = {
-          consultantProfile: {
-            id: session.user.consultantProfileId ?? "__none__",
-          },
+          consultantProfileId: session.user.consultantProfileId ?? "__none__",
         };
       } else if (session.user.role === "CONSULTEE") {
         // Consultees can only see their own subscriptions
@@ -110,44 +113,37 @@ export async function GET(request: NextRequest) {
       // kind === "all": no additional filter
     }
 
+    // #997 Phase 0 — narrow SELECTs replace the old include tree. The deep
+    // includes joined consultantProfile.domain/subDomains/tags (M2M) and a
+    // per-slot user M2M that no list consumer reads, and over-shared user
+    // PII (email/role/phone) against the #946 allowlist direction. Field
+    // superset verified across RequestSlotAllocationTab, the Mini tab,
+    // fetchApprovals, and useEvents consumers.
     const [subscriptions, total] = await Promise.all([
       prisma.subscription.findMany({
         where: whereClause,
-        include: {
+        select: {
+          id: true,
+          status: true,
+          requestedAt: true,
+          bookingSource: true,
+          schedulingPeriodStartsAt: true,
+          schedulingPeriodEndsAt: true,
+          schedulingTimezone: true,
           subscriptionPlan: {
-            include: {
-              consultantProfile: {
-                include: {
-                  user: { select: { id: true, name: true, email: true, image: true, role: true, phone: true } },
-                  domain: true,
-                  subDomains: true,
-                  tags: true,
-                },
-              },
+            select: {
+              id: true,
+              title: true,
+              callsPerWeek: true,
+              durationInMonths: true,
+              sessionDurationInHours: true,
+              totalSessions: true,
+              consultantProfileId: true,
+              consultantProfile: PROFILE_WITH_USER_SELECT,
             },
           },
-          requestedBy: {
-            include: {
-              user: {
-                select: {
-                  id: true,
-                  name: true,
-                  email: true,
-                  image: true,
-                },
-              },
-            },
-          },
-          appointments: {
-            include: {
-              slotsOfAppointment: {
-                include: {
-                  user: { select: { id: true, name: true, email: true, image: true, role: true, phone: true } },
-                },
-              },
-              payment: { select: { id: true, paymentStatus: true, amount: true, currency: true } },
-            },
-          },
+          requestedBy: PROFILE_WITH_USER_SELECT,
+          appointments: APPOINTMENT_LIST_SELECT,
         },
         orderBy: {
           requestedAt: "desc",

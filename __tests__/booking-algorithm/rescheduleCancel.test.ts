@@ -1170,6 +1170,7 @@ describe("cleanupTentativeSlots", () => {
         endsAt: new Date("2025-01-01T10:30:00.000Z"),
         isTentative: true,
         createdAt: new Date("2024-12-01T00:00:00.000Z"),
+        updatedAt: new Date("2024-12-01T00:00:00.000Z"),
         appointment: {
           payment: [],
           consultation: {
@@ -1205,6 +1206,7 @@ describe("cleanupTentativeSlots", () => {
         endsAt: new Date(),
         isTentative: true,
         createdAt: new Date("2024-12-01"),
+        updatedAt: new Date("2024-12-01"),
         appointment: { payment: [], consultation: null, subscription: null },
       },
       {
@@ -1214,6 +1216,7 @@ describe("cleanupTentativeSlots", () => {
         endsAt: new Date(),
         isTentative: true,
         createdAt: new Date("2024-12-01"),
+        updatedAt: new Date("2024-12-01"),
         appointment: { payment: [], consultation: null, subscription: null },
       },
       {
@@ -1223,6 +1226,7 @@ describe("cleanupTentativeSlots", () => {
         endsAt: new Date(),
         isTentative: true,
         createdAt: new Date("2024-12-01"),
+        updatedAt: new Date("2024-12-01"),
         appointment: { payment: [], consultation: null, subscription: null },
       },
     ];
