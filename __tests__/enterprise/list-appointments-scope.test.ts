@@ -3,39 +3,42 @@
  */
 
 /**
- * #674 — personal-scope appointment query. Consultee arms stay scoped to
- * non-org bookings (sponsored sessions are org business); consultant arms cover
- * every session the user DELIVERS, sponsored or not, since an independent
- * consultant / host EXPERT has no org-scope access to see them otherwise.
+ * #org-appts — personal-scope appointment query. The personal dashboards are now
+ * purely B2C on BOTH sides: `organizationId: null` is pinned at the top level, so
+ * every org-hosted session (delivered OR attended) is excluded here and lives in
+ * the org dashboard under `orgMember` scope. Retires the earlier #674 carve-out
+ * that force-showed delivered org sessions in the personal list.
  */
 
 import { buildWhere } from "@/lib/api/scope/list-appointments";
 
-describe("buildWhere — personal scope (#674)", () => {
+describe("buildWhere — personal scope (#org-appts)", () => {
   const where = buildWhere({
     scope: { kind: "personal" },
     userId: "u1",
   }) as {
+    organizationId: unknown;
     OR: Array<Record<string, unknown>>;
   };
 
-  it("has consultee arms constrained to organizationId: null", () => {
-    const consulteeArms = where.OR.filter(
-      (a) => "organizationId" in a && a.organizationId === null,
-    );
-    // consultation / subscription / trial (consultee side)
-    expect(consulteeArms).toHaveLength(3);
+  it("pins organizationId: null at the top level (purely B2C)", () => {
+    expect(where.organizationId).toBeNull();
   });
 
-  it("has consultant arms NOT constrained by organizationId (sponsored visible)", () => {
-    const consultantArms = where.OR.filter((a) => !("organizationId" in a));
-    // consultation-plan / subscription-plan / trial / webinar-plan / class-plan
-    expect(consultantArms).toHaveLength(5);
-    // each keys off the plan's consultantProfile userId
-    const hasConsultantUser = consultantArms.some((a) =>
+  it("covers both sides — 3 consultee + 5 consultant arms, none re-pinning org", () => {
+    // consultee: consultation / subscription / trial ; consultant: consultation-
+    // plan / subscription-plan / trial / webinar-plan / class-plan
+    expect(where.OR).toHaveLength(8);
+    // The org constraint is top-level, so no arm carries its own organizationId.
+    expect(where.OR.every((a) => !("organizationId" in a))).toBe(true);
+    const hasConsultantUser = where.OR.some((a) =>
       JSON.stringify(a).includes('"consultantProfile":{"userId":"u1"}'),
     );
     expect(hasConsultantUser).toBe(true);
+    const hasConsulteeUser = where.OR.some((a) =>
+      JSON.stringify(a).includes('"requestedBy":{"userId":"u1"}'),
+    );
+    expect(hasConsulteeUser).toBe(true);
   });
 
   it("org scope filters by orgId with no user OR", () => {

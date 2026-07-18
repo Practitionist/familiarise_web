@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import {
   useCall,
+  useCallStateHooks,
 } from "@stream-io/video-react-sdk";
 import { Button } from "@/components/ui/button";
 import { useRouter } from "next/navigation";
@@ -11,6 +12,8 @@ import { Loader2 } from "lucide-react";
 
 const EndCallButton = () => {
   const call = useCall();
+  const { useCallCustomData } = useCallStateHooks();
+  const custom = useCallCustomData();
   const router = useRouter();
   const { data: session } = useSession();
   const [isPressed, setIsPressed] = useState(false);
@@ -113,11 +116,18 @@ const EndCallButton = () => {
       "useStreamCall must be used within a StreamCall component.",
     );
 
-  // Only consultants (hosts) should be able to end the call for everyone
-  // Use session role instead of Stream's createdBy, as consultee might join first
-  const isConsultant = session?.user?.role === "CONSULTANT";
+  // Only the host (delivering side) may end the call for everyone.
+  // #org-appts — derive the host from WHICH SIDE of THIS appointment the viewer
+  // is on (the consultantUserId stamped into the call), not the singular
+  // UserRole: a dual-profile user booked as a learner into someone else's
+  // session has role CONSULTANT but is the guest here. Fall back to the role
+  // check for legacy calls created before the id was stamped.
+  const consultantUserId = custom?.consultantUserId as string | undefined;
+  const isHost = consultantUserId
+    ? session?.user?.id === consultantUserId
+    : session?.user?.role === "CONSULTANT";
 
-  if (!isConsultant) return null;
+  if (!isHost) return null;
 
   return (
     <Button
