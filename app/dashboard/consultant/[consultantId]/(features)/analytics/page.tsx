@@ -26,9 +26,12 @@ export default async function AnalyticsPage({ params }: Readonly<PageProps>) {
     queryClient.prefetchQuery({
       queryKey: ["consultant-earnings-analytics", consultantId],
       queryFn: () =>
+        // #org-appts (#1024) — personal dashboard = B2C-only VIEW.
+        // Explicit to match the client's default (unset orgScope).
         buildConsultantEarningsPayload(consultantId, {
           limit: 1,
           includeMonthly: true,
+          organizationId: null,
         }),
     }),
     queryClient.prefetchQuery({
