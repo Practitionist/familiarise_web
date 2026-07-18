@@ -1,5 +1,5 @@
 /**
- * Data layer for /dashboard/organization/[orgId]/my-arrangement (EXPERT per-org
+ * Data layer for /dashboard/organization/[orgId]/compensation (EXPERT per-org
  * view). Server-only reads extracted out of the RSC page (repo convention:
  * lib/data/* for RSC read-fetchers) so the page is a thin renderer and the
  * queries are reusable + testable. #754 / #777 §D.

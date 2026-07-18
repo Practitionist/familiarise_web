@@ -1,5 +1,5 @@
 /**
- * /dashboard/organization/[orgId]/my-arrangement — EXPERT's per-org view.
+ * /dashboard/organization/[orgId]/compensation — EXPERT's per-org view.
  *
  * The org's RateCard governs WHO gets paid WHAT for sessions hosted via
  * this org's brand. An EXPERT must be able to confirm:
@@ -88,7 +88,7 @@ export default async function MyArrangementPage({
   return (
     <div className="space-y-6">
       <header>
-        <h1 className="text-2xl font-semibold">My Arrangement</h1>
+        <h1 className="text-2xl font-semibold">Compensation</h1>
         <p className="text-sm text-muted-foreground mt-1">
           How {access.org.name} compensates you for sessions hosted under their
           brand.

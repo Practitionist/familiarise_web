@@ -195,31 +195,23 @@ function ConsulteeLayoutInner({
     placeholderData: (previousData) => previousData,
   });
 
-  // Check if user has access to this consultee dashboard:
-  // - ADMIN: Can access ANY dashboard
-  // - STAFF: Can view consultant and consultee dashboards
-  // - CONSULTEE: Can only access their OWN dashboard
-  // - CONSULTANT: Cannot access consultee dashboards (they have their own)
+  // Capability-based (#org-appts): access is owning THIS consulteeProfile, NOT
+  // "role !== CONSULTANT". A marketplace CONSULTANT sponsored by an org as a
+  // learner owns a consulteeProfile and must reach their consumer surfaces —
+  // the old `role !== "CONSULTANT"` lock barred them from their own dashboard.
+  // ADMIN/STAFF may inspect anyone's.
   const hasConsulteeAccess =
     userDetails &&
     (userDetails.role === "ADMIN" ||
       userDetails.role === "STAFF" ||
-      (userDetails.consulteeProfileId === consulteeId &&
-        userDetails.role !== "CONSULTANT"));
+      userDetails.consulteeProfileId === consulteeId);
 
-  // Redirect unauthorized users to their appropriate dashboard
+  // Redirect unauthorized users to their own dashboard (capability-routed).
   useEffect(() => {
     if (isLoadingUser || isSessionLoading || !userId) return;
 
     if (userDetails && !hasConsulteeAccess) {
       if (
-        userDetails.role === "CONSULTANT" &&
-        userDetails.consultantProfileId
-      ) {
-        router.replace(
-          `/dashboard/consultant/${userDetails.consultantProfileId}/home`,
-        );
-      } else if (
         userDetails.consulteeProfileId &&
         userDetails.consulteeProfileId !== consulteeId
       ) {
