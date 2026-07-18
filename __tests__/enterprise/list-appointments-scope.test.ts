@@ -54,11 +54,13 @@ describe("buildWhere — personal scope (#674)", () => {
     }) as { organizationId: string; OR: Array<Record<string, unknown>> };
     // Strictly this org's activity...
     expect(w.organizationId).toBe("org1");
-    // ...AND only the user's own — both consumed (booked) and delivered arms.
-    expect(w.OR).toHaveLength(8);
+    // ...AND only the user's own — consultation/subscription, both consumed
+    // (booked) and delivered arms. Trials are excluded (B2C, personal scope).
+    expect(w.OR).toHaveLength(6);
     const s = JSON.stringify(w.OR);
     expect(s).toContain('"requestedBy":{"userId":"u1"}'); // consultee side
     expect(s).toContain('"consultantProfile":{"userId":"u1"}'); // consultant side
+    expect(s).not.toContain("trialSession"); // trials stay B2C/personal
     // No arm re-pins organizationId: null (that's personal scope, not this).
     expect(w.OR.every((arm) => !("organizationId" in arm))).toBe(true);
   });

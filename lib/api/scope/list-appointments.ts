@@ -91,20 +91,24 @@ export function buildWhere(
 
   if (params.scope.kind === "orgMember") {
     // #org-appts — ONE member's own appointments WITHIN this org: sessions they
-    // booked (as a learner) OR deliver (as an expert). Same participation arms
-    // as personal scope, but hoisting `organizationId: orgId` to the top so it
-    // is strictly this org's activity. Distinct from `org` (all-org, MANAGER+).
+    // booked (as a learner) OR deliver (as an expert). Hoists `organizationId:
+    // orgId` so it is strictly this org's activity. Distinct from `org`
+    // (all-org, MANAGER+).
+    //
+    // Trials are intentionally EXCLUDED: a trial is a B2C acquisition session
+    // (org-tagged only for conversion analytics, never org-sponsored), so it
+    // belongs in the member's PERSONAL appointments, not the org view.
     const uid = params.scope.userId;
     return {
       ...base,
       organizationId: params.scope.orgId,
       OR: [
+        // Consumed as a learner (org-sponsored bookings).
         { consultation: { requestedBy: { userId: uid } } },
         { subscription: { requestedBy: { userId: uid } } },
-        { trialSession: { consulteeProfile: { userId: uid } } },
+        // Delivered as an expert (owns the plan).
         { consultation: { consultationPlan: { consultantProfile: { userId: uid } } } },
         { subscription: { subscriptionPlan: { consultantProfile: { userId: uid } } } },
-        { trialSession: { consultantProfile: { userId: uid } } },
         { webinar: { webinarPlan: { consultantProfile: { userId: uid } } } },
         { class: { classPlan: { consultantProfile: { userId: uid } } } },
       ],
