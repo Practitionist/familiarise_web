@@ -34,7 +34,7 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    const { searchParams } = new URL(request.url);
+    const { searchParams } = request.nextUrl;
     const memberships = await prisma.membership.findMany({
       where: { userId: session.user.id, status: "ACTIVE" },
       select: { organizationId: true, status: true },
