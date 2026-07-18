@@ -47,10 +47,9 @@ export async function GET(req: NextRequest) {
     // Membership lookup is only needed to authorize a specific `orgId`
     // scope value; "mine"/"personal"/"all" never touch the membership
     // table.
-    const rawOrgScope = searchParams.get("orgScope");
+    const rawOrgScope = searchParams.get("orgScope")?.trim();
     const needsMemberships =
-      !!rawOrgScope &&
-      !["mine", "personal", "all"].includes(rawOrgScope.trim());
+      !!rawOrgScope && !["mine", "personal", "all"].includes(rawOrgScope);
     const callerMemberships = needsMemberships
       ? await prisma.membership.findMany({
           where: { userId: session.user.id, status: "ACTIVE" },
@@ -74,9 +73,10 @@ export async function GET(req: NextRequest) {
     const organizationId =
       scopeResolution.scope.kind === "personal"
         ? null
-        : scopeResolution.scope.kind === "org"
+        : scopeResolution.scope.kind === "org" ||
+            scopeResolution.scope.kind === "orgMember"
           ? scopeResolution.scope.orgId
-          : undefined; // "all" → no filter
+          : undefined; // "all" → no filter (org-data isolation for org/orgMember)
 
     const payload = await buildConsultantEarningsPayload(consultantProfile.id, {
       status: status || undefined,
