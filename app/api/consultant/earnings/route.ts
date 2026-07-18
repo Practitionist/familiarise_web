@@ -9,6 +9,7 @@ import prisma from "@/lib/prisma";
 import { EarningStatus } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
 import { buildConsultantEarningsPayload } from "@/lib/data/consultant-earnings-analytics";
+import { resolveOrgScope } from "@/lib/api/scope/parse";
 
 /**
  * GET /api/consultant/earnings
@@ -42,11 +43,47 @@ export async function GET(req: NextRequest) {
     // analytics page. Absent param = response unchanged.
     const includeMonthly = searchParams.get("includeMonthly") === "1";
 
+    // #org-appts (#1024) — personal Earnings view splits by org-ness.
+    // Membership lookup is only needed to authorize a specific `orgId`
+    // scope value; "mine"/"personal"/"all" never touch the membership
+    // table.
+    const rawOrgScope = searchParams.get("orgScope")?.trim();
+    const needsMemberships =
+      !!rawOrgScope && !["mine", "personal", "all"].includes(rawOrgScope);
+    const callerMemberships = needsMemberships
+      ? await prisma.membership.findMany({
+          where: { userId: session.user.id, status: "ACTIVE" },
+          select: { organizationId: true, status: true },
+        })
+      : [];
+    const scopeResolution = resolveOrgScope({
+      raw: rawOrgScope,
+      memberships: callerMemberships,
+      userRole: session.user.role,
+      // Self-scoped consultant endpoint — `?orgScope=all` just means
+      // "everything I earned, personal + every org I belong to".
+      allowAllForOwner: true,
+    });
+    if (!scopeResolution.ok) {
+      return NextResponse.json(
+        { error: scopeResolution.message, code: scopeResolution.code },
+        { status: scopeResolution.status },
+      );
+    }
+    const organizationId =
+      scopeResolution.scope.kind === "personal"
+        ? null
+        : scopeResolution.scope.kind === "org" ||
+            scopeResolution.scope.kind === "orgMember"
+          ? scopeResolution.scope.orgId
+          : undefined; // "all" → no filter (org-data isolation for org/orgMember)
+
     const payload = await buildConsultantEarningsPayload(consultantProfile.id, {
       status: status || undefined,
       limit,
       offset,
       includeMonthly,
+      organizationId,
     });
 
     return NextResponse.json(payload);

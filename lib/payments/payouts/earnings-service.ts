@@ -847,35 +847,67 @@ export async function releaseEarningsFromHold(): Promise<number> {
 }
 
 /**
- * Get consultant earnings summary
+ * Get consultant earnings summary.
+ *
+ * `organizationId` is an OPTIONAL view-scope filter (#org-appts #1024):
+ * omitted (`undefined`) = no filter, identical to pre-#1024 behavior, for
+ * any caller outside the earnings-view path. `null` scopes to personal
+ * (B2C) earnings; a string scopes to that org's earnings.
  */
 export async function getConsultantEarningsSummary(
   consultantProfileId: string,
+  organizationId?: string | null,
 ): Promise<EarningsSummary> {
+  const orgFilter =
+    organizationId !== undefined ? { payment: { organizationId } } : {};
   const [pending, ready, batched, paid, held, pendingTrust] =
     await Promise.all([
       prisma.consultantEarnings.aggregate({
-        where: { consultantProfileId, status: EarningStatus.PENDING },
+        where: {
+          consultantProfileId,
+          status: EarningStatus.PENDING,
+          ...orgFilter,
+        },
         _sum: { consultantSharePaise: true },
       }),
       prisma.consultantEarnings.aggregate({
-        where: { consultantProfileId, status: EarningStatus.READY },
+        where: {
+          consultantProfileId,
+          status: EarningStatus.READY,
+          ...orgFilter,
+        },
         _sum: { consultantSharePaise: true },
       }),
       prisma.consultantEarnings.aggregate({
-        where: { consultantProfileId, status: EarningStatus.BATCHED },
+        where: {
+          consultantProfileId,
+          status: EarningStatus.BATCHED,
+          ...orgFilter,
+        },
         _sum: { consultantSharePaise: true },
       }),
       prisma.consultantEarnings.aggregate({
-        where: { consultantProfileId, status: EarningStatus.PAID },
+        where: {
+          consultantProfileId,
+          status: EarningStatus.PAID,
+          ...orgFilter,
+        },
         _sum: { consultantSharePaise: true },
       }),
       prisma.consultantEarnings.aggregate({
-        where: { consultantProfileId, status: EarningStatus.HELD },
+        where: {
+          consultantProfileId,
+          status: EarningStatus.HELD,
+          ...orgFilter,
+        },
         _sum: { consultantSharePaise: true },
       }),
       prisma.consultantEarnings.aggregate({
-        where: { consultantProfileId, status: EarningStatus.PENDING_TRUST },
+        where: {
+          consultantProfileId,
+          status: EarningStatus.PENDING_TRUST,
+          ...orgFilter,
+        },
         _sum: { consultantSharePaise: true },
       }),
     ]);
@@ -908,7 +940,12 @@ export async function getConsultantEarningsSummary(
 }
 
 /**
- * Get consultant earnings with pagination and filters
+ * Get consultant earnings with pagination and filters.
+ *
+ * `organizationId` is an OPTIONAL view-scope filter (#org-appts #1024):
+ * omitted (`undefined`) = no filter, identical to pre-#1024 behavior, for
+ * any caller outside the earnings-view path. `null` scopes to personal
+ * (B2C) earnings; a string scopes to that org's earnings.
  */
 export async function getConsultantEarnings(
   consultantProfileId: string,
@@ -916,15 +953,19 @@ export async function getConsultantEarnings(
     status?: EarningStatus;
     limit?: number;
     offset?: number;
+    organizationId?: string | null;
   },
 ) {
-  const { status, limit = 20, offset = 0 } = options || {};
+  const { status, limit = 20, offset = 0, organizationId } = options || {};
+  const orgFilter =
+    organizationId !== undefined ? { payment: { organizationId } } : {};
 
   const [earnings, total] = await Promise.all([
     prisma.consultantEarnings.findMany({
       where: {
         consultantProfileId,
         ...(status ? { status } : {}),
+        ...orgFilter,
       },
       include: {
         payment: {
@@ -958,6 +999,7 @@ export async function getConsultantEarnings(
       where: {
         consultantProfileId,
         ...(status ? { status } : {}),
+        ...orgFilter,
       },
     }),
   ]);
