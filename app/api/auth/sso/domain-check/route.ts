@@ -110,13 +110,19 @@ export async function GET(req: NextRequest) {
     select: { name: true },
   });
 
+  // An org-scoped SSO login lands the user IN that org's dashboard, not on
+  // their singular-UserRole home. `callbackUrl` is honored by the signin
+  // redirect effect for onboarded users and threaded through onboarding for
+  // first-timers (relative-path XSS-guarded there). The auto-joined membership
+  // is committed in the same customSession request, so the org layout resolves.
+  const orgHome = `/dashboard/organization/${enforced.organizationId}/home`;
   return NextResponse.json({
     enforceSSO: true,
     organizationName: org?.name ?? null,
     ssoBody: {
       providerId: provider.providerId,
       domain,
-      callbackURL: `${APP_URL}/auth/signin?ssoCallback=1`,
+      callbackURL: `${APP_URL}/auth/signin?ssoCallback=1&callbackUrl=${encodeURIComponent(orgHome)}`,
     },
   });
 }

@@ -34,6 +34,13 @@ export interface MeetingAppointment {
   appointmentType: AppointmentsType;
   slotsOfAppointment: MeetingSlot[];
   organizationId?: string | null;
+  // #org-appts — the user ids on each side of the appointment, stamped into the
+  // call's custom data so the meeting UI derives host/guest from WHICH SIDE the
+  // viewer is on (not the singular UserRole, which is wrong for a dual-profile
+  // user booked as a learner into someone else's session). Optional: callers
+  // that don't plumb them fall back to the role check.
+  consultantUserId?: string | null;
+  consulteeUserId?: string | null;
   consultation?: {
     requestedBy?: { user?: { name?: string | null } | null } | null;
     consultationPlan?: { title?: string | null } | null;
@@ -129,6 +136,13 @@ export const getOrCreateAppointmentMeeting = async (
         slotId: slot.id,
         appointmentType: appointment.appointmentType,
         ...(resolvedOrgId ? { organizationId: resolvedOrgId } : {}),
+        // #org-appts — per-appointment identity for host/guest derivation.
+        ...(appointment.consultantUserId
+          ? { consultantUserId: appointment.consultantUserId }
+          : {}),
+        ...(appointment.consulteeUserId
+          ? { consulteeUserId: appointment.consulteeUserId }
+          : {}),
       };
 
       await call.getOrCreate({

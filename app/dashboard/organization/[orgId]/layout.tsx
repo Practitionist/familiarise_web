@@ -221,10 +221,20 @@ export default function OrgLayout({
         show: can("myProgram.read") && canSponsor,
       },
       {
-        name: "My Arrangement",
+        name: "Compensation",
         icon: UserCog,
-        path: "my-arrangement",
+        path: "compensation",
         show: can("myArrangement.read") && canHost,
+      },
+      {
+        // Any ACTIVE member — learners who ATTEND org sessions and experts
+        // who DELIVER them both need their own per-org appointments surface.
+        // Deliberately NOT gated on canHost (that would exclude pure
+        // learners): requireOrgAccess already floors this at active
+        // membership, so show it to everyone who reaches the org dashboard.
+        name: "My Appointments",
+        icon: CalendarCheck,
+        path: "my-appointments",
       },
     ];
 
@@ -556,7 +566,9 @@ export default function OrgLayout({
   // Map URL segments to human-readable page names so the breadcrumbs match
   // the heading the user actually sees on the page.
   const PAGE_LABELS: Record<string, string> = {
-    home:         "Overview",
+    home:               "Overview",
+    "my-appointments":  "My Appointments",
+    compensation:       "Compensation",
     members:      "Members",
     invitations:  "Invitations",
     learners:     "Learners",

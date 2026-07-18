@@ -12,13 +12,6 @@ import { AppointmentsShell } from "@/components/appointments/AppointmentsShell";
 import { AppointmentsPageSkeleton } from "@/components/appointments/skeletons";
 import { mapConsultantAppointments } from "@/lib/appointments/map-consultant";
 import { createConsultantQueries } from "@/lib/dashboard-queries";
-import { useOrgScope } from "@/hooks/useOrgScope";
-import {
-  OrgContextFilter,
-  ORG_FILTER_ALL,
-  ORG_FILTER_PERSONAL,
-  type OrgContextFilterValue,
-} from "@/components/dashboard/OrgContextFilter";
 import { useConsultantAppointmentsAdapter } from "./ConsultantAppointmentsAdapter";
 
 /** Old HomeTab deep-links carry groupRecurringAppointments keys — map the
@@ -57,41 +50,14 @@ function SideQueryNotice({
 export default function AppointmentsPageClient({
   consultantId,
 }: Readonly<{ consultantId: string }>) {
-  // Default to "All activity" so a panel expert lands on the union view
-  // (sponsored + personal) without a manual toggle every visit.
-  const { scope, setScope } = useOrgScope({ defaultForOrgMember: "all" });
-  const orgScopeParam =
-    scope.kind === "personal"
-      ? "personal"
-      : scope.kind === "all"
-        ? "all"
-        : scope.orgId;
-  const orgScopeQueryParam =
-    orgScopeParam && orgScopeParam !== "personal" ? orgScopeParam : null;
   const searchParams = useSearchParams();
   const highlightedId = normalizeHighlight(
     searchParams?.get("highlight") ?? null,
   );
 
-  const filterValue: OrgContextFilterValue =
-    scope.kind === "personal"
-      ? ORG_FILTER_PERSONAL
-      : scope.kind === "all"
-        ? ORG_FILTER_ALL
-        : scope.orgId;
-  const handleFilterChange = (next: OrgContextFilterValue) => {
-    if (next === ORG_FILTER_PERSONAL) setScope({ kind: "personal" });
-    else if (next === ORG_FILTER_ALL) setScope({ kind: "all" });
-    else setScope({ kind: "org", orgId: next });
-  };
-
-  // keepPreviousData: org-scope filter changes show the previous list while
-  // the new one loads instead of a skeleton flash (#346). The server page
-  // prefetches the "personal" scope (#890).
-  const appointmentsQuery = createConsultantQueries(
-    consultantId,
-    orgScopeParam,
-  ).appointments;
+  // keepPreviousData: refetches show the previous list while the new one
+  // loads instead of a skeleton flash (#346).
+  const appointmentsQuery = createConsultantQueries(consultantId).appointments;
   const {
     data: appointments,
     isLoading,
@@ -110,13 +76,10 @@ export default function AppointmentsPageClient({
     refetch: refetchTrials,
   } = useQuery({
     placeholderData: keepPreviousData,
-    queryKey: ["trials", consultantId, "SCHEDULED", orgScopeParam] as const,
+    queryKey: ["trials", consultantId, "SCHEDULED"] as const,
     queryFn: async () => {
-      const orgScopeQs = orgScopeQueryParam
-        ? `&orgScope=${encodeURIComponent(orgScopeQueryParam)}`
-        : "";
       const res = await fetch(
-        `/api/trials?consultantProfileId=${consultantId}&status=SCHEDULED${orgScopeQs}`,
+        `/api/trials?consultantProfileId=${consultantId}&status=SCHEDULED`,
       );
       if (!res.ok) throw new Error("Failed to fetch trials");
       const { data } = await res.json();
@@ -130,13 +93,10 @@ export default function AppointmentsPageClient({
     refetch: refetchClasses,
   } = useQuery({
     placeholderData: keepPreviousData,
-    queryKey: ["consultant-classes", consultantId, orgScopeParam] as const,
+    queryKey: ["consultant-classes", consultantId] as const,
     queryFn: async () => {
-      const orgScopeQs = orgScopeQueryParam
-        ? `&orgScope=${encodeURIComponent(orgScopeQueryParam)}`
-        : "";
       const res = await fetch(
-        `/api/bookings/classes?consultantProfileId=${consultantId}${orgScopeQs}`,
+        `/api/bookings/classes?consultantProfileId=${consultantId}`,
       );
       if (!res.ok) throw new Error("Failed to fetch classes");
       const { data } = await res.json();
@@ -152,17 +112,10 @@ export default function AppointmentsPageClient({
     refetch: refetchWebinars,
   } = useQuery({
     placeholderData: keepPreviousData,
-    queryKey: [
-      "consultant-webinars-unscheduled",
-      consultantId,
-      orgScopeParam,
-    ] as const,
+    queryKey: ["consultant-webinars-unscheduled", consultantId] as const,
     queryFn: async () => {
-      const orgScopeQs = orgScopeQueryParam
-        ? `&orgScope=${encodeURIComponent(orgScopeQueryParam)}`
-        : "";
       const res = await fetch(
-        `/api/bookings/webinars?consultantProfileId=${consultantId}${orgScopeQs}`,
+        `/api/bookings/webinars?consultantProfileId=${consultantId}`,
       );
       if (!res.ok) throw new Error("Failed to fetch webinars");
       const { data } = await res.json();
@@ -243,12 +196,6 @@ export default function AppointmentsPageClient({
             adapter={adapter}
             highlightedId={highlightedId}
             notices={notices}
-            orgFilterSlot={
-              <OrgContextFilter
-                value={filterValue}
-                onChange={handleFilterChange}
-              />
-            }
           />
         )}
       </div>

@@ -8,7 +8,7 @@
  *
  *   MANAGER+      → /home
  *   LEARNER       → /my-program
- *   EXPERT        → /my-arrangement
+ *   EXPERT        → /compensation
  *   no membership → personal dashboard fallback
  *
  * `next/navigation`'s `redirect()` throws — we catch the thrown
@@ -104,7 +104,7 @@ describe("/dashboard/organization/[orgId] entry-point routing", () => {
     expect(path).toBe("/dashboard/organization/org-1/my-program");
   });
 
-  it("redirects EXPERT to /my-arrangement", async () => {
+  it("redirects EXPERT to /compensation", async () => {
     mockedGetSession.mockResolvedValueOnce({
       user: { id: "u-expert", role: "USER" },
     });
@@ -114,7 +114,7 @@ describe("/dashboard/organization/[orgId] entry-point routing", () => {
     });
 
     const path = await expectRedirect(() => OrgRoot(makeParams("org-1")));
-    expect(path).toBe("/dashboard/organization/org-1/my-arrangement");
+    expect(path).toBe("/dashboard/organization/org-1/compensation");
   });
 
   it.each(["OWNER", "MAINTAINER", "MANAGER", "SUPPORT"] as const)(

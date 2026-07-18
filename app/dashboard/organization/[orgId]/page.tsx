@@ -10,7 +10,7 @@ import { resolvePersonalDashboardHref } from "@/lib/labels/personal-dashboard";
  * Routing by role:
  *   - MANAGER+      → /home (operator overview)
  *   - LEARNER       → /my-program (per-org sponsored allocation view)
- *   - EXPERT        → /my-arrangement (per-org payout + RateCard view)
+ *   - EXPERT        → /compensation (per-org payout + RateCard view)
  *   - SUPPORT       → /home (read-only operator views; rank-30 passes
  *                    role checks on the lighter pages)
  *   - no membership → personal dashboard fallback (resolver may return
@@ -45,7 +45,7 @@ export default async function OrgRoot({
         redirect(`/dashboard/organization/${orgId}/my-program`);
       }
       if (member.role === "EXPERT") {
-        redirect(`/dashboard/organization/${orgId}/my-arrangement`);
+        redirect(`/dashboard/organization/${orgId}/compensation`);
       }
       // MANAGER+, SUPPORT, OWNER, MAINTAINER fall through to /home
     } else if (!member) {

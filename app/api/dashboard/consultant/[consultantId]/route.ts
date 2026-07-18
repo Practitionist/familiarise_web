@@ -32,8 +32,10 @@ export async function GET(
 
     const isPrivileged =
       session.user.role === "ADMIN" || session.user.role === "STAFF";
+    // Capability, not UserRole (#org-appts): the id match IS the ownership
+    // proof; the `role === "CONSULTANT"` conjunct wrongly excluded an org EXPERT
+    // who owns this profile.
     const ownsProfile =
-      session.user.role === "CONSULTANT" &&
       session.user.consultantProfileId === consultantProfileId;
 
     if (!isPrivileged && !ownsProfile) {
