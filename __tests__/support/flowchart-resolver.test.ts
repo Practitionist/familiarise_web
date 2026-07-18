@@ -90,6 +90,7 @@ describe("escalation policy", () => {
     nextNodeId: null,
     actions: [],
     resolved: false,
+    escalate: false,
   };
 
   it("escalates on a human keyword regardless of the flow", () => {

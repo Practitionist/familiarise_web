@@ -38,7 +38,6 @@ export async function buildSupportContext(
         select: { id: true, amount: true },
         take: 1,
       },
-      recordings: { select: { id: true }, take: 1 },
       consultation: {
         select: { consultationPlan: { select: { consultantProfileId: true } } },
       },
@@ -67,6 +66,13 @@ export async function buildSupportContext(
 
   const startsAt = appt.slotsOfAppointment[0]?.startsAt ?? null;
 
+  // Recordings hang off the slot's meeting session, not the appointment directly
+  // (Recording → MeetingSession → SlotOfAppointment → Appointment).
+  const recording = await prisma.recording.findFirst({
+    where: { meetingSession: { slotOfAppointment: { appointmentId } } },
+    select: { id: true },
+  });
+
   // Policy refund % if cancelled now (consultee-initiated). Only meaningful when
   // there's a policy snapshot + a start time; the caller re-derives the real
   // amount at execution time (this is a preview for the flow).
@@ -93,6 +99,6 @@ export async function buildSupportContext(
     paymentId: appt.payment[0]?.id ?? null,
     // moneyResultExtensions has already converted the BigInt column → number paise.
     paymentAmountPaise: appt.payment[0]?.amount ?? null,
-    hasRecording: appt.recordings.length > 0,
+    hasRecording: !!recording,
   };
 }
