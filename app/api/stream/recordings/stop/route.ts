@@ -26,8 +26,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Only consultants can stop recordings
-    if (session.user.role !== "CONSULTANT") {
+    // Capability, not UserRole (#org-appts): anyone who OWNS a consultantProfile
+    // (incl. an org EXPERT whose marketplace identity is CONSULTEE) may control
+    // their own recordings — the per-appointment ownership check below is the
+    // real authz. ADMIN/STAFF are handled by that check too.
+    if (!session.user.consultantProfileId) {
       return NextResponse.json(
         { error: "Only consultants can stop recordings" },
         { status: 403 },

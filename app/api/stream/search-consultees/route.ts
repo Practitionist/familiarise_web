@@ -29,10 +29,14 @@ export async function GET(req: NextRequest) {
     // Verify user is a consultant
     const user = await prisma.user.findUnique({
       where: { id: session.user.id },
-      select: { role: true, consultantProfileId: true },
+      select: { consultantProfileId: true },
     });
 
-    if (user?.role !== "CONSULTANT" || !user.consultantProfileId) {
+    // Capability, not UserRole (#org-appts): gate on owning a consultantProfile.
+    // An org EXPERT (whose top-level role may be CONSULTEE) legitimately searches
+    // the consultees they're delivering to; the old `role !== "CONSULTANT"` half
+    // wrongly blocked them. The query is already scoped to their own profile id.
+    if (!user?.consultantProfileId) {
       return NextResponse.json(
         { error: "Only consultants can search consultees" },
         { status: 403 },

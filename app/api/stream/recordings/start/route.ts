@@ -25,8 +25,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Only consultants can start recordings
-    if (session.user.role !== "CONSULTANT") {
+    // Capability, not UserRole (#org-appts): owning a consultantProfile is what
+    // matters (an org EXPERT counts); the per-appointment ownership check below
+    // is the real authz.
+    if (!session.user.consultantProfileId) {
       return NextResponse.json(
         { error: "Only consultants can start recordings" },
         { status: 403 },
