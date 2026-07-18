@@ -203,16 +203,25 @@ export async function checkConsentBatch(params: {
   const { userIds, purposeCode } = params;
   if (userIds.length === 0) return new Set();
 
-  const artifacts = await prisma.consentArtifact.findMany({
-    where: {
-      userId: { in: userIds },
-      purposeCodes: { has: purposeCode },
-      withdrawnAt: null,
-      auditRetainedUntil: { gt: new Date() },
-    },
-    select: { userId: true },
-  });
-  return new Set(artifacts.map((a) => a.userId));
+  // Chunk the id list so a very large org can't overflow Postgres's bind
+  // parameter ceiling (65,535). 10k per query keeps the round-trip count tiny
+  // while staying well under the limit.
+  const CHUNK = 10_000;
+  const now = new Date();
+  const consented = new Set<string>();
+  for (let i = 0; i < userIds.length; i += CHUNK) {
+    const artifacts = await prisma.consentArtifact.findMany({
+      where: {
+        userId: { in: userIds.slice(i, i + CHUNK) },
+        purposeCodes: { has: purposeCode },
+        withdrawnAt: null,
+        auditRetainedUntil: { gt: now },
+      },
+      select: { userId: true },
+    });
+    for (const a of artifacts) consented.add(a.userId);
+  }
+  return consented;
 }
 
 /**
