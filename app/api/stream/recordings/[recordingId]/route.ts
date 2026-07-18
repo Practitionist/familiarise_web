@@ -11,6 +11,7 @@ import { RecordingTransferService } from "@/lib/stream/recording-transfer-servic
 import prisma from "@/lib/prisma";
 import { streamLogger } from "@/lib/stream-logger";
 import { isPaymentEntitled } from "@/lib/payments/utils/refund-balance";
+import { isPrivileged } from "@/lib/auth-helpers";
 
 import { getSession } from "@/lib/auth-server";
 import * as Sentry from "@sentry/nextjs";
@@ -45,20 +46,21 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
 
     let hasAccess = false;
 
-    if (session.user.role === "CONSULTANT") {
-      // Consultant can access their own recordings, or recordings of plans they collaborate on
-      const consultantProfileRecord =
-        await prisma.consultantProfile.findUnique({
-          where: { userId: session.user.id },
-          select: { id: true },
-        });
-      const consultantProfileId = consultantProfileRecord?.id;
+    // Capability, not UserRole (#org-appts): an org EXPERT whose top-level role is CONSULTEE still owns recordings they delivered.
+    if (isPrivileged(session.user.role)) {
+      // Admin and staff can access all recordings
+      hasAccess = true;
+    }
+
+    // Provider path: gate on owning a consultant profile, not on role.
+    if (!hasAccess && session.user.consultantProfileId) {
+      const consultantProfileId = session.user.consultantProfileId;
 
       if (appointment?.webinar?.webinarPlan) {
         hasAccess =
           appointment.webinar.webinarPlan.consultantProfileId ===
           consultantProfileId;
-        if (!hasAccess && consultantProfileId) {
+        if (!hasAccess) {
           const collab = await prisma.collaborator.findFirst({
             where: {
               webinarPlanId: appointment.webinar.webinarPlan.id,
@@ -72,7 +74,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         hasAccess =
           appointment.class.classPlan.consultantProfileId ===
           consultantProfileId;
-        if (!hasAccess && consultantProfileId) {
+        if (!hasAccess) {
           const collab = await prisma.collaborator.findFirst({
             where: {
               classPlanId: appointment.class.classPlan.id,
@@ -83,7 +85,10 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
           hasAccess = !!collab;
         }
       }
-    } else if (session.user.role === "CONSULTEE") {
+    }
+
+    // Attendee path: consultee entitlement, gated on capability not role.
+    if (!hasAccess) {
       // Consultee can access recordings for sessions they participated in.
       // Use plan-level entitlement: the recording's appointment is the consultant's
       // allocation slot, not the attendee's enrollment slot, so we check by plan ID.
@@ -108,9 +113,6 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         // entitlement; access needs at least one net-positive purchase for the plan.
         hasAccess = payments.some(isPaymentEntitled);
       }
-    } else if (session.user.role === "ADMIN" || session.user.role === "STAFF") {
-      // Admin and staff can access all recordings
-      hasAccess = true;
     }
 
     if (!hasAccess) {
