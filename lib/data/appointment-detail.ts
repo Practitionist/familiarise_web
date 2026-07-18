@@ -142,6 +142,39 @@ export async function readAppointmentDetail(appointmentId: string) {
 export type TAppointmentDetail = NonNullable<
   Awaited<ReturnType<typeof readAppointmentDetail>>
 >;
+
+/** Every party to the appointment: the requesting consultee (or trial consultee,
+ *  or a slot participant), the plan's consultant, and ACCEPTED collaborators.
+ *  Capability-based — participation, not UserRole (#org-appts). Platform
+ *  ADMIN/STAFF are handled by the caller via isPrivileged. */
+export function canAccessAppointment(
+  userId: string,
+  detail: TAppointmentDetail,
+): boolean {
+  const { appointment } = detail;
+  const consulteeUserIds = [
+    appointment.consultation?.requestedBy?.userId,
+    appointment.subscription?.requestedBy?.userId,
+    appointment.trialSession?.consulteeProfile?.userId,
+    ...appointment.slotsOfAppointment.flatMap((slot) =>
+      slot.user.map((u) => u.id),
+    ),
+  ];
+  const consultantUserIds = [
+    appointment.consultation?.consultationPlan?.consultantProfile?.userId,
+    appointment.subscription?.subscriptionPlan?.consultantProfile?.userId,
+    appointment.webinar?.webinarPlan?.consultantProfile?.userId,
+    appointment.class?.classPlan?.consultantProfile?.userId,
+    appointment.trialSession?.subscriptionPlan?.consultantProfile?.userId,
+    ...(appointment.webinar?.webinarPlan?.collaborators ?? []).map(
+      (c) => c.consultantProfile?.userId,
+    ),
+    ...(appointment.class?.classPlan?.collaborators ?? []).map(
+      (c) => c.consultantProfile?.userId,
+    ),
+  ];
+  return [...consulteeUserIds, ...consultantUserIds].includes(userId);
+}
 export type TDetailAppointment = TAppointmentDetail["appointment"];
 export type TDetailRecording =
   TDetailAppointment["slotsOfAppointment"][number] extends {

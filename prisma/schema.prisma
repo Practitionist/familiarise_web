@@ -65,9 +65,12 @@ model User {
   Waitlist           Waitlist[]
 
   // Feedback and Support
-  feedbacks        Feedback[]
-  supportTickets   SupportTicket[]
-  supportResponses SupportResponse[]
+  feedbacks                 Feedback[]
+  supportTickets            SupportTicket[]
+  // #appt-support — per-appointment support conversations + private CSAT.
+  appointmentSupportThreads AppointmentSupportThread[]
+  appointmentFeedback       AppointmentFeedback[]
+  supportResponses          SupportResponse[]
 
   accounts         Account[] // BetterAuth Accounts
   sessions         Session[] // BetterAuth Sessions
@@ -176,8 +179,11 @@ model SupportTicket {
   user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   userId String
 
-  responses   SupportResponse[]
-  attachments SupportTicketAttachment[]
+  responses                SupportResponse[]
+  attachments              SupportTicketAttachment[]
+  // #appt-support — set when a per-appointment thread escalates to a human, so
+  // ops works it in this existing queue rather than a parallel system.
+  appointmentSupportThread AppointmentSupportThread?
 
   // Entity links for Swiggy-style context (link ticket to booking/payment)
   consultationId String?
@@ -233,6 +239,118 @@ model SupportTicketAttachment {
   uploadedAt DateTime @default(now())
 
   @@index([ticketId])
+}
+
+// #appt-support — per-appointment support conversation (Swiggy/Zomato-style).
+// One thread per (appointment, user). Channel-agnostic: messages are produced
+// by a swappable resolver — a deterministic flowchart now, an AI agent later,
+// a human on escalation — without changing this shape. organizationId is
+// denormalized from the appointment so org admins can triage without a join.
+model AppointmentSupportThread {
+  id             String        @id @default(uuid())
+  appointmentId  String
+  appointment    Appointment   @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Null for pure B2C appointments; set for org-sponsored/hosted ones.
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+
+  category      SupportThreadCategory @default(OTHER)
+  status        SupportThreadStatus   @default(OPEN)
+  // Which resolver is currently driving the thread. SELF_SERVE = flowchart.
+  activeChannel SupportChannel        @default(SELF_SERVE)
+  // Current flowchart node id (null once AI/HUMAN takes over or it resolves).
+  currentNodeId String?
+
+  // A HUMAN handoff creates/links a general SupportTicket so ops works it in the
+  // existing queue — no parallel ops system (one-to-one).
+  supportTicketId String?        @unique
+  supportTicket   SupportTicket? @relation(fields: [supportTicketId], references: [id], onDelete: SetNull)
+
+  messages   SupportMessage[]
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+  resolvedAt DateTime?
+
+  // One support conversation per (appointment, user) — reused across intents,
+  // like a per-order support chat. Also the concurrency guard for find-or-create.
+  @@unique([appointmentId, userId])
+  @@index([userId, status])
+  @@index([organizationId, status])
+  @@index([status, createdAt])
+}
+
+model SupportMessage {
+  id       String                   @id @default(uuid())
+  threadId String
+  thread   AppointmentSupportThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  sender   SupportMessageSender
+  body     String                   @db.Text
+  // Resolver metadata — flow node id, AI model, action refs. Free-form.
+  metadata Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([threadId, createdAt])
+}
+
+// #appt-support — per-appointment private CSAT (1-5), distinct from the public
+// ConsultantReview. Gives webinar/class a feedback path they lack today and
+// feeds the org-level quality signal. One per (appointment, user).
+model AppointmentFeedback {
+  id             String        @id @default(uuid())
+  appointmentId  String
+  appointment    Appointment   @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  rating         Int           @db.SmallInt
+  comment        String?       @db.Text
+
+  createdAt DateTime @default(now())
+
+  @@unique([appointmentId, userId])
+  @@index([organizationId, createdAt])
+}
+
+enum SupportThreadStatus {
+  OPEN
+  IN_PROGRESS
+  ESCALATED
+  RESOLVED
+  CLOSED
+}
+
+// Which resolver drives the thread. The interface is identical across all three
+// so a thread can move SELF_SERVE → AI → HUMAN without a data change.
+enum SupportChannel {
+  SELF_SERVE
+  AI
+  HUMAN
+}
+
+enum SupportMessageSender {
+  USER
+  BOT
+  AGENT
+  SYSTEM
+}
+
+// The support intent — selects which flowchart runs. SPONSORSHIP_BILLING and
+// ORG_ADMIN_DISPUTE are the B2B-only intents (offered by context).
+enum SupportThreadCategory {
+  CANCEL_REFUND
+  RESCHEDULE
+  NO_SHOW
+  TECHNICAL
+  PAYMENT_STATUS
+  RECORDING_ACCESS
+  QUALITY_COMPLAINT
+  SPONSORSHIP_BILLING
+  ORG_ADMIN_DISPUTE
+  OTHER
 }
 
 enum FeedbackStatus {
@@ -652,6 +770,11 @@ model Organization {
 
   // #778 §D — GST credit notes (Sec 34) issued against this org's invoices.
   creditNotes CreditNote[]
+
+  // #appt-support — org-scoped read views over members' per-appointment support
+  // threads + CSAT (denormalized org tag; org admins triage / see quality).
+  appointmentSupportThreads AppointmentSupportThread[]
+  appointmentFeedback       AppointmentFeedback[]
 
   // #778 §D — annual aggregate turnover ≥ ₹5cr makes IRN/e-invoice mandatory
   // (CGST e-invoicing threshold). Drives whether OrganizationInvoice must upload
@@ -3301,8 +3424,11 @@ model Appointment {
 
   trialSession TrialSession?
 
-  payment   Payment[]
-  documents AppointmentDocument[]
+  payment         Payment[]
+  documents       AppointmentDocument[]
+  // #appt-support — per-appointment support conversations + private CSAT.
+  supportThreads  AppointmentSupportThread[]
+  supportFeedback AppointmentFeedback[]
 
   // #674 personal-vs-org scope split — set at checkout for org-context bookings.
   organization   Organization? @relation("AppointmentByOrg", fields: [organizationId], references: [id], onDelete: SetNull)
