@@ -15,6 +15,7 @@ import {
   notifyCollaboratorRemoved,
 } from "@/lib/novu/service";
 import { getAppUrl } from "@/lib/url";
+import { scopeToWhereOrgId, type Scope } from "@/lib/api/scope/parse";
 
 type PlanType = "webinar" | "class";
 
@@ -688,12 +689,23 @@ export async function getMyCollaborations(consultantProfileId: string) {
 /**
  * Get all plans owned by this consultant that have collaborators.
  * Returns plans with their collaborator lists and schedule data (host perspective).
+ *
+ * #org-appts / #1025 — split by the PLAN's org-ness, not the consultant's:
+ * `personal` (default) surfaces only B2C plans (organizationId: null), an
+ * `org` scope surfaces only that org's plans. Received invitations
+ * (getMyCollaborations) are unaffected — those still aggregate personally.
  */
-export async function getHostedCollaborations(consultantProfileId: string) {
+export async function getHostedCollaborations(
+  consultantProfileId: string,
+  scope: Scope = { kind: "personal" },
+) {
+  const orgFilter = scopeToWhereOrgId(scope);
+
   const [webinarPlans, classPlans] = await Promise.all([
     prisma.webinarPlan.findMany({
       where: {
         consultantProfileId,
+        ...orgFilter,
         collaborators: {
           some: { status: { in: ["PENDING", "ACCEPTED"] } },
         },
@@ -740,6 +752,7 @@ export async function getHostedCollaborations(consultantProfileId: string) {
     prisma.classPlan.findMany({
       where: {
         consultantProfileId,
+        ...orgFilter,
         collaborators: {
           some: { status: { in: ["PENDING", "ACCEPTED"] } },
         },

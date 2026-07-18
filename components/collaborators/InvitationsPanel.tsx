@@ -11,6 +11,13 @@
  * the schedule cluster in ScheduleSummaries and shapes in types.ts.
  * There are deliberately NO confirm dialogs — Accept/Decline fire the
  * mutation directly, as before.
+ *
+ * #org-appts / #1025 — the Host section is scoped by the PLAN's org-ness.
+ * `orgScope` unset (personal dashboard) shows only B2C hosted plans;
+ * passing an orgId (org dashboard) shows only that org's hosted plans.
+ * Received invitations are unaffected either way. The scope is threaded
+ * into the query key so the two views don't collide in the react-query
+ * cache.
  */
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -28,14 +35,17 @@ import { PendingInvitationCard } from "./PendingInvitationCard";
 import { ActiveCollaborationCard } from "./ActiveCollaborationCard";
 import { HostedPlanCard } from "./HostedPlanCard";
 
-export function InvitationsPanel() {
+export function InvitationsPanel({ orgScope }: { orgScope?: string } = {}) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
   const { data, isLoading, isError, refetch } = useQuery<CollaborationsData>({
-    queryKey: ["my-collaborations"],
+    queryKey: ["my-collaborations", orgScope ?? "mine"],
     queryFn: async () => {
-      const res = await fetch("/api/collaborations");
+      const url = orgScope
+        ? `/api/collaborations?orgScope=${encodeURIComponent(orgScope)}`
+        : "/api/collaborations";
+      const res = await fetch(url);
       if (!res.ok) throw new Error("Failed to fetch collaborations");
       const json = await res.json();
       return json.data;
