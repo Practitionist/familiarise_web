@@ -109,7 +109,7 @@ export async function applyMembershipRoleEffects(
   // OWNER / MAINTAINER / BILLING_ADMIN / MANAGER / SUPPORT — operator
   // roles have no consumer or provider profile linkage. Any
   // previously-hydrated FKs are cleared so downstream joins
-  // (`/my-program`, `/my-arrangement`, checkout profile resolution)
+  // (`/my-program`, `/compensation`, checkout profile resolution)
   // don't pick up stale rows. BILLING_ADMIN sits in this group because
   // it's a finance-only operator role; it has no booking-side surface.
   return {
