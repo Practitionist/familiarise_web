@@ -43,7 +43,9 @@ export interface MyAppointmentSlot {
 
 interface PlanSide {
   title: string | null;
-  consultantProfile: { user: { id: string } | null } | null;
+  consultantProfile: {
+    user: { id: string; name: string | null; email: string } | null;
+  } | null;
 }
 
 interface RequestedBySide {
@@ -85,50 +87,55 @@ interface ResolvedIdentity {
 /**
  * Resolve the display title + the two identity user-ids from whichever of
  * consultation / subscription / webinar / class is populated on the row.
- * consulteeUserId is null for webinar/class (no single requester).
+ * The counterpart is the OTHER party relative to the viewer: a learner sees the
+ * consultant, the delivering consultant sees the learner. consulteeUserId is
+ * null for webinar/class (no single requester).
  */
-function resolveIdentity(item: MyAppointmentItem): ResolvedIdentity {
-  if (item.consultation) {
+function resolveIdentity(
+  item: MyAppointmentItem,
+  viewerId: string,
+): ResolvedIdentity {
+  const pick = (
+    title: string,
+    plan: PlanSide | null,
+    requestedBy: RequestedBySide | null,
+  ): ResolvedIdentity => {
+    const consultantUser = plan?.consultantProfile?.user ?? null;
+    const consulteeUser = requestedBy?.user ?? null;
+    const consulteeUserId = consulteeUser?.id ?? null;
+    // If the viewer is the consultee, the counterpart is the consultant;
+    // otherwise (viewer delivers, or webinar/class with no single requester)
+    // it's the consultee.
+    const counterpart =
+      viewerId === consulteeUserId
+        ? consultantUser?.name ?? consultantUser?.email ?? null
+        : consulteeUser?.name ?? consulteeUser?.email ?? null;
     return {
-      title: item.consultation.consultationPlan?.title ?? "Consultation",
-      counterpart:
-        item.consultation.requestedBy?.user?.name ??
-        item.consultation.requestedBy?.user?.email ??
-        null,
-      consultantUserId:
-        item.consultation.consultationPlan?.consultantProfile?.user?.id ?? null,
-      consulteeUserId: item.consultation.requestedBy?.user?.id ?? null,
+      title,
+      counterpart,
+      consultantUserId: consultantUser?.id ?? null,
+      consulteeUserId,
     };
+  };
+  if (item.consultation) {
+    return pick(
+      item.consultation.consultationPlan?.title ?? "Consultation",
+      item.consultation.consultationPlan,
+      item.consultation.requestedBy,
+    );
   }
   if (item.subscription) {
-    return {
-      title: item.subscription.subscriptionPlan?.title ?? "Subscription",
-      counterpart:
-        item.subscription.requestedBy?.user?.name ??
-        item.subscription.requestedBy?.user?.email ??
-        null,
-      consultantUserId:
-        item.subscription.subscriptionPlan?.consultantProfile?.user?.id ?? null,
-      consulteeUserId: item.subscription.requestedBy?.user?.id ?? null,
-    };
+    return pick(
+      item.subscription.subscriptionPlan?.title ?? "Subscription",
+      item.subscription.subscriptionPlan,
+      item.subscription.requestedBy,
+    );
   }
   if (item.webinar) {
-    return {
-      title: item.webinar.webinarPlan?.title ?? "Webinar",
-      counterpart: null,
-      consultantUserId:
-        item.webinar.webinarPlan?.consultantProfile?.user?.id ?? null,
-      consulteeUserId: null,
-    };
+    return pick(item.webinar.webinarPlan?.title ?? "Webinar", item.webinar.webinarPlan, null);
   }
   if (item.class) {
-    return {
-      title: item.class.classPlan?.title ?? "Class",
-      counterpart: null,
-      consultantUserId:
-        item.class.classPlan?.consultantProfile?.user?.id ?? null,
-      consulteeUserId: null,
-    };
+    return pick(item.class.classPlan?.title ?? "Class", item.class.classPlan, null);
   }
   return {
     title: "Session",
@@ -166,12 +173,14 @@ function formatSlot(slot: MyAppointmentSlot): string {
 
 export function MyAppointmentsClient({
   orgId,
+  viewerId,
   items,
   total,
   page,
   perPage,
 }: {
   orgId: string;
+  viewerId: string;
   items: MyAppointmentItem[];
   total: number;
   page: number;
@@ -184,7 +193,7 @@ export function MyAppointmentsClient({
 
   const handleJoin = async (item: MyAppointmentItem, slot: MyAppointmentSlot) => {
     setJoiningId(item.id);
-    const identity = resolveIdentity(item);
+    const identity = resolveIdentity(item, viewerId);
     const appointment: MeetingAppointment = {
       id: item.id,
       appointmentType: item.appointmentType,
@@ -207,7 +216,7 @@ export function MyAppointmentsClient({
     if (!navigating) setJoiningId(null);
   };
 
-  if (items.length === 0) {
+  if (total === 0) {
     return (
       <div className="rounded-lg border bg-card py-12 text-center text-sm text-muted-foreground">
         No appointments under this organization yet. Sessions you book or are
@@ -216,11 +225,24 @@ export function MyAppointmentsClient({
     );
   }
 
+  // A stale/out-of-range ?page= (beyond the last page) has rows elsewhere —
+  // point the user back rather than showing a misleading "empty" state.
+  if (items.length === 0) {
+    return (
+      <div className="rounded-lg border bg-card py-12 text-center text-sm text-muted-foreground">
+        <p>Nothing on this page.</p>
+        <Button asChild variant="outline" size="sm" className="mt-3">
+          <Link href="?page=1">Back to first page</Link>
+        </Button>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
       <ul className="space-y-3">
         {items.map((item) => {
-          const identity = resolveIdentity(item);
+          const identity = resolveIdentity(item, viewerId);
           const joinable = getJoinableSlot(item.slotsOfAppointment, {
             joinWindowMs: CONSULTEE_JOIN_WINDOW_MS,
           });

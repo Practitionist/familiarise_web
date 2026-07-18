@@ -151,7 +151,11 @@ export async function listAppointmentsScoped(
             consultationPlan: {
               select: {
                 title: true,
-                consultantProfile: { select: { user: { select: { id: true } } } },
+                consultantProfile: {
+                  select: {
+                    user: { select: { id: true, name: true, email: true } },
+                  },
+                },
               },
             },
             requestedBy: {
@@ -164,7 +168,11 @@ export async function listAppointmentsScoped(
             subscriptionPlan: {
               select: {
                 title: true,
-                consultantProfile: { select: { user: { select: { id: true } } } },
+                consultantProfile: {
+                  select: {
+                    user: { select: { id: true, name: true, email: true } },
+                  },
+                },
               },
             },
             requestedBy: {
@@ -177,7 +185,11 @@ export async function listAppointmentsScoped(
             webinarPlan: {
               select: {
                 title: true,
-                consultantProfile: { select: { user: { select: { id: true } } } },
+                consultantProfile: {
+                  select: {
+                    user: { select: { id: true, name: true, email: true } },
+                  },
+                },
               },
             },
           },
@@ -187,7 +199,11 @@ export async function listAppointmentsScoped(
             classPlan: {
               select: {
                 title: true,
-                consultantProfile: { select: { user: { select: { id: true } } } },
+                consultantProfile: {
+                  select: {
+                    user: { select: { id: true, name: true, email: true } },
+                  },
+                },
               },
             },
           },

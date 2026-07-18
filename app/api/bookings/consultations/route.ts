@@ -34,23 +34,38 @@ export async function GET(request: NextRequest) {
 
     // Authorization: filter by ownership for non-privileged users.
     // #org-appts — profile ids are carried independently of the singular
-    // platform role, so a dual-profile user (e.g. a host EXPERT whose
-    // marketplace role is CONSULTEE) must see BOTH sides: every consultation
-    // they DELIVER (own the plan) AND every one they BOOKED. Union whichever
-    // profiles the session actually carries — a single-identity user has only
-    // one id and matches one arm, so their view is unchanged. Nested under AND
-    // so it composes with the orgScope OR below instead of clobbering it.
+    // platform role. An explicit ?consultant/consulteeProfileId= (from a
+    // consultant/consultee dashboard) narrows to THAT side — validated against
+    // the session so a caller can only request their OWN profile. With no
+    // filter, union whichever profiles the session carries, so a dual-profile
+    // user sees both sides; a single-identity user matches one arm. Nested under
+    // AND so it composes with the orgScope OR below instead of clobbering it.
     if (!isPrivileged(session.user.role)) {
       const ownershipArms: Prisma.ConsultationWhereInput[] = [];
-      if (session.user.consultantProfileId) {
-        ownershipArms.push({
-          consultationPlan: {
-            consultantProfileId: session.user.consultantProfileId,
-          },
-        });
+      if (consultantProfileId) {
+        if (consultantProfileId !== session.user.consultantProfileId) {
+          return forbiddenResponse("Access denied");
+        }
+        ownershipArms.push({ consultationPlan: { consultantProfileId } });
       }
-      if (session.user.consulteeProfileId) {
-        ownershipArms.push({ requestedById: session.user.consulteeProfileId });
+      if (consulteeProfileId) {
+        if (consulteeProfileId !== session.user.consulteeProfileId) {
+          return forbiddenResponse("Access denied");
+        }
+        ownershipArms.push({ requestedById: consulteeProfileId });
+      }
+      if (ownershipArms.length === 0) {
+        // No explicit side → union whichever profiles the session carries.
+        if (session.user.consultantProfileId) {
+          ownershipArms.push({
+            consultationPlan: {
+              consultantProfileId: session.user.consultantProfileId,
+            },
+          });
+        }
+        if (session.user.consulteeProfileId) {
+          ownershipArms.push({ requestedById: session.user.consulteeProfileId });
+        }
       }
       if (ownershipArms.length === 0) {
         // No profile of either kind - deny access.
@@ -77,12 +92,25 @@ export async function GET(request: NextRequest) {
     }
 
     // Personal-vs-org scope filter (same mechanism as /api/slots/appointments:
-    // the denormalized Appointment.organizationId). ADDITIVE: when the param
-    // is absent, behavior is unchanged (unfiltered union) so existing callers
-    // keep seeing everything. A consultation with no Appointment row is
-    // definitionally not org-funded, so it counts as personal.
+    // the denormalized Appointment.organizationId). #org-appts — an ABSENT param
+    // now means PERSONAL/B2C (matching resolveOrgScope's documented default),
+    // NOT the old unfiltered union: the personal dashboards dropped the org
+    // switcher and must stay B2C. Org surfaces pass an explicit orgScope. A
+    // consultation with no Appointment row is not org-funded → personal.
     const rawOrgScope = searchParams.get("orgScope");
-    if (rawOrgScope) {
+    const explicitPersonal =
+      rawOrgScope === "mine" || rawOrgScope === "personal";
+    // Absent param defaults to personal for non-privileged callers (B2C
+    // dashboards) but stays unfiltered for ADMIN/STAFF (they oversee all).
+    const defaultPersonal = !rawOrgScope && !isPrivileged(session.user.role);
+    if (explicitPersonal || defaultPersonal) {
+      // Personal — no membership lookup needed.
+      whereClause.OR = [
+        { appointment: null },
+        { appointment: { organizationId: null } },
+      ];
+    } else if (rawOrgScope) {
+      // Explicit org / all (privileged + absent falls through → no filter).
       const memberships = await prisma.membership.findMany({
         where: { userId: session.user.id, status: "ACTIVE" },
         select: { organizationId: true, status: true },
@@ -101,12 +129,7 @@ export async function GET(request: NextRequest) {
           { status: scopeResolution.status },
         );
       }
-      if (scopeResolution.scope.kind === "personal") {
-        whereClause.OR = [
-          { appointment: null },
-          { appointment: { organizationId: null } },
-        ];
-      } else if (scopeResolution.scope.kind === "org") {
+      if (scopeResolution.scope.kind === "org") {
         whereClause.appointment = {
           organizationId: scopeResolution.scope.orgId,
         };

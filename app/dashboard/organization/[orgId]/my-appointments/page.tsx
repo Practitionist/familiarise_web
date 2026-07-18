@@ -69,6 +69,7 @@ export default async function MyAppointmentsPage({
       <StreamProvider userId={userId} enableChat={false} enableVideo={true}>
         <MyAppointmentsClient
           orgId={orgId}
+          viewerId={userId}
           items={items as unknown as MyAppointmentItem[]}
           total={total}
           page={page}

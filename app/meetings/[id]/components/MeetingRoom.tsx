@@ -82,13 +82,8 @@ const MeetingRoom = () => {
     }
   }, [callEndedAt, callingState]);
 
-  const { useLocalParticipant, useCallCustomData } = useCallStateHooks();
-  const localParticipant = useLocalParticipant();
+  const { useCallCustomData } = useCallStateHooks();
   const custom = useCallCustomData();
-  const isCallOwner =
-    localParticipant &&
-    call?.state.createdBy &&
-    localParticipant.userId === call.state.createdBy.id;
 
   // #org-appts — host/guest by WHICH SIDE of THIS appointment the viewer is on
   // (the ids stamped into the call's custom data), not the singular UserRole,
@@ -188,7 +183,7 @@ const MeetingRoom = () => {
     return <Loader />;
   }
 
-  if (callEndedAt && !isCallOwner) {
+  if (callEndedAt && !isHost) {
     return (
       <CallEnded
         message="The call has been ended by the host"
