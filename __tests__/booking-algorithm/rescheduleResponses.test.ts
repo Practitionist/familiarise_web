@@ -21,6 +21,8 @@ jest.mock("../../lib/prisma", () => ({
     $transaction: jest.fn(),
     appointment: { findUnique: jest.fn() },
     slotOfAppointment: { findMany: jest.fn(), deleteMany: jest.fn() },
+    // #1008 — reschedule/cancel routes read prisma.dispute.findFirst.
+    dispute: { findFirst: jest.fn().mockResolvedValue(null) },
     $disconnect: jest.fn(),
   },
 }));

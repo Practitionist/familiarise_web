@@ -641,11 +641,17 @@ export async function reverseBookingUtilization(
       },
     });
     // #775 — the over-cap charge for this booking is no longer owed. Cancel the
-    // linked OverageEvent only while it's still uncollected (the REVERSED guard
-    // in transitionOverage permits PENDING/ACCRUED/FAILED). An already-CHARGED
+    // linked OverageEvent only while it's still uncollected — an already-CHARGED
     // overage (member card captured, or org invoice paid) needs a real refund /
-    // credit note — left to the refund flow + #716, not a silent status flip.
-    await transitionOverage(tx, { bookingUtilizationId: util.id }, "REVERSED");
+    // credit note, handled by the refund cascade (#715/#716), not a silent flip.
+    // fromIn excludes CHARGED explicitly now that REVERSED accepts it.
+    await transitionOverage(
+      tx,
+      { bookingUtilizationId: util.id },
+      "REVERSED",
+      undefined,
+      { fromIn: ["PENDING", "ACCRUED", "FAILED"] },
+    );
   }
 
   return {

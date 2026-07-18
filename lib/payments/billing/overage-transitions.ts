@@ -15,7 +15,11 @@ import type { Tx } from "@/lib/prisma";
  *   FAILED ──▶ CHARGED                       (late capture webhook recovers a
  *                                             sweep-FAILed charge that was paid)
  *   ACCRUED / FAILED ──▶ REVERSED            (refund of an un-charged overage)
- *   CHARGED ──▶ (terminal)                   reversal needs a credit note (#716)
+ *   CHARGED ──▶ REVERSED                     (credit-back on full refund: the
+ *                                             CHARGE_MEMBER side-payment is
+ *                                             refunded / the CHARGE_ORG invoice
+ *                                             is netted by a credit note —
+ *                                             #715/#716, stamps reversedAt)
  *   BLOCKED ──▶ (terminal)                   set at creation only
  */
 import type { OverageChargeStatus, Prisma } from "@prisma/client";
@@ -28,7 +32,11 @@ const ALLOWED_FROM: Record<OverageChargeStatus, OverageChargeStatus[]> = {
   ACCRUED: ["PENDING"], // CHARGE_ORG rolled onto an issued invoice
   CHARGED: ["PENDING", "ACCRUED", "FAILED"], // money collected (member webhook / invoice paid); FAILED→CHARGED recovers a charge the abandoned-sweep wrongly FAILed while its capture webhook was stuck (#785)
   FAILED: ["PENDING"], // member side-charge abandoned
-  REVERSED: ["PENDING", "ACCRUED", "FAILED"], // booking refunded before collection
+  // uncollected reversal (booking refunded before collection) OR post-collection
+  // credit-back on full refund (#715/#716). Callers pass fromIn to disambiguate:
+  // the uncollected path (reverseBookingUtilization) narrows to non-CHARGED; the
+  // credit-back path (refund cascade) narrows to CHARGED + stamps reversedAt.
+  REVERSED: ["PENDING", "ACCRUED", "FAILED", "CHARGED"],
   BLOCKED: [], // set at creation only
 };
 
@@ -47,6 +55,8 @@ export async function transitionOverage(
     paymentId?: string | null;
     invoiceLineItemId?: string | null;
     settledAt?: Date | null;
+    /** #715/#716 — stamped when a CHARGED overage is credited back on refund. */
+    reversedAt?: Date | null;
     /** #779 §A telemetry — why a FAILED write-off happened (sweep/timeout). */
     chargeFailureReason?: string | null;
   },

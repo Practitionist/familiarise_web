@@ -1,4 +1,5 @@
 import { requireUserRole } from "@/lib/auth-guard";
+import { ENABLE_TDS_ADMIN_VIEW } from "@/lib/feature-flags";
 import { AdminShell } from "./AdminShell";
 
 /**
@@ -28,6 +29,7 @@ export default async function AdminLayout({
       userName={session.user.name ?? null}
       userEmail={session.user.email ?? null}
       userImage={session.user.image ?? null}
+      showTds={ENABLE_TDS_ADMIN_VIEW}
     >
       {children}
     </AdminShell>

@@ -5,7 +5,30 @@ import {
 import { emptyOnTransientDbError } from "@/lib/data/fail-open";
 import { unstable_cache } from "next/cache";
 import prisma from "@/lib/prisma";
+import { getSession } from "@/lib/auth-server";
 import ProgramsInteractiveContent from "./ProgramsInteractiveContent";
+
+// #664 — the viewer's ACTIVE org memberships, as { orgId: orgName }. Viewer-
+// specific, so it must NOT enter the shared curated cache — it's fetched
+// per-request here and prop-drilled to the card, which badges a plan
+// "Recommended by <org>" when the viewer's org sponsors that plan's program.
+// Fail-open to an empty map (signed-out or a transient read → no badges).
+async function getViewerOrgs(): Promise<Record<string, string>> {
+  try {
+    const session = await getSession();
+    const userId = session?.user?.id;
+    if (!userId) return {};
+    const memberships = await prisma.membership.findMany({
+      where: { userId, status: "ACTIVE" },
+      select: { organization: { select: { id: true, name: true } } },
+    });
+    return Object.fromEntries(
+      memberships.map((m) => [m.organization.id, m.organization.name]),
+    );
+  } catch {
+    return {};
+  }
+}
 
 // Stream behind the static layout's instant skeleton; don't prerender at build (#932).
 export const dynamic = "force-dynamic";
@@ -23,7 +46,7 @@ export const dynamic = "force-dynamic";
 export default async function ExplorePrograms() {
   // Degrade gracefully: a heavy curated read that times out (cold query brushing
   // the pg query budget) renders an empty row instead of erroring the whole page.
-  const [trendingPrograms, newestPrograms, topicsWithCount, stats] =
+  const [trendingPrograms, newestPrograms, topicsWithCount, stats, viewerOrgs] =
     await Promise.all([
       getCuratedPrograms("all", "trending", 8).catch(
         emptyOnTransientDbError("trending programs"),
@@ -33,6 +56,7 @@ export default async function ExplorePrograms() {
       ),
       getTopicsWithCount("all").catch(emptyOnTransientDbError("topics")),
       fetchProgramStats(),
+      getViewerOrgs(),
     ]);
 
   return (
@@ -41,6 +65,7 @@ export default async function ExplorePrograms() {
       initialNewest={newestPrograms}
       initialTopics={topicsWithCount}
       initialStats={stats}
+      viewerOrgs={viewerOrgs}
     />
   );
 }

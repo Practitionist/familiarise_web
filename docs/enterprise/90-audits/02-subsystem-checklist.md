@@ -266,7 +266,7 @@ __tests__/enterprise/   cap, overage, credit-pool, reachable-paths, billing-admi
 - [ ] `LEDGER_BALANCE_SNAPSHOT_DRIFT` (maintained `LedgerAccountBalance` vs journal) `✅` #776 — O(1) balance reads replace the O(n) groupBy scan
 - [ ] `REFUND_BOOKING_COHERENCE` (refund ↔ utilization-reversal coherence) `✅` #776
 - [ ] `COMPLETED_PAYOUT_WITHOUT_LEDGER_TXN` (a COMPLETED payout with no original `PAYOUT`/`ORG_PAYOUT` posting) `✅` #812/#813 — covers **both** org and consultant payouts, keyed on the original posting's idempotencyKey so a reversal row can't mask a missing original
-- [ ] Money type Int32→BigInt (₹2.14cr overflow) `❌` #780 (v0-blocker)
+- [ ] Money type Int32→BigInt (₹2.14cr overflow) `✅` #780 — shipped across the money columns; verified in the 2026-06-12 triage and against the current schema (this row previously lagged the fix)
 - [ ] Reconcile run → `ok:true`, 0 findings on fresh reseed `✅`
 
 ## Phase 16 — Earnings & payouts
@@ -378,8 +378,8 @@ __tests__/enterprise/   cap, overage, credit-pool, reachable-paths, billing-admi
 ## Phase 27 — Data fixtures, hierarchy & feature flags
 **Code:** `prisma/seedFiles/15a-create-organizations.ts`, `lib/feature-flags.ts`, hierarchy columns
 - [ ] Seed cohort: Wipro (SPONSOR/INVOICE/LICENSED_SEAT), LearnPro (HOST), IIT (HYBRID/WALLET), Rahul (solo HOST), tour-owner `✅` — verification fixture
-- [ ] Org hierarchy (`parentOrganizationId`/`rootOrganizationId`/`depth`) `❌ INERT` (no reads) — trim helpers #721/#779
-- [ ] Feature flags inventory: `ENABLE_HOST_ORGS`, `ENABLE_LIVE_PAYOUTS`, `ENABLE_ROUTED_WALLET`, `ENABLE_IRP_*`, `ENABLE_CONSOLIDATED_INVOICE`, `ENABLE_CSP_ENFORCE`, `DPDP_SWEEPER_DELETE` `✅` — `lib/feature-flags.ts`
+- [ ] Org hierarchy (`parentOrganizationId`/`rootOrganizationId`) `✅ DROPPED` — the inert columns were grep-verified to have zero readers and removed in the #705 schema freeze. Subsidiary scoping remains a future structural change if a conglomerate buyer materializes. (There was never a `depth` column.)
+- [ ] Feature flags inventory `✅` — the flags actually exported from `lib/feature-flags.ts` are `ENABLE_HOST_ORGS`, `ENABLE_LIVE_PAYOUTS`, `ENABLE_TDS_ADMIN_VIEW`, `ENABLE_BETTERSTACK_TELEMETRY`, and `ENABLE_DUNNING_SUSPEND` (centralized in #863). IRP is gated only by the `ENABLE_IRP_UPLOADER` GitHub Actions repo variable, not an app const. The previously-listed `ENABLE_ROUTED_WALLET`, `ENABLE_CONSOLIDATED_INVOICE`, `ENABLE_CSP_ENFORCE`, and `DPDP_SWEEPER_DELETE` are not in the module.
 
 ---
 

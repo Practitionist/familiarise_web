@@ -12,6 +12,7 @@ import {
 import { notifyAppointmentRescheduled } from "@/lib/novu/service";
 import { logActivity } from "@/lib/activity/log-activity";
 import { getAppUrl } from "@/lib/url";
+import { hasActiveDisputeForAppointment } from "@/lib/payments/dispute-guard";
 import {
   CLASS_EVENT_ALLOWED_FROM,
   EVENT_ALLOWED_FROM,
@@ -56,6 +57,19 @@ export async function POST(
     const { appointmentId } = await params;
     const { searchParams } = new URL(request.url);
     const appointmentType = searchParams.get("type");
+
+    // #1008 — an appointment with a live payment dispute is frozen: its state is
+    // evidence and must not move while the dispute is contested.
+    if (await hasActiveDisputeForAppointment(appointmentId)) {
+      return NextResponse.json(
+        {
+          error:
+            "This appointment has an open payment dispute and can't be rescheduled until it resolves.",
+          code: "DISPUTE_ACTIVE",
+        },
+        { status: 409 },
+      );
+    }
 
     // Parse request body for optional slotIds (used for individual/multiple session reschedule)
     let slotIds: string[] | undefined;

@@ -393,6 +393,8 @@ export type OrgInvoiceIssuedPayload = {
   currency: string;
   dueDate: string;
   dashboardUrl: string;
+  /** #438 — deep link to the invoice PDF route (302s to a signed URL). */
+  pdfUrl?: string;
 };
 
 export type OrgInvoicePaidPayload = {

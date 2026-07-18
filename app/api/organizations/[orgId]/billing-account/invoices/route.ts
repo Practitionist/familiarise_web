@@ -353,6 +353,8 @@ export async function POST(
       currency: body.displayCurrency,
       dueDate: body.dueDate.toISOString(),
       dashboardUrl: `${origin}/dashboard/organization/${orgId}/billing`,
+      // #438 — deep link to the PDF (route caches + 302s to a signed URL).
+      pdfUrl: `${origin}/api/organizations/${orgId}/billing-account/invoices/${invoice.id}/pdf`,
     }).catch((err) =>
       console.error("[notifyOrgInvoiceIssued] failed:", err),
     );

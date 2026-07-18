@@ -776,6 +776,9 @@ async function seedConsentArtifacts(users: UserWithProfiles[]) {
     for (const purposeCode of [
       PURPOSE_CODES.PRIMARY_PROCESSING,
       PURPOSE_CODES.STREAM_DATA_PROCESSING,
+      // #701 — session-booking consent, gated fail-closed at org-sponsored
+      // checkout. Mirror the signup hook so seeded users behave like signups.
+      PURPOSE_CODES.SESSION_BOOKING,
     ] as const) {
       const draft = buildConsentArtifact({
         userId: u.id,

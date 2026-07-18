@@ -25,6 +25,9 @@ jest.mock("../../lib/prisma", () => ({
     $transaction: jest.fn(),
     appointment: { findUnique: jest.fn() },
     slotOfAppointment: { findMany: jest.fn(), deleteMany: jest.fn() },
+    // #1008 — the cancel/reschedule routes call hasActiveDisputeForAppointment,
+    // which reads prisma.dispute.findFirst. Default to no live dispute.
+    dispute: { findFirst: jest.fn().mockResolvedValue(null) },
     $disconnect: jest.fn(),
   },
 }));
@@ -42,6 +45,17 @@ jest.mock("../../lib/waitlist/slot-handler", () => ({
 // Mock novu notifications
 jest.mock("../../lib/novu", () => ({
   notifyAppointmentCancelled: jest.fn().mockResolvedValue(undefined),
+}));
+
+// #776 §C — whole-event (class/webinar) cancel refunds are exercised in their
+// own suite; here the cancel route just needs a benign summary back.
+jest.mock("../../lib/payments/operations/event-refunds", () => ({
+  refundWholeEventPayments: jest.fn().mockResolvedValue({
+    refundsIssued: 0,
+    refundedPaise: 0,
+    childRefundIds: [],
+    failures: [],
+  }),
 }));
 
 // ─── Imports ────────────────────────────────────────────────────────────────

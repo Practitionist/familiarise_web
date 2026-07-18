@@ -37,6 +37,13 @@ export interface CreateOrganizationWizardProps {
   afterLaunch?: (orgId: string) => Promise<void> | void;
   /** Override the post-launch redirect target. */
   finalRedirectPath?: (orgId: string) => string;
+  /**
+   * #863 — whether host orgs are enabled (ENABLE_HOST_ORGS). The flag is
+   * server-only, so the render sites read it and pass it here; OrgInfoStep
+   * hides the "Host consultants" capability when false so a user can't tick a
+   * box the POST would only reject with 400 HOST_ORGS_GATED.
+   */
+  hostOrgsEnabled?: boolean;
 }
 
 export function CreateOrganizationWizard({
@@ -44,6 +51,7 @@ export function CreateOrganizationWizard({
   onCancel,
   afterLaunch,
   finalRedirectPath,
+  hostOrgsEnabled = false,
 }: CreateOrganizationWizardProps = {}) {
   const [step, setStep] = useState(0);
   const [wizardData, setWizardData] = useState<Partial<OrgWizardData>>({});
@@ -95,6 +103,8 @@ export function CreateOrganizationWizard({
     // Expose whether Back is meaningful on this step. OrgInfoStep reads
     // this to decide if its Back button should render.
     canGoBack: step > 0 || !!onCancel,
+    // #863 — OrgInfoStep hides the host capability when host orgs are off.
+    hostOrgsEnabled,
   };
 
   const currentStep = steps[step];

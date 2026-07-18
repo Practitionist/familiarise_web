@@ -456,6 +456,10 @@ const MultiStepForm: React.FC = () => {
   // user lands on their new org's home fully onboarded.
   if (currentRole === "ORG_WORKSPACE" && step > 0) {
     const userId = session?.user?.id;
+    // #863 — hostOrgsEnabled defaults to false here (host capability hidden),
+    // which is the honest state while ENABLE_HOST_ORGS is off. This is a client
+    // component with no server parent to read the flag; TODO(#863): thread the
+    // server flag when host orgs launch (e.g. a server action or a server shell).
     return (
       <CreateOrganizationWizard
         onCancel={() => setStep(0)}
