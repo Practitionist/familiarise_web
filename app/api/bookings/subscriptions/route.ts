@@ -40,24 +40,29 @@ export async function GET(request: NextRequest) {
     const whereClause: Prisma.SubscriptionWhereInput = {};
 
     // Authorization: filter by ownership for non-privileged users.
-    // `?? "__none__"` (the participants-route idiom) is load-bearing: a
-    // session with a missing profile id would otherwise put `undefined`
-    // into the where clause, which Prisma IGNORES — silently dropping the
-    // ownership filter and serving every consultant's subscriptions.
+    // #org-appts — profile ids are carried independently of the singular
+    // platform role, so a dual-profile user (e.g. a host EXPERT whose
+    // marketplace role is CONSULTEE) must see BOTH sides: every subscription
+    // they DELIVER (own the plan) AND every one they BOOKED. Union whichever
+    // profiles the session actually carries — a single-identity user has only
+    // one id and matches one arm, so their view is unchanged.
     if (!isPrivileged(session.user.role)) {
-      if (session.user.role === "CONSULTANT") {
-        // Consultants can only see their own subscriptions. Filter on the
-        // plan's scalar FK (indexed) instead of joining consultantProfile.
-        whereClause.subscriptionPlan = {
-          consultantProfileId: session.user.consultantProfileId ?? "__none__",
-        };
-      } else if (session.user.role === "CONSULTEE") {
-        // Consultees can only see their own subscriptions
-        whereClause.requestedById = session.user.consulteeProfileId ?? "__none__";
-      } else {
-        // Unknown role - deny access
+      const ownershipArms: Prisma.SubscriptionWhereInput[] = [];
+      if (session.user.consultantProfileId) {
+        ownershipArms.push({
+          subscriptionPlan: {
+            consultantProfileId: session.user.consultantProfileId,
+          },
+        });
+      }
+      if (session.user.consulteeProfileId) {
+        ownershipArms.push({ requestedById: session.user.consulteeProfileId });
+      }
+      if (ownershipArms.length === 0) {
+        // No profile of either kind - deny access.
         return forbiddenResponse("Access denied");
       }
+      whereClause.AND = [{ OR: ownershipArms }];
     } else {
       // Privileged users can filter by any profile
       if (consultantProfileId) {
