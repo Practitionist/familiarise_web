@@ -37,7 +37,7 @@ import { Resend } from "resend";
 import prisma from "../../lib/prisma";
 import { AUDIT_ACTIONS } from "../../lib/enterprise/audit-actions";
 import { recordSystemError } from "../../lib/enterprise/system-events";
-import { checkConsent } from "../../lib/compliance/dpdp";
+import { checkConsentBatch } from "../../lib/compliance/dpdp";
 import { PURPOSE_CODES } from "../../lib/compliance/purpose-codes";
 import { notifyOrgDataExportReady } from "../../lib/novu/org-workflows";
 import { getAppUrl } from "../../lib/url";
@@ -127,20 +127,16 @@ async function buildBundleFor(organizationId: string): Promise<ExportBundle> {
   // consent. Their name/email are dropped from `members` and scrubbed from the
   // membership rows (the org-relationship metadata stays). TODO(#701): extend to
   // field-level scoping across the rest of the bundle.
-  const memberConsent = new Map<string, boolean>();
-  for (const u of allMembers) {
-    memberConsent.set(
-      u.id,
-      await checkConsent({
-        userId: u.id,
-        purposeCode: PURPOSE_CODES.PRIMARY_PROCESSING,
-      }),
-    );
-  }
-  const members = allMembers.filter((u) => memberConsent.get(u.id) === true);
+  // #1019 — one batch query instead of a per-member loop (pool-safe for large
+  // orgs). consentedIds holds the members who HAVE core-processing consent.
+  const consentedIds = await checkConsentBatch({
+    userIds: allMembers.map((u) => u.id),
+    purposeCode: PURPOSE_CODES.PRIMARY_PROCESSING,
+  });
+  const members = allMembers.filter((u) => consentedIds.has(u.id));
   const excludedForConsent = allMembers.length - members.length;
   const scrubbedMemberships = memberships.map((m) =>
-    m.user && memberConsent.get(m.user.id) === false
+    m.user && !consentedIds.has(m.user.id)
       ? { ...m, user: { id: m.user.id, name: null, email: null } }
       : m,
   );

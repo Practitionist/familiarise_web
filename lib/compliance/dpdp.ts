@@ -189,6 +189,33 @@ export async function checkConsent(params: {
 }
 
 /**
+ * Batch form of `checkConsent` (#1019) — resolve consent for many users in ONE
+ * query instead of N. Same fail-closed semantics (a live, non-withdrawn,
+ * in-retention artifact carrying the purpose code). Returns the set of userIds
+ * that HAVE consent; absentees are implicitly denied. Pool-safe for large
+ * exports where a per-user loop (sequential or Promise.all) would either be slow
+ * or spike the connection pool.
+ */
+export async function checkConsentBatch(params: {
+  userIds: string[];
+  purposeCode: PurposeCode;
+}): Promise<Set<string>> {
+  const { userIds, purposeCode } = params;
+  if (userIds.length === 0) return new Set();
+
+  const artifacts = await prisma.consentArtifact.findMany({
+    where: {
+      userId: { in: userIds },
+      purposeCodes: { has: purposeCode },
+      withdrawnAt: null,
+      auditRetainedUntil: { gt: new Date() },
+    },
+    select: { userId: true },
+  });
+  return new Set(artifacts.map((a) => a.userId));
+}
+
+/**
  * Record a user-initiated consent withdrawal. Idempotent — repeated
  * calls for the same (userId, purposeCodes) set `withdrawnAt` once and
  * return the existing row on subsequent calls.
