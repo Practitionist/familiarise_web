@@ -48,13 +48,18 @@ export function decideEscalation(
   }
 
   // A refund action above the review threshold goes to a human even if the flow
-  // would auto-resolve — money over the line gets a person.
+  // would auto-resolve — money over the line gets a person. Size the exposure
+  // from the captured amount × the eligible %, not the % alone.
   const threshold = opts.highValueRefundPaise ?? 500_00; // ₹500 default
-  const offersRefund = turn.actions.some(
+  const refundAction = turn.actions.find(
     (a) => a.kind === "OFFER_CANCEL_REFUND" && a.refundPct > 0,
   );
-  if (offersRefund && ctx.paymentId && threshold <= 0) {
-    return { escalate: true, reason: "high_value_refund" };
+  if (refundAction?.kind === "OFFER_CANCEL_REFUND" && ctx.paymentAmountPaise) {
+    const refundExposurePaise =
+      (ctx.paymentAmountPaise * refundAction.refundPct) / 100;
+    if (refundExposurePaise >= threshold) {
+      return { escalate: true, reason: "high_value_refund" };
+    }
   }
 
   return { escalate: false };

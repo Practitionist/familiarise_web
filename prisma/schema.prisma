@@ -273,8 +273,10 @@ model AppointmentSupportThread {
   updatedAt  DateTime         @updatedAt
   resolvedAt DateTime?
 
+  // One support conversation per (appointment, user) — reused across intents,
+  // like a per-order support chat. Also the concurrency guard for find-or-create.
+  @@unique([appointmentId, userId])
   @@index([userId, status])
-  @@index([appointmentId])
   @@index([organizationId, status])
   @@index([status, createdAt])
 }

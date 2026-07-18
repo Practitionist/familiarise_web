@@ -21,7 +21,7 @@ export class FlowchartResolver implements SupportResolver {
   constructor(private readonly flow: FlowDefinition) {}
 
   async resolveTurn(
-    _ctx: SupportContext,
+    ctx: SupportContext,
     currentNodeId: string | null,
     input: SupportTurnInput,
   ): Promise<SupportTurnResult> {
@@ -46,7 +46,7 @@ export class FlowchartResolver implements SupportResolver {
 
     // On the very first turn we just present the entry prompt.
     if (currentNodeId === null) {
-      return this.present(node);
+      return this.present(node, ctx);
     }
 
     // Advancing: resolve the chosen option on the CURRENT node.
@@ -56,7 +56,7 @@ export class FlowchartResolver implements SupportResolver {
       );
       if (!chosen) {
         // Re-present the prompt on an unrecognized choice (idempotent).
-        return this.present(node);
+        return this.present(node, ctx);
       }
       if (chosen.next === null) {
         // Choice ends the flow with no successor — treat as resolved.
@@ -80,15 +80,18 @@ export class FlowchartResolver implements SupportResolver {
           resolved: false,
         };
       }
-      return this.present(nextNode);
+      return this.present(nextNode, ctx);
     }
 
     // Already at a terminal — nothing further to advance.
-    return this.present(node);
+    return this.present(node, ctx);
   }
 
   /** Emit a node's message + (for terminals) its action/escalation. */
-  private present(node: FlowDefinition["nodes"][string]): SupportTurnResult {
+  private present(
+    node: FlowDefinition["nodes"][string],
+    ctx: SupportContext,
+  ): SupportTurnResult {
     if (node.kind === "PROMPT") {
       return {
         messages: [
@@ -107,11 +110,17 @@ export class FlowchartResolver implements SupportResolver {
         resolved: false,
       };
     }
-    // TERMINAL
+    // TERMINAL. A cancel-refund action carries only a placeholder refundPct in
+    // the static flow graph — inject the context's actual eligible % so the
+    // caller (and the escalation policy) sees the real refund exposure.
+    const action =
+      node.action?.kind === "OFFER_CANCEL_REFUND"
+        ? { ...node.action, refundPct: ctx.refundPctIfCancelledNow ?? 0 }
+        : node.action;
     return {
       messages: [{ sender: "BOT", body: node.body, metadata: { nodeId: node.id } }],
       nextNodeId: null,
-      actions: node.action ? [node.action] : [],
+      actions: action ? [action] : [],
       escalate: node.escalate ?? false,
       resolved: node.resolved ?? false,
     };

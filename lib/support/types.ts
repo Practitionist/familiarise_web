@@ -34,6 +34,9 @@ export interface SupportContext {
   /** Policy refund % were the user to cancel now (reuse computeRefundPct). */
   refundPctIfCancelledNow: number | null;
   paymentId: string | null;
+  /** Captured payment amount in paise — lets the escalation policy size the
+   *  refund exposure (amount × refundPct) rather than guess. */
+  paymentAmountPaise: number | null;
   hasRecording: boolean;
 }
 

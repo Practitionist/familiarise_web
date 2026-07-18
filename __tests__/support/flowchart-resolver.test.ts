@@ -25,6 +25,7 @@ function ctx(overrides: Partial<SupportContext> = {}): SupportContext {
     startsAt: new Date("2026-08-01T10:00:00Z"),
     refundPctIfCancelledNow: 100,
     paymentId: "pay1",
+    paymentAmountPaise: 1000_00,
     hasRecording: false,
     ...overrides,
   };
@@ -48,7 +49,8 @@ describe("FlowchartResolver (SELF_SERVE)", () => {
     const r = new FlowchartResolver(cancelFlow);
     const turn = await r.resolveTurn(ctx(), "start", { chosenOptionId: "cancel" });
     expect(turn.nextNodeId).toBeNull();
-    expect(turn.actions).toEqual([{ kind: "OFFER_CANCEL_REFUND", refundPct: 0 }]);
+    // refundPct is injected from ctx.refundPctIfCancelledNow, not the placeholder.
+    expect(turn.actions).toEqual([{ kind: "OFFER_CANCEL_REFUND", refundPct: 100 }]);
   });
 
   it("resolves cleanly when the user keeps the session", async () => {
@@ -104,6 +106,35 @@ describe("escalation policy", () => {
 
   it("does not escalate an ordinary resolved turn", () => {
     const d = decideEscalation(ctx(), { ...base, escalate: false, resolved: true }, "ok thanks");
+    expect(d.escalate).toBe(false);
+  });
+
+  it("escalates a refund whose exposure clears the threshold", () => {
+    const turn = {
+      ...base,
+      actions: [{ kind: "OFFER_CANCEL_REFUND" as const, refundPct: 100 }],
+    };
+    const d = decideEscalation(
+      ctx({ paymentAmountPaise: 1000_00 }),
+      turn,
+      "yes",
+      { highValueRefundPaise: 500_00 },
+    );
+    expect(d.escalate).toBe(true);
+    expect(d.reason).toBe("high_value_refund");
+  });
+
+  it("does not escalate a refund below the threshold", () => {
+    const turn = {
+      ...base,
+      actions: [{ kind: "OFFER_CANCEL_REFUND" as const, refundPct: 50 }],
+    };
+    const d = decideEscalation(
+      ctx({ paymentAmountPaise: 400_00 }),
+      turn,
+      "yes",
+      { highValueRefundPaise: 500_00 },
+    );
     expect(d.escalate).toBe(false);
   });
 });
