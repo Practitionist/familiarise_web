@@ -38,6 +38,8 @@ import { CountdownBadge } from "../CountdownBadge";
 import { KIND_LABEL } from "../AppointmentRow";
 import { RowPrimaryAction } from "../RowPrimaryAction";
 import { SessionTimeline } from "../SessionTimeline";
+import { SupportThreadSheet } from "@/components/support/SupportThreadSheet";
+import { AppointmentCsatCard } from "@/components/support/AppointmentCsatCard";
 
 const PARTICIPANTS_PREVIEW = 5;
 
@@ -257,30 +259,33 @@ export function AppointmentDetailClient({
             </div>
           </div>
 
-          {/* Actions — full-width bar so buttons aren't cramped beside the title */}
-          {(action.kind !== "view" || overflow.length > 0) && (
-            <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-border pt-4">
-              {action.kind !== "view" && (
-                <RowPrimaryAction action={action} size="default" />
-              )}
-              {overflow.map((item) => (
-                <Button
-                  key={item.key}
-                  variant="outline"
-                  size="sm"
-                  disabled={item.disabled}
-                  onClick={item.onClick}
-                  className={
-                    item.destructive
-                      ? "text-red-600 border-red-200 hover:bg-red-50 dark:text-red-400 dark:border-red-900/40 dark:hover:bg-red-900/20"
-                      : undefined
-                  }
-                >
-                  {item.label}
-                </Button>
-              ))}
-            </div>
-          )}
+          {/* Actions — full-width bar so buttons aren't cramped beside the title.
+              Always rendered: "Get help" is available on every appointment. */}
+          <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-border pt-4">
+            {action.kind !== "view" && (
+              <RowPrimaryAction action={action} size="default" />
+            )}
+            {overflow.map((item) => (
+              <Button
+                key={item.key}
+                variant="outline"
+                size="sm"
+                disabled={item.disabled}
+                onClick={item.onClick}
+                className={
+                  item.destructive
+                    ? "text-red-600 border-red-200 hover:bg-red-50 dark:text-red-400 dark:border-red-900/40 dark:hover:bg-red-900/20"
+                    : undefined
+                }
+              >
+                {item.label}
+              </Button>
+            ))}
+            <SupportThreadSheet
+              appointmentId={appointmentId}
+              isOrgContext={!!orgName}
+            />
+          </div>
 
           {vm.group && vm.group.total > 0 && (
             <div className="mt-4 pt-4 border-t border-border">
@@ -300,6 +305,9 @@ export function AppointmentDetailClient({
 
         <div className="grid w-full grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(260px,340px)] lg:items-start">
           <div className="flex min-w-0 flex-col gap-4">
+            {vm.bucket === "past" && (
+              <AppointmentCsatCard appointmentId={appointmentId} />
+            )}
             <Section title="Sessions">
               {hasConfirmedSessions ? (
                 <SessionTimeline
