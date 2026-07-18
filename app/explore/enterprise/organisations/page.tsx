@@ -231,9 +231,11 @@ export default async function ExploreOrganisationsPage({
   const { industry } = await searchParams;
   // Outside the orgs Suspense boundary — a transient timeout here would crash the
   // whole page, so degrade to no industry filters rather than erroring (#925).
-  const industries = await fetchIndustryList().catch(
-    emptyOnTransientDbError("org industries"),
-  );
+  // #1019 — skip the query entirely while host orgs are gated: the grid + filters
+  // are replaced by the "coming soon" state, so the industries list is unused.
+  const industries = ENABLE_HOST_ORGS
+    ? await fetchIndustryList().catch(emptyOnTransientDbError("org industries"))
+    : [];
 
   return (
     <main className="min-h-screen bg-background">
