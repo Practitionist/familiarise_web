@@ -373,12 +373,15 @@ function ConsultantLayoutInner({
   // - ADMIN: Can access ANY dashboard
   // - STAFF: Can view consultant and consultee dashboards
   // - CONSULTANT: Can only access their OWN dashboard
+  // Capability-based (#org-appts): access is owning the consultantProfile, NOT
+  // holding UserRole=CONSULTANT — an org EXPERT whose marketplace identity is
+  // CONSULTEE still owns a consultantProfile and must reach their delivery
+  // surfaces. ADMIN/STAFF may inspect anyone's.
   const hasConsultantAccess =
     userDetails &&
     (userDetails.role === "ADMIN" ||
       userDetails.role === "STAFF" ||
-      (userDetails.role === "CONSULTANT" &&
-        userDetails.consultantProfileId === consultantId));
+      userDetails.consultantProfileId === consultantId);
 
   // Redirect unauthorized users to their appropriate dashboard
   useEffect(() => {
@@ -428,9 +431,7 @@ function ConsultantLayoutInner({
   // ADMIN/STAFF inspecting someone's dashboard must never be gated (and
   // /api/verification/status reads the SIGNED-IN user, which would be the
   // admin's own — mismatched — record). Gate + fetch only for the owner.
-  const isOwnDashboard =
-    userDetails?.role === "CONSULTANT" &&
-    userDetails?.consultantProfileId === consultantId;
+  const isOwnDashboard = userDetails?.consultantProfileId === consultantId;
   const { data: verification } = useVerificationStatus(
     userId,
     !!verificationStatus &&

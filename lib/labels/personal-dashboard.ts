@@ -38,3 +38,46 @@ export function resolvePersonalDashboardHref(
   }
   return null;
 }
+
+export type PersonalFacetKind = "org-workspace" | "consultant" | "consultee";
+
+export interface PersonalFacet {
+  kind: PersonalFacetKind;
+  label: string;
+  href: string;
+}
+
+/**
+ * All of a user's personal facets, in priority order — a user who both
+ * delivers (consultantProfile) and consumes (consulteeProfile) now has BOTH
+ * personal homes, so the switcher can offer each rather than the single
+ * priority-winner `resolvePersonalDashboardHref` returns. Identity is driven by
+ * capability (which profiles exist), not the singular UserRole.
+ */
+export function resolvePersonalDashboardFacets(
+  user: PersonalProfileIds,
+): PersonalFacet[] {
+  const facets: PersonalFacet[] = [];
+  if (user.orgWorkspaceProfileId) {
+    facets.push({
+      kind: "org-workspace",
+      label: "Personal (Operator)",
+      href: `/dashboard/org-workspace/${user.orgWorkspaceProfileId}/home`,
+    });
+  }
+  if (user.consultantProfileId) {
+    facets.push({
+      kind: "consultant",
+      label: "Personal (Consultant)",
+      href: `/dashboard/consultant/${user.consultantProfileId}/home`,
+    });
+  }
+  if (user.consulteeProfileId) {
+    facets.push({
+      kind: "consultee",
+      label: "Personal (Consultee)",
+      href: `/dashboard/consultee/${user.consulteeProfileId}/home`,
+    });
+  }
+  return facets;
+}
