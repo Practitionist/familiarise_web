@@ -227,6 +227,16 @@ export default function OrgLayout({
         show: can("myArrangement.read") && canHost,
       },
       {
+        // #org-appts / #1025 — collaborators on THIS org's hosted webinar/class
+        // plans. Mirrors Compensation's gate: only host-capable orgs have
+        // collaborator-bearing plans, and inviting/managing collaborators is
+        // the plan-owning EXPERT's own surface.
+        name: "Collaborations",
+        icon: Users,
+        path: "collaborations",
+        show: can("myArrangement.read") && canHost,
+      },
+      {
         // Any ACTIVE member — learners who ATTEND org sessions and experts
         // who DELIVER them both need their own per-org appointments surface.
         // Deliberately NOT gated on canHost (that would exclude pure
@@ -569,6 +579,7 @@ export default function OrgLayout({
     home:               "Overview",
     "my-appointments":  "My Appointments",
     compensation:       "Compensation",
+    collaborations:     "Collaborations",
     members:      "Members",
     invitations:  "Invitations",
     learners:     "Learners",
