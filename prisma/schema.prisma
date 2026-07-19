@@ -1,3 +1,8 @@
+// #705 schema freeze (2026-07-17) — enterprise schema is launch-frozen.
+// Additive-only until launch: new nullable columns / new models are allowed;
+// renames, drops of live columns, and type changes are not. Money columns are
+// BigInt paise; enums are declared below the model(s) that use them.
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -60,9 +65,12 @@ model User {
   Waitlist           Waitlist[]
 
   // Feedback and Support
-  feedbacks        Feedback[]
-  supportTickets   SupportTicket[]
-  supportResponses SupportResponse[]
+  feedbacks                 Feedback[]
+  supportTickets            SupportTicket[]
+  // #appt-support — per-appointment support conversations + private CSAT.
+  appointmentSupportThreads AppointmentSupportThread[]
+  appointmentFeedback       AppointmentFeedback[]
+  supportResponses          SupportResponse[]
 
   accounts         Account[] // BetterAuth Accounts
   sessions         Session[] // BetterAuth Sessions
@@ -70,6 +78,7 @@ model User {
   memberships      Membership[] // Typed enterprise memberships (Arch 4-Modified)
   invitationsSent  Invitation[]      @relation("InvitationsSent")
   consentArtifacts ConsentArtifact[]
+  dpdpGrievances   DpdpGrievance[]
 
   // Staff Dashboard Relations
   reportsSubmitted  ModerationReport[] @relation("ReportsSubmitted")
@@ -170,8 +179,11 @@ model SupportTicket {
   user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   userId String
 
-  responses   SupportResponse[]
-  attachments SupportTicketAttachment[]
+  responses                SupportResponse[]
+  attachments              SupportTicketAttachment[]
+  // #appt-support — set when a per-appointment thread escalates to a human, so
+  // ops works it in this existing queue rather than a parallel system.
+  appointmentSupportThread AppointmentSupportThread?
 
   // Entity links for Swiggy-style context (link ticket to booking/payment)
   consultationId String?
@@ -227,6 +239,118 @@ model SupportTicketAttachment {
   uploadedAt DateTime @default(now())
 
   @@index([ticketId])
+}
+
+// #appt-support — per-appointment support conversation (Swiggy/Zomato-style).
+// One thread per (appointment, user). Channel-agnostic: messages are produced
+// by a swappable resolver — a deterministic flowchart now, an AI agent later,
+// a human on escalation — without changing this shape. organizationId is
+// denormalized from the appointment so org admins can triage without a join.
+model AppointmentSupportThread {
+  id             String        @id @default(uuid())
+  appointmentId  String
+  appointment    Appointment   @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Null for pure B2C appointments; set for org-sponsored/hosted ones.
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+
+  category      SupportThreadCategory @default(OTHER)
+  status        SupportThreadStatus   @default(OPEN)
+  // Which resolver is currently driving the thread. SELF_SERVE = flowchart.
+  activeChannel SupportChannel        @default(SELF_SERVE)
+  // Current flowchart node id (null once AI/HUMAN takes over or it resolves).
+  currentNodeId String?
+
+  // A HUMAN handoff creates/links a general SupportTicket so ops works it in the
+  // existing queue — no parallel ops system (one-to-one).
+  supportTicketId String?        @unique
+  supportTicket   SupportTicket? @relation(fields: [supportTicketId], references: [id], onDelete: SetNull)
+
+  messages   SupportMessage[]
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+  resolvedAt DateTime?
+
+  // One support conversation per (appointment, user) — reused across intents,
+  // like a per-order support chat. Also the concurrency guard for find-or-create.
+  @@unique([appointmentId, userId])
+  @@index([userId, status])
+  @@index([organizationId, status])
+  @@index([status, createdAt])
+}
+
+model SupportMessage {
+  id       String                   @id @default(uuid())
+  threadId String
+  thread   AppointmentSupportThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  sender   SupportMessageSender
+  body     String                   @db.Text
+  // Resolver metadata — flow node id, AI model, action refs. Free-form.
+  metadata Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([threadId, createdAt])
+}
+
+// #appt-support — per-appointment private CSAT (1-5), distinct from the public
+// ConsultantReview. Gives webinar/class a feedback path they lack today and
+// feeds the org-level quality signal. One per (appointment, user).
+model AppointmentFeedback {
+  id             String        @id @default(uuid())
+  appointmentId  String
+  appointment    Appointment   @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  rating         Int           @db.SmallInt
+  comment        String?       @db.Text
+
+  createdAt DateTime @default(now())
+
+  @@unique([appointmentId, userId])
+  @@index([organizationId, createdAt])
+}
+
+enum SupportThreadStatus {
+  OPEN
+  IN_PROGRESS
+  ESCALATED
+  RESOLVED
+  CLOSED
+}
+
+// Which resolver drives the thread. The interface is identical across all three
+// so a thread can move SELF_SERVE → AI → HUMAN without a data change.
+enum SupportChannel {
+  SELF_SERVE
+  AI
+  HUMAN
+}
+
+enum SupportMessageSender {
+  USER
+  BOT
+  AGENT
+  SYSTEM
+}
+
+// The support intent — selects which flowchart runs. SPONSORSHIP_BILLING and
+// ORG_ADMIN_DISPUTE are the B2B-only intents (offered by context).
+enum SupportThreadCategory {
+  CANCEL_REFUND
+  RESCHEDULE
+  NO_SHOW
+  TECHNICAL
+  PAYMENT_STATUS
+  RECORDING_ACCESS
+  QUALITY_COMPLAINT
+  SPONSORSHIP_BILLING
+  ORG_ADMIN_DISPUTE
+  OTHER
 }
 
 enum FeedbackStatus {
@@ -500,14 +624,10 @@ model Organization {
   canSponsor Boolean @default(true)
   canHost    Boolean @default(false)
 
-  // #771 D3 — group hierarchy for conglomerate buyers (Tata/Reliance/Birla-style
-  // subsidiary groups). Nullable + inert until group-billing/subsidiary-scoping
-  // APIs ship (stubbed 501). Re-adds the parent/root columns dropped in #768 so
-  // a future buyer doesn't force a structural migration. Self-relation.
-  parentOrganizationId String?
-  parentOrganization   Organization?  @relation("OrgHierarchy", fields: [parentOrganizationId], references: [id], onDelete: SetNull)
-  childOrganizations   Organization[] @relation("OrgHierarchy")
-  rootOrganizationId   String? // denormalized group root for fast subsidiary scoping
+  // #705 freeze — inert group-hierarchy columns (parentOrganizationId,
+  // rootOrganizationId, OrgHierarchy self-relation) dropped: never read by any
+  // code path. Subsidiary scoping remains a future structural change if a
+  // conglomerate buyer materializes. See docs/enterprise/00-foundations/06-hierarchy.md.
 
   // India / GCC context (all schema-final; compliance logic stubbed)
   dataResidencyRegion DataRegion        @default(IN)
@@ -651,6 +771,11 @@ model Organization {
   // #778 §D — GST credit notes (Sec 34) issued against this org's invoices.
   creditNotes CreditNote[]
 
+  // #appt-support — org-scoped read views over members' per-appointment support
+  // threads + CSAT (denormalized org tag; org admins triage / see quality).
+  appointmentSupportThreads AppointmentSupportThread[]
+  appointmentFeedback       AppointmentFeedback[]
+
   // #778 §D — annual aggregate turnover ≥ ₹5cr makes IRN/e-invoice mandatory
   // (CGST e-invoicing threshold). Drives whether OrganizationInvoice must upload
   // to the IRP. Flag frozen now; enforcement deferred.
@@ -663,7 +788,6 @@ model Organization {
   @@index([canSponsor, canHost])
   @@index([canHost, isPublic, status])
   @@index([dataResidencyRegion])
-  @@index([parentOrganizationId])
   @@map("organizations")
 }
 
@@ -757,11 +881,10 @@ model Membership {
   rateCardOverride   RateCard?       @relation("MembershipRateCardOverride", fields: [rateCardOverrideId], references: [id], onUpdate: Cascade, onDelete: SetNull)
 
   /// ADR 18 — org-declared exclusivity for internal consultants (pairs with
-  /// payoutRecipient=ORGANIZATION). Schema stub, UNENFORCED: nothing hides or
-  /// blocks the consultant's independent B2C plans yet; the flag exists now
-  /// because the schema freezes before launch. Enforcement (hide/block
-  /// independent plans while an exclusive engagement is active) is a future
-  /// feature gated on org demand.
+  /// payoutRecipient=ORGANIZATION). ENFORCED at checkout (#982): while an ACTIVE
+  /// membership sets this flag, the consultant's independent (non-org-owned)
+  /// plans cannot be booked — see checkout.ts. The "hide" half (filtering those
+  /// plans out of marketplace listings) remains future work per the ADR.
   exclusiveEngagement Boolean @default(false)
 
   // Entitlement tracking
@@ -1334,13 +1457,11 @@ model BookingUtilization {
   @@index([programAssignmentId, createdAt])
 }
 
-/// ADR 18 — optional curated consultant panel for a Program. Schema stub,
-/// UNENFORCED: the sponsor network stays open (a Program with zero rows
-/// imposes no restriction, and checkout does not consult this table yet).
-/// When a sponsor asks for a curated panel, enforcement slots into the
-/// checkout org-resolution block right after the ProgramAssignment is
-/// validated (see the ADR-18 comment in lib/payments/operations/checkout.ts):
-/// rows present ⇒ the booked plan's consultant must be listed.
+/// ADR 18 — optional curated consultant panel for a Program. ENFORCED at
+/// checkout (#971): a Program with zero rows keeps the sponsor network open;
+/// once rows exist, an org-sponsored booking's consultant must be listed or
+/// the checkout is rejected under the distributed lock (see the ADR-18
+/// allowlist block in lib/payments/operations/checkout.ts).
 model ProgramConsultantAllowlist {
   id                  String            @id @default(uuid())
   programId           String
@@ -2190,6 +2311,30 @@ model DataBreach {
   principalNotificationNote    String?   @db.Text
 
   @@index([detectedAt])
+}
+
+/// DPDP Rule 13 grievance intake (#701, minimal). A data principal files a
+/// grievance; ops sees it via a recorded system event and works it manually.
+/// The redressal SLA workflow (assignment, response deadlines, closure audit)
+/// is deferred — this row is the durable intake record.
+model DpdpGrievance {
+  id          String          @id @default(uuid())
+  userId      String
+  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subject     String          @db.VarChar(200)
+  description String          @db.Text
+  status      GrievanceStatus @default(OPEN)
+  createdAt   DateTime        @default(now()) @db.Timestamptz
+  resolvedAt  DateTime?       @db.Timestamptz
+
+  @@index([status, createdAt])
+  // Postgres does not auto-index FKs; the Cascade delete scans by userId.
+  @@index([userId])
+}
+
+enum GrievanceStatus {
+  OPEN
+  RESOLVED
 }
 
 //////////////////////////////////////////////////// USER PROFILES and SLOTTING MECHANISM ////////////////////////////////////////////////////
@@ -3279,8 +3424,11 @@ model Appointment {
 
   trialSession TrialSession?
 
-  payment   Payment[]
-  documents AppointmentDocument[]
+  payment         Payment[]
+  documents       AppointmentDocument[]
+  // #appt-support — per-appointment support conversations + private CSAT.
+  supportThreads  AppointmentSupportThread[]
+  supportFeedback AppointmentFeedback[]
 
   // #674 personal-vs-org scope split — set at checkout for org-context bookings.
   organization   Organization? @relation("AppointmentByOrg", fields: [organizationId], references: [id], onDelete: SetNull)
@@ -5094,7 +5242,8 @@ enum EmailDeliveryStatus {
 /// Per-org SCIM 2.0 bearer tokens. Stored as SHA-256 hashes; the raw token
 /// is shown once at creation and never persisted. Auth path: bearer →
 /// sha256 → lookup in this table → load organizationId. Status flips to
-/// REVOKED on explicit DELETE; tokens never expire unless revoked.
+/// REVOKED on explicit DELETE; a token also stops authenticating once past
+/// its optional expiresAt (enforced in lib/scim/auth.ts).
 model ScimToken {
   id                    String          @id @default(cuid())
   organizationId        String
@@ -5106,12 +5255,10 @@ model ScimToken {
   createdAt             DateTime        @default(now())
   lastUsedAt            DateTime?
   revokedAt             DateTime?
-  /// Optional auto-rotation TTL. Null = "never expires"; non-null is
-  /// the absolute deadline after which `requireScimAuth` refuses the
-  /// token even if `status = ACTIVE`. The enforcement read is a
-  /// follow-up — the column exists today so OWNERs can set a 6/12
-  /// month TTL when minting + the rotation reminder cron has a
-  /// stable column to scan.
+  /// Optional auto-rotation TTL. Null = "never expires"; non-null is the
+  /// absolute deadline after which the SCIM auth path (#789) refuses the token
+  /// with 401 even while `status = ACTIVE` — the row stays ACTIVE so the
+  /// operator sees it lapsed rather than revoked.
   expiresAt             DateTime?
 
   @@index([organizationId, status])
@@ -5264,6 +5411,11 @@ model OverageEvent {
   invoiceLineItemId    String?
   invoiceLineItem      InvoiceLineItem?    @relation(fields: [invoiceLineItemId], references: [id], onDelete: SetNull)
   settledAt            DateTime?
+  /// #715/#716 — set when a CHARGED overage is credited back because its parent
+  /// booking was fully refunded (CHARGE_MEMBER side-payment refunded / CHARGE_ORG
+  /// invoice netted by the refund credit note). Uncollected reversals reuse the
+  /// existing chargeStatus history; this stamp marks the post-collection case.
+  reversedAt           DateTime?           @db.Timestamptz
 
   /// #779 §A — CHARGE_MEMBER timeout telemetry. A member-pays overage sits
   /// PENDING until the side-payment SUCCEEDS; if abandoned it must time out →

@@ -21,6 +21,10 @@ import type { Membership, MemberStatus } from "@prisma/client";
 export type Scope =
   | { kind: "personal" }
   | { kind: "org"; orgId: string }
+  // #org-appts — org-scoped to ONE member's own participation (booked as a
+  // learner OR delivered as an expert). Distinct from `org` (all-org, MANAGER+).
+  // Server-constructed only (not `?orgScope=`-addressable).
+  | { kind: "orgMember"; orgId: string; userId: string }
   | { kind: "all" };
 
 export type ScopeResolution =
@@ -125,7 +129,8 @@ export function scopeToWhereOrgId(
   scope: Scope,
 ): { organizationId: string | null } | { organizationId: string } | {} {
   if (scope.kind === "personal") return { organizationId: null };
-  if (scope.kind === "org") return { organizationId: scope.orgId };
+  if (scope.kind === "org" || scope.kind === "orgMember")
+    return { organizationId: scope.orgId };
   return {};
 }
 
@@ -137,5 +142,5 @@ export function scopeToWhereOrgId(
 export function serializeScope(scope: Scope): string {
   if (scope.kind === "personal") return "mine";
   if (scope.kind === "all") return "all";
-  return scope.orgId;
+  return scope.orgId; // org + orgMember both serialize to the orgId
 }

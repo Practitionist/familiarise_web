@@ -22,7 +22,10 @@ import {
   CAPABILITY_BADGE_CLASS,
   MEMBER_ROLE_LABEL,
 } from "@/lib/labels/org-labels";
-import { resolvePersonalDashboardHref } from "@/lib/labels/personal-dashboard";
+import {
+  resolvePersonalDashboardHref,
+  resolvePersonalDashboardFacets,
+} from "@/lib/labels/personal-dashboard";
 
 /**
  * Context switcher rendered in the consultant/consultee navbar and the
@@ -52,6 +55,11 @@ export function OrganizationSwitcher() {
   const personalHref = session?.user
     ? resolvePersonalDashboardHref(session.user)
     : null;
+  // A user who both delivers and consumes has MORE than one personal facet
+  // (consultant + consultee). Offer each so they can act on either side.
+  const personalFacets = session?.user
+    ? resolvePersonalDashboardFacets(session.user)
+    : [];
 
   // Active context from the route: an org dashboard pins to its orgId;
   // anything else is the personal context.
@@ -95,27 +103,44 @@ export function OrganizationSwitcher() {
         <DropdownMenuLabel>Switch dashboard</DropdownMenuLabel>
         <DropdownMenuSeparator />
 
-        {personalHref && (
+        {personalFacets.length > 0 && (
           <>
-            <DropdownMenuItem asChild>
-              <Link
-                href={personalHref}
-                className="flex cursor-pointer items-center gap-3"
-              >
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-md bg-zinc-100">
-                  <User className="h-4 w-4 text-zinc-500" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium text-zinc-900">
-                    Personal
-                  </p>
-                  <p className="text-[11px] text-zinc-500">Your own dashboard</p>
-                </div>
-                {isPersonalActive && (
-                  <Check className="h-4 w-4 shrink-0 text-zinc-900" />
-                )}
-              </Link>
-            </DropdownMenuItem>
+            {personalFacets.map((facet) => {
+              // Per-facet active detection — a dual-profile user can be on
+              // their consultant OR consultee home; only tick the current one.
+              const facetActive =
+                isPersonalActive &&
+                pathname?.startsWith(
+                  facet.kind === "org-workspace"
+                    ? "/dashboard/org-workspace/"
+                    : facet.kind === "consultant"
+                      ? "/dashboard/consultant/"
+                      : "/dashboard/consultee/",
+                );
+              return (
+                <DropdownMenuItem asChild key={facet.kind}>
+                  <Link
+                    href={facet.href}
+                    className="flex cursor-pointer items-center gap-3"
+                  >
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-md bg-zinc-100">
+                      <User className="h-4 w-4 text-zinc-500" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium text-zinc-900">
+                        {personalFacets.length > 1 ? facet.label : "Personal"}
+                      </p>
+                      <p className="text-[11px] text-zinc-500">
+                        Your own dashboard
+                      </p>
+                    </div>
+                    {facetActive && (
+                      <Check className="h-4 w-4 shrink-0 text-zinc-900" />
+                    )}
+                  </Link>
+                </DropdownMenuItem>
+              );
+            })}
             <DropdownMenuSeparator />
           </>
         )}

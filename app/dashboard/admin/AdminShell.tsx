@@ -25,6 +25,7 @@ import {
   Users,
   Wallet,
   Wrench,
+  Landmark,
 } from "lucide-react";
 
 import {
@@ -59,13 +60,24 @@ export function AdminShell({
   userEmail,
   userImage,
   children,
+  // #863 — the TDS surface is flag-gated (ENABLE_TDS_ADMIN_VIEW). The server
+  // layout reads the flag and passes it, so the nav item only appears when the
+  // page would actually resolve (no link that 404s).
+  showTds = false,
 }: Pick<
   OperatorDashboardShellProps,
   "userName" | "userEmail" | "userImage" | "children"
->) {
+> & { showTds?: boolean }) {
+  const items = showTds
+    ? [
+        ...sidebarItems.slice(0, 11),
+        { name: "TDS", icon: Landmark, path: "tds" },
+        ...sidebarItems.slice(11),
+      ]
+    : sidebarItems;
   return (
     <OperatorDashboardShell
-      sidebarItems={sidebarItems}
+      sidebarItems={items}
       basePath="/dashboard/admin"
       title="Admin Portal"
       breadcrumbRoot="Admin"

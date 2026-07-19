@@ -44,3 +44,24 @@ export async function getOrgAppointments(
   });
   return toPlain(result);
 }
+
+/**
+ * #org-appts — ONE member's own appointments within an org (booked as a learner
+ * OR delivered as an expert). Powers the per-user "Org Appointments" page.
+ * Distinct from getOrgAppointments (all-org, MANAGER+). Auth is enforced upstream
+ * (membership at orgId); this trusts its caller.
+ */
+export async function getOrgMemberAppointments(
+  orgId: string,
+  userId: string,
+  args: GetOrgAppointmentsArgs = {},
+): Promise<ListAppointmentsResult> {
+  const result = await listAppointmentsScoped({
+    scope: { kind: "orgMember", orgId, userId },
+    userId,
+    appointmentType: args.appointmentType,
+    page: args.page ?? 1,
+    perPage: args.perPage ?? 20,
+  });
+  return toPlain(result);
+}

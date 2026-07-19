@@ -54,6 +54,7 @@ import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import type { PaymentGateway, PayoutStatus } from "@prisma/client";
 import { acquireLock, releaseLock } from "@/lib/redis";
+import { assertPayoutBalance } from "./balance-preflight";
 import { computeMsmePaymentDeadline } from "@/lib/compliance/msme";
 import { computeTdsForPayout } from "@/lib/compliance/tds";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
@@ -707,6 +708,17 @@ async function submitOrgPayoutToGateway(payoutId: string): Promise<void> {
   const sdk = getRazorpayPayoutsService();
   const idempotencyKey = sdk.generateIdempotencyKey(payoutId);
   const mode = sdk.determinePayoutMode(payout.amountPaise, "bank_account");
+
+  // #863 — don't submit a high-value NEFT the RazorpayX balance can't cover.
+  // Leaves the row in PROCESSING for the reconcile cron to retry once funded
+  // (same posture as the Stripe-deferred return above). Fails open on unknown.
+  const preflight = await assertPayoutBalance(payout.amountPaise);
+  if (!preflight.ok) {
+    console.warn(
+      `[OrgPayoutService] Holding payout ${payoutId} — ${preflight.reason}`,
+    );
+    return;
+  }
 
   const response = await sdk.createPayout({
     fundAccountId,

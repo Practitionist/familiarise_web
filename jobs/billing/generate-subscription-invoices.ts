@@ -32,7 +32,10 @@ import { abortIfMaintenance } from "@/lib/maintenance-cron";
 import { deriveGstBreakdown } from "@/lib/compliance/gst";
 import { generateOrgInvoiceNumber } from "@/lib/payments/billing/invoice-numbering";
 import { BILLABLE_ORG_STATUSES } from "@/lib/enterprise/org-status";
-import { notifyOrgLicenseRenewalUpcoming } from "@/lib/novu/org-workflows";
+import {
+  notifyOrgLicenseRenewalUpcoming,
+  notifyOrgInvoiceIssued,
+} from "@/lib/novu/org-workflows";
 import { getAppUrl } from "@/lib/url";
 import { Currency, OrgInvoiceStatus, Prisma } from "@prisma/client";
 import { withCronLock, CronLockHeldError, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
@@ -64,6 +67,7 @@ export async function runGenerateSubscriptionInvoices(): Promise<{
           organization: {
             select: {
               id: true,
+              name: true,
               slug: true,
               invoiceNumberPrefix: true,
               taxInfo: { select: { gstStateCode: true, gstin: true } },
@@ -190,7 +194,12 @@ export async function runGenerateSubscriptionInvoices(): Promise<{
             },
           });
 
-          return { claimed: true as const, invoiceId: invoice.id };
+          return {
+            claimed: true as const,
+            invoiceId: invoice.id,
+            invoiceNumber,
+            totalPaise: gst.totalPaise,
+          };
         },
         {
           isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
@@ -199,6 +208,22 @@ export async function runGenerateSubscriptionInvoices(): Promise<{
 
       if (result.claimed) {
         generated++;
+        // #438 — email the issued invoice (bell + billingEmail channel). No
+        // request in a cron, so build the origin from getAppUrl(). Fire-and-
+        // forget, mirroring notifyOrgLicenseRenewalUpcoming below.
+        const origin = getAppUrl();
+        const orgId = sub.contract.organization.id;
+        void notifyOrgInvoiceIssued(orgId, {
+          invoiceNumber: result.invoiceNumber,
+          orgName: sub.contract.organization.name,
+          totalPaise: result.totalPaise,
+          currency: Currency.INR,
+          dueDate: dueDate.toISOString(),
+          dashboardUrl: `${origin}/dashboard/organization/${orgId}/billing`,
+          pdfUrl: `${origin}/api/organizations/${orgId}/billing-account/invoices/${result.invoiceId}/pdf`,
+        }).catch((err) =>
+          console.error("[cron] notifyOrgInvoiceIssued failed:", err),
+        );
       } else {
         console.log(
           `[cron] Subscription ${sub.id} already claimed by another worker, skipping`,

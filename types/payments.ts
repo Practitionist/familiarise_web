@@ -101,6 +101,13 @@ export interface Refund {
 export interface RefundListResponse {
   refunds: Refund[];
   total: number;
+  // #997 secondary findings — dashboard-wide counts (unfiltered by the
+  // current search/gateway), not a client-side .filter() over the page.
+  stats: {
+    pendingCount: number;
+    succeededCount: number;
+    failedCount: number;
+  };
   page: number;
   limit?: number;
   totalPages: number;

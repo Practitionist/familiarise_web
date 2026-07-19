@@ -274,7 +274,7 @@ export function HomePageClient({ orgId }: { orgId: string }) {
   // roles see the ConsumerView below instead of broken "Could not load"
   // cards. Sub-MANAGERs shouldn't normally reach /home anyway because
   // /[orgId]/page.tsx redirects them to /my-program (LEARNER) or
-  // /my-arrangement (EXPERT) — this is a deep-link safety net.
+  // /compensation (EXPERT) — this is a deep-link safety net.
   // We exclude BILLING_ADMIN from `isOperator` so it doesn't fall into
   // the operator branch downstream.
   const isOperator = !isFinanceLead && isAtLeast("MANAGER");
@@ -334,9 +334,9 @@ export function HomePageClient({ orgId }: { orgId: string }) {
           ? {
               title: "Your hosting arrangement with this organisation",
               body:
-                "This organisation routes session payments through a shared rate card. Open My Arrangement to see the split and your recent earnings.",
-              ctaLabel: "Open My Arrangement",
-              ctaHref: `/dashboard/organization/${orgId}/my-arrangement`,
+                "This organisation routes session payments through a shared rate card. Open Compensation to see the split and your recent earnings.",
+              ctaLabel: "Open Compensation",
+              ctaHref: `/dashboard/organization/${orgId}/compensation`,
             }
           : {
               title: "You're a member here",

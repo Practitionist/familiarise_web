@@ -50,6 +50,7 @@ export function OrgInfoStep({
   canGoBack,
   initialData,
   isSubmitting,
+  hostOrgsEnabled = false,
 }: StepProps) {
   const {
     register,
@@ -118,21 +119,26 @@ export function OrgInfoStep({
               </p>
             </div>
           </label>
-          <label className="flex items-start gap-3 rounded-lg border border-zinc-200 p-3 cursor-pointer hover:border-zinc-300">
-            <Checkbox
-              checked={canHost}
-              onCheckedChange={(v) => setValue("canHost", v === true)}
-              className="mt-0.5"
-            />
-            <div>
-              <p className="text-sm font-medium">Host consultants</p>
-              <p className="text-xs text-zinc-500">
-                The organization hosts consultants who deliver sessions. Enables
-                the payout account and rate cards. Admin verification required
-                before the first booking.
-              </p>
-            </div>
-          </label>
+          {/* #863 — host capability only shown when ENABLE_HOST_ORGS is on.
+              Hidden (not disabled) when off so the user can't tick a box the
+              POST would reject with 400 HOST_ORGS_GATED. */}
+          {hostOrgsEnabled && (
+            <label className="flex items-start gap-3 rounded-lg border border-zinc-200 p-3 cursor-pointer hover:border-zinc-300">
+              <Checkbox
+                checked={canHost}
+                onCheckedChange={(v) => setValue("canHost", v === true)}
+                className="mt-0.5"
+              />
+              <div>
+                <p className="text-sm font-medium">Host consultants</p>
+                <p className="text-xs text-zinc-500">
+                  The organization hosts consultants who deliver sessions.
+                  Enables the payout account and rate cards. Admin verification
+                  required before the first booking.
+                </p>
+              </div>
+            </label>
+          )}
         </div>
         {capabilityError && (
           <p className="text-sm text-red-500" role="alert">

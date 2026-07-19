@@ -151,12 +151,13 @@ export function RefundsPage({
   const totalPages = refundsData?.totalPages ?? 1;
   const total = refundsData?.total ?? 0;
 
-  // Calculate stats
+  // #997 secondary findings — server-computed, dashboard-wide (previously
+  // `.filter()` over the current page's ≤20 rows, which undercounted).
   const stats = {
-    total: total,
-    pending: refunds.filter((r) => r.status === "PENDING").length,
-    succeeded: refunds.filter((r) => r.status === "SUCCEEDED").length,
-    failed: refunds.filter((r) => r.status === "FAILED").length,
+    total,
+    pending: refundsData?.stats?.pendingCount ?? 0,
+    succeeded: refundsData?.stats?.succeededCount ?? 0,
+    failed: refundsData?.stats?.failedCount ?? 0,
   };
 
   const renderRowActions = (refund: Refund) =>

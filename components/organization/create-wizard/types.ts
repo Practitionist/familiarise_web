@@ -54,6 +54,9 @@ export interface StepProps {
    * button.
    */
   canGoBack?: boolean;
+  /** #863 — host orgs enabled (ENABLE_HOST_ORGS). OrgInfoStep hides the host
+   *  capability when false. Server-read, threaded through the wizard. */
+  hostOrgsEnabled?: boolean;
   /**
    * Optional hook for the Review step: runs after the final PATCH and
    * invitations succeed, before navigation. The onboarding caller uses

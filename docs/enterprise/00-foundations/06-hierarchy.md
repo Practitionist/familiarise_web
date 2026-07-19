@@ -2,14 +2,23 @@
 title: Organization hierarchy
 band: 00-foundations
 audience: sde2
-status: partial
-last-reviewed: 2026-06-05
+status: dropped
+last-reviewed: 2026-07-17
 ---
 
 # Organization hierarchy
 
-This doc covers the schema-only group-hierarchy columns on `Organization` (#771 D3)
-and explains what is, and is not, wired in v1. It was last updated 2026-06-05.
+> **Status update (2026-07-17, #705 schema freeze):** the schema-only
+> group-hierarchy columns described below (`parentOrganizationId`,
+> `rootOrganizationId`, and the `OrgHierarchy` self-relation) have been
+> **dropped**. A repo-wide grep confirmed they had zero readers, so they were
+> removed rather than carried as inert columns through the launch freeze.
+> Subsidiary scoping for a conglomerate buyer remains a future structural change
+> if the demand materializes. The rest of this document is retained as historical
+> design context for that eventual work.
+
+This doc covers the (now-removed) group-hierarchy columns on `Organization`
+(#771 D3) and explains what was, and was not, wired.
 
 > 🟡 **Gap:** the subtree-scoping work that would make these columns live —
 > population on create, the `requireOrgAccess` subtree scope, the helper functions,

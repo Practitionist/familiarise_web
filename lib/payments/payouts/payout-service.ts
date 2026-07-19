@@ -24,6 +24,7 @@ import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
 import { computeMsmePaymentDeadline } from "@/lib/compliance/msme";
 import { randomUUID } from "crypto";
 import { acquireLock, releaseLock } from "@/lib/redis";
+import { assertPayoutBalance } from "./balance-preflight";
 import {
   getCurrentFYCumulativePayments,
   getFYDateRange,
@@ -486,6 +487,16 @@ export async function processApprovedPayouts(): Promise<PayoutResult[]> {
         },
       },
     });
+
+    // #863 — hold the whole batch if RazorpayX can't cover it (a no-op unless
+    // ENABLE_LIVE_PAYOUTS is on + the gateway is configured). Conservative:
+    // sums gross; the real debit is net of TDS. Fails open on an unknown balance.
+    const batchTotalPaise = approvedPayouts.reduce((s, p) => s + p.amount, 0);
+    const preflight = await assertPayoutBalance(batchTotalPaise);
+    if (!preflight.ok) {
+      console.warn(`[Payouts] Holding approved batch — ${preflight.reason}`);
+      return [];
+    }
 
     const results: PayoutResult[] = [];
 

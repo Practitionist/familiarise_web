@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { isPaymentEntitled } from "@/lib/payments/utils/refund-balance";
+import { isPrivileged } from "@/lib/auth-helpers";
 
 import { getSession } from "@/lib/auth-server";
 import * as Sentry from "@sentry/nextjs";
@@ -99,75 +100,77 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       appointment?.consultation?.consultationPlan?.consultantProfileId ||
       appointment?.subscription?.subscriptionPlan?.consultantProfileId;
 
-    // Admin/Staff can access any meeting
-    if (session.user.role !== "ADMIN" && session.user.role !== "STAFF") {
-      // Check if user is a participant on this meeting slot
+    // Capability, not UserRole (#org-appts): an org EXPERT whose top-level role is CONSULTEE still owns recordings they delivered.
+    // Access is granted if ANY independent path passes; each path is an
+    // ownership/participation check, never a role gate.
+    let hasAccess = false;
+
+    // Privileged operators can access any meeting.
+    if (isPrivileged(session.user.role)) {
+      hasAccess = true;
+    }
+
+    // Participant on the meeting slot (either side).
+    if (!hasAccess) {
       const slotUserIds =
         meetingSession.slotOfAppointment?.user?.map(
           (u: { id: string }) => u.id,
         ) ?? [];
-      const isSlotParticipant = slotUserIds.includes(session.user.id);
+      hasAccess = slotUserIds.includes(session.user.id);
+    }
 
-      // Consultant can access their own meetings
-      if (session.user.role === "CONSULTANT") {
-        if (
-          session.user.consultantProfileId !== consultantProfileId &&
-          !isSlotParticipant
-        ) {
-          return NextResponse.json({ error: "Access denied" }, { status: 403 });
+    // Provider path: owns the consultant profile that delivered the session.
+    if (
+      !hasAccess &&
+      session.user.consultantProfileId &&
+      session.user.consultantProfileId === consultantProfileId
+    ) {
+      hasAccess = true;
+    }
+
+    // Attendee path: the requestedBy user for consultation/subscription.
+    if (!hasAccess) {
+      const consulteeUserId =
+        appointment?.consultation?.requestedBy?.userId ||
+        appointment?.subscription?.requestedBy?.userId;
+      hasAccess = consulteeUserId === session.user.id;
+    }
+
+    // Attendee path: paid enrollment for webinars/classes.
+    if (!hasAccess) {
+      const webinarId = appointment?.webinar?.id;
+      const classId = appointment?.class?.id;
+
+      if (webinarId || classId) {
+        const enrollmentConditions = [];
+        if (webinarId) {
+          enrollmentConditions.push({ webinarId });
         }
-      } else {
-        // Consultee: check if they are a participant on the slot,
-        // or the requestedBy user for consultation/subscription,
-        // or have a paid enrollment for webinar/class
-        const consulteeUserId =
-          appointment?.consultation?.requestedBy?.userId ||
-          appointment?.subscription?.requestedBy?.userId;
-        const isRequestor = consulteeUserId === session.user.id;
-
-        if (!isSlotParticipant && !isRequestor) {
-          // Fall back to payment-based enrollment check for webinars/classes
-          const webinarId = appointment?.webinar?.id;
-          const classId = appointment?.class?.id;
-
-          if (!webinarId && !classId) {
-            return NextResponse.json(
-              { error: "Access denied" },
-              { status: 403 },
-            );
-          }
-
-          const enrollmentConditions = [];
-          if (webinarId) {
-            enrollmentConditions.push({ webinarId });
-          }
-          if (classId) {
-            enrollmentConditions.push({ classId });
-          }
-
-          const enrollments = await prisma.payment.findMany({
-            where: {
-              userId: session.user.id,
-              paymentStatus: "SUCCEEDED",
-              appointment: {
-                OR: enrollmentConditions,
-              },
-            },
-            select: {
-              amount: true,
-              refunds: { select: { amountPaise: true, status: true } },
-            },
-          });
-
-          // #689 — a fully-refunded enrollment is no longer access.
-          if (!enrollments.some(isPaymentEntitled)) {
-            return NextResponse.json(
-              { error: "Access denied" },
-              { status: 403 },
-            );
-          }
+        if (classId) {
+          enrollmentConditions.push({ classId });
         }
+
+        const enrollments = await prisma.payment.findMany({
+          where: {
+            userId: session.user.id,
+            paymentStatus: "SUCCEEDED",
+            appointment: {
+              OR: enrollmentConditions,
+            },
+          },
+          select: {
+            amount: true,
+            refunds: { select: { amountPaise: true, status: true } },
+          },
+        });
+
+        // #689 — a fully-refunded enrollment is no longer access.
+        hasAccess = enrollments.some(isPaymentEntitled);
       }
+    }
+
+    if (!hasAccess) {
+      return NextResponse.json({ error: "Access denied" }, { status: 403 });
     }
 
     // Determine if recording is enabled based on appointment type

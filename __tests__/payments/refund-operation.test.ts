@@ -157,6 +157,16 @@ function txStub() {
           .reduce((acc, d) => acc + (d.amountPaise as number), 0);
         return { _sum: { amountPaise: sum } };
       }),
+      // #1008 — live-dispute guard reads (outer + in-tx). notIn = terminal set.
+      findFirst: jest.fn(async ({ where }: any) => {
+        const notIn: string[] = where.status?.notIn ?? [];
+        const d = state.disputes.find(
+          (d) =>
+            d.paymentId === where.paymentId &&
+            !notIn.includes(d.status as string),
+        );
+        return d ?? null;
+      }),
     },
     paymentLeg: {
       create: jest.fn(async ({ data }: any) => {
@@ -252,6 +262,12 @@ function txStub() {
         Object.assign(u, data);
         return u;
       }),
+    },
+    // #715/#716 — the cascade's overage credit-back step. These base tests
+    // register no overage events, so findFirst→null / updateMany→0 rows.
+    overageEvent: {
+      findFirst: jest.fn(async () => null),
+      updateMany: jest.fn(async () => ({ count: 0 })),
     },
     programAssignment: {
       update: jest.fn(async ({ where, data }: any) => {

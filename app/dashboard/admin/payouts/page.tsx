@@ -36,72 +36,25 @@ const VALID_TABS: readonly TabKey[] = [
   "earnings",
 ] as const;
 
-interface PayoutTrendDatum {
-  createdAt: string;
-  amount: number;
+interface PayoutTrendSeriesDatum {
+  day: string;
+  label: string;
+  totalPaise: number;
 }
 
 interface PayoutTrendResponse {
-  payouts: PayoutTrendDatum[];
-  pagination?: {
-    total: number;
-    limit: number;
-    offset: number;
-    hasMore: boolean;
-  };
+  series: PayoutTrendSeriesDatum[];
 }
 
+// #997 secondary findings — the 7-day bucketing used to run client-side over
+// a `?limit=100` guess (not 7-day-safe at scale). The server now returns an
+// already-bucketed, bounded 7-day series via /api/admin/payouts/trend.
 async function fetchPayoutTrend(): Promise<PayoutTrendResponse> {
-  // TODO: If /api/admin/payouts?limit=100 doesn't return enough history for a
-  // meaningful trend (e.g. paginated past the 7-day window), introduce a
-  // dedicated trend endpoint rather than fetching more client-side.
-  const response = await fetch("/api/admin/payouts?limit=100");
+  const response = await fetch("/api/admin/payouts/trend");
   if (!response.ok) {
     throw new Error("Failed to fetch payout trend");
   }
   return response.json() as Promise<PayoutTrendResponse>;
-}
-
-function formatDayKey(date: Date): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
-function formatDayLabel(date: Date): string {
-  return date.toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-  });
-}
-
-function buildLast7DaysSeries(
-  payouts: PayoutTrendDatum[] | undefined,
-): Array<{ day: string; label: string; total: number }> {
-  const now = new Date();
-  const days: Array<{ day: string; label: string; total: number }> = [];
-  for (let i = 6; i >= 0; i--) {
-    const d = new Date(now);
-    d.setHours(0, 0, 0, 0);
-    d.setDate(d.getDate() - i);
-    days.push({ day: formatDayKey(d), label: formatDayLabel(d), total: 0 });
-  }
-  if (!payouts?.length) return days;
-
-  const index = new Map(days.map((d, i) => [d.day, i]));
-  for (const p of payouts) {
-    if (!p?.createdAt) continue;
-    const d = new Date(p.createdAt);
-    if (Number.isNaN(d.getTime())) continue;
-    const key = formatDayKey(d);
-    const idx = index.get(key);
-    if (idx !== undefined) {
-      // amounts are stored in minor units (paise/cents) — normalize to major
-      days[idx].total += (p.amount || 0) / 100;
-    }
-  }
-  return days;
 }
 
 export default function AdminPayoutsPage() {
@@ -130,8 +83,14 @@ export default function AdminPayoutsPage() {
   });
 
   const chartData = useMemo(
-    () => buildLast7DaysSeries(trendData?.payouts),
-    [trendData?.payouts],
+    () =>
+      (trendData?.series ?? []).map((d) => ({
+        day: d.day,
+        label: d.label,
+        // amounts are paise server-side — normalize to major units for display.
+        total: d.totalPaise / 100,
+      })),
+    [trendData?.series],
   );
 
   const hasAnyTrendData = chartData.some((d) => d.total > 0);

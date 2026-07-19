@@ -36,6 +36,8 @@ interface ProgramsInteractiveContentProps {
   initialNewest: Program[];
   initialTopics: TopicWithCount[];
   initialStats: ProgramStats | null;
+  /** #664 — viewer's ACTIVE org memberships as { orgId: orgName }. */
+  viewerOrgs?: Record<string, string>;
 }
 
 const FALLBACK_STATS = [
@@ -65,6 +67,7 @@ export default function ProgramsInteractiveContent({
   initialNewest,
   initialTopics,
   initialStats,
+  viewerOrgs = {},
 }: ProgramsInteractiveContentProps) {
   const { data: session } = useSession();
   const userId = session?.user?.id;
@@ -294,6 +297,7 @@ export default function ProgramsInteractiveContent({
               isLoading={isLoading}
               viewMode={viewMode}
               sentinelRef={sentinelRef}
+              viewerOrgs={viewerOrgs}
             />
           </div>
         </div>

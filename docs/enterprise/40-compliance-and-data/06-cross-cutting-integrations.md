@@ -53,7 +53,7 @@ flowchart TB
   subgraph ACCESS["C · Membership & access"]
     ROLES["Roles · Invitations<br/>Membership.role"]:::wired
     SSO["SSO + domain claims + break-glass<br/>OrganizationSSOSettings"]:::wired
-    SCIM["SCIM provisioning"]:::parked
+    SCIM["SCIM provisioning"]:::wired
   end
 
   subgraph PROG["D · Programs & rate plans"]
@@ -277,12 +277,11 @@ Each section also lists:
 - **Why:** Self-serve recovery after an admin rejection, instead of forcing a support ticket to re-open the KYB review.
 - **Future work:** none open.
 
-### C.5 SCIM provisioning — ⏸ Parked (stubbed 501)
+### C.5 SCIM provisioning — ✅ Live
 
 - **Schema:** `ScimToken`, `ScimGroupMapping`.
-- **Code paths:** Routes return 501 by default.
-- **Why:** Schema is ready for the first customer that asks. Zero customers today, so the route handlers are stubbed instead of implemented — saves ~500 LoC of speculative provisioning code while keeping the option open.
-- **Future work:** Implement when a customer commits to SCIM.
+- **Code paths:** The SCIM 2.0 endpoints are implemented under `/scim/v2/**`, authenticated by bearer token (`requireScimAuth`, `lib/scim/auth.ts`). Tokens are stored as SHA-256 hashes, scoped to an org, and honour an optional `expiresAt` deadline — an expired token stops authenticating with a 401 while its row stays ACTIVE so an operator can see it lapsed (#789). Earlier docs describing SCIM as "parked / stubbed 501" are stale.
+- **Future work:** Rotation-reminder cron over `ScimToken.expiresAt` (the enforcement read already ships).
 
 ---
 

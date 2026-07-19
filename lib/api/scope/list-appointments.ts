@@ -43,14 +43,15 @@ export interface ListAppointmentsResult {
  * Build the Prisma `where` clause for the requested scope.
  *
  *   - `personal`: rows with `organizationId IS NULL` AND the user
- *     participates (consultee on Consultation/Subscription/Trial OR
- *     consultant on the linked plan). v1 narrows to consultee for
- *     simplicity; consultant-side filtering can layer on later.
+ *     participates — either as the consultee (booked the session) OR as the
+ *     consultant (owns the linked plan). Both sides are covered (#674): a
+ *     consultant's own B2C sessions appear in their personal list; org-hosted
+ *     sessions carry an organizationId and fall under `org` scope instead.
  *   - `org`: rows where `organizationId = orgId`. No user filter —
  *     MANAGER+ sees the org's full activity.
  *   - `all`: no scope filter; admin-only.
  */
-function buildWhere(
+export function buildWhere(
   params: ListAppointmentsParams,
 ): Prisma.AppointmentWhereInput {
   const base: Prisma.AppointmentWhereInput = {
@@ -60,13 +61,54 @@ function buildWhere(
   };
 
   if (params.scope.kind === "personal") {
+    // #org-appts — the personal dashboards are now purely B2C on BOTH sides.
+    // Every org-hosted session (delivered OR attended) lives in that org's
+    // dashboard under `orgMember` scope, so both arms are constrained to
+    // `organizationId: null`. This retires the earlier #674 carve-out that
+    // force-showed delivered org sessions here — they were double-listed once
+    // experts got a real org appointments surface. Trials stay B2C (personal)
+    // even when org-tagged for analytics.
+    const uid = params.userId;
     return {
       ...base,
       organizationId: null,
       OR: [
-        { consultation: { requestedBy: { userId: params.userId } } },
-        { subscription: { requestedBy: { userId: params.userId } } },
-        { trialSession: { consulteeProfile: { userId: params.userId } } },
+        // Consultee side — self-funded bookings.
+        { consultation: { requestedBy: { userId: uid } } },
+        { subscription: { requestedBy: { userId: uid } } },
+        { trialSession: { consulteeProfile: { userId: uid } } },
+        // Consultant side — sessions the user delivers B2C.
+        { consultation: { consultationPlan: { consultantProfile: { userId: uid } } } },
+        { subscription: { subscriptionPlan: { consultantProfile: { userId: uid } } } },
+        { trialSession: { consultantProfile: { userId: uid } } },
+        { webinar: { webinarPlan: { consultantProfile: { userId: uid } } } },
+        { class: { classPlan: { consultantProfile: { userId: uid } } } },
+      ],
+    };
+  }
+
+  if (params.scope.kind === "orgMember") {
+    // #org-appts — ONE member's own appointments WITHIN this org: sessions they
+    // booked (as a learner) OR deliver (as an expert). Hoists `organizationId:
+    // orgId` so it is strictly this org's activity. Distinct from `org`
+    // (all-org, MANAGER+).
+    //
+    // Trials are intentionally EXCLUDED: a trial is a B2C acquisition session
+    // (org-tagged only for conversion analytics, never org-sponsored), so it
+    // belongs in the member's PERSONAL appointments, not the org view.
+    const uid = params.scope.userId;
+    return {
+      ...base,
+      organizationId: params.scope.orgId,
+      OR: [
+        // Consumed as a learner (org-sponsored bookings).
+        { consultation: { requestedBy: { userId: uid } } },
+        { subscription: { requestedBy: { userId: uid } } },
+        // Delivered as an expert (owns the plan).
+        { consultation: { consultationPlan: { consultantProfile: { userId: uid } } } },
+        { subscription: { subscriptionPlan: { consultantProfile: { userId: uid } } } },
+        { webinar: { webinarPlan: { consultantProfile: { userId: uid } } } },
+        { class: { classPlan: { consultantProfile: { userId: uid } } } },
       ],
     };
   }
@@ -91,9 +133,31 @@ export async function listAppointmentsScoped(
     prisma.appointment.findMany({
       where,
       include: {
+        // #org-appts — slot fields drive the in-context Join (getOrCreate needs
+        // slot id + startsAt); consultantProfile.user.id lets the caller stamp
+        // per-appointment identity into the Stream call (host/guest derivation).
+        slotsOfAppointment: {
+          select: {
+            id: true,
+            startsAt: true,
+            endsAt: true,
+            isTentative: true,
+            completionStatus: true,
+          },
+          orderBy: { startsAt: "asc" },
+        },
         consultation: {
           select: {
-            consultationPlan: { select: { title: true } },
+            consultationPlan: {
+              select: {
+                title: true,
+                consultantProfile: {
+                  select: {
+                    user: { select: { id: true, name: true, email: true } },
+                  },
+                },
+              },
+            },
             requestedBy: {
               select: { user: { select: { id: true, name: true, email: true } } },
             },
@@ -101,14 +165,49 @@ export async function listAppointmentsScoped(
         },
         subscription: {
           select: {
-            subscriptionPlan: { select: { title: true } },
+            subscriptionPlan: {
+              select: {
+                title: true,
+                consultantProfile: {
+                  select: {
+                    user: { select: { id: true, name: true, email: true } },
+                  },
+                },
+              },
+            },
             requestedBy: {
               select: { user: { select: { id: true, name: true, email: true } } },
             },
           },
         },
-        webinar: { select: { webinarPlan: { select: { title: true } } } },
-        class: { select: { classPlan: { select: { title: true } } } },
+        webinar: {
+          select: {
+            webinarPlan: {
+              select: {
+                title: true,
+                consultantProfile: {
+                  select: {
+                    user: { select: { id: true, name: true, email: true } },
+                  },
+                },
+              },
+            },
+          },
+        },
+        class: {
+          select: {
+            classPlan: {
+              select: {
+                title: true,
+                consultantProfile: {
+                  select: {
+                    user: { select: { id: true, name: true, email: true } },
+                  },
+                },
+              },
+            },
+          },
+        },
         trialSession: {
           select: {
             consulteeProfile: {

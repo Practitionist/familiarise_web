@@ -82,12 +82,21 @@ const MeetingRoom = () => {
     }
   }, [callEndedAt, callingState]);
 
-  const { useLocalParticipant } = useCallStateHooks();
-  const localParticipant = useLocalParticipant();
-  const isCallOwner =
-    localParticipant &&
-    call?.state.createdBy &&
-    localParticipant.userId === call.state.createdBy.id;
+  const { useCallCustomData } = useCallStateHooks();
+  const custom = useCallCustomData();
+
+  // #org-appts — host/guest by WHICH SIDE of THIS appointment the viewer is on
+  // (the ids stamped into the call's custom data), not the singular UserRole,
+  // which is wrong for a dual-profile user booked as a learner into someone
+  // else's session. Role fallback for legacy calls created before the stamp.
+  const consultantUserId = custom?.consultantUserId as string | undefined;
+  const consulteeUserId = custom?.consulteeUserId as string | undefined;
+  const isHost = consultantUserId
+    ? session?.user?.id === consultantUserId
+    : session?.user?.role === "CONSULTANT";
+  const isGuest = consulteeUserId
+    ? session?.user?.id === consulteeUserId
+    : session?.user?.role === "CONSULTEE";
 
   useEffect(() => {
     if (call) {
@@ -174,7 +183,7 @@ const MeetingRoom = () => {
     return <Loader />;
   }
 
-  if (callEndedAt && !isCallOwner) {
+  if (callEndedAt && !isHost) {
     return (
       <CallEnded
         message="The call has been ended by the host"
@@ -254,8 +263,8 @@ const MeetingRoom = () => {
               {/* Screen Share */}
               <ScreenShareButton />
 
-              {/* Recording BUTTON for Consultant - Left of Leave Call (only if recording enabled) */}
-              {session?.user?.role === "CONSULTANT" &&
+              {/* Recording BUTTON for the host - Left of Leave Call (only if recording enabled) */}
+              {isHost &&
                 recordingEnabled &&
                 (meetingSessionId ? (
                   <RecordingControls
@@ -341,8 +350,8 @@ const MeetingRoom = () => {
               {/* Divider */}
               {!isPersonalRoom && <div className="w-px h-8 bg-zinc-700 mx-1" />}
 
-              {/* REC TIME Indicator for Consultant - Before End Call (only if recording enabled) */}
-              {session?.user?.role === "CONSULTANT" &&
+              {/* REC TIME Indicator for the host - Before End Call (only if recording enabled) */}
+              {isHost &&
                 meetingSessionId &&
                 recordingEnabled && (
                   <RecordingControls
@@ -355,8 +364,8 @@ const MeetingRoom = () => {
               {/* End Call Button - Only for Consultant */}
               {!isPersonalRoom && <EndCallButton />}
 
-              {/* Recording Indicator for Consultee - At the very end (only if recording enabled) */}
-              {session?.user?.role === "CONSULTEE" &&
+              {/* Recording Indicator for the guest - At the very end (only if recording enabled) */}
+              {isGuest &&
                 meetingSessionId &&
                 recordingEnabled && (
                   <RecordingControls

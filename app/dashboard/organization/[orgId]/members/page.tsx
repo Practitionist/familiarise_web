@@ -4,7 +4,7 @@ import { requireOrgAccess } from "@/lib/auth-helpers";
 
 
 import { MembersPageClient } from "./MembersPageClient";
-import { getOrgMembers } from "@/lib/data/org-members";
+import { getOrgMembers, ORG_MEMBERS_PER_PAGE } from "@/lib/data/org-members";
 
 export default async function OrgMembersPage({
   params,
@@ -23,10 +23,13 @@ export default async function OrgMembersPage({
 
   const queryClient = new QueryClient();
 
+  // #902 — the key + shape MUST match the client's first query
+  // (["org-members", orgId, "", 1] → {members,total}) or hydration misses and
+  // the roster re-fetches on mount (the bug this fixes).
   await Promise.allSettled([
     queryClient.prefetchQuery({
-      queryKey: ["org-members", orgId],
-      queryFn: () => getOrgMembers(orgId),
+      queryKey: ["org-members", orgId, "", 1],
+      queryFn: () => getOrgMembers(orgId, { page: 1, perPage: ORG_MEMBERS_PER_PAGE }),
     }),
   ]);
 

@@ -18,7 +18,7 @@ Exactly five flags are exported from the module, and each one is the literal exp
 
 | Flag | Default | Purpose | Gated surfaces when OFF |
 |---|---|---|---|
-| `ENABLE_HOST_ORGS` | off | Hosting orgs (agencies hosting experts, 3-way split). | `POST /organizations` rejects `canHost=true` (501); `POST …/members` rejects `role=EXPERT` (501); org-create wizard hides the host checkbox; `…/{payouts,payout-account,earnings,rate-cards}` return 501; `/experts` + `/payouts` nav hidden; `earnings-service` takes the sponsor-only split. |
+| `ENABLE_HOST_ORGS` | off | Hosting orgs (agencies hosting experts, 3-way split). | `POST /organizations` rejects `canHost=true` with 400 `HOST_ORGS_GATED`; `POST …/members` rejects `role=EXPERT`; the org-create wizard hides the host capability (server flag threaded to the wizard); the public org directory shows a "coming soon" state; the host routes stay gated; `/experts` + `/payouts` nav hidden; `earnings-service` takes the sponsor-only split. |
 | `ENABLE_LIVE_PAYOUTS` | off | Live payout **disbursement** gate (#776 §B). | The whole pipeline runs (batches, ledger, TDS, status machine) but gateway submission is held; org/consultant payouts sit `PROCESSING`, surfaced honestly as "pending platform enablement", **never** as a failure. Server-only — the home action-center + payout surfaces read it server-side and pass the boolean down. |
 | `ENABLE_IRP_UPLOADER` | off | IRP (Invoice Registration Portal) live e-invoice submission. | ClearTax GSP connector is wired (`lib/compliance/irp.ts`, `jobs/compliance/irp-uploader.ts`) but the GitHub Action short-circuits so CI doesn't burn minutes on a stub; sub-₹5cr orgs ride the `{ status: "FAILED", reason: "STUB" }` return (they don't need IRN to claim ITC). |
 | `ENABLE_TDS_ADMIN_VIEW` | off | Admin TDS dashboard + Form 26Q filing surfaces. | `app/api/admin/tds/route.ts` returns 404 (hides from discovery). TDS data is still captured continuously by the payout pipeline; only the *filing workflow* (mark-as-filed, decrypted-PAN view) is gated. |
@@ -33,8 +33,8 @@ governs:
 flowchart TD
   F{"ENABLE_HOST_ORGS<br/>=== 'true'?"}
   F -- OFF (default) --> OFF["host capability dark"]
-  OFF --> A["POST /organizations rejects canHost=true → 501"]
-  OFF --> B["POST …/members rejects role=EXPERT → 501"]
+  OFF --> A["POST /organizations rejects canHost=true → 400 HOST_ORGS_GATED"]
+  OFF --> B["POST …/members rejects role=EXPERT"]
   OFF --> C["wizard hides the host checkbox"]
   OFF --> D["…/{payouts,payout-account,earnings,rate-cards} → 501"]
   OFF --> E["/experts + /payouts nav hidden"]
