@@ -62,12 +62,13 @@ export default async function MyProgramPage({
     consulteeProfileId: access.member.consulteeProfileId,
   });
 
-  // Deep-link to the learner's appointments tab scoped to THIS org so
-  // org-funded sessions show. /dashboard alone lands on /home which has no
-  // OrgContextFilter and defaults to personal scope, hiding the rows.
-  const appointmentsHref = access.member.consulteeProfileId
-    ? `/dashboard/consultee/${access.member.consulteeProfileId}/appointments?orgScope=${orgId}`
-    : `/dashboard?orgScope=${orgId}`;
+  // Stay inside the org dashboard. This used to deep-link into the personal
+  // consultee dashboard with `?orgScope=<orgId>`, which stopped working when
+  // #1023 pinned personal scope to `organizationId: null` — org-funded
+  // sessions were exactly what that link was meant to show, and exactly what
+  // the personal dashboard now excludes. The org appointments page's "mine"
+  // scope is the surface that actually holds them.
+  const appointmentsHref = `/dashboard/organization/${orgId}/appointments?scope=mine`;
 
   return (
     <div className="space-y-6">

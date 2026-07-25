@@ -18,7 +18,7 @@ import {
   BarChart3,
   Gift,
   Settings,
-  HelpCircle,
+  LifeBuoy,
   Building2,
   UserRound,
   UserX,
@@ -61,7 +61,7 @@ const NAV_GROUPS: CollapsibleSidebarGroup[] = [
   {
     items: [
       { name: "Home", icon: Home, path: "home" },
-      { name: "Chats", icon: MessageSquare, path: "chats" },
+      { name: "Messages", icon: MessageSquare, path: "messages" },
       { name: "Appointments", icon: CalendarCheck, path: "appointments" },
     ],
   },
@@ -89,6 +89,13 @@ const NAV_GROUPS: CollapsibleSidebarGroup[] = [
       { name: "Referrals", icon: Gift, path: "referrals" },
     ],
   },
+  {
+    // Mirrors the consultee dashboard's Support group. Consultants
+    // previously had only a static FAQ, reachable from the avatar dropdown
+    // and nowhere else, with no way to raise a request or leave feedback.
+    label: "Support",
+    items: [{ name: "Support", icon: LifeBuoy, path: "support" }],
+  },
 ];
 
 // Mobile bottom-tab configuration — 5 most-accessed consultant pages.
@@ -104,7 +111,7 @@ const MOBILE_TABS: { label: string; path: string; Icon: LucideIcon }[] = [
 // the heading the user actually sees on the page.
 const PAGE_LABELS: Record<string, string> = {
   home: "Home",
-  chats: "Chats",
+  messages: "Messages",
   appointments: "Appointments",
   participants: "Participants",
   classes: "Class",
@@ -121,7 +128,7 @@ const PAGE_LABELS: Record<string, string> = {
   analytics: "Analytics",
   referrals: "Referrals",
   settings: "Settings",
-  help: "Help",
+  support: "Support",
 };
 
 // Opaque record ids (cuid / uuid) in nested routes carry no meaning as crumbs.
@@ -446,7 +453,7 @@ function ConsultantLayoutInner({
       NAV_GROUPS.map((group) => ({
         ...group,
         items: group.items.map((item) =>
-          item.path === "chats" && chatUnreadCount > 0
+          item.path === "messages" && chatUnreadCount > 0
             ? {
                 ...item,
                 badge: chatUnreadCount > 99 ? "99+" : chatUnreadCount,
@@ -601,7 +608,6 @@ function ConsultantLayoutInner({
       href: settingsHref,
       icon: Settings,
     },
-    { type: "item" as const, label: "Help", href: `${basePath}/help`, icon: HelpCircle },
     ...(orgMemberships.length > 0
       ? [
           { type: "separator" as const },

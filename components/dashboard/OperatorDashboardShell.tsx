@@ -30,6 +30,8 @@ import { useNovuSubscriberSync } from "@/hooks/useNovuSubscriberSync";
 import {
   CollapsibleSidebar,
   type CollapsibleSidebarItem,
+  type CollapsibleSidebarGroup,
+  type CollapsibleSidebarProps,
 } from "@/components/dashboard/CollapsibleSidebar";
 import { signOutEverywhere } from "@/lib/auth/sign-out";
 import { schedulePrefetch } from "@/lib/dashboard-queries";
@@ -44,9 +46,19 @@ function prettifySegment(segment: string): string {
 }
 
 export interface OperatorDashboardShellProps {
-  /** Flat sidebar nav; item.name doubles as the breadcrumb label per path. */
-  sidebarItems: CollapsibleSidebarItem[];
-  /** e.g. "/dashboard/admin" or "/dashboard/staff/<id>". */
+  /**
+   * Flat sidebar nav; item.name doubles as the breadcrumb label per path.
+   * Mutually exclusive with `sidebarGroups` — pass one or the other.
+   */
+  sidebarItems?: CollapsibleSidebarItem[];
+  /**
+   * Grouped sidebar nav. The merged back-office uses this: 21 items in one
+   * flat list stopped being scannable, and the groups double as the
+   * staff-vs-admin story (a staff member simply has fewer items per group,
+   * and empty groups elide).
+   */
+  sidebarGroups?: CollapsibleSidebarGroup[];
+  /** e.g. "/dashboard/admin". */
   basePath: string;
   /** Sidebar header title, e.g. "Admin Portal". */
   title: string;
@@ -59,11 +71,24 @@ export interface OperatorDashboardShellProps {
   userImage: string | null;
   /** Routes to warm on mount (idle-scheduled). */
   prefetchPaths?: string[];
+  /**
+   * Bottom user-chip dropdown entries, forwarded to CollapsibleSidebar.
+   * The back-office uses this to surface Settings, which previously had no
+   * nav entry and no inbound link at all.
+   */
+  bottomUserChipActions?: CollapsibleSidebarProps["bottomUserChipActions"];
+  /**
+   * Role badge for the bottom chip (e.g. "Admin", "Staff"). Required for the
+   * chip to render — CollapsibleSidebar only shows the dropdown when both
+   * the chip and its actions are present.
+   */
+  bottomUserChipRole?: string;
   children: React.ReactNode;
 }
 
 export function OperatorDashboardShell({
   sidebarItems,
+  sidebarGroups,
   basePath,
   title,
   breadcrumbRoot,
@@ -73,6 +98,8 @@ export function OperatorDashboardShell({
   userEmail,
   userImage,
   prefetchPaths,
+  bottomUserChipActions,
+  bottomUserChipRole,
   children,
 }: OperatorDashboardShellProps) {
   const pathname = usePathname() ?? "";
@@ -96,19 +123,30 @@ export function OperatorDashboardShell({
   // Active page label for the breadcrumb: the first segment after the base
   // path, mapped to its sidebar item name (or a prettified fallback for
   // detail sub-routes not present in the sidebar).
-  const segment = pathname.slice(basePath.length).split("/").filter(Boolean)[0];
-  const activeItem = sidebarItems.find((i) => i.path === segment);
+  // Flatten once so breadcrumb lookup works identically for the flat and
+  // grouped APIs. Multi-segment paths (e.g. "integrations/webhooks") are
+  // matched first so they don't fall through to the prettified fallback.
+  const flatItems = sidebarGroups
+    ? sidebarGroups.flatMap((g) => g.items)
+    : (sidebarItems ?? []);
+
+  const rest = pathname.slice(basePath.length).split("/").filter(Boolean);
+  const segment = rest[0];
+  const activeItem =
+    flatItems.find((i) => i.path === rest.slice(0, 2).join("/")) ??
+    flatItems.find((i) => i.path === segment);
   const pageLabel = activeItem
     ? activeItem.name
     : segment
       ? prettifySegment(segment)
-      : (sidebarItems[0]?.name ?? "");
+      : (flatItems[0]?.name ?? "");
 
   return (
     <NovuProvider>
       <div className="flex h-screen-maintenance bg-background">
         <CollapsibleSidebar
-          items={sidebarItems}
+          items={sidebarGroups ? undefined : sidebarItems}
+          groups={sidebarGroups}
           basePath={basePath}
           title={title}
           footerLabel={footerLabel}
@@ -116,6 +154,16 @@ export function OperatorDashboardShell({
           userName={displayName}
           userEmail={userEmail ?? undefined}
           userImage={userImage}
+          bottomUserChip={
+            bottomUserChipRole
+              ? {
+                  name: displayName,
+                  image: userImage,
+                  role: bottomUserChipRole,
+                }
+              : undefined
+          }
+          bottomUserChipActions={bottomUserChipActions}
           pathname={pathname}
           onSignOut={() => void signOutEverywhere()}
         />

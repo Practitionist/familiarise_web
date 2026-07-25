@@ -34,19 +34,30 @@ import { OrganizationSwitcher } from "@/components/dashboard/OrganizationSwitche
 import { NotificationInbox } from "@/components/notifications/NotificationInbox";
 import { signOutEverywhere } from "@/lib/auth/sign-out";
 
+/**
+ * Cross-org portfolio nav.
+ *
+ * "Billing" and "Settings" used to collide head-on with the per-org
+ * dashboard's own Billing and Settings entries — same words, different scope,
+ * and an operator moving between the two layers had no way to tell which one
+ * they were looking at. Both are renamed for what they actually are: a
+ * read-only roll-up of spend across orgs, and preferences that belong to the
+ * workspace rather than to any single org (default landing org, locale,
+ * notification routing).
+ */
 const sidebarItems: CollapsibleSidebarItem[] = [
   { name: "Overview", icon: Home, path: "home" },
   { name: "Activity", icon: Activity, path: "activity" },
-  { name: "Billing", icon: CreditCard, path: "billing" },
-  { name: "Settings", icon: Settings, path: "settings" },
+  { name: "Spend", icon: CreditCard, path: "billing" },
+  { name: "Workspace settings", icon: Settings, path: "settings" },
 ];
 
 /** Breadcrumb labels per first path segment (mirrors the sidebar + /create). */
 const PAGE_LABELS: Record<string, string> = {
   home: "Overview",
   activity: "Activity",
-  billing: "Billing",
-  settings: "Settings",
+  billing: "Spend",
+  settings: "Workspace settings",
   create: "New organization",
 };
 
@@ -93,12 +104,12 @@ export function OrgWorkspaceShell({
         <CollapsibleSidebar
           items={sidebarItems}
           basePath={basePath}
-          title="Operator"
+          title="All organizations"
           avatarFallback={avatarFallback}
           userName={displayName}
           userEmail={userEmail ?? undefined}
           userImage={userImage}
-          userSubtitle="Cross-org dashboard"
+          userSubtitle="Cross-org portfolio"
           pathname={pathname}
           onSignOut={() => void signOutEverywhere()}
           // Jet-black sidebar accent via the shared className prop. The
@@ -117,7 +128,7 @@ export function OrgWorkspaceShell({
             image: userImage,
             FallbackIcon: UserRound,
           }}
-          breadcrumbs={["Operator", pageLabel]}
+          breadcrumbs={["All organizations", pageLabel]}
           rightSlot={
             <div className="flex items-center gap-2">
               <OrganizationSwitcher />

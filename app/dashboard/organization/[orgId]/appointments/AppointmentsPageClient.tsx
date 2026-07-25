@@ -17,10 +17,6 @@ import { useSearchParams } from "next/navigation";
 import { format } from "date-fns";
 import { Badge } from "@/components/ui/badge";
 import {
-  DashboardHeader,
-  DashboardContent,
-} from "@/components/dashboard/PageScaffold";
-import {
   ScopedListTable,
   type Column,
 } from "@/components/dashboard/ScopedListTable";
@@ -109,11 +105,7 @@ export function AppointmentsPageClient({ orgId }: { orgId: string }) {
 
   return (
     <>
-      <DashboardHeader
-        title="Appointments"
-        subtitle="All bookings made under this organization."
-      />
-      <DashboardContent>
+      <div className="space-y-6">
         <ScopedListTable
           title="Org appointments"
           description="Sessions booked by members of this organization or scoped to a member's program assignment."
@@ -127,7 +119,7 @@ export function AppointmentsPageClient({ orgId }: { orgId: string }) {
           rowKey={(r) => r.id}
           emptyMessage="No appointments under this organization yet. Member bookings will surface here once stamped via checkout (B1-hybrid)."
         />
-      </DashboardContent>
+      </div>
     </>
   );
 }

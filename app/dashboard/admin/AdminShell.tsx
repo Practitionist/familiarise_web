@@ -1,59 +1,27 @@
 "use client";
 
 /**
- * Admin dashboard chrome: the admin-specific nav config, delegating all
- * layout/chrome to the shared OperatorDashboardShell. Sits inside the
- * server `layout.tsx`, which runs the requireUserRole("ADMIN") guard and
- * resolves the identity props on the server.
+ * Admin dashboard chrome. Sits inside the server `layout.tsx`, which runs the
+ * requireUserRole("ADMIN") guard and resolves the identity props server-side.
+ *
+ * The nav array used to live here as a flat list of 17 items, duplicated
+ * almost item-for-item in StaffShell. Both shells now build from
+ * `buildBackofficeNav`, so the two trees can't drift apart again — the admin
+ * tree simply resolves more items out of the same definition.
+ *
+ * Settings lives in the bottom user chip rather than the nav: it's the
+ * operator's own profile page, not a platform surface. It previously had no
+ * entry anywhere and zero inbound links, so it was unreachable.
  */
 
-import {
-  AlertTriangle,
-  BadgeCheck,
-  BarChart3,
-  Building2,
-  CreditCard,
-  Home,
-  ListChecks,
-  Megaphone,
-  Play,
-  Receipt,
-  RefreshCw,
-  RotateCcw,
-  Star,
-  Ticket,
-  Users,
-  Wallet,
-  Wrench,
-  Landmark,
-} from "lucide-react";
+import { useMemo } from "react";
+import { Settings } from "lucide-react";
 
 import {
   OperatorDashboardShell,
   type OperatorDashboardShellProps,
 } from "@/components/dashboard/OperatorDashboardShell";
-import { type CollapsibleSidebarItem } from "@/components/dashboard/CollapsibleSidebar";
-
-// Navigation configuration for admin (flat list, mirrors staff sidebar layout)
-const sidebarItems: CollapsibleSidebarItem[] = [
-  { name: "Overview", icon: Home, path: "home" },
-  { name: "Announcements", icon: Megaphone, path: "announcements" },
-  { name: "Support Tickets", icon: Ticket, path: "tickets" },
-  { name: "User Feedback", icon: Star, path: "feedback" },
-  { name: "All Payments", icon: CreditCard, path: "payments" },
-  { name: "Approval Payments", icon: BadgeCheck, path: "approval-payments" },
-  { name: "Subscriptions", icon: RefreshCw, path: "subscriptions" },
-  { name: "Refunds", icon: RotateCcw, path: "refunds" },
-  { name: "Disputes", icon: AlertTriangle, path: "disputes" },
-  { name: "Payouts", icon: Wallet, path: "payouts" },
-  { name: "Invoices", icon: Receipt, path: "invoices" },
-  { name: "Analytics", icon: BarChart3, path: "analytics" },
-  { name: "Organizations", icon: Building2, path: "organizations" },
-  { name: "Users", icon: Users, path: "users" },
-  { name: "Waitlists", icon: ListChecks, path: "waitlists" },
-  { name: "System Jobs", icon: Play, path: "system-jobs" },
-  { name: "Maintenance", icon: Wrench, path: "maintenance" },
-];
+import { buildBackofficeNav } from "@/lib/dashboard/backoffice-nav";
 
 export function AdminShell({
   userName,
@@ -68,16 +36,14 @@ export function AdminShell({
   OperatorDashboardShellProps,
   "userName" | "userEmail" | "userImage" | "children"
 > & { showTds?: boolean }) {
-  const items = showTds
-    ? [
-        ...sidebarItems.slice(0, 11),
-        { name: "TDS", icon: Landmark, path: "tds" },
-        ...sidebarItems.slice(11),
-      ]
-    : sidebarItems;
+  const groups = useMemo(
+    () => buildBackofficeNav("admin", { showTds }),
+    [showTds],
+  );
+
   return (
     <OperatorDashboardShell
-      sidebarItems={items}
+      sidebarGroups={groups}
       basePath="/dashboard/admin"
       title="Admin Portal"
       breadcrumbRoot="Admin"
@@ -86,6 +52,15 @@ export function AdminShell({
       userName={userName}
       userEmail={userEmail}
       userImage={userImage}
+      bottomUserChipRole="Admin"
+      bottomUserChipActions={[
+        {
+          type: "item",
+          label: "Settings",
+          href: "/dashboard/admin/settings",
+          icon: Settings,
+        },
+      ]}
       prefetchPaths={["/dashboard/admin/home", "/dashboard/admin/payments"]}
     >
       {children}

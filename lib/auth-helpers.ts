@@ -7,7 +7,12 @@ import type {
   Organization,
   Membership,
   MemberRole,
+  UserRole,
 } from "@prisma/client";
+import {
+  hasBackofficePermission,
+  type BackofficeSurface,
+} from "@/lib/auth/backoffice-permissions";
 
 /**
  * Requires API authentication and returns the session or an error response.
@@ -112,6 +117,39 @@ export async function requirePrivilegedAuth(): Promise<
     return {
       error: NextResponse.json(
         { error: "Forbidden — admin or staff access required" },
+        { status: 403 },
+      ),
+    };
+  }
+  return { session: auth.session };
+}
+
+/**
+ * Surface-scoped back-office auth — the granular flavor of
+ * `requirePrivilegedAuth`. Resolves the caller's UserRole against
+ * `BACKOFFICE_PERMISSIONS`, so the API route, the page guard, and the
+ * sidebar all agree on who may reach a surface.
+ *
+ * Prefer this over `requireAdminAuth` / `requireStaffAuth` on any route the
+ * merged `/dashboard/admin` renders: those two only express "is this an
+ * admin", which is why `admin/feedback` ended up calling `/api/staff/*` and
+ * `staff/refunds` calling `/api/admin/*`. Pick the surface, not the role.
+ *
+ * @see lib/auth/backoffice-permissions.ts for the matrix and its rationale.
+ */
+export async function requireBackofficeSurface(
+  surface: BackofficeSurface,
+): Promise<
+  { session: Session; error?: never } | { session?: never; error: NextResponse }
+> {
+  const auth = await requireApiAuth();
+  if (auth.error) return { error: auth.error };
+
+  const role = auth.session.user.role as UserRole | undefined;
+  if (!role || !hasBackofficePermission(role, surface)) {
+    return {
+      error: NextResponse.json(
+        { error: "Forbidden — insufficient back-office permissions" },
         { status: 403 },
       ),
     };

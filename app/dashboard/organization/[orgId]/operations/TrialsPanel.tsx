@@ -1,0 +1,102 @@
+"use client";
+
+/**
+ * Org-scoped trials dashboard (#674 / B1-hybrid). MANAGER+ at the org.
+ * `TrialSession.organizationId` already exists (predates #674) so this
+ * just lists rows already tagged to the org.
+ */
+
+import { useQuery } from "@tanstack/react-query";
+import { useRequireOrgAccess } from "../useOrgRole";
+import { useSearchParams } from "next/navigation";
+import { format } from "date-fns";
+import { Badge } from "@/components/ui/badge";
+import { PanelHeader } from "@/components/dashboard/PageScaffold";
+import {
+  ScopedListTable,
+  type Column,
+} from "@/components/dashboard/ScopedListTable";
+
+interface TrialRow {
+  id: string;
+  status: string;
+  requestedAt: string;
+  consulteeProfile: {
+    user: { id: string; name: string | null; email: string };
+  };
+  consultantProfile: {
+    user: { id: string; name: string | null; email: string };
+  };
+  subscriptionPlan: { title: string };
+}
+
+interface TrialsResponse {
+  items: TrialRow[];
+  total: number;
+  page: number;
+  perPage: number;
+}
+
+const COLUMNS: Column<TrialRow>[] = [
+  {
+    header: "Member",
+    accessor: (r) =>
+      r.consulteeProfile.user.name || r.consulteeProfile.user.email,
+  },
+  {
+    header: "Consultant",
+    accessor: (r) =>
+      r.consultantProfile.user.name || r.consultantProfile.user.email,
+  },
+  { header: "Plan", accessor: (r) => r.subscriptionPlan.title },
+  {
+    header: "Status",
+    accessor: (r) => <Badge variant="outline">{r.status}</Badge>,
+  },
+  {
+    header: "Requested",
+    accessor: (r) => format(new Date(r.requestedAt), "PP"),
+  },
+];
+
+export function TrialsPanel({ orgId }: { orgId: string }) {
+  // Page-level mirror of the API gate — previously this page had NO
+  // guard and rendered an error shell for unauthorized roles (#audit F8).
+  const { allowed } = useRequireOrgAccess(orgId, {
+    permission: "operations.read",
+  });
+  const searchParams = useSearchParams();
+  const page = Number(searchParams?.get("page") ?? "1") || 1;
+
+  const { data, isLoading, isError } = useQuery<TrialsResponse>({
+    enabled: allowed,
+    queryKey: ["org-trials", orgId, page],
+    queryFn: async () => {
+      const res = await fetch(
+        `/api/organizations/${orgId}/trials?page=${page}`,
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    },
+  });
+
+  return (
+    <>
+      <PanelHeader description="Trial sessions taken by this organization's members. Useful for sales pipeline reporting." />
+      <div className="space-y-6">
+        <ScopedListTable
+          title="Org trial sessions"
+          isLoading={isLoading}
+          isError={isError}
+          items={data?.items ?? []}
+          total={data?.total ?? 0}
+          page={data?.page ?? page}
+          perPage={data?.perPage ?? 20}
+          columns={COLUMNS}
+          rowKey={(r) => r.id}
+          emptyMessage="No trials under this organization yet."
+        />
+      </div>
+    </>
+  );
+}

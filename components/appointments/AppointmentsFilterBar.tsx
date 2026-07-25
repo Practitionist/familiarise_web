@@ -44,7 +44,7 @@ interface AppointmentsFilterBarProps {
   onSearchChange: (value: string) => void;
   dateRange: DateRange;
   onDateRangeChange: (value: DateRange) => void;
-  /** OrgContextFilter (or anything role-specific) rendered at the end. */
+  /** Role-specific filter control rendered at the end of the bar. */
   orgFilterSlot?: ReactNode;
 }
 

@@ -26,10 +26,7 @@ import {
 import { humanizeOrgError } from "@/lib/labels/org-errors";
 import { isBlockedRoleTransition } from "@/lib/enterprise/role-transitions";
 import { useSession } from "@/lib/auth-client";
-import {
-  DashboardHeader,
-  DashboardContent,
-} from "@/components/dashboard/PageScaffold";
+import { PanelHeader } from "@/components/dashboard/PageScaffold";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -425,9 +422,8 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
 
   return (
     <>
-      <DashboardHeader
-        title="Members"
-        subtitle="Everyone with a seat in this organization"
+      <PanelHeader
+        description="Everyone with a seat in this organization"
         actions={
           isAtLeast("MAINTAINER") && (
             <Button size="sm" onClick={() => setShowInvite(true)}>
@@ -436,7 +432,7 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
           )
         }
       />
-      <DashboardContent>
+      <div className="space-y-6">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0">
             <CardTitle className="text-base">
@@ -501,7 +497,7 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
             )}
           </CardContent>
         </Card>
-      </DashboardContent>
+      </div>
 
       <ResponsiveModal open={showInvite} onOpenChange={setShowInvite}>
         <ResponsiveModalContent>

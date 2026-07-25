@@ -3,6 +3,8 @@
 import { useEffect, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
+import Link from "next/link";
+import { ArrowLeft } from "lucide-react";
 import { z } from "zod";
 
 import { loadScript } from "@/app/checkout/plans/utils";
@@ -155,6 +157,20 @@ export default function OveragePage() {
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-8">
+      {/* This route deliberately renders outside any dashboard shell — it's a
+          focused settlement task, like /checkout, and the notification deep
+          link (`/dashboard/overage?charge=<id>`) carries no org context to
+          route into an org dashboard with. Without a way out, though, anyone
+          arriving from that notification was stranded on a chrome-less page.
+          /dashboard re-routes each role to their own home. */}
+      <Link
+        href="/dashboard"
+        className="mb-4 inline-flex items-center gap-1 text-sm text-zinc-500 hover:text-zinc-900"
+      >
+        <ArrowLeft className="h-4 w-4" />
+        Back to dashboard
+      </Link>
+
       <h1 className="text-xl font-semibold text-zinc-900 mb-1">
         Outstanding charges
       </h1>

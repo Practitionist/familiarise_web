@@ -8,7 +8,6 @@ import { motion } from "framer-motion";
 import {
   Home,
   Users,
-  Mail,
   GraduationCap,
   Briefcase,
   CreditCard,
@@ -23,13 +22,8 @@ import {
   FileText,
   CalendarCheck,
   ListOrdered,
-  Sparkles,
-  Video,
   Receipt,
   ShieldCheck,
-  Webhook,
-  KeyRound,
-  Download,
   ShieldAlert,
   type LucideIcon,
 } from "lucide-react";
@@ -212,6 +206,12 @@ export default function OrgLayout({
     // Top (no label) — Overview + consumer-role landing pages. The
     // LEARNER / EXPERT cases are the only sidebar items those roles
     // ever see. Operators (MANAGER+) get the richer per-tab views.
+    //
+    // My Program stays separate from Commerce's Programs on purpose: they are
+    // different objects, not two scopes of one. `my-program` is a LEARNER's
+    // own assignment and coverage detail; `programs` is the sponsor's catalog
+    // CRUD. Appointments was the only genuine same-object scope split, and it
+    // is now one entry with a Mine/Everyone toggle.
     const topItems: ItemSpec[] = [
       { name: "Overview", icon: Home, path: "home" },
       {
@@ -227,6 +227,36 @@ export default function OrgLayout({
         show: can("myArrangement.read") && canHost,
       },
       {
+        // Any ACTIVE member — learners who ATTEND org sessions and experts
+        // who DELIVER them both need their own per-org appointments surface.
+        // Deliberately NOT gated on canHost (that would exclude pure
+        // learners): requireOrgAccess already floors this at active
+        // membership, so show it to everyone who reaches the org dashboard.
+        // Operators additionally get the "Everyone" scope inside the page.
+        name: "Appointments",
+        icon: CalendarCheck,
+        path: "appointments",
+      },
+    ];
+
+    // People — governance + roster surfaces (BILLING_ADMIN is
+    // operator-blind; SUPPORT reads Members for ticket investigation).
+    //
+    // Learners, Experts and Invitations are tabs on Members rather than
+    // sidebar entries: the first two were `?role=` filters on the very
+    // endpoint Members already reads, and splitting one roster across four
+    // nav slots made the group harder to scan than the data warranted.
+    const peopleItems: ItemSpec[] = [
+      {
+        // members.read is the widest of the four tab grants
+        // (OPERATIONS_READERS, vs GOVERNANCE for invitations and OPERATORS
+        // for learners/experts), so it alone decides the nav entry.
+        name: "Members",
+        icon: Users,
+        path: "members",
+        show: can("members.read"),
+      },
+      {
         // #org-appts / #1025 — collaborators on THIS org's hosted webinar/class
         // plans. Mirrors Compensation's gate: only host-capable orgs have
         // collaborator-bearing plans, and inviting/managing collaborators is
@@ -235,45 +265,6 @@ export default function OrgLayout({
         icon: Users,
         path: "collaborations",
         show: can("myArrangement.read") && canHost,
-      },
-      {
-        // Any ACTIVE member — learners who ATTEND org sessions and experts
-        // who DELIVER them both need their own per-org appointments surface.
-        // Deliberately NOT gated on canHost (that would exclude pure
-        // learners): requireOrgAccess already floors this at active
-        // membership, so show it to everyone who reaches the org dashboard.
-        name: "My Appointments",
-        icon: CalendarCheck,
-        path: "my-appointments",
-      },
-    ];
-
-    // People — governance + roster surfaces (BILLING_ADMIN is
-    // operator-blind; SUPPORT reads Members for ticket investigation).
-    const peopleItems: ItemSpec[] = [
-      {
-        name: "Members",
-        icon: Users,
-        path: "members",
-        show: can("members.read"),
-      },
-      {
-        name: "Invitations",
-        icon: Mail,
-        path: "invitations",
-        show: can("invitations.manage"),
-      },
-      {
-        name: "Learners",
-        icon: GraduationCap,
-        path: "learners",
-        show: canSponsor && can("learners.read"),
-      },
-      {
-        name: "Experts",
-        icon: UserCog,
-        path: "experts",
-        show: canHost && can("experts.read"),
       },
     ];
 
@@ -350,35 +341,16 @@ export default function OrgLayout({
     // here. OWNER + MAINTAINER have access but the group is
     // collapsed by default (see operationsCollapsedDefault).
     // BILLING_ADMIN is excluded — no booking-side remit.
+    // Waitlist, Trials, Documents and Recordings are tabs on one Operations
+    // page. All four were read-only ScopedListTable views with no actions —
+    // four nav slots for four tables was more navigation than content.
+    // Appointments moved up to the top block, where it carries its own
+    // Mine/Everyone scope toggle.
     const operationsItems: ItemSpec[] = [
       {
-        name: "Appointments",
-        icon: CalendarCheck,
-        path: "appointments",
-        show: can("operations.read"),
-      },
-      {
-        name: "Waitlist",
+        name: "Operations",
         icon: ListOrdered,
-        path: "waitlist",
-        show: can("operations.read"),
-      },
-      {
-        name: "Trials",
-        icon: Sparkles,
-        path: "trials",
-        show: can("operations.read"),
-      },
-      {
-        name: "Documents",
-        icon: FileText,
-        path: "documents",
-        show: can("operations.read"),
-      },
-      {
-        name: "Recordings",
-        icon: Video,
-        path: "recordings",
+        path: "operations",
         show: can("operations.read"),
       },
     ];
@@ -412,30 +384,16 @@ export default function OrgLayout({
     // Settings stays MAINTAINER+ (org-config is sensitive). Webhooks +
     // SCIM + Data exports are BILLING_ADMIN-reachable for finance
     // integrations.
+    // Webhooks, SCIM and Data exports are tabs on Settings, alongside SSO —
+    // which had no sidebar entry at all and was reachable only via a link
+    // buried inside the settings page. One Configuration destination, five
+    // tabs, each still gated on its own matrix key.
     const configurationItems: ItemSpec[] = [
       {
         name: "Settings",
         icon: Settings,
         path: "settings",
-        show: can("settings.manage"),
-      },
-      {
-        name: "Webhooks",
-        icon: Webhook,
-        path: "integrations/webhooks",
-        show: can("integrations.read"),
-      },
-      {
-        name: "SCIM",
-        icon: KeyRound,
-        path: "integrations/scim",
-        show: can("integrations.read"),
-      },
-      {
-        name: "Data exports",
-        icon: Download,
-        path: "integrations/data-exports",
-        show: can("integrations.read"),
+        show: can("settings.manage") || can("integrations.read"),
       },
     ];
 
@@ -531,11 +489,13 @@ export default function OrgLayout({
     (m) => m.organizationId !== orgId,
   );
 
-  // Bottom chip dropdown — context switching + account actions.
+  // Bottom chip dropdown — context switching only.
   // Top header stays static (org identity + collapse arrow). Single dropdown
   // at the bottom keeps the "which dropdown has what" confusion at zero.
-  const settingsHref = `/dashboard/organization/${orgId}/settings`;
-
+  //
+  // No "Organization settings" entry here: it pointed at the very href the
+  // Configuration → Settings sidebar item already owns, so the same
+  // destination appeared twice in one sidebar.
   const bottomUserChipActions: NonNullable<
     React.ComponentProps<typeof CollapsibleSidebar>["bottomUserChipActions"]
   > = [
@@ -559,13 +519,6 @@ export default function OrgLayout({
           })),
         ]
       : []),
-    { type: "separator" },
-    {
-      type: "item",
-      label: "Organization settings",
-      href: settingsHref,
-      icon: Settings,
-    },
   ];
 
   // Subtitle under the org name: the user's role in THIS org. Capability
@@ -577,27 +530,23 @@ export default function OrgLayout({
   // the heading the user actually sees on the page.
   const PAGE_LABELS: Record<string, string> = {
     home:               "Overview",
-    "my-appointments":  "My Appointments",
+    "my-program":       "My Program",
     compensation:       "Compensation",
     collaborations:     "Collaborations",
+    appointments:       "Appointments",
     members:      "Members",
-    invitations:  "Invitations",
-    learners:     "Learners",
-    experts:      "Experts",
     programs:     "Programs",
     contracts:    "Contracts",
-    appointments: "Appointments",
-    waitlist:     "Waitlist",
-    trials:       "Trials",
-    documents:    "Documents",
-    recordings:   "Recordings",
+    "purchase-orders": "Purchase Orders",
+    operations:   "Operations",
     billing:      "Billing",
     payouts:      "Payouts",
+    reimbursements: "Reimbursements",
     disputes:     "Disputes",
     analytics:    "Analytics",
     audit:        "Audit",
+    consent:      "Consent",
     settings:     "Settings",
-    sso:          "SSO",
   };
 
   // Full breadcrumb trail — every URL segment after /organization/{orgId}

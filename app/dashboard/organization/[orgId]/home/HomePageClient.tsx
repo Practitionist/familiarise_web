@@ -412,7 +412,7 @@ export function HomePageClient({ orgId }: { orgId: string }) {
         title: "Invite member",
         description: "Add team members by email",
         icon: Mail,
-        href: `/dashboard/organization/${orgId}/invitations`,
+        href: `/dashboard/organization/${orgId}/members?tab=invitations`,
         minRole: "MAINTAINER",
       },
       {

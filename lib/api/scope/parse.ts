@@ -10,10 +10,11 @@
  *   - `all`                    — admin-only union across all orgs +
  *                                personal; rejected for non-ADMIN/STAFF
  *
- * The serialized form mirrors `lib/dashboard/org-context-filter.ts`
- * (which also uses `"mine"` / `"all"` / orgId). The #768 lockdown
- * renamed the sentinels from `__personal__` / `"personal"` to a single
- * `"mine"` vocabulary.
+ * The #768 lockdown renamed the sentinels from `__personal__` /
+ * `"personal"` to a single `"mine"` vocabulary. This file is now the only
+ * definition of that vocabulary — the client-side mirror it used to share
+ * with (`lib/dashboard/org-context-filter.ts`) was deleted once #1023
+ * removed the last org-context switcher from the personal dashboards.
  */
 
 import type { Membership, MemberStatus } from "@prisma/client";

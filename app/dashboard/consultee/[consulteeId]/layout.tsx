@@ -67,7 +67,7 @@ const NAV_GROUPS: CollapsibleSidebarGroup[] = [
   },
   {
     label: "Support",
-    items: [{ name: "Support", icon: LifeBuoy, path: "feedback" }],
+    items: [{ name: "Support", icon: LifeBuoy, path: "support" }],
   },
 ];
 
@@ -77,7 +77,7 @@ const MOBILE_TABS: { label: string; path: string; Icon: LucideIcon }[] = [
   { label: "Appointments", path: "appointments", Icon: CalendarCheck },
   { label: "Messages", path: "messages", Icon: MessageSquare },
   { label: "Payments", path: "payments", Icon: CreditCard },
-  { label: "Support", path: "feedback", Icon: LifeBuoy },
+  { label: "Support", path: "support", Icon: LifeBuoy },
 ];
 
 // Map URL segments to human-readable page names so the breadcrumbs match
@@ -90,7 +90,7 @@ const PAGE_LABELS: Record<string, string> = {
   messages: "Messages",
   payments: "Payments",
   referrals: "Referrals",
-  feedback: "Support",
+  support: "Support",
   settings: "Settings",
 };
 
