@@ -36,6 +36,9 @@ import {
   getMonthlyEvents,
   groupSlotsIntoSessions,
 } from "./event-processor";
+import { useQuery } from "@tanstack/react-query";
+import { ActionRequiredPanel } from "@/components/dashboard/ActionRequiredPanel";
+import { deriveConsulteeActionItems } from "@/lib/dashboard/action-items";
 import { WaitlistStatusBadge } from "@/components/ui/waitlist-status-badge";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import {
@@ -718,6 +721,36 @@ export default function HomeTab({
     [processedEvents],
   );
 
+  // Same query key PendingPaymentsWidget uses, so react-query serves both
+  // from one cache entry instead of fetching the list twice.
+  const { data: pendingPayments } = useQuery({
+    queryKey: ["pending-payments", consulteeId],
+    queryFn: async (): Promise<Array<{ amount: number }>> => {
+      const res = await fetch(
+        `/api/dashboard/consultee/${consulteeId}/pending-payments`,
+      );
+      if (!res.ok) throw new Error("Failed to fetch pending payments");
+      return (await res.json()).pendingPayments || [];
+    },
+  });
+
+  const actionItems = useMemo(
+    () =>
+      deriveConsulteeActionItems({
+        pendingPaymentCount: pendingPayments?.length ?? 0,
+        pendingPaymentTotalPaise: (pendingPayments ?? []).reduce(
+          (sum, p) => sum + (p.amount ?? 0),
+          0,
+        ),
+        upcomingSessions: upcomingEvents.map((e) => ({
+          startsAt: e.startsAt,
+          title: e.title,
+        })),
+        basePath: `/dashboard/consultee/${consulteeId}`,
+      }),
+    [pendingPayments, upcomingEvents, consulteeId],
+  );
+
   // Get events for current month
   const monthlyEvents = useMemo(
     () => getMonthlyEvents(processedEvents, currentMonth),
@@ -749,6 +782,10 @@ export default function HomeTab({
       animate="visible"
       className="space-y-6"
     >
+      {/* What's actually blocked on this learner, above the summary. Renders
+          nothing when the queue is clear. */}
+      <ActionRequiredPanel items={actionItems} className="space-y-2" />
+
       {/* Refreshing indicator */}
       {isRefreshing && (
         <div className="fixed top-20 right-4 bg-foreground text-background px-4 py-2 rounded-lg text-sm z-50 shadow-lg flex items-center gap-2">

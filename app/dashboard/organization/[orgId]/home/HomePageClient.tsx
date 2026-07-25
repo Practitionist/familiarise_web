@@ -8,8 +8,6 @@ import {
   Briefcase,
   CreditCard,
   AlertCircle,
-  AlertTriangle,
-  Info,
   Mail,
   Settings,
   Check,
@@ -18,7 +16,6 @@ import {
   Wallet,
   FileText,
   UserCog,
-  ArrowRight,
   type LucideIcon,
 } from "lucide-react";
 import type { FundingSource, MemberRole, OrgStatus } from "@prisma/client";
@@ -27,7 +24,6 @@ import {
   deriveActivationChecklist,
   deriveActionCenter,
   type OrgActivationSnapshot,
-  type ActionItem,
 } from "@/lib/enterprise/org-activation";
 
 import {
@@ -46,6 +42,7 @@ import {
 import { Progress } from "@/components/ui/progress";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { useOrgRole } from "../useOrgRole";
+import { ActionRequiredPanel } from "@/components/dashboard/ActionRequiredPanel";
 import { FinanceLeadViewCard } from "./FinanceLeadViewCard";
 
 // ---------------------------------------------------------------------------
@@ -173,61 +170,13 @@ function countByRole(
   return byRole.find((r) => r.role === role)?.count ?? 0;
 }
 
-// #779 §F — state-driven action center. Renders the org's real next actions
-// (overdue invoices, cap-near, expiring contracts, pending overages, stuck
-// payouts, low wallet) instead of a generic dashboard. Severity drives tone.
-const ACTION_TONE: Record<
-  ActionItem["severity"],
-  { card: string; icon: LucideIcon; iconColor: string }
-> = {
-  critical: {
-    card: "border-rose-200 bg-rose-50",
-    icon: AlertCircle,
-    iconColor: "text-rose-600",
-  },
-  warning: {
-    card: "border-amber-200 bg-amber-50",
-    icon: AlertTriangle,
-    iconColor: "text-amber-600",
-  },
-  info: {
-    card: "border-sky-200 bg-sky-50",
-    icon: Info,
-    iconColor: "text-sky-600",
-  },
-};
-
-function ActionCenter({ items }: { items: ActionItem[] }) {
-  if (items.length === 0) return null;
-  return (
-    <div className="mb-6 space-y-2">
-      <h3 className="text-sm font-semibold text-zinc-700">Action required</h3>
-      {items.map((item) => {
-        const tone = ACTION_TONE[item.severity];
-        const Icon = tone.icon;
-        return (
-          <Link key={item.key} href={item.ctaHref} className="block">
-            <div
-              className={`flex items-start gap-3 rounded-lg border p-3 transition-colors hover:brightness-[0.98] ${tone.card}`}
-            >
-              <Icon className={`mt-0.5 h-5 w-5 shrink-0 ${tone.iconColor}`} />
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-semibold text-zinc-900">
-                  {item.title}
-                </p>
-                <p className="text-sm text-zinc-600">{item.body}</p>
-              </div>
-              <span className="flex shrink-0 items-center gap-1 text-sm font-medium text-zinc-700">
-                {item.ctaLabel}
-                <ArrowRight className="h-4 w-4" />
-              </span>
-            </div>
-          </Link>
-        );
-      })}
-    </div>
-  );
-}
+// #779 §F — the org's real next actions (overdue invoices, cap-near,
+// expiring contracts, pending overages, stuck payouts, low wallet), not a
+// generic dashboard. Severity drives tone.
+//
+// The panel that renders these moved to components/dashboard/
+// ActionRequiredPanel when the consultant and consultee homes adopted the
+// same idea — this was the only home page that led with what needed doing.
 
 /** Map the analytics payload → the pure activation snapshot. */
 function toActivationSnapshot(data: OrgAnalytics): OrgActivationSnapshot {
@@ -458,7 +407,7 @@ export function HomePageClient({ orgId }: { orgId: string }) {
       <DashboardContent>
         {/* #779 §F — action center: the org's real next actions, ahead of
             stats. Empty (renders nothing) for a healthy org. */}
-        <ActionCenter items={actionItems} />
+        <ActionRequiredPanel items={actionItems} heading="Action required" />
 
         {/* #777 §A — Getting-Started checklist; auto-hides once every step is
             complete. */}
