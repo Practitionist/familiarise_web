@@ -79,10 +79,12 @@ export default async function OrgAppointmentsPage({
   if (scope === "everyone") {
     const queryClient = new QueryClient();
     // #890 — prefetch only the default page; filtered/paged views diverge by
-    // queryKey and fall back to the client fetch.
+    // queryKey and fall back to the client fetch. The trailing `undefined` is
+    // the appointmentType filter and MUST be present: the client's key carries
+    // that slot, and ["...", 1] wouldn't match ["...", 1, undefined].
     await Promise.allSettled([
       queryClient.prefetchQuery({
-        queryKey: ["org-appointments", orgId, page],
+        queryKey: ["org-appointments", orgId, page, undefined],
         queryFn: () => getOrgAppointments(orgId, { page }),
       }),
     ]);
