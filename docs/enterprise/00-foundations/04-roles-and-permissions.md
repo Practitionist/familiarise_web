@@ -528,10 +528,10 @@ page it lands on and the reason for that choice.
 |------|----------|-----|
 | `OWNER` / `MAINTAINER` / `MANAGER` / `SUPPORT` | `/home` | Operator overview (analytics, members, billing). |
 | `LEARNER` | `/my-program` | Per-cycle ProgramAssignment + utilization. The only in-org consumer surface for sponsored bookings. |
-| `EXPERT` | `/my-arrangement` | Membership.payoutRecipient + RateCard split + recent earnings on org-tagged payments. |
+| `EXPERT` | `/compensation` | Membership.payoutRecipient + RateCard split + recent earnings on org-tagged payments. |
 | no membership | personal dashboard fallback (`resolvePersonalDashboardHref` → `/dashboard`) | Stranger to this org — bounce out entirely. |
 
-Both `/my-program` and `/my-arrangement` are read-only in v1. A LEARNER
+Both `/my-program` and `/compensation` are read-only in v1. A LEARNER
 cannot self-assign to a Program; an EXPERT cannot flip their own
 `payoutRecipient`. Mutations remain on operator pages. Membership also
 carries an `exclusiveEngagement` boolean (ADR 18) recording an

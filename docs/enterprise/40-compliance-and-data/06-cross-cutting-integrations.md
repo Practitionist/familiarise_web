@@ -437,7 +437,7 @@ Each route lives at `/dashboard/organization/[orgId]/<slug>`. All are MANAGER+ u
 | `/home` | Stat grid (members / programs / wallet / invoices / reimbursements (PERSONAL only, C.B.4) / earnings) + Get Started checklist + activity feed |
 | `/members` | Roster + invite role gating + role-transition guards |
 | `/my-program` | LEARNER-only view of their own ProgramAssignment |
-| `/my-arrangement` | EXPERT-only view of their rate-card + earnings |
+| `/compensation` | EXPERT-only view of their rate-card + earnings |
 | `/programs` | LICENSED_SEAT / CREDIT_POOL CRUD + assignment + overage view |
 | `/contracts` | Contract CRUD + LICENSE flat-fee on-create flow |
 | `/purchase-orders` | PO CRUD + remainingAmountPaise display |
