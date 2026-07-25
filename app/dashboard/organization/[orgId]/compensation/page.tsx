@@ -23,6 +23,10 @@ import { requireOrgAccess } from "@/lib/auth-helpers";
 import { ENABLE_LIVE_PAYOUTS } from "@/lib/feature-flags";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { getMyArrangementData } from "@/lib/data/org-member-arrangement";
+import {
+  DashboardHeader,
+  DashboardContent,
+} from "@/components/dashboard/PageScaffold";
 
 const PAYOUT_RECIPIENT_LABEL: Record<string, string> = {
   SELF: "You — paid directly",
@@ -86,14 +90,12 @@ export default async function MyArrangementPage({
     : `/dashboard?orgScope=${orgId}`;
 
   return (
-    <div className="space-y-6">
-      <header>
-        <h1 className="text-2xl font-semibold">Compensation</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          How {access.org.name} compensates you for sessions hosted under their
-          brand.
-        </p>
-      </header>
+    <>
+      <DashboardHeader
+        title="Compensation"
+        subtitle={`How ${access.org.name} compensates you for sessions hosted under their brand.`}
+      />
+      <DashboardContent>
 
       {/* #754 — upcoming org-hosted sessions */}
       {member.consultantProfileId && upcomingSessions.length > 0 && (
@@ -379,7 +381,8 @@ export default async function MyArrangementPage({
           here.
         </div>
       )}
-    </div>
+      </DashboardContent>
+    </>
   );
 }
 

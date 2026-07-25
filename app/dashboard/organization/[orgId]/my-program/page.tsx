@@ -18,6 +18,10 @@ import Link from "next/link";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { getMyProgramData } from "@/lib/data/org-member-program";
+import {
+  DashboardHeader,
+  DashboardContent,
+} from "@/components/dashboard/PageScaffold";
 
 const PROGRAM_TYPE_LABEL: Record<string, string> = {
   LICENSED_SEAT: "Licensed seat",
@@ -71,13 +75,12 @@ export default async function MyProgramPage({
   const appointmentsHref = `/dashboard/organization/${orgId}/appointments?scope=mine`;
 
   return (
-    <div className="space-y-6">
-      <header>
-        <h1 className="text-2xl font-semibold">My Program</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          {access.org.name} sponsors your bookings through the programs below.
-        </p>
-      </header>
+    <>
+      <DashboardHeader
+        title="My Program"
+        subtitle={`${access.org.name} sponsors your bookings through the programs below.`}
+      />
+      <DashboardContent>
 
       {/* #777 §C.5/§F — outstanding overage deep-link banner. */}
       {outstandingOveragePaise > 0 && (
@@ -377,7 +380,8 @@ export default async function MyProgramPage({
           </p>
         </section>
       )}
-    </div>
+      </DashboardContent>
+    </>
   );
 }
 
