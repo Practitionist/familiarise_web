@@ -12,7 +12,7 @@
  * lives here rather than being left to a manual click-through.
  */
 
-import { existsSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 
 import { buildBackofficeNav } from "@/lib/dashboard/backoffice-nav";
@@ -79,7 +79,7 @@ describe("org nav targets resolve", () => {
   it("covers every path the layout actually declares", () => {
     // Guards the list above against drift: if someone adds a nav item and
     // forgets to add it here, this fails rather than silently under-testing.
-    const layout = require("fs").readFileSync(
+    const layout = readFileSync(
       join(APP, "organization/[orgId]/layout.tsx"),
       "utf8",
     ) as string;
@@ -117,7 +117,7 @@ describe("personal + workspace nav targets resolve", () => {
   ];
 
   it.each(TREES)("%s", (_name, layoutRel, routeBase) => {
-    const src = require("fs").readFileSync(join(APP, layoutRel), "utf8") as string;
+    const src = readFileSync(join(APP, layoutRel), "utf8");
     const paths = Array.from(
       new Set(Array.from(src.matchAll(/path: "([a-z0-9-]+)"/g), (m) => m[1])),
     );
@@ -125,5 +125,51 @@ describe("personal + workspace nav targets resolve", () => {
 
     const missing = paths.filter((p) => !resolves(`${routeBase}/${p}`));
     expect(missing).toEqual([]);
+  });
+});
+
+/**
+ * A group header that restates the only item beneath it carries no
+ * information — the reader expands "Resources" to find "Resources". This
+ * happened twice: once in the org sidebar (a tabbed Resources page inside a
+ * Resources group) and once in both personal dashboards (a Support group
+ * wrapping a lone Support item).
+ *
+ * The rule: a labelled group must either hold more than one item, or hold an
+ * item whose name differs from the label. A single item that would restate
+ * its header belongs in a labelless group instead.
+ */
+describe("no redundant group nesting", () => {
+  it("back-office groups never restate their only item", () => {
+    for (const tree of ["admin", "staff"] as const) {
+      for (const group of buildBackofficeNav(tree, { showTds: true })) {
+        if (!group.label) continue;
+        const restates =
+          group.items.length === 1 && group.items[0].name === group.label;
+        expect({ tree, label: group.label, restates }).toEqual({
+          tree,
+          label: group.label,
+          restates: false,
+        });
+      }
+    }
+  });
+
+  it.each([
+    ["consultant", "consultant/[consultantId]/layout.tsx"],
+    ["consultee", "consultee/[consulteeId]/layout.tsx"],
+    ["organization", "organization/[orgId]/layout.tsx"],
+  ])("%s sidebar has no label that equals a lone item name", (_name, rel) => {
+    const src = readFileSync(join(APP, rel), "utf8");
+
+    // Deliberately narrow rather than a general parser: match a labelled
+    // group whose `items` array opens with a single inline item of the SAME
+    // name. That is the exact shape that occurred twice, and a loose
+    // heuristic here matched across group boundaries and cried wolf.
+    const inlineRestatement =
+      /label: "([^"]+)",\s*\n\s*items: \[\{ name: "\1"/g;
+
+    const offenders = Array.from(src.matchAll(inlineRestatement), (m) => m[1]);
+    expect(offenders).toEqual([]);
   });
 });

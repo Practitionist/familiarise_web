@@ -66,7 +66,9 @@ const NAV_GROUPS: CollapsibleSidebarGroup[] = [
     ],
   },
   {
-    label: "Support",
+    // Labelless on purpose: a group header reading "Support" above a single
+    // item also called "Support" is redundant nesting — the header would
+    // restate the only thing under it. Rendered as a standalone entry.
     items: [{ name: "Support", icon: LifeBuoy, path: "support" }],
   },
 ];
