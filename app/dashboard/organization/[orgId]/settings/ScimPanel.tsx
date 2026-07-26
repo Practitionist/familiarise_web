@@ -14,7 +14,7 @@
  * banner and never persisted client-side beyond that render.
  */
 
-import { use, useState } from "react";
+import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRequireOrgAccess, useOrgRole } from "../useOrgRole";
 import { PanelHeader } from "@/components/dashboard/PageScaffold";
@@ -113,7 +113,6 @@ const tokenColumns: ResponsiveColumn<ScimToken>[] = [
   },
 ];
 
-type PageProps = { params: Promise<{ orgId: string }> };
 
 export function ScimPanel({ orgId }: { orgId: string }) {
   const { allowed, isLoading: isGateLoading } = useRequireOrgAccess(orgId, { permission: "integrations.read" });

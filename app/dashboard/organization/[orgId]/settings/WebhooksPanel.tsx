@@ -15,7 +15,7 @@
  * shows but submits surface a 403 with friendly copy.
  */
 
-import { use, useState } from "react";
+import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRequireOrgAccess } from "../useOrgRole";
 import { PanelHeader } from "@/components/dashboard/PageScaffold";
@@ -107,7 +107,6 @@ const webhookColumns: ResponsiveColumn<WebhookRow>[] = [
   },
 ];
 
-type PageProps = { params: Promise<{ orgId: string }> };
 
 export function WebhooksPanel({ orgId }: { orgId: string }) {
   const { allowed, isLoading: isGateLoading } = useRequireOrgAccess(orgId, { permission: "integrations.read" });

@@ -13,7 +13,7 @@
  * (READY / FAILED / EXPIRED) to keep the dashboard idle.
  */
 
-import { use, useState } from "react";
+import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRequireOrgAccess } from "../useOrgRole";
 import { PanelHeader } from "@/components/dashboard/PageScaffold";
@@ -53,7 +53,6 @@ const STATUS_TONE: Record<ExportJob["status"], string> = {
   EXPIRED: "bg-muted text-muted-foreground",
 };
 
-type PageProps = { params: Promise<{ orgId: string }> };
 
 export function DataExportsPanel({ orgId }: { orgId: string }) {
   const { allowed, isLoading: isGateLoading } = useRequireOrgAccess(orgId, { permission: "integrations.read" });
