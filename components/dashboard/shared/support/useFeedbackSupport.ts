@@ -43,7 +43,7 @@ export interface SupportTicketWithResponses extends SupportTicket {
   responses: EnrichedSupportTicketResponse[];
 }
 
-export function useFeedbackSupport(consulteeId: string) {
+export function useFeedbackSupport(scopeId: string) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [isLoading, setIsLoading] = React.useState(false);
@@ -54,7 +54,7 @@ export function useFeedbackSupport(consulteeId: string) {
   // Same query configs the feedback page prefetches — the page's fetch IS
   // this hook's data (previously the hook re-fetched both endpoints via
   // useEffect, doubling every page load's network calls).
-  const consulteeQueries = createConsulteeQueries(consulteeId);
+  const consulteeQueries = createConsulteeQueries(scopeId);
   const { data: feedbacksData } = useQuery(consulteeQueries.feedback);
   const { data: ticketsData } = useQuery(consulteeQueries.supportTickets);
   const feedbacks = (feedbacksData ?? []) as unknown as Feedback[];

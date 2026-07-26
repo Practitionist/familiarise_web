@@ -47,7 +47,11 @@ export interface FeedbackPanelProps {
 }
 
 export function FeedbackPanel({ profileId, view }: FeedbackPanelProps) {
-  const consulteeId = profileId;
+  // Query-key namespace only — every fetch behind this hook is session-keyed
+  // (/api/user/feedbacks, /api/user/support-tickets). It is no longer always
+  // a consultee: enterprise operators reach this same surface from
+  // org-workspace, and they hold no consultee profile at all.
+  const scopeId = profileId;
   const {
     isLoading,
     feedbacks,
@@ -63,7 +67,7 @@ export function FeedbackPanel({ profileId, view }: FeedbackPanelProps) {
     handleFeedbackSubmit,
     handleTicketSubmit,
     handleResponseSubmit,
-  } = useFeedbackSupport(consulteeId);
+  } = useFeedbackSupport(scopeId);
 
   // Semantic status colors kept (amber=in progress, green=resolved); the
   // off-brand blue OPEN/PENDING accent collapses to neutral monochrome.

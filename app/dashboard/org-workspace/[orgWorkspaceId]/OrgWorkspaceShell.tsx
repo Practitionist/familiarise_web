@@ -20,7 +20,14 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Activity, CreditCard, Home, Settings, UserRound } from "lucide-react";
+import {
+  Activity,
+  CreditCard,
+  Home,
+  LifeBuoy,
+  Settings,
+  UserRound,
+} from "lucide-react";
 
 import {
   CollapsibleSidebar,
@@ -50,6 +57,9 @@ const sidebarItems: CollapsibleSidebarItem[] = [
   { name: "Activity", icon: Activity, path: "activity" },
   { name: "Spend", icon: CreditCard, path: "billing" },
   { name: "Workspace settings", icon: Settings, path: "settings" },
+  // Operators had no support surface at all until this entry — see
+  // support/page.tsx.
+  { name: "Support", icon: LifeBuoy, path: "support" },
 ];
 
 /** Breadcrumb labels per first path segment (mirrors the sidebar + /create). */
@@ -58,6 +68,7 @@ const PAGE_LABELS: Record<string, string> = {
   activity: "Activity",
   billing: "Spend",
   settings: "Workspace settings",
+  support: "Support",
   create: "New organization",
 };
 

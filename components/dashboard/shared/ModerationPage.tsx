@@ -130,7 +130,13 @@ export function ModerationPage() {
     queryFn: async (): Promise<ModerationStats> => {
       const response = await fetch("/api/staff/moderation/stats");
       if (!response.ok) throw new Error("Failed to fetch stats");
-      return response.json();
+      // The route wraps the counters in a `stats` envelope, alongside
+      // reportsByType / actionsByType / period. Returning the envelope and
+      // annotating it `ModerationStats` typechecked fine and left every card
+      // reading `undefined`, so all four rendered their `?? 0` fallback
+      // permanently — a moderation queue that always looked empty.
+      const body = (await response.json()) as { stats: ModerationStats };
+      return body.stats;
     },
   });
 

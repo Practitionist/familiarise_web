@@ -42,7 +42,12 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
 
     // Parse query params for filtering
     const { searchParams } = new URL(req.url);
-    const type = searchParams.get("type") as "webinar" | "class" | null;
+    const type = searchParams.get("type") as
+      | "webinar"
+      | "class"
+      | "consultation"
+      | "subscription"
+      | null;
     const status = searchParams.get("status") as RecordingStatus | null;
     const search = searchParams.get("search") || undefined;
     const page = parseInt(searchParams.get("page") || "1");
@@ -65,7 +70,12 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       const slot = recording.meetingSession.slotOfAppointment;
       const appointment = slot.appointment;
 
-      let planType: "webinar" | "class" | null = null;
+      let planType:
+        | "webinar"
+        | "class"
+        | "consultation"
+        | "subscription"
+        | null = null;
       let planId: string | null = null;
       let planTitle: string | null = null;
 
@@ -77,6 +87,14 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         planType = "class";
         planId = appointment.class.classPlan.id;
         planTitle = appointment.class.classPlan.title;
+      } else if (appointment?.consultation?.consultationPlan) {
+        planType = "consultation";
+        planId = appointment.consultation.consultationPlan.id;
+        planTitle = appointment.consultation.consultationPlan.title;
+      } else if (appointment?.subscription?.subscriptionPlan) {
+        planType = "subscription";
+        planId = appointment.subscription.subscriptionPlan.id;
+        planTitle = appointment.subscription.subscriptionPlan.title;
       }
 
       // Extract participant info from slot users

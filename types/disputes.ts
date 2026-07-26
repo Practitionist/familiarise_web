@@ -18,7 +18,8 @@ type JsonValue =
 export interface Dispute {
   id: string;
   disputeId: string;
-  amount: number;
+  /** Paise. Was declared as `amount`, which the API never returned. */
+  amountPaise: number;
   currency: string;
   status: string;
   reason: string | null;
@@ -49,7 +50,8 @@ export interface DisputeListResponse {
 export interface DisputeDetails {
   id: string;
   disputeId: string;
-  amount: number;
+  /** Paise. Was declared as `amount`, which the API never returned. */
+  amountPaise: number;
   currency: string;
   status: string;
   reason: string | null;

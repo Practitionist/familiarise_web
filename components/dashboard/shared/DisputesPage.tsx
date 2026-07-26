@@ -200,7 +200,7 @@ export function DisputesPage({
       key: "amount",
       header: "Amount",
       className: "font-medium",
-      cell: (dispute) => formatCurrency(dispute.amount, dispute.currency),
+      cell: (dispute) => formatCurrency(dispute.amountPaise, dispute.currency),
     },
     {
       key: "gateway",
