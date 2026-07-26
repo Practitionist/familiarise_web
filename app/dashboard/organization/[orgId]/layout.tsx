@@ -21,7 +21,7 @@ import {
   Clock,
   FileText,
   CalendarCheck,
-  FolderOpen,
+  Video,
   Receipt,
   ShieldCheck,
   ShieldAlert,
@@ -342,17 +342,25 @@ export default function OrgLayout({
     // by default (see resourcesCollapsedDefault). BILLING_ADMIN is excluded
     // — no booking-side remit.
     //
-    // Documents and Recordings are tabs on one page; each was a read-only
-    // ScopedListTable with no actions, so two nav slots for two tables was
-    // more navigation than content. Waitlist and Trials are deliberately
-    // NOT here: the waitlist feature is being retired, and a trial IS an
-    // appointment, so it belongs on Appointments rather than in a list of
-    // its own.
+    // Two entries, not one tabbed "Resources" page: a group labelled
+    // Resources holding a single item also called Resources is redundant
+    // nesting, and the two lists answer different questions — Documents is a
+    // review queue, Recordings is an archive.
+    //
+    // Waitlist and Trials are deliberately absent: the waitlist feature is
+    // being retired, and a trial IS an appointment, so it belongs on
+    // Appointments rather than in a list of its own.
     const resourcesItems: ItemSpec[] = [
       {
-        name: "Resources",
-        icon: FolderOpen,
-        path: "resources",
+        name: "Documents",
+        icon: FileText,
+        path: "documents",
+        show: can("operations.read"),
+      },
+      {
+        name: "Recordings",
+        icon: Video,
+        path: "recordings",
         show: can("operations.read"),
       },
     ];
@@ -540,7 +548,8 @@ export default function OrgLayout({
     programs:     "Programs",
     contracts:    "Contracts",
     "purchase-orders": "Purchase Orders",
-    resources:    "Resources",
+    documents:    "Documents",
+    recordings:   "Recordings",
     billing:      "Billing",
     payouts:      "Payouts",
     reimbursements: "Reimbursements",

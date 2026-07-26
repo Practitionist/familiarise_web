@@ -11,7 +11,10 @@ import { useRequireOrgAccess } from "../useOrgRole";
 import { useSearchParams } from "next/navigation";
 import { format } from "date-fns";
 import { Badge } from "@/components/ui/badge";
-import { PanelHeader } from "@/components/dashboard/PageScaffold";
+import {
+  DashboardHeader,
+  DashboardContent,
+} from "@/components/dashboard/PageScaffold";
 import {
   ScopedListTable,
   type Column,
@@ -48,7 +51,7 @@ const COLUMNS: Column<RecordingRow>[] = [
   },
 ];
 
-export function RecordingsPanel({ orgId }: { orgId: string }) {
+export function RecordingsClient({ orgId }: { orgId: string }) {
   // Page-level mirror of the API gate — previously this page had NO
   // guard and rendered an error shell for unauthorized roles (#audit F8).
   const { allowed } = useRequireOrgAccess(orgId, {
@@ -71,8 +74,11 @@ export function RecordingsPanel({ orgId }: { orgId: string }) {
 
   return (
     <>
-      <PanelHeader description="Session recordings for events run under this organization." />
-      <div className="space-y-6">
+      <DashboardHeader
+        title="Recordings"
+        subtitle="Session recordings for events run under this organization."
+      />
+      <DashboardContent>
         <ScopedListTable
           title="Org recordings"
           isLoading={isLoading}
@@ -85,7 +91,7 @@ export function RecordingsPanel({ orgId }: { orgId: string }) {
           rowKey={(r) => r.id}
           emptyMessage="No recordings under this organization yet."
         />
-      </div>
+      </DashboardContent>
     </>
   );
 }

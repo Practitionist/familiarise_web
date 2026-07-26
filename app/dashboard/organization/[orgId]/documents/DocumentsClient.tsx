@@ -10,7 +10,10 @@ import { useRequireOrgAccess } from "../useOrgRole";
 import { useSearchParams } from "next/navigation";
 import { format } from "date-fns";
 import { Badge } from "@/components/ui/badge";
-import { PanelHeader } from "@/components/dashboard/PageScaffold";
+import {
+  DashboardHeader,
+  DashboardContent,
+} from "@/components/dashboard/PageScaffold";
 import {
   ScopedListTable,
   type Column,
@@ -104,7 +107,7 @@ const COLUMNS: Column<DocumentRow>[] = [
   },
 ];
 
-export function DocumentsPanel({ orgId }: { orgId: string }) {
+export function DocumentsClient({ orgId }: { orgId: string }) {
   // Page-level mirror of the API gate — previously this page had NO
   // guard and rendered an error shell for unauthorized roles (#audit F8).
   const { allowed } = useRequireOrgAccess(orgId, {
@@ -127,8 +130,11 @@ export function DocumentsPanel({ orgId }: { orgId: string }) {
 
   return (
     <>
-      <PanelHeader description="Documents attached to appointments under this organization. Useful for HR / compliance review." />
-      <div className="space-y-6">
+      <DashboardHeader
+        title="Documents for review"
+        subtitle="Documents attached to appointments under this organization, with the outcome of each review."
+      />
+      <DashboardContent>
         <ScopedListTable
           title="Org documents"
           isLoading={isLoading}
@@ -141,7 +147,7 @@ export function DocumentsPanel({ orgId }: { orgId: string }) {
           rowKey={(r) => r.id}
           emptyMessage="No documents uploaded under this organization yet."
         />
-      </div>
+      </DashboardContent>
     </>
   );
 }

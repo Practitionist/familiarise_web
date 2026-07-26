@@ -72,8 +72,11 @@ The list below is the actual `page.tsx` set under
                                                   summary (host-side only)
 /dashboard/organization/[orgId]/analytics      → rollups (bookings, revenue,
                                                   earnings, wallet burn-down)
-/dashboard/organization/[orgId]/resources      → session artefacts, with
-                                                  ?tab=documents | recordings
+/dashboard/organization/[orgId]/documents      → documents uploaded against
+                                                  this org's appointments, with
+                                                  each review's outcome
+/dashboard/organization/[orgId]/recordings     → session recordings for events
+                                                  run under this org
 /dashboard/organization/[orgId]/disputes       → payment-dispute tracker
 /dashboard/organization/[orgId]/reimbursements → (see above)
 /dashboard/organization/[orgId]/audit          → per-org OrgAuditLog (rich filters)
@@ -87,14 +90,20 @@ The list below is the actual `page.tsx` set under
 ### Surfaces that are tabs, not routes
 
 The sidebar carried 28 entries at its peak, several of which were a filter or
-a single read-only table rather than a destination. Four of those groups are
-now tabs on one page each. Every tab is addressable as `?tab=<value>`, so a
-link into a specific panel still works.
+a single read-only table rather than a destination. Those became tabs on the
+page that already owned the object. Every tab is addressable as
+`?tab=<value>`, so a link into a specific panel still works.
+
+Documents and Recordings were briefly folded together this way too, under a
+"Resources" page. They were split back out: a sidebar group labelled
+Resources holding one item also called Resources is redundant nesting, and
+the two lists answer different questions — a review queue versus an archive.
+Consolidation is worth doing when it removes a duplicate, not when it just
+adds a level.
 
 | Page | Tabs | Why they merged |
 |---|---|---|
 | `/members` | `all`, `learners`, `experts`, `invitations` | `learners` and `experts` were `?role=` queries against the same `/api/organizations/[orgId]/members` endpoint the roster already read. `learners` was additionally capped at `perPage=100` with no pagination. |
-| `/resources` | `documents`, `recordings` | Two read-only `ScopedListTable` views, ~110 lines apiece, with no actions on either. Waitlist and Trials were briefly tabs here too; the waitlist feature is being retired, and a trial IS an appointment so it belongs on `/appointments`. |
 | `/settings` | `general`, `sso`, `webhooks`, `scim`, `data-exports` | SSO had no sidebar entry at all and was reachable only from a link inside the settings page. |
 | `/billing` | `invoices`, `wallet` | Unchanged — this one predates the consolidation. |
 
@@ -245,8 +254,8 @@ readable projection of it.
 > `OrganizationPlan` model) is gone. Discovery now reads each per-type
 > plan's `OrgPlanVisibility` directly — see
 > [public pages & discovery](05-public-pages-and-discovery.md). The
-> operations surfaces (`/appointments`, and the `/resources` tabs
-> `documents`, `recordings`) all share the single `operations.read`
+> operations surfaces (`/appointments`, `/documents`, `/recordings`)
+> all share the single `operations.read`
 > grant (OWNER, MAINTAINER, MANAGER, SUPPORT) at sidebar, page, and API;
 > `/reimbursements` uses `reimbursements.read` plus the
 > `fundingSource=PERSONAL` structural gate; `/audit` uses `audit.read`
