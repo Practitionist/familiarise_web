@@ -55,9 +55,14 @@ export async function GET(
     );
   }
 
+  // Must mirror the list route's filter exactly, or the CSV a finance team
+  // actually pays from disagrees with the screen they approved. See the
+  // rationale there: PaymentStatus has no REFUNDED state.
   const where = {
     organizationId: orgId,
     paymentStatus: "SUCCEEDED" as const,
+    refunds: { none: { status: "SUCCEEDED" as const, deletedAt: null } },
+    deletedAt: null,
     ...(filters.data.userId && { userId: filters.data.userId }),
     ...(filters.data.from || filters.data.to
       ? {

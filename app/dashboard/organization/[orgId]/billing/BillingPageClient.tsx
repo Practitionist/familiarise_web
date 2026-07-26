@@ -640,6 +640,20 @@ export function BillingPageClient({ orgId }: { orgId: string }) {
               )}
             {summary.isLoading ? (
               <p className="text-sm text-muted-foreground">Loading…</p>
+            ) : summary.isError || !summary.data ? (
+              /* The `?? 0` fallbacks below meant a failed fetch rendered
+                 "₹0.00 outstanding" — an org carrying ₹40L of unpaid
+                 invoices saw zero when the API 500'd. On a billing surface
+                 that is worse than showing nothing. */
+              <div className="rounded-lg border border-border bg-card p-6 text-sm">
+                <p className="font-medium text-foreground">
+                  Couldn&apos;t load the billing summary
+                </p>
+                <p className="mt-1 text-muted-foreground">
+                  These figures are unavailable right now — this is a loading
+                  problem, not a zero balance. Refresh to try again.
+                </p>
+              </div>
             ) : (
               <DashboardGrid columns={4}>
                 <StatCard

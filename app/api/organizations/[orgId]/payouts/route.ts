@@ -22,12 +22,12 @@ import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
-import { requireOrgAccess, requireOrgOwner } from "@/lib/auth-helpers";
+import { requireOrgAccess } from "@/lib/auth-helpers";
 // Why: payout initiation is a finance-team action; downgrade from
 // requireOrgOwner so BILLING_ADMIN can trigger payouts without escalation.
 import { requireOrgBillingAdminOrOwner } from "@/lib/auth/billing-admin-gate";
-import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { sumPaise } from "@/lib/payments/utils/money";
+import { createOrgPayoutBatch } from "@/lib/payments/payouts/org-payout-service";
 import type { PayoutStatus } from "@prisma/client";
 
 const PayoutStatusSchema = z.enum([
@@ -188,167 +188,41 @@ export async function POST(
   const body = parsed.data;
 
   try {
-    const payout = await prisma.$transaction(async (tx) => {
-      // Require a verified payout account. An unverified account means
-      // the side-channel hasn't finished provisioning RazorpayX contact +
-      // fund-account, so fund movement cannot actually succeed.
-      const payoutAccount = await tx.organizationPayoutAccount.findUnique({
-        where: { organizationId: orgId },
-      });
-      if (!payoutAccount) {
-        throw Object.assign(
-          new Error("No payout account configured for this organization"),
-          { httpStatus: 409 },
-        );
-      }
-      if (payoutAccount.status !== "VERIFIED") {
-        throw Object.assign(
-          new Error(
-            `Payout account is ${payoutAccount.status} — cannot create payouts until VERIFIED`,
-          ),
-          { httpStatus: 409 },
-        );
-      }
+    // Delegate to the canonical batch creator rather than re-implementing it.
+    //
+    // This route used to carry its own copy of the create logic, and the copy
+    // had drifted: it wrote `amountPaise: orgShare - refunds` with NO TDS
+    // withheld and left `tdsAmountPaise` / `mustPayByDate` null, on the
+    // strength of a comment claiming "TDS is withheld by the cron". Nothing
+    // back-fills TDS — `createOrgPayoutBatch` is the only writer of those
+    // fields — and disbursement submits `payout.amountPaise` verbatim, so a
+    // batch created from the dashboard paid the org the full pre-tax amount.
+    // That is statutory under-withholding, and the MSME 43B(h) alert job
+    // skipped the row because `mustPayByDate` was never set.
+    //
+    // The service is a strict superset of what was here: same payout-account
+    // VERIFIED gate, same race-safe claim of READY earnings, plus TDS, the
+    // MSME deadline, a distributed lock and idempotency.
+    const result = await createOrgPayoutBatch(
+      orgId,
+      body.periodStart,
+      body.periodEnd,
+      {
+        paymentGateway: body.paymentGateway,
+        notes: body.notes,
+        actorMembershipId: access.member.id,
+      },
+    );
 
-      // Race-safe claim pattern:
-      //   (1) Create the payout row first (with zero totals as placeholders).
-      //   (2) Atomically claim READY earnings by assigning them orgPayoutId
-      //       in a single UPDATE — Postgres' row-level locks serialise any
-      //       concurrent POST, so two requests can never claim the same
-      //       earning.
-      //   (3) Re-read the claimed rows (authoritatively scoped by orgPayoutId),
-      //       compute totals, and patch the payout row with the real numbers.
-      //   (4) Flip the claimed rows READY → BATCHED in the same tx (#837).
-      // If no rows are claimed, throw to abort the tx so the placeholder
-      // payout row is rolled back too.
-      const created = await tx.organizationPayout.create({
-        data: {
-          organizationId: orgId,
-          amountPaise: 0,
-          currency: "INR",
-          status: "PENDING",
-          paymentGateway: body.paymentGateway,
-          periodStart: body.periodStart,
-          periodEnd: body.periodEnd,
-          grossRevenuePaise: 0,
-          platformFeePaise: 0,
-          refundsPaise: 0,
-          netPayoutPaise: 0,
-        },
-      });
-
-      const claim = await tx.organizationEarnings.updateMany({
-        where: {
-          organizationId: orgId,
-          status: "READY",
-          orgPayoutId: null,
-          createdAt: { gte: body.periodStart, lt: body.periodEnd },
-        },
-        data: { orgPayoutId: created.id },
-      });
-      if (claim.count === 0) {
-        throw Object.assign(
-          new Error("No READY earnings in the requested window"),
-          { httpStatus: 409 },
-        );
-      }
-
-      const readyEarnings = await tx.organizationEarnings.findMany({
-        where: { orgPayoutId: created.id },
-        select: {
-          id: true,
-          grossAmountPaise: true,
-          platformFeePaise: true,
-          orgSharePaise: true,
-          refundedAmountPaise: true,
-          currency: true,
-        },
-      });
-
-      const first = readyEarnings[0];
-      if (!first) {
-        throw Object.assign(
-          new Error("No READY earnings in the requested window"),
-          { httpStatus: 409 },
-        );
-      }
-      const mixedCurrency = readyEarnings.some(
-        (e) => e.currency !== first.currency,
-      );
-      if (mixedCurrency) {
-        throw Object.assign(
-          new Error(
-            "Cannot roll earnings in mixed currencies into a single payout. Split the window.",
-          ),
-          { httpStatus: 409 },
-        );
-      }
-
-      const totals = readyEarnings.reduce(
-        (acc, e) => {
-          acc.gross += e.grossAmountPaise;
-          acc.platformFeePaise += e.platformFeePaise;
-          acc.orgShare += e.orgSharePaise;
-          acc.refunds += e.refundedAmountPaise;
-          return acc;
-        },
-        { gross: 0, platformFeePaise: 0, orgShare: 0, refunds: 0 },
-      );
-      // Net payout to the org = orgShare - refunds. TDS is withheld by
-      // the cron if applicable, so this is the PRE-tax net.
-      const netPayout = totals.orgShare - totals.refunds;
-      if (netPayout <= 0) {
-        throw Object.assign(
-          new Error(
-            `Net payout would be ${netPayout} paise — refunds exceed earnings. Reconcile first.`,
-          ),
-          { httpStatus: 409 },
-        );
-      }
-
-      const updated = await tx.organizationPayout.update({
-        where: { id: created.id },
-        data: {
-          amountPaise: netPayout,
-          currency: first.currency,
-          grossRevenuePaise: totals.gross,
-          platformFeePaise: totals.platformFeePaise,
-          refundsPaise: totals.refunds,
-          netPayoutPaise: netPayout,
-        },
-      });
-
-      // #837 E-03/E-04 — batch creation only STAGES the earnings; cash has not
-      // left. Flip READY → BATCHED, not PAID. markOrgPayoutCompleted performs
-      // the BATCHED → PAID flip when the payout reaches COMPLETED (+ UTR).
-      await tx.organizationEarnings.updateMany({
-        where: { orgPayoutId: created.id, status: "READY" },
-        data: { status: "BATCHED" },
-      });
-
-      await tx.orgAuditLog.create({
-        data: {
-          organizationId: orgId,
-          actorMembershipId: access.member.id,
-          category: "PAYOUT",
-          action: AUDIT_ACTIONS.PAYOUT.PAYOUT_INITIATED,
-          description: `Payout initiated: ${readyEarnings.length} earnings, net ${netPayout} paise ${first.currency}`,
-          details: {
-            payoutId: created.id,
-            earningsCount: readyEarnings.length,
-            netPayoutPaise: netPayout,
-            grossPaise: totals.gross,
-            platformFeePaise: totals.platformFeePaise,
-            refundsPaise: totals.refunds,
-          },
-        },
-      });
-
-      return updated;
+    const payout = await prisma.organizationPayout.findUnique({
+      where: { id: result.payoutId },
     });
 
     return NextResponse.json({ payout }, { status: 201 });
   } catch (err) {
+    // PayoutValidationError carries `httpStatus` (409 for an unverified
+    // payout account, no READY earnings, etc.), so the existing branch
+    // already maps it correctly.
     if (err instanceof Error && "httpStatus" in err) {
       const status =
         typeof err.httpStatus === "number" ? err.httpStatus : 500;

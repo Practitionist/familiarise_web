@@ -66,9 +66,23 @@ export async function GET(
   }
   const pagination = parsePagination(url);
 
+  // `PaymentStatus` has no REFUNDED state (PENDING/SUCCEEDED/FAILED/EXPIRED)
+  // — refunds live in the separate `Refund` model and never touch
+  // `paymentStatus`. Filtering on SUCCEEDED alone therefore kept fully
+  // refunded bookings on the payroll reimbursement report, and the org
+  // reimbursed the member cash they had already been given back.
+  //
+  // Excluded here rather than netted: a partial refund still leaves a real
+  // out-of-pocket amount, but this report drives a payroll transfer of
+  // `Payment.amount`, and paying a partially-refunded row at face value is
+  // the same overpayment in miniature. Netting needs a per-row net column in
+  // the response and the CSV, which is a bigger change than this fix — the
+  // conservative filter is correct today and never over-pays.
   const where = {
     organizationId: orgId,
     paymentStatus: "SUCCEEDED" as const,
+    refunds: { none: { status: "SUCCEEDED" as const, deletedAt: null } },
+    deletedAt: null,
     ...(filters.data.userId && { userId: filters.data.userId }),
     ...(filters.data.from || filters.data.to
       ? {
