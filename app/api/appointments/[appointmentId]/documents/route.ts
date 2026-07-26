@@ -341,6 +341,11 @@ export async function POST(
 
     const file = formData.get("file") as File;
     const description = formData.get("description") as string;
+    // A revision re-upload threads onto the document it replaces, mirroring
+    // the consultant side. Threading rather than mutating keeps the rejected
+    // version and its reviewNotes intact — the reviewer needs to see what
+    // changed, and an audit of "why was this approved" needs the history.
+    const revisionOf = (formData.get("responseToDocumentId") as string) || null;
 
     if (!file || file.size === 0) {
       return NextResponse.json(
@@ -578,6 +583,27 @@ export async function POST(
       );
     }
 
+    // A revision must point at a document on THIS appointment. Without the
+    // check, a caller could thread their upload onto any document id they
+    // guessed and have it render inside someone else's review history.
+    if (revisionOf) {
+      const parent = await prisma.appointmentDocument.findFirst({
+        where: { id: revisionOf, appointmentId },
+        select: { id: true },
+      });
+      if (!parent) {
+        return NextResponse.json(
+          {
+            error: "Invalid revision target",
+            message:
+              "The document this revision replaces was not found on this appointment.",
+            code: "INVALID_REVISION_TARGET",
+          },
+          { status: 400 },
+        );
+      }
+    }
+
     // Save document record to database
     let document;
     try {
@@ -592,6 +618,7 @@ export async function POST(
           storagePath: uploadResult.storagePath!,
           description: description?.trim() || null,
           reviewStatus: "PENDING",
+          responseToDocumentId: revisionOf,
         },
       });
     } catch (dbError) {

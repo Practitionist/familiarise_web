@@ -115,6 +115,10 @@ export function DocumentUpload({
   };
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [description, setDescription] = useState("");
+  // Set when the learner clicks "Upload revision" on a NEEDS_REVISION doc, so
+  // the new file threads onto the one it replaces instead of arriving as an
+  // unrelated upload the reviewer has to match up by hand.
+  const [revisionOf, setRevisionOf] = useState<UploadedDocument | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [documents, setDocuments] = useState<UploadedDocument[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -262,6 +266,9 @@ export function DocumentUpload({
       if (description.trim()) {
         formData.append("description", description.trim());
       }
+      if (revisionOf) {
+        formData.append("responseToDocumentId", revisionOf.id);
+      }
 
       const response = await fetch(
         `/api/appointments/${appointmentId}/documents`,
@@ -327,6 +334,7 @@ export function DocumentUpload({
       // Reset form
       setSelectedFile(null);
       setDescription("");
+      setRevisionOf(null);
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
@@ -488,6 +496,33 @@ export function DocumentUpload({
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
+                {/* Replacing a specific file is a different act from adding a
+                    new one, and the form looks identical either way — say
+                    which, and give a way out. */}
+                {revisionOf && (
+                  <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm dark:border-amber-900/50 dark:bg-amber-950/30">
+                    <Reply className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+                    <div className="min-w-0 flex-1">
+                      <p className="font-medium text-foreground">
+                        Uploading a revision
+                      </p>
+                      <p className="text-muted-foreground truncate">
+                        Replaces &ldquo;{revisionOf.originalName}&rdquo;. The
+                        original stays on file with its review notes.
+                      </p>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 shrink-0"
+                      onClick={() => setRevisionOf(null)}
+                      disabled={isUploading}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                )}
+
                 <div>
                   <Input
                     ref={fileInputRef}
@@ -518,6 +553,7 @@ export function DocumentUpload({
                         size="sm"
                         onClick={() => {
                           setSelectedFile(null);
+                          setRevisionOf(null);
                           if (fileInputRef.current)
                             fileInputRef.current.value = "";
                         }}
@@ -666,6 +702,25 @@ export function DocumentUpload({
                                     {doc.reviewNotes}
                                   </p>
                                 </div>
+                              )}
+                              {/* The loop used to end here: the learner could
+                                  read WHAT to fix but had no way to act on it,
+                                  because the only action was delete-while-
+                                  PENDING. This is the way back in. */}
+                              {doc.reviewStatus === "NEEDS_REVISION" && (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="mt-2"
+                                  onClick={() => {
+                                    setRevisionOf(doc);
+                                    setIsOpen(true);
+                                    fileInputRef.current?.click();
+                                  }}
+                                >
+                                  <Upload className="h-3 w-3 mr-1.5" />
+                                  Upload revision
+                                </Button>
                               )}
                             </div>
                           </div>

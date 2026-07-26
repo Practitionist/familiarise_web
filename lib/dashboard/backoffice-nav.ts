@@ -6,6 +6,7 @@ import {
   Building2,
   CalendarCheck,
   CreditCard,
+  FileText,
   Home,
   Landmark,
   ListChecks,
@@ -96,6 +97,8 @@ function groupSpecs({ showTds = false }: BackofficeNavOptions): NavGroupSpec[] {
         { name: "Appointments", icon: CalendarCheck, path: "appointments", surface: "appointments.manage" },
         { name: "Waitlists", icon: ListChecks, path: "waitlists", surface: "waitlists.manage" },
         { name: "Users", icon: Users, path: "users", surface: "users.read" },
+        // Support context for "why was my document rejected?" — read-only.
+        { name: "Documents", icon: FileText, path: "documents", surface: "appointments.manage" },
       ],
     },
     {
