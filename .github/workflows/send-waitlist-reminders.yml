@@ -75,7 +75,7 @@ jobs:
       # pager message would drop.
       - name: Notify on failure
         if: steps.run_script.outcome == 'failure'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const title = 'Waitlist Reminder Job Failed';
