@@ -47,7 +47,7 @@ export async function GET(req: NextRequest) {
   // Resolve scope against the caller's active memberships.
   const memberships = await prisma.membership.findMany({
     where: { userId: session.user.id, status: "ACTIVE" },
-    select: { organizationId: true, status: true },
+    select: { organizationId: true, status: true, role: true },
   });
 
   const url = new URL(req.url);
@@ -55,6 +55,7 @@ export async function GET(req: NextRequest) {
     raw: url.searchParams.get("orgScope"),
     memberships,
     userRole: (session.user as { role?: string }).role,
+    userId: session.user.id,
   });
   if (!scopeResolution.ok) {
     return NextResponse.json(

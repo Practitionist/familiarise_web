@@ -51,6 +51,61 @@ function buildWhere(
   if (params.scope.kind === "org") {
     return { ...base, organizationId: params.scope.orgId };
   }
+  // `orgMember` = ONE member's own rows within an org. It must never fall
+  // through to the unfiltered `base` below: that arm is the `all` scope
+  // (admin/staff), and reaching it with an orgMember scope would return the
+  // whole platform. `resolveOrgScope` now downgrades a non-operator's
+  // ?orgScope=<orgId> to this kind, so the fall-through is live, not latent.
+  if (params.scope.kind === "orgMember") {
+    return {
+      ...base,
+      organizationId: params.scope.orgId,
+      meetingSession: {
+        slotOfAppointment: {
+          appointment: {
+            OR: [
+              { consultation: { requestedBy: { userId: params.scope.userId } } },
+              { subscription: { requestedBy: { userId: params.scope.userId } } },
+              {
+                trialSession: {
+                  consulteeProfile: { userId: params.scope.userId },
+                },
+              },
+              {
+                consultation: {
+                  consultationPlan: {
+                    consultantProfile: { userId: params.scope.userId },
+                  },
+                },
+              },
+              {
+                subscription: {
+                  subscriptionPlan: {
+                    consultantProfile: { userId: params.scope.userId },
+                  },
+                },
+              },
+              {
+                webinar: {
+                  webinarPlan: {
+                    consultantProfile: { userId: params.scope.userId },
+                  },
+                },
+              },
+              {
+                class: {
+                  classPlan: {
+                    consultantProfile: { userId: params.scope.userId },
+                  },
+                },
+              },
+            ],
+          },
+        },
+      },
+    };
+  }
+
   return base;
 }
 

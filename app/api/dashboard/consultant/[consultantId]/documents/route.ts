@@ -147,12 +147,13 @@ export async function GET(
     // to the parent Appointment.organizationId.
     const callerMembershipsForScope = await prisma.membership.findMany({
       where: { userId: session.user.id, status: "ACTIVE" },
-      select: { organizationId: true, status: true },
+      select: { organizationId: true, status: true, role: true },
     });
     const docScopeResolution = resolveOrgScope({
       raw: searchParams.get("orgScope"),
       memberships: callerMembershipsForScope,
       userRole: session.user.role,
+      userId: session.user.id,
       // Self-scoped consultant endpoint.
       allowAllForOwner: true,
     });

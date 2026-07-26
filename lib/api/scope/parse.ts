@@ -17,7 +17,9 @@
  * removed the last org-context switcher from the personal dashboards.
  */
 
-import type { Membership, MemberStatus } from "@prisma/client";
+import type { Membership } from "@prisma/client";
+
+import { hasOrgPermission } from "@/lib/auth/org-permissions";
 
 export type Scope =
   | { kind: "personal" }
@@ -43,10 +45,16 @@ export type ScopeResolution =
 export interface ResolveScopeContext {
   /** The raw `?orgScope=` value from the URL (or `undefined`). */
   raw: string | null | undefined;
-  /** Active org memberships for the calling user. */
-  memberships: Pick<Membership, "organizationId" | "status">[];
+  /**
+   * Active org memberships for the calling user. `role` is required: the
+   * `org` scope carries NO user filter, so granting it is equivalent to
+   * granting `operations.read` and must be gated on the member's role.
+   */
+  memberships: Pick<Membership, "organizationId" | "status" | "role">[];
   /** Top-level UserRole — used to gate `?orgScope=all`. */
   userRole: string | null | undefined;
+  /** Caller's user id — needed to build the `orgMember` downgrade below. */
+  userId: string;
   /**
    * Opt-in for endpoints that are already self-scoped to the caller's
    * own data (e.g. `/api/dashboard/consultee/<myId>/events` — the route
@@ -61,16 +69,6 @@ export interface ResolveScopeContext {
 }
 
 const PRIVILEGED_USER_ROLES = new Set(["ADMIN", "STAFF"]);
-
-function isActiveAtOrg(
-  memberships: ResolveScopeContext["memberships"],
-  orgId: string,
-  activeStatuses: MemberStatus[] = ["ACTIVE"],
-): boolean {
-  return memberships.some(
-    (m) => m.organizationId === orgId && activeStatuses.includes(m.status),
-  );
-}
 
 /**
  * Parse + authorize a `?orgScope=` value. Returns either the resolved
@@ -104,7 +102,10 @@ export function resolveOrgScope(ctx: ResolveScopeContext): ScopeResolution {
   // Treat anything else as an orgId. Reject if the caller has no active
   // membership at that org (cross-tenant IDOR guard).
   const orgId = raw;
-  if (!isActiveAtOrg(ctx.memberships, orgId)) {
+  const membership = ctx.memberships.find(
+    (m) => m.organizationId === orgId && m.status === "ACTIVE",
+  );
+  if (!membership) {
     return {
       ok: false,
       status: 403,
@@ -112,6 +113,24 @@ export function resolveOrgScope(ctx: ResolveScopeContext): ScopeResolution {
       message: `You are not an active member of org ${orgId}.`,
     };
   }
+
+  // Membership alone is NOT enough. The `org` scope applies no user filter —
+  // `buildWhere` returns rows for the whole org — so handing it to any active
+  // member let a plain LEARNER read the org's entire appointment, document and
+  // recording feed via `?orgScope=<orgId>`. The org-scoped sibling routes
+  // (/api/organizations/[orgId]/...) all require `operations.read` for the
+  // same rows; this is the same gate on the other door.
+  //
+  // Below that bar the request still has an honest answer — "my own rows in
+  // this org" — so it downgrades to `orgMember` rather than 403ing. That is
+  // what a learner passing their own org id actually means.
+  if (!hasOrgPermission(membership.role, "operations.read")) {
+    return {
+      ok: true,
+      scope: { kind: "orgMember", orgId, userId: ctx.userId },
+    };
+  }
+
   return { ok: true, scope: { kind: "org", orgId } };
 }
 

@@ -111,12 +111,13 @@ export async function GET(request: NextRequest) {
   // Appointment.organizationId column populated by the #674 backfill.
   const callerMembershipsForScope = await prisma.membership.findMany({
     where: { userId: session.user.id, status: "ACTIVE" },
-    select: { organizationId: true, status: true },
+    select: { organizationId: true, status: true, role: true },
   });
   const scopeResolution = resolveOrgScope({
     raw: searchParams.get("orgScope"),
     memberships: callerMembershipsForScope,
     userRole: session.user.role,
+    userId: session.user.id,
     // Self-scoped: non-admin callers are already locked to their own
     // profileId via `hasOwnFilter` above, so `?orgScope=all` here just
     // means "all of MY data" — safe for any role.

@@ -117,12 +117,13 @@ export async function GET(request: NextRequest) {
       // Explicit org / all (privileged + absent falls through → no filter).
       const memberships = await prisma.membership.findMany({
         where: { userId: session.user.id, status: "ACTIVE" },
-        select: { organizationId: true, status: true },
+        select: { organizationId: true, status: true, role: true },
       });
       const scopeResolution = resolveOrgScope({
         raw: rawOrgScope,
         memberships,
         userRole: session.user.role,
+        userId: session.user.id,
         // Self-scoped: the ownership filter above already locks non-admin
         // callers to their own rows, so "all" just means "all of MY data".
         allowAllForOwner: true,

@@ -61,12 +61,13 @@ export async function GET(request: NextRequest) {
     // filter via the `classPlan.organizationId` relation.
     const callerMemberships = await prisma.membership.findMany({
       where: { userId: session.user.id, status: "ACTIVE" },
-      select: { organizationId: true, status: true },
+      select: { organizationId: true, status: true, role: true },
     });
     const scopeResolution = resolveOrgScope({
       raw: searchParams.get("orgScope"),
       memberships: callerMemberships,
       userRole: session.user.role,
+      userId: session.user.id,
       // Self-scoped: non-admin callers are already locked to their own
       // consultant/consulteeProfileId above, so `?orgScope=all` means
       // "all of MY classes" — safe for any role.
