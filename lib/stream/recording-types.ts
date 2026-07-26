@@ -49,21 +49,6 @@ export const consultantRecordingInclude =
                     },
                   },
                 },
-                // The 1:1 kinds. Their absence here was why a consultant
-                // could not see the recording of a consultation or
-                // subscription session they had delivered, while the
-                // sponsoring organization could — backwards under ADR 20,
-                // which puts session content with the participants.
-                consultation: {
-                  include: {
-                    consultationPlan: { select: { id: true, title: true } },
-                  },
-                },
-                subscription: {
-                  include: {
-                    subscriptionPlan: { select: { id: true, title: true } },
-                  },
-                },
               },
             },
           },

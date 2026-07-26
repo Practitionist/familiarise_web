@@ -254,7 +254,7 @@ export class RecordingService {
   static async getConsultantRecordings(
     consultantProfileId: string,
     filters?: {
-      type?: "webinar" | "class" | "consultation" | "subscription";
+      type?: "webinar" | "class";
       status?: RecordingStatus;
       search?: string;
       page?: number;
@@ -324,38 +324,6 @@ export class RecordingService {
                     },
                   },
                 },
-              },
-            },
-          },
-        });
-      }
-
-      // The 1:1 kinds. A consultant who delivered a consultation or a
-      // subscription session could not see its recording — the query stopped
-      // at the two group kinds — while an operator at the sponsoring org
-      // could, through the org recordings page. ADR 20 puts session content
-      // with the participants, and the delivering consultant is one of them.
-      //
-      // No collaborator arm: `Collaborator` attaches to webinar and class
-      // plans only, because a 1:1 has exactly two people in it.
-      if (!filters?.type || filters.type === "consultation") {
-        typeConditions.push({
-          meetingSession: {
-            slotOfAppointment: {
-              appointment: {
-                consultation: { consultationPlan: { consultantProfileId } },
-              },
-            },
-          },
-        });
-      }
-
-      if (!filters?.type || filters.type === "subscription") {
-        typeConditions.push({
-          meetingSession: {
-            slotOfAppointment: {
-              appointment: {
-                subscription: { subscriptionPlan: { consultantProfileId } },
               },
             },
           },

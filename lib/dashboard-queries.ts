@@ -10,7 +10,6 @@
  * 5. Prefetch strategies for predictive loading
  */
 
-import type { PlanType } from "@/lib/supabase";
 import type { TConsultantDashboardResponse } from "@/types/consultant-events";
 import type { TAppointment } from "@/types/appointment";
 import type { TConsultantProfile } from "@/types/consultant";
@@ -36,13 +35,7 @@ interface PlannerData {
 }
 
 export interface ConsultantRecordingsParams {
-  /**
-   * All four plan kinds, not just the two group ones. Consultations and
-   * subscriptions were absent from the query behind this, so a consultant
-   * could not watch back a 1:1 they had delivered while the sponsoring org
-   * could — see ADR 20. `PlanType` is the union that already existed for this.
-   */
-  type?: PlanType | null;
+  type?: "webinar" | "class" | null;
   page?: number;
   limit?: number;
   search?: string;

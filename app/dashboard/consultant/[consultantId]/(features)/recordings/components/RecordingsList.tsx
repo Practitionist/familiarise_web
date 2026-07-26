@@ -22,17 +22,8 @@ import { createConsultantQueries } from "@/lib/dashboard-queries";
 
 interface RecordingsListProps {
   consultantId: string;
-  type?: "webinar" | "class" | "consultation" | "subscription" | null;
+  type?: "webinar" | "class" | null;
 }
-
-/** Empty-state noun per tab. The copy used to name only webinars and classes,
- * which stopped being the whole story once 1:1 recordings reached this page. */
-const EMPTY_LABEL = {
-  webinar: "Webinar",
-  class: "Class",
-  consultation: "Consultation",
-  subscription: "Subscription",
-} as const;
 
 export function RecordingsList({ consultantId, type }: RecordingsListProps) {
   const { toast } = useToast();
@@ -176,13 +167,16 @@ export function RecordingsList({ consultantId, type }: RecordingsListProps) {
         <Video className="w-12 h-12 text-muted-foreground mb-4" />
         <p className="text-lg font-medium">No recordings yet</p>
         <p className="text-sm text-muted-foreground mt-1">
-          {type
-            ? `${EMPTY_LABEL[type]} recordings will appear here after you record a session.`
-            : "Your recorded sessions will appear here."}
+          {type === "webinar"
+            ? "Webinar recordings will appear here after you record a session."
+            : type === "class"
+              ? "Class recordings will appear here after you record a session."
+              : "Your recorded sessions will appear here."}
         </p>
         <p className="text-sm text-muted-foreground mt-2 max-w-md">
           Recordings are created automatically when you enable recording during
-          a session. Use the button below to check for new recordings.
+          a webinar or class session. Use the button below to check for new
+          recordings.
         </p>
         <Button
           onClick={handleSync}

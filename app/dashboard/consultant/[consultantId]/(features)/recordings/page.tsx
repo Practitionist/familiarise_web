@@ -2,24 +2,12 @@
 
 import { use, useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Video, Play, GraduationCap, User, Repeat } from "lucide-react";
+import { Video, Play, GraduationCap } from "lucide-react";
 import {
   DashboardHeader,
   DashboardContent,
 } from "@/components/dashboard/PageScaffold";
 import { RecordingsList } from "./components/RecordingsList";
-
-/**
- * Consultations and subscriptions used to be missing here, and from the query
- * behind it — a consultant could not watch back a 1:1 they had delivered,
- * while an operator at the sponsoring org could. See ADR 20.
- */
-type RecordingTab =
-  | "all"
-  | "webinar"
-  | "class"
-  | "consultation"
-  | "subscription";
 
 interface RecordingsPageProps {
   params: Promise<{
@@ -29,22 +17,24 @@ interface RecordingsPageProps {
 
 export default function RecordingsPage({ params }: RecordingsPageProps) {
   const { consultantId } = use(params);
-  const [activeTab, setActiveTab] = useState<RecordingTab>("all");
+  const [activeTab, setActiveTab] = useState<"all" | "webinar" | "class">(
+    "all",
+  );
 
   return (
     <>
       <DashboardHeader
         title="Recordings"
-        subtitle="Recordings of every session you delivered"
+        subtitle="Manage your webinar and class recordings"
       />
       <DashboardContent>
 
       <Tabs
         value={activeTab}
-        onValueChange={(v) => setActiveTab(v as RecordingTab)}
+        onValueChange={(v) => setActiveTab(v as "all" | "webinar" | "class")}
         className="space-y-6"
       >
-        <TabsList className="grid w-full max-w-full grid-cols-3 sm:grid-cols-5 sm:max-w-[640px]">
+        <TabsList className="grid w-full max-w-full grid-cols-3 sm:max-w-[400px]">
           <TabsTrigger value="all" className="flex items-center gap-2">
             <Video className="w-4 h-4" />
             <span>All</span>
@@ -56,14 +46,6 @@ export default function RecordingsPage({ params }: RecordingsPageProps) {
           <TabsTrigger value="class" className="flex items-center gap-2">
             <GraduationCap className="w-4 h-4" />
             <span>Classes</span>
-          </TabsTrigger>
-          <TabsTrigger value="consultation" className="flex items-center gap-2">
-            <User className="w-4 h-4" />
-            <span>Consultations</span>
-          </TabsTrigger>
-          <TabsTrigger value="subscription" className="flex items-center gap-2">
-            <Repeat className="w-4 h-4" />
-            <span>Subscriptions</span>
           </TabsTrigger>
         </TabsList>
 
@@ -77,14 +59,6 @@ export default function RecordingsPage({ params }: RecordingsPageProps) {
 
         <TabsContent value="class" className="mt-6">
           <RecordingsList consultantId={consultantId} type="class" />
-        </TabsContent>
-
-        <TabsContent value="consultation" className="mt-6">
-          <RecordingsList consultantId={consultantId} type="consultation" />
-        </TabsContent>
-
-        <TabsContent value="subscription" className="mt-6">
-          <RecordingsList consultantId={consultantId} type="subscription" />
         </TabsContent>
         </Tabs>
       </DashboardContent>
