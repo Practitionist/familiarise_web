@@ -2,6 +2,7 @@ import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
+import { consultantPublicScalars } from "@/lib/data/consultant-public";
 import {
   requireApiAuth,
   isPrivileged,
@@ -23,8 +24,11 @@ export async function GET(
     const review = await prisma.consultantReview.findUnique({
       where: { id: id },
       include: {
-        consultantProfile: true,
-        consulteeProfile: true,
+        // #946 allowlist. `consultantProfile: true` returns every scalar,
+        // including panNumber / ibanOrAccount / swiftBic / udyamNumber — and
+        // this route is public.
+        consultantProfile: { select: consultantPublicScalars },
+        consulteeProfile: { select: { id: true, userId: true } },
       },
     });
 
@@ -105,8 +109,8 @@ export async function PUT(
               reviewDescription: body.reviewDescription,
             },
             include: {
-              consultantProfile: true,
-              consulteeProfile: true,
+              consultantProfile: { select: consultantPublicScalars },
+              consulteeProfile: { select: { id: true, userId: true } },
             },
           });
 
