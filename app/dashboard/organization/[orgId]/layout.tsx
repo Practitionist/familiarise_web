@@ -21,7 +21,7 @@ import {
   Clock,
   FileText,
   CalendarCheck,
-  ListOrdered,
+  FolderOpen,
   Receipt,
   ShieldCheck,
   ShieldAlert,
@@ -182,7 +182,7 @@ export default function OrgLayout({
   // API routes check, so a tab can't drift into "shown but rejected".
   // Capability gates (canSponsor/canHost/requiresPO/fundingSource) remain
   // separate structural conditions combined per item. Five clusters
-  // (People / Commerce / Operations / Insights / Configuration) plus an
+  // (People / Commerce / Resources / Insights / Configuration) plus an
   // ungrouped Overview block; groups with zero remaining items drop out.
   const sidebarGroups: CollapsibleSidebarGroup[] = useMemo(() => {
     if (!org) return [];
@@ -190,10 +190,10 @@ export default function OrgLayout({
     const role = org.membership.role;
     const can = (surface: OrgSurface) => hasOrgPermission(role, surface);
 
-    // Operations group defaults collapsed for OWNER + MAINTAINER —
-    // their primary job isn't appointment-level data triage. Open by
-    // default for MANAGER + SUPPORT who live in those tabs.
-    const operationsCollapsedDefault =
+    // Resources group defaults collapsed for OWNER + MAINTAINER — their
+    // primary job isn't document triage. Open by default for MANAGER +
+    // SUPPORT who live in those tabs.
+    const resourcesCollapsedDefault =
       role === "OWNER" || role === "MAINTAINER";
 
     type ItemSpec = {
@@ -337,20 +337,22 @@ export default function OrgLayout({
       },
     ];
 
-    // Operations — booking-side data feeds. MANAGER + SUPPORT live
-    // here. OWNER + MAINTAINER have access but the group is
-    // collapsed by default (see operationsCollapsedDefault).
-    // BILLING_ADMIN is excluded — no booking-side remit.
-    // Waitlist, Trials, Documents and Recordings are tabs on one Operations
-    // page. All four were read-only ScopedListTable views with no actions —
-    // four nav slots for four tables was more navigation than content.
-    // Appointments moved up to the top block, where it carries its own
-    // Mine/Everyone scope toggle.
-    const operationsItems: ItemSpec[] = [
+    // Resources — the artefacts a session leaves behind. MANAGER + SUPPORT
+    // live here. OWNER + MAINTAINER have access but the group is collapsed
+    // by default (see resourcesCollapsedDefault). BILLING_ADMIN is excluded
+    // — no booking-side remit.
+    //
+    // Documents and Recordings are tabs on one page; each was a read-only
+    // ScopedListTable with no actions, so two nav slots for two tables was
+    // more navigation than content. Waitlist and Trials are deliberately
+    // NOT here: the waitlist feature is being retired, and a trial IS an
+    // appointment, so it belongs on Appointments rather than in a list of
+    // its own.
+    const resourcesItems: ItemSpec[] = [
       {
-        name: "Operations",
-        icon: ListOrdered,
-        path: "operations",
+        name: "Resources",
+        icon: FolderOpen,
+        path: "resources",
         show: can("operations.read"),
       },
     ];
@@ -407,9 +409,9 @@ export default function OrgLayout({
       { label: "People", items: filterItems(peopleItems) },
       { label: "Commerce", items: filterItems(commerceItems) },
       {
-        label: "Operations",
-        items: filterItems(operationsItems),
-        defaultCollapsed: operationsCollapsedDefault,
+        label: "Resources",
+        items: filterItems(resourcesItems),
+        defaultCollapsed: resourcesCollapsedDefault,
       },
       { label: "Insights", items: filterItems(insightsItems) },
       { label: "Configuration", items: filterItems(configurationItems) },
@@ -538,7 +540,7 @@ export default function OrgLayout({
     programs:     "Programs",
     contracts:    "Contracts",
     "purchase-orders": "Purchase Orders",
-    operations:   "Operations",
+    resources:    "Resources",
     billing:      "Billing",
     payouts:      "Payouts",
     reimbursements: "Reimbursements",
