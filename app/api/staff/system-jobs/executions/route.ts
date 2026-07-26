@@ -7,7 +7,7 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { SystemJobStatus, Prisma } from "@prisma/client";
 
-import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import * as Sentry from "@sentry/nextjs";
 /**
  * GET /api/staff/system-jobs/executions
@@ -15,7 +15,7 @@ import * as Sentry from "@sentry/nextjs";
  */
 export async function GET(req: NextRequest) {
   try {
-    const auth = await requirePrivilegedAuth();
+    const auth = await requireBackofficeSurface("systemJobs.manage");
     if (auth.error) return auth.error;
 
     const { searchParams } = new URL(req.url);

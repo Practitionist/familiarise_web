@@ -6,7 +6,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { getEarningsStats } from "@/lib/payments/payouts/earnings-service";
-import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
 
 /**
  * GET /api/admin/earnings/stats
@@ -14,7 +14,7 @@ import { requirePrivilegedAuth } from "@/lib/auth-helpers";
  */
 export async function GET(_req: NextRequest) {
   try {
-    const auth = await requirePrivilegedAuth();
+    const auth = await requireBackofficeSurface("payouts.read");
     if (auth.error) return auth.error;
 
     const stats = await getEarningsStats();

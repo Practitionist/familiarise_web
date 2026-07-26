@@ -8,6 +8,8 @@ import prisma from "@/lib/prisma";
 import { ModerationActionType } from "@prisma/client";
 
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { hasBackofficePermission } from "@/lib/auth/backoffice-permissions";
+import type { UserRole } from "@prisma/client";
 import {
   applyTransactionalEffects,
   applyBestEffortEffects,
@@ -166,6 +168,32 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     const { reportId } = await params;
     const body = await req.json();
     const { actionType, notes, suspensionDays } = body;
+
+    // Moderation is staff's remit (`moderation.manage`), but banning and
+    // suspending an account is not: BACKOFFICE_PERMISSIONS reserves
+    // `users.moderate` for ADMIN because those are irreversible and
+    // account-destroying, and staff are employees with turnover. The gate is
+    // per-ACTION rather than per-route so staff keep the rest of the queue —
+    // warnings, content removal, un-verifying a profile.
+    const ACCOUNT_DESTRUCTIVE: ModerationActionType[] = [
+      "USER_BANNED",
+      "USER_SUSPENDED",
+    ];
+    if (
+      ACCOUNT_DESTRUCTIVE.includes(actionType) &&
+      !hasBackofficePermission(
+        session.user.role as UserRole,
+        "users.moderate",
+      )
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Forbidden — banning or suspending an account requires an admin",
+        },
+        { status: 403 },
+      );
+    }
 
     const validationError = validateActionRequest(actionType, suspensionDays);
     if (validationError) return validationError;

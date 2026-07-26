@@ -15,7 +15,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
 
 const TREND_DAYS = 7;
 
@@ -36,7 +36,7 @@ function dayLabel(d: Date): string {
 
 export async function GET() {
   try {
-    const auth = await requirePrivilegedAuth();
+    const auth = await requireBackofficeSurface("payouts.read");
     if (auth.error) return auth.error;
 
     const now = new Date();

@@ -9,7 +9,7 @@ import prisma from "@/lib/prisma";
 import { z } from "zod";
 import {
   requireAdminAuth,
-  requirePrivilegedAuth,
+  requireBackofficeSurface,
 } from "@/lib/auth-helpers";
 import {
   getPayoutById,
@@ -32,7 +32,7 @@ const actionSchema = z.object({
  */
 export async function GET(req: NextRequest, { params }: RouteParams) {
   try {
-    const auth = await requirePrivilegedAuth();
+    const auth = await requireBackofficeSurface("payouts.read");
     if (auth.error) return auth.error;
 
     const { id } = await params;

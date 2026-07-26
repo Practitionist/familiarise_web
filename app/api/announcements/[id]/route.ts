@@ -2,6 +2,8 @@ import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { revalidateTag } from "next/cache";
 import prisma from "@/lib/prisma";
+import { hasBackofficePermission } from "@/lib/auth/backoffice-permissions";
+import type { UserRole } from "@prisma/client";
 
 import { getSession } from "@/lib/auth-server";
 import { ANNOUNCEMENTS_TAG } from "@/lib/cache-tags";
@@ -24,7 +26,13 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
       );
     }
 
-    if (!["STAFF", "ADMIN"].includes(session.user.role)) {
+    // Announcements fan out to every user (`notifyGeneralAnnouncement`), so
+    // BACKOFFICE_PERMISSIONS makes them ADMIN-only. The nav already hid the
+    // surface from staff; the route accepted the call regardless.
+    if (!hasBackofficePermission(
+      session.user.role as UserRole,
+      "announcements.manage",
+    )) {
       return NextResponse.json(
         { success: false, error: "Forbidden" },
         { status: 403 },
@@ -117,7 +125,13 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       );
     }
 
-    if (!["STAFF", "ADMIN"].includes(session.user.role)) {
+    // Announcements fan out to every user (`notifyGeneralAnnouncement`), so
+    // BACKOFFICE_PERMISSIONS makes them ADMIN-only. The nav already hid the
+    // surface from staff; the route accepted the call regardless.
+    if (!hasBackofficePermission(
+      session.user.role as UserRole,
+      "announcements.manage",
+    )) {
       return NextResponse.json(
         { success: false, error: "Forbidden" },
         { status: 403 },
