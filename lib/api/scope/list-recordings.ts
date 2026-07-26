@@ -18,8 +18,81 @@ export interface ListRecordingsParams {
   perPage?: number;
 }
 
+/**
+ * #946 select-allowlist, applied to the scope split.
+ *
+ * The `org` arm below carries NO participant filter — it returns every
+ * recording made under the organization, for every member. So what it selects
+ * is what an operator can read about a session they were not in. `include`
+ * shipped the whole row, which meant `recordingUrl` (plus the Supabase mirror,
+ * the thumbnail, the preview clip and the Stream ids that resolve to the same
+ * media) reached anyone holding `operations.read` — OWNER, MAINTAINER, MANAGER
+ * and SUPPORT. The org table renders none of it; the JSON carried it anyway.
+ *
+ * ADR 20 draws the line: the organization may see THAT a session happened, not
+ * what happened in it. These two objects are that line in code — the metadata
+ * select is the org's view, and only the two people on the appointment get the
+ * media itself.
+ */
+const recordingMetadataSelect = {
+  id: true,
+  title: true,
+  status: true,
+  durationInMinutes: true,
+  recordedAt: true,
+  createdAt: true,
+  organizationId: true,
+  meetingSession: {
+    select: {
+      id: true,
+      slotOfAppointment: {
+        select: {
+          appointment: {
+            select: { id: true, appointmentType: true, organizationId: true },
+          },
+        },
+      },
+    },
+  },
+  organization: { select: { id: true, name: true, slug: true } },
+} satisfies Prisma.RecordingSelect;
+
+/** Participant arms only. Everything here reaches, or resolves to, the media. */
+const recordingParticipantSelect = {
+  ...recordingMetadataSelect,
+  recordingUrl: true,
+  supabaseUrl: true,
+  supabasePath: true,
+  thumbnailUrl: true,
+  previewClipUrl: true,
+  previewClipDuration: true,
+  streamRecordingId: true,
+  streamCallId: true,
+  streamUrlExpiresAt: true,
+  storageType: true,
+  fileSize: true,
+  codec: true,
+  resolution: true,
+  transferredAt: true,
+} satisfies Prisma.RecordingSelect;
+
+type RecordingMetadata = Prisma.RecordingGetPayload<{
+  select: typeof recordingMetadataSelect;
+}>;
+type RecordingWithMedia = Prisma.RecordingGetPayload<{
+  select: typeof recordingParticipantSelect;
+}>;
+
+/**
+ * Media fields are optional on purpose: a caller that wants `recordingUrl` has
+ * to handle its absence, which is how the type system carries the scope rule
+ * to consumers instead of leaving it to whoever reads this file next.
+ */
+export type ScopedRecording = RecordingMetadata &
+  Partial<Omit<RecordingWithMedia, keyof RecordingMetadata>>;
+
 export interface ListRecordingsResult {
-  items: Awaited<ReturnType<typeof prisma.recording.findMany>>;
+  items: ScopedRecording[];
   total: number;
   page: number;
   perPage: number;
@@ -116,29 +189,20 @@ export async function listRecordingsScoped(
   const perPage = Math.min(100, Math.max(1, params.perPage ?? 20));
   const where = buildWhere(params);
 
+  // `personal` and `orgMember` are the arms whose `where` pins the caller as a
+  // participant on the appointment. Only those get the media. `org` sees the
+  // whole organization's recordings and `all` is the admin/staff union — both
+  // are reading other people's sessions, so both stop at metadata.
+  const isParticipantScope =
+    params.scope.kind === "personal" || params.scope.kind === "orgMember";
+
   const [total, items] = await prisma.$transaction([
     prisma.recording.count({ where }),
     prisma.recording.findMany({
       where,
-      include: {
-        meetingSession: {
-          select: {
-            id: true,
-            slotOfAppointment: {
-              select: {
-                appointment: {
-                  select: {
-                    id: true,
-                    appointmentType: true,
-                    organizationId: true,
-                  },
-                },
-              },
-            },
-          },
-        },
-        organization: { select: { id: true, name: true, slug: true } },
-      },
+      select: isParticipantScope
+        ? recordingParticipantSelect
+        : recordingMetadataSelect,
       orderBy: { recordedAt: "desc" },
       take: perPage,
       skip: (page - 1) * perPage,
