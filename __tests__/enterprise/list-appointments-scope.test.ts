@@ -41,13 +41,29 @@ describe("buildWhere — personal scope (#org-appts)", () => {
     expect(hasConsulteeUser).toBe(true);
   });
 
-  it("org scope filters by orgId with no user OR", () => {
+  it("org scope covers events the org HOSTS or FUNDED, and never filters by user", () => {
     const w = buildWhere({
       scope: { kind: "org", orgId: "org1" },
       userId: "u1",
     }) as Record<string, unknown>;
-    expect(w.organizationId).toBe("org1");
-    expect(w.OR).toBeUndefined();
+
+    // Two columns, two questions. A group event shares ONE Appointment across
+    // every registrant and checkout tags it with the HOST's org, so filtering
+    // on `organizationId` alone hid every webinar a sponsor had paid into.
+    // Per-registrant funding lives on Payment.organizationId.
+    const or = w.OR as Record<string, unknown>[];
+    expect(or).toHaveLength(2);
+    expect(or).toContainEqual({ organizationId: "org1" });
+    expect(or).toContainEqual({
+      payment: { some: { organizationId: "org1" } },
+    });
+
+    // The property the previous version of this test was really protecting:
+    // the org arm carries NO user filter, which is why it requires
+    // `operations.read` and why a non-operator is downgraded to `orgMember`.
+    // Widening to hosted-or-funded must not have smuggled one in.
+    expect(JSON.stringify(w)).not.toContain('"u1"');
+    expect(JSON.stringify(w)).not.toContain("userId");
   });
 
   it("orgMember scope pins organizationId AND filters to the user's participation (#org-appts)", () => {
