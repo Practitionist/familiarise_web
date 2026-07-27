@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { getClassPlanDetail } from "@/lib/data/plan-details";
 import { ClassDetails } from "./components/ClassDetails";
-import { generateProgramImageUrl } from "@/app/explore/programs/utils";
+import { generateProgramImageUrl } from "@/lib/explore/programs";
 
 // Stream behind the static layout's instant skeleton; don't prerender at build (#932).
 export const dynamic = "force-dynamic";

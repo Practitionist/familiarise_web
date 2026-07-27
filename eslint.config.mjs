@@ -132,4 +132,44 @@ export default [
       "no-control-regex": "off",
     },
   },
+
+  // Layering: `app/` is the routing layer. It may depend on lib, components,
+  // hooks, types and schemas — never the reverse.
+  //
+  // This regressed silently more than once before it was enforced. A shared
+  // component ended up importing a calendar and a slot-allocation hook from
+  // `app/dashboard/consultant/[consultantId]/(features)/shared/`, through a
+  // dynamic route segment; `lib/dashboard-queries.ts` pulled types out of two
+  // route folders; and `lib/data/explore-programs.ts` imported live functions
+  // from `app/explore`. Each was reasonable in isolation and each made the
+  // importing layer impossible to reuse or extract without dragging routing
+  // along with it.
+  //
+  // If a route folder holds something genuinely shared, the answer is to move
+  // it out — that is where `components/scheduling`, `hooks/scheduling`,
+  // `lib/scheduling` and `lib/explore` came from. For an API response shape,
+  // put it in `schemas/` and let both sides derive from one Zod definition.
+  {
+    files: [
+      "lib/**/*.{ts,tsx}",
+      "components/**/*.{ts,tsx}",
+      "hooks/**/*.{ts,tsx}",
+      "types/**/*.{ts,tsx}",
+      "schemas/**/*.{ts,tsx}",
+    ],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["@/app/*", "@/app/**"],
+              message:
+                "Do not import from app/ here — app/ is the routing layer and must depend on these layers, not the reverse. Move the shared code into lib/, components/, hooks/ or types/, or put the response shape in schemas/ and derive both sides from it.",
+            },
+          ],
+        },
+      ],
+    },
+  },
 ];
