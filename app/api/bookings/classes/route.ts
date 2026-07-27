@@ -8,7 +8,7 @@ import {
   isPrivileged,
   forbiddenResponse,
 } from "@/lib/auth-helpers";
-import { resolveOrgScope } from "@/lib/api/scope/parse";
+import { resolveOrgScope, scopeOrgId } from "@/lib/api/scope/parse";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
 
 export async function GET(request: NextRequest) {
@@ -61,12 +61,13 @@ export async function GET(request: NextRequest) {
     // filter via the `classPlan.organizationId` relation.
     const callerMemberships = await prisma.membership.findMany({
       where: { userId: session.user.id, status: "ACTIVE" },
-      select: { organizationId: true, status: true },
+      select: { organizationId: true, status: true, role: true },
     });
     const scopeResolution = resolveOrgScope({
       raw: searchParams.get("orgScope"),
       memberships: callerMemberships,
       userRole: session.user.role,
+      userId: session.user.id,
       // Self-scoped: non-admin callers are already locked to their own
       // consultant/consulteeProfileId above, so `?orgScope=all` means
       // "all of MY classes" — safe for any role.
@@ -78,11 +79,13 @@ export async function GET(request: NextRequest) {
         { status: scopeResolution.status },
       );
     }
+    // `orgMember` pins an org exactly as `org` does — see scopeOrgId.
+    const scopedOrgId = scopeOrgId(scopeResolution.scope);
     const classPlanOrgWhere: Prisma.ClassPlanWhereInput | null =
       scopeResolution.scope.kind === "personal"
         ? { organizationId: null }
-        : scopeResolution.scope.kind === "org"
-          ? { organizationId: scopeResolution.scope.orgId }
+        : scopedOrgId
+          ? { organizationId: scopedOrgId }
           : null; // "all" → no filter
 
     let classes;

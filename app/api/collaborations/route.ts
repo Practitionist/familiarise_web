@@ -37,12 +37,13 @@ export async function GET(request: NextRequest) {
     const { searchParams } = request.nextUrl;
     const memberships = await prisma.membership.findMany({
       where: { userId: session.user.id, status: "ACTIVE" },
-      select: { organizationId: true, status: true },
+      select: { organizationId: true, status: true, role: true },
     });
     const scopeResolution = resolveOrgScope({
       raw: searchParams.get("orgScope"),
       memberships,
       userRole: session.user.role,
+      userId: session.user.id,
       // Self-scoped to the caller's own hosted plans — no cross-tenant leak.
       allowAllForOwner: true,
     });

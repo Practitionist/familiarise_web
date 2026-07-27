@@ -77,12 +77,13 @@ export async function GET(
     const url = new URL(request.url);
     const callerMemberships = await prisma.membership.findMany({
       where: { userId, status: "ACTIVE" },
-      select: { organizationId: true, status: true },
+      select: { organizationId: true, status: true, role: true },
     });
     const scopeResolution = resolveOrgScope({
       raw: url.searchParams.get("orgScope"),
       memberships: callerMemberships,
       userRole: session.user.role,
+      userId: session.user.id,
       // Self-scoped: route already rejects requests for someone else's
       // consulteeProfileId, so `?orgScope=all` here means "my personal
       // + every org I belong to" — safe for any role.

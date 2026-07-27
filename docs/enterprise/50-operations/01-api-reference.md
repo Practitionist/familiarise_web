@@ -289,7 +289,7 @@ These two routes expose the org's Stream chat and video metadata; the call/recor
 
 | Path | Verb | Min role | Purpose | Audit actions |
 |------|------|----------|---------|----------------|
-| `/api/organizations/[orgId]/stream/channels` | `GET` | MANAGER | Stream chat channel roster | — |
+| `/api/organizations/[orgId]/stream/channels` | `GET` | MANAGER | Stream chat channel roster (metadata only; message bodies are never fetched, per ADR 20) | `STREAM_CHANNELS_EXPORTED` (SYSTEM) |
 | `/api/organizations/[orgId]/stream/calls` | `GET` | MANAGER | Call/recording metadata export (compliance pull) | `STREAM_CALLS_EXPORTED` (SYSTEM) |
 
 ## Retired audit actions

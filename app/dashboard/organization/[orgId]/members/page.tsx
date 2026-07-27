@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 
 
-import { MembersPageClient } from "./MembersPageClient";
+import { MembersTabs } from "./MembersTabs";
 import { getOrgMembers, ORG_MEMBERS_PER_PAGE } from "@/lib/data/org-members";
 
 export default async function OrgMembersPage({
@@ -35,7 +35,7 @@ export default async function OrgMembersPage({
 
   return (
     <HydrationBoundary state={dehydrate(queryClient)}>
-      <MembersPageClient orgId={orgId} />
+      <MembersTabs orgId={orgId} />
     </HydrationBoundary>
   );
 }

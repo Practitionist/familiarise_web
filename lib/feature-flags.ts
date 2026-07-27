@@ -25,7 +25,9 @@
  *   - The public /explore/enterprise/organisations directory shows an honest
  *     "coming soon" state instead of a silently-empty grid — #863
  *   - The host earnings/payout surfaces stay gated
- *   - /dashboard/organization/[id]/{experts,payouts} nav links hidden
+ *   - The Experts tab and the Payouts nav item are hidden — but note those
+ *     are gated on the org's own `canHost`, not on this flag; an org can
+ *     only have `canHost=true` because the create gate above let it through
  *   - The earnings split in lib/payments/payouts/earnings-service.ts takes
  *     the sponsor-only path even if the org has `canHost=true`
  *

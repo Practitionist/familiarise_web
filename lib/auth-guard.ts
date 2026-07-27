@@ -2,6 +2,10 @@ import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 import type { UserRole } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
+import {
+  hasBackofficePermission,
+  type BackofficeSurface,
+} from "@/lib/auth/backoffice-permissions";
 
 type SessionUser = NonNullable<Awaited<ReturnType<typeof getSession>>>["user"];
 
@@ -103,6 +107,26 @@ export async function requireUserRole(allowed: UserRole | UserRole[]) {
   const roles = Array.isArray(allowed) ? allowed : [allowed];
   if (!session.user.role || !roles.includes(session.user.role as UserRole)) {
     redirect("/dashboard");
+  }
+  return session;
+}
+
+/**
+ * Require back-office access to a specific surface. The page-level twin of
+ * `requireBackofficeSurface` (which returns a 403 for API routes) — this
+ * redirects instead, so a STAFF member who types `/dashboard/admin/payouts`
+ * lands back on the back-office home rather than seeing a broken page.
+ *
+ * Every page under `/dashboard/admin` that isn't visible to both roles must
+ * call this. The sidebar hiding the link is not access control; it only keeps
+ * the nav tidy.
+ *
+ * @see lib/auth/backoffice-permissions.ts
+ */
+export async function requireBackofficePage(surface: BackofficeSurface) {
+  const session = await requireUserRole(["ADMIN", "STAFF"]);
+  if (!hasBackofficePermission(session.user.role as UserRole, surface)) {
+    redirect("/dashboard/admin/home");
   }
   return session;
 }

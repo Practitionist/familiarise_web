@@ -153,7 +153,7 @@ export async function DELETE(
       providerId,
       deletedByName:
         access.session.user.name ?? access.session.user.email,
-      dashboardUrl: `${origin}/dashboard/organization/${orgId}/settings/sso`,
+      dashboardUrl: `${origin}/dashboard/organization/${orgId}/settings?tab=sso`,
     }).catch((err) => {
       Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "organizations" } });
       console.error("[notifyOrgSsoProviderDeleted] failed:", err);

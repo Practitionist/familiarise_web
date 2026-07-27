@@ -299,4 +299,4 @@ Every valid combination of `UserRole × org capability kind × MemberRole`.
 | Org dashboard (any member) | `/dashboard/organization/[orgId]` → routes by MemberRole |
 | Org OWNER/MAINTAINER/MANAGER/SUPPORT landing | `/dashboard/organization/[orgId]/home` |
 | Org LEARNER landing | `/dashboard/organization/[orgId]/my-program` |
-| Org EXPERT landing | `/dashboard/organization/[orgId]/my-arrangement` |
+| Org EXPERT landing | `/dashboard/organization/[orgId]/compensation` |

@@ -51,6 +51,8 @@ import {
   getRoleBadgeStyle,
 } from "../../utils/appointmentHelpers";
 
+import { ActionRequiredPanel } from "@/components/dashboard/ActionRequiredPanel";
+import { deriveConsultantActionItems } from "@/lib/dashboard/action-items";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { eventUnionStatusBadge } from "@/lib/appointments/status";
 import { getProximityLabel } from "@/lib/appointments/slots";
@@ -164,6 +166,24 @@ export function HomeTab({
 
   const firstName = consultantName?.split(" ")[0];
 
+  // "Needs you now" — derived from data already on the page, so no extra
+  // fetch. The upcoming list is flattened to {startsAt,title} because the
+  // derivation only cares about when a session starts and what it's called.
+  const actionItems = useMemo(
+    () =>
+      deriveConsultantActionItems({
+        pendingApprovals: pendingRequestsCount,
+        upcomingSessions: allUpcomingAppointments.flatMap((a) =>
+          (a.slotsOfAppointment ?? []).map((slot) => ({
+            startsAt: slot.startsAt,
+            title: getAppointmentTypeAndPlan(a),
+          })),
+        ),
+        basePath: `/dashboard/consultant/${consultantId}`,
+      }),
+    [allUpcomingAppointments, pendingRequestsCount, consultantId],
+  );
+
   return (
     <>
       <DashboardHeader
@@ -178,6 +198,10 @@ export function HomeTab({
           animate="visible"
           className="space-y-6"
         >
+          {/* What's actually blocked on this consultant, above everything
+              else. Renders nothing when the queue is clear. */}
+          <ActionRequiredPanel items={actionItems} className="space-y-2" />
+
           {/* Performance Snapshot */}
           {performanceSnapshot && (
             <motion.div variants={fadeInUp}>

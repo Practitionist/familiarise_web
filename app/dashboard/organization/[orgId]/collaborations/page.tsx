@@ -17,6 +17,10 @@ import { notFound } from "next/navigation";
 
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { InvitationsPanel } from "@/components/collaborators/InvitationsPanel";
+import {
+  DashboardHeader,
+  DashboardContent,
+} from "@/components/dashboard/PageScaffold";
 
 export default async function OrgCollaborationsPage({
   params,
@@ -31,16 +35,14 @@ export default async function OrgCollaborationsPage({
   }
 
   return (
-    <div className="space-y-6">
-      <header>
-        <h1 className="text-2xl font-semibold">Collaborations</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Manage invitations and active collaborations on {access.org.name}
-          &apos;s webinar and class plans.
-        </p>
-      </header>
-
-      <InvitationsPanel orgScope={orgId} />
-    </div>
+    <>
+      <DashboardHeader
+        title="Collaborations"
+        subtitle={`Manage invitations and active collaborations on ${access.org.name}'s webinar and class plans.`}
+      />
+      <DashboardContent>
+        <InvitationsPanel orgScope={orgId} />
+      </DashboardContent>
+    </>
   );
 }

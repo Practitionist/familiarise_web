@@ -15,10 +15,12 @@ interface PrefetchDashboardOptions {
   enableAggressivePrefetch?: boolean;
 }
 
-// FAQ fetcher — specific to consultant help page, not a dashboard query
+// FAQ fetcher — backs the Help tab of the shared Support surface, which both
+// the consultant and consultee dashboards mount. Not a dashboard query.
 export const fetchHelpFAQs = async () => {
-  const { faqs } =
-    await import("../app/dashboard/consultant/[consultantId]/(features)/help/questions");
+  const { faqs } = await import(
+    "@/components/dashboard/shared/support/questions"
+  );
   return faqs;
 };
 

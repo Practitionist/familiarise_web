@@ -8,6 +8,7 @@
 import prisma from "@/lib/prisma";
 import type { Prisma, WaitlistStatus } from "@prisma/client";
 import type { Scope } from "./parse";
+import { assertNeverScope } from "./parse";
 
 export interface ListWaitlistParams {
   scope: Scope;
@@ -36,7 +37,24 @@ function buildWhere(
   if (params.scope.kind === "org") {
     return { ...base, organizationId: params.scope.orgId };
   }
-  return base;
+  // `orgMember` = ONE member's own rows within an org. It must never fall
+  // through to the unfiltered `base` below: that arm is the `all` scope
+  // (admin/staff), and reaching it with an orgMember scope would return the
+  // whole platform. `resolveOrgScope` now downgrades a non-operator's
+  // ?orgScope=<orgId> to this kind, so the fall-through is live, not latent.
+  if (params.scope.kind === "orgMember") {
+    return {
+      ...base,
+      organizationId: params.scope.orgId,
+      userId: params.scope.userId,
+    };
+  }
+
+  // Explicit rather than a fall-through: `base` alone is the admin/staff arm,
+  // so an unhandled kind reaching it would return every tenant's rows.
+  if (params.scope.kind === "all") return base;
+
+  return assertNeverScope(params.scope);
 }
 
 export async function listWaitlistScoped(

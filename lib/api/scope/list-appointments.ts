@@ -20,6 +20,7 @@
 import prisma from "@/lib/prisma";
 import type { AppointmentsType, Prisma } from "@prisma/client";
 import type { Scope } from "./parse";
+import { assertNeverScope } from "./parse";
 
 export interface ListAppointmentsParams {
   scope: Scope;
@@ -117,8 +118,11 @@ export function buildWhere(
     return { ...base, organizationId: params.scope.orgId };
   }
 
-  // all — admin/staff
-  return base;
+  // Explicit rather than a fall-through: `base` alone is the admin/staff arm,
+  // so an unhandled kind reaching it would return every tenant's rows.
+  if (params.scope.kind === "all") return base;
+
+  return assertNeverScope(params.scope);
 }
 
 export async function listAppointmentsScoped(

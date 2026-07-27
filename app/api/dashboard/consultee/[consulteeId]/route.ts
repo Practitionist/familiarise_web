@@ -1,6 +1,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { consultantPublicScalars } from "@/lib/data/consultant-public";
 import { Prisma } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
 
@@ -20,11 +21,13 @@ const userSelectFields = {
 const consultationInclude = {
   consultationPlan: {
     include: {
+      // #946 allowlist. A bare `include:` shipped the consultant's panNumber /
+      // ibanOrAccount / swiftBic to the learner's own dashboard. The sibling
+      // resources/route.ts already narrows this way; this file was missed.
       consultantProfile: {
-        include: {
-          user: {
-            select: userSelectFields,
-          },
+        select: {
+          ...consultantPublicScalars,
+          user: { select: userSelectFields },
         },
       },
     },
@@ -57,7 +60,8 @@ const subscriptionInclude = {
   subscriptionPlan: {
     include: {
       consultantProfile: {
-        include: {
+        select: {
+          ...consultantPublicScalars,
           user: {
             select: userSelectFields,
           },
@@ -93,7 +97,8 @@ const webinarInclude = {
   webinarPlan: {
     include: {
       consultantProfile: {
-        include: {
+        select: {
+          ...consultantPublicScalars,
           user: {
             select: {
               id: true,
@@ -132,7 +137,8 @@ const classInclude = {
   classPlan: {
     include: {
       consultantProfile: {
-        include: {
+        select: {
+          ...consultantPublicScalars,
           user: {
             select: {
               id: true,

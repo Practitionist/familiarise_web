@@ -186,6 +186,10 @@ export const AUDIT_ACTIONS = {
     // Emitted from GET /api/organizations/[orgId]/stream/calls when a
     // MANAGER+ exports the call/recording metadata (compliance pull).
     STREAM_CALLS_EXPORTED: "STREAM_CALLS_EXPORTED",
+    // The chat half of the same compliance pair. Shipped without an audit
+    // row while its sibling had one, so pulling the roster of who messages
+    // whom inside an org left no trace.
+    STREAM_CHANNELS_EXPORTED: "STREAM_CHANNELS_EXPORTED",
     // Emitted by PATCH org settings when the retention window changes;
     // SYSTEM bucket because it's a platform-policy mutation, not a
     // member action.

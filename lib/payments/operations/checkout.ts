@@ -1116,7 +1116,14 @@ async function revalidateInsideLock(
     await ensureConsulteeProfile(tx, userId);
     const user = await tx.user.findUnique({
       where: { id: userId },
-      include: { consulteeProfile: true },
+      include: {
+        consulteeProfile: true,
+        // For the self-booking guard below. A user may hold both profiles —
+        // ConsultantProfile and ConsulteeProfile are independent 1:1s and
+        // deliberately not mutually exclusive (ADR 18, and the roles doc says
+        // so outright), which is exactly what makes the guard necessary.
+        consultantProfile: { select: { id: true } },
+      },
     });
 
     if (!user?.consulteeProfile) {
@@ -1129,6 +1136,27 @@ async function revalidateInsideLock(
       data.appointmentType,
       data.planId,
     );
+
+    // Nobody buys their own plan. Because one person can hold both profiles,
+    // a LEARNER in a sponsoring org who also sells on the marketplace could
+    // book their OWN plan against the org's credit pool and route the
+    // sponsor's money into their own payout account. The same-org
+    // EXPERT+LEARNER block doesn't reach this: it needs only a
+    // ConsulteeProfile and a plan, and `ProgramConsultantAllowlist` — the one
+    // thing that would have caught it — is empty by default under ADR 18's
+    // open network.
+    //
+    // Blocked for personal checkouts too. There the loss is the platform fee
+    // rather than someone else's money, so it is self-punishing rather than
+    // dangerous, but there is no legitimate reason to buy your own session and
+    // a rule with no exceptions needs no explanation at the call site.
+    if (
+      plan.consultantProfileId &&
+      user.consultantProfile &&
+      plan.consultantProfileId === user.consultantProfile.id
+    ) {
+      throw new Error("You cannot book your own plan.");
+    }
 
     // ADR 18 — curated-panel enforcement (#971 shipped the stub). Rows on
     // the funding Program restrict org-sponsored bookings to listed

@@ -2,7 +2,11 @@
 
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { formatCurrencyFromMajorUnit } from "@/utils/formatting";
+// `formatCurrencyAmount`, not `formatCurrencyFromMajorUnit`: refunds carry
+// paise. The old call had both halves wrong — a field the payload has never
+// contained, passed to the rupees formatter — so it rendered ₹NaN rather than
+// a number that was merely 100× too large.
+import { formatCurrencyAmount } from "@/utils/formatting";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -196,7 +200,7 @@ export function RefundsPage({
       header: "Amount",
       className: "font-medium",
       cell: (refund) =>
-        formatCurrencyFromMajorUnit(refund.amount, refund.currency),
+        formatCurrencyAmount(refund.amountPaise, refund.currency),
     },
     {
       key: "gateway",
