@@ -32,6 +32,10 @@ interface ReimbursementRow {
   description: string | null;
   createdAt: string;
   user: { id: string; name: string | null; email: string };
+  /** Gross, refunded and net in paise — see the route's netting rationale. */
+  grossPaise: number;
+  refundedPaise: number;
+  netReimbursablePaise: number;
 }
 
 interface ByMemberRow {
@@ -39,6 +43,8 @@ interface ByMemberRow {
   name: string | null;
   email: string | null;
   totalPaise: number;
+  refundedPaise: number;
+  netReimbursablePaise: number;
   paymentCount: number;
 }
 
@@ -48,6 +54,8 @@ interface ReimbursementsResponse {
   page: number;
   perPage: number;
   totalPaise: number;
+  totalRefundedPaise: number;
+  totalNetPaise: number;
   byMember: ByMemberRow[];
 }
 
@@ -63,7 +71,19 @@ const COLUMNS: Column<ReimbursementRow>[] = [
   { header: "Description", accessor: (r) => r.description ?? "—" },
   {
     header: "Amount",
-    accessor: (r) => `${(r.amount / 100).toFixed(2)} ${r.currency}`,
+    accessor: (r) => `${(r.grossPaise / 100).toFixed(2)} ${r.currency}`,
+  },
+  {
+    header: "Refunded",
+    accessor: (r) =>
+      r.refundedPaise > 0 ? `−${(r.refundedPaise / 100).toFixed(2)}` : "—",
+  },
+  {
+    // The payable figure. A fully refunded row stays visible at 0.00 rather
+    // than vanishing from the report.
+    header: "Net reimbursable",
+    accessor: (r) =>
+      `${(r.netReimbursablePaise / 100).toFixed(2)} ${r.currency}`,
   },
   {
     header: "Payment",
@@ -131,7 +151,10 @@ export default function OrgReimbursementsPage({
       },
     });
 
-  const totalRupees = ((data?.totalPaise ?? 0) / 100).toFixed(2);
+  // The card is labelled "Total to reimburse", so it shows the NET. It used to
+  // read the gross, which over-stated the payroll transfer by every refund.
+  const totalNetRupees = ((data?.totalNetPaise ?? 0) / 100).toFixed(2);
+  const totalRefundedRupees = ((data?.totalRefundedPaise ?? 0) / 100).toFixed(2);
 
   return (
     <>
@@ -177,14 +200,22 @@ export default function OrgReimbursementsPage({
               <p className="text-xs uppercase text-muted-foreground">
                 Total to reimburse
               </p>
-              <p className="mt-1 text-2xl font-semibold">₹{totalRupees}</p>
+              <p className="mt-1 text-2xl font-semibold">₹{totalNetRupees}</p>
+              {(data.totalRefundedPaise ?? 0) > 0 && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Net of ₹{totalRefundedRupees} refunded
+                </p>
+              )}
             </div>
             <div className="rounded-lg border bg-card p-4">
               <p className="text-xs uppercase text-muted-foreground">
                 Members owed
               </p>
               <p className="mt-1 text-2xl font-semibold">
-                {data.byMember.length}
+                {
+                  data.byMember.filter((m) => m.netReimbursablePaise > 0)
+                    .length
+                }
               </p>
             </div>
             <div className="rounded-lg border bg-card p-4">

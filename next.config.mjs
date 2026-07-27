@@ -79,7 +79,54 @@ const securityHeaders = [
   { key: CSP_HEADER_KEY, value: CSP_DIRECTIVES },
 ];
 
+/**
+ * The app's own origin, resolved at BUILD time.
+ *
+ * `NEXT_PUBLIC_APP_URL` is set on Netlify with context `all`, pinned to
+ * https://familiarisenow.com. Because `NEXT_PUBLIC_*` is inlined into the
+ * client bundle, every deploy preview shipped a bundle whose auth client
+ * called PRODUCTION's `/api/auth/*`. The browser blocked it on CORS, which is
+ * the only reason previews failed loudly rather than quietly authenticating
+ * against production and mutating real data.
+ *
+ * Netlify sets `CONTEXT` (production | deploy-preview | branch-deploy) and
+ * `DEPLOY_PRIME_URL` (this deploy's own origin) on every build. Off
+ * production we prefer the per-deploy URL, so a preview talks to itself.
+ *
+ * This has to happen here rather than as an env var: Netlify env values are
+ * literal strings — it does NOT expand `$DEPLOY_PRIME_URL` inside a value —
+ * and `NEXT_PUBLIC_*` is baked at build, so a runtime fallback would come too
+ * late for the client bundle.
+ */
+const RESOLVED_APP_URL =
+  process.env.CONTEXT && process.env.CONTEXT !== "production"
+    ? (process.env.DEPLOY_PRIME_URL ?? process.env.NEXT_PUBLIC_APP_URL)
+    : process.env.NEXT_PUBLIC_APP_URL;
+
 const nextConfig = {
+  // Origin-dependent values are recomputed per deploy context — see
+  // RESOLVED_APP_URL above. Listing them here overrides whatever the Netlify
+  // dashboard injected, for the build only.
+  env: {
+    ...(RESOLVED_APP_URL
+      ? {
+          NEXT_PUBLIC_APP_URL: RESOLVED_APP_URL,
+          BETTER_AUTH_URL: RESOLVED_APP_URL,
+          // BetterAuth rejects any Origin not on this list. A preview must
+          // trust its own origin or every auth call 403s.
+          BETTER_AUTH_TRUSTED_ORIGINS: [
+            ...new Set(
+              [
+                ...(process.env.BETTER_AUTH_TRUSTED_ORIGINS?.split(",") ?? []),
+                RESOLVED_APP_URL,
+              ]
+                .map((s) => s.trim())
+                .filter(Boolean),
+            ),
+          ].join(","),
+        }
+      : {}),
+  },
   // Only the Netlify deploy build OOM'd at the 4GB heap re-running ESLint + tsc.
   // Skip them THERE (NETLIFY=true is set in Netlify's build env) to drop that memory
   // hog — CI gates both independently anyway (ci.yaml runs `npx tsc --noEmit` +

@@ -315,7 +315,7 @@ export function DisputeDetailPage({
               <div>
                 <p className="text-sm text-zinc-500">Dispute Amount</p>
                 <p className="text-xl font-bold">
-                  {formatCurrencyAmount(dispute.amount, dispute.currency)}
+                  {formatCurrencyAmount(dispute.amountPaise, dispute.currency)}
                 </p>
               </div>
               <div>

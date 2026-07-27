@@ -5,6 +5,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { consultantPublicScalars } from "@/lib/data/consultant-public";
 import { Prisma, UserRole } from "@prisma/client";
 import { notifySupportTicketUpdate } from "@/lib/novu";
 import { UpdateSupportTicketSchema } from "@/schemas/support";
@@ -78,8 +79,12 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
                   title: true,
                   price: true,
                   priceCurrency: true,
+                  // #946 allowlist — a bare `include:` handed every staff
+                  // member opening a ticket the consultant's panNumber and
+                  // ibanOrAccount.
                   consultantProfile: {
-                    include: {
+                    select: {
+                      ...consultantPublicScalars,
                       user: { select: { name: true, email: true } },
                     },
                   },
@@ -111,8 +116,12 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
                   title: true,
                   price: true,
                   priceCurrency: true,
+                  // #946 allowlist — a bare `include:` handed every staff
+                  // member opening a ticket the consultant's panNumber and
+                  // ibanOrAccount.
                   consultantProfile: {
-                    include: {
+                    select: {
+                      ...consultantPublicScalars,
                       user: { select: { name: true, email: true } },
                     },
                   },

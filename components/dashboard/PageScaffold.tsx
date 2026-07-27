@@ -73,6 +73,37 @@ export function DashboardHeader({
   );
 }
 
+interface PanelHeaderProps {
+  description?: string;
+  actions?: ReactNode;
+}
+
+/**
+ * Header for a tab panel, as opposed to a page.
+ *
+ * When the IA consolidation folded sidebar entries into tabs, the panels kept
+ * their old `DashboardHeader` — which renders an `h1`. Inside a tab that reads
+ * as a second page title directly under the tab you just clicked. This drops
+ * the heading and keeps only what the panel still needs: a line of context and
+ * its own actions.
+ */
+export function PanelHeader({ description, actions }: PanelHeaderProps) {
+  if (!description && !actions) return null;
+
+  return (
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      {description && (
+        <p className="text-sm text-muted-foreground">{description}</p>
+      )}
+      {actions && (
+        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:gap-3 sm:shrink-0">
+          {actions}
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface DashboardContentProps {
   children: ReactNode;
   className?: string;

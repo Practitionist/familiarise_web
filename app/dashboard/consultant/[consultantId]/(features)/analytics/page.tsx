@@ -6,6 +6,7 @@ import {
 import AnalyticsPageClient from "./AnalyticsPageClient";
 import { getConsultantAppointments } from "@/lib/data/consultant-appointments";
 import { buildConsultantEarningsPayload } from "@/lib/data/consultant-earnings-analytics";
+import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
 
 type PageProps = {
   params: Promise<{ consultantId: string }>;
@@ -13,6 +14,10 @@ type PageProps = {
 
 export default async function AnalyticsPage({ params }: Readonly<PageProps>) {
   const { consultantId } = await params;
+  // Ownership is enforced HERE, not by the layout: the layout is a client
+  // component, so its check runs after this server render has already read
+  // and streamed the data. See lib/auth/personal-dashboard-access.ts.
+  await requirePersonalProfileAccess("consultant", consultantId);
   const queryClient = new QueryClient();
 
   // SSR prefetch both analytics reads (org home-page pattern). Keys MUST

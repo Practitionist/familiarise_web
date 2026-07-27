@@ -53,13 +53,14 @@ export async function GET(req: NextRequest) {
     const callerMemberships = needsMemberships
       ? await prisma.membership.findMany({
           where: { userId: session.user.id, status: "ACTIVE" },
-          select: { organizationId: true, status: true },
+          select: { organizationId: true, status: true, role: true },
         })
       : [];
     const scopeResolution = resolveOrgScope({
       raw: rawOrgScope,
       memberships: callerMemberships,
       userRole: session.user.role,
+      userId: session.user.id,
       // Self-scoped consultant endpoint — `?orgScope=all` just means
       // "everything I earned, personal + every org I belong to".
       allowAllForOwner: true,

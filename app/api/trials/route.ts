@@ -74,12 +74,13 @@ export async function GET(request: NextRequest) {
     // bookings into the consultant's "Trials" tab.
     const callerMemberships = await prisma.membership.findMany({
       where: { userId: session.user.id, status: "ACTIVE" },
-      select: { organizationId: true, status: true },
+      select: { organizationId: true, status: true, role: true },
     });
     const scopeResolution = resolveOrgScope({
       raw: searchParams.get("orgScope"),
       memberships: callerMemberships,
       userRole: session.user.role,
+      userId: session.user.id,
       // Non-admin callers are already locked to their own
       // consultant/consulteeProfileId (lines 50-73), so `?orgScope=all`
       // means "all of MY trials" — safe for any role.

@@ -85,7 +85,13 @@ export interface PaymentDetail {
 export interface Refund {
   id: string;
   refundId?: string;
-  amount: number;
+  /**
+   * Paise. The Prisma model calls it `amountPaise` and the money extension
+   * computes it to a Number in paise; this interface used to declare
+   * `amount`, which no payload has ever carried, so every refund rendered
+   * as ₹NaN.
+   */
+  amountPaise: number;
   currency: string;
   status: string;
   reason?: string | null;
@@ -117,7 +123,8 @@ export interface RefundListResponse {
 export interface Dispute {
   id: string;
   disputeId: string | null;
-  amount: number;
+  /** Paise — see the note on Refund.amountPaise. */
+  amountPaise: number;
   currency: string;
   status: string;
   reason: string | null;

@@ -66,9 +66,27 @@ export async function GET(
   }
   const pagination = parsePagination(url);
 
+  // `PaymentStatus` has no REFUNDED state (PENDING/SUCCEEDED/FAILED/EXPIRED)
+  // — refunds live in the separate `Refund` model and never touch
+  // `paymentStatus`, so filtering on SUCCEEDED alone once put fully refunded
+  // bookings on the payroll report and the org reimbursed cash the member had
+  // already been given back.
+  //
+  // Dropping every refunded row fixed that but broke the other direction: a
+  // ₹1,000 payment with a ₹100 refund reimbursed ₹0 rather than ₹900. Both are
+  // wrong, so the report nets instead. Refunds stay in the query and each row
+  // carries `refundedPaise` and `netReimbursablePaise`.
+  //
+  // Fully refunded rows are KEPT, at a net of zero, rather than filtered out.
+  // Netting cannot be expressed in a Prisma `where` (it compares an aggregate
+  // to a column), so removing them would mean post-filtering a paginated page
+  // and returning short pages. Showing them at ₹0 also makes the report
+  // self-explanatory: finance sees the payment, the refund and the zero,
+  // instead of a row that silently isn't there.
   const where = {
     organizationId: orgId,
     paymentStatus: "SUCCEEDED" as const,
+    deletedAt: null,
     ...(filters.data.userId && { userId: filters.data.userId }),
     ...(filters.data.from || filters.data.to
       ? {
@@ -80,54 +98,106 @@ export async function GET(
       : {}),
   };
 
-  const [total, items, totalPaiseAgg] = await prisma.$transaction([
+  const succeededRefunds = {
+    where: { status: "SUCCEEDED" as const, deletedAt: null },
+    select: { amountPaise: true },
+  };
+
+  /** Gross, refunded and net for one payment, all in paise. */
+  function netOf(payment: {
+    amount: bigint | number;
+    refunds: { amountPaise: bigint | number }[];
+  }) {
+    const grossPaise = sumPaise(payment.amount);
+    const refundedPaise = payment.refunds.reduce(
+      (acc, r) => acc + sumPaise(r.amountPaise),
+      0,
+    );
+    // Clamped: an over-refund would otherwise make the row a negative
+    // deduction against the rest of the payroll run.
+    const netReimbursablePaise = Math.max(0, grossPaise - refundedPaise);
+    return { grossPaise, refundedPaise, netReimbursablePaise };
+  }
+
+  const [total, pageRows, rollupRows] = await prisma.$transaction([
     prisma.payment.count({ where }),
     prisma.payment.findMany({
       where,
       include: {
         user: { select: { id: true, name: true, email: true } },
+        refunds: succeededRefunds,
       },
       orderBy: { createdAt: "desc" },
       take: pagination.pageSize,
       skip: (pagination.page - 1) * pagination.pageSize,
     }),
-    prisma.payment.aggregate({
+    // The roll-up replaces the old aggregate + groupBy pair. Those summed
+    // `Payment.amount`, which is now the wrong number — the payable figure is
+    // net of refunds, and no Prisma aggregate spans the two tables. It reads
+    // three scalars per row over the same filtered set the groupBy already
+    // scanned.
+    prisma.payment.findMany({
       where,
-      _sum: { amount: true },
+      select: {
+        amount: true,
+        refunds: succeededRefunds,
+        user: { select: { id: true, name: true, email: true } },
+      },
     }),
   ]);
-  // groupBy lives outside the $transaction tuple — Prisma 7's
-  // groupBy/aggregate types don't compose into the array tuple cleanly.
-  const byMember = await prisma.payment.groupBy({
-    by: ["userId"],
-    where,
-    _sum: { amount: true },
-    _count: { _all: true },
-  });
 
-  // Hydrate member names for the by-member roll-up.
-  const userIds = byMember.map((b) => b.userId);
-  const users = await prisma.user.findMany({
-    where: { id: { in: userIds } },
-    select: { id: true, name: true, email: true },
-  });
-  const userMap = new Map(users.map((u) => [u.id, u]));
+  const items = pageRows.map((p) => ({ ...p, ...netOf(p) }));
+
+  let totalPaise = 0;
+  let totalRefundedPaise = 0;
+  let totalNetPaise = 0;
+  const perMember = new Map<
+    string,
+    {
+      userId: string;
+      name: string | null;
+      email: string | null;
+      totalPaise: number;
+      refundedPaise: number;
+      netReimbursablePaise: number;
+      paymentCount: number;
+    }
+  >();
+
+  for (const row of rollupRows) {
+    const { grossPaise, refundedPaise, netReimbursablePaise } = netOf(row);
+    totalPaise += grossPaise;
+    totalRefundedPaise += refundedPaise;
+    totalNetPaise += netReimbursablePaise;
+
+    const entry = perMember.get(row.user.id) ?? {
+      userId: row.user.id,
+      name: row.user.name,
+      email: row.user.email,
+      totalPaise: 0,
+      refundedPaise: 0,
+      netReimbursablePaise: 0,
+      paymentCount: 0,
+    };
+    entry.totalPaise += grossPaise;
+    entry.refundedPaise += refundedPaise;
+    entry.netReimbursablePaise += netReimbursablePaise;
+    entry.paymentCount += 1;
+    perMember.set(row.user.id, entry);
+  }
 
   return NextResponse.json({
     items,
     total,
     page: pagination.page,
     perPage: pagination.pageSize,
-    totalPaise: sumPaise(totalPaiseAgg._sum.amount),
-    byMember: byMember.map((b) => ({
-      userId: b.userId,
-      name: userMap.get(b.userId)?.name ?? null,
-      email: userMap.get(b.userId)?.email ?? null,
-      totalPaise: sumPaise(b._sum?.amount),
-      paymentCount:
-        typeof b._count === "object" && b._count
-          ? ((b._count as { _all?: number })._all ?? 0)
-          : 0,
-    })),
+    // `totalPaise` stays the gross so existing readers keep their meaning;
+    // `totalNetPaise` is the figure payroll should actually transfer.
+    totalPaise,
+    totalRefundedPaise,
+    totalNetPaise,
+    byMember: Array.from(perMember.values()).sort(
+      (a, b) => b.netReimbursablePaise - a.netReimbursablePaise,
+    ),
   });
 }

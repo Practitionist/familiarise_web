@@ -1,6 +1,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { consultantPublicScalars } from "@/lib/data/consultant-public";
 import { Prisma } from "@prisma/client";
 import { notifyNewReview } from "@/lib/novu";
 import { CreateReviewSchema } from "@/schemas/feedbacks";
@@ -50,13 +51,14 @@ export async function GET(req: NextRequest) {
       where: whereClause,
       take: 50,
       include: {
+        // #946 allowlist. This route is PUBLIC (middleware.ts marks it so) and
+        // its response is CDN-cached, so a bare `include:` here published every
+        // reviewed consultant's panNumber / ibanOrAccount / swiftBic /
+        // udyamNumber to anonymous callers.
         consultantProfile: {
-          include: {
-            user: {
-              select: {
-                name: true,
-              },
-            },
+          select: {
+            ...consultantPublicScalars,
+            user: { select: { name: true } },
           },
         },
         consulteeProfile: {
@@ -156,13 +158,13 @@ export async function POST(req: NextRequest) {
           consulteeProfileId: sessionConsulteeProfileId,
         },
         include: {
+          // #946 allowlist — the response goes back to the consultee who wrote
+          // the review; a bare `include:` handed them the consultant's PAN and
+          // bank account.
           consultantProfile: {
-            include: {
-              user: {
-                select: {
-                  name: true,
-                },
-              },
+            select: {
+              ...consultantPublicScalars,
+              user: { select: { name: true } },
             },
           },
           consulteeProfile: {

@@ -3,7 +3,10 @@ import { z } from "zod";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { Prisma, RefundStatus, PaymentGateway } from "@prisma/client";
-import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import {
+  requirePrivilegedAuth,
+  requireBackofficeSurface,
+} from "@/lib/auth-helpers";
 import {
   refundPayment,
   RefundValidationError,
@@ -110,7 +113,12 @@ const RefundBodySchema = z
 
 export async function POST(req: NextRequest) {
   try {
-    const auth = await requirePrivilegedAuth();
+    // Executing a refund moves real money and is ADMIN-only per
+    // BACKOFFICE_PERMISSIONS. This was `requirePrivilegedAuth`, which admits
+    // STAFF — the dashboard only ever hid the button, so a staff member could
+    // still issue a refund by calling this route directly. GET stays
+    // privileged: staff read every money surface for ticket context.
+    const auth = await requireBackofficeSurface("refunds.manage");
     if (auth.error) return auth.error;
 
     let payload: unknown;

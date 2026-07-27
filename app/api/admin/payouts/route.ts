@@ -19,7 +19,7 @@ import { PayoutStatus } from "@prisma/client";
 import { createPayoutBatch } from "@/lib/payments/payouts";
 import {
   requireAdminAuth,
-  requirePrivilegedAuth,
+  requireBackofficeSurface,
 } from "@/lib/auth-helpers";
 import { getOperatorPayouts } from "@/lib/api/operators";
 
@@ -29,7 +29,7 @@ import { getOperatorPayouts } from "@/lib/api/operators";
  */
 export async function GET(req: NextRequest) {
   try {
-    const auth = await requirePrivilegedAuth();
+    const auth = await requireBackofficeSurface("payouts.read");
     if (auth.error) return auth.error;
 
     const { searchParams } = new URL(req.url);

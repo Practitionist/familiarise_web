@@ -154,7 +154,7 @@ export function PayoutsPageClient({
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
   const [page, setPage] = useState(1);
 
-  const { data, isPending } = useQuery({
+  const { data, isPending, isError } = useQuery({
     queryKey: ["org-payouts", orgId, page, statusFilter],
     queryFn: () => fetchPayouts(orgId, (page - 1) * PAGE_SIZE, statusFilter),
     enabled: allowed,
@@ -222,6 +222,21 @@ export function PayoutsPageClient({
               <StatCardSkeleton key={i} />
             ))}
           </DashboardGrid>
+        ) : isError || !data ? (
+          /* Without this the failure path fell straight through to
+             `stats?.totalPaidPaise ?? 0` and rendered "₹0.00 paid out ·
+             ₹0.00 pending · No payouts yet." — a fetch error was
+             indistinguishable from a genuinely empty settlement ledger.
+             /home already handles this correctly; these surfaces did not. */
+          <div className="rounded-lg border border-border bg-card p-6 text-sm">
+            <p className="font-medium text-foreground">
+              Couldn&apos;t load payouts
+            </p>
+            <p className="mt-1 text-muted-foreground">
+              We couldn&apos;t reach the settlement ledger. This is a loading
+              problem, not a zero balance — refresh to try again.
+            </p>
+          </div>
         ) : (
           <>
             {/* Summary cards */}

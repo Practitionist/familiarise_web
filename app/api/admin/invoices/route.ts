@@ -3,7 +3,8 @@
  * View all platform invoices.
  *
  * Thin shell — query/response logic lives in `lib/api/operators/invoices.ts`
- * and is shared with `/api/staff/invoices`.
+ * and is shared with the staff dashboard, which calls this same route —
+ * the staff copy was byte-identical apart from its comments and a Sentry tag.
  */
 
 import * as Sentry from "@sentry/nextjs";

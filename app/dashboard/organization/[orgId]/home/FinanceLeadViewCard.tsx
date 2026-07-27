@@ -200,13 +200,13 @@ export function FinanceLeadViewCard({ orgId, data }: FinanceLeadViewProps) {
             </Button>
           ))}
           <Button asChild variant="outline" className="justify-between">
-            <Link href={`/dashboard/organization/${orgId}/integrations/webhooks`}>
+            <Link href={`/dashboard/organization/${orgId}/settings?tab=webhooks`}>
               <span>Manage outbound webhooks</span>
               <ArrowRight className="h-4 w-4" />
             </Link>
           </Button>
           <Button asChild variant="outline" className="justify-between">
-            <Link href={`/dashboard/organization/${orgId}/integrations/data-exports`}>
+            <Link href={`/dashboard/organization/${orgId}/settings?tab=data-exports`}>
               <span>Request a data export</span>
               <ArrowRight className="h-4 w-4" />
             </Link>
