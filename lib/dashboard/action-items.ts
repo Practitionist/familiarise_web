@@ -58,14 +58,22 @@ export function imminentSessionItem(
   if (!soonest) return null;
 
   const mins = minutesUntil(soonest.startsAt);
-  const joinable = mins <= JOIN_WINDOW_MS / 60000;
+  // Compare against the raw delta, not the rounded minutes: a session 10m29s
+  // out rounds to 10 and was being called joinable, outside the documented
+  // window. `mins` stays for display only.
+  const joinable =
+    new Date(soonest.startsAt).getTime() - Date.now() <= JOIN_WINDOW_MS;
 
   return {
     key: "session-imminent",
     severity: joinable ? "critical" : "warning",
     title: joinable ? "A session is starting now" : `Session in ${mins} min`,
     body: soonest.title,
-    ctaLabel: joinable ? "Join" : "View",
+    // Both labels say "View": `ctaHref` is the appointments list, not the
+    // meeting, and ActionRequiredPanel renders it as an ordinary link. Saying
+    // "Join" promised a call and delivered a list. The urgency is already
+    // carried by `severity` and the title.
+    ctaLabel: "View",
     ctaHref: appointmentsHref,
   };
 }

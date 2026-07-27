@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   DashboardHeader,
   DashboardContent,
@@ -158,8 +158,16 @@ export function ReferralsPage({ role }: ReferralsPageProps) {
   const qualified = referrals.filter(
     (r) => r.status === "QUALIFIED" || r.status === "REWARDED",
   ).length;
-  const referralLink = code
-    ? `${window.location.origin}/r/${code.customCode || code.code}`
+  // `window` is only safe here because `code` happens to be undefined on the
+  // server pass today. Add an SSR prefetch for ["referral-code"] — the exact
+  // pattern this PR introduces elsewhere — and rendering it would throw
+  // "window is not defined" and take the route down. Read the origin after
+  // mount instead, so the safety is structural rather than incidental.
+  const [origin, setOrigin] = useState("");
+  useEffect(() => setOrigin(window.location.origin), []);
+
+  const referralLink = code && origin
+    ? `${origin}/r/${code.customCode || code.code}`
     : "";
 
   const shareMessage = referralLink
@@ -173,30 +181,65 @@ export function ReferralsPage({ role }: ReferralsPageProps) {
     : "";
 
   const handleCopy = () => {
-    navigator.clipboard.writeText(referralLink);
-    setCopied(true);
-    toast({ title: "Referral link copied!" });
-    setTimeout(() => setCopied(false), 2000);
+    // writeText rejects on a denied permission or a non-secure context. It was
+    // neither awaited nor caught, so the user got "Referral link copied!" and
+    // an empty clipboard.
+    navigator.clipboard.writeText(referralLink).then(
+      () => {
+        setCopied(true);
+        toast({ title: "Referral link copied!" });
+        setTimeout(() => setCopied(false), 2000);
+      },
+      () => {
+        toast({
+          title: "Couldn't copy the link",
+          description: "Copy it manually from the field above.",
+          variant: "destructive",
+        });
+      },
+    );
   };
 
-  const handleCustomize = async () => {
-    if (!customCode.trim()) return;
-    const res = await fetch("/api/referrals/code/customize", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ customCode }),
-    });
-    if (res.ok) {
+  // Through the mutation layer like every other write on this page: a network
+  // throw was previously an unhandled rejection with no toast, and nothing
+  // disabled the button in flight, so a double-click issued two POSTs.
+  const customizeMutation = useMutation({
+    mutationFn: async (code: string) => {
+      const res = await fetch("/api/referrals/code/customize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ customCode: code }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.error || "Failed to set custom code");
+      }
+      return res.json().catch(() => null);
+    },
+    onSuccess: () => {
       toast({ title: "Custom code set!" });
       setCustomCode("");
       queryClient.invalidateQueries({ queryKey: ["referral-code"] });
-    } else {
-      toast({ title: "Failed to set custom code", variant: "destructive" });
-    }
+    },
+    onError: (err: Error) => {
+      toast({
+        title: err.message || "Failed to set custom code",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleCustomize = () => {
+    const trimmed = customCode.trim();
+    if (!trimmed) return;
+    customizeMutation.mutate(trimmed);
   };
 
   const statsLoading = referralsLoading || creditsLoading || codeLoading;
-  const statsError = referralsError || creditsError;
+  // codeError belongs here: the "Total Earned" card reads `code?.totalEarned`,
+  // so without it a failed code fetch rendered a confident ₹0.00 while every
+  // neighbouring card fell back to "—".
+  const statsError = referralsError || creditsError || codeError;
 
   const referralColumns: ResponsiveColumn<Referral>[] = [
     {
@@ -359,36 +402,44 @@ export function ReferralsPage({ role }: ReferralsPageProps) {
                     <Copy className="h-4 w-4" />
                   )}
                 </Button>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  asChild
-                  disabled={!referralLink}
-                >
-                  <a
-                    href={whatsappUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    aria-label="Share on WhatsApp"
-                  >
+                {/* `disabled` is not a valid anchor attribute, so with `asChild`
+                    React dropped it and the button stayed clickable with an
+                    empty href while the code query was loading or failed. */}
+                {referralLink ? (
+                  <Button variant="outline" size="icon" asChild>
+                    <a
+                      href={whatsappUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      aria-label="Share on WhatsApp"
+                    >
+                      <WhatsAppIcon className="h-4 w-4" />
+                    </a>
+                  </Button>
+                ) : (
+                  <Button variant="outline" size="icon" disabled aria-label="Share on WhatsApp">
                     <WhatsAppIcon className="h-4 w-4" />
-                  </a>
-                </Button>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  asChild
-                  disabled={!referralLink}
-                >
-                  <a
-                    href={emailUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    aria-label="Share via email"
-                  >
+                  </Button>
+                )}
+                {/* `disabled` is not a valid anchor attribute, so with `asChild`
+                    React dropped it and the button stayed clickable with an
+                    empty href while the code query was loading or failed. */}
+                {referralLink ? (
+                  <Button variant="outline" size="icon" asChild>
+                    <a
+                      href={emailUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      aria-label="Share via email"
+                    >
+                      <Mail className="h-4 w-4" />
+                    </a>
+                  </Button>
+                ) : (
+                  <Button variant="outline" size="icon" disabled aria-label="Share via email">
                     <Mail className="h-4 w-4" />
-                  </a>
-                </Button>
+                  </Button>
+                )}
               </div>
               {/* Vanity codes are a consultant affordance — they share the
                   link publicly. Consultees refer people they already know. */}
@@ -400,8 +451,12 @@ export function ReferralsPage({ role }: ReferralsPageProps) {
                     onChange={(e) => setCustomCode(e.target.value)}
                     className="flex-1"
                   />
-                  <Button variant="outline" onClick={handleCustomize}>
-                    Set
+                  <Button
+                    variant="outline"
+                    onClick={handleCustomize}
+                    disabled={customizeMutation.isPending || !customCode.trim()}
+                  >
+                    {customizeMutation.isPending ? "Saving…" : "Set"}
                   </Button>
                 </div>
               )}

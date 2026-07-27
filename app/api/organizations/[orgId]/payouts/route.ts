@@ -217,6 +217,24 @@ export async function POST(
     const payout = await prisma.organizationPayout.findUnique({
       where: { id: result.payoutId },
     });
+    // The service just wrote this row, so a miss means the read raced a
+    // rollback or hit a replica — either way `201 { payout: null }` would tell
+    // the caller the batch succeeded and hand them nothing to act on.
+    if (!payout) {
+      Sentry.captureException(
+        new Error(
+          `Payout ${result.payoutId} created but not readable on re-fetch`,
+        ),
+        { tags: { subsystem: "enterprise" } },
+      );
+      return NextResponse.json(
+        {
+          error:
+            "The payout batch was created but could not be read back. Refresh the payouts list before retrying.",
+        },
+        { status: 500 },
+      );
+    }
 
     return NextResponse.json({ payout }, { status: 201 });
   } catch (err) {

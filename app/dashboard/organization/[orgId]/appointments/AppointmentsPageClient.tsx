@@ -166,6 +166,10 @@ function rowSessionDate(row: AppointmentRow): string {
     timeZone: "Asia/Kolkata",
     day: "2-digit",
     month: "short",
+    // The org feed pages back through historical bookings and the adjacent
+    // Booked column carries the year, so omitting it here made sessions a year
+    // apart indistinguishable and read as a bug rather than a choice.
+    year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
   });
@@ -215,7 +219,16 @@ export function AppointmentsPageClient({ orgId }: { orgId: string }) {
   const rawPage = Number(searchParams?.get("page") ?? "1");
   const page = Number.isInteger(rawPage) && rawPage > 0 ? rawPage : 1;
 
-  const typeFilter = searchParams?.get("appointmentType") ?? undefined;
+  // Same discipline as the `page` clamp above. An unrecognised value still
+  // filtered the fetch, but the Select had no matching item so its trigger fell
+  // back to the "All types" placeholder — the control then misreported which
+  // filter was actually active.
+  const rawTypeFilter = searchParams?.get("appointmentType");
+  const typeFilter = (
+    APPOINTMENT_TYPES as readonly string[]
+  ).includes(rawTypeFilter ?? "")
+    ? (rawTypeFilter as string)
+    : undefined;
 
   const [status, setStatus] = useState<string>("all");
   const [search, setSearch] = useState("");

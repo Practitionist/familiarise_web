@@ -95,7 +95,10 @@ const removeParticipant = async ({
     { method: "DELETE" },
   );
   if (!response.ok) throw new Error("Failed to remove participant");
-  return response.json();
+  // Every participant DELETE handler answers 204 No Content, so parsing a body
+  // here threw on the SUCCESS path — the mutation rejected after the removal
+  // had already happened, the error toast fired, and the roster query was
+  // never invalidated.
 };
 
 export default function EventParticipantsPage() {

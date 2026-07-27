@@ -19,6 +19,10 @@ import {
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
 import { DashboardHeader } from "@/components/dashboard/PageScaffold";
+// Paise-aware and per-currency: the local helper this replaces divided by 100
+// and rounded to whole rupees, so 12,345 paise printed as ₹123 rather than
+// ₹123.45, and any currency with different minor-unit rules was wrong too.
+import { formatCurrencyAmount } from "@/utils/formatting";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   Search,
@@ -63,14 +67,6 @@ const getStatusIcon = (status: string) => {
     default:
       return null;
   }
-};
-
-const formatCurrency = (amount: number, currency: string = "INR") => {
-  return new Intl.NumberFormat("en-IN", {
-    style: "currency",
-    currency: currency,
-    maximumFractionDigits: 0,
-  }).format(amount / 100);
 };
 
 const formatDate = (dateString: string) => {
@@ -200,7 +196,7 @@ export function DisputesPage({
       key: "amount",
       header: "Amount",
       className: "font-medium",
-      cell: (dispute) => formatCurrency(dispute.amountPaise, dispute.currency),
+      cell: (dispute) => formatCurrencyAmount(dispute.amountPaise, dispute.currency),
     },
     {
       key: "gateway",

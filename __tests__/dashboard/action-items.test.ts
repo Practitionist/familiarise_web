@@ -36,13 +36,32 @@ describe("imminentSessionItem", () => {
     expect(item?.ctaLabel).toBe("View");
   });
 
-  it("escalates to Join once inside the 10-minute join window", () => {
+  it("escalates to critical once inside the 10-minute join window", () => {
     const item = imminentSessionItem(
       [{ startsAt: inMinutes(5), title: "Career review" }],
       "/x",
     );
     expect(item?.severity).toBe("critical");
-    expect(item?.ctaLabel).toBe("Join");
+    // The label stays "View" at both severities: ctaHref is the appointments
+    // list, not the meeting, so "Join" promised a call it could not deliver.
+    // Urgency is carried by `severity` and the title instead.
+    expect(item?.ctaLabel).toBe("View");
+    expect(item?.title).toBe("A session is starting now");
+  });
+
+  it("uses the exact boundary, not rounded minutes, to decide the window", () => {
+    // 10m29s rounds to 10 and used to read as inside the window.
+    const justOutside = imminentSessionItem(
+      [{ startsAt: new Date(Date.now() + 10 * 60_000 + 29_000), title: "x" }],
+      "/x",
+    );
+    expect(justOutside?.severity).toBe("warning");
+
+    const justInside = imminentSessionItem(
+      [{ startsAt: new Date(Date.now() + 9 * 60_000 + 30_000), title: "x" }],
+      "/x",
+    );
+    expect(justInside?.severity).toBe("critical");
   });
 
   it("keeps a session that has just started, and drops one long finished", () => {

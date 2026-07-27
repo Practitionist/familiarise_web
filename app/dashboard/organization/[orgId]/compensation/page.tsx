@@ -95,7 +95,10 @@ export default async function MyArrangementPage({
         title="Compensation"
         subtitle={`How ${access.org.name} compensates you for sessions hosted under their brand.`}
       />
-      <DashboardContent>
+      {/* space-y-6: DashboardContent only supplies padding, and these sibling
+          sections carry no margin of their own, so without it the bordered
+          cards stack flush against each other. */}
+      <DashboardContent className="space-y-6">
 
       {/* #754 — upcoming org-hosted sessions */}
       {member.consultantProfileId && upcomingSessions.length > 0 && (

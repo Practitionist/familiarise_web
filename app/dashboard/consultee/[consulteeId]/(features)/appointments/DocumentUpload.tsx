@@ -111,6 +111,10 @@ export function DocumentUpload({
 
   const handleOpenChange = (open: boolean) => {
     setIsOpen(open);
+    // Closing without uploading or cancelling used to leave `revisionOf` set,
+    // so the NEXT ordinary upload silently threaded onto the old document and
+    // became a revision of it.
+    if (!open) setRevisionOf(null);
     onOpenChange?.(open);
   };
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -766,15 +770,32 @@ export function DocumentUpload({
                           </div>
                         </div>
 
-                        {/* Consultant Response Documents */}
+                        {/* Threaded children. Since revisions were added, this
+                            list holds BOTH the consultant's replies and the
+                            learner's own re-uploads, so the old fixed
+                            "Consultant Response" heading labelled a learner's
+                            revision as a consultant reply. Name it for what
+                            the thread actually contains. */}
                         {doc.responseDocuments &&
                           doc.responseDocuments.length > 0 && (
                             <div className="mt-3 pl-4 sm:pl-8 border-l-2 border-border">
                               <div className="flex items-center gap-2 mb-2 text-xs text-muted-foreground">
                                 <Reply className="h-3 w-3" />
                                 <span className="font-medium">
-                                  Consultant Response
-                                  {doc.responseDocuments.length > 1 ? "s" : ""}
+                                  {(() => {
+                                    const kinds = new Set(
+                                      doc.responseDocuments.map((r) =>
+                                        r.uploadedByRole === "CONSULTEE"
+                                          ? "revision"
+                                          : "response",
+                                      ),
+                                    );
+                                    const n = doc.responseDocuments.length;
+                                    if (kinds.size > 1) return "Follow-up documents";
+                                    return kinds.has("revision")
+                                      ? `Your revision${n > 1 ? "s" : ""}`
+                                      : `Consultant response${n > 1 ? "s" : ""}`;
+                                  })()}
                                 </span>
                               </div>
                               <div className="space-y-2">

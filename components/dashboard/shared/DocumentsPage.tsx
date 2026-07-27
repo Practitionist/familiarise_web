@@ -14,6 +14,7 @@
  */
 
 import { useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
 
@@ -148,7 +149,14 @@ const COLUMNS: Column<DocumentRow>[] = [
 ];
 
 export function DocumentsPage() {
-  const [page, setPage] = useState(1);
+  // `ScopedListTable` paginates by pushing `?page=N`, so the URL is the source
+  // of truth. Holding it in local state meant every deep link and every
+  // pagination click still fetched page 1 while the footer claimed otherwise.
+  // Same derivation the org recordings/documents clients already use.
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const page = Number(searchParams?.get("page") ?? "1") || 1;
   const [status, setStatus] = useState<string>("all");
 
   const { data, isLoading, isError } = useQuery<DocumentsResponse>({
@@ -167,7 +175,12 @@ export function DocumentsPage() {
       value={status}
       onValueChange={(v) => {
         setStatus(v);
-        setPage(1);
+        // Drop the page param rather than setting it to 1 — a filter change
+        // makes the old offset meaningless.
+        const sp = new URLSearchParams(searchParams?.toString() ?? "");
+        sp.delete("page");
+        const qs = sp.toString();
+        router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
       }}
     >
       <SelectTrigger className="w-full sm:w-56">

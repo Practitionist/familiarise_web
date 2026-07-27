@@ -116,16 +116,33 @@ export async function GET(
     // Mirrors the /stream/calls sibling: one row per pull, volume in
     // `details` so the log carries the shape of the export without echoing
     // the channel list back into it.
-    await prisma.orgAuditLog.create({
-      data: {
-        organizationId: orgId,
-        actorMembershipId: access.member.id,
-        category: "SYSTEM",
-        action: AUDIT_ACTIONS.SYSTEM.STREAM_CHANNELS_EXPORTED,
-        description: `Listed ${rows.length} Stream chat channels`,
-        details: { page, pageSize: PAGE_SIZE, count: rows.length },
-      },
-    });
+    //
+    // Isolated from the outer try: `rows` is already built by this point, so a
+    // DB hiccup here would otherwise surface as a 502 "Failed to query
+    // channels" for a Stream query that in fact succeeded — and send Sentry
+    // chasing the wrong subsystem. The read still returns; the audit gap is
+    // reported on its own terms.
+    try {
+      await prisma.orgAuditLog.create({
+        data: {
+          organizationId: orgId,
+          actorMembershipId: access.member.id,
+          category: "SYSTEM",
+          action: AUDIT_ACTIONS.SYSTEM.STREAM_CHANNELS_EXPORTED,
+          description: `Listed ${rows.length} Stream chat channels`,
+          details: { page, pageSize: PAGE_SIZE, count: rows.length },
+        },
+      });
+    } catch (auditErr) {
+      Sentry.captureException(
+        auditErr instanceof Error ? auditErr : new Error(String(auditErr)),
+        { tags: { subsystem: "enterprise", surface: "stream-channels-audit" } },
+      );
+      streamLogger.error("Failed to record channel export audit", auditErr, {
+        orgId,
+        page,
+      });
+    }
 
     return NextResponse.json({
       page,
