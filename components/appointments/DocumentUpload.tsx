@@ -41,7 +41,7 @@ import {
   formatFileSize,
   getStatusColor,
   getStatusIcon,
-} from "@/app/dashboard/shared/utils/document-utils";
+} from "@/lib/documents/document-utils";
 
 interface DocumentUploadProps {
   appointmentId: string;

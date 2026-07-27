@@ -37,8 +37,8 @@ import {
 } from "./utils/participantHelpers";
 import { EventTimingsCalendar } from "./components/EventTimingsCalendar";
 import { useConsultantEventActions } from "./components/useConsultantEventActions";
-import { CancelConfirmationDialog } from "@/app/dashboard/consultee/[consulteeId]/(features)/appointments/CancelConfirmationDialog";
-import { RescheduleSessionsModal } from "@/app/dashboard/consultee/[consulteeId]/(features)/appointments/components/RescheduleSessionsModal";
+import { CancelConfirmationDialog } from "@/components/appointments/consultee/CancelConfirmationDialog";
+import { RescheduleSessionsModal } from "@/components/appointments/consultee/RescheduleSessionsModal";
 import { ConsultantResponseUpload } from "../documents/ConsultantResponseUpload";
 import {
   AlertDialog,
