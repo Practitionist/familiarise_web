@@ -170,11 +170,12 @@ export async function getEventAttendeeIds(
 ): Promise<string[]> {
   if (!appointment) return existingUserIds;
 
-  const eventFilter = appointment.webinar
-    ? { webinarId: appointment.webinar.id }
-    : appointment.class
-      ? { classId: appointment.class.id }
-      : null;
+  let eventFilter: { webinarId: string } | { classId: string } | null = null;
+  if (appointment.webinar) {
+    eventFilter = { webinarId: appointment.webinar.id };
+  } else if (appointment.class) {
+    eventFilter = { classId: appointment.class.id };
+  }
 
   if (!eventFilter) return existingUserIds;
 

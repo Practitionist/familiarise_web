@@ -7,7 +7,7 @@
  * result object and render the same copy either way.
  */
 
-import { createHash } from "crypto";
+import { createHash } from "node:crypto";
 import { Prisma, WaitlistSource, WaitlistStatus } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import {
@@ -244,12 +244,12 @@ export async function listSendableSubscribers() {
   });
 }
 
-function csvCell(value: string | null | undefined): string {
+function csvCell(value: string | null | undefined = ""): string {
   const raw = value ?? "";
   // Guard against a leading =, +, - or @ being interpreted as a formula when
   // the export is opened in a spreadsheet.
   const safe = /^[=+\-@]/.test(raw) ? `'${raw}` : raw;
-  return `"${safe.replace(/"/g, '""')}"`;
+  return `"${safe.replaceAll('"', '""')}"`;
 }
 
 export async function exportSubscribersCsv(

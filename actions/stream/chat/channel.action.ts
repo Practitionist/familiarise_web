@@ -579,20 +579,19 @@ export async function initializeAllChannels() {
     if (w.webinarPlan.consultantProfile?.user?.id) {
       userIds.add(w.webinarPlan.consultantProfile.user.id);
     }
-    (w.appointment?.slotsOfAppointment ?? []).forEach((slot) =>
-      slot.user.forEach((u) => userIds.add(u.id)),
-    );
+    (w.appointment?.slotsOfAppointment ?? [])
+      .flatMap((slot) => slot.user)
+      .forEach((u) => userIds.add(u.id));
   });
 
   classes.forEach((c) => {
     if (c.classPlan.consultantProfile?.user?.id) {
       userIds.add(c.classPlan.consultantProfile.user.id);
     }
-    c.appointments.forEach((apt) =>
-      apt.slotsOfAppointment.forEach((slot) =>
-        slot.user.forEach((u) => userIds.add(u.id)),
-      ),
-    );
+    c.appointments
+      .flatMap((apt) => apt.slotsOfAppointment)
+      .flatMap((slot) => slot.user)
+      .forEach((u) => userIds.add(u.id));
   });
 
   consultations.forEach((c) => {

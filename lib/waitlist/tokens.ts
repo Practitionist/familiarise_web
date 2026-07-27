@@ -11,7 +11,7 @@
  * work, and RFC 8058 one-click depends on it.
  */
 
-import { createHmac, timingSafeEqual } from "crypto";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { getAppUrl } from "@/lib/url";
 
 export const CONFIRM_TOKEN_TTL_MS = 48 * 60 * 60 * 1000;

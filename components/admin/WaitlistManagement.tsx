@@ -86,9 +86,64 @@ async function fetchSubscribers(
 
 /** Human label for an enum member: EVENT_SOLD_OUT → Event sold out. */
 function humanize(value: string): string {
-  const lower = value.toLowerCase().replace(/_/g, " ");
+  const lower = value.toLowerCase().replaceAll("_", " ");
   return lower.charAt(0).toUpperCase() + lower.slice(1);
 }
+
+const COLUMNS: ResponsiveColumn<Subscriber>[] = [
+  {
+    key: "email",
+    header: "Email",
+    primary: true,
+    cell: (row) => (
+      <div>
+        <p className="font-medium">{row.email}</p>
+        {row.name && (
+          <p className="text-xs text-muted-foreground">{row.name}</p>
+        )}
+      </div>
+    ),
+  },
+  {
+    key: "status",
+    header: "Status",
+    cell: (row) => (
+      <StatusBadge {...waitlistStatusBadge(row.status)} withDot size="sm" />
+    ),
+  },
+  {
+    key: "source",
+    header: "Source",
+    cell: (row) => (
+      <span className="text-sm text-muted-foreground">
+        {humanize(row.source)}
+      </span>
+    ),
+  },
+  {
+    key: "tags",
+    header: "Tags",
+    cell: (row) =>
+      row.tags.length > 0 ? (
+        <span className="text-sm text-muted-foreground">
+          {row.tags.join(", ")}
+        </span>
+      ) : (
+        <span className="text-sm text-muted-foreground">—</span>
+      ),
+  },
+  {
+    key: "joined",
+    header: "Signed up",
+    cell: (row) => format(new Date(row.createdAt), "MMM d, yyyy"),
+  },
+  {
+    key: "confirmed",
+    header: "Confirmed",
+    cell: (row) =>
+      row.confirmedAt ? format(new Date(row.confirmedAt), "MMM d, yyyy") : "—",
+  },
+];
 
 export function WaitlistManagement() {
   const { toast } = useToast();
@@ -147,63 +202,6 @@ export function WaitlistManagement() {
   const total = data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
 
-  const columns: ResponsiveColumn<Subscriber>[] = [
-    {
-      key: "email",
-      header: "Email",
-      primary: true,
-      cell: (row) => (
-        <div>
-          <p className="font-medium">{row.email}</p>
-          {row.name && (
-            <p className="text-xs text-muted-foreground">{row.name}</p>
-          )}
-        </div>
-      ),
-    },
-    {
-      key: "status",
-      header: "Status",
-      cell: (row) => (
-        <StatusBadge {...waitlistStatusBadge(row.status)} withDot size="sm" />
-      ),
-    },
-    {
-      key: "source",
-      header: "Source",
-      cell: (row) => (
-        <span className="text-sm text-muted-foreground">
-          {humanize(row.source)}
-        </span>
-      ),
-    },
-    {
-      key: "tags",
-      header: "Tags",
-      cell: (row) =>
-        row.tags.length > 0 ? (
-          <span className="text-sm text-muted-foreground">
-            {row.tags.join(", ")}
-          </span>
-        ) : (
-          <span className="text-sm text-muted-foreground">—</span>
-        ),
-    },
-    {
-      key: "joined",
-      header: "Signed up",
-      cell: (row) => format(new Date(row.createdAt), "MMM d, yyyy"),
-    },
-    {
-      key: "confirmed",
-      header: "Confirmed",
-      cell: (row) =>
-        row.confirmedAt
-          ? format(new Date(row.confirmedAt), "MMM d, yyyy")
-          : "—",
-    },
-  ];
-
   const statCards: Array<{ label: string; value: number }> = stats
     ? [
         { label: "Subscribed", value: stats.SUBSCRIBED },
@@ -212,6 +210,31 @@ export function WaitlistManagement() {
         { label: "Bounced", value: stats.BOUNCED },
       ]
     : [];
+
+  function renderSubscriberTable() {
+    if (error) {
+      return (
+        <p className="py-8 text-center text-muted-foreground">
+          Could not load subscribers.
+        </p>
+      );
+    }
+    if (isLoading) {
+      return <Skeleton className="h-64 rounded-lg" />;
+    }
+    return (
+      <ResponsiveTable<Subscriber>
+        columns={COLUMNS}
+        rows={items}
+        getRowId={(row) => row.id}
+        empty={
+          <div className="py-8 text-center text-muted-foreground">
+            No subscribers match these filters.
+          </div>
+        }
+      />
+    );
+  }
 
   return (
     <>
@@ -318,24 +341,7 @@ export function WaitlistManagement() {
               </Select>
             </div>
 
-            {error ? (
-              <p className="py-8 text-center text-muted-foreground">
-                Could not load subscribers.
-              </p>
-            ) : isLoading ? (
-              <Skeleton className="h-64 rounded-lg" />
-            ) : (
-              <ResponsiveTable<Subscriber>
-                columns={columns}
-                rows={items}
-                getRowId={(row) => row.id}
-                empty={
-                  <div className="py-8 text-center text-muted-foreground">
-                    No subscribers match these filters.
-                  </div>
-                }
-              />
-            )}
+            {renderSubscriberTable()}
 
             {totalPages > 1 && (
               <div className="flex items-center justify-between">

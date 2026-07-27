@@ -50,6 +50,50 @@ interface TxOutcome {
 
 const CANCEL_NOTE = "Cancelled by user during checkout";
 
+/**
+ * Give back whatever the buyer was holding.
+ *
+ * Group events never mint a per-buyer slot: registration connects the buyer to
+ * the event's shared session slots, so releasing the seat means disconnecting
+ * them. Deleting the slot would take every other attendee's session with it,
+ * and webinar slots are non-tentative anyway — which is why the old
+ * `deleteMany({ isTentative: true })` released nothing at all.
+ */
+async function releaseSlots(
+  tx: Tx,
+  appt: {
+    id: string;
+    class?: { id: string } | null;
+    webinar?: { id: string } | null;
+  },
+  userId: string,
+): Promise<number> {
+  if (!appt.class && !appt.webinar) {
+    const res = await tx.slotOfAppointment.deleteMany({
+      where: { appointmentId: appt.id, isTentative: true },
+    });
+    return res.count;
+  }
+
+  const seatFilter = appt.class
+    ? { appointment: { classId: appt.class.id } }
+    : { appointmentId: appt.id };
+
+  const seatSlots = await tx.slotOfAppointment.findMany({
+    where: { ...seatFilter, user: { some: { id: userId } } },
+    select: { id: true },
+  });
+
+  for (const slot of seatSlots) {
+    await tx.slotOfAppointment.update({
+      where: { id: slot.id },
+      data: { user: { disconnect: { id: userId } } },
+    });
+  }
+
+  return seatSlots.length;
+}
+
 export async function cancelPendingCheckout(args: {
   paymentId: string;
   userId: string;
@@ -109,33 +153,7 @@ export async function cancelPendingCheckout(args: {
         let slotsReleased = 0;
         const appt = payment.appointment;
         if (appt) {
-          if (appt.class || appt.webinar) {
-            // Group events never mint a per-buyer slot: registration connects
-            // the buyer to the event's shared session slots. Releasing the
-            // seat therefore means disconnecting them — deleting the slot
-            // would take every other attendee's session with it. The slots
-            // are also non-tentative for webinars, which is why the old
-            // `deleteMany({ isTentative: true })` released nothing at all.
-            const seatFilter = appt.class
-              ? { appointment: { classId: appt.class.id } }
-              : { appointmentId: appt.id };
-            const seatSlots = await tx.slotOfAppointment.findMany({
-              where: { ...seatFilter, user: { some: { id: args.userId } } },
-              select: { id: true },
-            });
-            for (const slot of seatSlots) {
-              await tx.slotOfAppointment.update({
-                where: { id: slot.id },
-                data: { user: { disconnect: { id: args.userId } } },
-              });
-            }
-            slotsReleased = seatSlots.length;
-          } else {
-            const res = await tx.slotOfAppointment.deleteMany({
-              where: { appointmentId: appt.id, isTentative: true },
-            });
-            slotsReleased = res.count;
-          }
+          slotsReleased = await releaseSlots(tx, appt, args.userId);
 
           if (appt.consultation) {
             await transitionConsultationRequest(tx, {

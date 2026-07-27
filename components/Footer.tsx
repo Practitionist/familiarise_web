@@ -111,6 +111,13 @@ const Footer: React.FC = () => {
 
   if (excludeFooter) return null;
 
+  const waitlistButtonLabel = {
+    idle: "Join waitlist",
+    loading: "Signing up...",
+    success: "Check your email",
+    error: "Join waitlist",
+  }[waitlistStatus];
+
   const handleWaitlistSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email || waitlistStatus === "loading") return;
@@ -179,11 +186,7 @@ const Footer: React.FC = () => {
                 }
                 className="h-14 bg-white text-zinc-900 hover:bg-zinc-200 px-8 rounded-xl font-medium shrink-0"
               >
-                {waitlistStatus === "loading"
-                  ? "Signing up..."
-                  : waitlistStatus === "success"
-                    ? "Check your email"
-                    : "Join waitlist"}
+                {waitlistButtonLabel}
               </Button>
             </form>
 

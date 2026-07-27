@@ -60,51 +60,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     for (let i = 0; i < subscribers.length; i += BATCH_SIZE) {
       const batch = subscribers.slice(i, i + BATCH_SIZE);
-      const batchNumber = Math.floor(i / BATCH_SIZE) + 1;
+      const emails = batch.map((sub) =>
+        buildMessage(sub.email, subject, htmlBody, textBody),
+      );
 
-      const emails = batch.map((sub) => {
-        const unsubscribeUrl = buildUnsubscribeUrl(sub.email);
-        return {
-          from: FROM_ADDRESS,
-          to: sub.email,
-          subject,
-          html: appendUnsubscribeFooter(htmlBody, unsubscribeUrl),
-          text: textBody,
-          headers: {
-            "List-Unsubscribe": `<${unsubscribeUrl}>`,
-            "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
-          },
-        };
-      });
-
-      try {
-        const result = await resend.batch.send(emails);
-        if (result.error) {
-          throw new Error(result.error.message || "Resend batch error");
-        }
-        sent += result.data?.data?.length ?? batch.length;
-      } catch (batchError) {
+      const outcome = await sendBatch(resend, emails);
+      if (outcome.ok) {
+        sent += outcome.sent;
+      } else {
         failed += batch.length;
         errors.push(
-          `Batch ${batchNumber}: ${
-            batchError instanceof Error ? batchError.message : "Unknown error"
-          }`,
+          `Batch ${Math.floor(i / BATCH_SIZE) + 1}: ${outcome.error}`,
         );
-        // Dead-letter each message so the retry worker can replay it — the
-        // old route only counted failures and dropped the content.
-        for (const email of emails) {
-          await recordFailedEmail(
-            {
-              from: email.from,
-              to: email.to,
-              subject: email.subject,
-              html: email.html,
-              text: email.text,
-            },
-            "WAITLIST_BROADCAST",
-            batchError,
-          );
-        }
       }
     }
 
@@ -132,6 +99,64 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 }
 
+type BroadcastMessage = ReturnType<typeof buildMessage>;
+
+function buildMessage(
+  email: string,
+  subject: string,
+  htmlBody: string,
+  textBody: string | undefined,
+) {
+  const unsubscribeUrl = buildUnsubscribeUrl(email);
+  return {
+    from: FROM_ADDRESS,
+    to: email,
+    subject,
+    html: appendUnsubscribeFooter(htmlBody, unsubscribeUrl),
+    text: textBody,
+    headers: {
+      "List-Unsubscribe": `<${unsubscribeUrl}>`,
+      "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+    },
+  };
+}
+
+/**
+ * Sends one batch. A failure dead-letters every message in it so the retry
+ * worker can replay them — the old route only counted the failure and dropped
+ * the content.
+ */
+async function sendBatch(
+  resend: NonNullable<ReturnType<typeof getResendClient>>,
+  emails: BroadcastMessage[],
+): Promise<{ ok: true; sent: number } | { ok: false; error: string }> {
+  try {
+    const result = await resend.batch.send(emails);
+    if (result.error) {
+      throw new Error(result.error.message || "Resend batch error");
+    }
+    return { ok: true, sent: result.data?.data?.length ?? emails.length };
+  } catch (batchError) {
+    for (const email of emails) {
+      await recordFailedEmail(
+        {
+          from: email.from,
+          to: email.to,
+          subject: email.subject,
+          html: email.html,
+          text: email.text,
+        },
+        "WAITLIST_BROADCAST",
+        batchError,
+      );
+    }
+    return {
+      ok: false,
+      error: batchError instanceof Error ? batchError.message : "Unknown error",
+    };
+  }
+}
+
 function appendUnsubscribeFooter(html: string, unsubscribeUrl: string): string {
   const footer = `
 <div style="text-align:center;margin:30px 0 0;padding:20px 0;border-top:1px solid #eee">
@@ -145,7 +170,9 @@ function appendUnsubscribeFooter(html: string, unsubscribeUrl: string): string {
   </p>
 </div>`;
 
-  if (html.includes("</body>")) return html.replace("</body>", `${footer}</body>`);
-  if (html.includes("</html>")) return html.replace("</html>", `${footer}</html>`);
+  if (html.includes("</body>"))
+    return html.replace("</body>", `${footer}</body>`);
+  if (html.includes("</html>"))
+    return html.replace("</html>", `${footer}</html>`);
   return html + footer;
 }
