@@ -406,8 +406,11 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
                     type="email"
                     value={billingEmail}
                     onChange={(e) => setBillingEmail(e.target.value)}
-                    // #779 §A — finance remit: BILLING_ADMIN edits this via the
-                    // billing page; on THIS page only OWNER may change it.
+                    // #779 §A — finance remit. BILLING_ADMIN edits this on the
+                    // Billing tab, which is gated on `billing.manage`; on THIS
+                    // panel only OWNER may change it. (That tab now exists —
+                    // the comment used to point at a billing page that was
+                    // never built, so the field was OWNER-only in practice.)
                     disabled={!isAtLeast("OWNER")}
                   />
                 </div>
@@ -486,8 +489,8 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
                     max="120"
                     value={paymentTermsDays}
                     onChange={(e) => setPaymentTermsDays(e.target.value)}
-                    // #779 §A — finance remit (BILLING_ADMIN edits via billing;
-                    // OWNER here).
+                    // #779 §A — finance remit (BILLING_ADMIN edits this on the
+                    // Billing tab; OWNER here).
                     disabled={!isAtLeast("OWNER")}
                   />
                   <p className="text-xs text-zinc-500">

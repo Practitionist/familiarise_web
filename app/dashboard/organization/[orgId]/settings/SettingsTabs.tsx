@@ -12,7 +12,10 @@
  * `settings.manage` is GOVERNANCE (OWNER + MAINTAINER), `integrations.read` is
  * the finance set (which includes BILLING_ADMIN), and SSO is an OWNER rank
  * floor — a genuine hierarchy check, not a surface grant. A BILLING_ADMIN
- * therefore lands on Webhooks with no General tab, which is correct.
+ * therefore lands on Billing and Webhooks with no General tab, which is
+ * correct: `billing.manage` is OWNER + BILLING_ADMIN, and the Billing tab
+ * carries exactly the two fields the server's field-level gate already let
+ * that role write.
  */
 
 import { DashboardHeader } from "@/components/dashboard/PageScaffold";
@@ -21,6 +24,7 @@ import { hasOrgPermission } from "@/lib/auth/org-permissions";
 
 import { useOrgRole } from "../useOrgRole";
 import { GeneralPanel } from "./GeneralPanel";
+import { BillingSettingsPanel } from "./BillingSettingsPanel";
 import { SsoPanel } from "./SsoPanel";
 import { WebhooksPanel } from "./WebhooksPanel";
 import { ScimPanel } from "./ScimPanel";
@@ -49,6 +53,17 @@ export function SettingsTabs({ orgId }: { orgId: string }) {
       content: <SsoPanel orgId={orgId} />,
       // Rank floor, not a matrix surface — SSO config is OWNER-only.
       show: role === "OWNER",
+    },
+    {
+      value: "billing",
+      label: "Billing",
+      content: <BillingSettingsPanel orgId={orgId} />,
+      // `billing.manage` (OWNER + BILLING_ADMIN), not `settings.manage`. The
+      // server has always let BILLING_ADMIN write these two fields — see
+      // BILLING_ADMIN_FIELDS in the org PATCH route — but the only UI for them
+      // sat on General behind GOVERNANCE, so the finance role could not reach
+      // the billing email it owns.
+      show: can("billing.manage"),
     },
     {
       value: "webhooks",
