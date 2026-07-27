@@ -128,13 +128,18 @@ export async function GET(request: NextRequest) {
         consultantImage:
           consultation.consultationPlan.consultantProfile.user.image ||
           undefined,
-        // Funding context is part of the DM key now, so a search hit on an
-        // org-funded session must resolve to that org's thread rather than the
-        // pair's personal one.
+        // Funding context is part of the DM key, so a hit must resolve to the
+        // SAME channel the creator made. Precedence matches
+        // createConsultationChannel exactly — plan org first, then the
+        // appointment's. Reading only the appointment sent org-hosted-plan
+        // bookings to a personal channel that was never created, so clicking
+        // the result opened an empty conversation.
         channelId: getDmChannelId(
           consultation.consultationPlan.consultantProfile.user.id,
           consultation.requestedBy.user.id,
-          consultation.appointment?.organizationId ?? null,
+          consultation.consultationPlan.organizationId ??
+            consultation.appointment?.organizationId ??
+            null,
         ),
       });
     }
@@ -240,10 +245,13 @@ export async function GET(request: NextRequest) {
         consultantImage:
           subscription.subscriptionPlan.consultantProfile.user.image ||
           undefined,
+        // Same precedence as createSubscriptionChannel.
         channelId: getDmChannelId(
           subscription.subscriptionPlan.consultantProfile.user.id,
           subscription.requestedBy.user.id,
-          subscription.appointments?.[0]?.organizationId ?? null,
+          subscription.subscriptionPlan.organizationId ??
+            subscription.appointments?.[0]?.organizationId ??
+            null,
         ),
       });
     }

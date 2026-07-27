@@ -354,7 +354,9 @@ export function RequestSlotAllocationTab({
         setLoading(false);
       }
     }
-  }, [consultantId, type, error]);
+    // orgScope belongs here: fetchData builds both URLs from it, so without it
+    // a scope change without a remount keeps refetching the previous org's rows.
+  }, [consultantId, type, error, orgScope]);
 
   useEffect(() => {
     fetchData();

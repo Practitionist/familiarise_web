@@ -1,0 +1,113 @@
+/**
+ * @jest-environment node
+ */
+
+/**
+ * Four call sites compute a DM channel id, and every one of them has to agree
+ * with the creators in `actions/stream/chat/channel.action.ts` — they are
+ * recomputing an id those creators already used, so any divergence points at a
+ * channel that does not exist.
+ *
+ * The creators resolve context as:
+ *
+ *     plan.organizationId ?? appointment.organizationId ?? null
+ *
+ * Two genuinely distinct cases sit behind that `??`: a plan can be org-HOSTED
+ * while the booking is self-funded, and a personal plan can be booked through an
+ * org-funded membership. Review found three consumers reading only the
+ * appointment, which treated every org-hosted-plan booking as personal. The
+ * reconcile set then looked for `dm-<a>-<b>` while the real channel was `dmo-…`
+ * — never re-joined at best, and at worst treated as stale so the user was
+ * removed from their own conversation.
+ *
+ * These assertions are source-level because the point is which expression each
+ * site uses, not what a mocked Prisma row would return.
+ */
+
+import { readFileSync } from "fs";
+import { join } from "path";
+
+import { getDmChannelId, STREAM_CHANNEL_ID_MAX } from "@/lib/stream-utils";
+
+const read = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8");
+
+describe("every consumer matches the creators' precedence", () => {
+  it("the creators put plan org first", () => {
+    const src = read("actions/stream/chat/channel.action.ts");
+    expect(src).toContain(
+      "consultation.consultationPlan.organizationId ??\n        consultation.appointment?.organizationId ??",
+    );
+  });
+
+  it.each([
+    ["reconcile", "actions/stream/chat/event-channel.action.ts", "consultationPlan?.organizationId"],
+    ["search", "app/api/stream/channels/search-appointments/route.ts", "consultationPlan.organizationId ??"],
+    ["backfill", "scripts/stream/backfill-channel-org.ts", "consultationPlan?.organizationId ??"],
+  ])("%s reads the plan org before the appointment's", (_label, rel, needle) => {
+    expect(read(rel)).toContain(needle);
+  });
+
+  it.each([
+    ["reconcile", "actions/stream/chat/event-channel.action.ts"],
+    ["search", "app/api/stream/channels/search-appointments/route.ts"],
+    ["backfill", "scripts/stream/backfill-channel-org.ts"],
+  ])("%s loads the plan org it now depends on", (_label, rel) => {
+    // A precedence that reads a field the query never selected is silently
+    // `undefined`, which falls through to the appointment and reintroduces the
+    // bug without failing anything.
+    expect(read(rel)).toContain("organizationId: true");
+  });
+});
+
+describe("channel ids stay inside Stream's cap without throwing", () => {
+  const CUID_A = "cmqb1757m005stxyoe218odf1";
+  const CUID_B = "cmqb190qa00hotxyor367yjz1";
+  const UUID_A = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+  const UUID_B = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+
+  it("leaves ordinary personal ids byte-identical, so no channel moves", () => {
+    expect(getDmChannelId(CUID_A, CUID_B)).toBe(`dm-${CUID_A}-${CUID_B}`);
+  });
+
+  it("is order-independent", () => {
+    expect(getDmChannelId(CUID_B, CUID_A)).toBe(getDmChannelId(CUID_A, CUID_B));
+  });
+
+  it("degrades legacy uuid pairs instead of throwing", () => {
+    // `dm-<36>-<36>` is 76 chars. Throwing here rejected the whole
+    // reconciliation — `getDmPairsForUser` and the `expectedChannelIds` map are
+    // not wrapped per-item — so one legacy account broke channel sync for
+    // everyone paired with it.
+    expect(`dm-${UUID_A}-${UUID_B}`.length).toBeGreaterThan(
+      STREAM_CHANNEL_ID_MAX,
+    );
+
+    const id = getDmChannelId(UUID_A, UUID_B);
+    expect(id.startsWith("dmh-")).toBe(true);
+    expect(id.length).toBeLessThanOrEqual(STREAM_CHANNEL_ID_MAX);
+    // Deterministic, or the fallback would strand the conversation.
+    expect(getDmChannelId(UUID_B, UUID_A)).toBe(id);
+  });
+
+  it("keeps the three namespaces distinct", () => {
+    const personal = getDmChannelId(CUID_A, CUID_B);
+    const org = getDmChannelId(CUID_A, CUID_B, "org-1");
+    const legacy = getDmChannelId(UUID_A, UUID_B);
+
+    expect(new Set([personal, org, legacy]).size).toBe(3);
+    expect(org.startsWith("dmo-")).toBe(true);
+  });
+
+  it("separates two orgs for the same pair, with room to spare", () => {
+    const a = getDmChannelId(CUID_A, CUID_B, "org-1");
+    const b = getDmChannelId(CUID_A, CUID_B, "org-2");
+    expect(a).not.toBe(b);
+
+    // The org segment is the ONLY differentiator between two orgs' otherwise
+    // identical pair digest, so a collision would merge two organizations' DM
+    // threads. 8 hex chars was 32 bits; this is 64.
+    const orgSegment = a.split("-")[1];
+    expect(orgSegment).toHaveLength(16);
+    expect(a.length).toBeLessThanOrEqual(STREAM_CHANNEL_ID_MAX);
+  });
+});

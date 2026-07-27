@@ -575,6 +575,8 @@ export default function OrgLayout({
     compensation:       "Compensation",
     collaborations:     "Collaborations",
     appointments:       "Appointments",
+    messages:           "Messages",
+    requests:           "Requests",
     members:      "Members",
     programs:     "Programs",
     contracts:    "Contracts",

@@ -708,15 +708,31 @@ interface DmPair {
 }
 
 /**
- * The org a booking was funded by. Consultations carry one appointment,
- * subscriptions many — but a subscription is funded once, so every appointment
- * under it shares the org and the first is representative.
+ * The org context a DM channel was created under.
+ *
+ * Precedence MUST match `createConsultationChannel` / `createSubscriptionChannel`
+ * exactly — `plan.organizationId ?? appointment.organizationId ?? null` — because
+ * this function recomputes the channel id those creators already used. They are
+ * two distinct cases: a plan can be org-HOSTED while the booking is self-funded,
+ * and a personal plan can be booked through an org-funded membership.
+ *
+ * Reading only the appointment treated every org-hosted-plan booking as
+ * personal, so the reconcile set looked for `dm-<a>-<b>` while the real channel
+ * was `dmo-…`. At best it was never re-joined; at worst the real one was treated
+ * as stale and the user removed from it.
+ *
+ * Subscriptions carry many appointments but are funded once, so the first is
+ * representative.
  */
 function bookingOrgId(booking: {
+  consultationPlan?: { organizationId: string | null } | null;
+  subscriptionPlan?: { organizationId: string | null } | null;
   appointment?: { organizationId: string | null } | null;
   appointments?: { organizationId: string | null }[];
 }): string | null {
   return (
+    booking.consultationPlan?.organizationId ??
+    booking.subscriptionPlan?.organizationId ??
     booking.appointment?.organizationId ??
     booking.appointments?.[0]?.organizationId ??
     null
@@ -743,9 +759,11 @@ async function getDmPairsForUser(
         },
         include: {
           requestedBy: { include: { user: { select: { id: true } } } },
-          // The DM channel key now includes the funding context, so the
-          // reconcile set has to know it too — otherwise it would look for a
-          // personal channel that an org booking never created.
+          // The DM channel key includes the funding context, so the reconcile
+          // set has to know it too — otherwise it looks for a personal channel
+          // that an org booking never created. Plan org FIRST, matching
+          // createConsultationChannel's precedence exactly.
+          consultationPlan: { select: { organizationId: true } },
           appointment: { select: { organizationId: true } },
         },
       }),
@@ -756,6 +774,7 @@ async function getDmPairsForUser(
         },
         include: {
           requestedBy: { include: { user: { select: { id: true } } } },
+          subscriptionPlan: { select: { organizationId: true } },
           appointments: { select: { organizationId: true }, take: 1 },
         },
       }),

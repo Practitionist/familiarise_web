@@ -5,8 +5,8 @@
  * it too, and `lib/` importing a type out of a route folder — through a
  * `[consultantId]` dynamic segment — inverts the dependency direction: `app/`
  * is the routing layer and should depend on `lib`, `components` and `hooks`,
- * never the reverse. The card re-exports it so route-local imports are
- * unchanged and there is still exactly one definition.
+ * never the reverse. Nothing re-exports it — the card imports it from here like
+ * every other consumer, so there is one definition and one import path.
  */
 export interface RecordingData {
   id: string;

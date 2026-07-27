@@ -163,7 +163,16 @@ export default [
         {
           patterns: [
             {
-              group: ["@/app/*", "@/app/**"],
+              // Both spellings. The alias form is what anyone would normally
+              // write, but `../../app/...` resolves to exactly the same module
+              // and would have walked straight past an alias-only rule.
+              group: [
+                "@/app/*",
+                "@/app/**",
+                "**/app/dashboard/**",
+                "**/app/api/**",
+                "**/app/explore/**",
+              ],
               message:
                 "Do not import from app/ here — app/ is the routing layer and must depend on these layers, not the reverse. Move the shared code into lib/, components/, hooks/ or types/, or put the response shape in schemas/ and derive both sides from it.",
             },

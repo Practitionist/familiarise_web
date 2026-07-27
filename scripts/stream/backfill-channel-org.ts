@@ -111,6 +111,7 @@ async function resolveChannelTarget(appointment: {
         select: {
           consultationPlan: {
             select: {
+              organizationId: true,
               consultantProfile: { select: { user: { select: { id: true } } } },
             },
           },
@@ -123,12 +124,13 @@ async function resolveChannelTarget(appointment: {
       if (!consultantId || !consulteeId) return null;
       return {
         channelType: "messaging",
-        // The DM key carries the funding context, and this backfill is walking
-        // appointments — so the org is the appointment's own, not a guess.
+        // Precedence must match the creators: an org-HOSTED plan wins over the
+        // appointment's own tag, or this targets a channel that was never made.
         channelId: getDmChannelId(
           consultantId,
           consulteeId,
-          appointment.organizationId,
+          consultation?.consultationPlan?.organizationId ??
+            appointment.organizationId,
         ),
       };
     }
@@ -139,6 +141,7 @@ async function resolveChannelTarget(appointment: {
         select: {
           subscriptionPlan: {
             select: {
+              organizationId: true,
               consultantProfile: { select: { user: { select: { id: true } } } },
             },
           },
@@ -151,12 +154,12 @@ async function resolveChannelTarget(appointment: {
       if (!consultantId || !consulteeId) return null;
       return {
         channelType: "messaging",
-        // The DM key carries the funding context, and this backfill is walking
-        // appointments — so the org is the appointment's own, not a guess.
+        // Same precedence as createSubscriptionChannel.
         channelId: getDmChannelId(
           consultantId,
           consulteeId,
-          appointment.organizationId,
+          subscription?.subscriptionPlan?.organizationId ??
+            appointment.organizationId,
         ),
       };
     }

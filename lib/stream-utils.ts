@@ -15,13 +15,27 @@ function digest(value: string, chars: number): string {
   return createHash("sha256").update(value).digest("hex").slice(0, chars);
 }
 
-function assertFits(channelId: string): string {
-  if (channelId.length > STREAM_CHANNEL_ID_MAX) {
-    throw new Error(
-      `Stream channel id exceeds ${STREAM_CHANNEL_ID_MAX} chars (${channelId.length}): ${channelId}`,
-    );
-  }
-  return channelId;
+/**
+ * Personal ids are `dm-<a>-<b>`, which fits comfortably for cuid users (54–61
+ * chars) but NOT for the 17 accounts still on 36-char uuids: two of those
+ * produce 76 chars.
+ *
+ * Throwing there was wrong. `getDmPairsForUser` and the `expectedChannelIds`
+ * map in `syncUserEventChannels` call this synchronously and un-isolated —
+ * unlike the add-pass, which is wrapped in `Promise.allSettled` — so a single
+ * legacy-id pair would reject the whole reconciliation and break channel sync
+ * for everyone paired with that account. Before the guard existed the same call
+ * simply produced a long id and failed later at the Stream API, affecting one
+ * channel rather than the run.
+ *
+ * So it degrades instead: a deterministic hashed form under a distinct prefix.
+ * Same input, same id, every time — and no id already in use changes, because
+ * every existing channel is under the cap.
+ */
+function fitOrHash(channelId: string, hashInput: string): string {
+  if (channelId.length <= STREAM_CHANNEL_ID_MAX) return channelId;
+  // `dmh-` keeps this namespace distinct from both `dm-` and `dmo-`.
+  return `dmh-${digest(hashInput, 40)}`;
 }
 
 /**
@@ -59,12 +73,17 @@ export function getDmChannelId(
   const [a, b] = [userId1, userId2].sort((x, y) => x.localeCompare(y));
 
   if (!organizationId) {
-    return assertFits(`dm-${a}-${b}`);
+    return fitOrHash(`dm-${a}-${b}`, `${a}-${b}`);
   }
 
   // Hash the pair, not only the org: the pair is the long part, and the point is
   // to stay well inside the ceiling rather than creep back up to it.
-  return assertFits(
-    `dmo-${digest(organizationId, 8)}-${digest(`${a}-${b}`, 16)}`,
-  );
+  //
+  // 16 and 24 hex chars — 64 and 96 bits. The org segment is the ONLY thing
+  // separating two organizations' otherwise-identical pair digest, so a
+  // collision there would merge two orgs' DM threads for the same pair. At 8
+  // chars (32 bits) the birthday bound makes that non-trivial in the tens of
+  // thousands of orgs; at 64 bits it is not a concern. The format still uses
+  // only 45 of the 64 available characters.
+  return `dmo-${digest(organizationId, 16)}-${digest(`${a}-${b}`, 24)}`;
 }

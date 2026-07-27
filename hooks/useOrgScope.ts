@@ -71,7 +71,10 @@ export interface UseOrgScopeOptions {
    *     org-tree counterpart, so merging the two here would duplicate a
    *     destination rather than complete one. Chat is the case: the org
    *     half lives at /dashboard/organization/[orgId]/messages.
-   * ADMIN / STAFF always default to "all" regardless of this option.
+   * ADMIN / STAFF default to "all" regardless of this option — EXCEPT when a
+   * caller passes "personal" explicitly, which wins for everyone. A privileged
+   * user landing on the union of a surface that has a separate org-tree half
+   * would see the org rows twice, once here and once there.
    * B2C users (no orgs) always default to "personal".
    */
   defaultForOrgMember?: "first-org" | "all" | "personal";
