@@ -6,19 +6,25 @@ RUN apk add --no-cache libc6-compat python3 make g++
 
 WORKDIR /app
 
-# Copy package files. `.npmrc` MUST come along: it carries
-# `legacy-peer-deps=true`, without which `npm ci` fails ERESOLVE on
-# better-call's peerOptional zod@^4 against the project's zod@3.
+# Copy package files. `.npmrc` MUST come along so the image resolves
+# dependencies exactly as local and CI do. It no longer sets
+# `legacy-peer-deps` — the one real conflict (better-call's peerOptional
+# zod@^4 against the project's zod@3) is pinned by `overrides` in
+# package.json, so a genuinely bad conflict elsewhere still fails loudly.
 COPY package.json package-lock.json .npmrc ./
 
-# Prisma schema must land BEFORE `npm ci`: package.json has a `postinstall`
-# of `prisma generate`, which fails with "Could not find Prisma Schema" if
-# the schema arrives afterwards. That postinstall also makes a separate
-# `npx prisma generate` step redundant.
+# Prisma schema must land BEFORE the install: package.json has a `postinstall`
+# of `prisma generate`, which fails with "Could not find Prisma Schema" if the
+# schema arrives afterwards.
 COPY prisma ./prisma/
 
-# Install dependencies (runs postinstall -> prisma generate)
-RUN npm ci
+# `--ignore-scripts` (sonar docker:S6505): a plain `npm ci` executes the
+# lifecycle scripts of every transitive dependency, which is arbitrary code
+# from the registry running in the build. We want exactly one of those scripts
+# — our own `prisma generate` — so it is suppressed for everything and then run
+# explicitly. The local binary rather than `npx`, which would be allowed to
+# fetch and execute an unpinned package on demand (docker:S6505, docker:S8543).
+RUN npm ci --ignore-scripts && ./node_modules/.bin/prisma generate
 
 # Copy application files (volumes will override in dev)
 COPY . .

@@ -448,19 +448,22 @@ Each route lives at `/dashboard/organization/[orgId]/<slug>`. All are MANAGER+ u
 | `/audit` | OrgAuditLog list + CSV export |
 | `/consent` | ConsentArtifact register |
 | `/analytics` | Cross-section aggregates (driven by `/api/organizations/[orgId]/analytics`) |
-| `/appointments` | Org-tagged appointment list |
-| `/waitlist` | Org-tagged waitlist entries |
-| `/trials` | Org-tagged trial sessions |
+| `/appointments` | Org-tagged appointment list, with a `Mine \| Everyone` scope toggle whose wider arm is gated on `operations.read` |
 | `/documents` | Bulk-review surface for org-scoped AppointmentDocuments |
 | `/recordings` | Recordings by org, governed by `streamRecordingRetentionDays` |
 | `/reimbursements` | PERSONAL spend dashboard (date filter + CSV export — C.B.4) |
 | `/domain-claims` | DNS TXT verification |
-| `/invitations` | Pending invitations |
-| `/experts` | EXPERT roster (canHost only) |
-| `/learners` | LEARNER roster |
-| `/integrations` | SCIM tokens, webhook endpoints, data-exports |
 
-OrgWorkspace cross-org operator pages live separately at `/dashboard/org-workspace/*` — 5 pages (`/home`, `/activity`, `/billing`, `/settings`, `/create`).
+Several routes in earlier revisions of this table no longer exist, and their
+destinations after the ADR 19 consolidation are as follows. `/invitations`,
+`/experts` and `/learners` became `?tab=` panels on `/members`, since all three
+were `?role=` queries against the endpoint the roster already read.
+`/integrations` split into the SCIM, webhooks and data-export panels on
+`/settings`, alongside SSO. `/trials` folded into `/appointments`, a trial being
+an appointment. `/waitlist` is gone because the waitlist feature is being
+retired rather than relocated.
+
+OrgWorkspace cross-org operator pages live separately at `/dashboard/org-workspace/*` — 6 pages (`/home`, `/activity`, `/billing`, `/settings`, `/support`, `/create`).
 
 ---
 
