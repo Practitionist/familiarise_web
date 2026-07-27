@@ -198,7 +198,7 @@ const WRITE_BLOCKED_IN_DEGRADED = [
   "/api/verification/submit", // Block verification submission
   "/api/verification/resubmit", // Block verification resubmission
   "/api/slots/appointments", // Block direct appointment creation/mutation
-  "/api/waitlist", // Block waitlist mutations
+  "/api/waitlist", // Block newsletter signups
   "/api/referrals", // Block referral code creation
   "/api/collaborators", // Block collaborator management
   "/api/payments/disputes", // Block dispute handling mutations

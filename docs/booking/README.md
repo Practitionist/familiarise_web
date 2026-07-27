@@ -98,7 +98,6 @@ graph TD
 | Understand cancellation                | [08-cancellation-flow.md](./08-cancellation-flow.md)                           |
 | Learn about trial sessions             | [09-trial-sessions.md](./09-trial-sessions.md)                                 |
 | See how checkout connects to booking   | [10-checkout-payment-integration.md](./10-checkout-payment-integration.md)     |
-| Understand the waitlist system         | [11-waitlist-system.md](./11-waitlist-system.md)                               |
 | Learn about concurrency and locking    | [12-concurrency-and-locking.md](./12-concurrency-and-locking.md)               |
 | See all cron jobs and background tasks | [13-cron-jobs-and-background-tasks.md](./13-cron-jobs-and-background-tasks.md) |
 | Set up local dev and run tests         | [14-local-development-and-testing.md](./14-local-development-and-testing.md)   |
@@ -123,7 +122,6 @@ Then reference these as needed:
 
 - [07-rescheduling-flow.md](./07-rescheduling-flow.md), [08-cancellation-flow.md](./08-cancellation-flow.md) -- Modify existing bookings
 - [09-trial-sessions.md](./09-trial-sessions.md) -- Trial session specifics
-- [11-waitlist-system.md](./11-waitlist-system.md) -- Waitlist for group events
 - [05-troubleshooting-and-changelog.md](./05-troubleshooting-and-changelog.md) -- Debug errors
 
 ## Related Documentation

@@ -48,7 +48,6 @@ graph TD
 | `lib/novu/workflows.ts`         | 27 workflow ID constants + 16 typed payload interfaces                                          |
 | `lib/novu/subscriber.ts`        | `syncSubscriber`, `updateSubscriberPreferences`, `deleteSubscriber`                             |
 | `lib/email.ts`                  | 6 Resend email functions (welcome, password reset, account linked, payment link/success/failed) |
-| `lib/waitlist/notifications.ts` | 4 waitlist-specific Resend emails (joined, spot available, expiring, expired)                   |
 
 ### Frontend
 
@@ -69,16 +68,14 @@ graph TD
 
 | Template                                  | Category | Sent Via      |
 | ----------------------------------------- | -------- | ------------- |
+| `waitlist/WaitlistConfirmEmail.tsx`       | Newsletter | lib/email.ts |
+| `waitlist/WaitlistWelcomeEmail.tsx`       | Newsletter | lib/email.ts |
 | `auth/WelcomeEmail.tsx`                   | Auth     | Resend direct |
 | `auth/PasswordResetEmail.tsx`             | Auth     | Resend direct |
 | `auth/AccountLinkedEmail.tsx`             | Auth     | Resend direct |
 | `payments/PaymentLinkEmail.tsx`           | Payments | Resend direct |
 | `payments/PaymentSuccessEmail.tsx`        | Payments | Resend direct |
 | `payments/PaymentFailedEmail.tsx`         | Payments | Resend direct |
-| `waitlist/WaitlistJoinedEmail.tsx`        | Waitlist | Resend direct |
-| `waitlist/WaitlistSpotAvailableEmail.tsx` | Waitlist | Resend direct |
-| `waitlist/WaitlistExpiringEmail.tsx`      | Waitlist | Resend direct |
-| `waitlist/WaitlistExpiredEmail.tsx`       | Waitlist | Resend direct |
 
 ### Schemas
 

@@ -268,7 +268,6 @@ export async function createWebinarChannel(webinarId: string) {
           consultantProfile: { include: { user: true } },
         },
       },
-      waitlist: { include: { user: true } },
       appointment: {
         include: {
           slotsOfAppointment: { include: { user: true } },
@@ -286,24 +285,16 @@ export async function createWebinarChannel(webinarId: string) {
     throw new Error("Consultant not found for webinar");
   }
 
-  // Get participant IDs from waitlist
-  const waitlistParticipantIds = webinar.waitlist.map((entry) => entry.userId);
-
-  // Get participant IDs from appointments
+  // Members are everyone connected to the webinar's session slots.
   const appointmentParticipantIds =
     webinar.appointment?.slotsOfAppointment?.flatMap((slot) =>
       slot.user.map((user) => user.id),
     ) || [];
 
-  // Combine both sets and remove duplicates
-  const allParticipantIds = Array.from(
-    new Set([...waitlistParticipantIds, ...appointmentParticipantIds]),
-  );
+  const allParticipantIds = Array.from(new Set(appointmentParticipantIds));
 
   console.log(
-    `Webinar ${webinarId} participants: ${waitlistParticipantIds.length} ` +
-      `from waitlist, ${appointmentParticipantIds.length} from appointments, ` +
-      `${allParticipantIds.length} total unique`,
+    `Webinar ${webinarId} participants: ${allParticipantIds.length} unique`,
   );
 
   return createChannel({
@@ -405,7 +396,7 @@ sequenceDiagram
     SA->>DB: Query webinar with participants
     DB-->>SA: Webinar data + participants
 
-    Note over SA: Collect participant IDs<br/>from waitlist & appointments
+    Note over SA: Collect participant IDs<br/>from the event's session slots
     Note over SA: Deduplicate IDs
 
     SA->>Stream: channel.create({<br/>type: "team",<br/>id: "webinar-{id}",<br/>members: [...]<br/>})
@@ -435,7 +426,7 @@ sequenceDiagram
 
 1. **Client Request**: Client calls server action with entity ID
 2. **Database Query**: Fetch entity data with all participants
-3. **Member Collection**: Gather IDs from waitlist and appointments
+3. **Member Collection**: Gather IDs from the event's session slots
 4. **Deduplication**: Remove duplicate participant IDs
 5. **Channel Creation**: Atomically create channel with members
 6. **Error Handling**: If users don't exist, upsert and retry

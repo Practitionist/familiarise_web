@@ -93,7 +93,7 @@ Single one-time event with multiple attendees.
 **Slots**: `slotsPerSession = Math.ceil(durationInHours / 0.5)`
 **Rules**: Consecutive slots required. Exactly one Appointment created. Consultant-scheduled (no request-based flow).
 
-**Enrollment**: Consultees enroll via checkout. If event is full, they join a waitlist.
+**Enrollment**: Consultees enroll via checkout. A full event is sold out — registration closes until the organizer raises its capacity.
 
 ---
 
@@ -118,7 +118,39 @@ flowchart LR
     F -->|Yes| G[Valid]
 ```
 
-Consultant-scheduled. Consultees enroll via checkout or join waitlist.
+Consultant-scheduled. Consultees enroll via checkout; a full event reads as sold out.
+
+---
+
+## Capacity
+
+Capacity applies to the two group event types, webinars and classes. It lives in
+two places, and the difference matters.
+
+`WebinarPlan.maxParticipants` and `ClassPlan.maxParticipants` are the plan's
+default: the number a newly created instance starts with.
+`Webinar.maxParticipants` and `Class.maxParticipants` are nullable per-instance
+overrides. The effective capacity of an event is its own value when it has one
+and the plan's otherwise, which is what `effectiveMaxParticipants` in
+`lib/events/capacity.ts` computes. Every surface that counts seats — the
+checkout gates, the explore pages, the planner cards, the participants screen —
+reads from that module, so there is one answer to "is this event full".
+
+A seat is taken by any user connected to one of the event's slots, whether or
+not their payment has settled. Registration connects the buyer to the event's
+shared session slots, so tentativeness is a property of the slot rather than of
+an individual registrant and cannot be filtered per person. An abandoned
+checkout releases its seat when `jobs/payments/cleanup-abandoned-payments.ts`
+disconnects the buyer, or immediately if they cancel the pending checkout
+themselves.
+
+The organizer edits capacity from the planner, which submits to
+`PATCH /api/bookings/{webinars,classes}/crud-with-plan`. Raising it simply
+reopens registration; there is no queue to notify. Lowering it below the number
+of people already registered is rejected with a 400 and a message naming the
+current count, and the check runs inside the update transaction so a booking
+cannot slip in between the check and the write. Nobody is ever removed from an
+event by a capacity change.
 
 ---
 

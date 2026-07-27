@@ -77,7 +77,6 @@ export type TWebinar = Prisma.WebinarGetPayload<{
           };
         };
         topics: true;
-
       };
     };
     appointment: {
@@ -93,7 +92,6 @@ export type TWebinar = Prisma.WebinarGetPayload<{
         payment: true;
       };
     };
-    waitlist: true;
   };
 }>;
 
@@ -116,7 +114,6 @@ export type TClass = Prisma.ClassGetPayload<{
         };
       };
     };
-    waitlist: true;
     appointments: {
       include: {
         slotsOfAppointment: {
@@ -184,7 +181,7 @@ export type TAppointment = Prisma.AppointmentGetPayload<{
                 user: true;
               };
             };
-    
+
             title: true;
           };
         };
@@ -199,7 +196,6 @@ export type TAppointment = Prisma.AppointmentGetPayload<{
                 user: true;
               };
             };
-    
           };
         };
       };

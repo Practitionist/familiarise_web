@@ -216,7 +216,6 @@ describe("Event Channel Actions", () => {
             user: { id: "consultant-1" },
           },
         },
-        waitlist: [{ userId: "user-1" }, { userId: "user-2" }],
         appointment: {
           slotsOfAppointment: [{ user: [{ id: "user-3" }] }],
         },
@@ -306,7 +305,6 @@ describe("Event Channel Actions", () => {
             user: { id: "consultant-1" },
           },
         },
-        waitlist: [{ userId: "user-1" }],
         appointments: [
           {
             slotsOfAppointment: [
@@ -340,7 +338,6 @@ describe("Event Channel Actions", () => {
           title: "Test Class",
           consultantProfile: null,
         },
-        waitlist: [],
         appointments: [],
       });
 
@@ -689,9 +686,9 @@ describe("Event Channel Actions", () => {
         consultantProfileId: null,
         consulteeProfileId: "consultee-123",
       });
-      mockPrisma.webinar.findMany
-        .mockResolvedValueOnce([{ id: "waitlist-webinar" }])
-        .mockResolvedValueOnce([{ id: "appointment-webinar" }]);
+      mockPrisma.webinar.findMany.mockResolvedValueOnce([
+        { id: "appointment-webinar" },
+      ]);
       mockPrisma.class.findMany.mockResolvedValue([]);
       mockPrisma.consultation.findMany.mockResolvedValue([]);
       mockPrisma.subscription.findMany.mockResolvedValue([]);
@@ -703,8 +700,8 @@ describe("Event Channel Actions", () => {
 
       await syncUserEventChannels("consultee-user");
 
-      // Should have been called twice - once for waitlist, once for appointments
-      expect(mockPrisma.webinar.findMany).toHaveBeenCalledTimes(2);
+      // One query: webinars the consultee holds a slot on.
+      expect(mockPrisma.webinar.findMany).toHaveBeenCalledTimes(1);
     });
   });
 

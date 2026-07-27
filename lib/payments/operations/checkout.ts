@@ -32,15 +32,8 @@ import { validateSlotTiming } from "@/lib/payments/utils/slot-validation";
 import { ensureConsulteeProfile } from "@/lib/profiles/ensure-consultee-profile";
 import { isMinuteWithinWeeklySlot } from "@/utils/slotAllocation/slotTimeUtils";
 import { buildOccupiedAppointmentFilter } from "@/utils/slotAllocation/occupancyPolicy";
-import {
-  countUniqueParticipants,
-  isUserEnrolled,
-  countWebinarParticipants,
-} from "@/lib/payments/utils/participants";
-import {
-  markWaitlistAsBooked,
-  countWaitlistHolds,
-} from "@/lib/waitlist/slot-handler";
+import { isUserEnrolled } from "@/lib/payments/utils/participants";
+import { getClassCapacity, getWebinarCapacity } from "@/lib/events/capacity";
 import { getExchangeRates } from "@/lib/currency";
 import {
   applyCreditsToPayment,
@@ -54,7 +47,10 @@ import {
   type AppointmentType,
 } from "@/lib/payments/payouts";
 import { walletDebit } from "@/lib/api/organizations/wallet";
-import { isWalletFrozen, WalletFrozenError } from "@/lib/payments/wallet-freeze";
+import {
+  isWalletFrozen,
+  WalletFrozenError,
+} from "@/lib/payments/wallet-freeze";
 import { recordSystemError } from "@/lib/enterprise/system-events";
 import {
   recordBookingUtilization,
@@ -153,7 +149,6 @@ function buildPaymentMetadata(
     discountCode: data.discountCode || "",
     notes: data.notes || "",
     ...(data.eventId && { eventId: data.eventId }),
-    ...(data.fromWaitlist && { fromWaitlist: data.fromWaitlist }),
     ...(orgContext?.organizationId && {
       organizationId: orgContext.organizationId,
     }),
@@ -199,9 +194,12 @@ export class PaymentIntentManager {
       return paymentResponse;
     } catch (error) {
       console.error("Payment intent creation failed:", error);
-      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), {
-        tags: { subsystem: "payments" },
-      });
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        {
+          tags: { subsystem: "payments" },
+        },
+      );
       throw new Error(
         "Failed to create payment intent. Please try again later.",
       );
@@ -220,10 +218,13 @@ export class PaymentIntentManager {
       this.activeIntents.delete(intentId);
     } catch (error) {
       console.error(`Failed to cancel payment intent ${intentId}:`, error);
-      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), {
-        tags: { subsystem: "payments" },
-        level: "warning",
-      });
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        {
+          tags: { subsystem: "payments" },
+          level: "warning",
+        },
+      );
       // Don't throw - cleanup should be best-effort
     }
   }
@@ -369,12 +370,13 @@ export async function calculateAmountAndValidate(
         }
 
         const consultantUserId = plan.consultantProfile?.userId;
-        const currentWebinarParticipants = countWebinarParticipants(
-          webinar.appointment,
-          [consultantUserId || ""],
-        );
+        const webinarCapacity = getWebinarCapacity({
+          webinar,
+          plan: webinar.webinarPlan,
+          excludeUserIds: consultantUserId ? [consultantUserId] : [],
+        });
 
-        if (currentWebinarParticipants >= plan.maxParticipants) {
+        if (webinarCapacity.isFull) {
           throw new Error("Webinar is full");
         }
 
@@ -417,14 +419,13 @@ export async function calculateAmountAndValidate(
         }
 
         const classConsultantUserId = plan.consultantProfile?.userId;
-        // FIX: Count unique participants, not total slots
-        // A user enrolled in a class with 8 sessions should count as 1 participant, not 8
-        const currentClassParticipants = countUniqueParticipants(
-          classInstance.appointments,
-          classConsultantUserId ? [classConsultantUserId] : [],
-        );
+        const classCapacity = getClassCapacity({
+          classInstance,
+          plan: classInstance.classPlan,
+          excludeUserIds: classConsultantUserId ? [classConsultantUserId] : [],
+        });
 
-        if (currentClassParticipants >= plan.maxParticipants) {
+        if (classCapacity.isFull) {
           throw new Error("Class is full");
         }
 
@@ -1012,39 +1013,6 @@ async function releaseCheckoutLock(
 }
 
 /**
- * Resolve the host org id for a webinar/class event so waitlist + recording
- * rows can stamp `organizationId` consistently with the parent Appointment
- * (which uses `plan.organizationId` per the SHARED-across-registrants tag).
- *
- * Used by the four waitlist creates in handleCheckout's catch blocks; the
- * tx that loaded the plan is already rolled back at that point so we have
- * to re-fetch. Returns null when the plan is personal (not org-owned).
- */
-async function resolveEventHostOrgId(
-  appointmentType: "WEBINAR" | "CLASS",
-  eventId: string,
-): Promise<string | null> {
-  try {
-    if (appointmentType === "WEBINAR") {
-      const w = await prisma.webinar.findUnique({
-        where: { id: eventId },
-        select: { webinarPlan: { select: { organizationId: true } } },
-      });
-      return w?.webinarPlan?.organizationId ?? null;
-    }
-    const c = await prisma.class.findUnique({
-      where: { id: eventId },
-      select: { classPlan: { select: { organizationId: true } } },
-    });
-    return c?.classPlan?.organizationId ?? null;
-  } catch {
-    // Best-effort: an error here shouldn't sink the waitlist add. The org
-    // dashboard's "events I host" rollup tolerates null FKs.
-    return null;
-  }
-}
-
-/**
  * BUG-E: Verify plan still exists inside lock
  * Prevents race condition where plan is deleted between initial validation and checkout
  */
@@ -1199,31 +1167,6 @@ async function revalidateInsideLock(
       }
     }
 
-    // FIX #548: Validate waitlist entry if this checkout originates from a waitlist offer.
-    // Verify the entry belongs to this user, is in NOTIFIED status, and hasn't expired.
-    if (
-      data.fromWaitlist &&
-      (data.appointmentType === "WEBINAR" || data.appointmentType === "CLASS")
-    ) {
-      const waitlistEntry = await tx.waitlist.findUnique({
-        where: { id: data.fromWaitlist },
-      });
-      if (!waitlistEntry) {
-        throw new Error("Waitlist entry not found");
-      }
-      if (waitlistEntry.userId !== userId) {
-        throw new Error("Waitlist entry does not belong to this user");
-      }
-      if (waitlistEntry.status !== "NOTIFIED") {
-        throw new Error(
-          "Waitlist offer is no longer valid (expired, cancelled, or already used)",
-        );
-      }
-      if (waitlistEntry.expiresAt && waitlistEntry.expiresAt < new Date()) {
-        throw new Error("Waitlist offer has expired");
-      }
-    }
-
     // Re-validate slot availability based on appointment type
     switch (data.appointmentType) {
       case "CONSULTATION": {
@@ -1357,7 +1300,13 @@ async function revalidateInsideLock(
               },
             },
             appointment: {
-              include: { slotsOfAppointment: true },
+              // `user` is load-bearing: without it the participant count is
+              // silently 0 and this whole recheck is dead.
+              include: {
+                slotsOfAppointment: {
+                  include: { user: { select: { id: true } } },
+                },
+              },
             },
           },
         });
@@ -1366,23 +1315,13 @@ async function revalidateInsideLock(
 
         const plan = webinar.webinarPlan;
         const consultantUserId = plan.consultantProfile?.userId;
-        const currentParticipants = countWebinarParticipants(
-          webinar.appointment,
-          [consultantUserId || ""],
-        );
-
-        // #837 — count NOTIFIED waitlist holds (seats offered to waitlisted
-        // users) so an FCFS buyer can't take one; exclude this buyer's own hold
-        // so a waitlisted user's fromWaitlist checkout still fits.
-        const webinarHolds = await countWaitlistHolds(tx, {
-          webinarId: data.eventId,
-          excludeUserId: userId,
+        const capacity = getWebinarCapacity({
+          webinar,
+          plan,
+          excludeUserIds: consultantUserId ? [consultantUserId] : [],
         });
 
-        if (
-          currentParticipants + webinarHolds >=
-          webinar.webinarPlan.maxParticipants
-        ) {
+        if (capacity.isFull) {
           throw new Error("Webinar is full");
         }
         break;
@@ -1411,23 +1350,14 @@ async function revalidateInsideLock(
 
         if (!classInstance) throw new Error("Class not found");
 
-        // FIX: Count unique participants, not total slots
         const ownerUserId = classInstance.classPlan.consultantProfile?.userId;
-        const currentParticipants = countUniqueParticipants(
-          classInstance.appointments,
-          ownerUserId ? [ownerUserId] : [],
-        );
-
-        // #837 — count NOTIFIED waitlist holds; exclude this buyer's own.
-        const classHolds = await countWaitlistHolds(tx, {
-          classId: data.eventId,
-          excludeUserId: userId,
+        const capacity = getClassCapacity({
+          classInstance,
+          plan: classInstance.classPlan,
+          excludeUserIds: ownerUserId ? [ownerUserId] : [],
         });
 
-        if (
-          currentParticipants + classHolds >=
-          classInstance.classPlan.maxParticipants
-        ) {
+        if (capacity.isFull) {
           throw new Error("Class is full");
         }
         break;
@@ -1694,7 +1624,6 @@ export async function handleWebinarCheckout(
           consultantProfile: true,
         },
       },
-      waitlist: true,
       appointment: {
         include: {
           slotsOfAppointment: {
@@ -1713,21 +1642,13 @@ export async function handleWebinarCheckout(
 
   const plan = webinar.webinarPlan;
   const consultantUserId = plan.consultantProfile?.userId;
-  const currentParticipants = countWebinarParticipants(webinar.appointment, [
-    consultantUserId || "",
-  ]);
-
-  // #837 — NOTIFIED waitlist holds occupy seats; exclude this buyer's own hold
-  // so a waitlisted user's fromWaitlist checkout still fits.
-  const webinarHolds = await countWaitlistHolds(tx, {
-    webinarId: webinar.id,
-    excludeUserId: userId,
+  const capacity = getWebinarCapacity({
+    webinar,
+    plan,
+    excludeUserIds: consultantUserId ? [consultantUserId] : [],
   });
 
-  // Check if max participants reached
-  // NOTE: Waitlist creation happens OUTSIDE the transaction in handleCheckout's catch block,
-  // because creating it here (inside the transaction) would be rolled back on throw.
-  if (currentParticipants + webinarHolds >= plan.maxParticipants) {
+  if (capacity.isFull) {
     throw new Error("Webinar is full");
   }
 
@@ -1823,7 +1744,6 @@ export async function handleClassCheckout(
       classPlan: {
         include: { consultantProfile: true },
       },
-      waitlist: true,
       appointments: {
         include: {
           slotsOfAppointment: {
@@ -1843,22 +1763,13 @@ export async function handleClassCheckout(
   const plan = classInstance.classPlan;
   const consultantUserId = plan.consultantProfile?.userId;
 
-  // OPT-2: Use extracted utility for participant counting
-  const currentParticipants = countUniqueParticipants(
-    classInstance.appointments,
-    consultantUserId ? [consultantUserId] : [],
-  );
-
-  // #837 — NOTIFIED waitlist holds occupy seats; exclude this buyer's own.
-  const classHolds = await countWaitlistHolds(tx, {
-    classId: classInstance.id,
-    excludeUserId: userId,
+  const capacity = getClassCapacity({
+    classInstance,
+    plan,
+    excludeUserIds: consultantUserId ? [consultantUserId] : [],
   });
 
-  // Check if max participants reached
-  // NOTE: Waitlist creation happens OUTSIDE the transaction in handleCheckout's catch block,
-  // because creating it here (inside the transaction) would be rolled back on throw.
-  if (currentParticipants + classHolds >= plan.maxParticipants) {
+  if (capacity.isFull) {
     throw new Error("Class is full");
   }
 
@@ -2335,9 +2246,14 @@ export async function handleCheckout(
         });
       } catch (paymentError) {
         console.error("Payment intent creation failed:", paymentError);
-        Sentry.captureException(paymentError instanceof Error ? paymentError : new Error(String(paymentError)), {
-          tags: { subsystem: "payments" },
-        });
+        Sentry.captureException(
+          paymentError instanceof Error
+            ? paymentError
+            : new Error(String(paymentError)),
+          {
+            tags: { subsystem: "payments" },
+          },
+        );
         throw new Error(
           "Failed to create payment intent. Please try again later.",
         );
@@ -2621,11 +2537,19 @@ export async function handleCheckout(
                     );
                   })
                   .catch((notifyErr) => {
-                    console.error("[notifyOrgProgramExhausted] failed:", notifyErr);
-                    Sentry.captureException(notifyErr instanceof Error ? notifyErr : new Error(String(notifyErr)), {
-                      tags: { subsystem: "payments" },
-                      level: "warning",
-                    });
+                    console.error(
+                      "[notifyOrgProgramExhausted] failed:",
+                      notifyErr,
+                    );
+                    Sentry.captureException(
+                      notifyErr instanceof Error
+                        ? notifyErr
+                        : new Error(String(notifyErr)),
+                      {
+                        tags: { subsystem: "payments" },
+                        level: "warning",
+                      },
+                    );
                   });
 
                 throw new Error(
@@ -2726,11 +2650,19 @@ export async function handleCheckout(
                     );
                   })
                   .catch((notifyErr) => {
-                    console.error("[notifyOrgProgramCapNear] failed:", notifyErr);
-                    Sentry.captureException(notifyErr instanceof Error ? notifyErr : new Error(String(notifyErr)), {
-                      tags: { subsystem: "payments" },
-                      level: "warning",
-                    });
+                    console.error(
+                      "[notifyOrgProgramCapNear] failed:",
+                      notifyErr,
+                    );
+                    Sentry.captureException(
+                      notifyErr instanceof Error
+                        ? notifyErr
+                        : new Error(String(notifyErr)),
+                      {
+                        tags: { subsystem: "payments" },
+                        level: "warning",
+                      },
+                    );
                   });
               }
             }
@@ -2931,7 +2863,7 @@ export async function handleCheckout(
       );
 
       // Mock/zero-amount/org-sponsored payment post-processing: referral
-      // qualifying action + waitlist. Real payments handle this via
+      // qualifying action. Real payments handle this via
       // handlePaymentSuccess() in the webhook, but these flows bypass
       // webhooks entirely.
       if (isMockPayment || isZeroAmountPayment || isOrgSponsoredPayment) {
@@ -2943,10 +2875,15 @@ export async function handleCheckout(
             `⚠️ Failed to process referral qualifying action for user ${userId}:`,
             referralError,
           );
-          Sentry.captureException(referralError instanceof Error ? referralError : new Error(String(referralError)), {
-            tags: { subsystem: "payments" },
-            level: "warning",
-          });
+          Sentry.captureException(
+            referralError instanceof Error
+              ? referralError
+              : new Error(String(referralError)),
+            {
+              tags: { subsystem: "payments" },
+              level: "warning",
+            },
+          );
         }
 
         // Create consultant earnings (mock payments bypass webhooks, so earnings must be created here)
@@ -3086,31 +3023,15 @@ export async function handleCheckout(
             `⚠️ Failed to process consultant referral qualifying action:`,
             consultantRefError,
           );
-          Sentry.captureException(consultantRefError instanceof Error ? consultantRefError : new Error(String(consultantRefError)), {
-            tags: { subsystem: "payments" },
-            level: "warning",
-          });
-        }
-
-        // Update waitlist status if coming from waitlist flow
-        if (validatedData.fromWaitlist) {
-          try {
-            await markWaitlistAsBooked(validatedData.fromWaitlist);
-            console.log(
-              JSON.stringify({
-                event: "waitlist_booking_completed",
-                waitlistId: validatedData.fromWaitlist,
-                timestamp: new Date().toISOString(),
-              }),
-            );
-          } catch (waitlistError) {
-            // Log but don't fail the checkout - payment was successful
-            console.error("Failed to update waitlist status:", waitlistError);
-            Sentry.captureException(waitlistError instanceof Error ? waitlistError : new Error(String(waitlistError)), {
+          Sentry.captureException(
+            consultantRefError instanceof Error
+              ? consultantRefError
+              : new Error(String(consultantRefError)),
+            {
               tags: { subsystem: "payments" },
               level: "warning",
-            });
-          }
+            },
+          );
         }
       }
 
@@ -3129,9 +3050,12 @@ export async function handleCheckout(
       };
     } catch (dbError) {
       console.error("Failed to create payment record:", dbError);
-      Sentry.captureException(dbError instanceof Error ? dbError : new Error(String(dbError)), {
-        tags: { subsystem: "payments" },
-      });
+      Sentry.captureException(
+        dbError instanceof Error ? dbError : new Error(String(dbError)),
+        {
+          tags: { subsystem: "payments" },
+        },
+      );
 
       // CRITICAL: Cancel payment intent since DB operation failed
       // (Skip cleanup for zero-amount payments — they have no real gateway intent)
@@ -3140,81 +3064,6 @@ export async function handleCheckout(
           paymentResponse.id,
           "Database operation failed - preventing orphaned payment intent",
         );
-      }
-
-      // Waitlist creation for full webinar — must happen OUTSIDE the transaction
-      // (transaction was rolled back above, so any tx.waitlist.create would be lost)
-      // NOTE: The capacity check in revalidateInsideLock also throws "Webinar is full",
-      // but that lands in the outer catch(error) block, not here. Both are handled.
-      if (
-        dbError instanceof Error &&
-        dbError.message === "Webinar is full" &&
-        validatedData.appointmentType === "WEBINAR" &&
-        validatedData.eventId
-      ) {
-        try {
-          const hostOrgId = await resolveEventHostOrgId(
-            "WEBINAR",
-            validatedData.eventId,
-          );
-          await prisma.waitlist.create({
-            data: {
-              userId,
-              webinarId: validatedData.eventId,
-              organizationId: hostOrgId,
-            },
-          });
-          throw new Error("Webinar is full. Added to waitlist.");
-        } catch (waitlistError) {
-          console.error("[WAITLIST CREATE ERROR]", waitlistError);
-          // Re-throw if it's our own "Added to waitlist" error
-          if (
-            waitlistError instanceof Error &&
-            waitlistError.message.includes("Added to waitlist")
-          ) {
-            throw waitlistError;
-          }
-          // Waitlist creation failed (e.g., already on waitlist) — fall through
-          Sentry.captureException(waitlistError instanceof Error ? waitlistError : new Error(String(waitlistError)), {
-            tags: { subsystem: "payments" },
-            level: "warning",
-          });
-        }
-      }
-
-      // Waitlist creation for full class — same pattern as webinar above
-      if (
-        dbError instanceof Error &&
-        dbError.message === "Class is full" &&
-        validatedData.appointmentType === "CLASS" &&
-        validatedData.eventId
-      ) {
-        try {
-          const hostOrgId = await resolveEventHostOrgId(
-            "CLASS",
-            validatedData.eventId,
-          );
-          await prisma.waitlist.create({
-            data: {
-              userId,
-              classId: validatedData.eventId,
-              organizationId: hostOrgId,
-            },
-          });
-          throw new Error("Class is full. Added to waitlist.");
-        } catch (waitlistError) {
-          console.error("[WAITLIST CREATE ERROR]", waitlistError);
-          if (
-            waitlistError instanceof Error &&
-            waitlistError.message.includes("Added to waitlist")
-          ) {
-            throw waitlistError;
-          }
-          Sentry.captureException(waitlistError instanceof Error ? waitlistError : new Error(String(waitlistError)), {
-            tags: { subsystem: "payments" },
-            level: "warning",
-          });
-        }
       }
 
       // #837 — WalletFrozenError carries httpStatus=409 + an actionable reason;
@@ -3260,66 +3109,6 @@ export async function handleCheckout(
         throw new Error(
           "Another user is currently booking this slot. Please wait a few seconds and try again.",
         );
-      }
-
-      // Waitlist creation for full webinar — handles capacity check from revalidateInsideLock
-      // (which runs OUTSIDE the inner try/catch(dbError), so errors land here)
-      if (
-        error.message === "Webinar is full" &&
-        validatedData.appointmentType === "WEBINAR" &&
-        validatedData.eventId
-      ) {
-        try {
-          const hostOrgId = await resolveEventHostOrgId(
-            "WEBINAR",
-            validatedData.eventId,
-          );
-          await prisma.waitlist.create({
-            data: {
-              userId,
-              webinarId: validatedData.eventId,
-              organizationId: hostOrgId,
-            },
-          });
-          throw new Error("Webinar is full. Added to waitlist.");
-        } catch (waitlistError) {
-          if (
-            waitlistError instanceof Error &&
-            waitlistError.message.includes("Added to waitlist")
-          ) {
-            throw waitlistError;
-          }
-          // Waitlist creation failed (e.g., already on waitlist) — rethrow original
-        }
-      }
-
-      // Waitlist creation for full class — same pattern as webinar above
-      if (
-        error.message === "Class is full" &&
-        validatedData.appointmentType === "CLASS" &&
-        validatedData.eventId
-      ) {
-        try {
-          const hostOrgId = await resolveEventHostOrgId(
-            "CLASS",
-            validatedData.eventId,
-          );
-          await prisma.waitlist.create({
-            data: {
-              userId,
-              classId: validatedData.eventId,
-              organizationId: hostOrgId,
-            },
-          });
-          throw new Error("Class is full. Added to waitlist.");
-        } catch (waitlistError) {
-          if (
-            waitlistError instanceof Error &&
-            waitlistError.message.includes("Added to waitlist")
-          ) {
-            throw waitlistError;
-          }
-        }
       }
     }
     throw error;

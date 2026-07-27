@@ -63,7 +63,7 @@ export interface ResolveScopeContext {
    * to" — no cross-tenant leak is possible, so the admin gate is
    * unnecessary and was the reason learners couldn't see their full
    * activity in one view. Cross-tenant endpoints (e.g. /api/appointments,
-   * /api/waitlist) leave this false and keep the admin restriction.
+   * /api/appointments) leave this false and keep the admin restriction.
    */
   allowAllForOwner?: boolean;
 }

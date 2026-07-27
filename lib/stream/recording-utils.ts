@@ -155,55 +155,40 @@ export function generateRecordingTitle(
 }
 
 /**
- * Get all attendee user IDs for a webinar or class event.
- * Queries appointment slot users and booked waitlist users in parallel.
+ * Get all attendee user IDs for a webinar or class event — everyone connected
+ * to one of the event's slots.
  */
 export async function getEventAttendeeIds(
-  appointment: {
-    webinar?: { id: string } | null;
-    class?: { id: string } | null;
-  } | null | undefined,
+  appointment:
+    | {
+        webinar?: { id: string } | null;
+        class?: { id: string } | null;
+      }
+    | null
+    | undefined,
   existingUserIds: string[] = [],
 ): Promise<string[]> {
   if (!appointment) return existingUserIds;
 
-  if (appointment.webinar) {
-    const [slotUsers, waitlistEntries] = await Promise.all([
-      prisma.slotOfAppointment.findMany({
-        where: { appointment: { webinarId: appointment.webinar.id } },
-        select: { user: { select: { id: true } } },
-      }),
-      prisma.waitlist.findMany({
-        where: { webinarId: appointment.webinar.id, status: "BOOKED" },
-        select: { userId: true },
-      }),
-    ]);
-    return Array.from(new Set([
+  const eventFilter = appointment.webinar
+    ? { webinarId: appointment.webinar.id }
+    : appointment.class
+      ? { classId: appointment.class.id }
+      : null;
+
+  if (!eventFilter) return existingUserIds;
+
+  const slotUsers = await prisma.slotOfAppointment.findMany({
+    where: { appointment: eventFilter },
+    select: { user: { select: { id: true } } },
+  });
+
+  return Array.from(
+    new Set([
       ...existingUserIds,
       ...slotUsers.flatMap((s) => s.user.map((u) => u.id)),
-      ...waitlistEntries.map((w) => w.userId),
-    ]));
-  }
-
-  if (appointment.class) {
-    const [slotUsers, waitlistEntries] = await Promise.all([
-      prisma.slotOfAppointment.findMany({
-        where: { appointment: { classId: appointment.class.id } },
-        select: { user: { select: { id: true } } },
-      }),
-      prisma.waitlist.findMany({
-        where: { classId: appointment.class.id, status: "BOOKED" },
-        select: { userId: true },
-      }),
-    ]);
-    return Array.from(new Set([
-      ...existingUserIds,
-      ...slotUsers.flatMap((s) => s.user.map((u) => u.id)),
-      ...waitlistEntries.map((w) => w.userId),
-    ]));
-  }
-
-  return existingUserIds;
+    ]),
+  );
 }
 
 export function getMeetingSessionOwnershipInfo(

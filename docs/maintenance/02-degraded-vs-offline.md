@@ -44,7 +44,7 @@
 | **Trials** (`/api/trials`, `/api/trials/[id]`)           | Allowed (gap)                           | Blocked                    | MEDIUM     |
 | **Plans** (`/api/plans/*`)                               | GET: Allowed, POST/PATCH: Allowed (gap) | Blocked                    | MEDIUM     |
 | **Slot appointments** (`/api/slots/appointments`)        | **Writes blocked (503)** (Mar 2026)     | Blocked                    | HIGH       |
-| **Waitlist** (`/api/waitlist`)                           | **Writes blocked (503)** (Mar 2026)     | Blocked                    | MEDIUM     |
+| **Waitlist / newsletter** (`/api/waitlist`)              | **Writes blocked (503)** (Mar 2026)     | Blocked                    | LOW        |
 | **Referrals** (`/api/referrals`)                         | **Writes blocked (503)** (Mar 2026)     | Blocked                    | MEDIUM     |
 | **Collaborators** (`/api/collaborators`)                 | **Writes blocked (503)** (Mar 2026)     | Blocked                    | MEDIUM     |
 | **Refunds** (`/api/payments/refunds`)                    | **Writes blocked (503)** (Mar 2026)     | Blocked                    | HIGH       |
@@ -77,7 +77,7 @@
 | Route | Reason |
 | --- | --- |
 | `/api/slots/appointments` | Prevent slot modifications during maintenance |
-| `/api/waitlist` | Prevent waitlist mutations |
+| `/api/waitlist` | Prevent newsletter signups |
 | `/api/referrals` | Prevent referral creation |
 | `/api/collaborators` | Prevent collaborator changes |
 | `/api/payments/refunds` | Prevent refund processing |

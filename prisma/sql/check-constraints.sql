@@ -40,6 +40,16 @@ ALTER TABLE "WebinarPlan" ADD CONSTRAINT "webinar_plan_max_participants_min" CHE
 ALTER TABLE "ClassPlan" DROP CONSTRAINT IF EXISTS "class_plan_max_participants_min";
 -- SPLIT
 ALTER TABLE "ClassPlan" ADD CONSTRAINT "class_plan_max_participants_min" CHECK ("maxParticipants" >= 1);
+-- SPLIT
+-- Per-instance capacity override. NULL means "inherit the plan's value", so
+-- the guard has to admit NULL while still rejecting a zero or negative cap.
+ALTER TABLE "Webinar" DROP CONSTRAINT IF EXISTS "webinar_max_participants_min";
+-- SPLIT
+ALTER TABLE "Webinar" ADD CONSTRAINT "webinar_max_participants_min" CHECK ("maxParticipants" IS NULL OR "maxParticipants" >= 1);
+-- SPLIT
+ALTER TABLE "Class" DROP CONSTRAINT IF EXISTS "class_max_participants_min";
+-- SPLIT
+ALTER TABLE "Class" ADD CONSTRAINT "class_max_participants_min" CHECK ("maxParticipants" IS NULL OR "maxParticipants" >= 1);
 
 -- SPLIT
 -- #440 — DB-level double-booking backstop for 1:1 bookings. The application

@@ -219,7 +219,10 @@ export async function addUserToEventChannel(
 
     return { success: true, channelId, created };
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "stream" } },
+    );
     streamLogger.error("Failed to add user to event channel", error, {
       eventType,
       eventId,
@@ -287,10 +290,6 @@ async function getEventData(eventType: EventType, eventId: string) {
               },
             },
           },
-          waitlist: {
-            where: { status: "BOOKED" },
-            select: { userId: true },
-          },
           appointment: {
             include: {
               slotsOfAppointment: {
@@ -305,12 +304,10 @@ async function getEventData(eventType: EventType, eventId: string) {
       const consultantId = webinar.webinarPlan.consultantProfile?.user?.id;
       if (!consultantId) return null;
 
-      const members = [
-        ...webinar.waitlist.map((w) => w.userId),
-        ...(webinar.appointment?.slotsOfAppointment?.flatMap((s) =>
+      const members =
+        webinar.appointment?.slotsOfAppointment?.flatMap((s) =>
           s.user.map((u) => u.id),
-        ) || []),
-      ];
+        ) || [];
 
       return { consultantId, members, name: webinar.webinarPlan.title };
     }
@@ -326,10 +323,6 @@ async function getEventData(eventType: EventType, eventId: string) {
               },
             },
           },
-          waitlist: {
-            where: { status: "BOOKED" },
-            select: { userId: true },
-          },
           appointments: {
             include: {
               slotsOfAppointment: {
@@ -344,13 +337,11 @@ async function getEventData(eventType: EventType, eventId: string) {
       const consultantId = classData.classPlan.consultantProfile?.user?.id;
       if (!consultantId) return null;
 
-      const members = [
-        ...classData.waitlist.map((w) => w.userId),
-        ...(classData.appointments?.flatMap(
+      const members =
+        classData.appointments?.flatMap(
           (a) =>
             a.slotsOfAppointment?.flatMap((s) => s.user.map((u) => u.id)) || [],
-        ) || []),
-      ];
+        ) || [];
 
       return { consultantId, members, name: classData.classPlan.title };
     }
@@ -447,7 +438,10 @@ export async function getUserEventChannels(userId: string) {
       memberCount: Object.keys(channel.state.members || {}).length,
     }));
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "stream" } },
+    );
     streamLogger.error("Failed to get user event channels", error, { userId });
     throw error;
   }
@@ -502,10 +496,13 @@ export async function syncUserEventChannels(
       await upsertUserToStream(userId);
     } catch (err) {
       if (err instanceof ConsentRequiredError) {
-        streamLogger.info("Skipping channel sync — Stream consent not granted", {
-          userId,
-          purposeCode: err.purposeCode,
-        });
+        streamLogger.info(
+          "Skipping channel sync — Stream consent not granted",
+          {
+            userId,
+            purposeCode: err.purposeCode,
+          },
+        );
         // Mark sync "completed" for this session so we don't retry the gated
         // upsert on every navigation; a re-grant clears caches via the consent
         // flow and a forced re-sync re-attempts it.
@@ -687,7 +684,10 @@ export async function syncUserEventChannels(
       durationMs: duration,
     };
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "stream" } },
+    );
     streamLogger.error("Channel sync failed", error, { userId });
     throw error;
   }
@@ -886,12 +886,8 @@ async function getWebinarIdsForUser(
     );
   }
 
-  // Consultee: get webinars from booked waitlist or appointments
+  // Consultee: get webinars they registered for
   queries.push(
-    prisma.webinar.findMany({
-      where: { waitlist: { some: { userId, status: "BOOKED" } } },
-      select: { id: true },
-    }),
     prisma.webinar.findMany({
       where: {
         appointment: {
@@ -931,12 +927,8 @@ async function getClassIdsForUser(
     );
   }
 
-  // Consultee: get classes from booked waitlist or appointments
+  // Consultee: get classes they enrolled in
   queries.push(
-    prisma.class.findMany({
-      where: { waitlist: { some: { userId, status: "BOOKED" } } },
-      select: { id: true },
-    }),
     prisma.class.findMany({
       where: {
         appointments: {

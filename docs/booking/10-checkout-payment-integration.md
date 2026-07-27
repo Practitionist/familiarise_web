@@ -155,7 +155,6 @@ When `isMockPayment = true`:
 
 - A payment intent is still created (for record-keeping)
 - The payment record is immediately set to `PaymentStatus.SUCCEEDED`
-- Waitlist status is updated synchronously (no webhook)
 - No webhook confirmation needed
 
 ---
@@ -184,7 +183,6 @@ The semaphore uses a Redis Lua script that atomically reads the counter, checks 
 
 **Slot conflict filtering**: The conflict check inside `revalidateInsideLock()` uses `buildOccupiedAppointmentFilter()` to exclude appointments with terminal statuses (CANCELLED, REJECTED, EXPIRED). This means cancelled, rejected, or expired appointment slots no longer block new bookings for the same time range.
 
-**Waitlist validation**: When `fromWaitlist` is provided, `revalidateInsideLock()` validates the waitlist entry inside the lock-protected region. It checks ownership (the waitlist entry belongs to the current user), status (must be NOTIFIED), and expiration (must not have passed `expiresAt`). This prevents race conditions where a waitlist entry could be used by the wrong user or after expiration.
 
 > Cross-reference: `docs/booking/12-concurrency-and-locking.md` for full locking architecture and Redis infrastructure details.
 
@@ -223,7 +221,6 @@ Runs outside the transaction. Failures are logged but do not roll back the payme
 | ---- | ---------------------------------------------------------------- | -------------------------------- |
 | 1    | `createEarningsFromPayment()`                                    | `sync-payment-earnings` cron job |
 | 2    | `createInvoiceFromPayment()`                                     | Manual reconciliation            |
-| 3    | `markWaitlistAsBooked()` (if `fromWaitlist` in metadata)         | N/A                              |
 | 4    | `notifyPaymentSuccess()` via Novu (to consultee)                 | N/A                              |
 | 5    | `notifyAppointmentBooked()` via Novu (to consultant + consultee) | N/A                              |
 
@@ -285,28 +282,6 @@ For subscriptions specifically, the legacy flow logs a warning since all new sub
 ```
 "Creating subscription via webhook - expected only for old payments"
 ```
-
----
-
-## Waitlist Integration
-
-The `fromWaitlist` parameter in the checkout schema carries the waitlist entry ID through the entire flow.
-
-**Flow**:
-
-1. Frontend passes `fromWaitlist: "<waitlistId>"` in checkout data
-2. `revalidateInsideLock()` validates the waitlist entry inside the lock-protected region:
-   - Confirms ownership (entry belongs to current user)
-   - Confirms status is NOTIFIED (not WAITING, EXPIRED, CANCELLED, etc.)
-   - Confirms the notification has not expired (current time < `expiresAt`)
-3. `buildPaymentMetadata()` includes `fromWaitlist` in payment intent metadata
-4. After successful payment:
-   - **Mock payment**: `markWaitlistAsBooked()` called synchronously in `handleCheckout()`
-   - **Real payment**: `markWaitlistAsBooked()` called in Phase 2 of `handlePaymentSuccess()`
-
-**File**: `lib/waitlist/slot-handler.ts` -- `markWaitlistAsBooked(waitlistId)`
-
-Waitlist updates are non-critical. If they fail, the payment and appointment are still valid. Errors are logged but do not cause the checkout or webhook handler to fail.
 
 ---
 

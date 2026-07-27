@@ -14,7 +14,6 @@ import prisma from "@/lib/prisma";
 import { notifyAppointmentCancelled } from "@/lib/novu";
 import { refundPayment } from "@/lib/payments/operations/refund";
 import { refundWholeEventPayments } from "@/lib/payments/operations/event-refunds";
-import { handleSlotOpening } from "@/lib/waitlist";
 import {
   CANCELLABLE_FROM,
   CLASS_EVENT_ALLOWED_FROM,
@@ -232,7 +231,11 @@ async function collectConsultantWork(
 async function runWorkItem(
   item: WorkItem,
   targetUserId: string,
-  ctx: { initiatedByUserId: string; notes?: string; summary: BulkCancelSummary },
+  ctx: {
+    initiatedByUserId: string;
+    notes?: string;
+    summary: BulkCancelSummary;
+  },
 ): Promise<void> {
   const { initiatedByUserId, notes, summary } = ctx;
   try {
@@ -261,7 +264,11 @@ async function runWorkItem(
         break;
     }
   } catch (error) {
-    summary.failures.push({ kind: item.kind, id: item.id, error: errMsg(error) });
+    summary.failures.push({
+      kind: item.kind,
+      id: item.id,
+      error: errMsg(error),
+    });
     captureModerationError(error);
   }
 }
@@ -281,7 +288,11 @@ interface NormalizedEngagement {
 async function cancelExclusiveEngagement(
   kind: "consultation" | "subscription",
   engagementId: string,
-  ctx: { initiatedByUserId: string; notes?: string; summary: BulkCancelSummary },
+  ctx: {
+    initiatedByUserId: string;
+    notes?: string;
+    summary: BulkCancelSummary;
+  },
 ) {
   const planSelect = {
     select: {
@@ -453,7 +464,11 @@ async function cancelGroupEvent(
   ctx.summary.refundsIssued += eventRefund.refundsIssued;
   ctx.summary.refundedPaise += eventRefund.refundedPaise;
   for (const f of eventRefund.failures) {
-    ctx.summary.failures.push({ kind: "refund", id: f.paymentId, error: f.error });
+    ctx.summary.failures.push({
+      kind: "refund",
+      id: f.paymentId,
+      error: f.error,
+    });
   }
 
   // Light query for attendee notification (the helper doesn't return userIds).
@@ -520,20 +535,6 @@ async function removeAttendee(
   });
   if (paid) {
     await issueFullRefund(paid.id, ctx.initiatedByUserId, ctx.summary);
-  }
-
-  try {
-    await handleSlotOpening({
-      ...(isWebinar ? { webinarId: eventId } : { classId: eventId }),
-      slotsAvailable: 1,
-      reason: "participant_removed",
-    });
-  } catch (error) {
-    // Waitlist promotion is opportunistic — the removal itself stands.
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "moderation" } },
-    );
   }
 }
 

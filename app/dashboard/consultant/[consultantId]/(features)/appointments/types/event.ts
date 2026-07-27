@@ -24,6 +24,8 @@ interface ClassPlan {
 
 export interface ClassEvent {
   id: string;
+  /** Per-instance capacity; null inherits the plan's value. */
+  maxParticipants: number | null;
   classPlan: ClassPlan;
   appointments: Appointment[];
 }
@@ -36,6 +38,8 @@ interface WebinarPlan {
 
 export interface WebinarEvent {
   id: string;
+  /** Per-instance capacity; null inherits the plan's value. */
+  maxParticipants: number | null;
   webinarPlan: WebinarPlan;
   appointment: Appointment | null;
 }

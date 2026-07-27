@@ -261,15 +261,6 @@ export async function GET(request: NextRequest) {
           },
           {
             OR: [
-              // User is on the waitlist with booked status
-              {
-                waitlist: {
-                  some: {
-                    userId: userId,
-                    status: "BOOKED",
-                  },
-                },
-              },
               // User is on an appointment slot
               {
                 appointment: {
@@ -343,15 +334,6 @@ export async function GET(request: NextRequest) {
           },
           {
             OR: [
-              // User is on the waitlist with booked status
-              {
-                waitlist: {
-                  some: {
-                    userId: userId,
-                    status: "BOOKED",
-                  },
-                },
-              },
               // User is on an appointment slot
               {
                 appointments: {
@@ -414,7 +396,10 @@ export async function GET(request: NextRequest) {
     // Limit total results
     return NextResponse.json(results.slice(0, 20));
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "stream" } },
+    );
     console.error("Error searching appointments:", error);
     return NextResponse.json(
       { error: "Failed to search appointments" },

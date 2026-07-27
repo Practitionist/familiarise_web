@@ -49,7 +49,7 @@ The grouping half of this decision — bucketing the user-facing "same day" rule
 
 Slots created for pending payment or for rescheduling carry an `isTentative` flag. A cleanup cron releases tentative slots that are older than 24 hours with no successful payment (`TENTATIVE_EXPIRATION_HOURS = 24`, reduced from seven days by #833), and users can release their own pending slot early via `DELETE /api/checkout/pending/[paymentId]` (#849).
 
-The job is keyed on the slot's age and the payment state rather than on the wall-clock hour, which makes it idempotent: a run that is skipped, delayed, or fired twice neither double-processes nor misses work, and the next successful run catches up everything that aged out in the meantime. This is the same idempotent-by-deadline posture the waitlist expiry sweep uses (see [11-waitlist-system.md](./11-waitlist-system.md)).
+The job is keyed on the slot's age and the payment state rather than on the wall-clock hour, which makes it idempotent: a run that is skipped, delayed, or fired twice neither double-processes nor misses work, and the next successful run catches up everything that aged out in the meantime.
 
 ## ADR B6 — Expired pending-payment holds free their slot, consistently
 
@@ -65,7 +65,7 @@ The decision is defence in depth rather than relying on either mechanism alone. 
 
 ## ADR B8 — GitHub Actions cron for background jobs
 
-The booking lifecycle depends on several recurring jobs (tentative cleanup, slot-availability reconciliation, waitlist expiry and reminders). These run on GitHub Actions cron, following a three-layer pattern in which a dependency-free core script holds the logic, an API route wraps it with authentication, and a workflow file supplies the schedule and failure notifications.
+The booking lifecycle depends on several recurring jobs (tentative cleanup, slot-availability reconciliation, abandoned-checkout cleanup). These run on GitHub Actions cron, following a three-layer pattern in which a dependency-free core script holds the logic, an API route wraps it with authentication, and a workflow file supplies the schedule and failure notifications.
 
 The rejected alternatives were a managed queue or a dedicated scheduler service. GitHub Actions was chosen because it co-locates the schedule with the code, needs no extra infrastructure, and routes failures to Slack for the on-call engineer. The known limitation is scheduling jitter, which the jobs absorb by being idempotent (see ADR B5). The cron-architecture follow-up tracked in #866 may move the highest-frequency jobs to a queue later; the business-cadence jobs stay on GitHub Actions.
 

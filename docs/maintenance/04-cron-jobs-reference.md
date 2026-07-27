@@ -14,7 +14,6 @@ All 28 scheduled jobs run as GitHub Actions workflows, executing standalone Node
 | Earnings     | 2     | Sync Payment-Earning                                 |
 | Cleanup      | 4     | Document Storage Reconciliation                      |
 | Stream       | 1     | Stream User Sync                                     |
-| Waitlist     | 2     | Process Waitlist Expirations                         |
 
 ## Appointments
 
@@ -343,32 +342,6 @@ All 28 scheduled jobs run as GitHub Actions workflows, executing standalone Node
 | **External APIs**    | Stream.io API                                                                                                                 |
 | **Maintenance Risk** | MEDIUM -- May incorrectly identify active users as stale if appointment tables are being migrated                             |
 | **Safe to skip?**    | Yes -- stale users persist one extra week. Run manually post-maintenance if concerned.                                        |
-
-## Waitlist
-
-### 27. Send Waitlist Expiration Reminders
-
-| Field                | Value                                                                                                            |
-| -------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| **Schedule**         | `30 * * * *` (hourly, at :30)                                                                                    |
-| **Script**           | `jobs/waitlist/send-expiration-reminders.ts`                                                                     |
-| **Description**      | Sends 12-hour reminder email to users whose waitlist spot offers are about to expire. Marks entries as reminded. |
-| **DB Connection**    | Yes (Prisma)                                                                                                     |
-| **External APIs**    | Resend (email)                                                                                                   |
-| **Maintenance Risk** | LOW -- Email sending, DB reads for waitlist entries                                                              |
-| **Safe to skip?**    | Yes -- users miss one reminder but have 24h total offer window.                                                  |
-
-### 28. Process Waitlist Expirations
-
-| Field                | Value                                                                                                           |
-| -------------------- | --------------------------------------------------------------------------------------------------------------- |
-| **Schedule**         | `5 * * * *` (hourly, at :05 — staggered to avoid pool contention at the top-of-hour spike)                     |
-| **Script**           | `jobs/waitlist/process-expired-notifications.ts`                                                                |
-| **Description**      | Marks expired waitlist notifications as EXPIRED, sends expiration email, and notifies the next person in queue. |
-| **DB Connection**    | Yes (Prisma)                                                                                                    |
-| **External APIs**    | Resend (email)                                                                                                  |
-| **Maintenance Risk** | LOW -- Waitlist management, not payment-critical                                                                |
-| **Safe to skip?**    | Yes -- expired notifications processed on next run. Next-in-queue notification delayed.                         |
 
 ## Post-Maintenance Catch-Up Priority
 

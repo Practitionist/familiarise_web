@@ -45,7 +45,6 @@ Before a payment has been completed, the user holds a **tentative slot** but no 
                    │
                    ├─→ Appointment deleted
                    ├─→ Slots deleted
-                   ├─→ Waitlist notified (if webinar/class)
                    │
                    └─→ NO automatic refund
                        │
@@ -135,19 +134,6 @@ When a refund succeeds, consultant earnings must be reversed. This happens **asy
 \*Can be force-refunded with `forceRefund: true` — platform absorbs the loss.
 
 **Code location:** `lib/payments/payouts/earnings-service.ts` → `refundEarnings()`
-
----
-
-## Waitlist Payment Implications
-
-When a webinar or class appointment is cancelled:
-
-1. `handleSlotOpening()` notifies the next person in the waitlist queue
-2. Notification expires after 48 hours
-3. If they accept: redirected to checkout for a **new payment** (the original payment is NOT transferred)
-4. If they decline or skip: next person in queue is notified
-
-**Key:** Waitlist acceptance requires a completely new payment. The cancelled appointment's refund (if issued) goes back to the original payer.
 
 ---
 

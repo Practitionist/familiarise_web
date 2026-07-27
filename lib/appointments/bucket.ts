@@ -23,8 +23,6 @@ import type {
 export interface BucketInput {
   status: string | null | undefined;
   sessions: SessionVM[];
-  /** Waitlist entry status when the row has no confirmed slot (WAITING/NOTIFIED). */
-  waitlistStatus?: string | null;
   /** Consultant-side event with no Appointment rows yet — always needs scheduling. */
   isUnscheduled?: boolean;
   now?: Date;
@@ -36,7 +34,7 @@ export interface BucketResult {
 }
 
 export function deriveBucket(input: BucketInput): BucketResult {
-  const { sessions, waitlistStatus, isUnscheduled } = input;
+  const { sessions, isUnscheduled } = input;
   const now = input.now ?? new Date();
   const status = normalizeStatus(input.status);
 
@@ -48,9 +46,6 @@ export function deriveBucket(input: BucketInput): BucketResult {
   }
   if (isUnscheduled) {
     return { bucket: "needsAction", needsActionReason: "UNSCHEDULED" };
-  }
-  if (waitlistStatus === "NOTIFIED") {
-    return { bucket: "needsAction", needsActionReason: "WAITLIST_NOTIFIED" };
   }
   if (isPendingPaymentStatus(status)) {
     return { bucket: "needsAction", needsActionReason: "PAY_NOW" };

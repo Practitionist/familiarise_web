@@ -6,9 +6,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { eventUnionStatusBadge } from "@/lib/appointments/status";
 import { getProximityLabel } from "@/lib/appointments/slots";
-import type {
-  AppointmentActionAdapter,
-} from "@/lib/appointments/adapter";
+import type { AppointmentActionAdapter } from "@/lib/appointments/adapter";
 import type { AppointmentVM } from "@/lib/appointments/view-model";
 import { cn } from "@/utils/tailwind";
 import { RowPrimaryAction } from "./RowPrimaryAction";
@@ -89,7 +87,8 @@ export function AppointmentRow({
       className={cn(
         "group flex flex-col sm:flex-row sm:items-center gap-3 rounded-xl border border-border bg-card p-3 sm:p-4 transition-all",
         open && "cursor-pointer hover:border-foreground/20 hover:shadow-md",
-        highlighted && "ring-2 ring-primary ring-offset-2 ring-offset-background",
+        highlighted &&
+          "ring-2 ring-primary ring-offset-2 ring-offset-background",
         (vm.bucket === "past" || vm.bucket === "cancelled") && "opacity-80",
       )}
     >
@@ -129,13 +128,6 @@ export function AppointmentRow({
             {sponsoredLabel && (
               <span className="shrink-0 rounded bg-indigo-50 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300 px-1.5 py-px text-[10px] font-medium">
                 Sponsored · {sponsoredLabel}
-              </span>
-            )}
-            {vm.waitlist && (
-              <span className="shrink-0 rounded bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300 px-1.5 py-px text-[10px] font-medium">
-                {vm.waitlist.status === "NOTIFIED"
-                  ? "Spot available"
-                  : `Waitlisted${vm.waitlist.position ? ` · #${vm.waitlist.position}` : ""}`}
               </span>
             )}
           </div>

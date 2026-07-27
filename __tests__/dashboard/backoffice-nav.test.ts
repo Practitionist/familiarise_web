@@ -64,7 +64,7 @@ describe("BACKOFFICE_PERMISSIONS", () => {
       "feedback.manage",
       "moderation.manage",
       "appointments.manage",
-      "waitlists.manage",
+      "waitlist.manage",
       "users.read",
       "users.verify",
     ] as BackofficeSurface[]) {
@@ -109,7 +109,7 @@ describe("buildBackofficeNav", () => {
       "feedback",
       "moderation",
       "appointments",
-      "waitlists",
+      "waitlist",
       "users",
       "payments",
       "refunds",
@@ -139,8 +139,12 @@ describe("buildBackofficeNav", () => {
   });
 
   it("honours the TDS feature flag on the admin tree", () => {
-    expect(flatten(buildBackofficeNav("admin", { showTds: false }))).not.toContain("tds");
-    expect(flatten(buildBackofficeNav("admin", { showTds: true }))).toContain("tds");
+    expect(
+      flatten(buildBackofficeNav("admin", { showTds: false })),
+    ).not.toContain("tds");
+    expect(flatten(buildBackofficeNav("admin", { showTds: true }))).toContain(
+      "tds",
+    );
   });
 
   it("emits no empty groups", () => {

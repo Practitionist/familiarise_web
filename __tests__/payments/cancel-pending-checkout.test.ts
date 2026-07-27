@@ -41,9 +41,7 @@ function newStore(): Store {
 }
 
 function matchesUserSome(slot: SlotRow, where: Row): boolean {
-  const user = where.user as
-    | { some?: { id?: string } }
-    | undefined;
+  const user = where.user as { some?: { id?: string } } | undefined;
   if (!user?.some?.id) return true;
   return slot.userIds.includes(user.some.id);
 }
@@ -109,6 +107,30 @@ function makeTx() {
       }),
     },
     slotOfAppointment: {
+      findMany: jest.fn(async ({ where }: any) =>
+        state.slots
+          .filter((slot) => {
+            let match = true;
+            if (where.appointmentId !== undefined)
+              match = match && slot.appointmentId === where.appointmentId;
+            if (where.appointment?.classId !== undefined)
+              match = match && slot.classId === where.appointment.classId;
+            if (where.isTentative !== undefined)
+              match = match && slot.isTentative === where.isTentative;
+            match = match && matchesUserSome(slot, where);
+            return match;
+          })
+          .map((slot) => ({ id: slot.id })),
+      ),
+      update: jest.fn(async ({ where, data }: any) => {
+        const slot = state.slots.find((s) => s.id === where.id);
+        if (!slot) return null;
+        const disconnectId = data?.user?.disconnect?.id;
+        if (disconnectId) {
+          slot.userIds = slot.userIds.filter((id) => id !== disconnectId);
+        }
+        return { id: slot.id };
+      }),
       deleteMany: jest.fn(async ({ where }: any) => {
         const before = state.slots.length;
         state.slots = state.slots.filter((slot) => {
@@ -397,11 +419,17 @@ describe("cancelPendingCheckout — webinar scoping", () => {
       userId: "user-1",
     });
 
-    expect(result).toEqual({ ok: true, slotsReleased: 1 });
+    // Both of the caller's slots on the shared webinar appointment release
+    // their seat; the rows survive because other attendees share them.
+    expect(result).toEqual({ ok: true, slotsReleased: 2 });
     expect(state.slots.map((s) => s.id).sort()).toEqual([
       "slot-confirmed",
+      "slot-mine",
       "slot-theirs",
     ]);
+    expect(
+      state.slots.filter((s) => s.userIds.includes("user-1")).map((s) => s.id),
+    ).toEqual([]);
   });
 });
 
@@ -450,7 +478,15 @@ describe("cancelPendingCheckout — class scoping", () => {
     });
 
     expect(result).toEqual({ ok: true, slotsReleased: 2 });
-    expect(state.slots.map((s) => s.id)).toEqual(["c2-theirs"]);
+    // Session rows are shared with the other students, so they stay put.
+    expect(state.slots.map((s) => s.id)).toEqual([
+      "c1-mine",
+      "c2-mine",
+      "c2-theirs",
+    ]);
+    expect(
+      state.slots.filter((s) => s.userIds.includes("user-1")).map((s) => s.id),
+    ).toEqual([]);
   });
 });
 

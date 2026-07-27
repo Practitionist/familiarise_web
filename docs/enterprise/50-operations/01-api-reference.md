@@ -193,7 +193,7 @@ These are the host-side money routes for organizations that earn — rate cards,
 
 ## Reimbursements, disputes, documents (read surfaces)
 
-These are read-only roster endpoints — reimbursements, disputes, documents, trials, waitlist, appointments, and recordings — all gated at MANAGER and none of them emit audit rows.
+These are read-only roster endpoints — reimbursements, disputes, documents, trials, appointments, and recordings — all gated at MANAGER and none of them emit audit rows.
 
 | Path | Verb | Min role | Purpose | Audit actions |
 |------|------|----------|---------|----------------|
@@ -202,7 +202,6 @@ These are read-only roster endpoints — reimbursements, disputes, documents, tr
 | `/api/organizations/[orgId]/disputes` | `GET` | MANAGER | Dispute roster (org-scoped) | — |
 | `/api/organizations/[orgId]/documents` | `GET` | MANAGER | Org document list | — |
 | `/api/organizations/[orgId]/trials` | `GET` | MANAGER | Trial roster | — |
-| `/api/organizations/[orgId]/waitlist` | `GET` | MANAGER | Waitlist roster | — |
 | `/api/organizations/[orgId]/appointments` | `GET` | MANAGER | Org appointment feed | — |
 | `/api/organizations/[orgId]/recordings` | `GET` | MANAGER | Stream recording roster | — |
 

@@ -6,9 +6,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { addMonthsSafely } from "@/utils/dateUtils";
 import { findOrCreateTopics, transformNestedPlanTopics } from "@/lib/topics";
-import { handleSlotOpening } from "@/lib/waitlist/slot-handler";
 import { checkConsultantVerification } from "@/lib/verification";
 import { countUniqueParticipants } from "@/lib/payments/utils/participants";
+import {
+  CapacityBelowEnrollmentError,
+  capacityBelowRegisteredMessage,
+} from "@/lib/events/capacity";
 
 import { getSession } from "@/lib/auth-server";
 // Schema for class content input (without Prisma-managed fields like createdAt, updatedAt, classPlanId)
@@ -295,7 +298,6 @@ export async function POST(request: NextRequest) {
                 },
               },
             },
-            waitlist: true,
           },
         });
 
@@ -336,7 +338,10 @@ export async function POST(request: NextRequest) {
         console.error("Prisma Error Meta:", error.meta);
       }
     }
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "bookings" } },
+    );
     return NextResponse.json(
       { error: errorMessage, details: errorDetails }, // Return more details
       { status: 500 },
@@ -484,7 +489,9 @@ export async function PATCH(request: NextRequest) {
         const startChanged =
           startDateString !== undefined &&
           startDateString !== null &&
-          classToUpdate.schedulingPeriodStartsAt?.toISOString()?.slice(0, 10) !==
+          classToUpdate.schedulingPeriodStartsAt
+            ?.toISOString()
+            ?.slice(0, 10) !==
             new Date(startDateString).toISOString().slice(0, 10);
         const endChanged =
           endDateString !== undefined &&
@@ -497,32 +504,6 @@ export async function PATCH(request: NextRequest) {
             {
               error:
                 "Cannot modify class schedule with enrolled participants. Use the reschedule workflow instead.",
-            },
-            { status: 400 },
-          );
-        }
-      }
-
-      // FIX #628: Block lowering maxParticipants below current enrollment.
-      // Use shared countUniqueParticipants helper for consistent counting.
-      // Include ALL slots (not just non-tentative) because during reschedule
-      // all slots become tentative but participants are still enrolled.
-      if (maxParticipants !== undefined) {
-        const classAppointments = await prisma.appointment.findMany({
-          where: { classId: classToUpdate.id },
-          include: {
-            slotsOfAppointment: { include: { user: { select: { id: true } } } },
-          },
-        });
-        const consultantUserId = existingPlan.consultantProfile?.userId;
-        const enrolledCount = countUniqueParticipants(
-          classAppointments,
-          consultantUserId ? [consultantUserId] : [],
-        );
-        if (maxParticipants < enrolledCount) {
-          return NextResponse.json(
-            {
-              error: `Cannot set max participants to ${maxParticipants}. There are ${enrolledCount} enrolled participants.`,
             },
             { status: 400 },
           );
@@ -611,7 +592,9 @@ export async function PATCH(request: NextRequest) {
           updateData.totalHours =
             updateData.totalSessions * finalSessionDurationInHours;
         }
-        if (maxParticipants !== undefined)
+        // Capacity is per instance. Only move the plan's default when the
+        // caller is editing the plan itself rather than one of its classes.
+        if (maxParticipants !== undefined && !classToUpdate)
           updateData.maxParticipants = maxParticipants;
         if (language !== undefined) updateData.language = language;
         if (level !== undefined) updateData.level = level;
@@ -680,11 +663,37 @@ export async function PATCH(request: NextRequest) {
             status?: ClassStatus;
             schedulingPeriodStartsAt?: Date | null;
             schedulingPeriodEndsAt?: Date | null;
+            maxParticipants?: number;
           } = {};
 
           // Only include status if it's provided in the validated data
           if (status !== undefined) {
             classUpdateData.status = status;
+          }
+
+          // #628 — shrinking below the students already enrolled would strand
+          // paying learners. Checked inside the tx (the old guard ran before
+          // it and left a TOCTOU window).
+          if (maxParticipants !== undefined) {
+            const classAppointments = await tx.appointment.findMany({
+              where: { classId: updatedClass.id },
+              include: {
+                slotsOfAppointment: {
+                  include: { user: { select: { id: true } } },
+                },
+              },
+            });
+            const consultantUserId = existingPlan.consultantProfile?.userId;
+            const enrolledCount = countUniqueParticipants(
+              classAppointments,
+              consultantUserId ? [consultantUserId] : [],
+            );
+            if (maxParticipants < enrolledCount) {
+              throw new CapacityBelowEnrollmentError(
+                capacityBelowRegisteredMessage(maxParticipants, enrolledCount),
+              );
+            }
+            classUpdateData.maxParticipants = maxParticipants;
           }
 
           // Handle startDate: update if provided, set to null if explicitly null, otherwise leave unchanged
@@ -745,7 +754,6 @@ export async function PATCH(request: NextRequest) {
                     },
                   },
                 },
-                waitlist: true,
               },
             });
           } else {
@@ -769,7 +777,6 @@ export async function PATCH(request: NextRequest) {
                     },
                   },
                 },
-                waitlist: true,
               },
             });
           }
@@ -791,40 +798,6 @@ export async function PATCH(request: NextRequest) {
     console.log(
       "Update transaction completed successfully. Returning updated class data.",
     );
-
-    // Notify waitlist if capacity was increased
-    const oldMaxParticipants = existingPlan.maxParticipants;
-    const newMaxParticipants = result.classPlan.maxParticipants;
-
-    if (newMaxParticipants > oldMaxParticipants && result.class?.id) {
-      const newSlotsAvailable = newMaxParticipants - oldMaxParticipants;
-
-      try {
-        await handleSlotOpening({
-          classId: result.class.id,
-          slotsAvailable: newSlotsAvailable,
-          reason: "capacity_increase",
-        });
-
-        console.log(
-          JSON.stringify({
-            event: "waitlist_notified_after_capacity_increase",
-            classId: result.class.id,
-            oldMaxParticipants,
-            newMaxParticipants,
-            newSlotsAvailable,
-            timestamp: new Date().toISOString(),
-          }),
-        );
-      } catch (waitlistError) {
-        // Log but don't fail the update - waitlist notification is best-effort
-        console.error(
-          "Failed to notify waitlist after capacity increase:",
-          waitlistError,
-        );
-        Sentry.captureException(waitlistError instanceof Error ? waitlistError : new Error(String(waitlistError)), { tags: { subsystem: "bookings" } });
-      }
-    }
 
     // Return the appropriate response based on whether we had a class instance
     // Transform topics to strings in response
@@ -850,6 +823,11 @@ export async function PATCH(request: NextRequest) {
     }
     // --- End Zod Error Handling ---
 
+    // Shrinking below the current roster is a user error, not a 500.
+    if (error instanceof CapacityBelowEnrollmentError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+
     console.error("Error updating class with plan:", error);
 
     // If error indicates topics don't exist (keep specific error handling)
@@ -872,7 +850,10 @@ export async function PATCH(request: NextRequest) {
       );
     }
 
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "bookings" } },
+    );
     return NextResponse.json(
       { error: "An error occurred while updating the class" },
       { status: 500 },

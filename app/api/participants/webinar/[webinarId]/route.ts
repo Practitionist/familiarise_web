@@ -1,7 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { handleSlotOpening } from "@/lib/waitlist/slot-handler";
 import {
   requireApiAuth,
   isPrivileged,
@@ -22,10 +21,6 @@ const PARTICIPANT_USER_SELECT = {
   email: true,
   image: true,
 } as const;
-
-// Bound the waitlist payload; the UI shows a roster, not an export. The
-// truncated flag tells the client the count is a floor, not an exact size.
-const WAITLIST_CAP = 500;
 
 export async function GET(
   request: Request,
@@ -97,31 +92,15 @@ export async function GET(
       ).values(),
     );
 
-    // Get waitlist entries with user details
-    const waitlist = await prisma.waitlist.findMany({
-      where: {
-        webinarId: webinarId,
-        status: {
-          in: ["WAITING", "NOTIFIED", "EXPIRED"],
-        },
-      },
-      include: {
-        user: { select: PARTICIPANT_USER_SELECT },
-      },
-      orderBy: {
-        joinedAt: "asc",
-      },
-      take: WAITLIST_CAP,
-    });
-
     return NextResponse.json({
       webinarEvent,
       participants,
-      waitlist,
-      waitlistTruncated: waitlist.length === WAITLIST_CAP,
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "bookings" } },
+    );
     console.error("[WEBINAR_PARTICIPANTS_GET]", error);
     return new NextResponse("Internal error", { status: 500 });
   }
@@ -197,22 +176,13 @@ export async function DELETE(
         }),
       ),
     );
-    const participantRemoved = userSlots.length > 0;
-
-    // Trigger waitlist notification if a participant was removed
-    if (participantRemoved) {
-      try {
-        await handleSlotOpening({ webinarId, slotsAvailable: 1 });
-      } catch (error) {
-        // Log error but don't fail the request - participant removal succeeded
-        Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
-        console.error("[WEBINAR_WAITLIST_NOTIFICATION]", error);
-      }
-    }
 
     return new NextResponse(null, { status: 204 });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "bookings" } },
+    );
     console.error("[WEBINAR_PARTICIPANT_DELETE]", error);
     return new NextResponse("Internal error", { status: 500 });
   }

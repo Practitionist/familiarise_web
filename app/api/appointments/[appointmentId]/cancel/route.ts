@@ -363,7 +363,12 @@ export async function POST(
         } catch (refundErr) {
           // The cancellation itself stands; a failed refund must be visible,
           // not silently swallowed — surface for ops + tell the caller.
-          Sentry.captureException(refundErr instanceof Error ? refundErr : new Error(String(refundErr)), { tags: { subsystem: "appointments" } });
+          Sentry.captureException(
+            refundErr instanceof Error
+              ? refundErr
+              : new Error(String(refundErr)),
+            { tags: { subsystem: "appointments" } },
+          );
           console.error(
             `[cancel] refund failed for payment ${paidPayment.id}:`,
             refundErr,
@@ -463,11 +468,6 @@ export async function POST(
       }
     }
 
-    // Note: This route cancels the entire event (sets parent to CANCELLED),
-    // so we do NOT notify waitlisted users — there is no "spot" to offer.
-    // Waitlist notifications should only fire when a participant leaves an
-    // otherwise-active event (handled in participant removal flow).
-
     return NextResponse.json({ ...result, refund, eventRefund });
   } catch (error) {
     if (error instanceof Error && "httpStatus" in error) {
@@ -491,7 +491,10 @@ export async function POST(
       );
     }
 
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "appointments" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "appointments" } },
+    );
     console.error("Error canceling appointment:", error);
     return NextResponse.json(
       { error: "Failed to cancel appointment" },

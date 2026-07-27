@@ -23,7 +23,11 @@
 import { readFileSync } from "fs";
 import { join } from "path";
 
-import { scopeOrgId, assertNeverScope, type Scope } from "@/lib/api/scope/parse";
+import {
+  scopeOrgId,
+  assertNeverScope,
+  type Scope,
+} from "@/lib/api/scope/parse";
 
 const read = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8");
 
@@ -48,9 +52,9 @@ describe("assertNeverScope", () => {
   it("throws rather than returning an unfiltered result", () => {
     // Cast because the point is a kind the union does not contain — what a
     // future variant looks like before someone handles it.
-    expect(() =>
-      assertNeverScope({ kind: "something-new" } as never),
-    ).toThrow(/Unhandled scope kind/);
+    expect(() => assertNeverScope({ kind: "something-new" } as never)).toThrow(
+      /Unhandled scope kind/,
+    );
   });
 });
 
@@ -60,22 +64,24 @@ describe("every scoped list helper fails closed", () => {
     "lib/api/scope/list-documents.ts",
     "lib/api/scope/list-recordings.ts",
     "lib/api/scope/list-trials.ts",
-    "lib/api/scope/list-waitlist.ts",
   ];
 
-  it.each(HELPERS)("%s ends in an exhaustiveness check, not `return base`", (rel) => {
-    const src = read(rel);
+  it.each(HELPERS)(
+    "%s ends in an exhaustiveness check, not `return base`",
+    (rel) => {
+      const src = read(rel);
 
-    // The `all` arm must be stated, not inherited.
-    expect(src).toContain('if (params.scope.kind === "all") return base;');
-    // And the final position must throw rather than return rows.
-    expect(src).toContain("return assertNeverScope(params.scope);");
+      // The `all` arm must be stated, not inherited.
+      expect(src).toContain('if (params.scope.kind === "all") return base;');
+      // And the final position must throw rather than return rows.
+      expect(src).toContain("return assertNeverScope(params.scope);");
 
-    const allArm = src.lastIndexOf('kind === "all"');
-    const guard = src.lastIndexOf("assertNeverScope(params.scope)");
-    expect(allArm).toBeGreaterThan(-1);
-    expect(guard).toBeGreaterThan(allArm);
-  });
+      const allArm = src.lastIndexOf('kind === "all"');
+      const guard = src.lastIndexOf("assertNeverScope(params.scope)");
+      expect(allArm).toBeGreaterThan(-1);
+      expect(guard).toBeGreaterThan(allArm);
+    },
+  );
 });
 
 describe("every self-scoped consumer treats orgMember as an org filter", () => {
@@ -93,11 +99,14 @@ describe("every self-scoped consumer treats orgMember as an org filter", () => {
     expect(src).toContain("scopeOrgId");
   });
 
-  it.each(CONSUMERS)("%s no longer branches on `kind === \"org\"` alone", (rel) => {
-    const src = read(rel);
-    // This is the exact shape that dropped the filter: testing only for `org`
-    // sends `orgMember` into the unfiltered else.
-    expect(src).not.toMatch(/scope\.kind === "org"\s*$/m);
-    expect(src).not.toContain('scope.kind === "org"\n');
-  });
+  it.each(CONSUMERS)(
+    '%s no longer branches on `kind === "org"` alone',
+    (rel) => {
+      const src = read(rel);
+      // This is the exact shape that dropped the filter: testing only for `org`
+      // sends `orgMember` into the unfiltered else.
+      expect(src).not.toMatch(/scope\.kind === "org"\s*$/m);
+      expect(src).not.toContain('scope.kind === "org"\n');
+    },
+  );
 });

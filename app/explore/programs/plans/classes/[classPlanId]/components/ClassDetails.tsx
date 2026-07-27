@@ -371,7 +371,9 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
                       <h3 className="font-semibold text-foreground">
                         {plan.consultantProfile?.user?.name}
                       </h3>
-                      <p className="text-sm text-muted-foreground">Expert Instructor</p>
+                      <p className="text-sm text-muted-foreground">
+                        Expert Instructor
+                      </p>
                     </div>
                   </div>
                   <p className="text-sm text-muted-foreground">
@@ -436,7 +438,6 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
               <ClientClassRegistration
                 plan={plan}
                 maxParticipants={plan.maxParticipants ?? undefined}
-                waitlist={plan.classes?.[0]?.waitlist ?? []}
                 consultantUserId={plan.consultantProfile?.user?.id}
               />
             </div>

@@ -13,7 +13,6 @@ type TClassSessionWithSchedule = PrismaClass & {
       user: { id: string }[];
     })[];
   })[];
-  waitlist?: Array<{ userId: string; position: number | null; status: string }>;
 };
 
 export type TClassPlanDetailsData = Omit<

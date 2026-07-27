@@ -30,7 +30,7 @@ in the sibling test suites under
 6-org-scope-and-activity / 7-cross-org-operator. Each subfolder carries
 both API and UI files (where applicable) plus Round-3 surfaces (TDS,
 MSME, DPDP gate, per-org invoice numbering, payout idempotency,
-Waitlist/Recording orgId, Programs v2 reject).
+Recording orgId, Programs v2 reject).
 
 This tour deliberately touches every happy path and a few representative
 guard paths; it is NOT trying to enumerate every error code.

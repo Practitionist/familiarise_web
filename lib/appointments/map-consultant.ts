@@ -95,13 +95,15 @@ function eventFacts(appointment: TAppointment): {
   switch (appointment.appointmentType) {
     case "CONSULTATION":
       return {
-        title: appointment.consultation?.consultationPlan?.title ?? "Consultation",
+        title:
+          appointment.consultation?.consultationPlan?.title ?? "Consultation",
         counterpart: person(appointment.consultation?.requestedBy?.user),
         status: normalizeStatus(appointment.consultation?.status?.toString()),
       };
     case "SUBSCRIPTION":
       return {
-        title: appointment.subscription?.subscriptionPlan?.title ?? "Subscription",
+        title:
+          appointment.subscription?.subscriptionPlan?.title ?? "Subscription",
         counterpart: person(appointment.subscription?.requestedBy?.user),
         status: normalizeStatus(appointment.subscription?.status?.toString()),
       };
@@ -159,9 +161,8 @@ function collaboratorRoleOf(
         ? appointment.class?.classPlan
         : null;
   if (!plan) return null;
-  const collaborators = (
-    plan as { collaborators?: PlanCollaboratorLike[] }
-  ).collaborators;
+  const collaborators = (plan as { collaborators?: PlanCollaboratorLike[] })
+    .collaborators;
   if (plan.consultantProfileId === consultantId) {
     return Array.isArray(collaborators) && collaborators.length > 0
       ? "HOST"
@@ -195,9 +196,7 @@ function nextActionableChild(
     (a, b) => firstSlotTime(a) - firstSlotTime(b),
   );
   return (
-    sorted.find((c) =>
-      sessionsOf(c).some((s) => !isSessionOver(s, now)),
-    ) ??
+    sorted.find((c) => sessionsOf(c).some((s) => !isSessionOver(s, now))) ??
     sorted.find((c) => (c.slotsOfAppointment?.length ?? 0) > 0) ??
     sorted[0]
   );
@@ -224,7 +223,6 @@ function mapSingle(
     meta: null,
     organizationId: appointment.organizationId ?? null,
     pendingPaymentUrl: null,
-    waitlist: null,
     collaborators: [],
     collaboratorRole: collaboratorRoleOf(appointment, consultantId),
     raw: { appointment, source: appointment },
@@ -264,7 +262,6 @@ function mapGroup(
     meta: null,
     organizationId: first.organizationId ?? null,
     pendingPaymentUrl: null,
-    waitlist: null,
     collaborators: [],
     collaboratorRole: collaboratorRoleOf(first, consultantId),
     raw: {
@@ -300,7 +297,6 @@ function mapTrial(t: ConsultantTrialLike, now: Date): AppointmentVM {
     meta: trialMeta(t.subscriptionPlan.trialPriceInPaise ?? null, null),
     organizationId: null,
     pendingPaymentUrl: null,
-    waitlist: null,
     collaborators: [],
     collaboratorRole: null,
     raw: { source: t },
@@ -327,7 +323,6 @@ function mapUnscheduledClass(
     meta: `${plan.meetingsPerWeek} meeting${plan.meetingsPerWeek !== 1 ? "s" : ""}/week · ${plan.totalSessions} sessions · ${plan.sessionDurationInHours}h each`,
     organizationId: null,
     pendingPaymentUrl: null,
-    waitlist: null,
     collaborators: [],
     collaboratorRole: null,
     raw: { source: c },
@@ -353,7 +348,6 @@ function mapUnscheduledWebinar(
     meta: `Single session · ${w.webinarPlan.durationInHours}h`,
     organizationId: null,
     pendingPaymentUrl: null,
-    waitlist: null,
     collaborators: [],
     collaboratorRole: null,
     raw: { source: w },
@@ -377,7 +371,8 @@ export function mapConsultantAppointments(
   const groups = new Map<string, TAppointment[]>();
   for (const appointment of appointments ?? []) {
     const key =
-      appointment.appointmentType === "SUBSCRIPTION" && appointment.subscriptionId
+      appointment.appointmentType === "SUBSCRIPTION" &&
+      appointment.subscriptionId
         ? `subscription-${appointment.subscriptionId}`
         : appointment.appointmentType === "CLASS" && appointment.classId
           ? `class-${appointment.classId}`

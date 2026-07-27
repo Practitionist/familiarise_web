@@ -264,7 +264,7 @@ sequenceDiagram
     Database-->>ChannelAction: Webinar data
 
     ChannelAction->>ChannelAction: Collect member IDs
-    Note over ChannelAction: - Waitlist users<br/>- Appointment users<br/>- Consultant host
+    Note over ChannelAction: - Registered attendees<br/>- Consultant host
 
     ChannelAction->>NodeSDK: channel.create()
     NodeSDK->>StreamCloud: Create channel

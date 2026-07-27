@@ -16,7 +16,11 @@
  * - Issue #10: Re-check payment status before cleanup to handle webhooks
  */
 
-import { PaymentStatus, PaymentGateway, AppointmentStatus } from "@prisma/client";
+import {
+  PaymentStatus,
+  PaymentGateway,
+  AppointmentStatus,
+} from "@prisma/client";
 import Stripe from "stripe";
 import { cancelRazorpayOrder } from "../../lib/payments/core/razorpay";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
@@ -83,8 +87,10 @@ export async function cancelPaymentIntent(
 // #476 — locked at the core so every entry (GH Actions / HTTP) shares one
 // mutual exclusion; fail-closed: money state must not double-run unlocked.
 export async function cleanupAbandonedPayments(): Promise<CleanupResult> {
-  return withCronLock("cleanup-abandoned-payments", { failMode: "closed" }, () =>
-    cleanupAbandonedPaymentsUnlocked(),
+  return withCronLock(
+    "cleanup-abandoned-payments",
+    { failMode: "closed" },
+    () => cleanupAbandonedPaymentsUnlocked(),
   );
 }
 
@@ -127,11 +133,14 @@ async function cleanupAbandonedPaymentsUnlocked(): Promise<CleanupResult> {
             ],
           },
         },
-        slotsOfAppointment: {
-          some: {
-            isTentative: true,
-          },
-        },
+        // Group-event seats are held by connecting the buyer to shared,
+        // non-tentative slots, so a tentative-slot filter would never see an
+        // abandoned webinar or class checkout.
+        OR: [
+          { slotsOfAppointment: { some: { isTentative: true } } },
+          { webinar: { isNot: null } },
+          { class: { isNot: null } },
+        ],
       },
       include: {
         payment: {
@@ -231,17 +240,35 @@ async function cleanupAbandonedPaymentsUnlocked(): Promise<CleanupResult> {
             }
           }
 
-          // Remove tentative slots for webinar/class (many-to-many relationships)
+          // Group events: disconnect only the abandoning buyers. The session
+          // slots are shared by everyone who registered, so deleting them
+          // would strand every other attendee.
           if (appointment.webinar || appointment.class) {
-            await tx.slotOfAppointment.deleteMany({
-              where: {
-                appointmentId: appointment.id,
-                isTentative: true,
-              },
-            });
-            console.log(
-              `🗑️ Cleaned up tentative slots for ${appointment.webinar ? "webinar" : "class"} appointment: ${appointment.id}`,
+            const abandonedUserIds = Array.from(
+              new Set(appointment.payment.map((p) => p.userId)),
             );
+            const seatFilter = appointment.class
+              ? { appointment: { classId: appointment.class.id } }
+              : { appointmentId: appointment.id };
+
+            for (const abandonedUserId of abandonedUserIds) {
+              const seatSlots = await tx.slotOfAppointment.findMany({
+                where: {
+                  ...seatFilter,
+                  user: { some: { id: abandonedUserId } },
+                },
+                select: { id: true },
+              });
+              for (const slot of seatSlots) {
+                await tx.slotOfAppointment.update({
+                  where: { id: slot.id },
+                  data: { user: { disconnect: { id: abandonedUserId } } },
+                });
+              }
+              console.log(
+                `🗑️ Released ${seatSlots.length} seat slot(s) for user ${abandonedUserId} on ${appointment.webinar ? "webinar" : "class"} appointment ${appointment.id}`,
+              );
+            }
           }
 
           // For consultation/subscription, check if any non-tentative slots exist
@@ -356,8 +383,10 @@ async function cleanupAbandonedPaymentsUnlocked(): Promise<CleanupResult> {
 // #476 — locked at the core so every entry (GH Actions / HTTP) shares one
 // mutual exclusion; fail-closed: money state must not double-run unlocked.
 export async function cleanupExpiredApprovalPendingPayments(): Promise<CleanupResult> {
-  return withCronLock("cleanup-abandoned-payments", { failMode: "closed" }, () =>
-    cleanupExpiredApprovalPendingPaymentsUnlocked(),
+  return withCronLock(
+    "cleanup-abandoned-payments",
+    { failMode: "closed" },
+    () => cleanupExpiredApprovalPendingPaymentsUnlocked(),
   );
 }
 
