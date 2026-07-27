@@ -81,10 +81,10 @@ export async function fetchApprovals(
     // Fetch both consultations and subscriptions
     const [consultationsRes, subscriptionsRes] = await Promise.all([
       fetch(
-        `/api/bookings/consultations?consultantProfileId=${consultantId}&status=PENDING`,
+        `/api/bookings/consultations?consultantProfileId=${consultantId}&status=PENDING&orgScope=all`,
       ),
       fetch(
-        `/api/bookings/subscriptions?consultantProfileId=${consultantId}&status=PENDING`,
+        `/api/bookings/subscriptions?consultantProfileId=${consultantId}&status=PENDING&orgScope=all`,
       ),
     ]);
 

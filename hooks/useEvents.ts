@@ -142,12 +142,16 @@ function useEventsInternal(mode: TEventQueryMode): IEventsResult {
           queryParam = `consulteeProfileId=${identifier}`;
         }
 
+        // `orgScope=all` on every leg: these routes exclude org-funded rows
+        // when the param is absent, and every consumer of this hook wants the
+        // caller's whole picture. `all` is "all of MY rows" here — the routes
+        // are self-scoped by profile id (allowAllForOwner in parse.ts).
         const [consultationsRes, subscriptionsRes, webinarsRes, classesRes] =
           await Promise.all([
-            fetch(`/api/bookings/consultations?${queryParam}`),
-            fetch(`/api/bookings/subscriptions?${queryParam}`),
-            fetch(`/api/bookings/webinars?${queryParam}`),
-            fetch(`/api/bookings/classes?${queryParam}`),
+            fetch(`/api/bookings/consultations?${queryParam}&orgScope=all`),
+            fetch(`/api/bookings/subscriptions?${queryParam}&orgScope=all`),
+            fetch(`/api/bookings/webinars?${queryParam}&orgScope=all`),
+            fetch(`/api/bookings/classes?${queryParam}&orgScope=all`),
           ]);
 
         if (

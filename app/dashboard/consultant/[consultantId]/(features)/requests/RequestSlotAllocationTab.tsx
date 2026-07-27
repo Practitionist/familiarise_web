@@ -158,10 +158,10 @@ export function RequestSlotAllocationTab({
       // Fetch data in parallel (only PENDING requests).
       const [consultationsResult, subscriptionsResult] = await Promise.all([
         fetchDataFromApi<ConsultationApiResponse[]>(
-          `/api/bookings/consultations?consultantProfileId=${consultantId}&status=PENDING`,
+          `/api/bookings/consultations?consultantProfileId=${consultantId}&status=PENDING&orgScope=all`,
         ),
         fetchDataFromApi<SubscriptionApiResponse[]>(
-          `/api/bookings/subscriptions?consultantProfileId=${consultantId}&status=PENDING`,
+          `/api/bookings/subscriptions?consultantProfileId=${consultantId}&status=PENDING&orgScope=all`,
         ),
       ]);
 

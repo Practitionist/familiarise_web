@@ -149,7 +149,13 @@ ChannelItem.displayName = "ChannelItem";
 export const ChatSidebar = () => {
   const { client, setActiveChannel } = useChatContext();
   const userRole = client?.user?.role as string | undefined;
-  const { scope } = useOrgScope();
+  // `all`, not the hook's `first-org` default. A conversation belongs to the
+  // two people in it; scoping the inbox by who funded the session hid a
+  // member's B2C chats behind their first org, and hid every conversation in a
+  // second org entirely — with no picker to change it, since ADR 19 removed the
+  // personal-dashboard context filter. The org still cannot read any of this;
+  // see ADR 20. Chat is mounted only in the personal trees.
+  const { scope } = useOrgScope({ defaultForOrgMember: "all" });
   const [teamChannels, setTeamChannels] = useState<Channel[]>([]);
   const [directMessages, setDirectMessages] = useState<Channel[]>([]);
   const [activeChannelId, setActiveChannelId] = useState<string | null>(null);
