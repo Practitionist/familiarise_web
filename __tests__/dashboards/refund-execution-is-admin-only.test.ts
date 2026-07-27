@@ -37,6 +37,10 @@ describe("refund execution is admin-only", () => {
     const postBody = src.slice(src.indexOf("export async function POST"));
     expect(postBody).toContain('requireBackofficeSurface("refunds.manage")');
     expect(postBody).not.toContain("requirePrivilegedAuth()");
+    // The call on its own proves nothing: deleting the early return leaves
+    // both assertions above green while refunds stay open to STAFF — the exact
+    // regression this file exists to catch. Pin the short-circuit too.
+    expect(postBody).toMatch(/if\s*\(auth\.error\)\s*return\s+auth\.error;/);
 
     // GET keeps the wider grant — staff read every money surface.
     const getBody = src.slice(

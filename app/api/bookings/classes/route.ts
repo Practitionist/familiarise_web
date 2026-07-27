@@ -8,7 +8,7 @@ import {
   isPrivileged,
   forbiddenResponse,
 } from "@/lib/auth-helpers";
-import { resolveOrgScope } from "@/lib/api/scope/parse";
+import { resolveOrgScope, scopeOrgId } from "@/lib/api/scope/parse";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
 
 export async function GET(request: NextRequest) {
@@ -79,11 +79,13 @@ export async function GET(request: NextRequest) {
         { status: scopeResolution.status },
       );
     }
+    // `orgMember` pins an org exactly as `org` does — see scopeOrgId.
+    const scopedOrgId = scopeOrgId(scopeResolution.scope);
     const classPlanOrgWhere: Prisma.ClassPlanWhereInput | null =
       scopeResolution.scope.kind === "personal"
         ? { organizationId: null }
-        : scopeResolution.scope.kind === "org"
-          ? { organizationId: scopeResolution.scope.orgId }
+        : scopedOrgId
+          ? { organizationId: scopedOrgId }
           : null; // "all" → no filter
 
     let classes;

@@ -9,6 +9,7 @@
 import prisma from "@/lib/prisma";
 import type { Prisma, RecordingStatus } from "@prisma/client";
 import type { Scope } from "./parse";
+import { assertNeverScope } from "./parse";
 
 export interface ListRecordingsParams {
   scope: Scope;
@@ -179,7 +180,11 @@ function buildWhere(
     };
   }
 
-  return base;
+  // Explicit rather than a fall-through: `base` alone is the admin/staff arm,
+  // so an unhandled kind reaching it would return every tenant's rows.
+  if (params.scope.kind === "all") return base;
+
+  return assertNeverScope(params.scope);
 }
 
 export async function listRecordingsScoped(

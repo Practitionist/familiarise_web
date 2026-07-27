@@ -21,7 +21,7 @@ import {
 import { transitionSubscriptionRequest } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
-import { resolveOrgScope } from "@/lib/api/scope/parse";
+import { resolveOrgScope, scopeOrgId } from "@/lib/api/scope/parse";
 
 export async function GET(request: NextRequest) {
   // Require authentication
@@ -134,9 +134,11 @@ export async function GET(request: NextRequest) {
           { status: scopeResolution.status },
         );
       }
-      if (scopeResolution.scope.kind === "org") {
+      // `orgMember` pins an org exactly as `org` does — see scopeOrgId.
+      const scopedOrgId = scopeOrgId(scopeResolution.scope);
+      if (scopedOrgId) {
         whereClause.appointments = {
-          some: { organizationId: scopeResolution.scope.orgId },
+          some: { organizationId: scopedOrgId },
         };
       }
       // kind === "all": no additional filter

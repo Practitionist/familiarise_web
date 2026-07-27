@@ -45,14 +45,17 @@ const read = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8");
 describe("server pages verify profile ownership before reading", () => {
   it.each(GUARDED_PAGES)("%s calls the guard for its own id", (rel, kind, param) => {
     const src = read(rel);
+    // `await` is part of the assertion: a bare call satisfies "the guard is
+    // present" while letting the page start its read before the async
+    // ownership check settles — which is the bug, not the fix.
     expect(src).toContain(
-      `requirePersonalProfileAccess("${kind}", ${param})`,
+      `await requirePersonalProfileAccess("${kind}", ${param})`,
     );
   });
 
   it.each(GUARDED_PAGES)("%s guards BEFORE it reads any data", (rel) => {
     const src = read(rel);
-    const guard = src.indexOf("requirePersonalProfileAccess(");
+    const guard = src.indexOf("await requirePersonalProfileAccess(");
     expect(guard).toBeGreaterThan(-1);
 
     // A guard placed after the prefetch would still redirect, but the query

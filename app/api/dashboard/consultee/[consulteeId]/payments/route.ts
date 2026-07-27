@@ -6,7 +6,7 @@ import {
   isPrivileged,
   forbiddenResponse,
 } from "@/lib/auth-helpers";
-import { resolveOrgScope } from "@/lib/api/scope/parse";
+import { resolveOrgScope, scopeOrgId } from "@/lib/api/scope/parse";
 
 export async function GET(
   request: Request,
@@ -69,11 +69,13 @@ export async function GET(
         { status: scopeResolution.status },
       );
     }
+    // `orgMember` pins an org exactly as `org` does — see scopeOrgId.
+    const scopedOrgId = scopeOrgId(scopeResolution.scope);
     const orgFilter =
       scopeResolution.scope.kind === "personal"
         ? { organizationId: null }
-        : scopeResolution.scope.kind === "org"
-          ? { organizationId: scopeResolution.scope.orgId }
+        : scopedOrgId
+          ? { organizationId: scopedOrgId }
           : {};
 
     // Per-Payment invoices stay out of this response since the v0 lockdown

@@ -2,7 +2,7 @@ import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { Prisma, DocumentReviewStatus } from "@prisma/client";
-import { resolveOrgScope } from "@/lib/api/scope/parse";
+import { resolveOrgScope, scopeOrgId } from "@/lib/api/scope/parse";
 
 import { getSession } from "@/lib/auth-server";
 // GET - Get all documents for review by consultant
@@ -166,11 +166,13 @@ export async function GET(
         { status: docScopeResolution.status },
       );
     }
+    // `orgMember` pins an org exactly as `org` does — see scopeOrgId.
+    const docScopedOrgId = scopeOrgId(docScopeResolution.scope);
     const docOrgFilter: Partial<Prisma.AppointmentWhereInput> =
       docScopeResolution.scope.kind === "personal"
         ? { organizationId: null }
-        : docScopeResolution.scope.kind === "org"
-          ? { organizationId: docScopeResolution.scope.orgId }
+        : docScopedOrgId
+          ? { organizationId: docScopedOrgId }
           : {};
 
     // Build where clause

@@ -135,6 +135,43 @@ export function resolveOrgScope(ctx: ResolveScopeContext): ScopeResolution {
 }
 
 /**
+ * Exhaustiveness guard for `Scope`.
+ *
+ * Every `buildWhere` in this directory used to end in a bare `return base`,
+ * which is the `all` (admin/staff) arm — no filter, every tenant. That made
+ * the helpers fail OPEN by construction: the `orgMember` kind fell through it
+ * for months as a latent leak, and any kind added later would do the same
+ * silently. Calling this in the final position turns that into a compile
+ * error when a variant is added, and a thrown error rather than a
+ * platform-wide result set if one somehow reaches it at runtime.
+ */
+export function assertNeverScope(scope: never): never {
+  throw new Error(
+    `Unhandled scope kind: ${JSON.stringify(scope)}. Scoped list helpers must fail closed.`,
+  );
+}
+
+/**
+ * The organization a scope is pinned to, or `null` when it spans every org
+ * (`all`) or none (`personal`).
+ *
+ * `org` and `orgMember` BOTH pin an organization — narrowing to the caller's
+ * own rows is the only difference between them, and that half is applied by
+ * the route's existing self-scoping. Six consumers hand-rolled
+ * `kind === "org" ? { organizationId } : <unfiltered>` and so silently stopped
+ * filtering the moment the `operations.read` downgrade made `orgMember`
+ * reachable: a learner picking one org got their rows from every org plus
+ * their personal ones. Route the question through here instead of repeating
+ * the two-kind test, so a future `Scope` variant is a compile error in one
+ * place rather than a quiet fall-through in seven.
+ */
+export function scopeOrgId(scope: Scope): string | null {
+  return scope.kind === "org" || scope.kind === "orgMember"
+    ? scope.orgId
+    : null;
+}
+
+/**
  * Project a `Scope` into a partial Prisma `where` clause keyed on the
  * model's `organizationId` column. Caller composes this with their
  * other filters.
