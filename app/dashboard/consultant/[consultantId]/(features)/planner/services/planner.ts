@@ -23,7 +23,7 @@ import {
   ClassContentInput,
   WebinarFormInput,
   ClassFormInput,
-} from "../types/event";
+} from "@/types/planner-events";
 import { WebinarService } from "./events/webinar-service";
 import { ClassService } from "./events/class-service";
 import { ConsultationService } from "./plans/consultation-service";

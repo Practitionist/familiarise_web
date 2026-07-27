@@ -59,7 +59,7 @@ import { TopicsMultiSelect } from "./TopicsMultiSelect";
 import {
   SubscriptionPlanEvent,
   SubscriptionPlannerProps,
-} from "../types/event";
+} from "@/types/planner-events";
 import { PlannerService } from "../services/planner";
 import { PlanMaterialsUpload } from "./PlanMaterialsUpload";
 

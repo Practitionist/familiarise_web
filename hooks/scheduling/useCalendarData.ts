@@ -8,7 +8,7 @@ import {
   getDaysInMonth,
 } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
-import { AllocationService } from "../utils/allocationService";
+import { AllocationService } from "@/lib/scheduling/allocationService";
 import { INTERVALS } from "@/utils/timeSlotsMeta";
 
 /**

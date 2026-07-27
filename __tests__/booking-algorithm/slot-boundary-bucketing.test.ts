@@ -21,10 +21,10 @@ import {
   dayKey,
   weekKey,
   type SlotLimits,
-} from "@/app/dashboard/consultant/[consultantId]/(features)/shared/utils/slotSelectionValidation";
+} from "@/lib/scheduling/slotSelectionValidation";
 // eslint-disable-next-line jest/no-mocks-import -- shared fixture builders, not module mocks (suite-wide pattern)
 import { makeConsecutiveTimeSlots } from "./__mocks__/booking.mockData";
-import type { TimeSlot } from "@/app/dashboard/consultant/[consultantId]/(features)/shared/utils/calendarUtils";
+import type { TimeSlot } from "@/lib/scheduling/calendarUtils";
 
 const limits = (slotsPerSession: number, maxSlots: number): SlotLimits => ({
   minSlots: maxSlots * slotsPerSession,

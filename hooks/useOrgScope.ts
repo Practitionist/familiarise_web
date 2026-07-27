@@ -66,10 +66,15 @@ export interface UseOrgScopeOptions {
    *     lib/api/scope/parse.ts) — e.g. the consultee appointments
    *     page, where seeing the full picture by default is the most
    *     useful landing state.
+   *   - "personal" — B2C only, even for org members. For surfaces that
+   *     ADR 19 splits strictly by org-ness and that have a separate
+   *     org-tree counterpart, so merging the two here would duplicate a
+   *     destination rather than complete one. Chat is the case: the org
+   *     half lives at /dashboard/organization/[orgId]/messages.
    * ADMIN / STAFF always default to "all" regardless of this option.
    * B2C users (no orgs) always default to "personal".
    */
-  defaultForOrgMember?: "first-org" | "all";
+  defaultForOrgMember?: "first-org" | "all" | "personal";
 }
 
 export function useOrgScope(
@@ -100,6 +105,11 @@ export function useOrgScope(
     // URL is the source of truth. Honor whatever it says.
     if (raw) return parseRaw(raw);
 
+    // An explicit "personal" wins even for privileged users: the caller is
+    // saying this surface is the B2C half of a split, and an admin landing on
+    // the union there would see the org rows twice — once here and once in the
+    // org tree.
+    if (defaultForOrgMember === "personal") return { kind: "personal" };
     if (role === "ADMIN" || role === "STAFF") return { kind: "all" };
     if (firstOrgId) {
       return defaultForOrgMember === "all"

@@ -556,8 +556,8 @@ export async function syncUserEventChannels(
     // Build the set of channel IDs this user is expected to be in
     const expectedChannelIds = new Set([
       ...eventIds.map(({ type, id }) => getChannelId(type, id)),
-      ...dmPairs.map(({ consultantUserId, consulteeUserId }) =>
-        getDmChannelId(consultantUserId, consulteeUserId),
+      ...dmPairs.map(({ consultantUserId, consulteeUserId, organizationId }) =>
+        getDmChannelId(consultantUserId, consulteeUserId, organizationId),
       ),
     ]);
 
@@ -583,7 +583,9 @@ export async function syncUserEventChannels(
       }
     }
 
-    // --- DM pair add-pass: join/create one channel per consultant-consultee pair ---
+    // --- DM add-pass: one channel per pair PER FUNDING CONTEXT ---
+    // A pair working both B2C and through an org now has two threads, and this
+    // pass joins the user to each. `dmPairs` is already keyed that way.
     for (let i = 0; i < dmPairs.length; i += BATCH_SIZE) {
       const batch = dmPairs.slice(i, i + BATCH_SIZE);
       const results = await Promise.allSettled(
@@ -592,6 +594,7 @@ export async function syncUserEventChannels(
             pair.consultantUserId,
             pair.consulteeUserId,
             userId,
+            pair.organizationId,
           ),
         ),
       );
@@ -696,17 +699,40 @@ export async function syncUserEventChannels(
 /**
  * Get unique consultant-consultee DM pairs for a user, across consultations and subscriptions.
  */
+/** A DM the user should be a member of, in one specific funding context. */
+interface DmPair {
+  consultantUserId: string;
+  consulteeUserId: string;
+  /** null = personal (B2C). Part of the channel key — see getDmChannelId. */
+  organizationId: string | null;
+}
+
+/**
+ * The org a booking was funded by. Consultations carry one appointment,
+ * subscriptions many — but a subscription is funded once, so every appointment
+ * under it shares the org and the first is representative.
+ */
+function bookingOrgId(booking: {
+  appointment?: { organizationId: string | null } | null;
+  appointments?: { organizationId: string | null }[];
+}): string | null {
+  return (
+    booking.appointment?.organizationId ??
+    booking.appointments?.[0]?.organizationId ??
+    null
+  );
+}
+
 async function getDmPairsForUser(
   userId: string,
   user: {
     consultantProfileId: string | null;
     consulteeProfileId: string | null;
   },
-): Promise<{ consultantUserId: string; consulteeUserId: string }[]> {
-  const pairMap = new Map<
-    string,
-    { consultantUserId: string; consulteeUserId: string }
-  >();
+): Promise<DmPair[]> {
+  // Keyed by channel id, so a pair working in two contexts yields two entries
+  // rather than one overwriting the other.
+  const pairMap = new Map<string, DmPair>();
 
   if (user.consultantProfileId) {
     const [consultations, subscriptions] = await Promise.all([
@@ -717,6 +743,10 @@ async function getDmPairsForUser(
         },
         include: {
           requestedBy: { include: { user: { select: { id: true } } } },
+          // The DM channel key now includes the funding context, so the
+          // reconcile set has to know it too — otherwise it would look for a
+          // personal channel that an org booking never created.
+          appointment: { select: { organizationId: true } },
         },
       }),
       prisma.subscription.findMany({
@@ -726,14 +756,20 @@ async function getDmPairsForUser(
         },
         include: {
           requestedBy: { include: { user: { select: { id: true } } } },
+          appointments: { select: { organizationId: true }, take: 1 },
         },
       }),
     ]);
     for (const c of [...consultations, ...subscriptions]) {
       const consulteeUserId = c.requestedBy?.user?.id;
       if (!consulteeUserId) continue;
-      const channelId = getDmChannelId(userId, consulteeUserId);
-      pairMap.set(channelId, { consultantUserId: userId, consulteeUserId });
+      const organizationId = bookingOrgId(c);
+      const channelId = getDmChannelId(userId, consulteeUserId, organizationId);
+      pairMap.set(channelId, {
+        consultantUserId: userId,
+        consulteeUserId,
+        organizationId,
+      });
     }
   }
 
@@ -752,6 +788,7 @@ async function getDmPairsForUser(
               },
             },
           },
+          appointment: { select: { organizationId: true } },
         },
       }),
       prisma.subscription.findMany({
@@ -767,20 +804,32 @@ async function getDmPairsForUser(
               },
             },
           },
+          appointments: { select: { organizationId: true }, take: 1 },
         },
       }),
     ]);
     for (const c of consultations) {
       const consultantUserId = c.consultationPlan?.consultantProfile?.user?.id;
       if (!consultantUserId) continue;
-      const channelId = getDmChannelId(consultantUserId, userId);
-      pairMap.set(channelId, { consultantUserId, consulteeUserId: userId });
+      const organizationId = bookingOrgId(c);
+      const channelId = getDmChannelId(consultantUserId, userId, organizationId);
+      pairMap.set(channelId, {
+        consultantUserId,
+        consulteeUserId: userId,
+        organizationId,
+      });
     }
-    for (const s of subscriptions) {
-      const consultantUserId = s.subscriptionPlan?.consultantProfile?.user?.id;
+    for (const sub of subscriptions) {
+      const consultantUserId =
+        sub.subscriptionPlan?.consultantProfile?.user?.id;
       if (!consultantUserId) continue;
-      const channelId = getDmChannelId(consultantUserId, userId);
-      pairMap.set(channelId, { consultantUserId, consulteeUserId: userId });
+      const organizationId = bookingOrgId(sub);
+      const channelId = getDmChannelId(consultantUserId, userId, organizationId);
+      pairMap.set(channelId, {
+        consultantUserId,
+        consulteeUserId: userId,
+        organizationId,
+      });
     }
   }
 
@@ -794,8 +843,14 @@ async function addUserToDmChannel(
   consultantUserId: string,
   consulteeUserId: string,
   currentUserId: string,
+  /** Funding context — the channel key differs per org (see getDmChannelId). */
+  organizationId: string | null,
 ): Promise<{ success: boolean; channelId: string; created?: boolean }> {
-  const channelId = getDmChannelId(consultantUserId, consulteeUserId);
+  const channelId = getDmChannelId(
+    consultantUserId,
+    consulteeUserId,
+    organizationId,
+  );
   const channelType = "messaging";
 
   if (getMembershipCached(channelId, currentUserId) === true) {

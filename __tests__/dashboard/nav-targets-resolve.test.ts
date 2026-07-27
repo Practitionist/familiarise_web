@@ -55,6 +55,10 @@ describe("org nav targets resolve", () => {
     "my-program",
     "compensation",
     "appointments",
+    // Participant surface, org-scoped by route — see the layout comment.
+    "messages",
+    // Delivery surface: slot allocation for org-funded bookings.
+    "requests",
     "members",
     "collaborations",
     "contracts",

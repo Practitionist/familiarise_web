@@ -11,8 +11,8 @@ import {
 import { AppointmentsType } from "@prisma/client";
 import { AlertTriangle, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-import { AllocationService } from "../../shared/utils/allocationService";
-import { TimeSlot } from "../../shared/utils/calendarUtils";
+import { AllocationService } from "@/lib/scheduling/allocationService";
+import { TimeSlot } from "@/lib/scheduling/calendarUtils";
 import type { SlotConflictResult } from "@/utils/slotAllocation/types";
 
 // Slot with tentative status

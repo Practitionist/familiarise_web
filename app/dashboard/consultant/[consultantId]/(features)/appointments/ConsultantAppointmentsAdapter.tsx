@@ -25,7 +25,7 @@ import type {
 } from "@/lib/appointments/map-consultant";
 import type { TAppointment } from "@/types/appointment";
 import type { UnscheduledClass, UnscheduledWebinar } from "../../types";
-import { useLazyJoinMeeting } from "../shared/hooks/useLazyJoinMeeting";
+import { useLazyJoinMeeting } from "@/hooks/scheduling/useLazyJoinMeeting";
 import {
   buildUnscheduledClassAppointment,
   buildUnscheduledWebinarAppointment,

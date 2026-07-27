@@ -28,7 +28,7 @@ import {
   getJoinableSlot,
 } from "@/lib/appointments/slots";
 import type { MeetingAppointment } from "@/lib/meeting";
-import { useLazyJoinMeeting } from "@/app/dashboard/consultant/[consultantId]/(features)/shared/hooks/useLazyJoinMeeting";
+import { useLazyJoinMeeting } from "@/hooks/scheduling/useLazyJoinMeeting";
 
 // Slot shape as delivered by getOrgMemberAppointments (see the include in
 // lib/api/scope/list-appointments.ts). Dates survive the RSC boundary as

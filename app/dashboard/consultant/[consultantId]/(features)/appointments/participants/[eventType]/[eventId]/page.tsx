@@ -40,7 +40,7 @@ import {
 import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 import type { WaitlistParticipant } from "@/types/participants";
 
-import type { ClassEvent, WebinarEvent } from "../../../types/event";
+import type { ClassEvent, WebinarEvent } from "@/types/planner-events";
 
 /** URL segment → API path segment and the noun used in the count line. */
 const EVENT_KINDS = {

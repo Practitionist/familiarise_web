@@ -84,6 +84,8 @@ type ChannelTarget = {
 async function resolveChannelTarget(appointment: {
   id: string;
   appointmentType: string;
+  /** Non-null for every row this backfill walks; part of the DM channel key. */
+  organizationId: string | null;
   webinarId: string | null;
   classId: string | null;
   consultationId: string | null;
@@ -121,7 +123,13 @@ async function resolveChannelTarget(appointment: {
       if (!consultantId || !consulteeId) return null;
       return {
         channelType: "messaging",
-        channelId: getDmChannelId(consultantId, consulteeId),
+        // The DM key carries the funding context, and this backfill is walking
+        // appointments — so the org is the appointment's own, not a guess.
+        channelId: getDmChannelId(
+          consultantId,
+          consulteeId,
+          appointment.organizationId,
+        ),
       };
     }
     case "SUBSCRIPTION": {
@@ -143,7 +151,13 @@ async function resolveChannelTarget(appointment: {
       if (!consultantId || !consulteeId) return null;
       return {
         channelType: "messaging",
-        channelId: getDmChannelId(consultantId, consulteeId),
+        // The DM key carries the funding context, and this backfill is walking
+        // appointments — so the org is the appointment's own, not a guess.
+        channelId: getDmChannelId(
+          consultantId,
+          consulteeId,
+          appointment.organizationId,
+        ),
       };
     }
     default:

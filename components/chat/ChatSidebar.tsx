@@ -149,7 +149,13 @@ ChannelItem.displayName = "ChannelItem";
 export const ChatSidebar = () => {
   const { client, setActiveChannel } = useChatContext();
   const userRole = client?.user?.role as string | undefined;
-  const { scope } = useOrgScope();
+  // Route-pinned under /dashboard/organization/[orgId]/ — that mount scopes
+  // itself to the org and this option is ignored there. Everywhere else this
+  // component renders is a PERSONAL dashboard, and ADR 19 pins personal to
+  // `organizationId: null`, so B2C is the right default rather than the hook's
+  // `first-org` (which silently hid a member's B2C threads behind whichever org
+  // happened to be first, and hid a second org's entirely).
+  const { scope } = useOrgScope({ defaultForOrgMember: "personal" });
   const [teamChannels, setTeamChannels] = useState<Channel[]>([]);
   const [directMessages, setDirectMessages] = useState<Channel[]>([]);
   const [activeChannelId, setActiveChannelId] = useState<string | null>(null);
