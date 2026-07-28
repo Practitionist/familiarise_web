@@ -48,7 +48,7 @@ import {
 import {
   isInactiveStatus,
   isApprovedStatus,
-} from "../appointments/utils/status-guards";
+} from "@/lib/appointments/status-guards";
 import { DEFAULT_MEETING_DURATION_MS } from "../appointments/types";
 
 // Webinars/classes carry WebinarStatus/ClassStatus; consultations and
@@ -126,8 +126,9 @@ function UpcomingSessionCard({
     session?.user?.organizationMemberships,
   );
 
-  // Shared guards (appointments/utils/status-guards.ts) — same semantics
-  // as the Appointments tab cards.
+  // Shared guards (lib/appointments/status-guards.ts) — same semantics as the
+  // Appointments tab cards. Moved out of the route folder when the resources
+  // card started using them too.
   const isInactive = isInactiveStatus(event.status);
   const isApproved =
     event.type === "webinar" || event.type === "class"

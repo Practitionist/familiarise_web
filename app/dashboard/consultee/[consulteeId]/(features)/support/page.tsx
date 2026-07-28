@@ -1,14 +1,14 @@
-import { SupportSurface } from "@/components/dashboard/shared/support/SupportSurface";
+import { SupportRequestsPage } from "@/components/dashboard/shared/support/SupportPages";
 
 /**
- * Consultee Support — requests, feedback, and help in one place.
- * Was `/feedback` (labelled "Support" in the nav, with no help content).
+ * Support requests. Feedback and Help are sibling entries now rather than tabs
+ * here — see SupportPages for why.
  */
-export default async function ConsulteeSupportPage({
+export default async function SupportPage({
   params,
 }: {
   params: Promise<{ consulteeId: string }>;
 }) {
-  const { consulteeId } = await params;
-  return <SupportSurface profileId={consulteeId} />;
+  const p = await params;
+  return <SupportRequestsPage profileId={p.consulteeId} />;
 }

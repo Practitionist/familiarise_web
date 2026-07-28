@@ -22,24 +22,69 @@ export function PageSkeleton() {
 }
 
 // Chat page skeleton
+/**
+ * Chat loading state.
+ *
+ * Sized to the same box the real chat surface occupies. It previously had NO
+ * height — just `flex-1 flex m-4` — which only fills the viewport if the parent
+ * is a flex container with a height. `loading.tsx` renders it as the whole
+ * route, outside the `h-[calc(100dvh-…)]` wrapper the live `MessagesTab`
+ * applies, so it collapsed to content height and covered a fraction of the
+ * screen. The height calc here mirrors that wrapper: full viewport minus the
+ * context bar, and minus the mobile tab bar below `md`.
+ *
+ * Colours are theme tokens rather than the hardcoded indigo it used to carry,
+ * so it stops being the one light-only surface in a dark dashboard.
+ */
 export function ChatSkeleton() {
   return (
-    <div className="flex-1 flex m-4 lg:m-6 rounded-xl overflow-hidden border border-zinc-200">
-      {/* Sidebar skeleton */}
-      <div className="w-64 bg-indigo-600 p-4 space-y-4">
-        <Skeleton className="h-10 w-full bg-indigo-500" />
+    <div className="-m-4 flex h-[calc(100dvh-3.5rem-4rem)] overflow-hidden border-border bg-card sm:-m-6 md:h-[calc(100dvh-3.5rem)] lg:-m-8">
+      {/* Channel list */}
+      <div className="hidden w-72 shrink-0 space-y-4 border-r border-border p-4 sm:block">
+        <Skeleton className="h-10 w-full" />
         <div className="space-y-2">
           {[1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
-            <Skeleton key={i} className="h-8 w-full bg-indigo-500" />
+            <div key={i} className="flex items-center gap-3 p-2">
+              <Skeleton className="h-10 w-10 shrink-0 rounded-full" />
+              <div className="flex-1 space-y-1">
+                <Skeleton className="h-4 w-3/4" />
+                <Skeleton className="h-3 w-1/2" />
+              </div>
+            </div>
           ))}
         </div>
       </div>
-      {/* Content skeleton */}
-      <div className="flex-1 flex items-center justify-center bg-zinc-50">
-        <div className="text-center space-y-4">
-          <Skeleton className="h-20 w-20 rounded-full mx-auto" />
-          <Skeleton className="h-6 w-48 mx-auto" />
-          <Skeleton className="h-4 w-64 mx-auto" />
+
+      {/* Conversation */}
+      <div className="flex flex-1 flex-col">
+        <div className="flex items-center gap-3 border-b border-border p-4">
+          <Skeleton className="h-10 w-10 rounded-full" />
+          <Skeleton className="h-5 w-40" />
+        </div>
+
+        <div className="flex-1 space-y-4 overflow-hidden p-4">
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="flex items-start gap-3">
+              <Skeleton className="h-8 w-8 shrink-0 rounded-full" />
+              <div className="space-y-1">
+                <Skeleton className="h-4 w-48" />
+                <Skeleton className="h-3 w-32" />
+              </div>
+            </div>
+          ))}
+          {[1, 2].map((i) => (
+            <div key={`out-${i}`} className="flex items-start justify-end gap-3">
+              <div className="space-y-1 text-right">
+                <Skeleton className="ml-auto h-4 w-40" />
+                <Skeleton className="ml-auto h-3 w-24" />
+              </div>
+              <Skeleton className="h-8 w-8 shrink-0 rounded-full" />
+            </div>
+          ))}
+        </div>
+
+        <div className="border-t border-border p-4">
+          <Skeleton className="h-10 w-full" />
         </div>
       </div>
     </div>
