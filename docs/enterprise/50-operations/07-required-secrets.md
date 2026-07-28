@@ -109,6 +109,43 @@ that turning the flag on does not become an archaeology exercise.
 | `STREAM_SYNC_EXCLUDED_USERS`                               | `stream-sync`                | Absent means no exclusions, which is the intended default.                                                                   |
 | `LOAD_TEST_EMAIL`, `LOAD_TEST_PASSWORD`                    | `load-test`                  | The manual k6 load test cannot authenticate. The workflow is `workflow_dispatch`-only, so this never affects scheduled runs. |
 
+## The second surface: Netlify runtime environment
+
+Everything above concerns GitHub Actions secrets, which is where the scheduled
+fleet reads its configuration. The running application reads a different store
+entirely — the Netlify site environment — and a name can be present in one and
+absent from the other. `scripts/ci/check-workflow-hygiene.ts` cannot see the
+Netlify side at all, because it parses workflow files rather than querying a
+deploy, so this section has to be maintained by hand.
+
+Netlify scopes each variable to a set of deploy contexts, and the default when a
+variable is added through the UI is production only. A value that works in
+production is therefore not evidence that branch deploys and deploy previews
+have it, which is the trap described below.
+
+The one confirmed gap was found on 2026-07-28 while exercising the refund
+webhook against the deploy preview for PR #1042. Every request to
+`/api/webhooks/razorpay` returned `500 {"error":"Webhook secret not
+configured"}`, because `app/api/webhooks/razorpay/route.ts` reads
+`process.env.RAZORPAY_WEBHOOK_SECRET` and refuses to verify a signature without
+it. The consequence is narrow but worth stating plainly: gateway webhooks cannot
+be exercised on a preview, so refund, dispute and payout events can only be
+tested against production or locally.
+
+| Variable                   | Read by                               | What is broken where it is missing                                                                                                                                                                                               |
+| -------------------------- | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `RAZORPAY_WEBHOOK_SECRET`  | `app/api/webhooks/razorpay/route.ts`  | Every Razorpay webhook is rejected with a 500 before signature verification. Confirmed missing on Deploy Preview; **production has not been confirmed either way and should be**, because no live payment has ever exercised it. |
+| `RAZORPAYX_WEBHOOK_SECRET` | same route, payout-signature fallback | Payout webhooks signed with the X secret fail verification. Not yet provisioned anywhere; live payouts remain gated.                                                                                                             |
+| `STRIPE_WEBHOOK_SECRET`    | `app/api/webhooks/stripe/route.ts`    | Same failure shape on the Stripe route.                                                                                                                                                                                          |
+| `STREAM_WEBHOOK_SECRET`    | `app/api/stream/webhooks/route.ts`    | Same failure shape on the Stream route.                                                                                                                                                                                          |
+
+Confirming production is a two-minute check and it has never been done, so it is
+worth doing before the first live payment rather than after: open the Netlify
+site environment, confirm `RAZORPAY_WEBHOOK_SECRET` is present for the
+production context, and confirm the value matches the secret configured on the
+Razorpay dashboard webhook. An endpoint that 500s on every delivery would be
+invisible today, because no live payment has ever produced one.
+
 ## Related
 
 The companion guard `scripts/ci/check-workflow-hygiene.ts` also enforces that no

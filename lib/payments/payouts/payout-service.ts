@@ -210,6 +210,20 @@ const PAYOUT_BATCH_LOCK_TTL = 120_000; // 2 minutes — generous for large batch
 export async function createPayoutBatch(
   consultantProfileIds?: string[],
 ): Promise<string> {
+  // Same ADR 13 precheck processApprovedPayouts carries, for the same reason,
+  // and it matters more here: mock Redis is an in-process map, so it grants
+  // this lock to every process that asks. The NEW-2 hazard above — two callers
+  // reading the same READY earnings and cutting two payouts for one consultant
+  // — is exactly what that leaves unguarded. A real Redis outage is the milder
+  // case: the call already threw, but it told an admin the batch was "already
+  // in progress. Please wait and try again", which never becomes true.
+  if (isMockRedis()) {
+    throw new CronLockUnavailableError("create-payout-batch");
+  }
+  if (!(await checkRedisHealth())) {
+    throw new CronLockUnavailableError("create-payout-batch");
+  }
+
   const lockToken = await acquireLock(
     PAYOUT_BATCH_LOCK_KEY,
     PAYOUT_BATCH_LOCK_TTL,
