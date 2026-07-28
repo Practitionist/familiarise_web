@@ -124,11 +124,12 @@ jobs:
         # a failing cleanup cron and a dead back-office payments dashboard.
         # Skips cleanly without DATABASE_URL, so forked PRs do not fail on a
         # check they cannot perform.
-        # Local binary, not `npx`: tsx is now a pinned devDependency, so `npm ci`
-        # has already put it in node_modules. `npx` would silently fall back to
-        # fetching an unpinned release from the registry if it ever went missing
-        # from the lockfile — and this step runs with DATABASE_URL in scope.
-        run: node_modules/.bin/tsx scripts/ci/check-enum-drift.ts
+        # Plain node on `pg`, not `npx tsx`: tsx is not a dependency of this
+        # repo, so `npx tsx` fetches an unpinned release from the registry and
+        # runs it — with DATABASE_URL in scope here. Adding tsx to close that
+        # broke the Netlify build (see #1041), so the guard drops the TS runner
+        # instead. It only needs catalog SQL, and pg is already a dependency.
+        run: node scripts/ci/check-enum-drift.mjs
         env:
           # Read-only catalog query. Without this the script skips, which would
           # make the guard look like coverage while checking nothing.

@@ -15,47 +15,48 @@
  * `paymentGateway` inside a `Promise.all`, so one unknown value took the whole
  * stats read down, not just the gateway breakdown.
  *
- * Direction matters, and only one direction is a fault:
+ * Two directions, only one of which is a fault:
  *
- *   - DB has a label the schema lacks   → BREAKS the client. This is the check.
- *   - Schema has a label the DB lacks   → harmless; the DB simply has not been
- *     pushed yet, and nothing can be reading a value that does not exist.
+ *   - A ROW holds a value the schema lacks → BREAKS the client. Fails the build.
+ *   - The DB declares a LABEL the schema lacks → inert until a row uses it, and
+ *     Postgres cannot drop an enum value in place, so clearing it means
+ *     recreating the type across every column that uses it. Warns only; failing
+ *     here would red-light CI on a condition no code change can resolve.
  *
- * So this compares labels only, and only flags the first case. It does NOT
- * check whether rows still use a dropped label — dropping a label from the
- * schema while rows hold it is exactly the failure above, and this fires before
- * the enum can be dropped from the database at all.
+ * Plain `.mjs` on `pg` rather than TypeScript on the Prisma client, for two
+ * reasons. A TS runner would have to be fetched or added as a dependency, and
+ * the whole point of this check is that it must not itself perturb the build.
+ * And the Prisma client is the wrong instrument regardless: it refuses to read
+ * the very rows this looks for, and knows nothing of the catalog it queries.
  *
  * Requires DATABASE_URL. Skips cleanly when absent so local runs and forked PRs
  * without secrets do not fail on a check they cannot perform.
  */
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-// The repo's configured singleton, not a hand-rolled client: Prisma 7 needs an
-// explicit adapter (`lib/prisma.ts` builds a PrismaPg one), and every other
-// connecting script under scripts/ imports this same instance.
-import { Prisma } from "@prisma/client";
+import pg from "pg";
 
-import prisma from "@/lib/prisma";
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-type DbEnum = { enum_name: string; enum_value: string };
-type EnumColumn = {
-  table_name: string;
-  column_name: string;
-  enum_name: string;
-};
-
-function schemaEnums(): Map<string, Set<string>> {
-  const schemaPath = path.join(__dirname, "..", "..", "prisma", "schema.prisma");
+/** Labels declared per enum in schema.prisma. */
+function schemaEnums() {
+  const schemaPath = path.join(
+    __dirname,
+    "..",
+    "..",
+    "prisma",
+    "schema.prisma",
+  );
   const schema = fs.readFileSync(schemaPath, "utf8");
 
-  const out = new Map<string, Set<string>>();
+  const out = new Map();
   const enumRe = /^enum\s+(\w+)\s*\{([\s\S]*?)^\}/gm;
-  let m: RegExpExecArray | null;
+  let m;
   while ((m = enumRe.exec(schema))) {
     const [, name, body] = m;
-    const values = new Set<string>();
+    const values = new Set();
     for (const raw of body.split("\n")) {
       // Strip trailing `// comment` and `///` doc lines, then take the bare
       // label. indexOf rather than a regex: the label pattern below is the only
@@ -72,6 +73,11 @@ function schemaEnums(): Map<string, Set<string>> {
   return out;
 }
 
+/** Postgres identifier quoting — catalog-sourced, but never interpolate raw. */
+function quoteIdent(name) {
+  return `"${name.replaceAll('"', '""')}"`;
+}
+
 async function main() {
   if (!process.env.DATABASE_URL) {
     console.log("enum-drift: DATABASE_URL not set — skipping.");
@@ -79,59 +85,61 @@ async function main() {
   }
 
   const declared = schemaEnums();
+  const enumNames = [...declared.keys()];
+
+  const client = new pg.Client({
+    connectionString: process.env.DATABASE_URL,
+  });
+  await client.connect();
 
   try {
-    // Raw SQL because this asks about the database's own catalog, which the
-    // generated client has no view of by construction.
-    const dbEnums = await prisma.$queryRaw<DbEnum[]>`
-      SELECT t.typname AS enum_name, e.enumlabel AS enum_value
-      FROM pg_type t
-      JOIN pg_enum e ON e.enumtypid = t.oid
-      JOIN pg_namespace n ON n.oid = t.typnamespace
-      WHERE n.nspname = 'public'
-    `;
+    const { rows: dbEnums } = await client.query(
+      `SELECT t.typname AS enum_name, e.enumlabel AS enum_value
+         FROM pg_type t
+         JOIN pg_enum e ON e.enumtypid = t.oid
+         JOIN pg_namespace n ON n.oid = t.typnamespace
+        WHERE n.nspname = 'public'`,
+    );
 
-    const byEnum = new Map<string, string[]>();
+    const byEnum = new Map();
     for (const { enum_name, enum_value } of dbEnums) {
-      byEnum.set(enum_name, [...(byEnum.get(enum_name) ?? []), enum_value]);
+      if (!byEnum.has(enum_name)) byEnum.set(enum_name, []);
+      byEnum.get(enum_name).push(enum_value);
     }
 
-    // Labels the database has and the schema does not. On their own these are
-    // INERT — Prisma only throws when it reads a ROW holding one. Reported as a
-    // warning so the divergence stays visible, because Postgres cannot drop an
-    // enum value in place: clearing it means recreating the type across every
-    // column that uses it, which is a `db push` rather than a code change.
-    const staleLabels: string[] = [];
+    const staleLabels = [];
     for (const [name, dbValues] of byEnum) {
       const schemaValues = declared.get(name);
       // An enum the schema does not model may belong to an extension.
       if (!schemaValues) continue;
       const extra = dbValues.filter((v) => !schemaValues.has(v));
-      if (extra.length > 0) staleLabels.push(`  - ${name}: ${extra.join(", ")}`);
+      if (extra.length > 0)
+        staleLabels.push(`  - ${name}: ${extra.join(", ")}`);
     }
 
     // What actually breaks: a ROW holding a value the client cannot parse.
     // Found by asking the catalog which columns carry which enum, then counting
     // rows outside the declared set — no hardcoded table list to go stale.
-    const columns = await prisma.$queryRaw<EnumColumn[]>`
-      SELECT c.table_name, c.column_name, c.udt_name AS enum_name
-      FROM information_schema.columns c
-      JOIN information_schema.tables t
-        ON t.table_name = c.table_name AND t.table_schema = c.table_schema
-      WHERE c.table_schema = 'public' AND t.table_type = 'BASE TABLE'
-        AND c.udt_name IN (${Prisma.join([...declared.keys()])})
-    `;
+    const { rows: columns } = await client.query(
+      `SELECT c.table_name, c.column_name, c.udt_name AS enum_name
+         FROM information_schema.columns c
+         JOIN information_schema.tables t
+           ON t.table_name = c.table_name AND t.table_schema = c.table_schema
+        WHERE c.table_schema = 'public' AND t.table_type = 'BASE TABLE'
+          AND c.udt_name = ANY($1::text[])`,
+      [enumNames],
+    );
 
-    const breaking: string[] = [];
+    const breaking = [];
     for (const col of columns) {
       const allowed = declared.get(col.enum_name);
       if (!allowed || allowed.size === 0) continue;
-      const rows = await prisma.$queryRawUnsafe<{ value: string; n: bigint }[]>(
-        `SELECT "${col.column_name}"::text AS value, COUNT(*) AS n
-           FROM "${col.table_name}"
-          WHERE "${col.column_name}"::text <> ALL($1::text[])
+      const { rows } = await client.query(
+        `SELECT ${quoteIdent(col.column_name)}::text AS value, COUNT(*) AS n
+           FROM ${quoteIdent(col.table_name)}
+          WHERE ${quoteIdent(col.column_name)}::text <> ALL($1::text[])
           GROUP BY 1`,
-        [...allowed],
+        [[...allowed]],
       );
       for (const r of rows) {
         breaking.push(
@@ -156,18 +164,19 @@ async function main() {
           "Migrate the rows to a declared value; do not add the values back\n" +
           "unless they are genuinely supported again.",
       );
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
 
     console.log(
       `enum-drift: no unparseable rows — ${columns.length} enum columns checked.`,
     );
   } finally {
-    await prisma.$disconnect();
+    await client.end();
   }
 }
 
 main().catch((err) => {
   console.error("enum-drift: check failed to run:", err);
-  process.exit(1);
+  process.exitCode = 1;
 });
