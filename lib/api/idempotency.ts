@@ -29,9 +29,12 @@
  *     was fixed in kind (reuse the unpaid order, refuse when one is in flight,
  *     CAS the stamp) because the right key there is the order itself.
  *
- * Usage:
+ * Usage — note the `await`, which is load-bearing whenever the call sits inside
+ * a `try`. `return somePromise` hands the promise to the caller before it
+ * settles, so a rejection bypasses the enclosing catch and surfaces as Next's
+ * bare 500-with-empty-body instead of the route's typed error mapping:
  *
- *   return withIdempotency(req, { scope: "admin.refund", userId }, async () => {
+ *   return await withIdempotency(req, { scope: "admin.refund", userId }, async () => {
  *     ...do the work...
  *     return NextResponse.json({ refundId });
  *   });

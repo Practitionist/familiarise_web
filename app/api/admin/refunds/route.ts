@@ -131,7 +131,16 @@ export async function POST(req: NextRequest) {
     // the Refund row we create first, so a second request simply mints a second
     // row with a second key and the gateway honours both. Dedupe one layer up.
     // Callers without the header behave exactly as before.
-    return withIdempotency(
+    //
+    // The `await` is load-bearing, not style: `return somePromise` inside a
+    // `try` returns before the promise settles, so its rejection is adopted by
+    // this function's own promise and NEVER reaches the catch below. Without
+    // it, every typed refund failure — REFUND_BLOCKED_BY_DISPUTE,
+    // ALREADY_FULLY_REFUNDED, AMOUNT_EXCEEDS_REFUNDABLE — escaped to Next's
+    // framework boundary, which answers a production route handler with a bare
+    // 500 and an empty body. The operator lost the reason and Sentry lost the
+    // event.
+    return await withIdempotency(
       req,
       { scope: "admin.refund", userId: initiatedByUserId ?? "anonymous" },
       async (payload) => {
