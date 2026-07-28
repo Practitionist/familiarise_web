@@ -123,9 +123,6 @@ erDiagram
     TrialSession }o--|| ConsulteeProfile : "requested by"
     TrialSession }o--o| Subscription : "converts to"
 
-    Webinar ||--o{ Waitlist : "has"
-    Class ||--o{ Waitlist : "has"
-    Waitlist }o--|| User : "belongs to"
 
     Appointment ||--o{ Earnings : "generates"
     Payment ||--o| Invoice : "generates"
@@ -426,13 +423,12 @@ sequenceDiagram
 
     rect rgb(255, 249, 220)
         Note over SYS,DB: handleWebinarCheckout (checkout.ts L1126)
-        SYS->>DB: Fetch webinar with plan, waitlist, appointment (with all slots + users)
+        SYS->>DB: Fetch webinar with plan and appointment (with all slots + users)
         SYS->>DB: Count participants excluding consultant (countWebinarParticipants)
 
         alt Capacity reached (currentParticipants >= maxParticipants)
             alt Mock payment (skipPayment=true)
-                SYS->>DB: CREATE Waitlist entry
-                SYS-->>CE: Webinar is full - added to waitlist
+                SYS-->>CE: Webinar is full (sold out)
             else Real payment
                 SYS-->>CE: Webinar is full
             end
@@ -464,9 +460,6 @@ sequenceDiagram
     rect rgb(230, 230, 255)
         Note over WH,DB: handlePaymentSuccess Phase 2
         WH->>DB: Create earnings + invoice
-        opt fromWaitlist metadata present
-            WH->>DB: markWaitlistAsBooked
-        end
         WH->>CE: Novu: payment-success, appointment-booked
     end
 
@@ -543,13 +536,12 @@ sequenceDiagram
 
     rect rgb(255, 249, 220)
         Note over SYS,DB: handleClassCheckout (checkout.ts L1256)
-        SYS->>DB: Fetch class with plan, waitlist, ALL appointments (with all slots + users)
+        SYS->>DB: Fetch class with plan and ALL appointments (with all slots + users)
         SYS->>DB: countUniqueParticipants across all appointments
 
         alt Capacity reached
             alt Mock payment
-                SYS->>DB: CREATE Waitlist entry
-                SYS-->>CE: Class is full - added to waitlist
+                SYS-->>CE: Class is full (sold out)
             else Real payment
                 SYS-->>CE: Class is full
             end
@@ -743,7 +735,6 @@ flowchart TD
 
     subgraph "Phase 2: Post-Transaction"
         O[Create earnings record] --> P[Create invoice]
-        P --> Q[Update waitlist if applicable]
         Q --> R[Send Novu notifications]
     end
 
@@ -780,7 +771,6 @@ The webhook handler (`handlePaymentSuccess`) deliberately splits work into two p
 
 - Create earnings record
 - Create invoice
-- Update waitlist status
 - Send Novu push/in-app notifications
 
 The reason for this split is transaction timeout. Prisma transactions have a default timeout of 5 seconds. If earnings creation involves complex queries or the Novu API is slow, including them in the transaction could cause it to time out, which would roll back the payment confirmation -- a catastrophic outcome (the user was charged but the system thinks it failed).
@@ -1033,7 +1023,7 @@ This section covers what happens when things go wrong. Understanding these scena
 
 The reason this works is that tentative slots ARE counted in capacity checks. The `countWebinarParticipants()` function counts ALL SlotOfAppointment records in the shared appointment, including tentative ones. Additionally, a distributed lock is acquired during checkout to serialize concurrent requests.
 
-If User A's payment fails, the tentative slot is cleaned up and the spot opens for the next user (potentially notified via waitlist processing).
+If User A's payment fails, the abandoned-checkout cleanup disconnects them from the event's slots and the seat is free again.
 
 ### 9c. Duplicate Checkout Attempt
 
@@ -1145,7 +1135,6 @@ Notifications are sent via Novu workflows. All workflow IDs are defined in `lib/
 
 | Lifecycle Event         | Novu Workflow ID          | Recipients             | Trigger Point              | Source           |
 | ----------------------- | ------------------------- | ---------------------- | -------------------------- | ---------------- |
-| Waitlist spot available | `waitlist-spot-available` | Consultee              | Waitlist processing script | Waitlist scripts |
 | Recording available     | `recording-available`     | Consultee + Consultant | Recording upload           | Recording routes |
 
 **Important**: All Novu notifications in the webhook handler are sent as fire-and-forget (`void notifyPaymentSuccess(...)`) with try-catch wrappers. Notification failures are logged but never roll back the payment transaction. The reason for this design is that a failed push notification should never cause a successful payment to appear as failed.
@@ -1166,7 +1155,6 @@ Background jobs run on schedules via GitHub Actions and are also exposed as API 
 | **Cleanup tentative slots**                | Every 2 hours | Deletes `isTentative=true` slots with no successful payment                                           | Tentative slot created > 24 hours ago, payment not SUCCEEDED (`TENTATIVE_EXPIRATION_HOURS = 24`) | `scripts/appointments/cleanup-tentative-slots.ts`             |
 | **Expire stale requests**                  | Daily         | Sets PENDING requests to EXPIRED after 30 days; sets APPROVED_PENDING_PAYMENT to EXPIRED after 7 days | No activity within threshold                               | `scripts/appointments/expire-stale-requests.ts`               |
 | **Cleanup stale pending consultations**    | Hourly        | Cancels APPROVED/APPROVED_PENDING_PAYMENT consultations with no payment activity after 7 days         | No payment record or payment stuck in PENDING              | `scripts/appointments/cleanup-stale-pending-consultations.ts` |
-| **Process expired waitlist notifications** | Hourly        | Expires waitlist entries where user did not respond in time, notifies next person in queue            | Notification sent > response window                        | `scripts/waitlist/process-expired-notifications.ts`           |
 | **Sync payment earnings**                  | Periodic      | Safety net: finds payments with SUCCEEDED status but no earnings record, creates missing earnings     | Payment.status=SUCCEEDED AND no Earnings linked            | `scripts/payments/sync-payment-earnings.ts`                   |
 
 ### Auto-Complete Details by Event Type

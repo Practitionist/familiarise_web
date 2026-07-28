@@ -84,6 +84,8 @@ type ChannelTarget = {
 async function resolveChannelTarget(appointment: {
   id: string;
   appointmentType: string;
+  /** Non-null for every row this backfill walks; part of the DM channel key. */
+  organizationId: string | null;
   webinarId: string | null;
   classId: string | null;
   consultationId: string | null;
@@ -109,6 +111,7 @@ async function resolveChannelTarget(appointment: {
         select: {
           consultationPlan: {
             select: {
+              organizationId: true,
               consultantProfile: { select: { user: { select: { id: true } } } },
             },
           },
@@ -121,7 +124,14 @@ async function resolveChannelTarget(appointment: {
       if (!consultantId || !consulteeId) return null;
       return {
         channelType: "messaging",
-        channelId: getDmChannelId(consultantId, consulteeId),
+        // Precedence must match the creators: an org-HOSTED plan wins over the
+        // appointment's own tag, or this targets a channel that was never made.
+        channelId: getDmChannelId(
+          consultantId,
+          consulteeId,
+          consultation?.consultationPlan?.organizationId ??
+            appointment.organizationId,
+        ),
       };
     }
     case "SUBSCRIPTION": {
@@ -131,6 +141,7 @@ async function resolveChannelTarget(appointment: {
         select: {
           subscriptionPlan: {
             select: {
+              organizationId: true,
               consultantProfile: { select: { user: { select: { id: true } } } },
             },
           },
@@ -143,7 +154,13 @@ async function resolveChannelTarget(appointment: {
       if (!consultantId || !consulteeId) return null;
       return {
         channelType: "messaging",
-        channelId: getDmChannelId(consultantId, consulteeId),
+        // Same precedence as createSubscriptionChannel.
+        channelId: getDmChannelId(
+          consultantId,
+          consulteeId,
+          subscription?.subscriptionPlan?.organizationId ??
+            appointment.organizationId,
+        ),
       };
     }
     default:

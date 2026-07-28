@@ -76,7 +76,6 @@ flowchart TD
         Webinar
         Class
         TrialSession
-        Waitlist
     end
     subgraph Core["Appointment Core"]
         Appointment
@@ -694,25 +693,13 @@ erDiagram
         datetime schedulingPeriodStartsAt
         datetime schedulingPeriodEndsAt
     }
-    Waitlist {
-        string id
-        string userId
-        string webinarId
-        string classId
-        string organizationId
-        WaitlistStatus status
-        int priority
-        int position
-        datetime notifiedAt
-        datetime expiresAt
-        datetime bookedAt
-    }
-
     WebinarPlan ||--o{ Webinar : "schedules instances"
-    Webinar ||--o{ Waitlist : "queue"
     ClassPlan ||--o{ Class : "runs cohorts"
-    Class ||--o{ Waitlist : "queue"
 ```
+
+`Webinar.maxParticipants` and `Class.maxParticipants` are nullable per-instance
+capacity overrides; null inherits the plan's value. See
+[the capacity section of the booking docs](../booking/02-event-types-and-validation.md).
 
 ---
 
@@ -1889,7 +1876,8 @@ Every enum in the schema and its values.
 | `SlotCompletionStatus` | SCHEDULED, COMPLETED, UNVERIFIED, CANCELLED, RESCHEDULED |
 | `BookingSource` | DIRECT_CHECKOUT, REQUEST_SUBMITTED |
 | `TrialSessionStatus` | PENDING, SCHEDULED, COMPLETED, CONVERTED, CANCELLED, REJECTED |
-| `WaitlistStatus` | WAITING, NOTIFIED, BOOKED, EXPIRED, CANCELLED, SKIPPED |
+| `WaitlistStatus` | PENDING, SUBSCRIBED, UNSUBSCRIBED, BOUNCED (newsletter list) |
+| `WaitlistSource` | LANDING_PAGE, FOOTER, BLOG, USE_CASE_PAGE, EVENT_SOLD_OUT, IMPORT |
 | `WebinarStatus` | SCHEDULED, IN_PROGRESS, COMPLETED, CANCELLED |
 | `ClassStatus` | SCHEDULED, IN_PROGRESS, COMPLETED, CANCELLED |
 | `DayOfWeek` | MONDAY, TUESDAY, WEDNESDAY, THURSDAY, FRIDAY, SATURDAY, SUNDAY |

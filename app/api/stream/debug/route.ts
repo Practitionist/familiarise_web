@@ -130,16 +130,11 @@ export async function GET(req: NextRequest) {
           })
         : prisma.webinar.count({
             where: {
-              OR: [
-                { waitlist: { some: { userId } } },
-                {
-                  appointment: {
-                    slotsOfAppointment: {
-                      some: { user: { some: { id: userId } } },
-                    },
-                  },
+              appointment: {
+                slotsOfAppointment: {
+                  some: { user: { some: { id: userId } } },
                 },
-              ],
+              },
             },
           }),
       user.consultantProfileId
@@ -150,18 +145,13 @@ export async function GET(req: NextRequest) {
           })
         : prisma.class.count({
             where: {
-              OR: [
-                { waitlist: { some: { userId } } },
-                {
-                  appointments: {
-                    some: {
-                      slotsOfAppointment: {
-                        some: { user: { some: { id: userId } } },
-                      },
-                    },
+              appointments: {
+                some: {
+                  slotsOfAppointment: {
+                    some: { user: { some: { id: userId } } },
                   },
                 },
-              ],
+              },
             },
           }),
     ]);
@@ -200,7 +190,10 @@ export async function GET(req: NextRequest) {
       }),
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "stream" } },
+    );
     streamLogger.error("Debug endpoint error", error);
     return NextResponse.json(
       {

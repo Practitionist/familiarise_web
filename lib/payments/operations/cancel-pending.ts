@@ -50,6 +50,50 @@ interface TxOutcome {
 
 const CANCEL_NOTE = "Cancelled by user during checkout";
 
+/**
+ * Give back whatever the buyer was holding.
+ *
+ * Group events never mint a per-buyer slot: registration connects the buyer to
+ * the event's shared session slots, so releasing the seat means disconnecting
+ * them. Deleting the slot would take every other attendee's session with it,
+ * and webinar slots are non-tentative anyway — which is why the old
+ * `deleteMany({ isTentative: true })` released nothing at all.
+ */
+async function releaseSlots(
+  tx: Tx,
+  appt: {
+    id: string;
+    class?: { id: string } | null;
+    webinar?: { id: string } | null;
+  },
+  userId: string,
+): Promise<number> {
+  if (!appt.class && !appt.webinar) {
+    const res = await tx.slotOfAppointment.deleteMany({
+      where: { appointmentId: appt.id, isTentative: true },
+    });
+    return res.count;
+  }
+
+  const seatFilter = appt.class
+    ? { appointment: { classId: appt.class.id } }
+    : { appointmentId: appt.id };
+
+  const seatSlots = await tx.slotOfAppointment.findMany({
+    where: { ...seatFilter, user: { some: { id: userId } } },
+    select: { id: true },
+  });
+
+  for (const slot of seatSlots) {
+    await tx.slotOfAppointment.update({
+      where: { id: slot.id },
+      data: { user: { disconnect: { id: userId } } },
+    });
+  }
+
+  return seatSlots.length;
+}
+
 export async function cancelPendingCheckout(args: {
   paymentId: string;
   userId: string;
@@ -109,35 +153,7 @@ export async function cancelPendingCheckout(args: {
         let slotsReleased = 0;
         const appt = payment.appointment;
         if (appt) {
-          if (appt.class) {
-            // Classes span one appointment per session; payment links only
-            // the first — release the caller's tentative slots across all
-            // of them (mirror of the webhook's confirm scope).
-            const res = await tx.slotOfAppointment.deleteMany({
-              where: {
-                appointment: { classId: appt.class.id },
-                isTentative: true,
-                user: { some: { id: args.userId } },
-              },
-            });
-            slotsReleased = res.count;
-          } else if (appt.webinar) {
-            // Webinars share one appointment among all participants —
-            // touch only the caller's tentative slot.
-            const res = await tx.slotOfAppointment.deleteMany({
-              where: {
-                appointmentId: appt.id,
-                isTentative: true,
-                user: { some: { id: args.userId } },
-              },
-            });
-            slotsReleased = res.count;
-          } else {
-            const res = await tx.slotOfAppointment.deleteMany({
-              where: { appointmentId: appt.id, isTentative: true },
-            });
-            slotsReleased = res.count;
-          }
+          slotsReleased = await releaseSlots(tx, appt, args.userId);
 
           if (appt.consultation) {
             await transitionConsultationRequest(tx, {
@@ -185,9 +201,15 @@ export async function cancelPendingCheckout(args: {
   // the orphaned-confirmation reconciler picks it up for refund.
   if (outcome.ok && gatewayCancel !== null) {
     try {
-      await cancelPaymentIntent(gatewayCancel.paymentIntent, gatewayCancel.gateway);
+      await cancelPaymentIntent(
+        gatewayCancel.paymentIntent,
+        gatewayCancel.gateway,
+      );
     } catch (error) {
-      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "payments" } });
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "payments" } },
+      );
       console.warn(
         JSON.stringify({
           event: "cancel_pending_gateway_cancel_failed",

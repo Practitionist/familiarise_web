@@ -3,7 +3,7 @@
  */
 
 import type { ConsultationPlan } from "@/schemas/plans";
-import { ConsultationPlanEvent } from "../../types/event";
+import { ConsultationPlanEvent } from "@/types/planner-events";
 
 export class ConsultationService {
   /**

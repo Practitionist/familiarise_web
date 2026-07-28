@@ -115,7 +115,32 @@ export function buildWhere(
   }
 
   if (params.scope.kind === "org") {
-    return { ...base, organizationId: params.scope.orgId };
+    // Hosted OR funded, because those are two different columns answering two
+    // different questions.
+    //
+    // For a webinar or class every registrant shares ONE Appointment, and
+    // checkout deliberately tags it with the HOST's org (`plan.organizationId`)
+    // rather than the first registrant's — otherwise whoever booked first would
+    // decide which org the event belonged to. Per-registrant funding lives on
+    // `Payment.organizationId` instead.
+    //
+    // Filtering on `organizationId` alone therefore showed an org only the
+    // events it HOSTS. A sponsor that paid to put five employees into someone
+    // else's public webinar saw nothing: the money appeared on its invoice and
+    // the seats came off its program, but the session itself was invisible.
+    // 1:1 kinds were never affected — there the appointment's org already IS
+    // the funding org.
+    //
+    // No new exposure: the select carries no attendee list, and `getMember`
+    // renders "—" for group events. A sponsor sees that the session exists, on
+    // what plan, when — not who else was in the room. ADR 20 holds.
+    return {
+      ...base,
+      OR: [
+        { organizationId: params.scope.orgId },
+        { payment: { some: { organizationId: params.scope.orgId } } },
+      ],
+    };
   }
 
   // Explicit rather than a fall-through: `base` alone is the admin/staff arm,
@@ -137,6 +162,24 @@ export async function listAppointmentsScoped(
     prisma.appointment.findMany({
       where,
       include: {
+        // Who from the VIEWING org was funded into this session.
+        //
+        // Scoped to `scope.orgId` and nothing else, which is the whole point: a
+        // webinar's registrants may span several sponsors and the public, and a
+        // sponsor is entitled to see the five people it paid for — not the
+        // twenty it did not. Empty for 1:1 kinds, where `getMember` already
+        // names the counterpart, and empty for a hosted-but-not-funded event.
+        ...(params.scope.kind === "org"
+          ? {
+              payment: {
+                where: { organizationId: params.scope.orgId },
+                select: {
+                  id: true,
+                  user: { select: { id: true, name: true, email: true } },
+                },
+              },
+            }
+          : {}),
         // #org-appts — slot fields drive the in-context Join (getOrCreate needs
         // slot id + startsAt); consultantProfile.user.id lets the caller stamp
         // per-appointment identity into the Stream call (host/guest derivation).

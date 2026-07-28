@@ -2,7 +2,7 @@
 
 import { memo, useRef } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { Program } from "../utils";
+import { Program } from "@/lib/explore/programs";
 import ProgramCard, { ProgramBadge } from "./ProgramCard";
 
 interface ProgramRowProps {

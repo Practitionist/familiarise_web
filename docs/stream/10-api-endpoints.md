@@ -518,10 +518,8 @@ Provides comprehensive debugging information about a user's Stream Chat connecti
     webinarPlanTitle: string,
     consultantId: string,
     participantIds: string[],
-    waitlistParticipantIds: string[],
     appointmentParticipantIds: string[],
     participantBreakdown: {
-      fromWaitlist: number,
       fromAppointments: number,
       totalUnique: number
     }
@@ -533,10 +531,8 @@ Provides comprehensive debugging information about a user's Stream Chat connecti
     classPlanTitle: string,
     consultantId: string,
     participantIds: string[],
-    waitlistParticipantIds: string[],
     appointmentParticipantIds: string[],
     participantBreakdown: {
-      fromWaitlist: number,
       fromAppointments: number,
       totalUnique: number
     }
@@ -611,10 +607,8 @@ console.log(result);
       "webinarPlanTitle": "Advanced React Workshop",
       "consultantId": "user-123",
       "participantIds": ["user-456", "user-789", "user-012"],
-      "waitlistParticipantIds": ["user-456", "user-012"],
       "appointmentParticipantIds": ["user-789", "user-012"],
       "participantBreakdown": {
-        "fromWaitlist": 2,
         "fromAppointments": 2,
         "totalUnique": 3
       }

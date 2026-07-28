@@ -21,6 +21,8 @@ import {
   Clock,
   FileText,
   CalendarCheck,
+  MessageSquare,
+  ClipboardCheck,
   Video,
   Receipt,
   ShieldCheck,
@@ -71,10 +73,7 @@ import { LinkPendingIcon } from "@/components/ui/NavLink";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { useSession } from "@/lib/auth-client";
 import { signOutEverywhere } from "@/lib/auth/sign-out";
-import {
-  hasOrgPermission,
-  type OrgSurface,
-} from "@/lib/auth/org-permissions";
+import { hasOrgPermission, type OrgSurface } from "@/lib/auth/org-permissions";
 import {
   MEMBER_ROLE_LABEL,
   deriveCapabilityKind,
@@ -99,7 +98,10 @@ import {
  * returning 409 ORG_NOT_VERIFIED.
  */
 function OrgStatusBanner({ status }: { status: OrgStatus }) {
-  const copy: Record<OrgStatus, { title: string; body: string; tone: string } | null> = {
+  const copy: Record<
+    OrgStatus,
+    { title: string; body: string; tone: string } | null
+  > = {
     PENDING_VERIFICATION: {
       title: "Awaiting platform review",
       body: "You can set up branding and draft programs now. Inviting members and moving money unlocks as soon as an admin verifies your organization.",
@@ -193,8 +195,7 @@ export default function OrgLayout({
     // Resources group defaults collapsed for OWNER + MAINTAINER — their
     // primary job isn't document triage. Open by default for MANAGER +
     // SUPPORT who live in those tabs.
-    const resourcesCollapsedDefault =
-      role === "OWNER" || role === "MAINTAINER";
+    const resourcesCollapsedDefault = role === "OWNER" || role === "MAINTAINER";
 
     type ItemSpec = {
       name: string;
@@ -236,6 +237,35 @@ export default function OrgLayout({
         name: "Appointments",
         icon: CalendarCheck,
         path: "appointments",
+      },
+      {
+        // Participant surface, same floor as Appointments. Chat is scoped to
+        // this org purely by living on this route — `useOrgScope` pins under
+        // /dashboard/organization/[orgId]/ — so a member of several orgs gets
+        // one clean inbox per org with no picker.
+        //
+        // Not an operator surface: Stream only returns channels the viewer is a
+        // member of, and there is no org-wide chat query behind it. ADR 20
+        // keeps session content with the participants.
+        name: "Messages",
+        icon: MessageSquare,
+        path: "messages",
+      },
+      {
+        // Delivery surface: allocating slots is something only the person
+        // delivering the session can do, so it shows for members who hold a
+        // consultant profile. The page itself redirects anyone else — gating on
+        // the profile rather than on MemberRole.EXPERT means an OWNER who also
+        // delivers still gets it.
+        name: "Requests",
+        icon: ClipboardCheck,
+        path: "requests",
+        // Same gate as Compensation, which is the other EXPERT delivery
+        // surface: `myArrangement.read` is EXPERT-only and `canHost` means the
+        // org actually has experts. The page re-checks the membership's own
+        // consultantProfileId and redirects if absent, so a mismatch degrades
+        // to a redirect rather than a broken tab.
+        show: can("myArrangement.read") && canHost,
       },
     ];
 
@@ -347,9 +377,8 @@ export default function OrgLayout({
     // nesting, and the two lists answer different questions — Documents is a
     // review queue, Recordings is an archive.
     //
-    // Waitlist and Trials are deliberately absent: the waitlist feature is
-    // being retired, and a trial IS an appointment, so it belongs on
-    // Appointments rather than in a list of its own.
+    // Trials are deliberately absent: a trial IS an appointment, so it
+    // belongs on Appointments rather than in a list of its own.
     const resourcesItems: ItemSpec[] = [
       {
         name: "Documents",
@@ -510,12 +539,14 @@ export default function OrgLayout({
     React.ComponentProps<typeof CollapsibleSidebar>["bottomUserChipActions"]
   > = [
     ...(personalHref
-      ? [{
-          type: "item" as const,
-          label: "Personal Dashboard",
-          href: personalHref,
-          icon: LayoutDashboard,
-        }]
+      ? [
+          {
+            type: "item" as const,
+            label: "Personal Dashboard",
+            href: personalHref,
+            icon: LayoutDashboard,
+          },
+        ]
       : []),
     ...(otherOrgs.length > 0
       ? [
@@ -539,25 +570,27 @@ export default function OrgLayout({
   // Map URL segments to human-readable page names so the breadcrumbs match
   // the heading the user actually sees on the page.
   const PAGE_LABELS: Record<string, string> = {
-    home:               "Overview",
-    "my-program":       "My Program",
-    compensation:       "Compensation",
-    collaborations:     "Collaborations",
-    appointments:       "Appointments",
-    members:      "Members",
-    programs:     "Programs",
-    contracts:    "Contracts",
+    home: "Overview",
+    "my-program": "My Program",
+    compensation: "Compensation",
+    collaborations: "Collaborations",
+    appointments: "Appointments",
+    messages: "Messages",
+    requests: "Requests",
+    members: "Members",
+    programs: "Programs",
+    contracts: "Contracts",
     "purchase-orders": "Purchase Orders",
-    documents:    "Documents",
-    recordings:   "Recordings",
-    billing:      "Billing",
-    payouts:      "Payouts",
+    documents: "Documents",
+    recordings: "Recordings",
+    billing: "Billing",
+    payouts: "Payouts",
     reimbursements: "Reimbursements",
-    disputes:     "Disputes",
-    analytics:    "Analytics",
-    audit:        "Audit",
-    consent:      "Consent",
-    settings:     "Settings",
+    disputes: "Disputes",
+    analytics: "Analytics",
+    audit: "Audit",
+    consent: "Consent",
+    settings: "Settings",
   };
 
   // Full breadcrumb trail — every URL segment after /organization/{orgId}
@@ -652,8 +685,7 @@ export default function OrgLayout({
           {MOBILE_TABS.filter(
             ({ surface, needsSponsor }) =>
               !org ||
-              ((!surface ||
-                hasOrgPermission(org.membership.role, surface)) &&
+              ((!surface || hasOrgPermission(org.membership.role, surface)) &&
                 (!needsSponsor || org.organization.canSponsor)),
           ).map(({ label, path, Icon }) => {
             const isActive = pathname.includes(

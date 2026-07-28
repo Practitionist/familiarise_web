@@ -27,9 +27,9 @@ This document is the definitive reference for how appointment cancellation works
 
 ## High-Level Overview
 
-Cancellation is one of the most architecturally nuanced flows in the booking system. On the surface it seems simple -- "delete the appointment" -- but in practice it must coordinate across five concerns: database integrity, notification delivery, waitlist management, payment/refund tracking, and audit trail preservation. The cancellation endpoint is designed around three strict principles:
+Cancellation is one of the most architecturally nuanced flows in the booking system. On the surface it seems simple -- "delete the appointment" -- but in practice it must coordinate across four concerns: database integrity, notification delivery, payment/refund tracking, and audit trail preservation. The cancellation endpoint is designed around three strict principles:
 
-1. **The cancellation itself must never fail because of a side effect.** If notifications fail, if the waitlist system is down, the user still gets a successful cancellation. This is the "fire-and-forget" philosophy.
+1. **The cancellation itself must never fail because of a side effect.** If notifications fail, the user still gets a successful cancellation. This is the "fire-and-forget" philosophy.
 2. **Data needed after deletion must be extracted before deletion.** Since the appointment record is destroyed inside the transaction, any information needed for notifications or logging must be captured beforehand.
 3. **Refunds are never automatic.** The cancellation flow intentionally does not touch payment records. Refunds are a separate admin-initiated process with their own business rules.
 
@@ -180,7 +180,7 @@ The key insight: **only a valid JSON body that fails Zod validation returns an e
 | `webinarId`          | `string \| null`      | The webinar ID if this was a webinar cancellation |
 | `classId`            | `string \| null`      | The class ID if this was a class cancellation     |
 
-The `webinarId` and `classId` fields are populated only for webinar and class cancellations. They are used internally by the waitlist cascade logic, but they are also included in the client response so the frontend can trigger any UI updates related to the specific event.
+The `webinarId` and `classId` fields are populated only for webinar and class cancellations. They are included in the client response so the frontend can trigger any UI updates related to the specific event.
 
 ### Error Responses
 
@@ -238,7 +238,7 @@ flowchart LR
 
     subgraph Phase3["Phase 3: Post-Transaction"]
         direction TB
-        F["Fire-and-forget:\nnotify both parties"] --> G["Best-effort:\nwaitlist cascade"]
+        F["Fire-and-forget:\nnotify both parties"]
     end
 
     Phase1 --> Phase2 --> Phase3
@@ -252,7 +252,7 @@ flowchart LR
 
 **Phase 2 (Transaction)**: The transaction contains only fast write operations -- three simple queries (update, deleteMany, delete) on indexed primary keys. No joins, no nested includes. This keeps the transaction fast and reduces lock contention.
 
-**Phase 3 (Post-Transaction)**: Notifications and waitlist operations happen after the transaction has committed. They use the data extracted in Phase 1. Both are fault-tolerant: notifications use `void` (fire-and-forget), and the waitlist cascade is wrapped in try/catch.
+**Phase 3 (Post-Transaction)**: Notifications happen after the transaction has committed, using the data extracted in Phase 1. They are fault-tolerant: notifications use `void` (fire-and-forget).
 
 ### What Would Happen Without This Pattern
 
@@ -503,10 +503,6 @@ void notifyAppointmentCancelled(
 
 The `void` keyword is critical here. It means "call this function but do not await it." The API response is sent to Alice immediately without waiting for Novu to deliver the notification. If Novu is down or slow, Alice still gets her 200 OK.
 
-### Step 8: Waitlist Check (Lines 209-234)
-
-For this consultation, `result.webinarId` and `result.classId` are both `null`, so the waitlist cascade is skipped entirely. This logic only runs for webinar and class cancellations.
-
 ### Step 9: Response
 
 Alice receives:
@@ -605,8 +601,6 @@ flowchart TD
     G --> H{Post-transaction}
     H --> I["Notifications\n(all types)"]
     H --> J{Webinar or Class?}
-    J -->|Yes| K["Waitlist cascade\nhandleSlotOpening()"]
-    J -->|No| L["No waitlist action"]
 
     style Consultation fill:#e3f2fd,stroke:#1565c0
     style GroupEvent fill:#fff3e0,stroke:#e65100
@@ -621,7 +615,6 @@ flowchart TD
 | **Audit fields stored**          | Yes (5 fields)  | Yes (5 fields)  | No        | No       |
 | **Cancellation reason on model** | Yes             | Yes             | No        | No       |
 | **Cancelled-by tracking**        | Yes             | Yes             | No        | No       |
-| **Waitlist cascade**             | No              | No              | Yes       | Yes      |
 | **Notification sent**            | Yes             | Yes             | Yes       | Yes      |
 | **Slots deleted**                | Yes             | Yes             | Yes       | Yes      |
 | **Appointment deleted**          | Yes             | Yes             | Yes       | Yes      |
@@ -647,8 +640,6 @@ await tx.consultation.update({
 
 **Why audit fields exist**: Consultations often involve payment disputes. When a consultee asks for a refund, the admin needs to know who cancelled, when they cancelled, and why. This audit trail is essential for the refund decision process.
 
-**No waitlist cascade**: Consultations are 1:1. There is no concept of a "next person waiting" for a consultation slot.
-
 ### Subscription Cancellation (Detailed)
 
 Subscriptions are recurring consultation sessions (e.g., "4 sessions per month with Bob"). They behave identically to consultations for cancellation purposes.
@@ -672,7 +663,6 @@ await tx.webinar.update({
 
 **Why no audit fields**: Webinars are typically cancelled by the consultant (the host). Since webinars are group events, the system does not track individual cancellation reasons on the event model. The `status` change is sufficient for the event lifecycle. If audit data is needed, it can be reconstructed from the API logs and the `cancelledBy` information in the notification payload.
 
-**Waitlist cascade triggers**: When a webinar is cancelled, `handleSlotOpening()` is called with `slotsAvailable: 1`. This notifies the first person in the waitlist queue that a spot has opened up.
 
 ### Class Cancellation (Detailed)
 
@@ -680,7 +670,6 @@ Classes are multi-session group events (e.g., "6-week Python bootcamp"). They be
 
 **What gets written to the database**: Only `status: "CANCELLED"`, same as webinar.
 
-**Waitlist cascade**: Same as webinar -- `handleSlotOpening()` is called.
 
 ### State Transition Diagram
 
@@ -731,7 +720,6 @@ flowchart TD
         A1["Appointment\n(appt_abc123)\nExists"] --- B1["SlotOfAppointment\n(1 or more slots)\nExists"]
         A1 --- C1["Event Record\n(Consultation/Subscription/\nWebinar/Class)\nActive status"]
         D1["Payment Records\nExists, various statuses"] --- A1
-        E1["Waitlist Entries\n(Webinar/Class only)\nWAITING status"]
     end
 
     subgraph TRANSACTION["TRANSACTION"]
@@ -747,7 +735,6 @@ flowchart TD
         A2["Appointment\nDELETED"] --- B2["SlotOfAppointment\nDELETED"]
         C2["Event Record\nstatus = CANCELLED\n(preserved for audit)"]
         D2["Payment Records\nUNTOUCHED\n(refund is separate)"]
-        E2["Waitlist Entries\nNOTIFIED\n(next in queue promoted)"]
     end
 
     BEFORE --> TRANSACTION --> AFTER
@@ -772,7 +759,6 @@ flowchart TD
 | `Class` (if applicable)        | `status = "PUBLISHED"`            | `status = "CANCELLED"`                       | Same reasoning as webinar                                            |
 | `Payment` / `PaymentOrder`     | Various statuses                  | **Untouched**                                | Refund is a deliberate admin action, not automatic                   |
 | `Earning` / `PayoutItem`       | May exist if payment was captured | **Untouched**                                | Earnings reversal is handled by the refund flow                      |
-| `Waitlist` entries             | `WAITING` for others              | Top entry moves to `NOTIFIED`                | Only for webinar/class; the freed spot is offered to the next person |
 
 ### Why the Event Record is Preserved
 
@@ -900,59 +886,6 @@ For webinars and classes where consultant/consultee relationships are not direct
 
 **Why fire-and-forget**: The notification is a courtesy, not a critical operation. If Novu is down for 5 minutes, the cancellation should still succeed. The user can always check their dashboard. Making the notification blocking would mean a Novu outage causes cancellation failures, which would be unacceptable.
 
-### Waitlist Cascade (Webinar and Class Only)
-
-When a webinar or class appointment is cancelled, a spot opens up. The system automatically notifies the next person on the waitlist.
-
-```mermaid
-sequenceDiagram
-    participant API as Cancel API
-    participant SH as Slot Handler
-    participant QM as Queue Manager<br/>(getNextInQueue)
-    participant DB as Database
-    participant Email as Email Service
-
-    Note over API: Transaction committed,<br/>webinarId or classId is non-null
-
-    API->>SH: handleSlotOpening with webinarId, slotsAvailable=1, reason=cancellation
-
-    SH->>QM: getNextInQueue(webinarId)
-    QM->>DB: Find first WAITING entry<br/>ordered by priority + joinedAt
-    DB-->>QM: Waitlist entry (or null)
-
-    alt No one waiting
-        QM-->>SH: null
-        Note over SH: Break loop,<br/>no one to notify
-    else Someone is waiting
-        QM-->>SH: (id, userId, user.email, ...)
-        SH->>DB: UPDATE waitlist entry<br/>status = NOTIFIED<br/>notifiedAt = now<br/>expiresAt = now + 48h<br/>position = null
-        SH->>Email: sendWaitlistSpotAvailableEmail(<br/>  email, name, eventTitle,<br/>  eventType, scheduledDate,<br/>  expiresAt, waitlistId<br/>)
-        Email-->>SH: Sent
-        SH->>DB: updatePositions()<br/>(recalculate remaining queue)
-    end
-
-    SH-->>API: notified: 1, errors: none
-    Note over API: Log success,<br/>return 200 to client
-```
-
-**Key details about the waitlist cascade**:
-
-1. **48-hour response window**: When notified, a user has 48 hours to accept the spot before it expires and is offered to the next person.
-2. **Position clearing**: The notified user's `position` is set to `null` because they are no longer "in the queue" -- they are in a separate "offered" state.
-3. **Queue reordering**: After notifying a user, `updatePositions()` recalculates position numbers for everyone still waiting.
-4. **Best-effort guarantee**: The entire waitlist cascade is wrapped in try/catch:
-
-```typescript
-try {
-  await handleSlotOpening({ ... });
-  console.log(JSON.stringify({ event: "waitlist_notified_after_cancellation", ... }));
-} catch (waitlistError) {
-  console.error("Failed to notify waitlist after cancellation:", waitlistError);
-}
-```
-
-If the waitlist system fails (database error, email service down, etc.), the error is logged but the cancellation response still returns 200 OK. The spot is still technically open; it just was not offered to anyone. An admin can manually trigger waitlist notifications later.
-
 ### Refund and Earnings
 
 **Refunds are NOT automatic.** This is a critical design decision that new developers must understand.
@@ -996,7 +929,6 @@ flowchart TD
     F -->|commits| G[Post-transaction effects]
 
     G --> H["Notification failure?\nLogged, NOT blocking\nResponse already 200"]
-    G --> I["Waitlist failure?\nLogged, NOT blocking\nResponse already 200"]
 
     F -->|commits| J["200 OK\n(success: true)"]
 
@@ -1080,16 +1012,6 @@ flowchart TD
 
 **Notification failure**: If `notifyAppointmentCancelled` throws, the error is silently swallowed because of the `void` prefix. The function runs as an unhandled promise, but since it uses Novu's client (which has its own error handling), unhandled rejections are rare. The cancellation response has already been sent.
 
-**Waitlist failure**: If `handleSlotOpening` throws, the error is caught and logged:
-
-```
-Failed to notify waitlist after cancellation: [error details]
-```
-
-The cancellation response still returns 200. The waitlist spot remains unclaimed until an admin intervenes or the next cancellation triggers another cascade.
-
----
-
 ## Cancellation vs Reschedule Comparison
 
 Developers frequently ask: "What is the difference between cancelling and rescheduling?" The two flows share some code but differ in fundamental ways.
@@ -1105,7 +1027,6 @@ Developers frequently ask: "What is the difference between cancelling and resche
 | **Payment**                      | Untouched (refund is separate)   | Untouched (no additional charge)         |
 | **Refund triggered**             | No (manual admin action)         | No                                       |
 | **Notifications**                | "Your appointment was cancelled" | "Your appointment was rescheduled"       |
-| **Waitlist cascade**             | Yes (webinar/class)              | No (slot count unchanged)                |
 | **Audit fields written**         | Yes (consultation/subscription)  | Different fields (rescheduled timestamp) |
 | **Can happen after event start** | Not checked (no guard)           | Typically blocked by validation          |
 | **Reversible**                   | No (must rebook from scratch)    | Yes (can reschedule again)               |
@@ -1162,7 +1083,6 @@ sequenceDiagram
     participant Zod as Zod Validator
     participant DB as Prisma / PostgreSQL
     participant Novu as Novu Notifications
-    participant WL as Waitlist System
     participant Email as Email Service
 
     User->>Client: Click "Cancel Appointment"
@@ -1204,11 +1124,6 @@ sequenceDiagram
         Email-->>Novu: Delivered
 
         opt Webinar or Class cancellation
-            API->>WL: handleSlotOpening with eventId, slotsAvailable=1
-            WL->>DB: Find next WAITING entry
-            WL->>DB: UPDATE status = NOTIFIED,<br/>expiresAt = now + 48h
-            WL->>Email: sendWaitlistSpotAvailableEmail()
-            WL->>DB: updatePositions()
             WL-->>API: notified: 1, errors: none
         end
     end
@@ -1223,62 +1138,11 @@ sequenceDiagram
 
 ### Structured Logging
 
-The cancellation endpoint logs structured JSON for observability. When a waitlist cascade succeeds, the following is logged:
-
-```json
-{
-  "event": "waitlist_notified_after_cancellation",
-  "webinarId": "web_123",
-  "classId": null,
-  "timestamp": "2025-06-15T10:30:01.234Z"
-}
-```
-
-The waitlist handler itself logs each individual notification:
-
-```json
-{
-  "event": "waitlist_user_notified",
-  "waitlistId": "wl_456",
-  "userId": "user_789",
-  "webinarId": "web_123",
-  "classId": null,
-  "reason": "cancellation",
-  "expiresAt": "2025-06-17T10:30:01.234Z",
-  "timestamp": "2025-06-15T10:30:01.234Z"
-}
-```
-
-These structured logs can be queried in your logging infrastructure to track cancellation patterns and debug waitlist issues.
-
-### Idempotency
-
-The cancellation endpoint is **not idempotent** in the strict HTTP sense. If you call it twice with the same appointment ID:
-
-- First call: 200 OK (appointment cancelled and deleted)
-- Second call: 404 Not Found (appointment no longer exists)
-
-This is acceptable because cancellation is a destructive operation. The 404 on the second call effectively communicates "this was already handled."
-
-### Concurrency
-
-If two users simultaneously try to cancel the same appointment:
-
-- Both will pass the `findUnique` check (Phase 1)
-- Both will enter the transaction (Phase 2)
-- One transaction will succeed; the other will fail with a "Record not found" error because the first transaction already deleted the appointment
-- The failing transaction returns a 500 or 404 depending on the error type
-
-This race condition is acceptable because the end result is the same: the appointment is cancelled.
-
----
-
 ## Related Documents
 
 - [Architecture](./01-architecture.md) -- Booking system overview and data model
 - [Event Types and Validation](./02-event-types-and-validation.md) -- Differences between event models
 - [API Reference](./04-api-reference.md) -- All booking endpoints including validate and allocate
 - [Reschedule Implementation Plan](./06-reschedule-implementation-plan.md) -- How rescheduling works (contrast with this doc)
-- [Waitlist System](./11-waitlist-system.md) -- Complete waitlist lifecycle and queue management
 - [Cancellation Payment Flow](../payments/cancellations-rescheduling/01-cancellation-payment-flow.md) -- Refund processing and earnings reversal
 - [Rescheduling Payment Flow](../payments/cancellations-rescheduling/02-rescheduling-payment-flow.md) -- How payment is handled during reschedule

@@ -348,14 +348,13 @@ describe("Entity Channel Creation", () => {
   });
 
   describe("createWebinarChannel", () => {
-    it("should create channel for webinar with waitlist and appointments", async () => {
+    it("should create channel for webinar registrants", async () => {
       mockPrisma.webinar.findUnique.mockResolvedValueOnce({
         id: "webinar-123",
         webinarPlan: {
           title: "Test Webinar",
           consultantProfile: { user: { id: "consultant-1" } },
         },
-        waitlist: [{ userId: "user-1" }, { userId: "user-2" }],
         appointment: {
           slotsOfAppointment: [{ user: [{ id: "user-3" }, { id: "user-1" }] }],
         },
@@ -393,7 +392,6 @@ describe("Entity Channel Creation", () => {
       mockPrisma.webinar.findUnique.mockResolvedValueOnce({
         id: "webinar-123",
         webinarPlan: { title: "Test", consultantProfile: null },
-        waitlist: [],
         appointment: null,
       });
 
@@ -421,7 +419,6 @@ describe("Entity Channel Creation", () => {
           title: "Test Class",
           consultantProfile: { user: { id: "consultant-2" } },
         },
-        waitlist: [{ userId: "user-a" }],
         appointments: [
           { slotsOfAppointment: [{ user: [{ id: "user-b" }] }] },
           { slotsOfAppointment: [{ user: [{ id: "user-c" }] }] },
@@ -460,7 +457,6 @@ describe("Entity Channel Creation", () => {
       mockPrisma.class.findUnique.mockResolvedValueOnce({
         id: "class-456",
         classPlan: { title: "Test", consultantProfile: { user: null } },
-        waitlist: [],
         appointments: [],
       });
 
@@ -619,14 +615,14 @@ describe("initializeAllChannels", () => {
       {
         id: "w1",
         webinarPlan: { consultantProfile: { user: { id: "c1" } } },
-        waitlist: [{ userId: "u1" }],
+        appointment: { slotsOfAppointment: [{ user: [{ id: "u1" }] }] },
       },
     ]);
     mockPrisma.class.findMany.mockResolvedValueOnce([
       {
         id: "cl1",
         classPlan: { consultantProfile: { user: { id: "c2" } } },
-        waitlist: [],
+        appointments: [],
       },
     ]);
     mockPrisma.consultation.findMany.mockResolvedValueOnce([
@@ -651,13 +647,11 @@ describe("initializeAllChannels", () => {
         title: "Webinar",
         consultantProfile: { user: { id: "c1" } },
       },
-      waitlist: [{ userId: "u1" }],
       appointment: null,
     });
     mockPrisma.class.findUnique.mockResolvedValue({
       id: "cl1",
       classPlan: { title: "Class", consultantProfile: { user: { id: "c2" } } },
-      waitlist: [],
       appointments: [],
     });
     mockPrisma.consultation.findUnique.mockResolvedValue({
@@ -685,7 +679,7 @@ describe("initializeAllChannels", () => {
       {
         id: "w1",
         webinarPlan: { consultantProfile: { user: { id: "c1" } } },
-        waitlist: [],
+        appointment: null,
       },
     ]);
     mockPrisma.class.findMany.mockResolvedValueOnce([]);

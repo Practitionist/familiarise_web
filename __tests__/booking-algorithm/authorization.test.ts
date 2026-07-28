@@ -38,10 +38,6 @@ jest.mock("../../lib/auth-server", () => ({
   getSession: jest.fn(),
 }));
 
-jest.mock("../../lib/waitlist/slot-handler", () => ({
-  handleSlotOpening: jest.fn().mockResolvedValue({ notified: 0 }),
-}));
-
 jest.mock("../../lib/payments/operations/event-refunds", () => ({
   refundWholeEventPayments: jest.fn().mockResolvedValue({
     refundsIssued: 0,
@@ -58,10 +54,7 @@ jest.mock("../../lib/novu", () => ({
 
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
-import {
-  authorizeEventAccess,
-  isPrivileged,
-} from "@/lib/auth-helpers";
+import { authorizeEventAccess, isPrivileged } from "@/lib/auth-helpers";
 import { POST as rescheduleHandler } from "@/app/api/appointments/[appointmentId]/reschedule/route";
 import { POST as cancelHandler } from "@/app/api/appointments/[appointmentId]/cancel/route";
 

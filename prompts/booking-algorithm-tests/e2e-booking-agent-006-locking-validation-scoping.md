@@ -287,7 +287,7 @@ VALUES (
 )
 ON CONFLICT (id) DO NOTHING;
 
--- Webinar for waitlist test: 1h, max 1 participant
+-- Webinar for sold-out test: 1h, max 1 participant
 INSERT INTO "WebinarPlan" (
   id, title, "durationInHours", "maxParticipants",
   price, "priceCurrency",
@@ -295,7 +295,7 @@ INSERT INTO "WebinarPlan" (
 )
 VALUES (
   'test-webinar-plan-006a-wl',
-  'Waitlist Test Webinar',
+  'Sold Out Test Webinar',
   1.0, 1,
   300, 'INR',
   'test-consultant-profile-006a',
@@ -863,9 +863,9 @@ Verify the class session counter shows the correct count:
 
 ---
 
-## Phase 8 — Waitlist Edge Case
+## Phase 8 — Sold-Out Edge Case
 
-### Setup: Allocate Waitlist Webinar
+### Setup: Allocate Single-Seat Webinar
 
 Login as CONSULTANT A. Allocate the 1-participant webinar:
 
@@ -908,15 +908,15 @@ async () => {
 
 **Expected:** 200 — first participant fills the single seat
 
-### Test 8.2 — Second Checkout Triggers Waitlist
+### Test 8.2 — Second Checkout Is Rejected As Full
 
 Create a second consultee or use an existing one. The key point: the next checkout
-should be waitlisted rather than causing a transaction rollback error.
+should fail cleanly as full rather than causing a transaction rollback error.
 
 ```javascript
 async () => {
   // As same consultee, try to checkout again (or a different user)
-  // The system should detect capacity is full and waitlist
+  // The system should detect that capacity is full
   const response = await fetch("/api/checkout", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -932,16 +932,13 @@ async () => {
 };
 ```
 
-**Expected:** Waitlisted (200 with waitlist indicator, or specific status code) — NOT a 500 transaction error
+**Expected:** A 4xx carrying "Webinar is full" — NOT a 500 transaction error
 
 DB verify:
 
 ```sql
 SELECT COUNT(*) as total_appointments
 FROM "Appointment" WHERE "webinarId" = 'test-webinar-006a-wl';
-
--- Check if waitlist record exists
-SELECT * FROM "Waitlist" WHERE "webinarId" = 'test-webinar-006a-wl';
 ```
 
 ---
@@ -1008,8 +1005,6 @@ WHERE "consultationId" IN (SELECT id FROM "Consultation" WHERE "consultationPlan
    OR "webinarId" IN ('test-webinar-006a', 'test-webinar-006a-wl')
    OR "classId" = 'test-class-006a';
 
--- Waitlist
-DELETE FROM "Waitlist" WHERE "webinarId" = 'test-webinar-006a-wl';
 
 -- Services
 DELETE FROM "Consultation" WHERE "consultationPlanId" = 'test-consultation-plan-006a';
@@ -1076,7 +1071,7 @@ SELECT
 | 17  | Unscheduled classes NOT in scheduled section              | UI verified          |
 | 18  | Session counter uses totalSessions                        | Correct count        |
 | 19  | Webinar fills to capacity -> first checkout succeeds      | 200                  |
-| 20  | Next checkout -> waitlisted (not 500)                     | Waitlisted           |
+| 20  | Next checkout -> rejected as full (not 500)               | 4xx "Webinar is full" |
 | 21  | Cleanup complete                                          | All counts = 0       |
 
 ---
@@ -1088,5 +1083,5 @@ SELECT
 - **Focus:** distributed locking (`lockAutoAllocate`), error classification, input validation, consultant-scoped filtering
 - **Concurrent requests via `Promise.all`** — tests the Redis distributed lock under contention
 - **Integer minute validation** — comprehensive edge cases (negative, float, string, boundary)
-- **Waitlist edge case** — webinar with max 1 participant, verifies graceful overflow
+- **Sold-out edge case** — webinar with max 1 participant, verifies graceful overflow
 - **Cross-consultant scoping** — verifies booking for A doesn't affect B's availability

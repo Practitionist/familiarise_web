@@ -2,7 +2,7 @@
 
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { DashboardHeader } from "@/components/dashboard/PageScaffold";
-import { RequestSlotAllocationTab } from "./RequestSlotAllocationTab";
+import { RequestSlotAllocationTab } from "@/components/dashboard/shared/requests/RequestSlotAllocationTab";
 
 /**
  * Requests tab page. RequestSlotAllocationTab owns its data: it resolves the

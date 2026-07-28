@@ -91,17 +91,14 @@ export function AppointmentSheet({
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <StatusBadge {...eventUnionStatusBadge(vm.status)} withDot size="sm" />
+            <StatusBadge
+              {...eventUnionStatusBadge(vm.status)}
+              withDot
+              size="sm"
+            />
             {sponsoredLabel && (
               <span className="rounded bg-indigo-50 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300 px-1.5 py-px text-[10px] font-medium">
                 Sponsored · {sponsoredLabel}
-              </span>
-            )}
-            {vm.waitlist && (
-              <span className="rounded bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300 px-1.5 py-px text-[10px] font-medium">
-                {vm.waitlist.status === "NOTIFIED"
-                  ? "Spot available — complete your booking"
-                  : `Waitlisted${vm.waitlist.position ? ` · #${vm.waitlist.position}` : ""}`}
               </span>
             )}
             {vm.collaboratorRole && (
@@ -113,146 +110,144 @@ export function AppointmentSheet({
         </SheetHeader>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6 sm:py-6">
-        <div className="space-y-5">
-          {/* Next session */}
-          {vm.nextAt && (
-            <div className="rounded-lg bg-muted border border-border p-3">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">
-                {vm.bucket === "past" || anchorOver
-                  ? "Last session"
-                  : "Next session"}
-              </p>
-              <div className="flex items-center gap-2">
-                <p className="text-sm font-medium text-foreground tabular-nums">
-                  {format(vm.nextAt, "EEE, d MMM yyyy · h:mm a")}
-                  {anchorSession?.endsAt && (
-                    <span className="text-muted-foreground font-normal">
-                      {" – "}
-                      {format(anchorSession.endsAt, "h:mm a")}
-                    </span>
-                  )}
+          <div className="space-y-5">
+            {/* Next session */}
+            {vm.nextAt && (
+              <div className="rounded-lg bg-muted border border-border p-3">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">
+                  {vm.bucket === "past" || anchorOver
+                    ? "Last session"
+                    : "Next session"}
                 </p>
-                {vm.bucket !== "past" && vm.bucket !== "cancelled" && (
-                  <CountdownBadge
-                    targetDate={vm.nextAt}
-                    sessionEndDate={anchorSession?.endsAt ?? undefined}
-                  />
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-medium text-foreground tabular-nums">
+                    {format(vm.nextAt, "EEE, d MMM yyyy · h:mm a")}
+                    {anchorSession?.endsAt && (
+                      <span className="text-muted-foreground font-normal">
+                        {" – "}
+                        {format(anchorSession.endsAt, "h:mm a")}
+                      </span>
+                    )}
+                  </p>
+                  {vm.bucket !== "past" && vm.bucket !== "cancelled" && (
+                    <CountdownBadge
+                      targetDate={vm.nextAt}
+                      sessionEndDate={anchorSession?.endsAt ?? undefined}
+                    />
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Group progress */}
+            {vm.group && vm.group.total > 0 && (
+              <div>
+                <div className="flex items-center justify-between text-xs text-muted-foreground mb-1.5">
+                  <span>Progress</span>
+                  <span className="font-medium text-foreground">
+                    {vm.group.completed} of {vm.group.total} sessions
+                  </span>
+                </div>
+                <Progress
+                  value={(vm.group.completed / vm.group.total) * 100}
+                  className="h-2"
+                />
+              </div>
+            )}
+
+            {/* Timeline (tentative-only / slot-less rows get a note instead) */}
+            {(allTentative || vm.sessions.length === 0) && (
+              <p className="text-xs text-muted-foreground rounded-lg bg-muted border border-border p-3">
+                {allTentative
+                  ? "Awaiting schedule confirmation."
+                  : vm.needsActionReason === "UNSCHEDULED"
+                    ? "No sessions scheduled yet — set a schedule to get started."
+                    : "No sessions scheduled yet."}
+              </p>
+            )}
+            {hasConcreteSessions && (
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+                  Sessions
+                </p>
+                <SessionTimeline
+                  sessions={vm.sessions}
+                  joinWindowMs={joinWindowMs}
+                  isJoining={action.kind === "join" && !!action.busy}
+                  onJoinSession={
+                    action.kind === "join" && action.onClick
+                      ? () => action.onClick!()
+                      : undefined
+                  }
+                />
+              </div>
+            )}
+
+            {/* Payment note */}
+            {vm.needsActionReason === "PAY_NOW" && vm.pendingPaymentUrl && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 dark:border-amber-900/40 dark:bg-amber-900/20 p-3">
+                <p className="text-xs text-amber-800 dark:text-amber-300 mb-2">
+                  Complete payment to confirm this booking.
+                </p>
+                <Button
+                  size="sm"
+                  className="w-full bg-amber-500 hover:bg-amber-600 text-white dark:bg-amber-600 dark:hover:bg-amber-500"
+                  onClick={() => {
+                    if (/^https?:\/\//.test(vm.pendingPaymentUrl!)) {
+                      window.open(
+                        vm.pendingPaymentUrl!,
+                        "_blank",
+                        "noopener,noreferrer",
+                      );
+                    }
+                  }}
+                >
+                  <CreditCard className="h-4 w-4 mr-2" />
+                  Pay Now to Confirm
+                </Button>
+              </div>
+            )}
+
+            {/* Actions — the sheet IS the "view", so a bare View primary is
+              redundant here; only stateful actions render. */}
+            {(action.kind !== "view" || overflow.length > 0 || detailHref) && (
+              <div className="space-y-2 border-t border-border pt-4">
+                {action.kind !== "view" && (
+                  <div className="[&>*]:w-full">
+                    <RowPrimaryAction action={action} size="default" />
+                  </div>
+                )}
+                {overflow.length > 0 && (
+                  <div className="grid grid-cols-2 gap-2">
+                    {overflow.map((item) => (
+                      <Button
+                        key={item.key}
+                        variant="outline"
+                        size="sm"
+                        disabled={item.disabled}
+                        onClick={item.onClick}
+                        className={
+                          item.destructive
+                            ? "text-red-600 border-red-200 hover:bg-red-50 dark:text-red-400 dark:border-red-900/40 dark:hover:bg-red-900/20"
+                            : undefined
+                        }
+                      >
+                        {item.label}
+                      </Button>
+                    ))}
+                  </div>
+                )}
+                {detailHref && (
+                  <Button variant="ghost" size="sm" className="w-full" asChild>
+                    <Link href={detailHref}>
+                      View full details
+                      <ArrowUpRight className="h-3.5 w-3.5 ml-1" />
+                    </Link>
+                  </Button>
                 )}
               </div>
-            </div>
-          )}
-
-          {/* Group progress */}
-          {vm.group && vm.group.total > 0 && (
-            <div>
-              <div className="flex items-center justify-between text-xs text-muted-foreground mb-1.5">
-                <span>Progress</span>
-                <span className="font-medium text-foreground">
-                  {vm.group.completed} of {vm.group.total} sessions
-                </span>
-              </div>
-              <Progress
-                value={(vm.group.completed / vm.group.total) * 100}
-                className="h-2"
-              />
-            </div>
-          )}
-
-          {/* Timeline (tentative-only / slot-less rows get a note instead) */}
-          {(allTentative || vm.sessions.length === 0) && (
-            <p className="text-xs text-muted-foreground rounded-lg bg-muted border border-border p-3">
-              {allTentative
-                ? "Awaiting schedule confirmation."
-                : vm.needsActionReason === "UNSCHEDULED"
-                  ? "No sessions scheduled yet — set a schedule to get started."
-                  : vm.waitlist
-                    ? "You'll get a session once your waitlist spot is confirmed."
-                    : "No sessions scheduled yet."}
-            </p>
-          )}
-          {hasConcreteSessions && (
-            <div>
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-                Sessions
-              </p>
-              <SessionTimeline
-                sessions={vm.sessions}
-                joinWindowMs={joinWindowMs}
-                isJoining={action.kind === "join" && !!action.busy}
-                onJoinSession={
-                  action.kind === "join" && action.onClick
-                    ? () => action.onClick!()
-                    : undefined
-                }
-              />
-            </div>
-          )}
-
-          {/* Payment note */}
-          {vm.needsActionReason === "PAY_NOW" && vm.pendingPaymentUrl && (
-            <div className="rounded-lg border border-amber-200 bg-amber-50 dark:border-amber-900/40 dark:bg-amber-900/20 p-3">
-              <p className="text-xs text-amber-800 dark:text-amber-300 mb-2">
-                Complete payment to confirm this booking.
-              </p>
-              <Button
-                size="sm"
-                className="w-full bg-amber-500 hover:bg-amber-600 text-white dark:bg-amber-600 dark:hover:bg-amber-500"
-                onClick={() => {
-                  if (/^https?:\/\//.test(vm.pendingPaymentUrl!)) {
-                    window.open(
-                      vm.pendingPaymentUrl!,
-                      "_blank",
-                      "noopener,noreferrer",
-                    );
-                  }
-                }}
-              >
-                <CreditCard className="h-4 w-4 mr-2" />
-                Pay Now to Confirm
-              </Button>
-            </div>
-          )}
-
-          {/* Actions — the sheet IS the "view", so a bare View primary is
-              redundant here; only stateful actions render. */}
-          {(action.kind !== "view" || overflow.length > 0 || detailHref) && (
-            <div className="space-y-2 border-t border-border pt-4">
-              {action.kind !== "view" && (
-                <div className="[&>*]:w-full">
-                  <RowPrimaryAction action={action} size="default" />
-                </div>
-              )}
-              {overflow.length > 0 && (
-                <div className="grid grid-cols-2 gap-2">
-                  {overflow.map((item) => (
-                    <Button
-                      key={item.key}
-                      variant="outline"
-                      size="sm"
-                      disabled={item.disabled}
-                      onClick={item.onClick}
-                      className={
-                        item.destructive
-                          ? "text-red-600 border-red-200 hover:bg-red-50 dark:text-red-400 dark:border-red-900/40 dark:hover:bg-red-900/20"
-                          : undefined
-                      }
-                    >
-                      {item.label}
-                    </Button>
-                  ))}
-                </div>
-              )}
-              {detailHref && (
-                <Button variant="ghost" size="sm" className="w-full" asChild>
-                  <Link href={detailHref}>
-                    View full details
-                    <ArrowUpRight className="h-3.5 w-3.5 ml-1" />
-                  </Link>
-                </Button>
-              )}
-            </div>
-          )}
-        </div>
+            )}
+          </div>
         </div>
       </SheetContent>
     </Sheet>

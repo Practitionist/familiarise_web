@@ -181,7 +181,7 @@ something they remember.
 - **Domain-claim verify** — `POST /domain-claims/[domain]/verify` (OWNER).
 - **Stream exports** — `GET /stream/channels`, `GET /stream/calls` (MANAGER).
 - **Read surfaces** — `/reimbursements` (+`/export`), `/disputes`,
-  `/documents`, `/trials`, `/waitlist`, `/appointments`, `/recordings`,
+  `/documents`, `/trials`, `/appointments`, `/recordings`,
   `/billing-account/invoices/[invoiceId]/pdf` (all MANAGER).
 
 ## Removed outright

@@ -7,7 +7,7 @@ import {
   ConsultationPlanEvent,
   SubscriptionPlanEvent,
   Event,
-} from "../types/event";
+} from "@/types/planner-events";
 import { EventPlannerForWebinar } from "./EventPlannerForWebinar";
 import { EventPlannerForClass } from "./EventPlannerForClass";
 import { EventPlannerForConsultation } from "./EventPlannerForConsultation";

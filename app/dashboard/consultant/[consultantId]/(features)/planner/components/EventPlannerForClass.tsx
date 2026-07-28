@@ -57,7 +57,7 @@ import { SubmitButton } from "./form-fields/SubmitButton";
 import { FormConfirmationDialog } from "./form-fields/FormConfirmationDialog";
 import { TopicsMultiSelect } from "./TopicsMultiSelect";
 import { PlannerService } from "../services/planner";
-import { ClassEvent, ClassPlannerProps } from "../types/event";
+import { ClassEvent, ClassPlannerProps } from "@/types/planner-events";
 import { PlanMaterialsUpload } from "./PlanMaterialsUpload";
 import { CollaboratorsTab } from "@/components/collaborators/CollaboratorsTab";
 import { PlanImageUploader } from "@/components/plans/PlanImageUploader";
@@ -97,7 +97,10 @@ export function EventPlannerForClass({
         const fetchedTopics = await PlannerService.getTopics("");
         setAvailableTopics(fetchedTopics);
       } catch (error) {
-        Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
+        Sentry.captureException(
+          error instanceof Error ? error : new Error(String(error)),
+          { tags: { subsystem: "client" } },
+        );
         console.error("Failed to fetch topics:", error);
         toast({
           title: "Error",
@@ -123,7 +126,9 @@ export function EventPlannerForClass({
           price: (initialData.classPlan.price ?? 0) / 100,
           priceCurrency: initialData.classPlan.priceCurrency ?? "INR",
           durationInMonths: initialData.classPlan.durationInMonths,
-          maxParticipants: initialData.classPlan.maxParticipants,
+          maxParticipants:
+            initialData.maxParticipants ??
+            initialData.classPlan.maxParticipants,
           language: initialData.classPlan.language ?? "English",
           level: initialData.classPlan.level ?? "Beginner",
           prerequisites: initialData.classPlan.prerequisites ?? "",
@@ -172,7 +177,8 @@ export function EventPlannerForClass({
         price: (initialData.classPlan.price ?? 0) / 100,
         priceCurrency: initialData.classPlan.priceCurrency ?? "INR",
         durationInMonths: initialData.classPlan.durationInMonths,
-        maxParticipants: initialData.classPlan.maxParticipants,
+        maxParticipants:
+          initialData.maxParticipants ?? initialData.classPlan.maxParticipants,
         language: initialData.classPlan.language ?? "English",
         level: initialData.classPlan.level ?? "Beginner",
         prerequisites: initialData.classPlan.prerequisites ?? "",
@@ -305,7 +311,8 @@ export function EventPlannerForClass({
           visibility: initialData?.classPlan?.visibility ?? "PUBLIC",
           certificateProvided: formData.certificateProvided ?? false,
           recordingEnabled: formData.recordingEnabled ?? false,
-          recordingStoragePolicy: initialData?.classPlan?.recordingStoragePolicy ?? "STREAM_ONLY",
+          recordingStoragePolicy:
+            initialData?.classPlan?.recordingStoragePolicy ?? "STREAM_ONLY",
           sessionDurationInHours:
             initialData?.classPlan?.sessionDurationInHours ?? 1,
           meetingsPerWeek: formData.meetingsPerWeek,
@@ -346,7 +353,10 @@ export function EventPlannerForClass({
       });
       onClose();
     } catch (error) {
-      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "client" } },
+      );
       console.error("Error saving class:", error);
       toast({
         title: "Error",
@@ -408,123 +418,32 @@ export function EventPlannerForClass({
           </ResponsiveModalHeader>
 
           <Form {...form}>
-            <form onSubmit={handleFormSubmit} className="flex min-h-0 flex-1 flex-col">
+            <form
+              onSubmit={handleFormSubmit}
+              className="flex min-h-0 flex-1 flex-col"
+            >
               <div className="min-h-0 flex-1 space-y-6 overflow-y-auto py-4">
-              {/* Basic Information Section */}
-              <FormSection
-                title="Basic Information"
-                description="Define your class content and topics"
-                icon={FileText}
-              >
-                <FormField
-                  control={form.control}
-                  name="title"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Title</FormLabel>
-                      <FormControl>
-                        <Input
-                          placeholder="e.g., Full-Stack Web Development Bootcamp"
-                          {...field}
-                        />
-                      </FormControl>
-                      <FormDescription>
-                        A clear, descriptive title for your class
-                      </FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                <FormField
-                  control={form.control}
-                  name="description"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Description</FormLabel>
-                      <FormControl>
-                        <Textarea
-                          {...field}
-                          value={field.value ?? ""}
-                          className="min-h-[100px] resize-none"
-                          placeholder="Describe what students will learn throughout this class..."
-                        />
-                      </FormControl>
-                      <FormDescription>
-                        Comprehensive overview of the class curriculum
-                      </FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                <FormField
-                  control={form.control}
-                  name="topics"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormControl>
-                        <TopicsMultiSelect
-                          initialTopics={field.value}
-                          onTopicsChange={(topics) => field.onChange(topics)}
-                          availableTopics={availableTopics}
-                          isLoading={isLoadingTopics}
-                          label="Topics"
-                          error={form.formState.errors.topics?.message}
-                          helpText={
-                            isFinite(maxTopics)
-                              ? `Select topics (up to ${maxTopics} based on duration). ${currentTopicCount}/${maxTopics} added.`
-                              : "Select or create topics for your class"
-                          }
-                        />
-                      </FormControl>
-                      {!canAddMoreTopics && isFinite(maxTopics) && (
-                        <p className="text-sm text-destructive mt-1">
-                          Topic limit ({maxTopics}) reached for the selected
-                          duration.
-                        </p>
-                      )}
-                    </FormItem>
-                  )}
-                />
-              </FormSection>
-
-              {/* Pricing & Duration Section */}
-              <FormSection
-                title="Pricing & Duration"
-                description="Set your class pricing and capacity"
-                icon={DollarSign}
-              >
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <PriceField
-                    control={form.control}
-                    priceName="price"
-                    currencyName="priceCurrency"
-                    description="Total class price"
-                  />
-
+                {/* Basic Information Section */}
+                <FormSection
+                  title="Basic Information"
+                  description="Define your class content and topics"
+                  icon={FileText}
+                >
                   <FormField
                     control={form.control}
-                    name="durationInMonths"
+                    name="title"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Duration (months)</FormLabel>
+                        <FormLabel>Title</FormLabel>
                         <FormControl>
                           <Input
-                            type="number"
-                            step="1"
-                            min="1"
-                            placeholder="1"
+                            placeholder="e.g., Full-Stack Web Development Bootcamp"
                             {...field}
-                            onChange={(e) => {
-                              const value = e.target.value;
-                              field.onChange(
-                                value === "" ? 0 : Number.parseFloat(value),
-                              );
-                            }}
                           />
                         </FormControl>
-                        <FormDescription>Course length</FormDescription>
+                        <FormDescription>
+                          A clear, descriptive title for your class
+                        </FormDescription>
                         <FormMessage />
                       </FormItem>
                     )}
@@ -532,546 +451,644 @@ export function EventPlannerForClass({
 
                   <FormField
                     control={form.control}
-                    name="maxParticipants"
+                    name="description"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Max Students</FormLabel>
+                        <FormLabel>Description</FormLabel>
                         <FormControl>
-                          <Input
-                            type="number"
-                            min="1"
-                            placeholder="30"
+                          <Textarea
                             {...field}
-                            onChange={(e) =>
-                              field.onChange(Number.parseInt(e.target.value))
+                            value={field.value ?? ""}
+                            className="min-h-[100px] resize-none"
+                            placeholder="Describe what students will learn throughout this class..."
+                          />
+                        </FormControl>
+                        <FormDescription>
+                          Comprehensive overview of the class curriculum
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="topics"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormControl>
+                          <TopicsMultiSelect
+                            initialTopics={field.value}
+                            onTopicsChange={(topics) => field.onChange(topics)}
+                            availableTopics={availableTopics}
+                            isLoading={isLoadingTopics}
+                            label="Topics"
+                            error={form.formState.errors.topics?.message}
+                            helpText={
+                              isFinite(maxTopics)
+                                ? `Select topics (up to ${maxTopics} based on duration). ${currentTopicCount}/${maxTopics} added.`
+                                : "Select or create topics for your class"
                             }
                           />
                         </FormControl>
-                        <FormDescription>Class size limit</FormDescription>
-                        <FormMessage />
+                        {!canAddMoreTopics && isFinite(maxTopics) && (
+                          <p className="text-sm text-destructive mt-1">
+                            Topic limit ({maxTopics}) reached for the selected
+                            duration.
+                          </p>
+                        )}
                       </FormItem>
                     )}
                   />
-                </div>
-              </FormSection>
+                </FormSection>
 
-              {/* Schedule & Support Section */}
-              <FormSection
-                title="Schedule & Support"
-                description="Define class start date, meeting frequency and support options"
-                icon={Calendar}
-              >
-                {/* Class Start Date & Time - Required Field */}
-                <div className="space-y-2 mb-4">
-                  <FormLabel htmlFor="schedulingStartDate">
-                    Class Start Date & Time{" "}
-                    <span className="text-destructive">*</span>
-                  </FormLabel>
-                  <div className="relative">
-                    <Input
-                      type="datetime-local"
-                      id="schedulingStartDate"
-                      value={schedulingStartDate}
-                      onChange={(e) => setSchedulingStartDate(e.target.value)}
-                      min={minDateTime}
-                      className="w-full"
+                {/* Pricing & Duration Section */}
+                <FormSection
+                  title="Pricing & Duration"
+                  description="Set your class pricing and capacity"
+                  icon={DollarSign}
+                >
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <PriceField
+                      control={form.control}
+                      priceName="price"
+                      currencyName="priceCurrency"
+                      description="Total class price"
                     />
-                    <CalendarIcon className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+
+                    <FormField
+                      control={form.control}
+                      name="durationInMonths"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Duration (months)</FormLabel>
+                          <FormControl>
+                            <Input
+                              type="number"
+                              step="1"
+                              min="1"
+                              placeholder="1"
+                              {...field}
+                              onChange={(e) => {
+                                const value = e.target.value;
+                                field.onChange(
+                                  value === "" ? 0 : Number.parseFloat(value),
+                                );
+                              }}
+                            />
+                          </FormControl>
+                          <FormDescription>Course length</FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <FormField
+                      control={form.control}
+                      name="maxParticipants"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Max Students</FormLabel>
+                          <FormControl>
+                            <Input
+                              type="number"
+                              min="1"
+                              placeholder="30"
+                              {...field}
+                              onChange={(e) =>
+                                field.onChange(Number.parseInt(e.target.value))
+                              }
+                            />
+                          </FormControl>
+                          <FormDescription>
+                            Seats for this class. Raise it at any time to reopen
+                            enrollment; you cannot drop below the number already
+                            enrolled.
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
                   </div>
-                  <p className="text-sm text-muted-foreground">
-                    When should the first class session begin? (Your local
-                    timezone)
-                  </p>
-                  {!schedulingStartDate && (
-                    <p className="text-sm text-destructive">
-                      Please select a start date and time for your class
+                </FormSection>
+
+                {/* Schedule & Support Section */}
+                <FormSection
+                  title="Schedule & Support"
+                  description="Define class start date, meeting frequency and support options"
+                  icon={Calendar}
+                >
+                  {/* Class Start Date & Time - Required Field */}
+                  <div className="space-y-2 mb-4">
+                    <FormLabel htmlFor="schedulingStartDate">
+                      Class Start Date & Time{" "}
+                      <span className="text-destructive">*</span>
+                    </FormLabel>
+                    <div className="relative">
+                      <Input
+                        type="datetime-local"
+                        id="schedulingStartDate"
+                        value={schedulingStartDate}
+                        onChange={(e) => setSchedulingStartDate(e.target.value)}
+                        min={minDateTime}
+                        className="w-full"
+                      />
+                      <CalendarIcon className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+                    </div>
+                    <p className="text-sm text-muted-foreground">
+                      When should the first class session begin? (Your local
+                      timezone)
+                    </p>
+                    {!schedulingStartDate && (
+                      <p className="text-sm text-destructive">
+                        Please select a start date and time for your class
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <FormField
+                      control={form.control}
+                      name="meetingsPerWeek"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Meetings Per Week</FormLabel>
+                          <FormControl>
+                            <Input
+                              type="number"
+                              min="1"
+                              max="7"
+                              placeholder="2"
+                              {...field}
+                              onChange={(e) =>
+                                field.onChange(Number.parseInt(e.target.value))
+                              }
+                            />
+                          </FormControl>
+                          <FormDescription>
+                            Number of sessions per week
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <FormField
+                      control={form.control}
+                      name="emailSupport"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Email Support Level</FormLabel>
+                          <Select
+                            onValueChange={field.onChange}
+                            defaultValue={field.value}
+                          >
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select support level" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              <SelectItem value="GENERAL">
+                                General (48h response)
+                              </SelectItem>
+                              <SelectItem value="PRIORITY">
+                                Priority (24h response)
+                              </SelectItem>
+                              <SelectItem value="DEDICATED">
+                                Dedicated (Same day)
+                              </SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <FormDescription>
+                            Expected email response time
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+                </FormSection>
+
+                {/* Session Details Section */}
+                <FormSection
+                  title="Session Details"
+                  description="Language, level, and certificate options"
+                  icon={Settings}
+                >
+                  <LanguageLevelFields control={form.control} />
+
+                  <FormField
+                    control={form.control}
+                    name="certificateProvided"
+                    render={({ field }) => (
+                      <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4 mt-4">
+                        <div className="space-y-0.5">
+                          <FormLabel className="text-base">
+                            Certificate of Completion
+                          </FormLabel>
+                          <FormDescription>
+                            Provide students with a certificate upon completion
+                          </FormDescription>
+                        </div>
+                        <FormControl>
+                          <Switch
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                          />
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="recordingEnabled"
+                    render={({ field }) => (
+                      <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4 mt-4">
+                        <div className="space-y-0.5">
+                          <FormLabel className="text-base">
+                            Enable Recording
+                          </FormLabel>
+                          <FormDescription>
+                            Allow recording of class sessions for students to
+                            watch later
+                          </FormDescription>
+                        </div>
+                        <FormControl>
+                          <Switch
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                          />
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="recordingStoragePolicy"
+                    render={({ field }) => (
+                      <FormItem className="rounded-lg border p-4 mt-4">
+                        <FormLabel className="text-base">
+                          Recording Storage
+                        </FormLabel>
+                        <FormDescription>
+                          Choose how long recordings are stored
+                        </FormDescription>
+                        <FormControl>
+                          <div
+                            role="radiogroup"
+                            aria-label="Recording storage policy"
+                            className="flex flex-col gap-3 mt-2"
+                          >
+                            <label
+                              htmlFor="class-storage-stream"
+                              className="flex items-start gap-3 cursor-pointer"
+                            >
+                              <input
+                                id="class-storage-stream"
+                                type="radio"
+                                name="recordingStoragePolicy"
+                                value="STREAM_ONLY"
+                                checked={field.value === "STREAM_ONLY"}
+                                onChange={() => field.onChange("STREAM_ONLY")}
+                                className="mt-1"
+                              />
+                              <div>
+                                <div className="font-medium text-sm">
+                                  Standard Storage (2 weeks)
+                                </div>
+                                <div className="text-xs text-muted-foreground">
+                                  Recordings are available for 2 weeks after the
+                                  session, then automatically removed.
+                                </div>
+                              </div>
+                            </label>
+                            <label
+                              htmlFor="class-storage-permanent"
+                              className="flex items-start gap-3 cursor-pointer"
+                            >
+                              <input
+                                id="class-storage-permanent"
+                                type="radio"
+                                name="recordingStoragePolicy"
+                                value="SUPABASE_PERMANENT"
+                                checked={field.value === "SUPABASE_PERMANENT"}
+                                onChange={() =>
+                                  field.onChange("SUPABASE_PERMANENT")
+                                }
+                                className="mt-1"
+                              />
+                              <div>
+                                <div className="font-medium text-sm">
+                                  Permanent Storage
+                                </div>
+                                <div className="text-xs text-muted-foreground">
+                                  Recordings are automatically transferred to
+                                  permanent storage and never expire.
+                                </div>
+                              </div>
+                            </label>
+                          </div>
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+                </FormSection>
+
+                {/* Learning Content Section */}
+                <FormSection
+                  title="Learning Content"
+                  description="Define prerequisites and outcomes"
+                  icon={GraduationCap}
+                >
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <FormField
+                      control={form.control}
+                      name="prerequisites"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Prerequisites</FormLabel>
+                          <FormControl>
+                            <Textarea
+                              {...field}
+                              placeholder="e.g., Basic programming knowledge"
+                              value={field.value ?? ""}
+                              className="min-h-[80px] resize-none"
+                            />
+                          </FormControl>
+                          <FormDescription>
+                            What should students know beforehand?
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <FormField
+                      control={form.control}
+                      name="materialProvided"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Materials Provided</FormLabel>
+                          <FormControl>
+                            <Textarea
+                              {...field}
+                              placeholder="e.g., Course slides, code repos, assignments"
+                              value={field.value ?? ""}
+                              className="min-h-[80px] resize-none"
+                            />
+                          </FormControl>
+                          <FormDescription>
+                            Resources you will provide
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+
+                  <LearningOutcomesField
+                    control={form.control}
+                    name="learningOutcomes"
+                    placeholder="e.g., Build full-stack web applications"
+                    description="What students will be able to do after completing the class"
+                  />
+                </FormSection>
+
+                {/* Class Curriculum Section */}
+                <FormSection
+                  title="Class Curriculum"
+                  description="Define the structure and content of your class"
+                  icon={BookOpen}
+                >
+                  <FormField
+                    control={form.control}
+                    name="classContents"
+                    render={({ field }) => (
+                      <FormItem>
+                        <div className="space-y-4">
+                          {(field.value ?? []).map((content, index) => (
+                            <div
+                              key={content.id || `content-${index}`}
+                              className="p-4 border rounded-lg bg-background"
+                            >
+                              <div className="flex items-center justify-between mb-4">
+                                <span className="text-sm font-medium text-muted-foreground">
+                                  Module {content.order || index + 1}
+                                </span>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                                  onClick={() => removeClassContent(index)}
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </div>
+
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <FormField
+                                  control={form.control}
+                                  name={`classContents.${index}.title`}
+                                  render={({ field: contentField }) => (
+                                    <FormItem>
+                                      <FormLabel>
+                                        Title{" "}
+                                        <span className="text-destructive">
+                                          *
+                                        </span>
+                                      </FormLabel>
+                                      <FormControl>
+                                        <Input
+                                          placeholder="e.g., Introduction to React"
+                                          {...contentField}
+                                        />
+                                      </FormControl>
+                                      <FormMessage />
+                                    </FormItem>
+                                  )}
+                                />
+
+                                <FormField
+                                  control={form.control}
+                                  name={`classContents.${index}.hoursAllotted`}
+                                  render={({ field: contentField }) => (
+                                    <FormItem>
+                                      <FormLabel>
+                                        Hours{" "}
+                                        <span className="text-destructive">
+                                          *
+                                        </span>
+                                      </FormLabel>
+                                      <FormControl>
+                                        <Input
+                                          type="number"
+                                          step="0.5"
+                                          min="0.5"
+                                          placeholder="1"
+                                          {...contentField}
+                                          onChange={(e) => {
+                                            const value = e.target.value;
+                                            contentField.onChange(
+                                              isNaN(Number.parseFloat(value))
+                                                ? 0
+                                                : Number.parseFloat(value),
+                                            );
+                                          }}
+                                        />
+                                      </FormControl>
+                                      <FormMessage />
+                                    </FormItem>
+                                  )}
+                                />
+
+                                <FormField
+                                  control={form.control}
+                                  name={`classContents.${index}.description`}
+                                  render={({ field: contentField }) => (
+                                    <FormItem className="md:col-span-2">
+                                      <FormLabel>
+                                        Description{" "}
+                                        <span className="text-destructive">
+                                          *
+                                        </span>
+                                      </FormLabel>
+                                      <FormControl>
+                                        <Textarea
+                                          {...contentField}
+                                          placeholder="Describe what will be covered in this module..."
+                                          value={contentField.value ?? ""}
+                                          className="min-h-[60px] resize-none"
+                                        />
+                                      </FormControl>
+                                      <FormMessage />
+                                    </FormItem>
+                                  )}
+                                />
+
+                                <FormField
+                                  control={form.control}
+                                  name={`classContents.${index}.contentType`}
+                                  render={({ field: contentField }) => (
+                                    <FormItem>
+                                      <FormLabel>Content Type</FormLabel>
+                                      <FormControl>
+                                        <Input
+                                          placeholder="e.g., Video, Live Session"
+                                          {...contentField}
+                                          value={contentField.value ?? ""}
+                                        />
+                                      </FormControl>
+                                      <FormMessage />
+                                    </FormItem>
+                                  )}
+                                />
+
+                                <FormField
+                                  control={form.control}
+                                  name={`classContents.${index}.contentUrl`}
+                                  render={({ field: contentField }) => (
+                                    <FormItem>
+                                      <FormLabel>Resource URL</FormLabel>
+                                      <FormControl>
+                                        <Input
+                                          placeholder="https://..."
+                                          {...contentField}
+                                          value={contentField.value ?? ""}
+                                        />
+                                      </FormControl>
+                                      <FormMessage />
+                                    </FormItem>
+                                  )}
+                                />
+                              </div>
+                            </div>
+                          ))}
+
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="w-full"
+                            onClick={addClassContent}
+                          >
+                            <Plus className="h-4 w-4 mr-2" />
+                            Add Module
+                          </Button>
+
+                          {/* Error messages for classContents */}
+                          {form.formState.errors.classContents?.message && (
+                            <p className="text-sm font-medium text-destructive">
+                              {form.formState.errors.classContents.message}
+                            </p>
+                          )}
+                          {form.formState.errors.classContents?.root
+                            ?.message && (
+                            <p className="text-sm font-medium text-destructive">
+                              {form.formState.errors.classContents.root.message}
+                            </p>
+                          )}
+                        </div>
+                      </FormItem>
+                    )}
+                  />
+                </FormSection>
+
+                {/* Cover Image Section - Only show when editing an existing plan */}
+                {initialData?.classPlan?.id && (
+                  <FormSection
+                    title="Cover Image"
+                    description="Upload a cover image for your class"
+                    icon={Upload}
+                  >
+                    <PlanImageUploader
+                      planType="class-plans"
+                      planId={initialData.classPlan.id}
+                      currentImageUrl={initialData.classPlan.imageUrl}
+                    />
+                  </FormSection>
+                )}
+
+                {/* Materials Section - Only show when editing an existing plan */}
+                {initialData?.id && (
+                  <FormSection
+                    title="Plan Materials"
+                    description="Upload materials for students"
+                    icon={Upload}
+                  >
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => setShowMaterialsDialog(true)}
+                      className="w-full"
+                    >
+                      <Upload className="mr-2 h-4 w-4" />
+                      Manage Materials
+                    </Button>
+                  </FormSection>
+                )}
+
+                {/* Collaborators Section */}
+                <FormSection
+                  title="Collaborators"
+                  description="Invite other consultants to co-teach this class"
+                  icon={Users}
+                >
+                  {initialData?.classPlan?.id ? (
+                    <CollaboratorsTab
+                      planType="class"
+                      planId={initialData.classPlan.id}
+                      isOwner={true}
+                      excludeId={consultantId}
+                    />
+                  ) : (
+                    <p className="text-sm text-zinc-500 text-center py-4">
+                      Save this class first to add collaborators
                     </p>
                   )}
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <FormField
-                    control={form.control}
-                    name="meetingsPerWeek"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Meetings Per Week</FormLabel>
-                        <FormControl>
-                          <Input
-                            type="number"
-                            min="1"
-                            max="7"
-                            placeholder="2"
-                            {...field}
-                            onChange={(e) =>
-                              field.onChange(Number.parseInt(e.target.value))
-                            }
-                          />
-                        </FormControl>
-                        <FormDescription>
-                          Number of sessions per week
-                        </FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  <FormField
-                    control={form.control}
-                    name="emailSupport"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Email Support Level</FormLabel>
-                        <Select
-                          onValueChange={field.onChange}
-                          defaultValue={field.value}
-                        >
-                          <FormControl>
-                            <SelectTrigger>
-                              <SelectValue placeholder="Select support level" />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            <SelectItem value="GENERAL">
-                              General (48h response)
-                            </SelectItem>
-                            <SelectItem value="PRIORITY">
-                              Priority (24h response)
-                            </SelectItem>
-                            <SelectItem value="DEDICATED">
-                              Dedicated (Same day)
-                            </SelectItem>
-                          </SelectContent>
-                        </Select>
-                        <FormDescription>
-                          Expected email response time
-                        </FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </div>
-              </FormSection>
-
-              {/* Session Details Section */}
-              <FormSection
-                title="Session Details"
-                description="Language, level, and certificate options"
-                icon={Settings}
-              >
-                <LanguageLevelFields control={form.control} />
-
-                <FormField
-                  control={form.control}
-                  name="certificateProvided"
-                  render={({ field }) => (
-                    <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4 mt-4">
-                      <div className="space-y-0.5">
-                        <FormLabel className="text-base">
-                          Certificate of Completion
-                        </FormLabel>
-                        <FormDescription>
-                          Provide students with a certificate upon completion
-                        </FormDescription>
-                      </div>
-                      <FormControl>
-                        <Switch
-                          checked={field.value}
-                          onCheckedChange={field.onChange}
-                        />
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
-
-                <FormField
-                  control={form.control}
-                  name="recordingEnabled"
-                  render={({ field }) => (
-                    <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4 mt-4">
-                      <div className="space-y-0.5">
-                        <FormLabel className="text-base">
-                          Enable Recording
-                        </FormLabel>
-                        <FormDescription>
-                          Allow recording of class sessions for students to
-                          watch later
-                        </FormDescription>
-                      </div>
-                      <FormControl>
-                        <Switch
-                          checked={field.value}
-                          onCheckedChange={field.onChange}
-                        />
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
-
-                <FormField
-                  control={form.control}
-                  name="recordingStoragePolicy"
-                  render={({ field }) => (
-                    <FormItem className="rounded-lg border p-4 mt-4">
-                      <FormLabel className="text-base">
-                        Recording Storage
-                      </FormLabel>
-                      <FormDescription>
-                        Choose how long recordings are stored
-                      </FormDescription>
-                      <FormControl>
-                        <div
-                          role="radiogroup"
-                          aria-label="Recording storage policy"
-                          className="flex flex-col gap-3 mt-2"
-                        >
-                          <label
-                            htmlFor="class-storage-stream"
-                            className="flex items-start gap-3 cursor-pointer"
-                          >
-                            <input
-                              id="class-storage-stream"
-                              type="radio"
-                              name="recordingStoragePolicy"
-                              value="STREAM_ONLY"
-                              checked={field.value === "STREAM_ONLY"}
-                              onChange={() => field.onChange("STREAM_ONLY")}
-                              className="mt-1"
-                            />
-                            <div>
-                              <div className="font-medium text-sm">
-                                Standard Storage (2 weeks)
-                              </div>
-                              <div className="text-xs text-muted-foreground">
-                                Recordings are available for 2 weeks after the
-                                session, then automatically removed.
-                              </div>
-                            </div>
-                          </label>
-                          <label
-                            htmlFor="class-storage-permanent"
-                            className="flex items-start gap-3 cursor-pointer"
-                          >
-                            <input
-                              id="class-storage-permanent"
-                              type="radio"
-                              name="recordingStoragePolicy"
-                              value="SUPABASE_PERMANENT"
-                              checked={field.value === "SUPABASE_PERMANENT"}
-                              onChange={() =>
-                                field.onChange("SUPABASE_PERMANENT")
-                              }
-                              className="mt-1"
-                            />
-                            <div>
-                              <div className="font-medium text-sm">
-                                Permanent Storage
-                              </div>
-                              <div className="text-xs text-muted-foreground">
-                                Recordings are automatically transferred to
-                                permanent storage and never expire.
-                              </div>
-                            </div>
-                          </label>
-                        </div>
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
-              </FormSection>
-
-              {/* Learning Content Section */}
-              <FormSection
-                title="Learning Content"
-                description="Define prerequisites and outcomes"
-                icon={GraduationCap}
-              >
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <FormField
-                    control={form.control}
-                    name="prerequisites"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Prerequisites</FormLabel>
-                        <FormControl>
-                          <Textarea
-                            {...field}
-                            placeholder="e.g., Basic programming knowledge"
-                            value={field.value ?? ""}
-                            className="min-h-[80px] resize-none"
-                          />
-                        </FormControl>
-                        <FormDescription>
-                          What should students know beforehand?
-                        </FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  <FormField
-                    control={form.control}
-                    name="materialProvided"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Materials Provided</FormLabel>
-                        <FormControl>
-                          <Textarea
-                            {...field}
-                            placeholder="e.g., Course slides, code repos, assignments"
-                            value={field.value ?? ""}
-                            className="min-h-[80px] resize-none"
-                          />
-                        </FormControl>
-                        <FormDescription>
-                          Resources you will provide
-                        </FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </div>
-
-                <LearningOutcomesField
-                  control={form.control}
-                  name="learningOutcomes"
-                  placeholder="e.g., Build full-stack web applications"
-                  description="What students will be able to do after completing the class"
-                />
-              </FormSection>
-
-              {/* Class Curriculum Section */}
-              <FormSection
-                title="Class Curriculum"
-                description="Define the structure and content of your class"
-                icon={BookOpen}
-              >
-                <FormField
-                  control={form.control}
-                  name="classContents"
-                  render={({ field }) => (
-                    <FormItem>
-                      <div className="space-y-4">
-                        {(field.value ?? []).map((content, index) => (
-                          <div
-                            key={content.id || `content-${index}`}
-                            className="p-4 border rounded-lg bg-background"
-                          >
-                            <div className="flex items-center justify-between mb-4">
-                              <span className="text-sm font-medium text-muted-foreground">
-                                Module {content.order || index + 1}
-                              </span>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                                onClick={() => removeClassContent(index)}
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            </div>
-
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                              <FormField
-                                control={form.control}
-                                name={`classContents.${index}.title`}
-                                render={({ field: contentField }) => (
-                                  <FormItem>
-                                    <FormLabel>
-                                      Title{" "}
-                                      <span className="text-destructive">
-                                        *
-                                      </span>
-                                    </FormLabel>
-                                    <FormControl>
-                                      <Input
-                                        placeholder="e.g., Introduction to React"
-                                        {...contentField}
-                                      />
-                                    </FormControl>
-                                    <FormMessage />
-                                  </FormItem>
-                                )}
-                              />
-
-                              <FormField
-                                control={form.control}
-                                name={`classContents.${index}.hoursAllotted`}
-                                render={({ field: contentField }) => (
-                                  <FormItem>
-                                    <FormLabel>
-                                      Hours{" "}
-                                      <span className="text-destructive">
-                                        *
-                                      </span>
-                                    </FormLabel>
-                                    <FormControl>
-                                      <Input
-                                        type="number"
-                                        step="0.5"
-                                        min="0.5"
-                                        placeholder="1"
-                                        {...contentField}
-                                        onChange={(e) => {
-                                          const value = e.target.value;
-                                          contentField.onChange(
-                                            isNaN(Number.parseFloat(value))
-                                              ? 0
-                                              : Number.parseFloat(value),
-                                          );
-                                        }}
-                                      />
-                                    </FormControl>
-                                    <FormMessage />
-                                  </FormItem>
-                                )}
-                              />
-
-                              <FormField
-                                control={form.control}
-                                name={`classContents.${index}.description`}
-                                render={({ field: contentField }) => (
-                                  <FormItem className="md:col-span-2">
-                                    <FormLabel>
-                                      Description{" "}
-                                      <span className="text-destructive">
-                                        *
-                                      </span>
-                                    </FormLabel>
-                                    <FormControl>
-                                      <Textarea
-                                        {...contentField}
-                                        placeholder="Describe what will be covered in this module..."
-                                        value={contentField.value ?? ""}
-                                        className="min-h-[60px] resize-none"
-                                      />
-                                    </FormControl>
-                                    <FormMessage />
-                                  </FormItem>
-                                )}
-                              />
-
-                              <FormField
-                                control={form.control}
-                                name={`classContents.${index}.contentType`}
-                                render={({ field: contentField }) => (
-                                  <FormItem>
-                                    <FormLabel>Content Type</FormLabel>
-                                    <FormControl>
-                                      <Input
-                                        placeholder="e.g., Video, Live Session"
-                                        {...contentField}
-                                        value={contentField.value ?? ""}
-                                      />
-                                    </FormControl>
-                                    <FormMessage />
-                                  </FormItem>
-                                )}
-                              />
-
-                              <FormField
-                                control={form.control}
-                                name={`classContents.${index}.contentUrl`}
-                                render={({ field: contentField }) => (
-                                  <FormItem>
-                                    <FormLabel>Resource URL</FormLabel>
-                                    <FormControl>
-                                      <Input
-                                        placeholder="https://..."
-                                        {...contentField}
-                                        value={contentField.value ?? ""}
-                                      />
-                                    </FormControl>
-                                    <FormMessage />
-                                  </FormItem>
-                                )}
-                              />
-                            </div>
-                          </div>
-                        ))}
-
-                        <Button
-                          type="button"
-                          variant="outline"
-                          className="w-full"
-                          onClick={addClassContent}
-                        >
-                          <Plus className="h-4 w-4 mr-2" />
-                          Add Module
-                        </Button>
-
-                        {/* Error messages for classContents */}
-                        {form.formState.errors.classContents?.message && (
-                          <p className="text-sm font-medium text-destructive">
-                            {form.formState.errors.classContents.message}
-                          </p>
-                        )}
-                        {form.formState.errors.classContents?.root?.message && (
-                          <p className="text-sm font-medium text-destructive">
-                            {form.formState.errors.classContents.root.message}
-                          </p>
-                        )}
-                      </div>
-                    </FormItem>
-                  )}
-                />
-              </FormSection>
-
-              {/* Cover Image Section - Only show when editing an existing plan */}
-              {initialData?.classPlan?.id && (
-                <FormSection
-                  title="Cover Image"
-                  description="Upload a cover image for your class"
-                  icon={Upload}
-                >
-                  <PlanImageUploader
-                    planType="class-plans"
-                    planId={initialData.classPlan.id}
-                    currentImageUrl={initialData.classPlan.imageUrl}
-                  />
                 </FormSection>
-              )}
-
-              {/* Materials Section - Only show when editing an existing plan */}
-              {initialData?.id && (
-                <FormSection
-                  title="Plan Materials"
-                  description="Upload materials for students"
-                  icon={Upload}
-                >
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => setShowMaterialsDialog(true)}
-                    className="w-full"
-                  >
-                    <Upload className="mr-2 h-4 w-4" />
-                    Manage Materials
-                  </Button>
-                </FormSection>
-              )}
-
-              {/* Collaborators Section */}
-              <FormSection
-                title="Collaborators"
-                description="Invite other consultants to co-teach this class"
-                icon={Users}
-              >
-                {initialData?.classPlan?.id ? (
-                  <CollaboratorsTab
-                    planType="class"
-                    planId={initialData.classPlan.id}
-                    isOwner={true}
-                    excludeId={consultantId}
-                  />
-                ) : (
-                  <p className="text-sm text-zinc-500 text-center py-4">
-                    Save this class first to add collaborators
-                  </p>
-                )}
-              </FormSection>
-
               </div>
               <ResponsiveModalFooter className="shrink-0 border-t pt-4">
                 <Button

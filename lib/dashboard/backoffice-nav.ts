@@ -86,54 +86,152 @@ function groupSpecs({ showTds = false }: BackofficeNavOptions): NavGroupSpec[] {
     {
       label: "Support",
       items: [
-        { name: "Support Tickets", icon: Ticket, path: "tickets", surface: "tickets.manage" },
-        { name: "User Feedback", icon: Star, path: "feedback", surface: "feedback.manage" },
-        { name: "Moderation", icon: Shield, path: "moderation", surface: "moderation.manage" },
+        {
+          name: "Support Tickets",
+          icon: Ticket,
+          path: "tickets",
+          surface: "tickets.manage",
+        },
+        {
+          name: "User Feedback",
+          icon: Star,
+          path: "feedback",
+          surface: "feedback.manage",
+        },
+        {
+          name: "Moderation",
+          icon: Shield,
+          path: "moderation",
+          surface: "moderation.manage",
+        },
       ],
     },
     {
       label: "Operations",
       items: [
-        { name: "Appointments", icon: CalendarCheck, path: "appointments", surface: "appointments.manage" },
-        { name: "Waitlists", icon: ListChecks, path: "waitlists", surface: "waitlists.manage" },
+        {
+          name: "Appointments",
+          icon: CalendarCheck,
+          path: "appointments",
+          surface: "appointments.manage",
+        },
+        {
+          name: "Waitlist",
+          icon: ListChecks,
+          path: "waitlist",
+          surface: "waitlist.manage",
+        },
         { name: "Users", icon: Users, path: "users", surface: "users.read" },
         // Support context for "why was my document rejected?" — read-only.
-        { name: "Documents", icon: FileText, path: "documents", surface: "appointments.manage" },
+        {
+          name: "Documents",
+          icon: FileText,
+          path: "documents",
+          surface: "appointments.manage",
+        },
       ],
     },
     {
       label: "Money",
       items: [
-        { name: "Payments", icon: CreditCard, path: "payments", surface: "payments.read" },
-        { name: "Refunds", icon: RotateCcw, path: "refunds", surface: "refunds.read" },
-        { name: "Disputes", icon: AlertTriangle, path: "disputes", surface: "disputes.read" },
-        { name: "Invoices", icon: Receipt, path: "invoices", surface: "invoices.read" },
-        { name: "Subscriptions", icon: RefreshCw, path: "subscriptions", surface: "subscriptions.read" },
-        { name: "Payouts", icon: Wallet, path: "payouts", surface: "payouts.read" },
+        {
+          name: "Payments",
+          icon: CreditCard,
+          path: "payments",
+          surface: "payments.read",
+        },
+        {
+          name: "Refunds",
+          icon: RotateCcw,
+          path: "refunds",
+          surface: "refunds.read",
+        },
+        {
+          name: "Disputes",
+          icon: AlertTriangle,
+          path: "disputes",
+          surface: "disputes.read",
+        },
+        {
+          name: "Invoices",
+          icon: Receipt,
+          path: "invoices",
+          surface: "invoices.read",
+        },
+        {
+          name: "Subscriptions",
+          icon: RefreshCw,
+          path: "subscriptions",
+          surface: "subscriptions.read",
+        },
+        {
+          name: "Payouts",
+          icon: Wallet,
+          path: "payouts",
+          surface: "payouts.read",
+        },
         {
           name: "Approval Payments",
           icon: BadgeCheck,
           path: "approval-payments",
           surface: "approvalPayments.manage",
         },
-        { name: "TDS", icon: Landmark, path: "tds", surface: "tds.read", show: showTds },
+        {
+          name: "TDS",
+          icon: Landmark,
+          path: "tds",
+          surface: "tds.read",
+          show: showTds,
+        },
       ],
     },
     {
       label: "Insights",
       items: [
         // Two different pages, one per tree — see the file header.
-        { name: "Metrics", icon: BarChart3, path: "metrics", surface: "analytics.read", only: "staff" },
-        { name: "Analytics", icon: BarChart3, path: "analytics", surface: "analytics.read", only: "admin" },
+        {
+          name: "Metrics",
+          icon: BarChart3,
+          path: "metrics",
+          surface: "analytics.read",
+          only: "staff",
+        },
+        {
+          name: "Analytics",
+          icon: BarChart3,
+          path: "analytics",
+          surface: "analytics.read",
+          only: "admin",
+        },
       ],
     },
     {
       label: "Platform",
       items: [
-        { name: "Organizations", icon: Building2, path: "organizations", surface: "organizations.manage" },
-        { name: "Announcements", icon: Megaphone, path: "announcements", surface: "announcements.manage" },
-        { name: "System Jobs", icon: Play, path: "system-jobs", surface: "systemJobs.manage" },
-        { name: "Maintenance", icon: Wrench, path: "maintenance", surface: "maintenance.manage" },
+        {
+          name: "Organizations",
+          icon: Building2,
+          path: "organizations",
+          surface: "organizations.manage",
+        },
+        {
+          name: "Announcements",
+          icon: Megaphone,
+          path: "announcements",
+          surface: "announcements.manage",
+        },
+        {
+          name: "System Jobs",
+          icon: Play,
+          path: "system-jobs",
+          surface: "systemJobs.manage",
+        },
+        {
+          name: "Maintenance",
+          icon: Wrench,
+          path: "maintenance",
+          surface: "maintenance.manage",
+        },
       ],
     },
   ];

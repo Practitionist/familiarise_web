@@ -67,11 +67,16 @@ function actionableSlots(slots: SlotLike[], now: Date): SlotLike[] {
       const end = slot.endsAt ? toDate(slot.endsAt) : toDate(slot.startsAt);
       return end.getTime() >= now.getTime();
     })
-    .sort((a, b) => toDate(a.startsAt).getTime() - toDate(b.startsAt).getTime());
+    .sort(
+      (a, b) => toDate(a.startsAt).getTime() - toDate(b.startsAt).getTime(),
+    );
 }
 
 function sessionsOf(
-  appointment: { id: string; slotsOfAppointment?: SlotLike[] } | null | undefined,
+  appointment:
+    | { id: string; slotsOfAppointment?: SlotLike[] }
+    | null
+    | undefined,
 ): SessionVM[] {
   return sortSessions(
     (appointment?.slotsOfAppointment ?? []).map((slot) =>
@@ -122,14 +127,6 @@ function nextActionableChild<
   );
 }
 
-function waitlistOf(
-  entry: { status: string; position: number | null } | undefined,
-  hasConfirmedSlot: boolean,
-): AppointmentVM["waitlist"] {
-  if (!entry || hasConfirmedSlot) return null;
-  return { status: entry.status, position: entry.position ?? null };
-}
-
 function mapConsultation(c: TConsultationWithPlan, now: Date): AppointmentVM {
   const sessions = sessionsOf(c.appointment);
   const status = normalizeStatus(c.status?.toString());
@@ -147,7 +144,6 @@ function mapConsultation(c: TConsultationWithPlan, now: Date): AppointmentVM {
     meta: null,
     organizationId: c.appointment?.organizationId ?? null,
     pendingPaymentUrl: c.pendingPaymentUrl ?? null,
-    waitlist: null,
     collaborators: [],
     collaboratorRole: null,
     raw: {
@@ -177,7 +173,6 @@ function mapSubscription(s: TSubscriptionWithPlan, now: Date): AppointmentVM {
     meta: null,
     organizationId: children[0]?.organizationId ?? null,
     pendingPaymentUrl: s.pendingPaymentUrl ?? null,
-    waitlist: null,
     collaborators: [],
     collaboratorRole: null,
     raw: {
@@ -195,23 +190,20 @@ function mapSubscription(s: TSubscriptionWithPlan, now: Date): AppointmentVM {
 function mapWebinar(w: TConsulteeWebinar, now: Date): AppointmentVM {
   const sessions = sessionsOf(w.appointment);
   const status = normalizeStatus(w.status?.toString());
-  const hasConfirmedSlot = sessions.length > 0;
-  const waitlist = waitlistOf(w.waitlist?.[0], hasConfirmedSlot);
   return {
-    id: w.appointment ? `webinar-${w.id}` : `waitlist-webinar-${w.id}`,
+    id: `webinar-${w.id}`,
     appointmentId: w.appointment?.id ?? null,
     kind: "WEBINAR",
     title: w.webinarPlan.title,
     counterpart: person(w.webinarPlan.consultantProfile?.user),
     status,
-    ...deriveBucket({ status, sessions, waitlistStatus: waitlist?.status, now }),
+    ...deriveBucket({ status, sessions, now }),
     nextAt: getAnchorTime(sessions, now),
     sessions,
     group: null,
     meta: null,
     organizationId: w.appointment?.organizationId ?? null,
     pendingPaymentUrl: null,
-    waitlist,
     collaborators: collaborators(w.webinarPlan.collaborators),
     collaboratorRole: null,
     raw: {
@@ -226,24 +218,21 @@ function mapClass(c: TConsulteeClass, now: Date): AppointmentVM {
   const children = c.appointments ?? [];
   const sessions = sortSessions(children.flatMap((child) => sessionsOf(child)));
   const status = normalizeStatus(c.status?.toString());
-  const hasConfirmedSlot = sessions.length > 0;
-  const waitlist = waitlistOf(c.waitlist?.[0], hasConfirmedSlot);
   const target = nextActionableChild(children, now);
   return {
-    id: hasConfirmedSlot ? `class-${c.id}` : `waitlist-class-${c.id}`,
+    id: `class-${c.id}`,
     appointmentId: target?.id ?? null,
     kind: "CLASS",
     title: c.classPlan.title,
     counterpart: person(c.classPlan.consultantProfile?.user),
     status,
-    ...deriveBucket({ status, sessions, waitlistStatus: waitlist?.status, now }),
+    ...deriveBucket({ status, sessions, now }),
     nextAt: getAnchorTime(sessions, now),
     sessions,
     group: groupProgress(children, now),
     meta: null,
     organizationId: children[0]?.organizationId ?? null,
     pendingPaymentUrl: null,
-    waitlist,
     collaborators: collaborators(c.classPlan.collaborators),
     collaboratorRole: null,
     raw: {
@@ -278,7 +267,6 @@ function mapTrial(t: TTrialWithPlan, now: Date): AppointmentVM {
     ),
     organizationId: t.appointment?.organizationId ?? null,
     pendingPaymentUrl: null,
-    waitlist: null,
     collaborators: [],
     collaboratorRole: null,
     raw: {

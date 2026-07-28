@@ -117,7 +117,7 @@ gate.
 | **GST place-of-supply env** | `SUPPLIER_STATE_CODE` env (default `"KA"`) drives intra-state CGST+SGST vs inter-state IGST. No hardcoded `"KA"` in invoice generation. | `jobs/billing/generate-subscription-invoices.ts`; `app/api/organizations/[orgId]/billing-account/invoices/route.ts` |
 | **Per-org invoice numbering** | Format `<PREFIX>-<FY>-<SEQ>` (CGST Rule 46). PREFIX = `Organization.invoiceNumberPrefix` or uppercased slug. `@@unique([organizationId, invoiceNumber])`. FY = Indian (April–March). Atomic counter at `OrgInvoiceCounter`. | `lib/payments/billing/invoice-numbering.ts` |
 | **Payout idempotency** | `scripts/payouts/process-payouts.ts:69` uses `payout_${payoutId}` (no `Date.now()`). `OrganizationPayout.idempotencyKey @unique`. Re-runs return `alreadyExisted: true`. | `scripts/payouts/process-payouts.ts:69`; `lib/payments/payouts/org-payout-service.ts:createOrgPayoutBatch` |
-| **Waitlist/Recording orgId** | Both `Waitlist.organizationId` and `Recording.organizationId` populated at write time from event-host org / parent appointment. Null FK only for personal (non-org) plans. | `lib/payments/operations/checkout.ts:resolveEventHostOrgId`; `lib/stream/recording-handlers.ts` |
+| **Recording orgId** | `Recording.organizationId` is populated at write time from the parent appointment. Null FK only for personal (non-org) plans. | `lib/stream/recording-handlers.ts` |
 | **Programs v2 reject** | POST `/api/organizations/[orgId]/programs` with `type=PROJECT` or `type=RETAINER` → 400 `code: "PROGRAM_TYPE_NOT_AVAILABLE"`. Other invalid bodies → 400 with no code. | `app/api/organizations/[orgId]/programs/route.ts` — `ProgramsV2AttemptSchema` |
 | **DPDP breach 72h cron** | Hourly. Sweeps `DataBreach WHERE reportedAt IS NULL`. Warn ≤12h before 72h deadline; critical past deadline. Resend email (env-gated) + structured-log fallback. | `jobs/compliance/databreach-deadline-alerts.ts`; `.github/workflows/databreach-deadline-alerts.yml` |
 | **Contract expiry cron** | Daily 03:00 UTC. ACTIVE → EXPIRED when `effectiveTo < NOW()`. In-flight earnings retain their `rateCardId` snapshot. | `jobs/compliance/contract-expiry.ts`; `.github/workflows/expire-contracts.yml` |
@@ -368,7 +368,6 @@ cards: `4111 1111 1111 1111`, OTP `1234`.
 - **Razorpay webhook:** `app/api/webhooks/razorpay/route.ts`; payload routing in `app/api/webhooks/utils.ts` (`handleOrgPaymentSuccess`)
 - **SSO URL derivation:** `lib/sso/derive-urls.ts` (`deriveAcsUrl`, `deriveMetadataUrl`)
 - **Branding upload:** `app/api/organizations/[orgId]/branding/[asset]/route.ts`; helpers in `lib/supabase.ts`
-- **Checkout (Round-3 Waitlist/Recording orgId):** `lib/payments/operations/checkout.ts:resolveEventHostOrgId`
 - **Recording handlers (Round-3 orgId):** `lib/stream/recording-handlers.ts`
 - **BetterAuth signup hook (Round-3 consent stamp):** `lib/auth.ts` databaseHooks
 - **Stream upsert (Round-3 consent gate):** `actions/stream/chat/user.action.ts:upsertUserToStream`, `upsertUsersToStream`
@@ -439,7 +438,7 @@ deterministic.
 - `5.4-dpdp-breach-72h-cron.md`
 
 ### 6-org-scope-and-activity/
-- `6.1-appointment-waitlist-recording-org-fk.md`
+- `6.1-appointment-recording-org-fk.md` (retired with the event waitlist)
 - `6.2-stream-channel-org-metadata.md`
 
 ### 7-cross-org-operator/

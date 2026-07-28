@@ -25,7 +25,6 @@ export type NeedsActionReason =
   | "PAY_NOW"
   | "PENDING_APPROVAL"
   | "UNSCHEDULED"
-  | "WAITLIST_NOTIFIED"
   | "TENTATIVE";
 
 /**
@@ -73,7 +72,7 @@ export interface AppointmentVMRaw {
 }
 
 export interface AppointmentVM {
-  /** Stable row key — synthetic for waitlist-only / unscheduled rows. */
+  /** Stable row key — synthetic for unscheduled rows. */
   id: string;
   /** Null ⇒ no detail page exists for this row (Sheet-only). */
   appointmentId: string | null;
@@ -95,7 +94,6 @@ export interface AppointmentVM {
   meta: string | null;
   organizationId: string | null;
   pendingPaymentUrl: string | null;
-  waitlist: { status: string; position: number | null } | null;
   collaborators: Array<PersonVM & { role: string }>;
   /** Consultant view: the viewer's own role on a collaborative event. */
   collaboratorRole: string | null;

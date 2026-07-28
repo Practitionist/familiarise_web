@@ -35,9 +35,6 @@ jest.mock("../../lib/email", () => ({
 jest.mock("../../lib/payments/payouts", () => ({
   createEarningsFromPayment: jest.fn(),
 }));
-jest.mock("../../lib/waitlist/slot-handler", () => ({
-  markWaitlistAsBooked: jest.fn(),
-}));
 jest.mock("../../lib/novu", () => ({
   notifyPaymentSuccess: jest.fn(),
   notifyPaymentFailed: jest.fn(),
@@ -152,7 +149,10 @@ describe("#827 — confirmExistingAppointment first-confirmed-wins", () => {
           updateMany: jest.fn().mockResolvedValue({ count: 1 }),
           findUnique: jest
             .fn()
-            .mockResolvedValue({ id: "c1", status: "APPROVED_PENDING_PAYMENT" }),
+            .mockResolvedValue({
+              id: "c1",
+              status: "APPROVED_PENDING_PAYMENT",
+            }),
         },
       } as never,
     };

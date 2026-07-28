@@ -3,7 +3,7 @@
 import { memo, type RefObject } from "react";
 import { motion } from "framer-motion";
 import { Search } from "lucide-react";
-import type { Program } from "../utils";
+import type { Program } from "@/lib/explore/programs";
 import ProgramCard from "./ProgramCard";
 
 interface ProgramResultsProps {

@@ -5,7 +5,7 @@ import Image from "next/image";
 import { useChatContext } from "stream-chat-react";
 import { SearchIcon, UserIcon, VideoIcon, BookOpenIcon } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import type { AppointmentSearchResult } from "@/app/api/stream/channels/search-appointments/route";
+import type { AppointmentSearchResult } from "@/schemas/stream-search";
 
 // Type badge configuration for events (webinars/classes)
 const EVENT_TYPE_CONFIG = {

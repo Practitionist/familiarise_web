@@ -485,7 +485,7 @@ All cron jobs are triggered via GitHub Actions workflows in `.github/workflows/`
 | **Trial** | Yes (`TrialSession` model) | No |
 | **Recording** | No | Optional |
 | **Certificate** | No | Optional |
-| **Waitlist** | No | Yes (`Waitlist` model, status: WAITING -> NOTIFIED -> BOOKED/EXPIRED) |
+| **Capacity** | No (1:1) | Yes (per-instance `maxParticipants`; full means sold out) |
 | **Curriculum model** | `SubscriptionContent` (session-by-session) | `ClassContent` (ordered, with `hoursAllotted`) |
 | **Scheduling field** | `callsPerWeek` | `meetingsPerWeek` |
 | **Request model** | `Subscription.status` (PENDING -> APPROVED -> SCHEDULED) | `Class.status` (SCHEDULED -> IN_PROGRESS -> COMPLETED) |
@@ -504,7 +504,7 @@ All cron jobs are triggered via GitHub Actions workflows in `.github/workflows/`
 | Checkout and payment integration | `docs/booking/10-checkout-payment-integration.md` |
 | Cancellation flow | `docs/booking/08-cancellation-flow.md` |
 | Trial sessions (subscription-only) | `docs/booking/09-trial-sessions.md` |
-| Waitlist system (class/webinar-only) | `docs/booking/11-waitlist-system.md` |
+| Event capacity (class/webinar-only) | `docs/booking/02-event-types-and-validation.md` |
 | Payout architecture | `docs/payments/payouts/01-architecture.md` |
 | Earnings lifecycle | `docs/payments/payouts/02-earnings-lifecycle.md` |
 | Revenue distribution models | `docs/finances/02-revenue-distribution.md` |

@@ -898,7 +898,7 @@ async () => {
 
 ### Overview
 
-Webinars are group events with a fixed time, maximum participant limit, and waitlist. The consultant creates the event; consultees register via checkout.
+Webinars are group events with a fixed time and a per-instance participant limit. The consultant creates the event; consultees register via checkout. A full webinar is sold out — there is no queue.
 
 ### Test 3.1: Allocate Webinar Time Slot (Consultant)
 
@@ -967,20 +967,15 @@ async () => {
    - Payment created with SUCCEEDED status
    - Consultee linked to webinar appointment
 
-### Test 3.3: Webinar Capacity & Waitlist
+### Test 3.3: Webinar Capacity
 
 This requires multiple consultee accounts. If testing capacity:
 
 1. Check current participant count
 2. Create additional test consultees via SQL and make checkout calls until `maxParticipants` (50) is reached
-3. The next checkout attempt should either fail or create a waitlist entry
+3. The next checkout attempt should fail with "Webinar is full"
 
 ```sql
--- Check waitlist
-SELECT w.id, w."userId", w.status, w.position
-FROM "Waitlist" w
-WHERE w."webinarId" = 'test-webinar-001'
-ORDER BY w.position ASC;
 ```
 
 ### Test 3.4: Webinar Reschedule (Consultant Only)
@@ -1763,7 +1758,6 @@ DELETE FROM "Appointment" WHERE id LIKE 'test-%'
   OR "classId" = 'test-class-001';
 DELETE FROM "Consultation" WHERE "consultationPlanId" = 'test-consultation-plan-001';
 DELETE FROM "Subscription" WHERE "subscriptionPlanId" = 'test-subscription-plan-001';
-DELETE FROM "Waitlist" WHERE "webinarId" = 'test-webinar-001' OR "classId" = 'test-class-001';
 DELETE FROM "Webinar" WHERE id = 'test-webinar-001';
 DELETE FROM "Class" WHERE id = 'test-class-001';
 DELETE FROM "ConsultationPlan" WHERE id = 'test-consultation-plan-001';

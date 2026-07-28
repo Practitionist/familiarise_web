@@ -5,7 +5,7 @@ import type { ActiveFilter } from "../components/FilterChips";
 import type {
   ProgramFilters,
   TopicWithCount,
-} from "../utils";
+} from "@/lib/explore/programs";
 
 /**
  * Structured chip key. Replaces the old `topic-${id}` string encoding so

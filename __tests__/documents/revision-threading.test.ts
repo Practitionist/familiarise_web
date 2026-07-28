@@ -20,7 +20,10 @@ const ROUTE = join(
 );
 const UPLOAD_UI = join(
   process.cwd(),
-  "app/dashboard/consultee/[consulteeId]/(features)/appointments/DocumentUpload.tsx",
+  // Moved out of the consultee route folder: the org appointment detail page
+  // renders the same component, and a shared component cannot live inside one
+  // tree's route directory.
+  "components/appointments/DocumentUpload.tsx",
 );
 
 describe("consultee revision upload", () => {

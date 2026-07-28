@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import { formatInTimeZone } from "date-fns-tz";
 import { ClientWebinarRegistration } from "./ClientWebinarRegistration";
-import { generateProgramImageUrl } from "../../../../utils";
+import { generateProgramImageUrl } from "@/lib/explore/programs";
 import { useCurrency } from "@/hooks/useCurrency";
 import type { Topic } from "@prisma/client";
 import { FeatureItem } from "@/app/explore/programs/plans/components/FeatureItem";
@@ -63,11 +63,19 @@ export function WebinarDetails({
       formattedNextSessionDisplay = `Ends at ${formatInTimeZone(sessionEnd, timeZone, "h:mm a zzz")}`;
     } else if (now < sessionStart) {
       sessionStatus = "Upcoming";
-      formattedNextSessionDisplay = formatInTimeZone(sessionStart, timeZone, "MMMM d, yyyy 'at' h:mm a zzz");
+      formattedNextSessionDisplay = formatInTimeZone(
+        sessionStart,
+        timeZone,
+        "MMMM d, yyyy 'at' h:mm a zzz",
+      );
     }
   } else if (nextSession) {
     sessionStatus = "Upcoming";
-    formattedNextSessionDisplay = formatInTimeZone(new Date(nextSession), timeZone, "MMMM d, yyyy 'at' h:mm a zzz");
+    formattedNextSessionDisplay = formatInTimeZone(
+      new Date(nextSession),
+      timeZone,
+      "MMMM d, yyyy 'at' h:mm a zzz",
+    );
   }
 
   const getStatusBadgeClass = (status: TSessionStatus) => {
@@ -262,7 +270,9 @@ export function WebinarDetails({
                       <h3 className="font-semibold text-foreground">
                         {plan.consultantProfile?.user?.name}
                       </h3>
-                      <p className="text-sm text-muted-foreground">Expert Host</p>
+                      <p className="text-sm text-muted-foreground">
+                        Expert Host
+                      </p>
                     </div>
                   </div>
                   <p className="text-sm text-muted-foreground">
@@ -334,7 +344,9 @@ export function WebinarDetails({
                 sessionStatus={sessionStatus}
                 appointment={plan.webinars?.[0]?.appointment}
                 maxParticipants={plan.maxParticipants ?? 100}
-                waitlist={plan.webinars?.[0]?.waitlist ?? []}
+                instanceMaxParticipants={
+                  plan.webinars?.[0]?.maxParticipants ?? null
+                }
                 consultantUserId={plan.consultantProfile?.user?.id}
               />
             </div>

@@ -60,9 +60,6 @@ export const NOVU_WORKFLOWS = {
   ACCOUNT_SUSPENDED: "account-suspended",
   ACCOUNT_BANNED: "account-banned",
 
-  // Waitlist
-  WAITLIST_SPOT_AVAILABLE: "waitlist-spot-available",
-
   // Disputes
   DISPUTE_CREATED: "dispute-created",
   DISPUTE_RESOLVED: "dispute-resolved",
@@ -265,12 +262,6 @@ export type AnnouncementPayload = {
   content: string;
   linkUrl?: string;
   linkText?: string;
-};
-
-export type WaitlistPayload = {
-  consultantName: string;
-  planTitle: string;
-  dashboardUrl: string;
 };
 
 export type DisputePayload = {

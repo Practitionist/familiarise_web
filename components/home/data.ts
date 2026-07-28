@@ -263,9 +263,9 @@ export const PLATFORM_FEATURES = [
   },
   {
     icon: ListChecks,
-    title: "Smart Waitlist",
+    title: "Live Seat Counts",
     description:
-      "Automatic queue management for sold-out webinars and classes. Get notified when spots open up.",
+      "Every webinar and class shows exactly how many seats are left, and hosts can open more at any time.",
   },
 ];
 

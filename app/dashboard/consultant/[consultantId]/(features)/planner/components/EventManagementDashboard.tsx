@@ -20,7 +20,7 @@ import {
   ConsultationPlanEvent,
   SubscriptionPlanEvent,
   Event,
-} from "../types/event";
+} from "@/types/planner-events";
 import { PlannerService } from "../services/planner";
 import type { ConsultationPlan, SubscriptionPlan } from "@/schemas/plans";
 import { useToast } from "@/hooks/use-toast";

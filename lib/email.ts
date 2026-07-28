@@ -8,6 +8,9 @@ import { PaymentLinkEmail } from "@/emails/payments/PaymentLinkEmail";
 import { PaymentSuccessEmail } from "@/emails/payments/PaymentSuccessEmail";
 import { PaymentFailedEmail } from "@/emails/payments/PaymentFailedEmail";
 import { OrgInvitationEmail } from "@/emails/organizations/OrgInvitationEmail";
+import { WaitlistConfirmEmail } from "@/emails/waitlist/WaitlistConfirmEmail";
+import { WaitlistWelcomeEmail } from "@/emails/waitlist/WaitlistWelcomeEmail";
+import { buildConfirmUrl, buildUnsubscribeUrl } from "@/lib/waitlist/tokens";
 import { render } from "@react-email/render";
 import { getAppUrl } from "@/lib/url";
 import prisma from "@/lib/prisma";
@@ -79,7 +82,7 @@ export async function recordFailedEmail(
 // Initialize Resend lazily to avoid build-time issues
 let resendClient: Resend | null = null;
 
-function getResendClient(): Resend | null {
+export function getResendClient(): Resend | null {
   const RESEND_API_KEY = process.env.RESEND_API_KEY;
 
   if (!RESEND_API_KEY) {
@@ -211,7 +214,8 @@ export async function sendPasswordResetEmail({
   } catch (error) {
     console.error("Failed to send password reset email:", error);
     // #474 — dead-letter the rendered message so the worker can replay it.
-    if (sentMessage) await recordFailedEmail(sentMessage, "PASSWORD_RESET", error);
+    if (sentMessage)
+      await recordFailedEmail(sentMessage, "PASSWORD_RESET", error);
     return { success: false, error };
   }
 }
@@ -276,7 +280,8 @@ export async function sendVerificationEmail({
   } catch (error) {
     console.error("Failed to send verification email:", error);
     // #474 — dead-letter the rendered message so the worker can replay it.
-    if (sentMessage) await recordFailedEmail(sentMessage, "EMAIL_VERIFICATION", error);
+    if (sentMessage)
+      await recordFailedEmail(sentMessage, "EMAIL_VERIFICATION", error);
     return { success: false, error };
   }
 }
@@ -332,7 +337,8 @@ export async function sendAccountLinkedEmail({
   } catch (error) {
     console.error("Failed to send account linked email:", error);
     // #474 — dead-letter the rendered message so the worker can replay it.
-    if (sentMessage) await recordFailedEmail(sentMessage, "ACCOUNT_LINKED", error);
+    if (sentMessage)
+      await recordFailedEmail(sentMessage, "ACCOUNT_LINKED", error);
     return { success: false, error };
   }
 }
@@ -415,7 +421,8 @@ export async function sendPaymentLinkEmail({
   } catch (error) {
     console.error("Failed to send payment link email:", error);
     // #474 — dead-letter the rendered message so the worker can replay it.
-    if (sentMessage) await recordFailedEmail(sentMessage, "PAYMENT_LINK", error);
+    if (sentMessage)
+      await recordFailedEmail(sentMessage, "PAYMENT_LINK", error);
     return { success: false, error };
   }
 }
@@ -498,7 +505,8 @@ export async function sendPaymentSuccessEmail({
   } catch (error) {
     console.error("Failed to send payment success email:", error);
     // #474 — dead-letter the rendered message so the worker can replay it.
-    if (sentMessage) await recordFailedEmail(sentMessage, "PAYMENT_SUCCESS", error);
+    if (sentMessage)
+      await recordFailedEmail(sentMessage, "PAYMENT_SUCCESS", error);
     return { success: false, error };
   }
 }
@@ -584,7 +592,8 @@ export async function sendPaymentFailedEmail({
   } catch (error) {
     console.error("Failed to send payment failed email:", error);
     // #474 — dead-letter the rendered message so the worker can replay it.
-    if (sentMessage) await recordFailedEmail(sentMessage, "PAYMENT_FAILED", error);
+    if (sentMessage)
+      await recordFailedEmail(sentMessage, "PAYMENT_FAILED", error);
     return { success: false, error };
   }
 }
@@ -611,7 +620,9 @@ export async function sendOrgInvitationEmail({
   try {
     const resend = getResendClient();
     if (!resend) {
-      console.error("RESEND_API_KEY not configured. Cannot send org invitation email.");
+      console.error(
+        "RESEND_API_KEY not configured. Cannot send org invitation email.",
+      );
       return { success: false, error: "Email service not configured" };
     }
 
@@ -637,7 +648,100 @@ export async function sendOrgInvitationEmail({
   } catch (error) {
     console.error("Failed to send org invitation email:", error);
     // #474 — dead-letter the rendered message so the worker can replay it.
-    if (sentMessage) await recordFailedEmail(sentMessage, "ORG_INVITATION", error);
+    if (sentMessage)
+      await recordFailedEmail(sentMessage, "ORG_INVITATION", error);
+    return { success: false, error };
+  }
+}
+
+// ============================================================================
+// Newsletter
+// ============================================================================
+
+const NEWSLETTER_FROM_ADDRESS = "Familiarise <newsletter@familiarise.com>";
+
+/**
+ * Double opt-in confirmation. The link carries its own issue time so it can
+ * expire without a token column — see lib/waitlist/tokens.ts.
+ */
+export async function sendWaitlistConfirmEmail({
+  email,
+  name,
+  issuedAt,
+}: {
+  email: string;
+  name?: string | null;
+  issuedAt: number;
+}) {
+  const confirmLink = buildConfirmUrl(email, issuedAt);
+
+  // Dev affordance: mirrors sendVerificationEmail so the flow is testable
+  // without a Resend key.
+  if (!process.env.RESEND_API_KEY) {
+    console.log(`[waitlist-confirm] ${email} -> ${confirmLink}`);
+  }
+
+  let sentMessage: RenderedEmail | undefined;
+  try {
+    const resend = getResendClient();
+    if (!resend) {
+      return { success: false, error: "Email service not configured" };
+    }
+
+    const html = await render(WaitlistConfirmEmail({ name, confirmLink }));
+
+    sentMessage = {
+      from: NEWSLETTER_FROM_ADDRESS,
+      to: email,
+      subject: "Confirm your Familiarise subscription",
+      html,
+    };
+
+    const data = await resend.emails.send(sentMessage);
+    if (data.error) throw new Error(data.error.message || "Resend API error");
+
+    return { success: true, data };
+  } catch (error) {
+    console.error("Failed to send waitlist confirmation email:", error);
+    if (sentMessage)
+      await recordFailedEmail(sentMessage, "WAITLIST_CONFIRM", error);
+    return { success: false, error };
+  }
+}
+
+/** Sent once the confirm link is clicked. */
+export async function sendWaitlistWelcomeEmail({
+  email,
+  name,
+}: {
+  email: string;
+  name?: string | null;
+}) {
+  let sentMessage: RenderedEmail | undefined;
+  try {
+    const resend = getResendClient();
+    if (!resend) {
+      return { success: false, error: "Email service not configured" };
+    }
+
+    const unsubscribeLink = buildUnsubscribeUrl(email);
+    const html = await render(WaitlistWelcomeEmail({ name, unsubscribeLink }));
+
+    sentMessage = {
+      from: NEWSLETTER_FROM_ADDRESS,
+      to: email,
+      subject: "You are on the Familiarise waitlist",
+      html,
+    };
+
+    const data = await resend.emails.send(sentMessage);
+    if (data.error) throw new Error(data.error.message || "Resend API error");
+
+    return { success: true, data };
+  } catch (error) {
+    console.error("Failed to send waitlist welcome email:", error);
+    if (sentMessage)
+      await recordFailedEmail(sentMessage, "WAITLIST_WELCOME", error);
     return { success: false, error };
   }
 }

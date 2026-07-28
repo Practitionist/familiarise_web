@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/select";
 import { Search, LayoutGrid, List, SlidersHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { TopicWithCount, ProgramFilters } from "../utils";
+import { TopicWithCount, ProgramFilters } from "@/lib/explore/programs";
 import { memo, useEffect, useRef, useState } from "react";
 
 interface AdvancedFiltersProps {

@@ -2,7 +2,7 @@
 
 import { memo } from "react";
 import { GraduationCap, Layers, Video } from "lucide-react";
-import { ProgramType } from "../utils";
+import { ProgramType } from "@/lib/explore/programs";
 
 interface ProgramTabsProps {
   activeTab: ProgramType;

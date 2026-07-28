@@ -62,7 +62,9 @@ model User {
   orgWorkspaceProfileId String?              @unique
 
   slotsOfAppointment SlotOfAppointment[] @relation("SlotOfAppointmentToUser")
-  Waitlist           Waitlist[]
+
+  // Newsletter signup, when the subscriber was signed in at the time.
+  waitlistSubscriptions Waitlist[]
 
   // Feedback and Support
   feedbacks                 Feedback[]
@@ -731,10 +733,9 @@ model Organization {
   // Referral attribution (#727) — same contract as TrialsByOrg.
   referralsByOrg Referral[] @relation("ReferralsByOrg")
 
-  // #674 personal-vs-org scope split — appointments / waitlist entries /
-  // recordings booked or produced by org members. Mirrors TrialsByOrg.
+  // #674 personal-vs-org scope split — appointments / recordings booked or
+  // produced by org members. Mirrors TrialsByOrg.
   appointmentsByOrg   Appointment[]    @relation("AppointmentByOrg")
-  waitlistByOrg       Waitlist[]       @relation("WaitlistByOrg")
   recordingsByOrg     Recording[]      @relation("RecordingByOrg")
   // Denormalized for org-scoped Stream call audit (#674). See
   // `MeetingSession.organizationId` for the write-side rationale.
@@ -3152,7 +3153,11 @@ model Webinar {
   id              String        @id @default(cuid())
   status          WebinarStatus @default(SCHEDULED)
   feedbackSummary String?
-  waitlist        Waitlist[]
+
+  // Per-instance capacity. Null inherits WebinarPlan.maxParticipants, so the
+  // plan value is the default for new instances and the organizer can retune a
+  // single session without touching its siblings.
+  maxParticipants Int?
 
   webinarPlan   WebinarPlan @relation(fields: [webinarPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   webinarPlanId String
@@ -3236,9 +3241,12 @@ model Class {
   // user.timezone). Kept as frozen schema; made load-bearing in #872.
   schedulingTimezone       String      @default("Asia/Kolkata")
   status                   ClassStatus @default(SCHEDULED)
-  waitlist                 Waitlist[]
-  recordingUrls            String[]
-  feedbackSummary          String?     @db.Text
+
+  // Per-instance capacity. See Webinar.maxParticipants.
+  maxParticipants Int?
+
+  recordingUrls   String[]
+  feedbackSummary String?  @db.Text
 
   classPlan   ClassPlan @relation(fields: [classPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   classPlanId String
@@ -3312,79 +3320,53 @@ model Topic {
   updatedAt DateTime @updatedAt
 }
 
-model Newsletter {
-  id    String @id @default(uuid())
-  email String @unique
+// Newsletter / marketing email list. Named `Waitlist` because that is what the
+// signup is called end-user side ("join the waitlist"); it has nothing to do
+// with event capacity — a full webinar or class is simply sold out.
+model Waitlist {
+  id    String  @id @default(uuid())
+  email String  @unique
+  name  String?
 
-  unsubscribed   Boolean   @default(false)
+  status WaitlistStatus @default(PENDING)
+  source WaitlistSource @default(FOOTER)
+  tags   String[]       @default([])
+
+  // Set when a signed-in user subscribes. SetNull so deleting the account does
+  // not resurrect an address that had already been suppressed.
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+  userId String?
+
+  confirmedAt    DateTime?
   unsubscribedAt DateTime?
 
+  // Consent proof under DPDP. The IP is hashed, never stored raw.
+  consentIpHash    String?
+  consentUserAgent String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-}
 
-// Waitlist status for tracking user position and notification state
+  // Broadcast hot path: SUBSCRIBED rows ordered by signup.
+  @@index([status, createdAt])
+  @@index([source])
+  @@index([userId])
+}
 
 enum WaitlistStatus {
-  WAITING // In queue, waiting for spot
-  NOTIFIED // Spot available, awaiting user response
-  BOOKED // Successfully booked the spot
-  EXPIRED // Notification window expired (48h)
-  CANCELLED // User left waitlist voluntarily
-  SKIPPED // User declined spot, moved to back of queue
+  PENDING // Signed up, confirmation email sent, not yet confirmed
+  SUBSCRIBED
+  UNSUBSCRIBED
+  BOUNCED
 }
 
-model Waitlist {
-  id       String   @id @default(uuid())
-  joinedAt DateTime @default(now())
-
-  // Queue management
-  position Int? // Calculated queue position (null until calculated)
-  status   WaitlistStatus @default(WAITING)
-  priority Int            @default(0) // Higher value = higher priority (for VIP/premium users)
-
-  // Notification tracking
-  notifiedAt     DateTime? // When user was notified of available spot
-  expiresAt      DateTime? // 48 hours after notifiedAt
-  reminderSentAt DateTime? // When 12-hour reminder was sent
-  bookedAt       DateTime? // When user successfully booked
-  respondedAt    DateTime? // When user responded to notification
-
-  // User preferences (for future enhancements)
-  preferences Json? // e.g., { preferredDates: [], maxPrice: 500 }
-
-  user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  userId String
-
-  webinar   Webinar? @relation(fields: [webinarId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  webinarId String?
-
-  class   Class?  @relation(fields: [classId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  classId String?
-
-  // #674 personal-vs-org scope split — set when joiner is an org LEARNER.
-  organization   Organization? @relation("WaitlistByOrg", fields: [organizationId], references: [id], onDelete: SetNull)
-  organizationId String?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@unique([userId, webinarId])
-  @@unique([userId, classId])
-  @@index([userId])
-  @@index([userId, status])
-  @@index([webinarId])
-  @@index([classId])
-  @@index([status])
-  @@index([status, webinarId])
-  @@index([status, classId])
-  @@index([expiresAt])
-  // Cron hot path: reminder + expiration jobs range-scan NOTIFIED entries
-  // by expiresAt window; the single-column indexes force a bitmap AND or a
-  // seq scan as the table grows.
-  @@index([status, expiresAt])
-  @@index([priority, joinedAt])
-  @@index([organizationId, createdAt])
+enum WaitlistSource {
+  LANDING_PAGE
+  FOOTER
+  BLOG
+  USE_CASE_PAGE
+  EVENT_SOLD_OUT
+  IMPORT
 }
 
 ////////////////////////////////////////////// APPOINTMENT ////////////////////////////////////////////////////
@@ -3559,7 +3541,7 @@ model SlotOfAppointment {
   id String @id @default(uuid())
 
   /// #834 — the implicit m:n join table's unique index on (A,B) is
-  /// load-bearing: it makes concurrent waitlist/checkout `connect` calls
+  /// load-bearing: it makes concurrent checkout `connect` calls
   /// double-assignment-safe. Restored automatically at every push/reset;
   /// do not convert to an explicit join model without re-declaring it.
   user User[] @relation("SlotOfAppointmentToUser")

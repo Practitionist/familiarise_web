@@ -10,7 +10,7 @@ import {
   getUniqueLevels,
   type Program,
   type TopicWithCount,
-} from "./utils";
+} from "@/lib/explore/programs";
 import {
   useCuratedPrograms,
   useInfiniteScroll,

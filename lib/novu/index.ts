@@ -45,8 +45,6 @@ export {
   // Admin
   notifyGeneralAnnouncement,
   notifyNewConsultantApplication,
-  // Waitlist
-  notifyWaitlistSpotAvailable,
   // Disputes
   notifyDisputeCreated,
   notifyDisputeResolved,

@@ -44,7 +44,6 @@ export async function GET(
             },
           },
         },
-        waitlist: true,
       },
     });
 
@@ -56,7 +55,10 @@ export async function GET(
     ) {
       return NextResponse.json({ error: "Webinar not found" }, { status: 404 });
     }
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "bookings" } },
+    );
     console.error("Error fetching webinar:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching the webinar" },
@@ -122,7 +124,6 @@ export async function PUT(
             },
           },
         },
-        waitlist: true,
       },
     });
 
@@ -134,7 +135,10 @@ export async function PUT(
     ) {
       return NextResponse.json({ error: "Webinar not found" }, { status: 404 });
     }
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "bookings" } },
+    );
     console.error("Error updating webinar:", error);
     return NextResponse.json(
       { error: "An error occurred while updating the webinar" },
@@ -158,7 +162,11 @@ export async function DELETE(
     // Use same ownership filter as the delete to prevent info disclosure.
     const ownershipFilter = isPrivileged(session.user.role)
       ? {}
-      : { webinarPlan: { consultantProfileId: session.user.consultantProfileId ?? "__none__" } };
+      : {
+          webinarPlan: {
+            consultantProfileId: session.user.consultantProfileId ?? "__none__",
+          },
+        };
     const now = new Date();
     const webinar = await prisma.webinar.findUnique({
       where: { id: webinarId, ...ownershipFilter },
@@ -182,7 +190,10 @@ export async function DELETE(
     }
     if (webinar.appointment?.payment?.length) {
       return NextResponse.json(
-        { error: "Cannot delete webinar with active payments. Cancel or refund first." },
+        {
+          error:
+            "Cannot delete webinar with active payments. Cancel or refund first.",
+        },
         { status: 400 },
       );
     }
@@ -226,7 +237,6 @@ export async function DELETE(
             },
           },
         },
-        waitlist: true,
       },
     });
 
@@ -238,7 +248,10 @@ export async function DELETE(
     ) {
       return NextResponse.json({ error: "Webinar not found" }, { status: 404 });
     }
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "bookings" } },
+    );
     console.error("Error deleting webinar:", error);
     return NextResponse.json(
       { error: "An error occurred while deleting the webinar" },

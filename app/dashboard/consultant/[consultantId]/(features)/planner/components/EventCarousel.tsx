@@ -20,7 +20,7 @@ import {
   ConsultationPlanEvent,
   SubscriptionPlanEvent,
   Event,
-} from "../types/event";
+} from "@/types/planner-events";
 import { EventCard } from "./EventCard";
 import { FormConfirmationDialog } from "./form-fields/FormConfirmationDialog";
 

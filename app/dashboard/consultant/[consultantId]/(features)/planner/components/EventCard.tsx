@@ -18,6 +18,7 @@ import {
 import { cn } from "@/utils/tailwind";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { isRecurringEventType } from "@/utils/slotAllocation/types";
+import { effectiveMaxParticipants } from "@/lib/events/capacity";
 import { WebinarStatus, ClassStatus } from "@prisma/client";
 import {
   Event,
@@ -25,7 +26,7 @@ import {
   ClassEvent,
   ConsultationPlanEvent,
   SubscriptionPlanEvent,
-} from "../types/event";
+} from "@/types/planner-events";
 
 type EventType = "consultation" | "subscription" | "webinar" | "class";
 
@@ -172,8 +173,11 @@ function getEventDuration(event: Event): string {
 }
 
 function getMaxParticipants(event: Event): number {
-  if (isWebinarEvent(event)) return event.webinarPlan.maxParticipants;
-  if (isClassEvent(event)) return event.classPlan.maxParticipants;
+  // The instance's own capacity wins; the plan supplies the default.
+  if (isWebinarEvent(event))
+    return effectiveMaxParticipants(event, event.webinarPlan);
+  if (isClassEvent(event))
+    return effectiveMaxParticipants(event, event.classPlan);
   return 1;
 }
 
