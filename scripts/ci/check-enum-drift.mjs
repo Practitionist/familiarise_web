@@ -78,6 +78,69 @@ function quoteIdent(name) {
   return `"${name.replaceAll('"', '""')}"`;
 }
 
+/** Labels the database declares that schema.prisma does not. Inert, warn-only. */
+async function findStaleLabels(client, declared) {
+  const { rows } = await client.query(
+    `SELECT t.typname AS enum_name, e.enumlabel AS enum_value
+       FROM pg_type t
+       JOIN pg_enum e ON e.enumtypid = t.oid
+       JOIN pg_namespace n ON n.oid = t.typnamespace
+      WHERE n.nspname = 'public'`,
+  );
+
+  const byEnum = new Map();
+  for (const { enum_name, enum_value } of rows) {
+    if (!byEnum.has(enum_name)) byEnum.set(enum_name, []);
+    byEnum.get(enum_name).push(enum_value);
+  }
+
+  const stale = [];
+  for (const [name, dbValues] of byEnum) {
+    // An enum the schema does not model may belong to an extension.
+    const schemaValues = declared.get(name);
+    if (!schemaValues) continue;
+    const extra = dbValues.filter((v) => !schemaValues.has(v));
+    if (extra.length > 0) stale.push(`  - ${name}: ${extra.join(", ")}`);
+  }
+  return stale;
+}
+
+/**
+ * What actually breaks: a ROW holding a value the client cannot parse. Found by
+ * asking the catalog which columns carry which enum, then counting rows outside
+ * the declared set — no hardcoded table list to go stale.
+ */
+async function findBreakingRows(client, declared) {
+  const { rows: columns } = await client.query(
+    `SELECT c.table_name, c.column_name, c.udt_name AS enum_name
+       FROM information_schema.columns c
+       JOIN information_schema.tables t
+         ON t.table_name = c.table_name AND t.table_schema = c.table_schema
+      WHERE c.table_schema = 'public' AND t.table_type = 'BASE TABLE'
+        AND c.udt_name = ANY($1::text[])`,
+    [[...declared.keys()]],
+  );
+
+  const breaking = [];
+  for (const col of columns) {
+    const allowed = declared.get(col.enum_name);
+    if (!allowed || allowed.size === 0) continue;
+    const { rows } = await client.query(
+      `SELECT ${quoteIdent(col.column_name)}::text AS value, COUNT(*) AS n
+         FROM ${quoteIdent(col.table_name)}
+        WHERE ${quoteIdent(col.column_name)}::text <> ALL($1::text[])
+        GROUP BY 1`,
+      [[...allowed]],
+    );
+    for (const r of rows) {
+      breaking.push(
+        `  - ${col.table_name}.${col.column_name} = ${r.value} (${r.n} rows)`,
+      );
+    }
+  }
+  return { breaking, columnCount: columns.length };
+}
+
 async function main() {
   if (!process.env.DATABASE_URL) {
     console.log("enum-drift: DATABASE_URL not set — skipping.");
@@ -85,68 +148,12 @@ async function main() {
   }
 
   const declared = schemaEnums();
-  const enumNames = [...declared.keys()];
-
-  const client = new pg.Client({
-    connectionString: process.env.DATABASE_URL,
-  });
+  const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
 
   try {
-    const { rows: dbEnums } = await client.query(
-      `SELECT t.typname AS enum_name, e.enumlabel AS enum_value
-         FROM pg_type t
-         JOIN pg_enum e ON e.enumtypid = t.oid
-         JOIN pg_namespace n ON n.oid = t.typnamespace
-        WHERE n.nspname = 'public'`,
-    );
-
-    const byEnum = new Map();
-    for (const { enum_name, enum_value } of dbEnums) {
-      if (!byEnum.has(enum_name)) byEnum.set(enum_name, []);
-      byEnum.get(enum_name).push(enum_value);
-    }
-
-    const staleLabels = [];
-    for (const [name, dbValues] of byEnum) {
-      const schemaValues = declared.get(name);
-      // An enum the schema does not model may belong to an extension.
-      if (!schemaValues) continue;
-      const extra = dbValues.filter((v) => !schemaValues.has(v));
-      if (extra.length > 0)
-        staleLabels.push(`  - ${name}: ${extra.join(", ")}`);
-    }
-
-    // What actually breaks: a ROW holding a value the client cannot parse.
-    // Found by asking the catalog which columns carry which enum, then counting
-    // rows outside the declared set — no hardcoded table list to go stale.
-    const { rows: columns } = await client.query(
-      `SELECT c.table_name, c.column_name, c.udt_name AS enum_name
-         FROM information_schema.columns c
-         JOIN information_schema.tables t
-           ON t.table_name = c.table_name AND t.table_schema = c.table_schema
-        WHERE c.table_schema = 'public' AND t.table_type = 'BASE TABLE'
-          AND c.udt_name = ANY($1::text[])`,
-      [enumNames],
-    );
-
-    const breaking = [];
-    for (const col of columns) {
-      const allowed = declared.get(col.enum_name);
-      if (!allowed || allowed.size === 0) continue;
-      const { rows } = await client.query(
-        `SELECT ${quoteIdent(col.column_name)}::text AS value, COUNT(*) AS n
-           FROM ${quoteIdent(col.table_name)}
-          WHERE ${quoteIdent(col.column_name)}::text <> ALL($1::text[])
-          GROUP BY 1`,
-        [[...allowed]],
-      );
-      for (const r of rows) {
-        breaking.push(
-          `  - ${col.table_name}.${col.column_name} = ${r.value} (${r.n} rows)`,
-        );
-      }
-    }
+    const staleLabels = await findStaleLabels(client, declared);
+    const { breaking, columnCount } = await findBreakingRows(client, declared);
 
     if (staleLabels.length > 0) {
       console.warn(
@@ -169,14 +176,16 @@ async function main() {
     }
 
     console.log(
-      `enum-drift: no unparseable rows — ${columns.length} enum columns checked.`,
+      `enum-drift: no unparseable rows — ${columnCount} enum columns checked.`,
     );
   } finally {
     await client.end();
   }
 }
 
-main().catch((err) => {
+try {
+  await main();
+} catch (err) {
   console.error("enum-drift: check failed to run:", err);
   process.exitCode = 1;
-});
+}
