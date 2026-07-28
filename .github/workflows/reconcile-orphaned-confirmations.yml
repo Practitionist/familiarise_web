@@ -21,8 +21,12 @@ jobs:
 
       # Payment gateway credentials
       STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+      # RAZORPAY_SECRET is the canonical name (lib/payments/core/razorpay.ts
+      # reads only that one); RAZORPAY_KEY_SECRET stays for the legacy readers
+      # in scripts/. Both source the same repo secret — see #677 PM-1.
       RAZORPAY_KEY_ID: ${{ secrets.RAZORPAY_KEY_ID }}
-      RAZORPAY_KEY_SECRET: ${{ secrets.RAZORPAY_KEY_SECRET }}
+      RAZORPAY_SECRET: ${{ secrets.RAZORPAY_SECRET }}
+      RAZORPAY_KEY_SECRET: ${{ secrets.RAZORPAY_SECRET }}
 
     steps:
       - name: Checkout code
@@ -47,4 +51,7 @@ jobs:
         if: failure()
         env:
           SLACK_OPS_WEBHOOK_URL: ${{ secrets.SLACK_OPS_WEBHOOK_URL }}
+          # Fallback sink — Slack has never been provisioned, so this is
+          # what actually pages today. See 07-required-secrets.md.
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
         run: bash scripts/ci/notify-ops-failure.sh "reconcile-orphaned-confirmations"

@@ -5,9 +5,6 @@ on:
     # Run every 15 minutes
     - cron: "6-59/15 * * * *"
   workflow_dispatch: # Allow manual triggering
-  push:
-    branches:
-      - dev
 
 jobs:
   cleanup-abandoned-payments:
@@ -50,4 +47,7 @@ jobs:
         if: failure()
         env:
           SLACK_OPS_WEBHOOK_URL: ${{ secrets.SLACK_OPS_WEBHOOK_URL }}
+          # Fallback sink — Slack has never been provisioned, so this is
+          # what actually pages today. See 07-required-secrets.md.
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
         run: bash scripts/ci/notify-ops-failure.sh "cleanup-abandoned-payments"
