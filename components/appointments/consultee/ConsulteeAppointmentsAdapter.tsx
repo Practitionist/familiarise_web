@@ -37,11 +37,11 @@ import type {
   AppointmentVM,
   SlotLike,
 } from "@/lib/appointments/view-model";
-import { useEventActions } from "./components/useEventActions";
-import { RescheduleSessionsModal } from "./components/RescheduleSessionsModal";
-import { CancelConfirmationDialog } from "./CancelConfirmationDialog";
-import { ReportIssueDialog } from "./ReportIssueDialog";
-import { DocumentUpload } from "./DocumentUpload";
+import { useEventActions } from "@/components/appointments/consultee/useEventActions";
+import { RescheduleSessionsModal } from "@/components/appointments/consultee/RescheduleSessionsModal";
+import { CancelConfirmationDialog } from "@/components/appointments/consultee/CancelConfirmationDialog";
+import { ReportIssueDialog } from "@/components/appointments/consultee/ReportIssueDialog";
+import { DocumentUpload } from "@/components/appointments/DocumentUpload";
 
 type DialogKind =
   | "cancel"

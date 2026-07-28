@@ -25,7 +25,7 @@ import type {
 } from "@/lib/appointments/map-consultant";
 import type { TAppointment } from "@/types/appointment";
 import type { UnscheduledClass, UnscheduledWebinar } from "../../types";
-import { useLazyJoinMeeting } from "../shared/hooks/useLazyJoinMeeting";
+import { useLazyJoinMeeting } from "@/hooks/scheduling/useLazyJoinMeeting";
 import {
   buildUnscheduledClassAppointment,
   buildUnscheduledWebinarAppointment,
@@ -37,8 +37,8 @@ import {
 } from "./utils/participantHelpers";
 import { EventTimingsCalendar } from "./components/EventTimingsCalendar";
 import { useConsultantEventActions } from "./components/useConsultantEventActions";
-import { CancelConfirmationDialog } from "@/app/dashboard/consultee/[consulteeId]/(features)/appointments/CancelConfirmationDialog";
-import { RescheduleSessionsModal } from "@/app/dashboard/consultee/[consulteeId]/(features)/appointments/components/RescheduleSessionsModal";
+import { CancelConfirmationDialog } from "@/components/appointments/consultee/CancelConfirmationDialog";
+import { RescheduleSessionsModal } from "@/components/appointments/consultee/RescheduleSessionsModal";
 import { ConsultantResponseUpload } from "../documents/ConsultantResponseUpload";
 import {
   AlertDialog,

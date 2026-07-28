@@ -21,6 +21,8 @@ import {
   Clock,
   FileText,
   CalendarCheck,
+  MessageSquare,
+  ClipboardCheck,
   Video,
   Receipt,
   ShieldCheck,
@@ -235,6 +237,35 @@ export default function OrgLayout({
         name: "Appointments",
         icon: CalendarCheck,
         path: "appointments",
+      },
+      {
+        // Participant surface, same floor as Appointments. Chat is scoped to
+        // this org purely by living on this route — `useOrgScope` pins under
+        // /dashboard/organization/[orgId]/ — so a member of several orgs gets
+        // one clean inbox per org with no picker.
+        //
+        // Not an operator surface: Stream only returns channels the viewer is a
+        // member of, and there is no org-wide chat query behind it. ADR 20
+        // keeps session content with the participants.
+        name: "Messages",
+        icon: MessageSquare,
+        path: "messages",
+      },
+      {
+        // Delivery surface: allocating slots is something only the person
+        // delivering the session can do, so it shows for members who hold a
+        // consultant profile. The page itself redirects anyone else — gating on
+        // the profile rather than on MemberRole.EXPERT means an OWNER who also
+        // delivers still gets it.
+        name: "Requests",
+        icon: ClipboardCheck,
+        path: "requests",
+        // Same gate as Compensation, which is the other EXPERT delivery
+        // surface: `myArrangement.read` is EXPERT-only and `canHost` means the
+        // org actually has experts. The page re-checks the membership's own
+        // consultantProfileId and redirects if absent, so a mismatch degrades
+        // to a redirect rather than a broken tab.
+        show: can("myArrangement.read") && canHost,
       },
     ];
 
@@ -544,6 +575,8 @@ export default function OrgLayout({
     compensation: "Compensation",
     collaborations: "Collaborations",
     appointments: "Appointments",
+    messages: "Messages",
+    requests: "Requests",
     members: "Members",
     programs: "Programs",
     contracts: "Contracts",

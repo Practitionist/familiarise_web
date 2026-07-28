@@ -26,7 +26,7 @@ import {
 import { ClientClassRegistration } from "./ClientClassRegistration";
 import { useCurrency } from "@/hooks/useCurrency";
 import type { Topic } from "@prisma/client";
-import { generateProgramImageUrl } from "@/app/explore/programs/utils";
+import { generateProgramImageUrl } from "@/lib/explore/programs";
 import { FeatureItem } from "@/app/explore/programs/plans/components/FeatureItem";
 import type { TClassPlanDetailsData } from "../types";
 

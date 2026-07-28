@@ -12,18 +12,18 @@ import "./setup";
 import {
   AllocationAlgorithms,
   type AllocationOptions,
-} from "@/app/dashboard/consultant/[consultantId]/(features)/shared/utils/allocationAlgorithms";
-import { AllocationService } from "@/app/dashboard/consultant/[consultantId]/(features)/shared/utils/allocationService";
+} from "@/lib/scheduling/allocationAlgorithms";
+import { AllocationService } from "@/lib/scheduling/allocationService";
 import {
   validateEventSlots,
   getEventConstraints,
   getSlotLimits,
   groupSlotsByDay,
-} from "@/app/dashboard/consultant/[consultantId]/(features)/shared/utils/slotSelectionValidation";
+} from "@/lib/scheduling/slotSelectionValidation";
 import {
   validateSlotDistribution,
   type TimeSlot,
-} from "@/app/dashboard/consultant/[consultantId]/(features)/shared/utils/calendarUtils";
+} from "@/lib/scheduling/calendarUtils";
 // eslint-disable-next-line jest/no-mocks-import -- shared fixture builders, not module mocks (suite-wide pattern)
 import { makeConsecutiveTimeSlots } from "./__mocks__/booking.mockData";
 

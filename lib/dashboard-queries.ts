@@ -21,8 +21,8 @@ import type {
 import type {
   PlannerWebinarEvent,
   PlannerClassEvent,
-} from "@/app/dashboard/consultant/[consultantId]/(features)/planner/types/event";
-import type { RecordingData } from "@/app/dashboard/consultant/[consultantId]/(features)/recordings/components/RecordingCard";
+} from "@/types/planner-events";
+import type { RecordingData } from "@/types/recording";
 
 // =============================================================================
 // Types

@@ -49,7 +49,7 @@ import { cn } from "@/utils/tailwind";
 // #248: no static Stream SDK / lib/meeting import — the shared hook
 // lazy-loads both at click time. Type-only imports are erased.
 import type { MeetingSlot } from "@/lib/meeting";
-import { useLazyJoinMeeting } from "../shared/hooks/useLazyJoinMeeting";
+import { useLazyJoinMeeting } from "@/hooks/scheduling/useLazyJoinMeeting";
 import {
   TrialScheduleCalendar,
   SelectedSlot,

@@ -9,7 +9,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useParams } from "next/navigation";
-import { SafeUnifiedCalendar } from "../../shared/components/SafeUnifiedCalendar";
+import { SafeUnifiedCalendar } from "@/components/scheduling/SafeUnifiedCalendar";
 import type { UnscheduledAppointment } from "../utils/unscheduledAppointments";
 import { getClassPlanDefaults, type ClassPlanType } from "@/utils/classPlans";
 

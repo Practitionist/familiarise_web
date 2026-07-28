@@ -3,7 +3,7 @@
  */
 
 import { toast } from "@/hooks/use-toast";
-import { ClassEvent } from "../../types/event";
+import { ClassEvent } from "@/types/planner-events";
 import {
   CreateClassPayload,
   UpdateClassPayload,

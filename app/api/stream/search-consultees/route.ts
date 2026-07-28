@@ -3,13 +3,11 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "lib/prisma";
 
 import { getSession } from "@/lib/auth-server";
-export type ConsulteeSearchResult = {
-  id: string;
-  name: string | null;
-  email: string | null;
-  image: string | null;
-  relationshipType: "consultation" | "subscription" | "webinar" | "class";
-};
+// See schemas/stream-search.ts for why the shape does not live here.
+import {
+  ConsulteeSearchResultSchema,
+  type ConsulteeSearchResult,
+} from "@/schemas/stream-search";
 
 /**
  * Search consultees of the current consultant
@@ -260,9 +258,13 @@ export async function GET(req: NextRequest) {
     // Sort by name
     results.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
 
+    // Validated against the same schema the dialog derives its type from, so
+    // a drift in this handler fails here rather than showing up as a blank row.
     return NextResponse.json({
       success: true,
-      consultees: results.slice(0, 50), // Limit to 50 results
+      consultees: ConsulteeSearchResultSchema.array().parse(
+        results.slice(0, 50),
+      ),
       total: results.length,
     });
   } catch (error) {

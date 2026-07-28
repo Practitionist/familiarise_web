@@ -1,3 +1,12 @@
+/**
+ * Planner event types.
+ *
+ * Moved out of `app/dashboard/consultant/[consultantId]/(features)/planner/`
+ * because `lib/dashboard-queries.ts` consumes them, and a non-route layer
+ * importing through a dynamic route segment inverts the dependency direction:
+ * `app/` is the routing layer and should depend on `lib`, `components` and
+ * `hooks`, never the reverse.
+ */
 import {
   TWebinar,
   TClass,

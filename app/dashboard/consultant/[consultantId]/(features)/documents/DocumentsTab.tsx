@@ -51,7 +51,7 @@ import { ConsultantResponseUpload } from "./ConsultantResponseUpload";
 import {
   formatFileSize,
   getDocumentTypeIcon,
-} from "@/app/dashboard/shared/utils/document-utils";
+} from "@/lib/documents/document-utils";
 
 // Appointment types are fixed on the server (Consultation | Subscription).
 // Hardcoding here so the type filter dropdown isn't dependent on the current

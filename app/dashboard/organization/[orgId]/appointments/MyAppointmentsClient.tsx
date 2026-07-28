@@ -28,7 +28,7 @@ import {
   getJoinableSlot,
 } from "@/lib/appointments/slots";
 import type { MeetingAppointment } from "@/lib/meeting";
-import { useLazyJoinMeeting } from "@/app/dashboard/consultant/[consultantId]/(features)/shared/hooks/useLazyJoinMeeting";
+import { useLazyJoinMeeting } from "@/hooks/scheduling/useLazyJoinMeeting";
 
 // Slot shape as delivered by getOrgMemberAppointments (see the include in
 // lib/api/scope/list-appointments.ts). Dates survive the RSC boundary as
@@ -271,7 +271,16 @@ export function MyAppointmentsClient({
                 </p>
               </div>
 
-              <div className="shrink-0">
+              <div className="flex shrink-0 items-center gap-2">
+                {/* The card used to offer Join and nothing else — it named your
+                    counterpart and gave you no way to reach them, reschedule,
+                    cancel or hand over a document for a session the org paid
+                    for. Details carries all of that. */}
+                <Button asChild variant="outline" size="sm">
+                  <Link href={`/dashboard/organization/${orgId}/appointments/${item.id}`}>
+                    Details
+                  </Link>
+                </Button>
                 {joinable ? (
                   <Button
                     size="sm"

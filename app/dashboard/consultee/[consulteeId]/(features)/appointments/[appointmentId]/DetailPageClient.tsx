@@ -3,8 +3,8 @@
 import { AppointmentDetailClient } from "@/components/appointments/detail/AppointmentDetailClient";
 import { CONSULTEE_JOIN_WINDOW_MS } from "@/lib/appointments/slots";
 import { isConfirmedStatus } from "@/lib/appointments/status";
-import { useConsulteeAppointmentsAdapter } from "../ConsulteeAppointmentsAdapter";
-import { DocumentUpload } from "../DocumentUpload";
+import { useConsulteeAppointmentsAdapter } from "@/components/appointments/consultee/ConsulteeAppointmentsAdapter";
+import { DocumentUpload } from "@/components/appointments/DocumentUpload";
 
 const DOCUMENT_KINDS = new Set(["CONSULTATION", "TRIAL", "SUBSCRIPTION"]);
 

@@ -26,7 +26,7 @@ import {
   ClassEvent,
   ConsultationPlanEvent,
   SubscriptionPlanEvent,
-} from "../types/event";
+} from "@/types/planner-events";
 
 type EventType = "consultation" | "subscription" | "webinar" | "class";
 

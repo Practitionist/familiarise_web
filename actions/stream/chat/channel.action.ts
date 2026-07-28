@@ -161,18 +161,26 @@ export async function createChannel(input: {
 export async function createDirectMessageChannel(
   currentUserId: string,
   targetUserId: string,
+  /**
+   * Context this conversation belongs to. Omitted (or null) means personal —
+   * the channel then lives in the B2C dashboards and carries no org tag. Pass
+   * an org id to open the thread inside that organization instead; the two are
+   * separate channels by design (see getDmChannelId).
+   */
+  organizationId?: string | null,
 ) {
   // Validate inputs
   memberIdSchema.parse(currentUserId);
   memberIdSchema.parse(targetUserId);
 
-  const channelId = getDmChannelId(currentUserId, targetUserId);
+  const channelId = getDmChannelId(currentUserId, targetUserId, organizationId);
 
   return createChannel({
     channelType: "messaging",
     channelId,
     members: [currentUserId, targetUserId],
     createdById: currentUserId,
+    organizationId,
   });
 }
 
@@ -398,12 +406,13 @@ export async function createConsultationChannel(
         null)
       : organizationId;
 
-  // DM channel is per consultant-consultee pair (not per event).
-  // Per-event IDs are not stored on the channel since multiple
-  // consultations/subscriptions between the same pair share one DM.
+  // One DM per pair PER CONTEXT. Still not per event — multiple
+  // consultations/subscriptions between the same pair in the same context share
+  // one thread — but a personal booking and an org-funded one no longer collide
+  // into a single channel that can only live in one dashboard (ADR 19).
   return createChannel({
     channelType: "messaging",
-    channelId: getDmChannelId(consultantId, consulteeId),
+    channelId: getDmChannelId(consultantId, consulteeId, resolvedOrgId),
     members: [consultantId, consulteeId],
     createdById: consultantId,
     additionalData: {
@@ -484,12 +493,13 @@ export async function createSubscriptionChannel(
         null)
       : organizationId;
 
-  // DM channel is per consultant-consultee pair (not per event).
-  // Per-event IDs are not stored on the channel since multiple
-  // consultations/subscriptions between the same pair share one DM.
+  // One DM per pair PER CONTEXT. Still not per event — multiple
+  // consultations/subscriptions between the same pair in the same context share
+  // one thread — but a personal booking and an org-funded one no longer collide
+  // into a single channel that can only live in one dashboard (ADR 19).
   return createChannel({
     channelType: "messaging",
-    channelId: getDmChannelId(consultantId, consulteeId),
+    channelId: getDmChannelId(consultantId, consulteeId, resolvedOrgId),
     members: [consultantId, consulteeId],
     createdById: consultantId,
     additionalData: {

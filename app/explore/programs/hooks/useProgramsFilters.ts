@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useDebouncedCallback } from "use-debounce";
-import type { ProgramFilters, ProgramType } from "../utils";
+import type { ProgramFilters, ProgramType } from "@/lib/explore/programs";
 
 const SEARCH_DEBOUNCE_MS = 300;
 

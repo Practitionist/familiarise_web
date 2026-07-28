@@ -76,6 +76,16 @@ interface AppointmentRow {
       user: { id: string; name: string | null; email: string };
     };
   } | null;
+  /**
+   * Seats in this session that THIS org funded, pre-filtered server-side to the
+   * viewing org. Present on the "Everyone" scope only; a group event shares one
+   * appointment across every registrant, so this is how a sponsor learns which
+   * of its own people were in it without learning who else was.
+   */
+  payment?: {
+    id: string;
+    user: { id: string; name: string | null; email: string } | null;
+  }[];
 }
 
 interface AppointmentsResponse {
@@ -130,7 +140,20 @@ function getMember(row: AppointmentRow): string {
     row.consultation?.requestedBy?.user ??
     row.subscription?.requestedBy?.user ??
     row.trialSession?.consulteeProfile?.user;
-  return u ? u.name || u.email : "—";
+  if (u) return u.name || u.email;
+
+  // Group events share one appointment across every registrant, so there is no
+  // single "member" — but `payment` is pre-filtered server-side to THIS org's
+  // funded seats, so these are our people and only ours. Without this the row
+  // read "—" and a sponsor could see that it had paid for a webinar without
+  // being told whom it had paid for.
+  const funded = row.payment ?? [];
+  const names = funded
+    .map((p) => p.user?.name || p.user?.email)
+    .filter((n): n is string => Boolean(n));
+  if (names.length === 0) return "—";
+  if (names.length === 1) return names[0];
+  return `${names[0]} +${names.length - 1}`;
 }
 
 /** Earliest slot that hasn't ended yet, else the latest. Mirrors the member view. */
