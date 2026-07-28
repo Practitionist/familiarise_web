@@ -14,9 +14,29 @@
  * no capture-amount parity check (which sits below that early-return). Money
  * taken, never journalled.
  *
- * Both orderings are asserted, because a fix that only works when the webhook
- * arrives second is not a fix.
+ * Both race orderings are asserted, because a fix that only works when the
+ * webhook arrives second is not a fix.
  */
+
+// The route dispatches the pipeline from `after()` so Phase 2's outbound work
+// (email, Stream channel provisioning) does not sit inside a request under
+// Netlify's ~10s function ceiling — the same posture the webhook route has
+// always had. Jest has no Next request lifecycle, so capture the callbacks and
+// run them on demand.
+const afterCallbacks: Array<() => unknown> = [];
+jest.mock("next/server", () => {
+  const actual = jest.requireActual("next/server");
+  return {
+    ...actual,
+    after: (cb: () => unknown) => {
+      afterCallbacks.push(cb);
+    },
+  };
+});
+
+async function flushAfter() {
+  for (const cb of afterCallbacks.splice(0)) await cb();
+}
 
 const routeCapturedPayment = jest.fn();
 jest.mock("../../app/api/webhooks/razorpay-dispatch", () => ({
@@ -72,8 +92,16 @@ function signedRequest(): NextRequest {
   });
 }
 
+/** A PENDING payment owned by the caller. */
+const pendingPayment = () => ({
+  id: "p1",
+  userId: USER_ID,
+  paymentStatus: "PENDING",
+});
+
 beforeEach(() => {
   jest.clearAllMocks();
+  afterCallbacks.length = 0;
   process.env.RAZORPAY_SECRET = SECRET;
   getSession.mockResolvedValue({ user: { id: USER_ID } });
   paymentsFetch.mockResolvedValue({
@@ -87,18 +115,10 @@ beforeEach(() => {
 
 describe("verify-signature drives the canonical pipeline", () => {
   it("never writes paymentStatus itself", async () => {
-    findUnique
-      .mockResolvedValueOnce({
-        id: "p1",
-        userId: USER_ID,
-        paymentStatus: "PENDING",
-      })
-      .mockResolvedValueOnce({
-        paymentStatus: "SUCCEEDED",
-        appointmentId: "appt_1",
-      });
+    findUnique.mockResolvedValue(pendingPayment());
 
     await POST(signedRequest());
+    await flushAfter();
 
     // The whole point: this route no longer sets the status. If it did, the
     // webhook's already-SUCCEEDED guard would skip the pipeline.
@@ -107,18 +127,10 @@ describe("verify-signature drives the canonical pipeline", () => {
   });
 
   it("passes gateway truth — amount and notes — so the parity check can run", async () => {
-    findUnique
-      .mockResolvedValueOnce({
-        id: "p1",
-        userId: USER_ID,
-        paymentStatus: "PENDING",
-      })
-      .mockResolvedValueOnce({
-        paymentStatus: "SUCCEEDED",
-        appointmentId: "appt_1",
-      });
+    findUnique.mockResolvedValue(pendingPayment());
 
     await POST(signedRequest());
+    await flushAfter();
 
     // The signature proves the id pair came from Razorpay but carries neither
     // the captured amount nor the notes; both have to come off the gateway.
@@ -130,63 +142,30 @@ describe("verify-signature drives the canonical pipeline", () => {
     });
   });
 
-  it("reports pendingConfirmation when the booking has not materialised yet", async () => {
-    findUnique
-      .mockResolvedValueOnce({
-        id: "p1",
-        userId: USER_ID,
-        paymentStatus: "PENDING",
-      })
-      .mockResolvedValueOnce({
-        paymentStatus: "SUCCEEDED",
-        appointmentId: null,
-      });
-
-    const res = await POST(signedRequest());
-    const body = await res.json();
-
-    expect(body.verified).toBe(true);
-    expect(body.pendingConfirmation).toBe(true);
-  });
-
-  it("does NOT report pendingConfirmation for flows that have no appointment", async () => {
-    paymentsFetch.mockResolvedValue({
-      id: PAY_ID,
-      order_id: ORDER_ID,
-      amount: 250000,
-      status: "captured",
-      notes: { type: "overage_member" },
-    });
-    findUnique
-      .mockResolvedValueOnce({
-        id: "p1",
-        userId: USER_ID,
-        paymentStatus: "PENDING",
-      })
-      .mockResolvedValueOnce({
-        paymentStatus: "SUCCEEDED",
-        appointmentId: null,
-      });
+  it("responds before the pipeline runs, and says so", async () => {
+    findUnique.mockResolvedValue(pendingPayment());
 
     const body = await (await POST(signedRequest())).json();
 
-    // An overage side-charge legitimately has no appointment; requiring one
-    // would leave the client polling forever.
-    expect(body.pendingConfirmation).toBe(false);
+    // Dispatched, not finished. checkout-success polls /api/checkout/verify
+    // until the appointment appears and renders "confirming your booking"
+    // meanwhile — never an unqualified success.
+    expect(body).toMatchObject({ verified: true, pendingConfirmation: true });
+    expect(routeCapturedPayment).not.toHaveBeenCalled(); // still queued
   });
 });
 
 describe("the race, both directions", () => {
   it("webhook first: verify-signature becomes a no-op", async () => {
     // The webhook already ran the pipeline and set SUCCEEDED.
-    findUnique.mockResolvedValueOnce({
+    findUnique.mockResolvedValue({
       id: "p1",
       userId: USER_ID,
       paymentStatus: "SUCCEEDED",
     });
 
-    const res = await POST(signedRequest());
-    const body = await res.json();
+    const body = await (await POST(signedRequest())).json();
+    await flushAfter();
 
     expect(routeCapturedPayment).not.toHaveBeenCalled();
     expect(updateMany).not.toHaveBeenCalled();
@@ -194,44 +173,60 @@ describe("the race, both directions", () => {
   });
 
   it("verify-signature first: it drives the pipeline, and a later webhook is idempotent", async () => {
-    findUnique
-      .mockResolvedValueOnce({
-        id: "p1",
-        userId: USER_ID,
-        paymentStatus: "PENDING",
-      })
-      .mockResolvedValueOnce({
-        paymentStatus: "SUCCEEDED",
-        appointmentId: "appt_1",
-      });
+    findUnique.mockResolvedValue(pendingPayment());
 
     await POST(signedRequest());
+    await flushAfter();
     expect(routeCapturedPayment).toHaveBeenCalledTimes(1);
 
     // The webhook arriving afterwards calls the same idempotent entry point;
     // handlePaymentSuccess's already-SUCCEEDED guard makes it a no-op. That
     // guard is now CORRECT, because SUCCEEDED again implies the pipeline ran.
     routeCapturedPayment.mockClear();
-    findUnique.mockResolvedValueOnce({
+    findUnique.mockResolvedValue({
       id: "p1",
       userId: USER_ID,
       paymentStatus: "SUCCEEDED",
     });
     await POST(signedRequest());
+    await flushAfter();
     expect(routeCapturedPayment).not.toHaveBeenCalled();
+  });
+});
+
+describe("capture state is verified, not assumed", () => {
+  it("refuses to run the pipeline on an authorized-but-uncaptured payment", async () => {
+    // With a non-zero auto-capture delay on the account, the modal handler
+    // fires while the payment is still `authorized`. Confirming there would
+    // journal a CASH debit for money never received — and Razorpay voids the
+    // authorization days later, leaving the ledger simply wrong. The webhook
+    // path cannot hit this (payment.captured fires on capture by definition),
+    // so this route is the only place that has to look.
+    paymentsFetch.mockResolvedValue({
+      id: PAY_ID,
+      order_id: ORDER_ID,
+      amount: 250000,
+      status: "authorized",
+      notes: { appointmentType: "CONSULTATION" },
+    });
+    findUnique.mockResolvedValue(pendingPayment());
+
+    const body = await (await POST(signedRequest())).json();
+    await flushAfter();
+
+    expect(routeCapturedPayment).not.toHaveBeenCalled();
+    expect(updateMany).not.toHaveBeenCalled();
+    expect(body.pendingConfirmation).toBe(true);
   });
 });
 
 describe("gateway-fetch failure", () => {
   it("defers to the webhook instead of falling back to a bare status flip", async () => {
-    findUnique.mockResolvedValueOnce({
-      id: "p1",
-      userId: USER_ID,
-      paymentStatus: "PENDING",
-    });
+    findUnique.mockResolvedValue(pendingPayment());
     paymentsFetch.mockRejectedValue(new Error("ECONNRESET"));
 
     const body = await (await POST(signedRequest())).json();
+    await flushAfter();
 
     // Falling back to the flip is exactly the behaviour being removed: it
     // would confirm a payment whose amount we never verified, and poison the
@@ -258,50 +253,23 @@ describe("signature and ownership are still enforced", () => {
     );
 
     const res = await POST(req);
+    await flushAfter();
 
     expect(res.status).toBe(400);
     expect(routeCapturedPayment).not.toHaveBeenCalled();
   });
 
   it("rejects another user's payment", async () => {
-    findUnique.mockResolvedValueOnce({
+    findUnique.mockResolvedValue({
       id: "p1",
       userId: "someone_else",
       paymentStatus: "PENDING",
     });
 
     const res = await POST(signedRequest());
+    await flushAfter();
 
     expect(res.status).toBe(403);
     expect(routeCapturedPayment).not.toHaveBeenCalled();
-  });
-});
-
-describe("capture state is verified, not assumed", () => {
-  it("refuses to run the pipeline on an authorized-but-uncaptured payment", async () => {
-    // With a non-zero auto-capture delay on the account, the modal handler
-    // fires while the payment is still `authorized`. Confirming there would
-    // journal a CASH debit for money never received — and Razorpay voids the
-    // authorization days later, leaving the ledger simply wrong. The webhook
-    // path cannot hit this (payment.captured fires on capture by definition),
-    // so this route is the only place that has to look.
-    paymentsFetch.mockResolvedValue({
-      id: PAY_ID,
-      order_id: ORDER_ID,
-      amount: 250000,
-      status: "authorized",
-      notes: { appointmentType: "CONSULTATION" },
-    });
-    findUnique.mockResolvedValueOnce({
-      id: "p1",
-      userId: USER_ID,
-      paymentStatus: "PENDING",
-    });
-
-    const body = await (await POST(signedRequest())).json();
-
-    expect(routeCapturedPayment).not.toHaveBeenCalled();
-    expect(updateMany).not.toHaveBeenCalled();
-    expect(body.pendingConfirmation).toBe(true);
   });
 });

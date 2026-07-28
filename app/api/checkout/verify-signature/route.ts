@@ -19,14 +19,17 @@
  * capture-amount parity check (which sits below that early-return). The money
  * was taken and never journalled.
  *
- * So the route now calls the same `routeCapturedPayment` the webhook calls.
- * Every handler beneath it is Serializable and idempotent, so whichever of the
- * two arrives first does the work and the other is a no-op — the race is safe
- * in both directions.
+ * So the route now calls the same `routeCapturedPayment` the webhook calls,
+ * and calls it from `after()` for the same reason the webhook does — the
+ * pipeline's Phase 2 does outbound work (email, Stream channels) that must not
+ * sit inside a request under Netlify's ~10s function ceiling. Every handler
+ * beneath it is Serializable and idempotent, so whichever of the two arrives
+ * first does the work and the other is a no-op — the race is safe in both
+ * directions.
  */
 
 import * as Sentry from "@sentry/nextjs";
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import crypto from "crypto";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
@@ -185,39 +188,57 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Same entry point the `payment.captured` webhook uses. Idempotent and
-    // Serializable, so a concurrent webhook either loses the SSI race and
-    // retries into a no-op, or wins and makes this a no-op.
-    await routeCapturedPayment({
-      orderId: razorpay_order_id,
-      notes,
-      amountPaise: capturedAmountPaise,
-      gatewayPaymentId: razorpay_payment_id,
+    // Same entry point the `payment.captured` webhook uses — and, like that
+    // route, driven AFTER the response rather than awaited.
+    //
+    // The pipeline's Phase 2 sends the success email, creates earnings,
+    // processes referrals and provisions Stream chat channels, all outbound
+    // work. Awaiting it here put that whole sequence inside a request under
+    // Netlify's ~10 second function ceiling (the same ceiling lib/prisma.ts
+    // tunes its connect budget around), where a timeout after Phase 1 commits
+    // would leave a confirmed booking with no email and no chat channel and
+    // nothing to re-drive them. The webhook route has always avoided that by
+    // ACKing first and working in `after()`; matching it means the client path
+    // has the same failure profile as the path it mirrors, rather than a worse
+    // one.
+    //
+    // Handlers are idempotent and Serializable, so a concurrent webhook either
+    // loses the SSI race and retries into a no-op or wins and makes this one.
+    after(async () => {
+      try {
+        await routeCapturedPayment({
+          orderId: razorpay_order_id,
+          notes,
+          amountPaise: capturedAmountPaise,
+          gatewayPaymentId: razorpay_payment_id,
+        });
+      } catch (err) {
+        // Mirrors the webhook's posture: report and let the durable paths
+        // recover. The `payment.captured` redelivery and the stuck-event
+        // sweeper both still own this payment.
+        Sentry.captureException(
+          err instanceof Error ? err : new Error(String(err)),
+          {
+            tags: { subsystem: "payments" },
+            contexts: {
+              payment: { paymentId: payment.id, orderId: razorpay_order_id },
+            },
+          },
+        );
+        console.error(
+          `verify-signature: pipeline failed for ${razorpay_order_id}`,
+          err,
+        );
+      }
     });
 
-    const confirmed = await prisma.payment.findUnique({
-      where: { id: payment.id },
-      select: { paymentStatus: true, appointmentId: true },
-    });
-
-    // Only the default (booking) route produces an appointment. Org top-ups,
-    // invoice payments and member-overage side-charges legitimately have none,
-    // so requiring one there would leave the client polling forever.
-    const NON_BOOKING_NOTE_TYPES = new Set([
-      "credit_purchase",
-      "invoice_payment",
-      "overage_member",
-    ]);
-    const expectsAppointment = !NON_BOOKING_NOTE_TYPES.has(notes.type ?? "");
-
+    // The work is now in flight rather than done, so this is always "pending"
+    // — `checkout-success` polls `/api/checkout/verify` until the appointment
+    // appears and renders "confirming your booking" meanwhile (#E1).
     return NextResponse.json({
       verified: true,
-      paymentStatus: confirmed?.paymentStatus ?? "PENDING",
-      // The client renders "confirming your booking" rather than an
-      // unqualified success while this is true (#E1).
-      pendingConfirmation:
-        confirmed?.paymentStatus !== "SUCCEEDED" ||
-        (expectsAppointment && !confirmed?.appointmentId),
+      paymentStatus: payment.paymentStatus,
+      pendingConfirmation: true,
       orderId: razorpay_order_id,
       paymentId: razorpay_payment_id,
     });
