@@ -126,8 +126,9 @@ function UpcomingSessionCard({
     session?.user?.organizationMemberships,
   );
 
-  // Shared guards (appointments/utils/status-guards.ts) — same semantics
-  // as the Appointments tab cards.
+  // Shared guards (lib/appointments/status-guards.ts) — same semantics as the
+  // Appointments tab cards. Moved out of the route folder when the resources
+  // card started using them too.
   const isInactive = isInactiveStatus(event.status);
   const isApproved =
     event.type === "webinar" || event.type === "class"

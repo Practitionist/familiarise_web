@@ -135,8 +135,37 @@ export function ResourcesTab({
     }
   };
 
-  const filteredData = useMemo(() => {
+  /**
+   * Events that actually carry the artifact this page is for.
+   *
+   * Gating the card's CONTENTS was not enough: totals, tab labels, the default
+   * tab and the empty state all counted every event, so Documents listed
+   * recording-only sessions as empty cards and claimed a count that did not
+   * match what was on screen. The artifact has to narrow the set first, and
+   * everything downstream reads the narrowed one.
+   */
+  const artifactData = useMemo(() => {
     if (!data) return null;
+    const keep = (events: EventResource[]) => {
+      if (artifact === "both") return events;
+      return events.filter((e) =>
+        artifact === "materials"
+          ? e.materials.length > 0
+          : e.recordings.length > 0,
+      );
+    };
+    return {
+      consultations: keep(data.consultations),
+      subscriptions: keep(data.subscriptions),
+      webinars: keep(data.webinars),
+      classes: keep(data.classes),
+      trials: keep(data.trials ?? []),
+    };
+  }, [data, artifact]);
+
+  const filteredData = useMemo(() => {
+    if (!artifactData) return null;
+    const data = artifactData;
     return {
       consultations: sortEvents(
         filterEvents(data.consultations, resourceFilter),
@@ -156,16 +185,16 @@ export function ResourcesTab({
         sortDir,
       ),
     };
-  }, [data, resourceFilter, sortDir]);
+  }, [artifactData, resourceFilter, sortDir]);
 
-  if (!data || !filteredData) return null;
+  if (!data || !artifactData || !filteredData) return null;
 
   const totalResources =
-    data.consultations.length +
-    data.subscriptions.length +
-    data.webinars.length +
-    data.classes.length +
-    (data.trials ?? []).length;
+    artifactData.consultations.length +
+    artifactData.subscriptions.length +
+    artifactData.webinars.length +
+    artifactData.classes.length +
+    artifactData.trials.length;
 
   if (totalResources === 0) {
     return (
@@ -178,22 +207,37 @@ export function ResourcesTab({
           <FolderOpen className="w-12 h-12" />
         </div>
         <h3 className="text-xl font-semibold text-foreground mb-2">
-          No Resources Yet
+          {artifact === "materials"
+            ? "No documents yet"
+            : artifact === "recordings"
+              ? "No recordings yet"
+              : "No resources yet"}
         </h3>
         <p className="text-muted-foreground text-center max-w-md">
-          Resources from your enrolled consultations, subscriptions, webinars,
-          and classes will appear here. Book a session to get started!
+          {artifact === "recordings"
+            ? "Recordings appear here once a session you attended has been recorded and processed."
+            : artifact === "materials"
+              ? "Handouts and materials shared for your sessions will appear here."
+              : "Resources from your enrolled consultations, subscriptions, webinars, and classes will appear here."}
         </p>
       </motion.div>
     );
   }
 
+  const artifactNoun =
+    artifact === "materials"
+      ? "documents"
+      : artifact === "recordings"
+        ? "recordings"
+        : "resources";
+
   const isFiltered = resourceFilter !== "all";
 
   // Find the first tab that has events (based on unfiltered data)
   const defaultTab =
-    EVENT_TYPES.find((t) => (data[t.key as keyof ResourcesData] ?? []).length > 0)
-      ?.key || "consultations";
+    EVENT_TYPES.find(
+      (t) => (artifactData[t.key as keyof ResourcesData] ?? []).length > 0,
+    )?.key || "consultations";
 
   return (
     <motion.div
@@ -241,9 +285,17 @@ export function ResourcesTab({
             <SelectValue placeholder="Filter resources" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All resources</SelectItem>
-            <SelectItem value="with_recordings">With recordings</SelectItem>
-            <SelectItem value="with_materials">With materials</SelectItem>
+            <SelectItem value="all">All {artifactNoun}</SelectItem>
+            {/* Redundant on an artifact-specific page: every event shown on
+                Documents already has materials, so "With materials" would
+                filter nothing and "With recordings" would contradict the
+                page. */}
+            {artifact === "both" && (
+              <>
+                <SelectItem value="with_recordings">With recordings</SelectItem>
+                <SelectItem value="with_materials">With materials</SelectItem>
+              </>
+            )}
             <SelectItem value="completed">Completed only</SelectItem>
           </SelectContent>
         </Select>
@@ -260,7 +312,7 @@ export function ResourcesTab({
       <Tabs defaultValue={defaultTab} className="space-y-6">
         <TabsList>
           {EVENT_TYPES.map(({ key, label }) => {
-            const total = (data[key as keyof ResourcesData] ?? []).length;
+            const total = (artifactData[key as keyof ResourcesData] ?? []).length;
             const filtered = (filteredData[key as keyof ResourcesData] ?? []).length;
             return (
               <TabsTrigger key={key} value={key} disabled={total === 0}>

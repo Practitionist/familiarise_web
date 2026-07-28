@@ -611,9 +611,11 @@ function ConsultantLayoutInner({
   const settingsHref = `${basePath}/settings`;
   const verificationHref = `${settingsHref}?tab=verification`;
 
-  // Bottom chip dropdown — account pages + org context switching. This is
-  // where Settings/Help live (they left the main nav, matching the org
-  // shell's IA); Sign Out renders as the standalone red button below.
+  // Bottom chip dropdown — org context switching only. Settings and Help are
+  // sidebar entries under Support now, so this comment used to say the exact
+  // opposite of what the code does; leaving it would have invited someone to
+  // "restore" a second link to the same href. Sign Out renders as the
+  // standalone red button below.
   const bottomUserChipActions = [
     // Settings is a sidebar entry under Support now; a second link to the same
     // href is the duplicate-destination problem ADR 19 exists to stop.

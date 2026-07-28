@@ -66,17 +66,22 @@ export function SupportFeedbackPage({
 export function SupportHelpPage() {
   const { data: faqs, isLoading, error } = useQuery(staticQueries.help);
 
+  let body: React.ReactNode;
+  if (isLoading) {
+    body = <p className="text-sm text-muted-foreground">Loading help…</p>;
+  } else if (error) {
+    body = (
+      <p className="text-sm text-red-600 dark:text-red-400">
+        {error.message || "Failed to load help content."}
+      </p>
+    );
+  } else {
+    body = <HelpPanel faqs={faqs || []} />;
+  }
+
   return (
     <Shell title="Help" subtitle="Answers to the questions we get most.">
-      {isLoading ? (
-        <p className="text-sm text-muted-foreground">Loading help…</p>
-      ) : error ? (
-        <p className="text-sm text-red-600 dark:text-red-400">
-          {error.message || "Failed to load help content."}
-        </p>
-      ) : (
-        <HelpPanel faqs={faqs || []} />
-      )}
+      {body}
     </Shell>
   );
 }
