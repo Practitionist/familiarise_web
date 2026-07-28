@@ -36,15 +36,28 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // a session; the footer form is public.
     const session = await getSession().catch(() => null);
 
-    await subscribe({
+    const result = await subscribe({
       ...parsed.data,
       userId: session?.user?.id ?? null,
       ip: getClientIp(request),
       userAgent: request.headers.get("user-agent"),
     });
 
-    // Deliberately uniform: telling the caller whether the address was already
-    // subscribed would turn this into a membership oracle.
+    // A send failure is an infrastructure state, not a per-address one, so
+    // saying so leaks no membership — and silently claiming success would
+    // strand the subscriber at PENDING with no confirmation to click.
+    if (result.outcome === "CONFIRMATION_FAILED") {
+      return NextResponse.json(
+        {
+          error:
+            "We could not send your confirmation email. Please try again shortly.",
+        },
+        { status: 502 },
+      );
+    }
+
+    // Otherwise deliberately uniform: telling the caller whether the address
+    // was already subscribed would turn this into a membership oracle.
     return NextResponse.json({
       success: true,
       message: "Check your email to confirm your subscription.",

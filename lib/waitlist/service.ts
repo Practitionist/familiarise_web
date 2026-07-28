@@ -7,6 +7,7 @@
  * result object and render the same copy either way.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { createHash } from "node:crypto";
 import { Prisma, WaitlistSource, WaitlistStatus } from "@prisma/client";
 import prisma from "@/lib/prisma";
@@ -14,7 +15,11 @@ import {
   sendWaitlistConfirmEmail,
   sendWaitlistWelcomeEmail,
 } from "@/lib/email";
-import { verifyConfirmToken, verifyUnsubscribeToken } from "./tokens";
+import {
+  canSignLinks,
+  verifyConfirmToken,
+  verifyUnsubscribeToken,
+} from "./tokens";
 
 export type SubscribeInput = {
   email: string;
@@ -29,7 +34,9 @@ export type SubscribeInput = {
 
 export type SubscribeResult =
   | { outcome: "CONFIRMATION_SENT" }
-  | { outcome: "ALREADY_SUBSCRIBED" };
+  | { outcome: "ALREADY_SUBSCRIBED" }
+  /** Row is on the list as PENDING but the confirmation could not be sent. */
+  | { outcome: "CONFIRMATION_FAILED" };
 
 /**
  * Consent proof without storing a raw IP. Salted with the HMAC secret when
@@ -58,6 +65,18 @@ export async function subscribe(
 ): Promise<SubscribeResult> {
   const email = normalizeEmail(input.email);
   const now = new Date();
+
+  // Checked before the membership lookup, deliberately. If this ran after the
+  // ALREADY_SUBSCRIBED short-circuit, a signing outage would answer 200 for
+  // subscribed addresses and fail for everyone else — letting a caller probe
+  // membership by status code. Config health must not depend on the address.
+  if (!canSignLinks()) {
+    Sentry.captureMessage("waitlist signing key unavailable", {
+      level: "error",
+      tags: { subsystem: "waitlist" },
+    });
+    return { outcome: "CONFIRMATION_FAILED" };
+  }
 
   const existing = await prisma.waitlist.findUnique({
     where: { email },
@@ -97,11 +116,32 @@ export async function subscribe(
     },
   });
 
-  await sendWaitlistConfirmEmail({
+  const sent = await sendWaitlistConfirmEmail({
     email,
     name: input.name ?? null,
     issuedAt: now.getTime(),
   });
+
+  if (!sent.success) {
+    // The row is written and the address is on the list; only the email
+    // failed. Report it rather than claiming a confirmation went out — the
+    // subscriber is otherwise stuck at PENDING with no way to advance.
+    // The reason is carried through so every failure isn't one flat warning;
+    // neither the address nor the signed link is included.
+    const reason = sent.error;
+    if (reason instanceof Error) {
+      Sentry.captureException(reason, {
+        level: "warning",
+        tags: { subsystem: "waitlist" },
+      });
+    } else {
+      Sentry.captureMessage(
+        `waitlist confirmation email failed to send: ${String(reason)}`,
+        { level: "warning", tags: { subsystem: "waitlist" } },
+      );
+    }
+    return { outcome: "CONFIRMATION_FAILED" };
+  }
 
   return { outcome: "CONFIRMATION_SENT" };
 }
