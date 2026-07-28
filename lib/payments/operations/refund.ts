@@ -325,6 +325,12 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
       paymentIntentId: payment.paymentIntent,
       amount: requested,
       reason: input.reason,
+      // The Phase 1 reservation id is the logical refund's identity: minted
+      // before the gateway call and left untouched on the error path, so a
+      // retry reuses it and Razorpay returns the original refund instead of
+      // debiting us twice. Unique per reservation, so two legitimate partial
+      // refunds of the same amount still each get their own.
+      idempotencyKey: reserved.id,
     });
   } catch (err) {
     Sentry.captureException(err instanceof Error ? err : new Error(String(err)), {

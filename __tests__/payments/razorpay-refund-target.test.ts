@@ -12,6 +12,11 @@
  *
  * We mock the `razorpay` SDK constructor so the module-load client is a stub
  * whose orders/payments methods we drive per-test.
+ *
+ * Refund CREATION no longer goes through the SDK — it is a raw POST so the
+ * `X-Refund-Idempotency` header can actually be sent (the SDK drops unknown
+ * headers). So the PM-12 target assertion now reads the request URL. The
+ * order/payment LOOKUP still uses the SDK.
  */
 
 // The client is built at module load from these env vars — set BEFORE the
@@ -51,8 +56,25 @@ import {
 
 const ordersFetchPayments = rzp.ordersFetchPayments;
 const ordersCreate = rzp.ordersCreate;
-const paymentsRefund = rzp.paymentsRefund;
 const paymentsFetchMultipleRefund = rzp.paymentsFetchMultipleRefund;
+
+const fetchMock = jest.fn();
+global.fetch = fetchMock as unknown as typeof fetch;
+
+/** Queue one successful create-refund HTTP response. */
+function mockRefundResponse(body: Record<string, unknown>) {
+  fetchMock.mockResolvedValue({
+    ok: true,
+    status: 200,
+    json: async () => body,
+  });
+}
+
+/** The payment id the refund was actually POSTed against. */
+function refundedPaymentId(call = 0): string {
+  const url = fetchMock.mock.calls[call][0] as string;
+  return url.match(/\/payments\/([^/]+)\/refund$/)?.[1] ?? "";
+}
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -67,7 +89,7 @@ describe("PM-12 — createRazorpayRefund targets the captured payment", () => {
         { id: "pay_captured", status: "captured" },
       ],
     });
-    paymentsRefund.mockResolvedValue({
+    mockRefundResponse({
       id: "rfnd_1",
       amount: 5000,
       currency: "inr",
@@ -82,8 +104,8 @@ describe("PM-12 — createRazorpayRefund targets the captured payment", () => {
     });
 
     // The refund must be created on the CAPTURED payment, never the failed one.
-    expect(paymentsRefund).toHaveBeenCalledTimes(1);
-    expect(paymentsRefund.mock.calls[0][0]).toBe("pay_captured");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(refundedPaymentId()).toBe("pay_captured");
   });
 
   it("falls back to items[0] when no payment is captured", async () => {
@@ -91,7 +113,7 @@ describe("PM-12 — createRazorpayRefund targets the captured payment", () => {
       count: 1,
       items: [{ id: "pay_only", status: "authorized" }],
     });
-    paymentsRefund.mockResolvedValue({
+    mockRefundResponse({
       id: "rfnd_2",
       amount: 1000,
       currency: "inr",
@@ -101,7 +123,7 @@ describe("PM-12 — createRazorpayRefund targets the captured payment", () => {
 
     await createRazorpayRefund({ paymentIntentId: "order_2", amount: 1000 });
 
-    expect(paymentsRefund.mock.calls[0][0]).toBe("pay_only");
+    expect(refundedPaymentId()).toBe("pay_only");
   });
 });
 

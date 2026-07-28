@@ -418,6 +418,13 @@ export class RazorpayPayoutsService {
       .update(payload)
       .digest("hex");
 
+    // timingSafeEqual THROWS on a length mismatch, so an attacker-controlled
+    // header could turn signature rejection into an unhandled exception.
+    // Compare lengths first, exactly as app/api/webhooks/utils.ts does.
+    if (signature.length !== expectedSignature.length) {
+      return false;
+    }
+
     return crypto.timingSafeEqual(
       Buffer.from(signature),
       Buffer.from(expectedSignature),
