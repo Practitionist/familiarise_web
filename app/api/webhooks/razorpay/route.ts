@@ -2,11 +2,7 @@ import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { after } from "next/server";
 import crypto from "node:crypto";
-import {
-  verifyWebhookSignature,
-  logWebhookEvent,
-  isDbHealthy,
-} from "../utils";
+import { verifyWebhookSignature, logWebhookEvent, isDbHealthy } from "../utils";
 import { recordSystemEvent } from "@/lib/enterprise/system-events";
 import {
   razorpayWebhookEnvelopeSchema,
@@ -47,8 +43,7 @@ export async function POST(req: NextRequest) {
     try {
       const parsed = JSON.parse(body);
       isPossiblyPayoutEvent =
-        typeof parsed.event === "string" &&
-        parsed.event.startsWith("payout.");
+        typeof parsed.event === "string" && parsed.event.startsWith("payout.");
     } catch {
       // Can't parse — not a valid webhook, reject
     }
@@ -76,7 +71,8 @@ export async function POST(req: NextRequest) {
           await recordSystemEvent({
             category: "WEBHOOK",
             severity: "WARN",
-            message: "Razorpay webhook HMAC verification failed (RazorpayX secret)",
+            message:
+              "Razorpay webhook HMAC verification failed (RazorpayX secret)",
             context: { provider: "razorpayx", event: "payout.*" },
           });
           return NextResponse.json(
@@ -99,10 +95,7 @@ export async function POST(req: NextRequest) {
         message: "Razorpay webhook HMAC verification failed",
         context: { provider: "razorpay" },
       });
-      return NextResponse.json(
-        { error: "Invalid signature" },
-        { status: 400 },
-      );
+      return NextResponse.json({ error: "Invalid signature" }, { status: 400 });
     }
   }
 
@@ -138,12 +131,21 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Composite key prevents collisions between different lifecycle events
-  // for the same entity (e.g., payment.captured vs refund.created).
-  // When no entity is present (malformed payload) we fall back to a
-  // SHA-256 hash of the raw body so the eventId stays deterministic —
-  // two identical replayed bodies collapse to the same id, which is what
-  // we want for dedup.
+  // Razorpay stamps every delivery with `x-razorpay-event-id`, unique per
+  // event and documented as THE deduplication primitive:
+  // https://razorpay.com/docs/webhooks/best-practices/
+  //
+  // Prefer it. The composite key below is a derived approximation and it is
+  // lossy in both directions: two genuinely distinct events of the same type
+  // on the same entity collapse into one (a second `payout.pending` after a
+  // state change is discarded as a duplicate), while a Razorpay-side replay of
+  // one event — which SHOULD be recognised as the same event — is only caught
+  // because the derivation happens to be stable.
+  //
+  // Kept as a fallback because Stripe and the stuck-event sweeper reach this
+  // shape without the header, and because a missing header must not drop the
+  // event.
+  const vendorEventId = req.headers.get("x-razorpay-event-id");
   const entityId =
     event.payload?.payment?.entity?.id ||
     event.payload?.order?.entity?.id ||
@@ -152,7 +154,11 @@ export async function POST(req: NextRequest) {
     event.payload?.payout?.entity?.id ||
     event.account_id ||
     `body_${crypto.createHash("sha256").update(body).digest("hex").slice(0, 16)}`;
-  const eventId = `${eventType}:${entityId}`;
+  // Namespaced by event type either way, so the WebhookEvent.eventId unique
+  // index keeps its existing meaning and old rows stay comparable.
+  const eventId = vendorEventId
+    ? `${eventType}:evt_${vendorEventId}`
+    : `${eventType}:${entityId}`;
 
   // Idempotency check (synchronous — must complete before returning 200)
   const { isNew } = await logWebhookEvent(
@@ -168,7 +174,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ status: "ok", duplicate: true });
   }
 
-  Sentry.logger.info(Sentry.logger.fmt`razorpay webhook: ${eventType}`, { eventId });
+  Sentry.logger.info(Sentry.logger.fmt`razorpay webhook: ${eventType}`, {
+    eventId,
+  });
 
   // Return 200 immediately — process the event asynchronously
   after(async () => {

@@ -4476,6 +4476,53 @@ model GstTcsAdjustment {
   @@index([paymentId])
 }
 
+/// Request-level idempotency for money mutations that have no natural dedupe
+/// key of their own.
+///
+/// Checkout and org wallet top-ups already carry one (`Payment.clientIdempotencyKey`,
+/// `WalletTopUp.providerOrderId`), but admin refunds, admin payout processing,
+/// org payout creation and invoice payment did not: a double-clicked button, a
+/// proxy retry, or an operator refreshing a slow tab issued a second real
+/// mutation. The gateway-level keys stop a duplicate REFUND reaching the card,
+/// but nothing stopped a duplicate row from being created first.
+///
+/// `scope` namespaces the key per route so a client reusing one UUID across two
+/// different operations cannot have the second silently replay the first's
+/// response. The stored response is replayed verbatim on a repeat, so the
+/// caller sees the original outcome rather than a confusing 409.
+model IdempotencyRecord {
+  id    String @id @default(cuid())
+  /// Route-owned namespace, e.g. "admin.refund" or "org.payout.create".
+  scope String
+  /// Caller-supplied `Idempotency-Key` header value.
+  key   String
+  /// Who the key belongs to — a key from one user must never replay another's
+  /// response, even within the same scope.
+  userId String
+
+  /// Hash of the request body. A repeat of the same key with a DIFFERENT body
+  /// is a client bug, not a retry, and is rejected rather than silently
+  /// replaying the original.
+  requestHash String
+
+  /// Serialized response of the first successful call, replayed on a repeat.
+  responseBody   Json?
+  responseStatus Int?
+
+  /// Set when the first call completes. A row that exists with this still null
+  /// means a request is in flight; a concurrent duplicate gets a 409 rather
+  /// than racing it.
+  completedAt DateTime? @db.Timestamptz
+
+  createdAt DateTime @default(now()) @db.Timestamptz
+  /// Swept by the cleanup-auth-tokens cron; 24h is longer than any client
+  /// retry window and short enough that the table stays small.
+  expiresAt DateTime @db.Timestamptz
+
+  @@unique([scope, key, userId])
+  @@index([expiresAt])
+}
+
 model WebhookEvent {
   id          String    @id @default(cuid())
   provider    String // razorpay, stripe, etc.

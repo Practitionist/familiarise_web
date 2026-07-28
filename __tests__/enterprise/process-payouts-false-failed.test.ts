@@ -29,6 +29,12 @@ jest.mock("../../lib/prisma", () => ({
 jest.mock("../../lib/redis", () => ({
   acquireLock: jest.fn().mockResolvedValue("tok"),
   releaseLock: jest.fn().mockResolvedValue(undefined),
+  // processApprovedPayouts now distinguishes "lock held by a concurrent run"
+  // (a clean skip) from "Redis unreachable" (fail closed and page), per ADR
+  // 13's degradation policy — acquireLock returns null for both. These tests
+  // exercise the happy path, so Redis is present and healthy.
+  isMockRedis: jest.fn().mockReturnValue(false),
+  checkRedisHealth: jest.fn().mockResolvedValue(true),
 }));
 jest.mock("../../lib/payments/tax/tds-service", () => ({
   getCurrentFYCumulativePayments: jest.fn().mockResolvedValue(0),
@@ -46,7 +52,11 @@ import { processApprovedPayouts } from "../../lib/payments/payouts/payout-servic
 
 const cp = (
   prisma as unknown as {
-    consultantPayout: { findMany: jest.Mock; updateMany: jest.Mock; update: jest.Mock };
+    consultantPayout: {
+      findMany: jest.Mock;
+      updateMany: jest.Mock;
+      update: jest.Mock;
+    };
     consultantEarnings: { updateMany: jest.Mock };
   }
 ).consultantPayout;
@@ -65,7 +75,11 @@ const APPROVED = {
   retryCount: 0,
   consultantProfile: {
     payoutAccounts: [
-      { razorpayFundAccId: "fa_x", stripeAccountId: null, accountType: "BANK_ACCOUNT" },
+      {
+        razorpayFundAccId: "fa_x",
+        stripeAccountId: null,
+        accountType: "BANK_ACCOUNT",
+      },
     ],
     user: { name: "Priya", email: "p@x.com" },
   },
@@ -73,7 +87,8 @@ const APPROVED = {
 
 const unlinkedEarnings = () =>
   ce.updateMany.mock.calls.some(
-    ([arg]: [{ data?: { payoutId?: unknown } }]) => arg?.data?.payoutId === null,
+    ([arg]: [{ data?: { payoutId?: unknown } }]) =>
+      arg?.data?.payoutId === null,
   );
 const markedFailed = () =>
   cp.update.mock.calls.some(
@@ -110,7 +125,9 @@ describe("processApprovedPayouts — #785 false-FAILED guard (service path)", ()
 
     const results = await processApprovedPayouts();
 
-    expect((global as unknown as { fetch: jest.Mock }).fetch).toHaveBeenCalled();
+    expect(
+      (global as unknown as { fetch: jest.Mock }).fetch,
+    ).toHaveBeenCalled();
     // the double-pay vector — earnings must STAY linked.
     expect(unlinkedEarnings()).toBe(false);
     expect(markedFailed()).toBe(false);
@@ -157,5 +174,46 @@ describe("processApprovedPayouts — #785 false-FAILED guard (service path)", ()
     ).not.toHaveBeenCalled();
     expect(markedFailed()).toBe(false);
     expect(unlinkedEarnings()).toBe(false);
+  });
+});
+
+/**
+ * ADR 13's Redis degradation policy for money jobs: a HELD lock is a clean skip
+ * (the holder is doing the work), but an UNREACHABLE Redis must fail closed and
+ * page. `acquireLock` returns null for both, so before this guard existed a
+ * Redis outage was indistinguishable from a concurrent run — payouts returned
+ * `[]`, the job logged a warning, and disbursement froze silently for as long
+ * as the outage lasted.
+ */
+describe("processApprovedPayouts — Redis degradation (ADR 13)", () => {
+  it("throws (fail closed) when Redis is unreachable, rather than silently returning []", async () => {
+    const redis = jest.requireMock("../../lib/redis");
+    redis.checkRedisHealth.mockResolvedValueOnce(false);
+
+    await expect(processApprovedPayouts()).rejects.toThrow(/process-payouts/);
+
+    // Crucially: it must not have looked for work or touched the gateway.
+    expect(cp.findMany).not.toHaveBeenCalled();
+    expect(
+      (global as unknown as { fetch: jest.Mock }).fetch,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("throws (fail closed) when Redis is not configured at all", async () => {
+    const redis = jest.requireMock("../../lib/redis");
+    redis.isMockRedis.mockReturnValueOnce(true);
+
+    await expect(processApprovedPayouts()).rejects.toThrow(/process-payouts/);
+    expect(cp.findMany).not.toHaveBeenCalled();
+  });
+
+  it("still treats a HELD lock as a clean skip, not a failure", async () => {
+    const redis = jest.requireMock("../../lib/redis");
+    redis.acquireLock.mockResolvedValueOnce(null); // another run holds it
+
+    const results = await processApprovedPayouts();
+
+    expect(results).toEqual([]);
+    expect(cp.findMany).not.toHaveBeenCalled();
   });
 });

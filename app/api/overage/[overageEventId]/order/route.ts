@@ -3,7 +3,10 @@ import { auth } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { headers } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
-import { createRazorpayOrder } from "@/lib/payments/core/razorpay";
+import {
+  createRazorpayOrder,
+  razorpayClient,
+} from "@/lib/payments/core/razorpay";
 import { PaymentStatus } from "@prisma/client";
 import { transitionOverage } from "@/lib/payments/billing/overage-transitions";
 import { recarveOverageBase } from "@/lib/payments/billing/overage-base-carve";
@@ -26,7 +29,10 @@ export async function POST(
 ) {
   const session = await auth.api.getSession({ headers: await headers() });
   if (!session?.user?.id) {
-    return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+    return NextResponse.json(
+      { error: "Authentication required" },
+      { status: 401 },
+    );
   }
   const userId = session.user.id;
   const { overageEventId } = await params;
@@ -40,23 +46,45 @@ export async function POST(
       marginalPaise: true,
       currency: true,
       payment: {
-        select: { id: true, userId: true, currency: true, paymentStatus: true },
+        select: {
+          id: true,
+          userId: true,
+          currency: true,
+          paymentStatus: true,
+          // Needed to reuse an already-minted order instead of stamping a second one.
+          paymentIntent: true,
+        },
       },
     },
   });
 
   if (!event || event.overageBehavior !== "CHARGE_MEMBER" || !event.payment) {
-    return NextResponse.json({ error: "Overage charge not found" }, { status: 404 });
+    return NextResponse.json(
+      { error: "Overage charge not found" },
+      { status: 404 },
+    );
   }
   if (event.payment.userId !== userId) {
     // Don't leak existence to a non-owner.
-    return NextResponse.json({ error: "Overage charge not found" }, { status: 404 });
+    return NextResponse.json(
+      { error: "Overage charge not found" },
+      { status: 404 },
+    );
   }
-  if (event.payment.paymentStatus === PaymentStatus.SUCCEEDED || event.chargeStatus === "CHARGED") {
-    return NextResponse.json({ error: "This overage has already been paid" }, { status: 409 });
+  if (
+    event.payment.paymentStatus === PaymentStatus.SUCCEEDED ||
+    event.chargeStatus === "CHARGED"
+  ) {
+    return NextResponse.json(
+      { error: "This overage has already been paid" },
+      { status: 409 },
+    );
   }
   if (event.chargeStatus === "REVERSED") {
-    return NextResponse.json({ error: "This overage was reversed" }, { status: 409 });
+    return NextResponse.json(
+      { error: "This overage was reversed" },
+      { status: 409 },
+    );
   }
   if (event.marginalPaise <= 0) {
     return NextResponse.json({ error: "Nothing to pay" }, { status: 400 });
@@ -71,21 +99,28 @@ export async function POST(
   // No-op when already PENDING (still carved). If the mint below fails after
   // this commits, the event sits PENDING/recarved until the abandoned-sweep
   // re-FAILs it and restores — self-healing.
-  const retryBlocked = await prisma.$transaction(async (tx) => {
-    const moved = await transitionOverage(tx, { id: event.id }, "PENDING");
-    if (moved === 0) return false;
-    const recarve = await recarveOverageBase(tx, { overageEventId: event.id });
-    if (recarve === "invoiced") {
-      throw Object.assign(new Error("OVERAGE_RETRY_AFTER_INVOICE"), {
-        httpStatus: 409,
+  const retryBlocked = await prisma
+    .$transaction(async (tx) => {
+      const moved = await transitionOverage(tx, { id: event.id }, "PENDING");
+      if (moved === 0) return false;
+      const recarve = await recarveOverageBase(tx, {
+        overageEventId: event.id,
       });
-    }
-    return false;
-  }).catch((err) => {
-    if (err instanceof Error && "httpStatus" in err) return true;
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "overage" } });
-    throw err;
-  });
+      if (recarve === "invoiced") {
+        throw Object.assign(new Error("OVERAGE_RETRY_AFTER_INVOICE"), {
+          httpStatus: 409,
+        });
+      }
+      return false;
+    })
+    .catch((err) => {
+      if (err instanceof Error && "httpStatus" in err) return true;
+      Sentry.captureException(
+        err instanceof Error ? err : new Error(String(err)),
+        { tags: { subsystem: "overage" } },
+      );
+      throw err;
+    });
   if (retryBlocked) {
     return NextResponse.json(
       {
@@ -94,6 +129,47 @@ export async function POST(
       },
       { status: 409 },
     );
+  }
+
+  // Reuse an order already minted for this charge instead of creating a second
+  // one. Every call used to mint a fresh Razorpay order and overwrite
+  // `payment.paymentIntent` with it, so two clicks (or a refresh of a slow
+  // page) left two live orders and only the newer one stamped. Pay the older
+  // one and `handleOverageMemberSuccess` — which routes on the stamped order id
+  // — finds nothing, and the member's money strands with no appointment and no
+  // journal entry.
+  //
+  // Same reuse posture as the invoice-pay route's `providerPaymentOrderId`. If
+  // the stored order has already been paid we fall through and mint a new one,
+  // because the webhook for the paid order owns that outcome.
+  const existingOrderId = event.payment.paymentIntent;
+  if (razorpayClient && existingOrderId?.startsWith("order_")) {
+    try {
+      const existingOrder = await razorpayClient.orders.fetch(existingOrderId);
+      if (
+        existingOrder.status === "created" &&
+        Number(existingOrder.amount) === event.marginalPaise
+      ) {
+        console.log(
+          `[overage/order] reusing existing Razorpay order ${existingOrderId} for overage ${event.id}`,
+        );
+        // Same response shape as the mint path below — the client needs
+        // `keyId` to open the Razorpay modal.
+        return NextResponse.json({
+          orderId: existingOrder.id,
+          amount: Number(existingOrder.amount),
+          currency: existingOrder.currency,
+          keyId: process.env.RAZORPAY_KEY_ID ?? null,
+        });
+      }
+    } catch (fetchErr) {
+      // Unreadable order (deleted, wrong key, transient) — mint a fresh one
+      // rather than blocking the member from paying.
+      console.warn(
+        `[overage/order] could not reuse order ${existingOrderId}; minting a new one`,
+        fetchErr,
+      );
+    }
   }
 
   const order = await createRazorpayOrder({

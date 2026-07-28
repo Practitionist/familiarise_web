@@ -13,6 +13,7 @@ import {
   RefundGatewayError,
 } from "@/lib/payments/operations/refund";
 import { refundWholeEventPayments } from "@/lib/payments/operations/event-refunds";
+import { withIdempotency } from "@/lib/api/idempotency";
 
 export async function GET(req: NextRequest) {
   try {
@@ -81,7 +82,10 @@ export async function GET(req: NextRequest) {
       totalPages: Math.ceil(total / limit),
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "admin" } },
+    );
     console.error("Admin refunds list error:", error);
     return NextResponse.json(
       { error: "Failed to fetch refunds" },
@@ -103,8 +107,7 @@ const RefundBodySchema = z
     reason: z.string().min(1).max(500),
   })
   .refine(
-    (b) =>
-      [b.paymentId, b.classId, b.webinarId].filter(Boolean).length === 1,
+    (b) => [b.paymentId, b.classId, b.webinarId].filter(Boolean).length === 1,
     { message: "Provide exactly one of paymentId, classId, webinarId" },
   )
   .refine((b) => !(b.amountPaise && (b.classId || b.webinarId)), {
@@ -121,44 +124,47 @@ export async function POST(req: NextRequest) {
     const auth = await requireBackofficeSurface("refunds.manage");
     if (auth.error) return auth.error;
 
-    let payload: unknown;
-    try {
-      payload = await req.json();
-    } catch {
-      return NextResponse.json(
-        { error: "Malformed JSON request body" },
-        { status: 400 },
-      );
-    }
-    const parsed = RefundBodySchema.safeParse(payload);
-    if (!parsed.success) {
-      return NextResponse.json(
-        { error: parsed.error.issues[0]?.message ?? "Invalid request" },
-        { status: 400 },
-      );
-    }
-    const body = parsed.data;
     const initiatedByUserId = auth.session?.user?.id ?? null;
 
-    if (body.paymentId) {
-      const result = await refundPayment({
-        paymentId: body.paymentId,
-        amountPaise: body.amountPaise,
-        reason: `admin refund: ${body.reason}`,
-        initiatedByUserId,
-      });
-      return NextResponse.json({ kind: "payment", result });
-    }
+    // A double-clicked "Refund" button used to issue two real refunds. The
+    // gateway's X-Refund-Idempotency header does not help here: it is keyed off
+    // the Refund row we create first, so a second request simply mints a second
+    // row with a second key and the gateway honours both. Dedupe one layer up.
+    // Callers without the header behave exactly as before.
+    return withIdempotency(
+      req,
+      { scope: "admin.refund", userId: initiatedByUserId ?? "anonymous" },
+      async (payload) => {
+        const parsed = RefundBodySchema.safeParse(payload);
+        if (!parsed.success) {
+          return NextResponse.json(
+            { error: parsed.error.issues[0]?.message ?? "Invalid request" },
+            { status: 400 },
+          );
+        }
+        const body = parsed.data;
 
-    const eventKind = body.classId ? "class" : "webinar";
-    const eventId = (body.classId ?? body.webinarId)!;
-    const summary = await refundWholeEventPayments(
-      eventKind,
-      eventId,
-      `admin whole-event refund: ${body.reason}`,
-      initiatedByUserId,
+        if (body.paymentId) {
+          const result = await refundPayment({
+            paymentId: body.paymentId,
+            amountPaise: body.amountPaise,
+            reason: `admin refund: ${body.reason}`,
+            initiatedByUserId,
+          });
+          return NextResponse.json({ kind: "payment", result });
+        }
+
+        const eventKind = body.classId ? "class" : "webinar";
+        const eventId = (body.classId ?? body.webinarId)!;
+        const summary = await refundWholeEventPayments(
+          eventKind,
+          eventId,
+          `admin whole-event refund: ${body.reason}`,
+          initiatedByUserId,
+        );
+        return NextResponse.json({ kind: eventKind, summary });
+      },
     );
-    return NextResponse.json({ kind: eventKind, summary });
   } catch (error) {
     // Validation / gateway errors carry a caller-actionable message + code.
     if (
@@ -170,7 +176,10 @@ export async function POST(req: NextRequest) {
         { status: error instanceof RefundValidationError ? 400 : 502 },
       );
     }
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "admin" } },
+    );
     console.error("Admin refund error:", error);
     return NextResponse.json({ error: "Refund failed" }, { status: 500 });
   }

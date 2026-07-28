@@ -23,7 +23,13 @@ import {
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
 import { computeMsmePaymentDeadline } from "@/lib/compliance/msme";
 import { randomUUID } from "crypto";
-import { acquireLock, releaseLock } from "@/lib/redis";
+import {
+  acquireLock,
+  releaseLock,
+  isMockRedis,
+  checkRedisHealth,
+} from "@/lib/redis";
+import { CronLockUnavailableError } from "@/lib/cron/with-cron-lock";
 import { assertPayoutBalance } from "./balance-preflight";
 import {
   getCurrentFYCumulativePayments,
@@ -459,6 +465,22 @@ const PAYOUT_PROCESS_LOCK_KEY = "lock:payout_processing";
 const PAYOUT_PROCESS_LOCK_TTL = 300_000; // 5 minutes — generous for batch processing
 
 export async function processApprovedPayouts(): Promise<PayoutResult[]> {
+  // ADR 13's Redis degradation policy: for a money job, a HELD lock is a clean
+  // skip (the holder is doing the work) but an UNREACHABLE Redis must fail
+  // closed and page. `acquireLock` returns null for both, so without this
+  // precheck a Redis outage looked identical to a concurrent run and payouts
+  // froze silently for as long as the outage lasted. This mirrors what
+  // withCronLock does for every other money job; the two payout jobs keep
+  // their own resource locks rather than being double-wrapped (ADR 13), so
+  // the precheck has to live here.
+  if (isMockRedis()) {
+    throw new CronLockUnavailableError("process-payouts");
+  }
+  const redisHealthy = await checkRedisHealth();
+  if (!redisHealthy) {
+    throw new CronLockUnavailableError("process-payouts");
+  }
+
   const lockToken = await acquireLock(
     PAYOUT_PROCESS_LOCK_KEY,
     PAYOUT_PROCESS_LOCK_TTL,
@@ -719,20 +741,28 @@ async function processSinglePayout(payout: {
           `[payout-service] CRITICAL: gateway accepted ${providerPayoutId} but DB persist failed twice for payout ${payout.id}; manual reconcile required`,
           persistErr,
         );
-        Sentry.captureException(persistErr instanceof Error ? persistErr : new Error(String(persistErr)), {
-          tags: { subsystem: "payments" },
-          level: "fatal",
-          contexts: { payout: { payoutId: payout.id, providerPayoutId } },
-        });
+        Sentry.captureException(
+          persistErr instanceof Error
+            ? persistErr
+            : new Error(String(persistErr)),
+          {
+            tags: { subsystem: "payments" },
+            level: "fatal",
+            contexts: { payout: { payoutId: payout.id, providerPayoutId } },
+          },
+        );
       }
       console.error(
         `⚠️ Payout ${payout.id}: gateway accepted ${providerPayoutId} but DB write failed — quarantined PROCESSING (NOT failed) to avoid double-pay`,
       );
-      Sentry.captureException(new Error(`gateway-accepted-db-write-failed: payout ${payout.id}`), {
-        tags: { subsystem: "payments" },
-        level: "error",
-        contexts: { payout: { payoutId: payout.id, providerPayoutId } },
-      });
+      Sentry.captureException(
+        new Error(`gateway-accepted-db-write-failed: payout ${payout.id}`),
+        {
+          tags: { subsystem: "payments" },
+          level: "error",
+          contexts: { payout: { payoutId: payout.id, providerPayoutId } },
+        },
+      );
       return {
         payoutId: payout.id,
         success: false,
@@ -1078,10 +1108,13 @@ export async function handlePayoutWebhook(
         dashboardUrl: `${getAppUrl()}/dashboard`,
       }).catch((error) => {
         console.error("[payouts] Failed to send payout notification:", error);
-        Sentry.captureException(error instanceof Error ? error : new Error(String(error)), {
-          tags: { subsystem: "payments" },
-          level: "warning",
-        });
+        Sentry.captureException(
+          error instanceof Error ? error : new Error(String(error)),
+          {
+            tags: { subsystem: "payments" },
+            level: "warning",
+          },
+        );
       });
     }
   }

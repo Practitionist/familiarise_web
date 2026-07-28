@@ -25,6 +25,8 @@ export interface AuthTokenCleanupResult {
   verificationTokensDeleted: number;
   sessionsDeleted: number;
   passwordResetTokensCleared: number;
+  /** Expired request-level idempotency keys (lib/api/idempotency.ts). */
+  idempotencyRecordsDeleted: number;
   totalCleaned: number;
   errors: string[];
   timestamp: string;
@@ -45,6 +47,7 @@ async function cleanupAuthTokensUnlocked(): Promise<AuthTokenCleanupResult> {
   const errors: string[] = [];
   let verificationTokensDeleted = 0;
   let sessionsDeleted = 0;
+  let idempotencyRecordsDeleted = 0;
   const passwordResetTokensCleared = 0;
 
   const now = new Date();
@@ -86,18 +89,41 @@ async function cleanupAuthTokensUnlocked(): Promise<AuthTokenCleanupResult> {
     console.error(`   Error: ${errorMessage}`);
   }
 
+  try {
+    // 3. Drop expired request-level idempotency keys. These are short-lived by
+    // design (24h, longer than any client retry window) and the table would
+    // otherwise grow without bound. An expired row is also reusable in-place by
+    // withIdempotency, so this sweep is housekeeping, not correctness.
+    console.log("\n🔑 Cleaning up expired idempotency keys...");
+    const idempotencyResult = await prisma.idempotencyRecord.deleteMany({
+      where: { expiresAt: { lt: now } },
+    });
+    idempotencyRecordsDeleted = idempotencyResult.count;
+    console.log(
+      `   Deleted ${idempotencyRecordsDeleted} expired idempotency keys`,
+    );
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    errors.push(`Idempotency cleanup: ${errorMessage}`);
+    console.error(`   Error: ${errorMessage}`);
+  }
+
   // Note: BetterAuth stores password reset tokens in the Verification table
   // (with identifier prefix "reset-password:"), so they are already cleaned up
   // in step 1 above when expired verification entries are deleted.
 
   const totalCleaned =
-    verificationTokensDeleted + sessionsDeleted + passwordResetTokensCleared;
+    verificationTokensDeleted +
+    sessionsDeleted +
+    passwordResetTokensCleared +
+    idempotencyRecordsDeleted;
 
   // Summary
   console.log("\n📊 Auth Token Cleanup Summary:");
   console.log(`   Verification tokens: ${verificationTokensDeleted}`);
   console.log(`   Sessions: ${sessionsDeleted}`);
   console.log(`   Password reset tokens: ${passwordResetTokensCleared}`);
+  console.log(`   Idempotency keys: ${idempotencyRecordsDeleted}`);
   console.log(`   Total cleaned: ${totalCleaned}`);
 
   return {
@@ -105,6 +131,7 @@ async function cleanupAuthTokensUnlocked(): Promise<AuthTokenCleanupResult> {
     verificationTokensDeleted,
     sessionsDeleted,
     passwordResetTokensCleared,
+    idempotencyRecordsDeleted,
     totalCleaned,
     errors,
     timestamp: new Date().toISOString(),
