@@ -98,7 +98,7 @@ for (const [secret, workflows] of Array.from(referencedBy).sort()) {
 /**
  * Expand the minute+hour fields of a 5-field cron into the concrete (hour,
  * minute) start times it fires at. Only the forms this fleet actually uses are
- * supported: `*`, a literal, `*​/n`, and `a-b/n`.
+ * supported: `*`, a literal, a step expression, and `a-b/n`.
  */
 function expandField(field: string, max: number): number[] {
   const out = new Set<number>();

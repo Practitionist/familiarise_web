@@ -10,11 +10,12 @@ last-reviewed: 2026-07-28
 
 ## Context
 
-Three code paths could observe that a Razorpay payment had succeeded: the
+Four code paths could observe that a Razorpay payment had succeeded: the
 `payment.captured` webhook, the client's return from the checkout modal
-(`/api/checkout/verify-signature`), and an on-demand status sync
-(`/api/checkout/verify?sync=true`). Only the first ran the confirmation
-pipeline. The other two wrote the outcome directly:
+(`/api/checkout/verify-signature`), an on-demand status sync
+(`/api/checkout/verify?sync=true`), and the `reconcile-payment-status` cron.
+Only the first ran the confirmation pipeline. The rest wrote the outcome
+directly:
 
 ```ts
 // app/api/checkout/verify-signature/route.ts, before this decision
@@ -64,7 +65,7 @@ does call `handlePaymentSuccess`.
 else.** Any path that learns a payment succeeded calls the pipeline rather than
 recording the conclusion itself.
 
-All three paths now funnel through one exported router:
+All four paths now funnel through one exported router:
 
 ```ts
 // app/api/webhooks/razorpay-dispatch.ts
@@ -93,11 +94,39 @@ the payment from Razorpay before routing. If that fetch fails it reports
 `pendingConfirmation` and defers to the webhook; it does **not** fall back to
 writing the status, because that is precisely the behaviour being removed.
 
+**They must verify capture, not infer it.** A signature proves the id pair is
+genuine; it says nothing about capture state. With a non-zero auto-capture delay
+configured on the Razorpay account, the modal handler fires while the payment is
+still `authorized`, and confirming there would post a CASH debit for money the
+platform has not received — which Razorpay then voids a few days later, leaving
+the journal wrong with nothing to reconcile against. The webhook path is
+structurally immune (`payment.captured` fires on capture by definition), so
+every other path checks `status === "captured"` explicitly and reports
+`pendingConfirmation` otherwise.
+
 **They must expect to lose the race, and that must be fine.** The pipeline runs
 at `Serializable` under `withSerializableRetry` and is idempotent on the
 already-`SUCCEEDED` check. Whichever path arrives first does the work; the other
 observes the completed state and returns. Both orderings produce one appointment,
 one set of earnings, and one journal entry.
+
+### The reconcile cron was the easiest one to miss
+
+`scripts/payments/reconcile-payment-status.ts` exists _because_ a
+`payment.captured` was missed, which makes it the least safe place of all to
+write status directly — and it did, then logged
+`⚠️ Payment succeeded - may need manual appointment creation!` rather than
+creating one. Setting SUCCEEDED there poisons the guard, and Razorpay's
+redelivery (it retries for 24 hours) then no-ops. Two things have no other
+backstop: the legacy appointment-creation path (`reconcile-orphaned-confirmations`
+filters on `appointmentId: { not: null }`, so it cannot help) and all three
+auto-refund guards — amount-mismatch, captured-after-terminal, and
+double-booking-loser. A capture that arrived after cancellation was silently
+kept instead of refunded.
+
+It now drives the pipeline for the Razorpay SUCCEEDED case and keeps the
+conditional write for `FAILED`/`EXPIRED` and for Stripe, whose successes are
+confirmed by their own webhook.
 
 ## Why not the alternatives
 
@@ -123,9 +152,17 @@ not writing status. A reviewer's test for any new payment code is: _does this
 set `paymentStatus` outside the pipeline?_ If yes, it is wrong.
 
 `verify-signature` now makes an outbound call to Razorpay before responding,
-adding roughly 200–600 ms to the checkout modal's handler. That is the price of
-the parity check running on the path most buyers actually take, and it is paid
-once per checkout.
+adding roughly 200–600 ms to the checkout modal's handler, and then awaits the
+pipeline itself. That second part is a real cost worth stating plainly: Phase 2
+sends the success email, creates earnings, processes referrals, and provisions
+Stream chat channels, all under Netlify's ~10-second function ceiling — whereas
+the webhook path escapes that by ACKing first and working inside `after()`. A
+timeout after Phase 1 commits leaves a confirmed booking with partial Phase 2;
+earnings and the journal recover hourly via `sync-payment-earnings`, but the
+email and the chat channel do not. Moving this call behind `after()` is the
+obvious next step and is deliberately not done here, because the poll loop on
+`checkout-success` that would cover the gap is new in the same change and
+unproven in production.
 
 The client contract gained `pendingConfirmation`, which is true when the payment
 is settled but the booking has not materialised. `checkout-success` renders that

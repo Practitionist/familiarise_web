@@ -3,16 +3,31 @@
  *
  * `/api/checkout` and org wallet top-ups already dedupe on a client-minted key
  * that lands in a unique column (`Payment.clientIdempotencyKey`,
- * `WalletTopUp.providerOrderId`). The remaining money mutations — admin
- * refunds, admin payout processing, org payout creation, invoice payment,
- * overage order minting — had nothing: a double-clicked button, a proxy retry,
- * or an operator refreshing a slow tab issued a second real mutation.
+ * `WalletTopUp.providerOrderId`).
  *
  * The gateway idempotency headers (`X-Refund-Idempotency`,
- * `X-Payout-Idempotency`) stop the duplicate reaching the bank, but they are
- * keyed off rows we create first — so a duplicate request still creates a
- * second row with a second gateway key, and the gateway happily honours both.
- * This closes that gap one layer earlier.
+ * `X-Payout-Idempotency`) stop a duplicate reaching the bank, but they are
+ * keyed off rows we create first — so a duplicate REQUEST still creates a
+ * second row with a second gateway key, and the gateway honours both. This
+ * closes that gap one layer earlier.
+ *
+ * Where it is actually mounted, and where it is not:
+ *
+ *   - `/api/admin/refunds` uses it. Note this is currently defence for a
+ *     future caller: the refunds dashboard is read-only and nothing in the app
+ *     POSTs to that route yet, so no client sends the header. With no header
+ *     the wrapper is a pass-through, so mounting it costs nothing and means the
+ *     protection exists the day a button does.
+ *   - Admin payout processing does NOT use it and does not need it — a Redis
+ *     lock plus a per-payout APPROVED->PROCESSING CAS already make it
+ *     exactly-once.
+ *   - Org payout creation does NOT use it: `createOrgPayoutBatch` derives a
+ *     deterministic key from (organizationId, periodStart) with a unique
+ *     constraint and a P2002 re-read.
+ *   - Invoice pay does NOT use it: it reuses `providerPaymentOrderId`.
+ *   - The overage order route does NOT use it; it was genuinely unprotected and
+ *     was fixed in kind (reuse the unpaid order, refuse when one is in flight,
+ *     CAS the stamp) because the right key there is the order itself.
  *
  * Usage:
  *
@@ -189,7 +204,24 @@ async function runAndRecord(
   body: unknown,
   where: { scope_key_userId: { scope: string; key: string; userId: string } },
 ): Promise<NextResponse> {
-  const response = await handler(body);
+  let response: NextResponse;
+  try {
+    response = await handler(body);
+  } catch (err) {
+    // A THROWN handler must free the key too. The money routes signal their
+    // caller-actionable failures by throwing — refundPayment raises
+    // RefundValidationError for things like REFUND_BLOCKED_BY_DISPUTE, which
+    // the route maps to a 400 and which the operator is expected to fix and
+    // retry. Leaving the claim in place would answer that retry with
+    // IDEMPOTENCY_IN_FLIGHT for the full 24-hour TTL.
+    //
+    // Freeing it is safe for the same reason the non-2xx path is: the
+    // underlying operations are individually idempotent (the refund's
+    // Serializable Phase 1 re-derives the refundable balance, the gateway call
+    // carries its own key), so a retry cannot double-apply.
+    await prisma.idempotencyRecord.delete({ where }).catch(() => {});
+    throw err;
+  }
 
   // Only successful responses are replayable. Recording a 4xx/5xx would pin the
   // caller to a failure they are entitled to retry out of.

@@ -130,13 +130,16 @@ async function handleMockPaymentCaptured(
     };
   }
 
-  // Update payment status to SUCCEEDED if not already
-  if (payment.paymentStatus !== PaymentStatus.SUCCEEDED) {
-    await prisma.payment.update({
-      where: { id: payment.id },
-      data: { paymentStatus: PaymentStatus.SUCCEEDED },
-    });
-  }
+  // ADR 21 — deliberately NOT flipping paymentStatus here.
+  //
+  // This used to set SUCCEEDED before calling handlePaymentSuccess below, which
+  // meant the pipeline always hit its already-SUCCEEDED early-return and did
+  // nothing: no appointment confirmation, no earnings, no journal entry. The
+  // mock webhook looked like it worked while exercising none of the code it
+  // exists to exercise — and since the only non-seed payments in the database
+  // came through this route, that made it a poor proxy for the real flow.
+  //
+  // The pipeline owns the status transition. Leave the row alone.
 
   // Extract consultant profile ID from the appointment's plan
   const getConsultantProfileId = () => {

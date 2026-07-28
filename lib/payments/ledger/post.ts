@@ -176,9 +176,16 @@ export async function postLedgerTxn(
     //   - Base client: the failed INSERT is isolated, so re-reading gives us
     //     the winner's id and this call becomes a correct no-op.
     //   - Inside a transaction: Postgres has already aborted it (Prisma takes
-    //     no savepoint), so the re-read below throws 25P02 too. Rethrowing the
-    //     original P2002 is then exactly right — the caller's retry re-runs the
-    //     whole transaction and takes the fast path at the top.
+    //     no savepoint), so the re-read below throws 25P02 too and the original
+    //     P2002 propagates.
+    //
+    // Be honest about what that second case buys: today EVERY caller passes a
+    // `tx`, and `withSerializableRetry` retries only P2034 — so nothing retries
+    // a P2002 and this rescue is unreachable in the current call graph. It is
+    // here so that the guarantee lives with the function rather than depending
+    // on each future call site being wrapped correctly, and so a base-client
+    // caller (there is no reason there won't be one) gets the right behaviour
+    // for free. It is not a claim that today's callers recover.
     //
     // Trying the read and falling back covers both without having to ask.
     if (

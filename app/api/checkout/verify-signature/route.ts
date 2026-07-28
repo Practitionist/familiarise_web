@@ -133,6 +133,29 @@ export async function POST(req: NextRequest) {
         ]),
       );
       capturedAmountPaise = Number(gatewayPayment.amount);
+
+      // The signature proves the id pair came from Razorpay. It says nothing
+      // about capture state, and this route is the ONLY confirmation path that
+      // can observe an uncaptured payment — `payment.captured` fires on capture
+      // by definition.
+      //
+      // With a non-zero auto-capture delay configured on the account, the modal
+      // handler fires while the payment is still `authorized`. Running the
+      // pipeline on that would confirm the booking, create earnings, and post a
+      // CASH debit for money we have not received; Razorpay then voids the
+      // authorization a few days later and the journal is simply wrong.
+      if (gatewayPayment.status !== "captured") {
+        console.warn(
+          `verify-signature: ${razorpay_payment_id} is "${gatewayPayment.status}", not captured — deferring to the webhook`,
+        );
+        return NextResponse.json({
+          verified: true,
+          paymentStatus: payment.paymentStatus,
+          pendingConfirmation: true,
+          orderId: razorpay_order_id,
+          paymentId: razorpay_payment_id,
+        });
+      }
     } catch (fetchError) {
       // Do NOT fall back to confirming without gateway truth: that is exactly
       // the bare-flip behaviour this route is fixing. The webhook remains the

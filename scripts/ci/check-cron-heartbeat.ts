@@ -11,10 +11,10 @@
  * one has been silent for implausibly long.
  *
  * The threshold deliberately is NOT the declared cadence. Measured on this repo
- * (2026-07-28): a `* * * * *` schedule actually delivers about one tick every
- * 102 minutes, and `*​/15` schedules about one every 100 minutes. Alerting on the
- * declared interval would page constantly and train everyone to ignore it —
- * the same trap the ledger reconciler fell into. So:
+ * (2026-07-28): an every-minute schedule actually delivers about one tick every
+ * 102 minutes, and an every-15-minutes schedule about one every 100 minutes.
+ * Alerting on the declared interval would page constantly and train everyone to
+ * ignore it — the same trap the ledger reconciler fell into. So:
  *
  *   sub-daily jobs   -> alert after max(interval x 12, 6h)
  *   daily and slower -> alert after interval x 3

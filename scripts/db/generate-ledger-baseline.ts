@@ -42,7 +42,10 @@ async function main(): Promise<void> {
     process.exitCode = 1;
     return;
   }
-  const reason = arg("reason", "known drift — see the report this was generated from");
+  const reason = arg(
+    "reason",
+    "known drift — see the report this was generated from",
+  );
 
   const report = await prisma.ledgerReconciliationReport.findFirst({
     where: { scope: "full" },
@@ -72,7 +75,8 @@ async function main(): Promise<void> {
   }
 
   const entries = Array.from(seen.values()).sort(
-    (a, b) => a.kind.localeCompare(b.kind) || a.entityId.localeCompare(b.entityId),
+    (a, b) =>
+      a.kind.localeCompare(b.kind) || a.entityId.localeCompare(b.entityId),
   );
 
   const source = fs.readFileSync(OUT, "utf8");
@@ -80,7 +84,9 @@ async function main(): Promise<void> {
   const start = source.indexOf(marker);
   const end = source.indexOf("];", start);
   if (start === -1 || end === -1) {
-    console.error("Could not find LEDGER_BASELINE in baseline.ts — has it moved?");
+    console.error(
+      "Could not find LEDGER_BASELINE in baseline.ts — has it moved?",
+    );
     process.exitCode = 1;
     return;
   }
@@ -101,7 +107,9 @@ async function main(): Promise<void> {
   console.log(
     `Wrote ${entries.length} baseline entr(ies) from report ${report.id} (${report.runAt.toISOString()}), expiring ${expires}.`,
   );
-  console.log("Review the diff — each entry is an alert you are switching off.");
+  console.log(
+    "Review the diff — each entry is an alert you are switching off.",
+  );
 }
 
 main()

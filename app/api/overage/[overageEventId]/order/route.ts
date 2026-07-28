@@ -146,10 +146,10 @@ export async function POST(
   if (razorpayClient && existingOrderId?.startsWith("order_")) {
     try {
       const existingOrder = await razorpayClient.orders.fetch(existingOrderId);
-      if (
-        existingOrder.status === "created" &&
-        Number(existingOrder.amount) === event.marginalPaise
-      ) {
+      const amountMatches =
+        Number(existingOrder.amount) === event.marginalPaise;
+
+      if (existingOrder.status === "created" && amountMatches) {
         console.log(
           `[overage/order] reusing existing Razorpay order ${existingOrderId} for overage ${event.id}`,
         );
@@ -162,6 +162,26 @@ export async function POST(
           keyId: process.env.RAZORPAY_KEY_ID ?? null,
         });
       }
+
+      // `attempted` or `paid` means a payment is in flight or already made
+      // against THIS order. Minting a replacement and re-stamping
+      // `paymentIntent` would orphan it: handleOverageMemberSuccess resolves by
+      // the stamped order id, so the capture webhook for the old order would
+      // find nothing, settle nothing, and page nobody — and the
+      // abandoned-overage sweep would later restore the base carve, billing the
+      // org for what the member already paid. Refuse instead.
+      if (existingOrder.status !== "created") {
+        return NextResponse.json(
+          {
+            error:
+              "A payment for this charge is already in progress. Give it a moment and refresh — if it stays stuck, contact support.",
+            code: "OVERAGE_PAYMENT_IN_PROGRESS",
+          },
+          { status: 409 },
+        );
+      }
+      // Falls through to mint only when the order exists, is unpaid, and its
+      // amount no longer matches (the charge was recalculated).
     } catch (fetchErr) {
       // Unreadable order (deleted, wrong key, transient) — mint a fresh one
       // rather than blocking the member from paying.
@@ -190,10 +210,26 @@ export async function POST(
 
   // Stamp the real gateway order onto the side-Payment so the webhook can find
   // it; reset to PENDING if a prior attempt FAILED.
-  await prisma.payment.update({
-    where: { id: event.payment.id },
+  //
+  // CAS on "not already settled". The SUCCEEDED guard above ran before an
+  // outbound order-creation round trip, and the capture webhook can land inside
+  // that window — an unconditional write would then downgrade a settled payment
+  // back to PENDING and point it at an unpaid order, which is the same orphan
+  // the reuse branch exists to prevent, arrived at from the other direction.
+  const stamped = await prisma.payment.updateMany({
+    where: {
+      id: event.payment.id,
+      paymentStatus: { not: PaymentStatus.SUCCEEDED },
+    },
     data: { paymentIntent: order.id, paymentStatus: PaymentStatus.PENDING },
   });
+
+  if (stamped.count === 0) {
+    return NextResponse.json(
+      { error: "This overage has already been paid" },
+      { status: 409 },
+    );
+  }
 
   return NextResponse.json({
     orderId: order.id,

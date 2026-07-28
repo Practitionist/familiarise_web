@@ -131,21 +131,24 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Razorpay stamps every delivery with `x-razorpay-event-id`, unique per
-  // event and documented as THE deduplication primitive:
-  // https://razorpay.com/docs/webhooks/best-practices/
+  // Razorpay sends `x-razorpay-event-id`, and it is tempting as the dedup key.
+  // This repo deliberately does NOT use it — see
+  // .claude/skills/razorpay/references/webhooks.md.
   //
-  // Prefer it. The composite key below is a derived approximation and it is
-  // lossy in both directions: two genuinely distinct events of the same type
-  // on the same entity collapse into one (a second `payout.pending` after a
-  // state change is discarded as a duplicate), while a Razorpay-side replay of
-  // one event — which SHOULD be recognised as the same event — is only caught
-  // because the derivation happens to be stable.
+  // Two reasons, and the second is the one that matters. First, the synthesized
+  // key dedups on the *business fact* rather than the delivery, so two distinct
+  // deliveries describing the same state transition collapse to one. Second,
+  // and decisively: the HMAC covers the BODY ONLY. A header is unsigned, so
+  // keying on it would let anyone holding one captured (body, signature) pair
+  // replay it N times under N invented header values and get N full dispatches.
+  // The key below is derived entirely from signature-covered material — an
+  // entity id from the payload, or a hash of the raw body — which is what makes
+  // the dedup boundary tamper-proof rather than merely convenient.
   //
-  // Kept as a fallback because Stripe and the stuck-event sweeper reach this
-  // shape without the header, and because a missing header must not drop the
-  // event.
-  const vendorEventId = req.headers.get("x-razorpay-event-id");
+  // Every downstream handler is separately idempotent, so the amplification
+  // would not have moved money; it would have removed a defence-in-depth layer
+  // for no correctness gain. If you change this, you are changing what "already
+  // processed" means AND weakening a trust boundary.
   const entityId =
     event.payload?.payment?.entity?.id ||
     event.payload?.order?.entity?.id ||
@@ -154,11 +157,7 @@ export async function POST(req: NextRequest) {
     event.payload?.payout?.entity?.id ||
     event.account_id ||
     `body_${crypto.createHash("sha256").update(body).digest("hex").slice(0, 16)}`;
-  // Namespaced by event type either way, so the WebhookEvent.eventId unique
-  // index keeps its existing meaning and old rows stay comparable.
-  const eventId = vendorEventId
-    ? `${eventType}:evt_${vendorEventId}`
-    : `${eventType}:${entityId}`;
+  const eventId = `${eventType}:${entityId}`;
 
   // Idempotency check (synchronous — must complete before returning 200)
   const { isNew } = await logWebhookEvent(

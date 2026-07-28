@@ -80,6 +80,7 @@ beforeEach(() => {
     id: PAY_ID,
     order_id: ORDER_ID,
     amount: 250000,
+    status: "captured",
     notes: { appointmentType: "CONSULTATION" },
   });
 });
@@ -153,6 +154,7 @@ describe("verify-signature drives the canonical pipeline", () => {
       id: PAY_ID,
       order_id: ORDER_ID,
       amount: 250000,
+      status: "captured",
       notes: { type: "overage_member" },
     });
     findUnique
@@ -272,5 +274,34 @@ describe("signature and ownership are still enforced", () => {
 
     expect(res.status).toBe(403);
     expect(routeCapturedPayment).not.toHaveBeenCalled();
+  });
+});
+
+describe("capture state is verified, not assumed", () => {
+  it("refuses to run the pipeline on an authorized-but-uncaptured payment", async () => {
+    // With a non-zero auto-capture delay on the account, the modal handler
+    // fires while the payment is still `authorized`. Confirming there would
+    // journal a CASH debit for money never received — and Razorpay voids the
+    // authorization days later, leaving the ledger simply wrong. The webhook
+    // path cannot hit this (payment.captured fires on capture by definition),
+    // so this route is the only place that has to look.
+    paymentsFetch.mockResolvedValue({
+      id: PAY_ID,
+      order_id: ORDER_ID,
+      amount: 250000,
+      status: "authorized",
+      notes: { appointmentType: "CONSULTATION" },
+    });
+    findUnique.mockResolvedValueOnce({
+      id: "p1",
+      userId: USER_ID,
+      paymentStatus: "PENDING",
+    });
+
+    const body = await (await POST(signedRequest())).json();
+
+    expect(routeCapturedPayment).not.toHaveBeenCalled();
+    expect(updateMany).not.toHaveBeenCalled();
+    expect(body.pendingConfirmation).toBe(true);
   });
 });

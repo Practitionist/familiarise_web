@@ -26,12 +26,13 @@ jest.mock("../../app/api/webhooks/razorpay-dispatch", () => ({
   processRazorpayWebhookEvent: jest.fn(),
 }));
 
-
 // #476 — the sweep cores are now wrapped in withCronLock; pass through so
 // these unit tests exercise the sweep logic, not the lock (covered in
 // with-cron-lock.test.ts).
 jest.mock("../../lib/cron/with-cron-lock", () => ({
-  withCronLock: jest.fn((_job: string, _opts: unknown, fn: () => unknown) => fn()),
+  withCronLock: jest.fn((_job: string, _opts: unknown, fn: () => unknown) =>
+    fn(),
+  ),
   CronLockHeldError: class CronLockHeldError extends Error {},
   CronLockUnavailableError: class CronLockUnavailableError extends Error {},
   LONG_JOB_TTL_MS: 35 * 60 * 1000,
@@ -41,9 +42,15 @@ import prisma from "../../lib/prisma";
 import { processRazorpayWebhookEvent } from "../../app/api/webhooks/razorpay-dispatch";
 import { sweepStuckWebhookEvents } from "../../scripts/cleanup/sweep-stuck-webhook-events";
 
-const mockWe = (prisma as unknown as {
-  webhookEvent: { findMany: jest.Mock; findUnique: jest.Mock; update: jest.Mock };
-}).webhookEvent;
+const mockWe = (
+  prisma as unknown as {
+    webhookEvent: {
+      findMany: jest.Mock;
+      findUnique: jest.Mock;
+      update: jest.Mock;
+    };
+  }
+).webhookEvent;
 const mockProcess = processRazorpayWebhookEvent as jest.Mock;
 
 const stuckRow = (over: Record<string, unknown> = {}) => ({
@@ -68,12 +75,25 @@ describe("sweepStuckWebhookEvents (#785)", () => {
     const r = await sweepStuckWebhookEvents({ staleMinutes: 6 });
 
     expect(r).toMatchObject({ scanned: 1, recovered: 1, stillFailing: 0 });
-    // only razorpay, only the after()-crash signature (processed=false+error=null)
-    expect(mockWe.findMany.mock.calls[0][0].where).toMatchObject({
-      provider: "razorpay",
-      processed: false,
-      error: null,
-    });
+
+    // Razorpay only, and BOTH stuck shapes.
+    //
+    // The selector used to be `processed: false, error: null` — "crashed before
+    // we recorded anything". That silently excluded every handler that failed
+    // loudly: markWebhookEventProcessed stamps `processed=true, error!=null` in
+    // the dispatch's finally, Razorpay already got its 200 and will not
+    // redeliver, so nothing on earth re-drove those rows. A transient failure
+    // inside handleRefundCreated meant the gateway had refunded the customer
+    // and the platform kept no record of it at all.
+    const where = mockWe.findMany.mock.calls[0][0].where;
+    expect(where).toMatchObject({ provider: "razorpay" });
+    expect(where.OR).toEqual([
+      { processed: false, error: null },
+      expect.objectContaining({ error: { not: null } }),
+    ]);
+    // The errored branch is age-bounded so a deterministically-failing row
+    // retries for a week and then stops rather than churning forever.
+    expect(where.OR[1].receivedAt).toHaveProperty("gte");
     // envelope reconstruction supplies the fields the schemas demand
     const [env, evType, evId] = mockProcess.mock.calls[0];
     expect(env).toMatchObject({
@@ -91,7 +111,10 @@ describe("sweepStuckWebhookEvents (#785)", () => {
   it("a re-drive that still errors counts as stillFailing, not recovered", async () => {
     mockWe.findMany.mockResolvedValue([stuckRow()]);
     mockProcess.mockResolvedValue(undefined);
-    mockWe.findUnique.mockResolvedValue({ error: "handler boom", processed: true });
+    mockWe.findUnique.mockResolvedValue({
+      error: "handler boom",
+      processed: true,
+    });
 
     const r = await sweepStuckWebhookEvents({ staleMinutes: 6 });
 
