@@ -26,23 +26,23 @@ import { useParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { RequestedSlotsDialog } from "./components/RequestedSlotsDialog";
 import { PaymentRequiredBadge } from "./components/PaymentRequiredBadge";
-import { SafeUnifiedCalendar } from "../shared/components/SafeUnifiedCalendar";
+import { SafeUnifiedCalendar } from "@/components/scheduling/SafeUnifiedCalendar";
 import {
   ConsultationApiResponse,
   RequestedBy,
   SubscriptionApiResponse,
 } from "./types";
-import { countSundayWeeksInclusive } from "../shared/utils/calendarUtils";
+import { countSundayWeeksInclusive } from "@/lib/scheduling/calendarUtils";
 import {
   allocatedElsewhere,
   allocationFailed,
   planConfigIncomplete,
-} from "../shared/utils/allocationMessages";
+} from "@/lib/scheduling/allocationMessages";
 import {
   computeAttemptFingerprint,
   resolveAttemptKey,
   type AllocationAttemptKey,
-} from "../shared/hooks/useSlotAllocation";
+} from "@/hooks/scheduling/useSlotAllocation";
 
 // Slot with tentative status for reschedule visibility
 interface RequestedSlot {
@@ -85,6 +85,23 @@ type RequestType = "all" | "consultation" | "subscription";
 interface RequestSlotAllocationTabProps {
   type: RequestType;
   onUpdate: () => void;
+  /**
+   * Whose requests to allocate. Falls back to the `[consultantId]` route param
+   * so the consultant tree keeps working untouched; the org tree has no such
+   * param and passes it explicitly.
+   */
+  consultantProfileId?: string;
+  /**
+   * Funding context, forwarded as `?orgScope=`.
+   *
+   * `/api/bookings/{consultations,subscriptions}` EXCLUDE org-funded rows when
+   * this is absent, so omitting it is how org-sponsored requests became
+   * invisible: the only allocation surface in the product sat in the consultant
+   * tree and silently dropped them, and an org-sponsored subscription was paid
+   * for and never scheduled. Personal keeps the B2C-only behaviour; an org id
+   * narrows to that organization.
+   */
+  orgScope?: "personal" | (string & {});
 }
 
 // Helper function to fetch and process data
@@ -136,9 +153,12 @@ async function fetchDataFromApi<T>(
 export function RequestSlotAllocationTab({
   type,
   onUpdate,
+  consultantProfileId,
+  orgScope = "personal",
 }: RequestSlotAllocationTabProps) {
   const params = useParams();
-  const consultantId = params.consultantId as string;
+  const consultantId =
+    consultantProfileId ?? (params.consultantId as string);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [requests, setRequests] = useState<Request[]>([]);
@@ -158,10 +178,10 @@ export function RequestSlotAllocationTab({
       // Fetch data in parallel (only PENDING requests).
       const [consultationsResult, subscriptionsResult] = await Promise.all([
         fetchDataFromApi<ConsultationApiResponse[]>(
-          `/api/bookings/consultations?consultantProfileId=${consultantId}&status=PENDING`,
+          `/api/bookings/consultations?consultantProfileId=${consultantId}&status=PENDING&orgScope=${orgScope}`,
         ),
         fetchDataFromApi<SubscriptionApiResponse[]>(
-          `/api/bookings/subscriptions?consultantProfileId=${consultantId}&status=PENDING`,
+          `/api/bookings/subscriptions?consultantProfileId=${consultantId}&status=PENDING&orgScope=${orgScope}`,
         ),
       ]);
 
@@ -334,7 +354,9 @@ export function RequestSlotAllocationTab({
         setLoading(false);
       }
     }
-  }, [consultantId, type, error]);
+    // orgScope belongs here: fetchData builds both URLs from it, so without it
+    // a scope change without a remount keeps refetching the previous org's rows.
+  }, [consultantId, type, error, orgScope]);
 
   useEffect(() => {
     fetchData();

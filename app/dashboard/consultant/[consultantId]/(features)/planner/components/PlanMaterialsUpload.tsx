@@ -24,7 +24,7 @@ import {
   Trash2,
   Loader2,
 } from "lucide-react";
-import { formatFileSize } from "@/app/dashboard/shared/utils/document-utils";
+import { formatFileSize } from "@/lib/documents/document-utils";
 import { MaterialsService, type PlanType } from "../services/materials-service";
 import { IPlanMaterial } from "../../../types";
 

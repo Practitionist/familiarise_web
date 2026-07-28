@@ -1,3 +1,12 @@
+/**
+ * Explore-programs domain helpers and shapes.
+ *
+ * Moved out of `app/explore/programs/utils.ts`: `lib/data/explore-programs.ts`
+ * imported FUNCTIONS from it, which made the data layer depend on a route
+ * folder at runtime — the wrong direction, and the only non-type instance of it
+ * left in the codebase. Nothing here is routing; it is pagination constants,
+ * program shapes and an image-URL builder.
+ */
 import {
   ClassPlan as PrismaClassPlan,
   WebinarPlan as PrismaWebinarPlan,

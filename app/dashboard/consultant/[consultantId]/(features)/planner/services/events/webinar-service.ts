@@ -3,7 +3,7 @@
  */
 
 import { toast } from "@/hooks/use-toast";
-import { WebinarEvent } from "../../types/event";
+import { WebinarEvent } from "@/types/planner-events";
 import {
   CreateWebinarPayload,
   UpdateWebinarPayload,

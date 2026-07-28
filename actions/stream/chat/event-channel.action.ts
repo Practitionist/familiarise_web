@@ -556,8 +556,8 @@ export async function syncUserEventChannels(
     // Build the set of channel IDs this user is expected to be in
     const expectedChannelIds = new Set([
       ...eventIds.map(({ type, id }) => getChannelId(type, id)),
-      ...dmPairs.map(({ consultantUserId, consulteeUserId }) =>
-        getDmChannelId(consultantUserId, consulteeUserId),
+      ...dmPairs.map(({ consultantUserId, consulteeUserId, organizationId }) =>
+        getDmChannelId(consultantUserId, consulteeUserId, organizationId),
       ),
     ]);
 
@@ -583,7 +583,9 @@ export async function syncUserEventChannels(
       }
     }
 
-    // --- DM pair add-pass: join/create one channel per consultant-consultee pair ---
+    // --- DM add-pass: one channel per pair PER FUNDING CONTEXT ---
+    // A pair working both B2C and through an org now has two threads, and this
+    // pass joins the user to each. `dmPairs` is already keyed that way.
     for (let i = 0; i < dmPairs.length; i += BATCH_SIZE) {
       const batch = dmPairs.slice(i, i + BATCH_SIZE);
       const results = await Promise.allSettled(
@@ -592,6 +594,7 @@ export async function syncUserEventChannels(
             pair.consultantUserId,
             pair.consulteeUserId,
             userId,
+            pair.organizationId,
           ),
         ),
       );
@@ -696,17 +699,56 @@ export async function syncUserEventChannels(
 /**
  * Get unique consultant-consultee DM pairs for a user, across consultations and subscriptions.
  */
+/** A DM the user should be a member of, in one specific funding context. */
+interface DmPair {
+  consultantUserId: string;
+  consulteeUserId: string;
+  /** null = personal (B2C). Part of the channel key — see getDmChannelId. */
+  organizationId: string | null;
+}
+
+/**
+ * The org context a DM channel was created under.
+ *
+ * Precedence MUST match `createConsultationChannel` / `createSubscriptionChannel`
+ * exactly — `plan.organizationId ?? appointment.organizationId ?? null` — because
+ * this function recomputes the channel id those creators already used. They are
+ * two distinct cases: a plan can be org-HOSTED while the booking is self-funded,
+ * and a personal plan can be booked through an org-funded membership.
+ *
+ * Reading only the appointment treated every org-hosted-plan booking as
+ * personal, so the reconcile set looked for `dm-<a>-<b>` while the real channel
+ * was `dmo-…`. At best it was never re-joined; at worst the real one was treated
+ * as stale and the user removed from it.
+ *
+ * Subscriptions carry many appointments but are funded once, so the first is
+ * representative.
+ */
+function bookingOrgId(booking: {
+  consultationPlan?: { organizationId: string | null } | null;
+  subscriptionPlan?: { organizationId: string | null } | null;
+  appointment?: { organizationId: string | null } | null;
+  appointments?: { organizationId: string | null }[];
+}): string | null {
+  return (
+    booking.consultationPlan?.organizationId ??
+    booking.subscriptionPlan?.organizationId ??
+    booking.appointment?.organizationId ??
+    booking.appointments?.[0]?.organizationId ??
+    null
+  );
+}
+
 async function getDmPairsForUser(
   userId: string,
   user: {
     consultantProfileId: string | null;
     consulteeProfileId: string | null;
   },
-): Promise<{ consultantUserId: string; consulteeUserId: string }[]> {
-  const pairMap = new Map<
-    string,
-    { consultantUserId: string; consulteeUserId: string }
-  >();
+): Promise<DmPair[]> {
+  // Keyed by channel id, so a pair working in two contexts yields two entries
+  // rather than one overwriting the other.
+  const pairMap = new Map<string, DmPair>();
 
   if (user.consultantProfileId) {
     const [consultations, subscriptions] = await Promise.all([
@@ -717,6 +759,12 @@ async function getDmPairsForUser(
         },
         include: {
           requestedBy: { include: { user: { select: { id: true } } } },
+          // The DM channel key includes the funding context, so the reconcile
+          // set has to know it too — otherwise it looks for a personal channel
+          // that an org booking never created. Plan org FIRST, matching
+          // createConsultationChannel's precedence exactly.
+          consultationPlan: { select: { organizationId: true } },
+          appointment: { select: { organizationId: true } },
         },
       }),
       prisma.subscription.findMany({
@@ -726,14 +774,21 @@ async function getDmPairsForUser(
         },
         include: {
           requestedBy: { include: { user: { select: { id: true } } } },
+          subscriptionPlan: { select: { organizationId: true } },
+          appointments: { select: { organizationId: true }, take: 1 },
         },
       }),
     ]);
     for (const c of [...consultations, ...subscriptions]) {
       const consulteeUserId = c.requestedBy?.user?.id;
       if (!consulteeUserId) continue;
-      const channelId = getDmChannelId(userId, consulteeUserId);
-      pairMap.set(channelId, { consultantUserId: userId, consulteeUserId });
+      const organizationId = bookingOrgId(c);
+      const channelId = getDmChannelId(userId, consulteeUserId, organizationId);
+      pairMap.set(channelId, {
+        consultantUserId: userId,
+        consulteeUserId,
+        organizationId,
+      });
     }
   }
 
@@ -752,6 +807,7 @@ async function getDmPairsForUser(
               },
             },
           },
+          appointment: { select: { organizationId: true } },
         },
       }),
       prisma.subscription.findMany({
@@ -767,20 +823,32 @@ async function getDmPairsForUser(
               },
             },
           },
+          appointments: { select: { organizationId: true }, take: 1 },
         },
       }),
     ]);
     for (const c of consultations) {
       const consultantUserId = c.consultationPlan?.consultantProfile?.user?.id;
       if (!consultantUserId) continue;
-      const channelId = getDmChannelId(consultantUserId, userId);
-      pairMap.set(channelId, { consultantUserId, consulteeUserId: userId });
+      const organizationId = bookingOrgId(c);
+      const channelId = getDmChannelId(consultantUserId, userId, organizationId);
+      pairMap.set(channelId, {
+        consultantUserId,
+        consulteeUserId: userId,
+        organizationId,
+      });
     }
-    for (const s of subscriptions) {
-      const consultantUserId = s.subscriptionPlan?.consultantProfile?.user?.id;
+    for (const sub of subscriptions) {
+      const consultantUserId =
+        sub.subscriptionPlan?.consultantProfile?.user?.id;
       if (!consultantUserId) continue;
-      const channelId = getDmChannelId(consultantUserId, userId);
-      pairMap.set(channelId, { consultantUserId, consulteeUserId: userId });
+      const organizationId = bookingOrgId(sub);
+      const channelId = getDmChannelId(consultantUserId, userId, organizationId);
+      pairMap.set(channelId, {
+        consultantUserId,
+        consulteeUserId: userId,
+        organizationId,
+      });
     }
   }
 
@@ -794,8 +862,14 @@ async function addUserToDmChannel(
   consultantUserId: string,
   consulteeUserId: string,
   currentUserId: string,
+  /** Funding context — the channel key differs per org (see getDmChannelId). */
+  organizationId: string | null,
 ): Promise<{ success: boolean; channelId: string; created?: boolean }> {
-  const channelId = getDmChannelId(consultantUserId, consulteeUserId);
+  const channelId = getDmChannelId(
+    consultantUserId,
+    consulteeUserId,
+    organizationId,
+  );
   const channelType = "messaging";
 
   if (getMembershipCached(channelId, currentUserId) === true) {

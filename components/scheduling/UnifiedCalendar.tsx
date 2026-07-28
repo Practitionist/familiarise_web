@@ -40,10 +40,10 @@ import {
   calculateCallProgress,
   countSundayWeeksInclusive,
   validateDayBasedConsecutiveSlots,
-} from "../utils/calendarUtils";
-import { useCalendarData } from "../hooks/useCalendarData";
-import { useEventSlotAllocation } from "../hooks/useSlotAllocation";
-import type { AllocationResponse } from "../utils/allocationService";
+} from "@/lib/scheduling/calendarUtils";
+import { useCalendarData } from "@/hooks/scheduling/useCalendarData";
+import { useEventSlotAllocation } from "@/hooks/scheduling/useSlotAllocation";
+import type { AllocationResponse } from "@/lib/scheduling/allocationService";
 import { SlotCalculationService } from "@/utils/slotAllocation/SlotCalculationService";
 import {
   outsideSchedulingWindow,
@@ -54,7 +54,7 @@ import {
   sessionBeingRescheduled,
   slotUnavailable,
   notEnoughConsecutive,
-} from "../utils/allocationMessages";
+} from "@/lib/scheduling/allocationMessages";
 import { useToast } from "@/hooks/use-toast";
 
 /**

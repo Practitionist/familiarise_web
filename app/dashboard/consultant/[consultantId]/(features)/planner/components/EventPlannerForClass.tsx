@@ -57,7 +57,7 @@ import { SubmitButton } from "./form-fields/SubmitButton";
 import { FormConfirmationDialog } from "./form-fields/FormConfirmationDialog";
 import { TopicsMultiSelect } from "./TopicsMultiSelect";
 import { PlannerService } from "../services/planner";
-import { ClassEvent, ClassPlannerProps } from "../types/event";
+import { ClassEvent, ClassPlannerProps } from "@/types/planner-events";
 import { PlanMaterialsUpload } from "./PlanMaterialsUpload";
 import { CollaboratorsTab } from "@/components/collaborators/CollaboratorsTab";
 import { PlanImageUploader } from "@/components/plans/PlanImageUploader";

@@ -38,7 +38,7 @@ import {
   getAppointmentUser,
   type TimeSlot,
   type Appointment,
-} from "@/app/dashboard/consultant/[consultantId]/(features)/shared/utils/calendarUtils";
+} from "@/lib/scheduling/calendarUtils";
 import { ScheduleType, DayOfWeek, AppointmentsType } from "@prisma/client";
 import {
   makeTimeSlot,

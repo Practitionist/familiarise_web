@@ -7,8 +7,8 @@
 
 import "./setup";
 
-import { enqueueToast } from "@/app/dashboard/consultant/[consultantId]/(features)/shared/hooks/useSlotAllocation";
-import type { AllocationToast } from "@/app/dashboard/consultant/[consultantId]/(features)/shared/utils/allocationMessages";
+import { enqueueToast } from "@/hooks/scheduling/useSlotAllocation";
+import type { AllocationToast } from "@/lib/scheduling/allocationMessages";
 
 const msg = (title: string, description = "d"): AllocationToast => ({
   title,

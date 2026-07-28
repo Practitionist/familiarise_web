@@ -1,13 +1,13 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import * as Sentry from "@sentry/nextjs";
 import { useToast } from "@/components/ui/use-toast";
-import { TimeSlot, calculateRequiredSlots } from "../utils/calendarUtils";
+import { TimeSlot, calculateRequiredSlots } from "@/lib/scheduling/calendarUtils";
 import {
   AllocationAlgorithms,
   AllocationOptions,
   AllocationResult,
-} from "../utils/allocationAlgorithms";
-import { AllocationService } from "../utils/allocationService";
+} from "@/lib/scheduling/allocationAlgorithms";
+import { AllocationService } from "@/lib/scheduling/allocationService";
 import { isRecurringEventType } from "@/utils/slotAllocation/types";
 import {
   ValidationResult,
@@ -23,7 +23,7 @@ import {
   findConsecutiveGroupContaining,
   dayKey,
   weekKey,
-} from "../utils/slotSelectionValidation";
+} from "@/lib/scheduling/slotSelectionValidation";
 import {
   AllocationToast,
   weeklyLimitReached,
@@ -40,7 +40,7 @@ import {
   autoScheduled,
   allocationFailed,
   allocatedElsewhere,
-} from "../utils/allocationMessages";
+} from "@/lib/scheduling/allocationMessages";
 
 /**
  * EVENT SLOT ALLOCATION HOOK

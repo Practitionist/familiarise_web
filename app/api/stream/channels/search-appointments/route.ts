@@ -3,14 +3,10 @@ import * as Sentry from "@sentry/nextjs";
 import prisma from "lib/prisma";
 import { getSession } from "@/lib/auth-server";
 import { getDmChannelId } from "@/lib/stream-utils";
-export type AppointmentSearchResult = {
-  id: string;
-  type: "consultation" | "subscription" | "webinar" | "class";
-  name: string;
-  consultantName: string;
-  consultantImage?: string;
-  channelId: string;
-};
+import {
+  AppointmentSearchResultSchema,
+  type AppointmentSearchResult,
+} from "@/schemas/stream-search";
 
 export async function GET(request: NextRequest) {
   try {
@@ -115,6 +111,8 @@ export async function GET(request: NextRequest) {
             },
           },
         },
+        // Needed to resolve which DM thread this hit belongs to.
+        appointment: { select: { organizationId: true } },
       },
       take: 10,
     });
@@ -130,9 +128,18 @@ export async function GET(request: NextRequest) {
         consultantImage:
           consultation.consultationPlan.consultantProfile.user.image ||
           undefined,
+        // Funding context is part of the DM key, so a hit must resolve to the
+        // SAME channel the creator made. Precedence matches
+        // createConsultationChannel exactly — plan org first, then the
+        // appointment's. Reading only the appointment sent org-hosted-plan
+        // bookings to a personal channel that was never created, so clicking
+        // the result opened an empty conversation.
         channelId: getDmChannelId(
           consultation.consultationPlan.consultantProfile.user.id,
           consultation.requestedBy.user.id,
+          consultation.consultationPlan.organizationId ??
+            consultation.appointment?.organizationId ??
+            null,
         ),
       });
     }
@@ -220,6 +227,9 @@ export async function GET(request: NextRequest) {
             },
           },
         },
+        // Needed to resolve which DM thread this hit belongs to. A subscription
+        // is funded once, so every appointment under it shares the org.
+        appointments: { select: { organizationId: true }, take: 1 },
       },
       take: 10,
     });
@@ -235,9 +245,13 @@ export async function GET(request: NextRequest) {
         consultantImage:
           subscription.subscriptionPlan.consultantProfile.user.image ||
           undefined,
+        // Same precedence as createSubscriptionChannel.
         channelId: getDmChannelId(
           subscription.subscriptionPlan.consultantProfile.user.id,
           subscription.requestedBy.user.id,
+          subscription.subscriptionPlan.organizationId ??
+            subscription.appointments?.[0]?.organizationId ??
+            null,
         ),
       });
     }
@@ -412,7 +426,13 @@ export async function GET(request: NextRequest) {
     results.sort((a, b) => a.name.localeCompare(b.name));
 
     // Limit total results
-    return NextResponse.json(results.slice(0, 20));
+    // Parse on the way out. The consumer derives its type from this same
+    // schema, so validating here is what makes the two agree by construction
+    // rather than by assertion — a field renamed in this handler fails at the
+    // boundary instead of arriving as `undefined` in the search dropdown.
+    return NextResponse.json(
+      AppointmentSearchResultSchema.array().parse(results.slice(0, 20)),
+    );
   } catch (error) {
     Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
     console.error("Error searching appointments:", error);

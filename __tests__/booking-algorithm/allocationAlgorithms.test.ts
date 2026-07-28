@@ -18,8 +18,8 @@ import "./setup";
 import {
   AllocationAlgorithms,
   type AllocationOptions,
-} from "@/app/dashboard/consultant/[consultantId]/(features)/shared/utils/allocationAlgorithms";
-import { AllocationService } from "@/app/dashboard/consultant/[consultantId]/(features)/shared/utils/allocationService";
+} from "@/lib/scheduling/allocationAlgorithms";
+import { AllocationService } from "@/lib/scheduling/allocationService";
 import {
   makeTimeSlot,
   makeConsecutiveTimeSlots,

@@ -7,7 +7,7 @@ import type {
   ClassInstance,
   ProgramFilters,
   TopicWithCount,
-} from "../utils";
+} from "@/lib/explore/programs";
 
 interface WebinarWithAppointment {
   appointment?: {

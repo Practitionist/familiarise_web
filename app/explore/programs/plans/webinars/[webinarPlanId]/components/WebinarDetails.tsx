@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import { formatInTimeZone } from "date-fns-tz";
 import { ClientWebinarRegistration } from "./ClientWebinarRegistration";
-import { generateProgramImageUrl } from "../../../../utils";
+import { generateProgramImageUrl } from "@/lib/explore/programs";
 import { useCurrency } from "@/hooks/useCurrency";
 import type { Topic } from "@prisma/client";
 import { FeatureItem } from "@/app/explore/programs/plans/components/FeatureItem";

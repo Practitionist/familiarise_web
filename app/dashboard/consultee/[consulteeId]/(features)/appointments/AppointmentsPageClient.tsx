@@ -11,7 +11,7 @@ import { AppointmentsShell } from "@/components/appointments/AppointmentsShell";
 import { AppointmentsPageSkeleton } from "@/components/appointments/skeletons";
 import { mapConsulteeEvents } from "@/lib/appointments/map-consultee";
 import { createConsulteeQueries } from "@/lib/dashboard-queries";
-import { useConsulteeAppointmentsAdapter } from "./ConsulteeAppointmentsAdapter";
+import { useConsulteeAppointmentsAdapter } from "@/components/appointments/consultee/ConsulteeAppointmentsAdapter";
 
 export default function AppointmentsPageClient({
   consulteeId,

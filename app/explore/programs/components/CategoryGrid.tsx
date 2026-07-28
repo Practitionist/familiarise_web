@@ -2,7 +2,7 @@
 
 import { memo, useState } from "react";
 import { Hash, ChevronDown, ChevronUp } from "lucide-react";
-import { TopicWithCount } from "../utils";
+import { TopicWithCount } from "@/lib/explore/programs";
 
 interface CategoryGridProps {
   topics: TopicWithCount[];

@@ -1,5 +1,7 @@
 "use client";
 
+import type { RecordingData } from "@/types/recording";
+
 import { useState } from "react";
 import Image from "next/image";
 import { formatDistanceToNow, format } from "date-fns";
@@ -26,27 +28,6 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/utils/tailwind";
 
-export interface RecordingData {
-  id: string;
-  title: string;
-  durationInMinutes: number;
-  recordedAt: string;
-  status: string;
-  storageType: string;
-  playbackUrl: string | null;
-  thumbnailUrl: string | null;
-  resolution: string | null;
-  fileSize: number | null;
-  streamUrlExpiresAt: string | null;
-  transferredAt: string | null;
-  planType: "webinar" | "class" | null;
-  planId: string | null;
-  planTitle: string | null;
-  participantNames: string[];
-  participantCount: number;
-  appointmentDate: string | null;
-  createdAt: string;
-}
 
 function formatFileSize(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;

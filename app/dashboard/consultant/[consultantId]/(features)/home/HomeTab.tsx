@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 // lib/meeting (which imports the SDK) here — that would pull the heavy SDK into
 // the dashboard-HOME bundle / critical path. The video client + meeting helper
 // are acquired lazily inside the Join handler (only when a user clicks Join).
-import { useLazyJoinMeeting } from "../shared/hooks/useLazyJoinMeeting";
+import { useLazyJoinMeeting } from "@/hooks/scheduling/useLazyJoinMeeting";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
@@ -60,7 +60,7 @@ import { getAppointmentLifecycleStatus } from "@/lib/appointments/map-consultant
 import { TAppointment } from "@/types/appointment";
 import { getJoinableSlot } from "../../utils/joinState";
 import { getInitials } from "@/utils/formatting";
-import { RequestSlotAllocationTabMini } from "../requests/RequestSlotAllocationTabMini";
+import { RequestSlotAllocationTabMini } from "@/components/dashboard/shared/requests/RequestSlotAllocationTabMini";
 import { PerformanceSnapshot } from "./PerformanceSnapshot";
 import { FinancialSummary } from "./FinancialSummary";
 import type {

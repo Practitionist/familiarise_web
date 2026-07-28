@@ -3,7 +3,7 @@
  */
 
 import type { SubscriptionPlan } from "@/schemas/plans";
-import { SubscriptionPlanEvent } from "../../types/event";
+import { SubscriptionPlanEvent } from "@/types/planner-events";
 
 export class SubscriptionService {
   /**
