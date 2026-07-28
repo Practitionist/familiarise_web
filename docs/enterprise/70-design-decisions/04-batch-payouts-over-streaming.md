@@ -18,14 +18,14 @@ gateway transfer the moment each earning becomes payable — a stream of one
 transfer per earning. The alternative is to let earnings accumulate and
 sweep them into one transfer per recipient per period. Two forces push
 hard against streaming. First, India's tax-deducted-at-source regime is
-computed *per period*, not per transaction: TDS under Section 194-O is a
+computed _per period_, not per transaction: TDS under Section 194-O is a
 rate applied to the payee's earnings, and computing and depositing it
 correctly is a per-period, per-payee operation, not something you want to
 recompute and round on every individual booking. Second, the RazorpayX
 Payouts API has been hardened around idempotency and balance management in
 ways that reward few large calls over many small ones — every
 Create-Payout request has carried a mandatory `X-Payout-Idempotency`
-header since 2025-03-15, and an underfunded account silently *queues*
+header since 2025-03-15, and an underfunded account silently _queues_
 payouts rather than erroring, so the fewer gateway calls you make, the
 fewer idempotency slots and queued-balance edge cases you have to manage
 (research bundle G, RazorpayX payout mechanics).
@@ -93,7 +93,7 @@ surfaced in the dashboard's "you have ₹X ready" eligibility probe
 (`getOrgPayoutEligibility`).
 
 A second cost is the reconciliation surface of the batch lifecycle. A
-batch can fail at the gateway and have to *release* its earnings back to
+batch can fail at the gateway and have to _release_ its earnings back to
 `READY` (`markOrgPayoutFailedInternal` does exactly this, the inverse of
 the claim), and that release path has to be exactly correct or earnings
 are either double-paid or stranded. Batches also park in `PROCESSING`

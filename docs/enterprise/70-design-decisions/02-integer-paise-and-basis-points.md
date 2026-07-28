@@ -18,7 +18,7 @@ how to store an amount of money, and how to store a percentage split. Both
 choices are load-bearing because a single rounding error in either one
 corrupts a balance the reconciler then flags as drift, and a money
 platform that silently rounds is not trustworthy. The constraint that
-drove the decision is that a split must sum to *exactly* the whole — the
+drove the decision is that a split must sum to _exactly_ the whole — the
 platform's fee plus the org's share plus the consultant's share has to
 account for every paise of the gross, with nothing created or destroyed in
 the arithmetic.
@@ -46,7 +46,7 @@ was computed with, so payout reconciliation reads the frozen split off the
 row rather than re-resolving the live card.
 
 The reason bps wins over float percents is that `platformBps + orgBps +
-consultantBps === 10000` is an *integer* equality that the system can
+consultantBps === 10000` is an _integer_ equality that the system can
 assert and that always holds, whereas the float equivalent `0.1 + 0.1 +
 0.8 === 1.0` can quietly evaluate false. #772 deleted the old `Float
 sharePercentage` columns for exactly this reason.

@@ -2248,11 +2248,19 @@ model LedgerEntry {
 // (`scripts/reconcile/reconcile-ledgers.ts`). Each run records per-scope
 // findings so operators can diff between runs and page on regressions.
 //
-// The auditor is READ-ONLY: it never mutates the three ledgers
-// (FundingLedgerEntry, WalletEntry-as-usage, SettlementLedgerEntry) or
-// the derived balances (BillingAccount.walletBalance, OrganizationInvoice
-// status). All remediation is manual — this table is the report, not the
-// fix. See `docs/enterprise/10-money-and-ledger/01-money-model-overview.md`.
+// The auditor is READ-ONLY: it never mutates the journal
+// (LedgerTransaction/LedgerEntry) or the derived caches
+// (LedgerAccountBalance, BillingAccount.walletBalance, OrganizationInvoice
+// status). The three single-entry logs this comment used to name —
+// FundingLedgerEntry, WalletEntry, SettlementLedgerEntry — were collapsed
+// into the journal by #772 and no longer exist.
+//
+// Remediation is never a patch to a cache: a finding is a symptom, the fix
+// is upstream, and a money correction is a counter-transaction. #837 added
+// the one exception, a protective wallet-spend freeze on balance drift.
+// Findings are split against a checked-in baseline
+// (lib/payments/ledger/baseline.ts) so only NEW drift fails the run.
+// See `docs/enterprise/10-money-and-ledger/13-ledger-integrity.md`.
 model LedgerReconciliationReport {
   id            String   @id @default(uuid())
   runAt         DateTime @default(now())
@@ -4690,8 +4698,9 @@ model ReferralCreditUsage {
 
 // #880 — single-row referral-program config (fixed id). Centralizes the
 // conservative-launch controls: the program on/off switch, a monthly budget cap
-// with auto-pause, and the ramped referrer reward. Paise stored as Int (well
-// within range for a referral budget) to keep the gate arithmetic in number.
+// with auto-pause, and the ramped referrer reward. Paise columns are BigInt
+// like every other money column (#780); the Prisma result extension converts
+// them to number at the JS boundary so the gate arithmetic stays in number.
 model ReferralProgramConfig {
   id                     String   @id @default("singleton")
   isActive               Boolean  @default(true)

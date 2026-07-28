@@ -15,7 +15,7 @@ organizations. India's CGST rules govern how those documents are numbered.
 CGST Rule 46(b) requires every tax invoice to bear "a consecutive serial
 number not exceeding sixteen characters … unique for a financial year,"
 drawn only from alphanumerics plus hyphen and slash; Rule 53 imposes the
-same discipline on credit notes but in a *separate* series, and requires
+same discipline on credit notes but in a _separate_ series, and requires
 each note to reference the original invoice it adjusts (research bundle A,
 F1/F3). The numbering scheme therefore has to be consecutive, unique
 within an Apr–March Indian fiscal year, and produced correctly even when
@@ -53,7 +53,7 @@ unique per financial year, not strictly gapless.** Rule 46(b) does not use
 the word "gapless"; a gap explained by a retained cancelled/void document
 is permissible, provided the cancelled number is not reused (research
 bundle A, F6). Our counter happens to be gapless under normal operation,
-which is the *safest superset* of the statutory requirement — gapless
+which is the _safest superset_ of the statutory requirement — gapless
 trivially satisfies "consecutive + unique" — and so a rare burned sequence
 number from a rolled-back transaction is a documentable exception, not a
 compliance defect. We chose the gapless superset deliberately; the code

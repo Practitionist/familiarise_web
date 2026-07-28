@@ -1,0 +1,276 @@
+/**
+ * @jest-environment node
+ */
+
+/**
+ * ADR 21 — payment confirmation has exactly one writer.
+ *
+ * The bug these pin: /api/checkout/verify-signature used to flip
+ * Payment.paymentStatus to SUCCEEDED with a bare updateMany. The client's
+ * return from the Razorpay modal normally beats the webhook, so when it won,
+ * the later payment.captured event hit handlePaymentSuccess's
+ * already-SUCCEEDED early-return and skipped the entire pipeline — no
+ * appointment, no earnings, no booking:<paymentId> journal entry, no GST, and
+ * no capture-amount parity check (which sits below that early-return). Money
+ * taken, never journalled.
+ *
+ * Both orderings are asserted, because a fix that only works when the webhook
+ * arrives second is not a fix.
+ */
+
+const routeCapturedPayment = jest.fn();
+jest.mock("../../app/api/webhooks/razorpay-dispatch", () => ({
+  routeCapturedPayment: (...args: unknown[]) => routeCapturedPayment(...args),
+}));
+
+const paymentsFetch = jest.fn();
+jest.mock("../../lib/payments/core/razorpay", () => ({
+  razorpayClient: {
+    payments: { fetch: (...a: unknown[]) => paymentsFetch(...a) },
+  },
+}));
+
+const getSession = jest.fn();
+jest.mock("../../lib/auth-server", () => ({
+  getSession: () => getSession(),
+}));
+
+const findUnique = jest.fn();
+const updateMany = jest.fn();
+jest.mock("../../lib/prisma", () => ({
+  __esModule: true,
+  default: {
+    payment: {
+      findUnique: (...a: unknown[]) => findUnique(...a),
+      updateMany: (...a: unknown[]) => updateMany(...a),
+    },
+  },
+}));
+
+import { NextRequest } from "next/server";
+import crypto from "crypto";
+import { POST } from "../../app/api/checkout/verify-signature/route";
+
+const SECRET = "test_secret";
+const ORDER_ID = "order_ABC123";
+const PAY_ID = "pay_XYZ789";
+const USER_ID = "user_1";
+
+function signedRequest(): NextRequest {
+  const signature = crypto
+    .createHmac("sha256", SECRET)
+    .update(`${ORDER_ID}|${PAY_ID}`)
+    .digest("hex");
+  return new NextRequest("https://x.test/api/checkout/verify-signature", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      razorpay_order_id: ORDER_ID,
+      razorpay_payment_id: PAY_ID,
+      razorpay_signature: signature,
+    }),
+  });
+}
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  process.env.RAZORPAY_SECRET = SECRET;
+  getSession.mockResolvedValue({ user: { id: USER_ID } });
+  paymentsFetch.mockResolvedValue({
+    id: PAY_ID,
+    order_id: ORDER_ID,
+    amount: 250000,
+    notes: { appointmentType: "CONSULTATION" },
+  });
+});
+
+describe("verify-signature drives the canonical pipeline", () => {
+  it("never writes paymentStatus itself", async () => {
+    findUnique
+      .mockResolvedValueOnce({
+        id: "p1",
+        userId: USER_ID,
+        paymentStatus: "PENDING",
+      })
+      .mockResolvedValueOnce({
+        paymentStatus: "SUCCEEDED",
+        appointmentId: "appt_1",
+      });
+
+    await POST(signedRequest());
+
+    // The whole point: this route no longer sets the status. If it did, the
+    // webhook's already-SUCCEEDED guard would skip the pipeline.
+    expect(updateMany).not.toHaveBeenCalled();
+    expect(routeCapturedPayment).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes gateway truth — amount and notes — so the parity check can run", async () => {
+    findUnique
+      .mockResolvedValueOnce({
+        id: "p1",
+        userId: USER_ID,
+        paymentStatus: "PENDING",
+      })
+      .mockResolvedValueOnce({
+        paymentStatus: "SUCCEEDED",
+        appointmentId: "appt_1",
+      });
+
+    await POST(signedRequest());
+
+    // The signature proves the id pair came from Razorpay but carries neither
+    // the captured amount nor the notes; both have to come off the gateway.
+    expect(routeCapturedPayment).toHaveBeenCalledWith({
+      orderId: ORDER_ID,
+      notes: { appointmentType: "CONSULTATION" },
+      amountPaise: 250000,
+      gatewayPaymentId: PAY_ID,
+    });
+  });
+
+  it("reports pendingConfirmation when the booking has not materialised yet", async () => {
+    findUnique
+      .mockResolvedValueOnce({
+        id: "p1",
+        userId: USER_ID,
+        paymentStatus: "PENDING",
+      })
+      .mockResolvedValueOnce({
+        paymentStatus: "SUCCEEDED",
+        appointmentId: null,
+      });
+
+    const res = await POST(signedRequest());
+    const body = await res.json();
+
+    expect(body.verified).toBe(true);
+    expect(body.pendingConfirmation).toBe(true);
+  });
+
+  it("does NOT report pendingConfirmation for flows that have no appointment", async () => {
+    paymentsFetch.mockResolvedValue({
+      id: PAY_ID,
+      order_id: ORDER_ID,
+      amount: 250000,
+      notes: { type: "overage_member" },
+    });
+    findUnique
+      .mockResolvedValueOnce({
+        id: "p1",
+        userId: USER_ID,
+        paymentStatus: "PENDING",
+      })
+      .mockResolvedValueOnce({
+        paymentStatus: "SUCCEEDED",
+        appointmentId: null,
+      });
+
+    const body = await (await POST(signedRequest())).json();
+
+    // An overage side-charge legitimately has no appointment; requiring one
+    // would leave the client polling forever.
+    expect(body.pendingConfirmation).toBe(false);
+  });
+});
+
+describe("the race, both directions", () => {
+  it("webhook first: verify-signature becomes a no-op", async () => {
+    // The webhook already ran the pipeline and set SUCCEEDED.
+    findUnique.mockResolvedValueOnce({
+      id: "p1",
+      userId: USER_ID,
+      paymentStatus: "SUCCEEDED",
+    });
+
+    const res = await POST(signedRequest());
+    const body = await res.json();
+
+    expect(routeCapturedPayment).not.toHaveBeenCalled();
+    expect(updateMany).not.toHaveBeenCalled();
+    expect(body).toMatchObject({ verified: true, paymentStatus: "SUCCEEDED" });
+  });
+
+  it("verify-signature first: it drives the pipeline, and a later webhook is idempotent", async () => {
+    findUnique
+      .mockResolvedValueOnce({
+        id: "p1",
+        userId: USER_ID,
+        paymentStatus: "PENDING",
+      })
+      .mockResolvedValueOnce({
+        paymentStatus: "SUCCEEDED",
+        appointmentId: "appt_1",
+      });
+
+    await POST(signedRequest());
+    expect(routeCapturedPayment).toHaveBeenCalledTimes(1);
+
+    // The webhook arriving afterwards calls the same idempotent entry point;
+    // handlePaymentSuccess's already-SUCCEEDED guard makes it a no-op. That
+    // guard is now CORRECT, because SUCCEEDED again implies the pipeline ran.
+    routeCapturedPayment.mockClear();
+    findUnique.mockResolvedValueOnce({
+      id: "p1",
+      userId: USER_ID,
+      paymentStatus: "SUCCEEDED",
+    });
+    await POST(signedRequest());
+    expect(routeCapturedPayment).not.toHaveBeenCalled();
+  });
+});
+
+describe("gateway-fetch failure", () => {
+  it("defers to the webhook instead of falling back to a bare status flip", async () => {
+    findUnique.mockResolvedValueOnce({
+      id: "p1",
+      userId: USER_ID,
+      paymentStatus: "PENDING",
+    });
+    paymentsFetch.mockRejectedValue(new Error("ECONNRESET"));
+
+    const body = await (await POST(signedRequest())).json();
+
+    // Falling back to the flip is exactly the behaviour being removed: it
+    // would confirm a payment whose amount we never verified, and poison the
+    // webhook's guard on the way.
+    expect(updateMany).not.toHaveBeenCalled();
+    expect(routeCapturedPayment).not.toHaveBeenCalled();
+    expect(body.pendingConfirmation).toBe(true);
+  });
+});
+
+describe("signature and ownership are still enforced", () => {
+  it("rejects a bad signature without touching the pipeline", async () => {
+    const req = new NextRequest(
+      "https://x.test/api/checkout/verify-signature",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          razorpay_order_id: ORDER_ID,
+          razorpay_payment_id: PAY_ID,
+          razorpay_signature: "a".repeat(64),
+        }),
+      },
+    );
+
+    const res = await POST(req);
+
+    expect(res.status).toBe(400);
+    expect(routeCapturedPayment).not.toHaveBeenCalled();
+  });
+
+  it("rejects another user's payment", async () => {
+    findUnique.mockResolvedValueOnce({
+      id: "p1",
+      userId: "someone_else",
+      paymentStatus: "PENDING",
+    });
+
+    const res = await POST(signedRequest());
+
+    expect(res.status).toBe(403);
+    expect(routeCapturedPayment).not.toHaveBeenCalled();
+  });
+});

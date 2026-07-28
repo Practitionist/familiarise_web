@@ -49,7 +49,7 @@ HTTP routes under `app/api/cleanup/**` (and a few siblings). For example
 These routes exist for manual triggering and for "an alternative cron
 system" (their own docblocks say so); they are the gated HTTP entry point,
 while the GitHub Actions workflows are the production scheduler and invoke
-the job scripts *directly* rather than calling these endpoints over HTTP.
+the job scripts _directly_ rather than calling these endpoints over HTTP.
 Both paths converge on the same underlying functions in `scripts/` and
 `lib/`, so behaviour is identical regardless of entry point.
 
@@ -83,14 +83,19 @@ disproportionate.
 The real cost is operational coupling to GitHub. If GitHub Actions is
 degraded, the crons don't run, and there is no in-app scheduler to fall
 back to automatically — recovery means firing the `CRON_SECRET` routes
-manually or waiting. The failure-notification story is also thin: most
-workflows' `Notify on failure` step is still a bare `echo` with a `TODO`
-to wire `#ops-alerts` (visible in `cleanup-stale-invitations.yml` and
-others), so a failed cron is only as loud as someone watching the Actions
-tab until that telemetry is wired.
+manually or waiting. Failure notification is wired: every scheduled
+workflow ends in a `Notify on failure` step calling
+`scripts/ci/notify-ops-failure.sh`, which posts to Slack when
+`SLACK_OPS_WEBHOOK_URL` is set and otherwise falls back to Sentry. For a
+job classified as money-critical, having no sink configured at all is
+itself a failure that exits non-zero, because a money job failing
+silently is the outcome this whole mechanism exists to prevent. What the
+pager cannot see is a run that never STARTS, which is what
+`cron-heartbeat.yml` covers — see ADR 22 for the measured cadence that
+made a dead-man's switch necessary.
 
 A second consequence is the maintenance of two parallel entry points.
-Because the workflows run `jobs/*.ts` directly and do *not* call the
+Because the workflows run `jobs/*.ts` directly and do _not_ call the
 `CRON_SECRET` HTTP routes, the two surfaces can drift if a fix lands in
 one path's wrapper and not the other; the mitigation is that both delegate
 to the same shared function, so the divergence is confined to the thin

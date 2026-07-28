@@ -32,7 +32,7 @@ checks whether the endpoint is inside the grace window — `secretRotatedAt
 != null && previousSecretHash != null && now − secretRotatedAt ≤
 WEBHOOK_ROTATION_GRACE_MS` — and if so passes the previous secret into
 `signPayload` as well (`lib/enterprise/outbound-webhooks/worker.ts`).
-`signPayload` then emits *both* signatures as repeated `v1=` entries:
+`signPayload` then emits _both_ signatures as repeated `v1=` entries:
 `t=<unix>,v1=<current>,v1=<previous>`
 (`lib/enterprise/outbound-webhooks/signing.ts`). A receiver running the
 body through either secret matches one of the listed signatures — which is
@@ -73,13 +73,13 @@ header carrying two signatures.
 
 We considered an unbounded or much longer grace (sign with both secrets
 indefinitely, or for weeks). It lost on the security purpose of rotation:
-if the old secret is honoured forever, rotating a *leaked* secret never
+if the old secret is honoured forever, rotating a _leaked_ secret never
 actually closes the exposure. A bounded 24h window forces the old secret
 to expire and keeps the exposure auditable.
 
 ## Consequences
 
-The real cost is that during the 24-hour window a *leaked* old secret is
+The real cost is that during the 24-hour window a _leaked_ old secret is
 still accepted, so rotation does not instantly revoke the compromised key
 — it revokes it after the grace lapses. That is an inherent tension
 (compatibility vs immediacy) that the bounded window manages rather than

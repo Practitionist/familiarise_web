@@ -11,7 +11,7 @@ last-reviewed: 2026-06-05
 ## Context
 
 Every posting through `postLedgerTxn` names the accounts its legs touch by
-*scope*, not by id: "the wallet account for this org," "the
+_scope_, not by id: "the wallet account for this org," "the
 consultant-payable account for this consultant," "the platform's cash
 account." Those accounts have to exist before a leg can reference them,
 and under concurrency several postings can be the first to touch the same
@@ -33,7 +33,7 @@ scope rather than a UUID. The id is computed by `ledgerAccountId(ref)` in
 "_"}|${consultantProfileId ?? "_"}|${currency}` — the account kind, the
 org id (or the sentinel `_`), the consultant-profile id (or `_`), and the
 currency, joined by pipes. Because the id is a pure function of the scope,
-two concurrent posts to the same scope compute the *same* id, and account
+two concurrent posts to the same scope compute the _same_ id, and account
 creation becomes `db.ledgerAccount.upsert({ where: { id }, create: {…},
 update: {} })` in `resolveAccountId`: the first writer creates the row,
 every subsequent writer is a no-op update, and there is no window in which
@@ -45,7 +45,7 @@ This sidesteps the Postgres nullable-unique gotcha directly. The model
 does also carry `@@unique([organizationId, consultantProfileId, kind,
 currency])` as a belt, but a Postgres unique index treats two `NULL`s as
 distinct, so for platform-scoped accounts (both owners null) that index
-does *not* dedupe — two platform `CASH` rows would both satisfy it. The
+does _not_ dedupe — two platform `CASH` rows would both satisfy it. The
 deterministic id is the suspenders that actually guarantee one row per
 scope, because `CASH|_|_|INR` is a single concrete string that the
 primary-key constraint deduplicates whether or not the owner columns are
