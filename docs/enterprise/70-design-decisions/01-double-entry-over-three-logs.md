@@ -21,7 +21,7 @@ being sent, or a refund. Each of those tables was internally coherent on
 its own terms — its rows summed, its running balance advanced — and that
 was precisely the problem. Nothing in the schema forced the three to agree
 with each other. Reconciliation meant joining all three across JSON
-columns and date heuristics and _hoping_ the answer they produced for "how
+columns and date heuristics and *hoping* the answer they produced for "how
 much money is where" was the same. There was no structural guarantee, only
 the accident of three writers having stayed in step. For a B2B platform
 that owes real money to host organizations, consultants, and the tax
@@ -64,7 +64,7 @@ happen to agree?" to "re-sum one journal."
 We considered keeping the three logs but adding a reconciliation job that
 cross-checked them. This is what we already effectively had, and it lost
 on the structural point: a cross-check between three independently-signed
-logs can only ever report a _discrepancy after the fact_; it cannot make
+logs can only ever report a *discrepancy after the fact*; it cannot make
 agreement a property the schema enforces at write time. Three logs that
 each balance internally can still disagree with each other, and no amount
 of nightly comparison changes that the disagreement was always possible.
@@ -99,8 +99,8 @@ did not exist when each log was a simple append. We also accept one
 principled exception to "balances are derived":
 `BillingAccount.walletBalance` survives as a cache so the booking
 overdraft guard can be a single conditional `UPDATE … WHERE walletBalance
-
-> = amount`; the reconciler asserts it against `balance(WALLET)`via`WALLET_BALANCE_DRIFT`.
+>= amount`; the reconciler asserts it against `balance(WALLET)` via
+`WALLET_BALANCE_DRIFT`.
 
 A second real cost is documentation and mental debt across the codebase:
 references to the removed models linger in stale docblocks. The

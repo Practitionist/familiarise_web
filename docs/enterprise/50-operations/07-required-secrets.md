@@ -20,7 +20,7 @@ is exactly why it survived two rounds of remediation.
 It has already bitten this repository twice. Issue #677 PM-1 found that seven
 reconciliation scripts read `RAZORPAY_KEY_SECRET` while the environment defined
 `RAZORPAY_SECRET`; the application code was corrected, and the workflows were
-then wired to source _both_ environment names from `secrets.RAZORPAY_KEY_SECRET`,
+then wired to source *both* environment names from `secrets.RAZORPAY_KEY_SECRET`,
 a secret that has never existed. Payout submission, payout-status reconciliation,
 payment-status reconciliation and stuck-payout handling therefore ran with empty
 Razorpay credentials for months while reporting green. Separately, the money-cron
@@ -42,7 +42,7 @@ the queue an operator should work through before launch.
 
 The status column records whether the secret is set at the **repository** level as
 of the last review. It is maintained by hand — the CI guard checks that a
-reference is _declared_, not that it is _provisioned_, because a workflow cannot
+reference is *declared*, not that it is *provisioned*, because a workflow cannot
 read the repository's secret list. Confirm the live state with `gh secret list`.
 
 ## Manifest
@@ -65,7 +65,7 @@ real value.
 | `NEXT_PUBLIC_SUPABASE_URL`                                          | 4 workflows                                   | Supabase project URL.                                                                                                                                                                                                                                                |
 | `RESEND_API_KEY`                                                    | 4 workflows                                   | Transactional email delivery.                                                                                                                                                                                                                                        |
 | `STREAM_API_KEY`, `STREAM_API_SECRET`, `NEXT_PUBLIC_STREAM_API_KEY` | Stream jobs                                   | Stream.io video and chat administration.                                                                                                                                                                                                                             |
-| `SENTRY_DSN`                                                        | all 56 scheduled workflows + `cron-heartbeat` | Fallback alert sink in `scripts/ci/notify-ops-failure.sh`. Because `SLACK_OPS_WEBHOOK_URL` has never been provisioned, this is currently the _only_ channel by which a money-cron failure reaches anyone.                                                            |
+| `SENTRY_DSN`                                                        | all 56 scheduled workflows + `cron-heartbeat` | Fallback alert sink in `scripts/ci/notify-ops-failure.sh`. Because `SLACK_OPS_WEBHOOK_URL` has never been provisioned, this is currently the *only* channel by which a money-cron failure reaches anyone.                                                            |
 | `REDIS_URL`                                                         | 1 workflow                                    | Legacy Redis URL retained by a single job.                                                                                                                                                                                                                           |
 | `ENV_FILE`                                                          | `ci.yaml`                                     | A base64-encoded `.env` that the test-and-build job decodes so Jest and `next build` have a full environment. It duplicates several of the values above, which makes it easy to rotate one and forget the other; #866 flagged it for removal and it is still in use. |
 | `CLAUDE_CODE_OAUTH_TOKEN`                                           | 2 workflows                                   | Claude Code review automation; not money-related.                                                                                                                                                                                                                    |

@@ -45,7 +45,7 @@ ran. Once a second writer can set `SUCCEEDED` without running it, the guard
 inverts: it stops reading "this work is done" and starts reading "this work will
 never be done". The webhook arrives, sees `SUCCEEDED`, and returns. No
 appointment, no earnings, no journal entry, no GST, and — because the
-capture-amount parity check sits _below_ the early return — no verification that
+capture-amount parity check sits *below* the early return — no verification that
 the amount captured matches the amount owed.
 
 The buyer's money is taken and never enters the ledger.
@@ -112,7 +112,7 @@ one set of earnings, and one journal entry.
 
 ### The reconcile cron was the easiest one to miss
 
-`scripts/payments/reconcile-payment-status.ts` exists _because_ a
+`scripts/payments/reconcile-payment-status.ts` exists *because* a
 `payment.captured` was missed, which makes it the least safe place of all to
 write status directly — and it did, then logged
 `⚠️ Payment succeeded - may need manual appointment creation!` rather than

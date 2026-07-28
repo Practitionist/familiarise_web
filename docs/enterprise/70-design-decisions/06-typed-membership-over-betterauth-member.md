@@ -25,7 +25,7 @@ maintain a typed sibling and gate exclusively on it.
 ## Decision
 
 The enterprise layer maintains its own typed `Membership` model
-(`prisma/schema.prisma`, `model Membership`) and _every_ permission gate
+(`prisma/schema.prisma`, `model Membership`) and *every* permission gate
 reads it, never BetterAuth's `member`. The `Membership` row carries a
 typed `role MemberRole` and `status MemberStatus @default(ACTIVE)`, the
 role-specific profile FKs, `payoutRecipient`, the rate-card override, and
@@ -65,7 +65,7 @@ lifecycle. The free string means a typo (`"BILLNG_ADMIN"`) is a silent
 runtime authorization bug rather than a compile error, and there is
 nowhere to express `SUSPENDED` / `REMOVED` / `ERASED` — so a suspended
 member could not be represented without overloading the role string or
-deleting the row, and a DPDP erasure would have to _delete_ the
+deleting the row, and a DPDP erasure would have to *delete* the
 membership, destroying the audit and financial trail it is legally
 required to keep. Right-to-erasure specifically needs a row that survives
 identifier scrubbing, which a delete cannot provide.

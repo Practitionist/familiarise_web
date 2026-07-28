@@ -26,7 +26,7 @@ true.
 
 ## The measurements
 
-Median gap between consecutive _scheduled_ runs, from the Actions API, alongside
+Median gap between consecutive *scheduled* runs, from the Actions API, alongside
 the median run duration:
 
 | Workflow                         | Declared     | Measured gap | Duration |
@@ -92,7 +92,7 @@ this entire fleet is under 130,000 actions per month, so the floor alone exceeds
 what the problem is worth, and each activity adds 50–200 ms of overhead.
 Temporal's own guidance is that "a few background steps, a cron task, or a
 simple webhook chain" sits below its threshold, which describes every flow here.
-The verdict is unchanged; the _reason_ is now cost and fit rather than
+The verdict is unchanged; the *reason* is now cost and fit rather than
 architecture, which matters because the architectural objection could have been
 retired by a vendor release and quietly invalidated the decision.
 
@@ -100,7 +100,7 @@ retired by a vendor release and quietly invalidated the decision.
 covers this fleet, it integrates with Netlify without a worker tier, and its
 step-level checkpointing — where a failed step resumes rather than restarting
 the flow — is genuinely better than the sweeper-re-drive pattern used here. But
-the measured defect is missed _schedule ticks_, and durable step execution does
+the measured defect is missed *schedule ticks*, and durable step execution does
 not fix scheduling. QStash restores the cadence for roughly $1–5/month without
 placing a hosted control plane between our cron triggers and our money flows,
 which is the specific risk ADR 13 raised (citing Inngest's August 2024 outage
@@ -127,7 +127,7 @@ factor of six. Where latency genuinely matters, drive the work at the event
 (as ADR 21 does for payment confirmation) rather than scheduling a sweeper and
 assuming it runs.
 
-`scripts/ci/check-workflow-hygiene.ts` fails the build on a _recurring_ start
+`scripts/ci/check-workflow-hygiene.ts` fails the build on a *recurring* start
 collision — two workflows that both fire more than once a day at the same
 minute. Collisions between two daily jobs are reported and tolerated, because at
 this fleet's density no four-times-hourly schedule can dodge every daily job,

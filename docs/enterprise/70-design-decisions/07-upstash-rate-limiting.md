@@ -59,7 +59,7 @@ correctness first — the in-memory counter is per-lambda and trivially
 defeated by lambda rotation under Netlify's serverless model, so on the
 auth routes it provides false assurance rather than protection. It lost a
 second time on operability: running both limiters at once means the same
-brute-force flow can trip _two different_ 429s depending on which lambda
+brute-force flow can trip *two different* 429s depending on which lambda
 served the request, an incident-response trap where the operator cannot
 tell which limiter fired or why the counts don't reconcile. One coherent
 limiter beats two that disagree, so BetterAuth's is turned fully off
@@ -96,7 +96,7 @@ limiter is off, any route not covered by an edge rule or an
 single-use reset token, not by a request limiter.
 
 Revisit this decision if the platform ever moves off serverless to a
-long-lived process model where an in-process limiter _would_ be globally
+long-lived process model where an in-process limiter *would* be globally
 coherent, or if Redis availability becomes a liability worth trading the
 fail-open behaviour against. Re-enabling BetterAuth's limiter requires
 auditing every overlap against the Upstash limiters first, or the

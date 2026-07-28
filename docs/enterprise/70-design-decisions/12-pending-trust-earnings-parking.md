@@ -21,7 +21,7 @@ org has paid nothing and may never pay, because it has not yet been
 verified and has no settled invoice. If the org then ghosts, the platform
 is left having promised consultants money funded by an invoice that will
 never be collected (#687, the invoice-fraud guard). The platform needed a
-way to let unverified orgs _transact_ (the pilot-before-verify sales
+way to let unverified orgs *transact* (the pilot-before-verify sales
 motion depends on it) without letting their unfunded bookings turn into
 payable consultant liabilities until some trust signal arrives.
 
@@ -37,7 +37,7 @@ status, and if that org is `PENDING_VERIFICATION` it counts its `PAID`
 `OrganizationInvoice` rows; only if that count is zero does it park. The
 decision then applies to **every** row the booking writes — the consultant
 earning, the primary org earning, and each collaborator-org earning — so
-an unverified sponsor cannot let consultant _or_ org money clear. (Keying
+an unverified sponsor cannot let consultant *or* org money clear. (Keying
 on the sponsor rather than the host is the fix for the earlier version,
 which keyed on the expert's HOST org and parked only the org-share row.)
 Upstream of accrual, the checkout path additionally hard-requires a
@@ -78,7 +78,7 @@ motion: the product deliberately lets an org pilot before it verifies, so
 a prospective enterprise customer can run real sessions during evaluation.
 Hard-blocking bookings kills that pilot-before-verify flow, which is a
 core go-to-market lever, to close a fraud hole that a status gate on
-_earnings_ closes just as effectively without touching the booking
+*earnings* closes just as effectively without touching the booking
 experience.
 
 We considered letting the earnings accrue as ordinary `PENDING` and
@@ -95,7 +95,7 @@ simply never sees.
 We considered a time-based release (auto-promote after N days regardless
 of verification). It lost because elapsed time is not a trust signal — a
 ghost org that waits out the timer is exactly the fraud we were guarding
-against. The release must be tied to a _positive_ signal (verification or
+against. The release must be tied to a *positive* signal (verification or
 payment), not the mere passage of time.
 
 ## Consequences

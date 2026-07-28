@@ -18,7 +18,7 @@ and confirmed by a webhook. Of all those steps, exactly one is
 irreversible: the gateway submission. Once `payouts.create` fires, real
 money leaves the platform's RazorpayX balance, and you cannot un-send a
 transfer — recovery is a clawback or a reversal, not a delete. The
-platform needed to bring the entire pipeline up _before_ it was safe to
+platform needed to bring the entire pipeline up *before* it was safe to
 move real money, both to prove the pipeline works against real accumulated
 data and to keep the schema and reconcilers exercised. A flag that froze
 the whole pipeline would prove nothing; a flag that froze nothing would
@@ -27,7 +27,7 @@ risk paying the wrong amount or recipient on an unproven path.
 ## Decision
 
 `ENABLE_LIVE_PAYOUTS` (read as `process.env.ENABLE_LIVE_PAYOUTS ===
-"true"`, surfaced as a constant in `lib/feature-flags.ts`) gates _only_
+"true"`, surfaced as a constant in `lib/feature-flags.ts`) gates *only*
 the gateway-submission step. Everything upstream runs for real regardless
 of the flag: earnings accrue and become `READY`, `createOrgPayoutBatch`
 claims them and writes a real `OrganizationPayout` with real aggregated
@@ -38,7 +38,7 @@ audit log records the batch. The flag is checked in `processOrgPayout`
 function does **not** submit to RazorpayX, and the actual
 `submitOrgPayoutToGateway` call — a live RazorpayX POST carrying the
 deterministic `payout_<id>` idempotency key — only happens after the
-transaction commits _and_ only when the flag is on. The submission
+transaction commits *and* only when the flag is on. The submission
 side-effect is deliberately placed after the transaction so a long network
 call and its double-submit risk never sit inside a serializable
 transaction; on a permanent 4xx the row is marked `FAILED` and earnings
@@ -105,7 +105,7 @@ A second cost is that the flag is redeploy-gated, not runtime — flipping
 it on (or rolling back) requires a deploy, so go-live and rollback are not
 instantaneous. That is deliberate (it forces the change through CI and
 makes it an auditable deploy event), but it means rollback can only stop
-_new_ submissions; already-submitted transfers settle via webhook and
+*new* submissions; already-submitted transfers settle via webhook and
 can't be un-sent.
 
 Revisit this decision once live payouts have run cleanly in production for

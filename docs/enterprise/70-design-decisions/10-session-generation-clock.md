@@ -35,21 +35,21 @@ and invitation-accept paths (see [JIT & session
 refresh](../20-iam-and-security/02-jit-and-session-refresh.md) §2). The
 `customSession` hook in `lib/auth.ts` reads the live row's
 `sessionGeneration` on every session lookup (`liveSessionGeneration`) and
-re-loads memberships from the database _unconditionally_ — the
+re-loads memberships from the database *unconditionally* — the
 `memberships.findMany` always runs (`prisma.membership.findMany({ where: {
 status: "ACTIVE", userId } })`). Because memberships are always re-read,
 the user's effective permissions update on the next round-trip with no
 forced logout. The marker carried in the session payload
 (`additionalFields.sessionGeneration`) is what client code can compare
-against its cached payload to _detect_ staleness; the always-on refetch is
-what actually _corrects_ it. Today the marker is not yet used as a
+against its cached payload to *detect* staleness; the always-on refetch is
+what actually *corrects* it. Today the marker is not yet used as a
 skip-the-refetch fast-path — that optimization is noted as future work in
 `lib/auth.ts`.
 
 "Next round-trip" is honestly qualified: BetterAuth's cookie cache
 (`session.cookieCache`, `maxAge: 5 min`) can serve a cached session shape
 for up to five minutes before `customSession` re-runs, so a benign role
-_change_ surfaces within a few minutes. The dangerous case — a downgraded
+*change* surfaces within a few minutes. The dangerous case — a downgraded
 OWNER or a removed member — is handled by the **same** generation bump, not
 by a hard session kill. There is no server-side revoke-by-userId available:
 BetterAuth's `admin` plugin (which exposes `revokeUserSessions`) is not
@@ -84,14 +84,14 @@ staleness to the cookie-cache window instead.
 We considered re-reading memberships from the database on every request
 unconditionally with no cookie cache. It lost on database load: it turns
 the session check into a guaranteed two-query round-trip (live user row +
-`memberships.findMany`) on _every_ page load and API call. The 5-minute
+`memberships.findMany`) on *every* page load and API call. The 5-minute
 cookie cache lets most requests be served from the signed cookie and skip
 the database entirely; the price is a bounded staleness window — the same
 cookie-cache / 24h `updateAge` ceiling — that applies to the dangerous
 removal/downgrade case as well, since no hard kill is available to shorten
 it.
 
-A design note on _why a counter and not a boolean_: concurrent role
+A design note on *why a counter and not a boolean*: concurrent role
 mutations (a script bulk-promoting interns) race against a boolean "stale"
 flag — the first reader clears it and later mutations are lost. A
 monotonic counter incremented atomically inside each mutation's
@@ -103,7 +103,7 @@ unambiguously compare "I've seen up to N" against the current row value.
 The real cost is the up-to-5-minute staleness window for benign role
 changes: a freshly promoted member may not see their new capabilities for
 a few minutes if their requests keep hitting the cookie cache. We accept
-that ceiling for benign changes; the _dangerous_ staleness — a downgraded
+that ceiling for benign changes; the *dangerous* staleness — a downgraded
 OWNER or a removed member still acting — is bounded by the same
 cookie-cache / 24h `updateAge` window rather than eliminated by a hard
 kill, because no server-side revoke is available (the `admin` plugin is not
