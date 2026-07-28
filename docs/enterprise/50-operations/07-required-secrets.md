@@ -153,20 +153,33 @@ none of it can be completed from the codebase. They are listed here rather than
 in a commit message because a commit message is not somewhere anyone looks for
 outstanding work. Ordered by what would hurt most if it stayed undone.
 
-**1. Confirm `RAZORPAY_WEBHOOK_SECRET` in the Netlify production context.**
-This is the one to do first. `app/api/webhooks/razorpay/route.ts` returns a 500
-before it verifies anything when the variable is missing, so every gateway
-event — captures, refunds, disputes, payouts — is rejected. It is confirmed
-absent from the deploy-preview context, and production has never been checked.
-Nothing would surface this today because no live payment has ever produced a
-webhook. Open the Netlify site environment, confirm the variable exists for the
-production context, and confirm the value matches the secret configured on the
-Razorpay dashboard webhook.
+**1. ~~Confirm `RAZORPAY_WEBHOOK_SECRET`~~ — done, 2026-07-29.** Checked with
+the Netlify CLI: it **is** set for the production context. It is absent from
+`deploy-preview` only, which is exactly why previews return
+`500 {"error":"Webhook secret not configured"}` on every gateway event. Nothing
+to do for production. If you ever want previews to exercise webhooks, set a
+**test** Razorpay webhook secret for that context — not the production value,
+since preview URLs are public and the secret is what stops forged webhooks.
 
-**2. Provision the four dangling ops secrets.** `SLACK_OPS_WEBHOOK_URL`,
-`NOVU_SECRET_KEY`, `NEXT_PUBLIC_APP_URL` and `MSME_ALERT_EMAIL` are referenced
-by workflows and have never been set. Sentry is currently the only channel by
-which a money-cron failure reaches a human.
+**2. Two ops secrets remain, and they belong to GitHub Actions, not Netlify.**
+This distinction cost real signal, so it is worth stating plainly: 60 of the 61
+workflow files list their secrets individually as `${{ secrets.X }}`, and only
+`ci.yaml` loads the bundled `ENV_FILE`. The scheduled fleet therefore reads
+**GitHub repository secrets**. A value set in Netlify reaches the running app
+and never reaches a cron.
+
+That gap was live. `NOVU_SECRET_KEY` and `NEXT_PUBLIC_APP_URL` were both set in
+Netlify and both missing from Actions, which means every notification cron —
+dunning, subscription invoices, wallet low-balance, member overage timeouts —
+has been running with an empty Novu key and silently sending nothing. Both were
+copied from Netlify production into GitHub Actions on 2026-07-29.
+
+Still missing, because each needs a value only a human can supply:
+
+| Secret | Where | What it needs |
+| --- | --- | --- |
+| `SLACK_OPS_WEBHOOK_URL` | GitHub Actions | An incoming-webhook URL from the Slack workspace. Referenced by 57 workflows. Until it exists, Sentry is the only channel by which a money-cron failure reaches anyone. |
+| `MSME_ALERT_EMAIL` | GitHub Actions | The finance inbox that should receive MSME §43B(h) payment-deadline alerts. `RESEND_API_KEY` is already set, so email dispatch starts working the moment a recipient exists. |
 
 **3. Take the GST zero-rating evidence gap to a CA.** Buyer-country detection
 now defaults to `IN` unless a country was explicitly asserted, so the error
