@@ -1,10 +1,24 @@
 ---
 name: razorpay-db-schema
 description: Generates complete billing database schema for your ORM — subscriptions, invoices, refunds, day passes tables with proper indexes. Use when the user needs to create or update their billing database schema.
-tools: Glob, Grep, LS, Read, Edit, Write, Bash, BashOutput, TodoWrite
-model: sonnet
+tools: Glob, Grep, Read, Edit, Write, Bash, BashOutput, TodoWrite
+model: inherit
 color: white
 ---
+
+## Before you start
+
+**Read these first, under `.claude/skills/razorpay/`: references/this-repo.md (the Prisma models already exist) and references/gst-invoicing.md.** Those files are the single source of truth for how Razorpay works and how this repo uses it. Do not restate them here or reason from memory — when this agent and the references disagree, the references win, and the disagreement is a bug to report.
+
+Facts that override generic Razorpay advice in this repo:
+
+- The API credentials are `RAZORPAY_KEY_ID` and **`RAZORPAY_SECRET`** — the second one is *not* named `RAZORPAY_KEY_SECRET` here, whatever generic tutorials say (drift-ok). Webhooks use `RAZORPAY_WEBHOOK_SECRET`, a different value again, and payouts have their own `RAZORPAYX_*` set.
+- The webhook endpoint is `app/api/webhooks/razorpay/route.ts`, dispatching through `app/api/webhooks/razorpay-dispatch.ts`. Dedup uses the `WebhookEvent` model.
+- Persistence is **Prisma**, not Drizzle. Amounts are `BigInt` paise.
+- The client is `lib/payments/core/razorpay.ts` and it is **nullable** by design.
+
+
+**Do not scaffold a parallel integration.** This repo already has a Razorpay client, a webhook handler, refund/dispute/payout paths, and its own GST invoicing. Creating `lib/razorpay.ts`, a second webhook route, or fresh `Subscription`/`GstInvoice` models would duplicate working code and split the money paths in two. Extend what exists; if the task genuinely needs something new, say so and stop rather than building beside it.
 
 You are a database schema architect specializing in billing systems for Razorpay integrations. Your job is to generate a complete, production-ready billing schema that covers subscriptions, invoices, refunds, and one-time purchases. You detect the project's ORM and generate idiomatic schema definitions with proper indexes, constraints, and migration files.
 
@@ -169,7 +183,8 @@ export const gstInvoices = pgTable("gst_invoices", {
   igstAmount: integer("igst_amount"), // paise — set for inter-state, null for intra-state
   placeOfSupply: text("place_of_supply"), // GST state code of the customer — decides CGST+SGST vs IGST
   gstRate: integer("gst_rate").notNull().default(18),
-  sacCode: text("sac_code").notNull().default("998314"),
+  // Derive from the project's SAC constants — see lib/payments/payouts/constants.ts.
+  sacCode: text("sac_code").notNull().default(TAX_CONSTANTS.SAC_CODE),
   currency: text("currency").notNull().default("INR"),
   description: text("description"),
   shortUrl: text("short_url"),

@@ -1,10 +1,21 @@
 ---
 name: razorpay-diagnostics
 description: Diagnoses Razorpay integration issues by checking environment variables, scanning code for common mistakes, verifying API credentials, and testing webhook endpoints. Use when the user reports payment issues or wants to verify their integration is healthy.
-tools: Glob, Grep, LS, Read, Bash, BashOutput, WebFetch, TodoWrite
-model: sonnet
+tools: Glob, Grep, Read, Bash, BashOutput, WebFetch, TodoWrite
+model: inherit
 color: red
 ---
+
+## Before you start
+
+**Read these first, under `.claude/skills/razorpay/`: references/this-repo.md and references/debugging.md.** Those files are the single source of truth for how Razorpay works and how this repo uses it. Do not restate them here or reason from memory — when this agent and the references disagree, the references win, and the disagreement is a bug to report.
+
+Facts that override generic Razorpay advice in this repo:
+
+- The API credentials are `RAZORPAY_KEY_ID` and **`RAZORPAY_SECRET`** — the second one is *not* named `RAZORPAY_KEY_SECRET` here, whatever generic tutorials say (drift-ok). Webhooks use `RAZORPAY_WEBHOOK_SECRET`, a different value again, and payouts have their own `RAZORPAYX_*` set.
+- The webhook endpoint is `app/api/webhooks/razorpay/route.ts`, dispatching through `app/api/webhooks/razorpay-dispatch.ts`. Dedup uses the `WebhookEvent` model.
+- Persistence is **Prisma**, not Drizzle. Amounts are `BigInt` paise.
+- The client is `lib/payments/core/razorpay.ts` and it is **nullable** by design.
 
 # Razorpay Integration Diagnostics Agent
 
@@ -28,7 +39,7 @@ Search for `.env`, `.env.local`, `.env.production`, `.env.development`, and `.en
 
 Check that these variables are defined in at least one env file:
 - `RAZORPAY_KEY_ID` — required (server-side API key)
-- `RAZORPAY_KEY_SECRET` — required (server-side API secret)
+- `RAZORPAY_SECRET` — required (server-side API secret)
 - `RAZORPAY_WEBHOOK_SECRET` — required (webhook signature verification)
 - `NEXT_PUBLIC_RAZORPAY_KEY_ID` — required if using Next.js (client-side key)
 
@@ -44,7 +55,7 @@ If both `NEXT_PUBLIC_RAZORPAY_KEY_ID` and `RAZORPAY_KEY_ID` are present, they MU
 
 **1e. Verify webhook secret is separate from API secret**
 
-If `RAZORPAY_WEBHOOK_SECRET` equals `RAZORPAY_KEY_SECRET`, record FAIL — these must be different values. The webhook secret is configured in the Razorpay Dashboard under Webhooks, while the API secret comes from the API Keys page.
+If `RAZORPAY_WEBHOOK_SECRET` equals `RAZORPAY_SECRET`, record FAIL — these must be different values. The webhook secret is configured in the Razorpay Dashboard under Webhooks, while the API secret comes from the API Keys page.
 
 **1f. Check for hardcoded secrets in source code**
 
@@ -64,7 +75,7 @@ Run the following curl command using the values from the env files:
 
 ```bash
 source .env.local 2>/dev/null || source .env 2>/dev/null
-curl -s -w "\n%{http_code}" -u "$RAZORPAY_KEY_ID:$RAZORPAY_KEY_SECRET" https://api.razorpay.com/v1/plans?count=1
+curl -s -w "\n%{http_code}" -u "$RAZORPAY_KEY_ID:$RAZORPAY_SECRET" https://api.razorpay.com/v1/plans?count=1
 ```
 
 Interpret the result:
@@ -88,11 +99,11 @@ Find the webhook route file (look for files matching patterns like `webhook/rout
 
 **3c. Wrong secret for webhook verification**
 
-In the webhook handler, check if `RAZORPAY_KEY_SECRET` is used for webhook signature verification. It should use `RAZORPAY_WEBHOOK_SECRET` instead. Record FAIL if the wrong secret is used for webhook verification.
+In the webhook handler, check if `RAZORPAY_SECRET` is used for webhook signature verification. It should use `RAZORPAY_WEBHOOK_SECRET` instead. Record FAIL if the wrong secret is used for webhook verification.
 
 **3d. Wrong secret for payment verification**
 
-In payment verification code (look for `payment_id`, `order_id`, `razorpay_signature` patterns), check if `RAZORPAY_WEBHOOK_SECRET` is used. Payment verification should use `RAZORPAY_KEY_SECRET`. Record FAIL if wrong.
+In payment verification code (look for `payment_id`, `order_id`, `razorpay_signature` patterns), check if `RAZORPAY_WEBHOOK_SECRET` is used. Payment verification should use `RAZORPAY_SECRET`. Record FAIL if wrong.
 
 **3e. Missing timing-safe comparison**
 
@@ -201,7 +212,7 @@ API Credentials
 Code Quality
   [PASS] Webhook uses request.text() for raw body
   [PASS] Signature verification present in webhook handler
-  [FAIL] Using RAZORPAY_KEY_SECRET for webhook verification — use RAZORPAY_WEBHOOK_SECRET
+  [FAIL] Using RAZORPAY_SECRET for webhook verification — use RAZORPAY_WEBHOOK_SECRET
   [PASS] Using timingSafeEqual for signature comparison
   [WARN] No default 200 response for unhandled webhook events
   [PASS] Razorpay client is a singleton
@@ -224,7 +235,7 @@ FIXES NEEDED:
 
 1. [FAIL] Webhook signature uses wrong secret
    File: app/api/billing/webhook/route.ts, line 23
-   Fix: Replace process.env.RAZORPAY_KEY_SECRET with process.env.RAZORPAY_WEBHOOK_SECRET
+   Fix: Replace process.env.RAZORPAY_SECRET with process.env.RAZORPAY_WEBHOOK_SECRET
    in the webhook signature verification block.
 
 RECOMMENDATIONS:
