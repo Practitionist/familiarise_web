@@ -152,6 +152,21 @@ Create a `.env` file based on `.env.sample`. Never commit `.env` or secrets to t
 | `NEXT_PUBLIC_RAZORPAY_KEY_ID` | Razorpay key ID | `rzp_test_` for dev, `rzp_live_` for prod |
 | `RAZORPAY_KEY_ID` | Razorpay key ID (server) | Same as public key |
 | `RAZORPAY_SECRET` | Razorpay secret | Different per environment |
+| `RAZORPAY_WEBHOOK_SECRET` | Razorpay webhook signing secret | **Required.** `/api/webhooks/razorpay` returns 500 before verifying anything when it is unset, so every gateway event is rejected — silently, since no live payment has exercised it. Absent from Netlify's deploy-preview context; confirm it exists for **production**. |
+
+> **Reminder — Dodo Payments is schema-only.** `DODO_PAYMENTS` exists as a
+> `PaymentGateway` enum value and nothing else: no client, no checkout path, no
+> webhook handler, no payout submitter, and no timeline. The value is reserved
+> only because Postgres cannot drop an enum value cheaply. It throws
+> (`UnsupportedGatewayError`) if it ever reaches gateway routing, a refund, or a
+> payout, so it cannot be used by accident — see
+> [docs/payments/gateways/README.md](docs/payments/gateways/README.md).
+>
+> **For a finance or CA review:** the live rails are **Razorpay** (primary, INR
+> settlement) and **Stripe** (the request→approve booking path only). Dodo has
+> never moved money and appears in no reconciliation or filing. Lemon Squeezy
+> and XFlow were evaluated in March 2026, rejected, and removed from the
+> codebase; they are not options.
 
 ### Stream.io (Video & Chat)
 

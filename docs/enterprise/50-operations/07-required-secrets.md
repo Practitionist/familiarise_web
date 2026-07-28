@@ -146,6 +146,54 @@ production context, and confirm the value matches the secret configured on the
 Razorpay dashboard webhook. An endpoint that 500s on every delivery would be
 invisible today, because no live payment has ever produced one.
 
+## Open actions, and who can do them
+
+Everything below needs a credential, a console, or a professional opinion, so
+none of it can be completed from the codebase. They are listed here rather than
+in a commit message because a commit message is not somewhere anyone looks for
+outstanding work. Ordered by what would hurt most if it stayed undone.
+
+**1. Confirm `RAZORPAY_WEBHOOK_SECRET` in the Netlify production context.**
+This is the one to do first. `app/api/webhooks/razorpay/route.ts` returns a 500
+before it verifies anything when the variable is missing, so every gateway
+event — captures, refunds, disputes, payouts — is rejected. It is confirmed
+absent from the deploy-preview context, and production has never been checked.
+Nothing would surface this today because no live payment has ever produced a
+webhook. Open the Netlify site environment, confirm the variable exists for the
+production context, and confirm the value matches the secret configured on the
+Razorpay dashboard webhook.
+
+**2. Provision the four dangling ops secrets.** `SLACK_OPS_WEBHOOK_URL`,
+`NOVU_SECRET_KEY`, `NEXT_PUBLIC_APP_URL` and `MSME_ALERT_EMAIL` are referenced
+by workflows and have never been set. Sentry is currently the only channel by
+which a money-cron failure reaches a human.
+
+**3. Take the GST zero-rating evidence gap to a CA.** Buyer-country detection
+now defaults to `IN` unless a country was explicitly asserted, so the error
+direction is over-collection rather than under-collection. What is still missing
+is the evidence a zero-rated export needs: no billing address is captured, no
+LUT is checked, settlement is in INR rather than convertible foreign exchange,
+and no FIRC reference is stored. `lib/payments/tax/tax-engine.ts` carries a TODO
+listing exactly these. Worth a professional opinion before international volume
+grows.
+
+**4. Decide whether non-resident consultants are supported at all.** The payout
+pipeline hard-throws for them today. Section 194-O does not apply to
+non-residents, so supporting them means Section 195 withholding, DTAA relief
+against a Tax Residency Certificate and Form 10F, and Form 15CA/15CB per
+remittance. The DTAA engine in `lib/compliance/tds.ts` is already written but
+unreachable, because both callers hardcode `residencyStatus: "RESIDENT"`. This
+is a product decision before it is an engineering one.
+
+**5. Finish the `PaymentGateway` enum removal.** `LEMON_SQUEEZY` and `XFLOW`
+still exist in the live enum but not in the schema. The reason this was deferred
+— that live rows referenced them — no longer holds: re-checked 2026-07-29, zero
+rows in `Payment`, `Refund` or `Dispute` use either value. All that remains is
+the mechanics, since Postgres has no `ALTER TYPE … DROP VALUE` and it needs a
+type recreation and swap. `scripts/ci/check-db-drift.ts` tolerates the drift
+until **2026-09-30**, after which CI fails rather than letting it become
+permanent.
+
 ## Related
 
 The companion guard `scripts/ci/check-workflow-hygiene.ts` also enforces that no

@@ -3949,7 +3949,16 @@ enum PaymentLegSource {
 enum PaymentGateway {
   STRIPE
   RAZORPAY
-  DODO_PAYMENTS // post-MVP: evaluation pending
+  // Schema-only, deliberately. No client, no checkout path, no webhook handler,
+  // no payout submitter, and no date attached to building any of them. The value
+  // is reserved because Postgres has no `ALTER TYPE ... DROP VALUE` — adding one
+  // is free, removing one costs a type recreation and swap.
+  //
+  // It fails loudly rather than falling through a `default:` branch: see
+  // POST_MVP_GATEWAY_STUBS in lib/payments/constants.ts and the throwing guard
+  // in lib/payments/validation/gateway-guards.ts. For a finance or CA review,
+  // treat it as not existing — no money has ever moved through it.
+  DODO_PAYMENTS
   CARD
 }
 

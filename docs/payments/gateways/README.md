@@ -14,18 +14,65 @@ Familiarise uses **Razorpay as the sole payment gateway** for both domestic and 
 | ------------ | ------------------------- | -------- | ----------------- |
 | **Razorpay** | India + International     | INR      | RazorpayX Payouts |
 
-### Previously Evaluated & Removed
+### Previously Evaluated
 
 | Gateway | Status | Reason |
 |---------|--------|--------|
-| Stripe | **Removed** | Invite-only in India since May 2024, no UPI, 5–6% international fees |
+| Stripe | **Still live — see the correction below** | Invite-only in India since May 2024, no UPI, 5–6% international fees |
+
+This table used to record Stripe as removed. That is wrong, and it is the kind
+of wrong that gets live payment code deleted, so it is corrected here rather
+than quietly edited away. Stripe is a **live rail** today: the request→approve
+booking flow hardcodes `PaymentGateway.STRIPE`
+(`app/api/bookings/consultations/[consultationId]/route.ts` and its
+subscriptions sibling), `lib/payments/core/stripe.ts` is a real client, and the
+database holds 86 Stripe payments against 240 Razorpay ones. What is true is
+that Stripe was rejected as the *primary* gateway and that new work should
+route through Razorpay. Do not delete Stripe code on the strength of the word
+"removed".
 
 ### Future Consideration
 
 | Gateway | When | Why |
 |---------|------|-----|
+| **Dodo Payments** | Post-MVP, no timeline | Sanctioned second gateway. **Schema-only today** — see below. |
 | Cashfree | Month 3-6 | Cheaper fees (1.6–1.95% vs 2%), better split fees (0.1% vs 0.25%) |
 | Wise Business | International payouts | Best FX rates for paying international consultants |
+
+### Dodo Payments — schema-only, deliberately
+
+`DODO_PAYMENTS` exists as a `PaymentGateway` enum value and nothing else. There
+is no client, no checkout path, no webhook handler and no payout submitter, and
+there is no date attached to building any of them.
+
+It is present so the enum does not have to change later — Postgres has no
+`ALTER TYPE … DROP VALUE`, so adding a value costs nothing while removing one
+costs a type recreation and swap. Keeping the value reserved is cheaper than
+adding it under time pressure.
+
+Because a schema value with no implementation is exactly the kind of thing that
+gets picked up by a `default:` branch and silently used, it fails loudly
+instead. `POST_MVP_GATEWAY_STUBS` in `lib/payments/constants.ts` names it, and
+`lib/payments/validation/gateway-guards.ts` throws an `UnsupportedGatewayError`
+if it ever reaches gateway routing, a refund, or a payout submitter. The payout
+service also skips a stub-gateway account at *selection* time rather than at
+disbursement, so a consultant's earnings stay `READY` for the next batch
+instead of being claimed into `BATCHED` against a gateway that will never
+exist.
+
+**For a finance or CA review:** treat Dodo as not existing. No money has ever
+moved through it, no fees are payable on it, and it appears in no reconciliation
+or filing. The only live rails are Razorpay (primary, INR settlement) and Stripe
+(the request→approve booking path).
+
+### Not under consideration
+
+Lemon Squeezy and XFlow were evaluated in March 2026 and rejected — Lemon
+Squeezy prohibits services in its ToS and charges ~6.5%, and XFlow is
+cross-border B2B settlement infrastructure rather than a gateway. Both were
+removed from the codebase in #984. The dated analysis is preserved in
+[gateway-evaluation-mar-2026.md](./gateway-evaluation-mar-2026.md) so the
+decision is not re-litigated; neither is a current option.
 
 > See [gateway-evaluation-mar-2026.md](./gateway-evaluation-mar-2026.md) for the full analysis.
 
