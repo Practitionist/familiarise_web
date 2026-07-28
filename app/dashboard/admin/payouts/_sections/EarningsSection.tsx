@@ -14,7 +14,7 @@ import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import {
   Wallet,
@@ -79,6 +79,10 @@ export default function EarningsSection() {
 
   const { data: earningsData, isLoading: earningsLoading } = useQuery({
     queryKey: ["admin-earnings", status, page],
+    // Filter/page live in the key, so each value is its own query. Without
+    // this, switching to one not yet fetched dropped `data` to undefined and
+    // re-showed the loading branch. Same fix as #346 on the appointments list.
+    placeholderData: keepPreviousData,
     queryFn: () => fetchEarnings(status, page, limit),
     staleTime: 30 * 1000,
   });

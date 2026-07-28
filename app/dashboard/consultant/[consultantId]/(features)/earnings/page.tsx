@@ -1,7 +1,7 @@
 "use client";
 
 import { use, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import type { EarningStatus } from "@prisma/client";
 import {
   DashboardHeader,
@@ -123,19 +123,27 @@ export default function EarningsPage({
   const [page, setPage] = useState(0);
   const limit = 15;
 
-  const { data, isLoading, error, refetch } = useQuery<EarningsResponse>({
-    queryKey: ["consultant-earnings", consultantId, statusFilter, page],
-    queryFn: async () => {
-      const params = new URLSearchParams();
-      if (statusFilter !== "ALL") params.set("status", statusFilter);
-      params.set("limit", String(limit));
-      params.set("offset", String(page * limit));
-      const res = await fetch(`/api/consultant/earnings?${params}`);
-      if (!res.ok) throw new Error("Failed to fetch earnings");
-      return res.json();
-    },
-    staleTime: 30_000,
-  });
+  const { data, isLoading, isPlaceholderData, error, refetch } =
+    useQuery<EarningsResponse>({
+      queryKey: ["consultant-earnings", consultantId, statusFilter, page],
+      queryFn: async () => {
+        const params = new URLSearchParams();
+        if (statusFilter !== "ALL") params.set("status", statusFilter);
+        params.set("limit", String(limit));
+        params.set("offset", String(page * limit));
+        const res = await fetch(`/api/consultant/earnings?${params}`);
+        if (!res.ok) throw new Error("Failed to fetch earnings");
+        return res.json();
+      },
+      staleTime: 30_000,
+      // `statusFilter` and `page` are in the key, so every tab and every page
+      // is a separate query. Without this, switching to a tab you have not
+      // opened in the last 30s left `data` undefined and `isLoading` true, and
+      // the branch below replaced the entire page — header, stat cards, tabs —
+      // with a centred spinner. Keeping the previous result means the outgoing
+      // rows stay put, dimmed, while the new ones load.
+      placeholderData: keepPreviousData,
+    });
 
   if (isLoading && !data) {
     return (
@@ -390,8 +398,15 @@ export default function EarningsPage({
           ))}
         </div>
 
-        {/* Earnings Table */}
-        <div className="mt-4 bg-white rounded-xl border border-zinc-200 overflow-hidden">
+        {/* Earnings Table — dimmed while the tab being switched to is still
+            in flight, so the rows on screen are visibly stale rather than
+            silently wrong. */}
+        <div
+          className={`mt-4 bg-white rounded-xl border border-zinc-200 overflow-hidden transition-opacity ${
+            isPlaceholderData ? "opacity-60" : "opacity-100"
+          }`}
+          aria-busy={isPlaceholderData}
+        >
           <ResponsiveTable
             columns={columns}
             rows={earnings}
