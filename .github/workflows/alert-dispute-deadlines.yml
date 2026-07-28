@@ -36,7 +36,7 @@ jobs:
         run: npx prisma generate
 
       - name: Check dispute deadlines
-        run: npx tsx jobs/disputes/alert-dispute-deadlines.ts
+        run: npx --yes tsx@4.23.1 jobs/disputes/alert-dispute-deadlines.ts
 
       - name: Notify on critical disputes
         if: failure()

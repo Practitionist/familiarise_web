@@ -44,7 +44,7 @@ jobs:
         run: npx prisma generate
 
       - name: Run consent retention sweeper job
-        run: npx tsx jobs/compliance/consent-retention-sweeper.ts
+        run: npx --yes tsx@4.23.1 jobs/compliance/consent-retention-sweeper.ts
 
       - name: Notify on failure
         if: failure()

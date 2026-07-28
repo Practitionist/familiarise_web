@@ -26,7 +26,7 @@ jobs:
           cache: "npm"
       - run: npm ci
       - run: npx prisma generate
-      - run: npx tsx jobs/cleanup/prune-audit-logs.ts
+      - run: npx --yes tsx@4.23.1 jobs/cleanup/prune-audit-logs.ts
       - name: Notify on failure
         if: failure()
         env:

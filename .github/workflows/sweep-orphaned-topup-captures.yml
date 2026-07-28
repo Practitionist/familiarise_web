@@ -37,7 +37,7 @@ jobs:
         run: npx prisma generate
 
       - name: Sweep orphaned top-up captures
-        run: npx tsx jobs/cleanup/sweep-orphaned-topup-captures.ts
+        run: npx --yes tsx@4.23.1 jobs/cleanup/sweep-orphaned-topup-captures.ts
 
       - name: Notify on failure
         if: failure()
