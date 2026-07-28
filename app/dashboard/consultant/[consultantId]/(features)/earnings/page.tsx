@@ -70,6 +70,13 @@ interface EarningRecord {
 
 interface EarningsResponse {
   summary: EarningsSummary;
+  /**
+   * #776 §B — server-only ENABLE_LIVE_PAYOUTS, relayed because this page is a
+   * client component with no RSC wrapper. With disbursement gated, a BATCHED
+   * earning is reserved at the platform rather than in transit, and the UI must
+   * not imply otherwise (same posture as the org payouts page).
+   */
+  livePayoutsEnabled?: boolean;
   eligibility: {
     isEligible: boolean;
     reason?: string;
@@ -158,6 +165,10 @@ export default function EarningsPage({
   const summary = data?.summary;
   const earnings = data?.earnings ?? [];
   const eligibility = data?.eligibility;
+  // Default to FALSE, not true: if the flag is missing for any reason the
+  // honest reading is "disbursement may not be live", never "your money is on
+  // its way".
+  const livePayoutsEnabled = data?.livePayoutsEnabled ?? false;
   const pagination = data?.pagination;
 
   const filterTabs: { label: string; value: EarningStatus | "ALL" }[] = [
@@ -247,7 +258,9 @@ export default function EarningsPage({
     {
       key: "status",
       header: "Status",
-      cell: (earning) => <StatusBadge {...earningStatusBadge(earning.status)} />,
+      cell: (earning) => (
+        <StatusBadge {...earningStatusBadge(earning.status)} />
+      ),
     },
     {
       key: "payout",
@@ -317,8 +330,16 @@ export default function EarningsPage({
               value={formatSummaryAmount(summary.batchedEarnings)}
               icon={ArrowUpRight}
               variant="info"
-              subtitle="In a payout batch"
-              tooltip="Cleared earnings locked into an in-flight payout batch. Cash is on its way to your bank; this releases as Paid once the payout settles."
+              subtitle={
+                livePayoutsEnabled
+                  ? "In a payout batch"
+                  : "Reserved — disbursement not live yet"
+              }
+              tooltip={
+                livePayoutsEnabled
+                  ? "Cleared earnings locked into an in-flight payout batch. Cash is on its way to your bank; this releases as Paid once the payout settles."
+                  : "Cleared earnings reserved into a payout batch. Disbursement isn't switched on yet, so this money is held at the platform — calculated and reserved, not failed, and not yet in transit to your bank."
+              }
             />
           )}
           {summary && summary.pendingTrustEarnings > 0 && (
@@ -430,21 +451,27 @@ export default function EarningsPage({
                 </p>
                 {eligibility.isEligible ? (
                   <p className="text-xs text-zinc-500 mt-1">
-                    {formatSummaryAmount(eligibility.readyAmount)} ready — payouts are processed weekly
+                    {formatSummaryAmount(eligibility.readyAmount)} ready —
+                    payouts are processed weekly
                   </p>
                 ) : (
                   <div className="mt-2">
                     <div className="flex items-center justify-between mb-1">
                       <p className="text-xs text-zinc-500">
-                        {formatSummaryAmount(eligibility.readyAmount)} of {formatSummaryAmount(eligibility.minimumAmount)} minimum reached
+                        {formatSummaryAmount(eligibility.readyAmount)} of{" "}
+                        {formatSummaryAmount(eligibility.minimumAmount)} minimum
+                        reached
                       </p>
                       <p className="text-xs font-medium text-zinc-600">
                         {Math.min(
                           100,
                           Math.round(
-                            (eligibility.readyAmount / eligibility.minimumAmount) * 100,
+                            (eligibility.readyAmount /
+                              eligibility.minimumAmount) *
+                              100,
                           ),
-                        )}%
+                        )}
+                        %
                       </p>
                     </div>
                     <div className="h-2 w-full overflow-hidden rounded-full bg-zinc-200">

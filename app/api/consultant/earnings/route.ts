@@ -10,6 +10,7 @@ import { EarningStatus } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
 import { buildConsultantEarningsPayload } from "@/lib/data/consultant-earnings-analytics";
 import { resolveOrgScope } from "@/lib/api/scope/parse";
+import { ENABLE_LIVE_PAYOUTS } from "@/lib/feature-flags";
 
 /**
  * GET /api/consultant/earnings
@@ -87,9 +88,20 @@ export async function GET(req: NextRequest) {
       organizationId,
     });
 
-    return NextResponse.json(payload);
+    // #776 §B honesty flag, ported from the org payouts page. With
+    // ENABLE_LIVE_PAYOUTS off, a BATCHED earning is reserved at the platform,
+    // not in flight to a bank — and the earnings page's own tooltip said "cash
+    // is on its way to your bank". The client needs the flag to tell the truth,
+    // and it is server-only, so it rides the payload.
+    return NextResponse.json({
+      ...payload,
+      livePayoutsEnabled: ENABLE_LIVE_PAYOUTS,
+    });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "consultant" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "consultant" } },
+    );
     console.error("Error fetching earnings:", error);
     return NextResponse.json(
       { error: "Failed to fetch earnings" },

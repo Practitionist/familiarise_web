@@ -12,6 +12,7 @@ import {
   EarningStatus,
 } from "@prisma/client";
 import { PAYOUT_CONSTANTS } from "./constants";
+import { isPostMvpGatewayStub } from "@/lib/payments/constants";
 import {
   getRazorpayPayoutsService,
   isRazorpayPayoutsConfigured,
@@ -260,6 +261,21 @@ export async function createPayoutBatch(
       if (!account) {
         console.warn(
           `No verified payout account for consultant ${consultantProfileId}`,
+        );
+        continue;
+      }
+
+      // Refuse a schema-only gateway HERE rather than at disbursement. The
+      // provider dispatch in processSinglePayout does throw on an unsupported
+      // value, but by then the payout row exists and its earnings have been
+      // claimed into BATCHED — so the consultant's money would sit in a status
+      // that only a completed payout can leave, waiting on a gateway that will
+      // never exist. Skipping at selection leaves the earnings READY for the
+      // next batch, which is the recoverable state.
+      if (isPostMvpGatewayStub(account.provider)) {
+        console.warn(
+          `Skipping consultant ${consultantProfileId}: payout account is on ` +
+            `"${account.provider}", which has no implementation (post-MVP stub).`,
         );
         continue;
       }

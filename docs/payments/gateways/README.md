@@ -19,15 +19,12 @@ Familiarise uses **Razorpay as the sole payment gateway** for both domestic and 
 | Gateway | Status | Reason |
 |---------|--------|--------|
 | Stripe | **Removed** | Invite-only in India since May 2024, no UPI, 5–6% international fees |
-| Lemon Squeezy | **Removed** | Services explicitly prohibited in ToS, no UPI, 6.5%+ fees |
-| Xflow | **Removed (for now)** | Not a gateway — cross-border B2B settlement. Revisit when international > Rs 5L/month |
 
 ### Future Consideration
 
 | Gateway | When | Why |
 |---------|------|-----|
 | Cashfree | Month 3-6 | Cheaper fees (1.6–1.95% vs 2%), better split fees (0.1% vs 0.25%) |
-| Xflow | International > Rs 5L/mo | 0% FX markup, auto eFIRA, JP Morgan rails |
 | Wise Business | International payouts | Best FX rates for paying international consultants |
 
 > See [gateway-evaluation-mar-2026.md](./gateway-evaluation-mar-2026.md) for the full analysis.
@@ -136,7 +133,7 @@ Both gateways share a common abstraction layer:
 
 ### Gateway Evaluation
 
-- [gateway-evaluation-mar-2026.md](./gateway-evaluation-mar-2026.md) — Full gateway comparison: Razorpay, Cashfree, Stripe, Lemon Squeezy, Xflow, Dodo, Polar
+- [gateway-evaluation-mar-2026.md](./gateway-evaluation-mar-2026.md) — the dated March 2026 comparison that produced the current choice. Historical: the gateways it rejected have since been removed from the codebase.
 
 ### Razorpay
 
