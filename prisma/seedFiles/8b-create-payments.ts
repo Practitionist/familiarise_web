@@ -1,5 +1,6 @@
 import { faker } from "@faker-js/faker";
 import {
+  Currency,
   PaymentGateway,
   PaymentStatus,
   Prisma,
@@ -99,7 +100,13 @@ export async function createPayments(users: UserWithProfiles[]) {
         user: { connect: { id: user.id } },
         amount: finalAmount,
         originalAmount: amount,
-        currency: faker.helpers.arrayElement(["USD", "EUR", "GBP"]),
+        // INR, like every real payment. This used to pick a random foreign
+        // currency, which is why 386 of 397 seeded payments were non-INR while
+        // no plan has ever been priced in anything but INR. Dashboards then
+        // summed EUR + GBP + USD + INR minor units into one figure and labelled
+        // it with a single symbol — the operator home page read ₹26,47,683.47
+        // for a number that was four currencies added together.
+        currency: Currency.INR,
         description,
         receiptUrl: faker.internet.url(),
         paymentMethod: faker.helpers.arrayElement([

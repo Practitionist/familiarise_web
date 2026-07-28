@@ -91,11 +91,17 @@ export function useCurrency() {
     : (data?.symbol ??
       SUPPORTED_CURRENCIES.find((c) => c.code === selectedCurrency)?.symbol ??
       selectedCurrency);
-  const rate = isINR ? 1 : (data?.rate ?? 1);
+  // No rate yet (still loading, or the provider failed after retries). Falling
+  // back to 1 meant multiplying by nothing and then stamping a foreign symbol
+  // on the result: a ₹5,000 session rendered as "$5,000" — about 83x its real
+  // price — on every fresh page view until the fetch landed, and permanently if
+  // it never did. `rate === null` lets formatPrice show the true INR figure
+  // instead, which is honest at any moment rather than wrong for a while.
+  const rate: number | null = isINR ? 1 : (data?.rate ?? null);
 
   const convert = useCallback(
     (amountINR: number): number => {
-      if (isINR) return amountINR;
+      if (isINR || rate === null) return amountINR;
       return Math.round(amountINR * rate * 100) / 100;
     },
     [rate, isINR],
@@ -106,22 +112,25 @@ export function useCurrency() {
       // Convert from paise (smallest unit) to major unit for display
       const amountInMajor = amountInPaise / 100;
       const converted = convert(amountInMajor);
+      // Until a rate arrives, render the amount in the currency it is actually
+      // denominated in rather than relabelling it.
+      const displayCurrency = rate === null ? "INR" : currency;
       // Use currency-appropriate locale for correct grouping (e.g. ₹1,00,000 vs $100,000)
       const locale =
-        CURRENCY_LOCALE_MAP[currency.toUpperCase()] ||
+        CURRENCY_LOCALE_MAP[displayCurrency.toUpperCase()] ||
         (typeof navigator !== "undefined" ? navigator.language : "en-IN");
       try {
         return new Intl.NumberFormat(locale, {
           style: "currency",
-          currency,
+          currency: displayCurrency,
           minimumFractionDigits: 0,
           maximumFractionDigits: 0,
         }).format(converted);
       } catch {
-        return `${symbol}${Math.round(converted).toLocaleString()}`;
+        return `${rate === null ? "\u20B9" : symbol}${Math.round(converted).toLocaleString()}`;
       }
     },
-    [convert, currency, symbol],
+    [convert, currency, symbol, rate],
   );
 
   const setCurrency = useCallback(

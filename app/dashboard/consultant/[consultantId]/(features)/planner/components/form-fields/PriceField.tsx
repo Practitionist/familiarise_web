@@ -22,7 +22,13 @@ import {
 } from "@/components/ui/form";
 import { cn } from "@/utils/tailwind";
 
-const DEFAULT_CURRENCIES = ["INR", "USD", "EUR", "GBP"];
+// INR only. The platform settles in INR end to end — Razorpay always settles
+// INR (gateway-router.ts) and the double-entry ledger is INR-denominated (#783)
+// — so a plan priced in another currency is either rejected at checkout or, via
+// the request→approve path, charged for real and then booked as if the number
+// were rupees. Offering the choice here was the only way to create that state.
+// Restore the other values only alongside genuine multi-currency settlement.
+const DEFAULT_CURRENCIES = ["INR"];
 
 interface PriceFieldProps<T extends FieldValues = FieldValues> {
   control: Control<T>;
