@@ -680,9 +680,11 @@ export async function sendWaitlistConfirmEmail({
     // throw into its caller.
     const confirmLink = buildConfirmUrl(email, issuedAt);
 
-    // Dev affordance: mirrors sendVerificationEmail so the flow is testable
-    // without a Resend key.
-    if (!process.env.RESEND_API_KEY) {
+    // Dev affordance so the flow is testable without a Resend key. Gated on
+    // NODE_ENV, not on the key being absent: a misconfigured production would
+    // otherwise print a live confirmation link, and that link is a bearer
+    // token — anyone reading the logs could confirm the address.
+    if (process.env.NODE_ENV === "development") {
       console.log(`[waitlist-confirm] ${email} -> ${confirmLink}`);
     }
 

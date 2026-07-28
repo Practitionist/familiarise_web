@@ -33,9 +33,18 @@ jest.mock("../../lib/email", () => ({
   sendWaitlistWelcomeEmail: jest.fn(),
 }));
 
+const mockCaptureMessage = jest.fn();
+const mockCaptureException = jest.fn();
+
 jest.mock("@sentry/nextjs", () => ({
-  captureMessage: jest.fn(),
-  captureException: jest.fn(),
+  captureMessage: (...args: unknown[]) => mockCaptureMessage(...args),
+  captureException: (...args: unknown[]) => mockCaptureException(...args),
+}));
+
+jest.mock("../../lib/waitlist/tokens", () => ({
+  canSignLinks: () => true,
+  verifyConfirmToken: jest.fn(),
+  verifyUnsubscribeToken: jest.fn(),
 }));
 
 import { subscribe } from "../../lib/waitlist/service";
@@ -57,6 +66,19 @@ describe("subscribe — confirmation send failure", () => {
     expect(result).toEqual({ outcome: "CONFIRMATION_FAILED" });
     // The row must still be on the list — the address opted in.
     expect(mockUpsert).toHaveBeenCalledTimes(1);
+
+    // Removing the reporting call must fail this test, not pass silently.
+    expect(mockCaptureMessage).toHaveBeenCalledWith(
+      expect.stringContaining("waitlist confirmation email failed to send"),
+      expect.objectContaining({
+        level: "warning",
+        tags: { subsystem: "waitlist" },
+      }),
+    );
+    // Neither the address nor a signed link may reach the report.
+    const reported = JSON.stringify(mockCaptureMessage.mock.calls);
+    expect(reported).not.toContain("reader@example.com");
+    expect(reported).not.toContain("token=");
   });
 
   it("does not throw when the sender reports failure", async () => {
