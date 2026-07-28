@@ -15,7 +15,7 @@ import type { UserRole } from "@prisma/client";
  *
  * Policy, stated once:
  *   - STAFF own support end-to-end: tickets, feedback, moderation,
- *     appointments, waitlists, and user verification. This is the job.
+ *     appointments, and user verification. This is the job.
  *   - STAFF READ every money surface, because a support agent who can't see
  *     a payment can't resolve a billing ticket. They mutate none of it.
  *   - ADMIN alone executes money (refunds, payouts, subscription changes),
@@ -37,7 +37,7 @@ export type BackofficeSurface =
   | "moderation.manage"
   // Operations — booking-side triage and user verification.
   | "appointments.manage"
-  | "waitlists.manage"
+  | "waitlist.manage"
   | "users.read"
   | "users.verify"
   | "users.moderate"
@@ -84,7 +84,7 @@ export const BACKOFFICE_PERMISSIONS: Record<
   // `users.moderate` (ban / role change / delete) is the one exception:
   // irreversible and account-destroying, so admin-only.
   "appointments.manage": OPERATORS,
-  "waitlists.manage": OPERATORS,
+  "waitlist.manage": OPERATORS,
   "users.read": OPERATORS,
   "users.verify": OPERATORS,
   "users.moderate": ADMIN_ONLY,

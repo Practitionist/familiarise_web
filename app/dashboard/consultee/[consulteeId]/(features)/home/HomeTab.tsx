@@ -39,7 +39,6 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { ActionRequiredPanel } from "@/components/dashboard/ActionRequiredPanel";
 import { deriveConsulteeActionItems } from "@/lib/dashboard/action-items";
-import { WaitlistStatusBadge } from "@/components/ui/waitlist-status-badge";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import {
   appointmentStatusBadge,
@@ -263,24 +262,16 @@ function UpcomingSessionCard({
           {/* Show booking status badge for webinars and classes */}
           {(event.type === "webinar" || event.type === "class") &&
             event.bookingStatus && (
-              <WaitlistStatusBadge
-                bookingStatus={event.bookingStatus}
-                waitlistPosition={event.waitlistPosition}
-                size="sm"
-                showIcon={false}
-                className="shrink-0 border-0"
-              />
+              <Badge className="text-[10px] font-medium px-2 py-0.5 shrink-0 rounded-md bg-green-100 text-green-800 border border-green-200">
+                Registered
+              </Badge>
             )}
           {/* Only show event status if not showing booking status */}
           {!(
             (event.type === "webinar" || event.type === "class") &&
             event.bookingStatus
           ) && (
-            <StatusBadge
-              {...processedEventBadge(event)}
-              withDot
-              size="sm"
-            />
+            <StatusBadge {...processedEventBadge(event)} withDot size="sm" />
           )}
         </div>
         {canShowJoin && (
@@ -408,12 +399,9 @@ function MonthlyEventItem({
               {/* Show booking status badge for webinars and classes */}
               {(event.type === "webinar" || event.type === "class") &&
                 event.bookingStatus && (
-                  <WaitlistStatusBadge
-                    bookingStatus={event.bookingStatus}
-                    waitlistPosition={event.waitlistPosition}
-                    size="sm"
-                    showIcon={false}
-                  />
+                  <Badge className="text-[10px] font-medium px-2 py-0.5 shrink-0 rounded-md bg-green-100 text-green-800 border border-green-200">
+                    Registered
+                  </Badge>
                 )}
               {/* Only show event status if not showing booking status */}
               {!(
@@ -468,12 +456,9 @@ function MonthlyEventItem({
               {/* Show booking status badge for webinars and classes (mobile) */}
               {(event.type === "webinar" || event.type === "class") &&
                 event.bookingStatus && (
-                  <WaitlistStatusBadge
-                    bookingStatus={event.bookingStatus}
-                    waitlistPosition={event.waitlistPosition}
-                    size="sm"
-                    showIcon={false}
-                  />
+                  <Badge className="text-[10px] font-medium px-2 py-0.5 shrink-0 rounded-md bg-green-100 text-green-800 border border-green-200">
+                    Registered
+                  </Badge>
                 )}
               {/* Only show event status if not showing booking status (mobile) */}
               {!(
@@ -486,57 +471,59 @@ function MonthlyEventItem({
       </div>
 
       {/* Expanded sessions (slots grouped by appointment) */}
-      {isExpanded && event.slots.length > 0 && (() => {
-        const sessions = groupSlotsIntoSessions(event.slots);
-        return (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            className="pl-16 pr-4 pb-4"
-          >
-            <div className="space-y-2 bg-muted rounded-lg p-3">
-              {sessions.slice(0, 10).map((session) => (
-                <div
-                  key={session.appointmentId}
-                  className="flex items-center gap-4 text-sm text-muted-foreground"
-                >
-                  <span
-                    className={cn(
-                      "h-2 w-2 rounded-full flex-shrink-0",
-                      session.status === "completed"
-                        ? "bg-muted-foreground/30"
-                        : "bg-emerald-500 dark:bg-emerald-400",
-                    )}
-                  />
-                  <span className="w-24 font-medium text-foreground">
-                    {format(session.startTime, "EEE d MMM")}
-                  </span>
-                  <span className="text-muted-foreground">
-                    {format(session.startTime, "h:mm a")} -{" "}
-                    {format(session.endTime, "h:mm a")}
-                  </span>
-                  <span
-                    className={cn(
-                      "text-xs ml-auto capitalize",
-                      session.status === "completed"
-                        ? "text-muted-foreground/70"
-                        : "text-emerald-600 dark:text-emerald-300",
-                    )}
+      {isExpanded &&
+        event.slots.length > 0 &&
+        (() => {
+          const sessions = groupSlotsIntoSessions(event.slots);
+          return (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: "auto", opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              className="pl-16 pr-4 pb-4"
+            >
+              <div className="space-y-2 bg-muted rounded-lg p-3">
+                {sessions.slice(0, 10).map((session) => (
+                  <div
+                    key={session.appointmentId}
+                    className="flex items-center gap-4 text-sm text-muted-foreground"
                   >
-                    {session.status}
-                  </span>
-                </div>
-              ))}
-              {sessions.length > 10 && (
-                <p className="text-xs text-muted-foreground/70 pt-1">
-                  +{sessions.length - 10} more sessions
-                </p>
-              )}
-            </div>
-          </motion.div>
-        );
-      })()}
+                    <span
+                      className={cn(
+                        "h-2 w-2 rounded-full flex-shrink-0",
+                        session.status === "completed"
+                          ? "bg-muted-foreground/30"
+                          : "bg-emerald-500 dark:bg-emerald-400",
+                      )}
+                    />
+                    <span className="w-24 font-medium text-foreground">
+                      {format(session.startTime, "EEE d MMM")}
+                    </span>
+                    <span className="text-muted-foreground">
+                      {format(session.startTime, "h:mm a")} -{" "}
+                      {format(session.endTime, "h:mm a")}
+                    </span>
+                    <span
+                      className={cn(
+                        "text-xs ml-auto capitalize",
+                        session.status === "completed"
+                          ? "text-muted-foreground/70"
+                          : "text-emerald-600 dark:text-emerald-300",
+                      )}
+                    >
+                      {session.status}
+                    </span>
+                  </div>
+                ))}
+                {sessions.length > 10 && (
+                  <p className="text-xs text-muted-foreground/70 pt-1">
+                    +{sessions.length - 10} more sessions
+                  </p>
+                )}
+              </div>
+            </motion.div>
+          );
+        })()}
     </div>
   );
 }

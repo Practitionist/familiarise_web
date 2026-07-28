@@ -47,7 +47,7 @@ export type OrgSurface =
   | "reimbursements.read"
   | "disputes.read"
   | "integrations.read"
-  // Operations (org-scoped appointments, waitlist, trials, documents,
+  // Operations (org-scoped appointments, trials, documents,
   // recordings, analytics — one read grant for the whole group, incl. the
   // L1/L2 SUPPORT carve-out)
   | "operations.read"
@@ -62,7 +62,12 @@ const roles = (...list: MemberRole[]): ReadonlySet<MemberRole> =>
 const GOVERNANCE = roles("OWNER", "MAINTAINER");
 const OPERATORS = roles("OWNER", "MAINTAINER", "MANAGER");
 const OPERATIONS_READERS = roles("OWNER", "MAINTAINER", "MANAGER", "SUPPORT");
-const FINANCE_READERS = roles("OWNER", "MAINTAINER", "BILLING_ADMIN", "MANAGER");
+const FINANCE_READERS = roles(
+  "OWNER",
+  "MAINTAINER",
+  "BILLING_ADMIN",
+  "MANAGER",
+);
 const FINANCE_MUTATORS = roles("OWNER", "BILLING_ADMIN");
 
 export const ORG_PERMISSIONS: Record<OrgSurface, ReadonlySet<MemberRole>> = {

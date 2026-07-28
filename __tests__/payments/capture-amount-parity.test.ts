@@ -46,7 +46,9 @@ jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     $transaction: async (fn: (tx: unknown) => unknown) => fn(txStub),
-    payment: { update: (...a: unknown[]) => prismaPaymentUpdate(...(a as [never])) },
+    payment: {
+      update: (...a: unknown[]) => prismaPaymentUpdate(...(a as [never])),
+    },
   },
 }));
 
@@ -54,7 +56,8 @@ jest.mock("../../lib/prisma", () => ({
 // branch returns before any of it runs.
 const createEarningsFromPayment = jest.fn();
 jest.mock("../../lib/payments/payouts", () => ({
-  createEarningsFromPayment: (...a: unknown[]) => createEarningsFromPayment(...a),
+  createEarningsFromPayment: (...a: unknown[]) =>
+    createEarningsFromPayment(...a),
 }));
 const refundPayment = jest.fn();
 jest.mock("../../lib/payments/operations/refund", () => ({
@@ -64,7 +67,6 @@ jest.mock("../../lib/email", () => ({
   sendPaymentSuccessEmail: jest.fn(),
   sendPaymentFailedEmail: jest.fn(),
 }));
-jest.mock("../../lib/waitlist/slot-handler", () => ({ markWaitlistAsBooked: jest.fn() }));
 jest.mock("../../lib/novu", () => ({
   notifyPaymentSuccess: jest.fn(),
   notifyPaymentFailed: jest.fn(),
@@ -83,7 +85,9 @@ jest.mock("../../actions/stream/chat/channel.action", () => ({
 jest.mock("../../lib/stream-logger", () => ({
   streamLogger: { info: jest.fn(), error: jest.fn() },
 }));
-jest.mock("../../lib/enterprise/system-events", () => ({ recordSystemError: jest.fn() }));
+jest.mock("../../lib/enterprise/system-events", () => ({
+  recordSystemError: jest.fn(),
+}));
 jest.mock("../../schemas/webhooks/metadata", () => ({
   normalizeLegacySlotKeys: (m: unknown) => m,
   validateWebhookMetadata: jest.fn(),
@@ -109,7 +113,11 @@ describe("#677 / #990 — handlePaymentSuccess capture-amount parity", () => {
   it("blocks confirmation, pages, and AUTO-REFUNDS when captured amount ≠ Payment.amount", async () => {
     refundPayment.mockResolvedValue({ id: "rfnd1" });
 
-    await handlePaymentSuccess("order1", { appointmentType: "CONSULTATION" }, 9999);
+    await handlePaymentSuccess(
+      "order1",
+      { appointmentType: "CONSULTATION" },
+      9999,
+    );
 
     // Paged exactly once with the mismatch error (the fatal Phase-1 page). No
     // second page fires because the refund succeeds.
@@ -146,7 +154,11 @@ describe("#677 / #990 — handlePaymentSuccess capture-amount parity", () => {
     // cleared (no clear-marker write) and the refund failure is paged too.
     refundPayment.mockRejectedValue(new Error("gateway 500"));
 
-    await handlePaymentSuccess("order1", { appointmentType: "CONSULTATION" }, 9999);
+    await handlePaymentSuccess(
+      "order1",
+      { appointmentType: "CONSULTATION" },
+      9999,
+    );
 
     // Two pages: the Phase-1 mismatch page + the Phase-2 refund-failure page.
     expect(captureException).toHaveBeenCalledTimes(2);

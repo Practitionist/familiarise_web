@@ -27,7 +27,6 @@ import {
   type AccountBannedPayload,
   type PayoutPayload,
   type AnnouncementPayload,
-  type WaitlistPayload,
   type DisputePayload,
   type RecordingPayload,
   type RecordingFailedPayload,
@@ -561,21 +560,6 @@ export async function notifyNewConsultantApplication(
   return triggerForMultiple(
     NOVU_WORKFLOWS.NEW_CONSULTANT_APPLICATION,
     adminUserIds,
-    payload,
-  );
-}
-
-// ============================================================================
-// Waitlist Notifications
-// ============================================================================
-
-export async function notifyWaitlistSpotAvailable(
-  userId: string,
-  payload: WaitlistPayload,
-) {
-  return triggerWorkflow(
-    NOVU_WORKFLOWS.WAITLIST_SPOT_AVAILABLE,
-    userId,
     payload,
   );
 }

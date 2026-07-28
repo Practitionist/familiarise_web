@@ -57,7 +57,7 @@ export async function GET(
       );
     }
 
-    // Get the userId from consultee profile to check waitlist memberships
+    // Get the userId from the consultee profile to match slot membership
     const consulteeProfile = await prisma.consulteeProfile.findUnique({
       where: { id: consulteeId },
       select: { userId: true },
@@ -112,7 +112,10 @@ export async function GET(
         { status: 404 },
       );
     }
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "dashboard" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "dashboard" } },
+    );
     console.error("Error fetching consultee events:", error);
     return NextResponse.json(
       { error: "Failed to fetch consultee events" },

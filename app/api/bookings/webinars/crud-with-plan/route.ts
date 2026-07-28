@@ -5,9 +5,12 @@ import { z } from "zod";
 import { WebinarPlanSchema } from "@/schemas/plans";
 import { Prisma, WebinarStatus } from "@prisma/client";
 import { findOrCreateTopics, transformNestedPlanTopics } from "@/lib/topics";
-import { handleSlotOpening } from "@/lib/waitlist/slot-handler";
 import { checkConsultantVerification } from "@/lib/verification";
 import { countWebinarParticipants } from "@/lib/payments/utils/participants";
+import {
+  CapacityBelowEnrollmentError,
+  capacityBelowRegisteredMessage,
+} from "@/lib/events/capacity";
 import {
   assertCollaboratorsAvailable,
   CollaboratorUnavailableError,
@@ -274,7 +277,6 @@ export async function POST(request: NextRequest) {
                 },
               },
             },
-            waitlist: true,
           },
         });
 
@@ -337,7 +339,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "bookings" } },
+    );
     return NextResponse.json(
       { error: "An error occurred while creating the webinar" },
       { status: 500 },
@@ -566,32 +571,6 @@ export async function PATCH(request: NextRequest) {
           );
         }
       }
-
-      // FIX #628: Block lowering maxParticipants below current enrollment.
-      // Use shared countWebinarParticipants helper for consistent counting.
-      // Include ALL slots (not just non-tentative) because during reschedule
-      // all slots become tentative but participants are still enrolled.
-      if (maxParticipants !== undefined) {
-        const appointmentWithSlots = await prisma.appointment.findUnique({
-          where: { id: webinarToUpdate.appointment.id },
-          include: {
-            slotsOfAppointment: { include: { user: { select: { id: true } } } },
-          },
-        });
-        const consultantUserId = existingPlan.consultantProfile?.userId;
-        const enrolledCount = countWebinarParticipants(
-          appointmentWithSlots,
-          consultantUserId ? [consultantUserId] : [],
-        );
-        if (maxParticipants < enrolledCount) {
-          return NextResponse.json(
-            {
-              error: `Cannot set max participants to ${maxParticipants}. There are ${enrolledCount} enrolled participants.`,
-            },
-            { status: 400 },
-          );
-        }
-      }
     }
 
     // Update webinar plan and related data in a transaction
@@ -615,7 +594,9 @@ export async function PATCH(request: NextRequest) {
         if (price !== undefined) updateData.price = price;
         if (priceCurrency !== undefined)
           updateData.priceCurrency = priceCurrency;
-        if (maxParticipants !== undefined)
+        // Capacity is per instance. Only move the plan's default when the
+        // caller is editing the plan itself rather than one of its webinars.
+        if (maxParticipants !== undefined && !webinarToUpdate)
           updateData.maxParticipants = maxParticipants;
         if (language !== undefined) updateData.language = language;
         if (level !== undefined) updateData.level = level;
@@ -685,6 +666,33 @@ export async function PATCH(request: NextRequest) {
             webinarUpdateData.status = status;
           }
 
+          // #628 — shrinking below the people already in the room would
+          // silently strand paying registrants. Checked inside the tx (the
+          // old guard ran before it and left a TOCTOU window).
+          if (maxParticipants !== undefined) {
+            const appointmentWithSlots = updatedWebinar.appointment
+              ? await tx.appointment.findUnique({
+                  where: { id: updatedWebinar.appointment.id },
+                  include: {
+                    slotsOfAppointment: {
+                      include: { user: { select: { id: true } } },
+                    },
+                  },
+                })
+              : null;
+            const consultantUserId = existingPlan.consultantProfile?.userId;
+            const enrolledCount = countWebinarParticipants(
+              appointmentWithSlots,
+              consultantUserId ? [consultantUserId] : [],
+            );
+            if (maxParticipants < enrolledCount) {
+              throw new CapacityBelowEnrollmentError(
+                capacityBelowRegisteredMessage(maxParticipants, enrolledCount),
+              );
+            }
+            webinarUpdateData.maxParticipants = maxParticipants;
+          }
+
           if (Object.keys(webinarUpdateData).length > 0) {
             updatedWebinar = await tx.webinar.update({
               where: { id: updatedWebinar.id },
@@ -705,7 +713,6 @@ export async function PATCH(request: NextRequest) {
                     },
                   },
                 },
-                waitlist: true,
               },
             });
           }
@@ -815,7 +822,6 @@ export async function PATCH(request: NextRequest) {
                   },
                 },
               },
-              waitlist: true,
             },
           });
         }
@@ -836,40 +842,6 @@ export async function PATCH(request: NextRequest) {
     console.log(
       "Update transaction completed successfully. Returning updated webinar data.",
     );
-
-    // Notify waitlist if capacity was increased
-    const oldMaxParticipants = existingPlan.maxParticipants;
-    const newMaxParticipants = result.webinarPlan.maxParticipants;
-
-    if (newMaxParticipants > oldMaxParticipants && result.webinar?.id) {
-      const newSlotsAvailable = newMaxParticipants - oldMaxParticipants;
-
-      try {
-        await handleSlotOpening({
-          webinarId: result.webinar.id,
-          slotsAvailable: newSlotsAvailable,
-          reason: "capacity_increase",
-        });
-
-        console.log(
-          JSON.stringify({
-            event: "waitlist_notified_after_capacity_increase",
-            webinarId: result.webinar.id,
-            oldMaxParticipants,
-            newMaxParticipants,
-            newSlotsAvailable,
-            timestamp: new Date().toISOString(),
-          }),
-        );
-      } catch (waitlistError) {
-        // Log but don't fail the update - waitlist notification is best-effort
-        console.error(
-          "Failed to notify waitlist after capacity increase:",
-          waitlistError,
-        );
-        Sentry.captureException(waitlistError instanceof Error ? waitlistError : new Error(String(waitlistError)), { tags: { subsystem: "bookings" } });
-      }
-    }
 
     // Transform topics to strings in response
     let responseData;
@@ -894,6 +866,10 @@ export async function PATCH(request: NextRequest) {
     }
     // --- End Zod Error Handling ---
 
+    // Shrinking below the current roster is a user error, not a 500.
+    if (error instanceof CapacityBelowEnrollmentError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
     // AE-2 — co-host clash is a conflict, not a server error.
     if (error instanceof CollaboratorUnavailableError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
@@ -911,7 +887,10 @@ export async function PATCH(request: NextRequest) {
 
     console.error("Error updating webinar with plan:", error);
 
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "bookings" } },
+    );
     return NextResponse.json(
       { error: "An error occurred while updating the webinar" },
       { status: 500 },

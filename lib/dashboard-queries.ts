@@ -47,16 +47,6 @@ interface ConsultantRecordingsResponse {
   total?: number;
 }
 
-/**
- * Shape of GET /api/waitlist — the consumer narrows entry details itself;
- * `status` is the full WaitlistStatus enum (WAITING/NOTIFIED/BOOKED/…),
- * not just the waiting states.
- */
-interface ConsulteeWaitlistsResponse {
-  webinars: Array<Record<string, unknown>>;
-  classes: Array<Record<string, unknown>>;
-}
-
 // =============================================================================
 // Fetch Functions
 // =============================================================================
@@ -161,13 +151,6 @@ export const consulteeFetchers = {
       `/api/user/support-tickets`,
       "Support tickets fetch failed",
     ),
-
-  /** GET /api/waitlist is session-scoped; returns { webinars, classes }. */
-  waitlists: () =>
-    fetchWithErrorHandling<ConsulteeWaitlistsResponse>(
-      `/api/waitlist`,
-      "Waitlists fetch failed",
-    ),
 };
 
 // User fetchers (shared)
@@ -217,11 +200,7 @@ export function createConsultantQueries(
 
     // Appointments with all statuses
     appointments: {
-      queryKey: [
-        "consultant-appointments",
-        consultantId,
-        scopeKey,
-      ] as const,
+      queryKey: ["consultant-appointments", consultantId, scopeKey] as const,
       queryFn: () => consultantFetchers.appointments(consultantId, orgScope),
       staleTime: STALE_TIMES.SHORT,
       gcTime: GC_TIME,
@@ -330,17 +309,6 @@ export function createConsulteeQueries(
       staleTime: STALE_TIMES.MEDIUM,
       gcTime: GC_TIME,
       retry: 2,
-    },
-
-    // Waitlist entries (webinars + classes). The endpoint is session-scoped;
-    // consulteeId is in the key purely for cache hygiene across accounts.
-    waitlists: {
-      queryKey: ["consultee-waitlists", consulteeId] as const,
-      queryFn: () => consulteeFetchers.waitlists(),
-      staleTime: STALE_TIMES.SHORT,
-      gcTime: GC_TIME,
-      retry: 2,
-      refetchOnWindowFocus: true,
     },
 
     // Settings (uses same endpoint as profile, typed with education/work includes)

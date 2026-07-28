@@ -170,15 +170,13 @@ export function mapAppointmentDetail(
     group: isGroup ? { total: withSlots.length, completed } : null,
     meta: appointment.trialSession
       ? trialMeta(
-          appointment.trialSession.subscriptionPlan?.trialPriceInPaise ??
-            null,
+          appointment.trialSession.subscriptionPlan?.trialPriceInPaise ?? null,
           appointment.trialSession.subscriptionPlan?.trialDurationMinutes ??
             null,
         )
       : null,
     organizationId: appointment.organizationId ?? null,
     pendingPaymentUrl: facts.pendingPaymentUrl,
-    waitlist: null,
     collaborators: facts.collaborators,
     collaboratorRole: null,
     raw: {

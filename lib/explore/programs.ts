@@ -42,6 +42,8 @@ interface ClassAppointment {
 export interface ClassInstance {
   id: string;
   schedulingPeriodStartsAt?: string | Date | null;
+  /** Per-instance capacity override; null inherits the plan's value. */
+  maxParticipants?: number | null;
   appointments?: ClassAppointment[];
 }
 

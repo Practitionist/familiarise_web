@@ -34,7 +34,6 @@ const webinarInclude = {
       },
     },
   },
-  waitlist: true,
 } satisfies Prisma.WebinarInclude;
 
 const classInclude = {
@@ -402,7 +401,10 @@ export async function GET(
       success: true,
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "dashboard" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "dashboard" } },
+    );
     console.error("Error fetching planner data:", error);
     return NextResponse.json(
       { error: "Failed to fetch planner data" },

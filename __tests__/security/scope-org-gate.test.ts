@@ -57,7 +57,11 @@ describe("?orgScope=<orgId> requires operations.read for the org-wide scope", ()
     const res = resolveOrgScope({
       raw: ORG,
       memberships: [
-        { organizationId: ORG, status: "SUSPENDED" as never, role: "OWNER" as never },
+        {
+          organizationId: ORG,
+          status: "SUSPENDED" as never,
+          role: "OWNER" as never,
+        },
       ],
       userRole: "CONSULTEE",
       userId: USER,
@@ -79,7 +83,6 @@ describe("every scoped list helper handles orgMember explicitly", () => {
     "lib/api/scope/list-documents.ts",
     "lib/api/scope/list-recordings.ts",
     "lib/api/scope/list-trials.ts",
-    "lib/api/scope/list-waitlist.ts",
   ];
 
   it.each(HELPERS)("%s branches on orgMember before the default", (rel) => {

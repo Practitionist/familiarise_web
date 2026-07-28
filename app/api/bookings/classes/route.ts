@@ -124,18 +124,6 @@ export async function GET(request: NextRequest) {
                 },
               },
             },
-            // Get classes where consultee is in waitlist
-            {
-              waitlist: {
-                some: {
-                  user: {
-                    consulteeProfile: {
-                      id: consulteeProfileId,
-                    },
-                  },
-                },
-              },
-            },
           ],
           ...dateFilter,
         },
@@ -178,19 +166,6 @@ export async function GET(request: NextRequest) {
                 },
               },
               payment: true,
-            },
-          },
-          waitlist: {
-            where: {
-              user: {
-                consulteeProfile: {
-                  id: consulteeProfileId,
-                },
-              },
-            },
-            select: {
-              userId: true,
-              joinedAt: true,
             },
           },
         },
@@ -251,7 +226,10 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ data: transformedClasses }, { status: 200 });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "bookings" } },
+    );
     console.error("Error fetching classes:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching classes" },

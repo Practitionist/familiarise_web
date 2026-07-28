@@ -49,7 +49,10 @@ const FOOTER_LINKS: Record<string, FooterLink[]> = {
   resources: [
     { label: "How It Works", href: "/#how-it-works" },
     { label: "Become an Expert", href: "/form/onboarding" },
-    { label: "Explore Organisations", href: "/explore/enterprise/organisations" },
+    {
+      label: "Explore Organisations",
+      href: "/explore/enterprise/organisations",
+    },
   ],
   legal: [
     { label: "Terms of Service", href: "/terms" },
@@ -89,7 +92,7 @@ const SOCIAL_LINKS = [
 const Footer: React.FC = () => {
   const pathname = usePathname();
   const [email, setEmail] = useState("");
-  const [newsletterStatus, setNewsletterStatus] = useState<
+  const [waitlistStatus, setWaitlistStatus] = useState<
     "idle" | "loading" | "success" | "error"
   >("idle");
 
@@ -108,22 +111,30 @@ const Footer: React.FC = () => {
 
   if (excludeFooter) return null;
 
-  const handleNewsletterSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!email || newsletterStatus === "loading") return;
+  const waitlistButtonLabel = {
+    idle: "Join waitlist",
+    loading: "Signing up...",
+    success: "Check your email",
+    error: "Join waitlist",
+  }[waitlistStatus];
 
-    setNewsletterStatus("loading");
+  const handleWaitlistSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email || waitlistStatus === "loading") return;
+
+    setWaitlistStatus("loading");
     try {
-      const res = await fetch("/api/newsletter/subscribe", {
+      const res = await fetch("/api/waitlist", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
+        // Tagged by surface so the admin list can tell where signups come from.
+        body: JSON.stringify({ email, source: "FOOTER" }),
       });
       if (!res.ok) throw new Error("Failed");
       setEmail("");
-      setNewsletterStatus("success");
+      setWaitlistStatus("success");
     } catch {
-      setNewsletterStatus("error");
+      setWaitlistStatus("error");
     }
   };
 
@@ -141,69 +152,62 @@ const Footer: React.FC = () => {
         </>
       )}
 
-      {/* Newsletter Section - Only on home page, merged with footer */}
-      {isHomePage && (
-        <div className="relative z-10 border-b border-zinc-800">
-          <div className="container mx-auto px-4 md:px-6 py-20 md:py-28">
-            <div className="max-w-2xl mx-auto text-center">
-              <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-zinc-700 to-zinc-900 flex items-center justify-center mx-auto mb-6 shadow-lg">
-                <MessageSquare className="w-8 h-8 text-white" />
-              </div>
-              <h2 className="text-fluid-5xl font-bold tracking-tight text-white mb-4">
-                Stay in the <span className="silver-text">loop</span>
-              </h2>
-              <p className="text-lg text-zinc-500 mb-8">
-                Get expert tips, career advice, and exclusive offers delivered
-                to your inbox weekly.
-              </p>
-
-              <form
-                className="flex flex-col sm:flex-row gap-3 max-w-md mx-auto"
-                onSubmit={handleNewsletterSubmit}
-              >
-                <Input
-                  type="email"
-                  placeholder="Enter your email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="h-14 bg-zinc-900 border-zinc-800 text-white placeholder:text-zinc-600 rounded-xl focus:border-zinc-600 focus:ring-zinc-600"
-                />
-                <Button
-                  type="submit"
-                  size="lg"
-                  disabled={
-                    newsletterStatus === "loading" ||
-                    newsletterStatus === "success"
-                  }
-                  className="h-14 bg-white text-zinc-900 hover:bg-zinc-200 px-8 rounded-xl font-medium shrink-0"
-                >
-                  {newsletterStatus === "loading"
-                    ? "Subscribing..."
-                    : newsletterStatus === "success"
-                      ? "Subscribed!"
-                      : "Subscribe"}
-                </Button>
-              </form>
-
-              {newsletterStatus === "error" && (
-                <p className="text-sm text-red-400 mt-2">
-                  Something went wrong. Please try again.
-                </p>
-              )}
-
-              <p className="text-sm text-zinc-600 mt-4">
-                No spam, unsubscribe anytime.{" "}
-                <Link
-                  href="/privacy"
-                  className="underline hover:text-zinc-400 transition-colors"
-                >
-                  Privacy Policy
-                </Link>
-              </p>
+      {/* Waitlist signup — every marketing page, merged with the footer */}
+      <div className="relative z-10 border-b border-zinc-800">
+        <div className="container mx-auto px-4 md:px-6 py-20 md:py-28">
+          <div className="max-w-2xl mx-auto text-center">
+            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-zinc-700 to-zinc-900 flex items-center justify-center mx-auto mb-6 shadow-lg">
+              <MessageSquare className="w-8 h-8 text-white" />
             </div>
+            <h2 className="text-fluid-5xl font-bold tracking-tight text-white mb-4">
+              Stay in the <span className="silver-text">loop</span>
+            </h2>
+            <p className="text-lg text-zinc-500 mb-8">
+              Get expert tips, career advice, and exclusive offers delivered to
+              your inbox weekly.
+            </p>
+
+            <form
+              className="flex flex-col sm:flex-row gap-3 max-w-md mx-auto"
+              onSubmit={handleWaitlistSubmit}
+            >
+              <Input
+                type="email"
+                placeholder="Enter your email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="h-14 bg-zinc-900 border-zinc-800 text-white placeholder:text-zinc-600 rounded-xl focus:border-zinc-600 focus:ring-zinc-600"
+              />
+              <Button
+                type="submit"
+                size="lg"
+                disabled={
+                  waitlistStatus === "loading" || waitlistStatus === "success"
+                }
+                className="h-14 bg-white text-zinc-900 hover:bg-zinc-200 px-8 rounded-xl font-medium shrink-0"
+              >
+                {waitlistButtonLabel}
+              </Button>
+            </form>
+
+            {waitlistStatus === "error" && (
+              <p className="text-sm text-red-400 mt-2">
+                Something went wrong. Please try again.
+              </p>
+            )}
+
+            <p className="text-sm text-zinc-600 mt-4">
+              No spam, unsubscribe anytime.{" "}
+              <Link
+                href="/privacy"
+                className="underline hover:text-zinc-400 transition-colors"
+              >
+                Privacy Policy
+              </Link>
+            </p>
           </div>
         </div>
-      )}
+      </div>
 
       {/* Main Footer Content */}
       <div className="container mx-auto px-4 md:px-6 py-16 md:py-20 relative z-10">

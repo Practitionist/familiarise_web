@@ -8,7 +8,6 @@ import {
   Home,
   CalendarCheck,
   MessageSquare,
-  ListOrdered,
   FolderOpen,
   CreditCard,
   Gift,
@@ -53,10 +52,7 @@ const NAV_GROUPS: CollapsibleSidebarGroup[] = [
   },
   {
     label: "Activity",
-    items: [
-      { name: "Waitlists", icon: ListOrdered, path: "waitlists" },
-      { name: "Resources", icon: FolderOpen, path: "resources" },
-    ],
+    items: [{ name: "Resources", icon: FolderOpen, path: "resources" }],
   },
   {
     label: "Billing",
@@ -87,7 +83,6 @@ const MOBILE_TABS: { label: string; path: string; Icon: LucideIcon }[] = [
 const PAGE_LABELS: Record<string, string> = {
   home: "Home",
   appointments: "Appointments",
-  waitlists: "Waitlists",
   resources: "Resources",
   messages: "Messages",
   payments: "Payments",
@@ -150,10 +145,7 @@ export default function ConsulteeLayout(props: Readonly<PageProps>) {
   );
 }
 
-function ConsulteeLayoutInner({
-  children,
-  params,
-}: Readonly<PageProps>) {
+function ConsulteeLayoutInner({ children, params }: Readonly<PageProps>) {
   const resolvedParams = use(params);
   const consulteeId = resolvedParams.consulteeId;
   const basePath = `/dashboard/consultee/${consulteeId}`;
@@ -184,10 +176,7 @@ function ConsulteeLayoutInner({
   // Consultee profile fetch — result unused directly, but it gates the
   // initial skeleton (profile 404s surface here) and warms the cache for
   // feature pages.
-  const {
-    error: profileError,
-    isLoading: isLoadingProfile,
-  } = useQuery({
+  const { error: profileError, isLoading: isLoadingProfile } = useQuery({
     queryKey: ["consultee-profile", consulteeId],
     queryFn: () => fetchConsulteeDetails(consulteeId),
     enabled: !!consulteeId,
@@ -261,10 +250,7 @@ function ConsulteeLayoutInner({
   // Full breadcrumb trail — opaque record ids are dropped (or replaced with
   // an override label such as the appointment title).
   const breadcrumbs = useMemo(() => {
-    const parts = pathname
-      .replace(basePath, "")
-      .split("/")
-      .filter(Boolean);
+    const parts = pathname.replace(basePath, "").split("/").filter(Boolean);
 
     const crumbs: { label: string; href?: string }[] = [];
     let acc = basePath;

@@ -3,7 +3,7 @@
  * the consultant/consultee sibling of `lib/labels/org-labels.ts`.
  *
  * Every badge that renders an appointment / trial / slot / document /
- * recording / payment / refund / earning / payout / referral / waitlist /
+ * recording / payment / refund / earning / payout / referral / newsletter /
  * verification status pulls its label + colour pair from here. Before this
  * module the same enums were styled by eight independent inline maps
  * (consultant appointments BADGE_STYLES, earnings statusConfig, referrals
@@ -229,40 +229,30 @@ export const slotStatusBadge = (
 ): StatusBadgeStyle => resolve(SLOT_STATUS_BADGE, status);
 
 // ───────────────────────────── WaitlistStatus ─────────────────────────────
+// Newsletter subscription lifecycle, not event capacity.
 
-export const WAITLIST_STATUS_BADGE: Record<WaitlistStatus, StatusBadgeStyle> =
-  {
-    WAITING: {
-      label: "Waiting",
-      className: "bg-amber-100 text-amber-900 border-amber-200",
-      dotClassName: "bg-amber-500",
-    },
-    NOTIFIED: {
-      label: "Spot available",
-      className: "bg-blue-100 text-blue-900 border-blue-200",
-      dotClassName: "bg-blue-500",
-    },
-    BOOKED: {
-      label: "Booked",
-      className: "bg-green-100 text-green-900 border-green-200",
-      dotClassName: "bg-green-500",
-    },
-    EXPIRED: {
-      label: "Expired",
-      className: "bg-zinc-100 text-zinc-500 border-zinc-200",
-      dotClassName: "bg-zinc-400",
-    },
-    CANCELLED: {
-      label: "Left waitlist",
-      className: "bg-zinc-100 text-zinc-600 border-zinc-200",
-      dotClassName: "bg-zinc-400",
-    },
-    SKIPPED: {
-      label: "Skipped",
-      className: "bg-zinc-100 text-zinc-600 border-zinc-200",
-      dotClassName: "bg-zinc-400",
-    },
-  };
+export const WAITLIST_STATUS_BADGE: Record<WaitlistStatus, StatusBadgeStyle> = {
+  PENDING: {
+    label: "Awaiting confirmation",
+    className: "bg-amber-100 text-amber-900 border-amber-200",
+    dotClassName: "bg-amber-500",
+  },
+  SUBSCRIBED: {
+    label: "Subscribed",
+    className: "bg-green-100 text-green-900 border-green-200",
+    dotClassName: "bg-green-500",
+  },
+  UNSUBSCRIBED: {
+    label: "Unsubscribed",
+    className: "bg-zinc-100 text-zinc-600 border-zinc-200",
+    dotClassName: "bg-zinc-400",
+  },
+  BOUNCED: {
+    label: "Bounced",
+    className: "bg-red-100 text-red-900 border-red-200",
+    dotClassName: "bg-red-500",
+  },
+};
 
 export const waitlistStatusBadge = (
   status: WaitlistStatus | string | null | undefined,
@@ -488,29 +478,28 @@ export const payoutStatusBadge = (
 
 // ───────────────────────────── ReferralStatus ─────────────────────────────
 
-export const REFERRAL_STATUS_BADGE: Record<ReferralStatus, StatusBadgeStyle> =
-  {
-    SIGNED_UP: {
-      label: "Signed up",
-      className: "bg-blue-100 text-blue-900 border-blue-200",
-    },
-    QUALIFIED: {
-      label: "Qualified",
-      className: "bg-emerald-100 text-emerald-900 border-emerald-200",
-    },
-    REWARDED: {
-      label: "Rewarded",
-      className: "bg-green-100 text-green-900 border-green-200",
-    },
-    EXPIRED: {
-      label: "Expired",
-      className: "bg-zinc-100 text-zinc-500 border-zinc-200",
-    },
-    FRAUDULENT: {
-      label: "Flagged",
-      className: "bg-red-100 text-red-900 border-red-200",
-    },
-  };
+export const REFERRAL_STATUS_BADGE: Record<ReferralStatus, StatusBadgeStyle> = {
+  SIGNED_UP: {
+    label: "Signed up",
+    className: "bg-blue-100 text-blue-900 border-blue-200",
+  },
+  QUALIFIED: {
+    label: "Qualified",
+    className: "bg-emerald-100 text-emerald-900 border-emerald-200",
+  },
+  REWARDED: {
+    label: "Rewarded",
+    className: "bg-green-100 text-green-900 border-green-200",
+  },
+  EXPIRED: {
+    label: "Expired",
+    className: "bg-zinc-100 text-zinc-500 border-zinc-200",
+  },
+  FRAUDULENT: {
+    label: "Flagged",
+    className: "bg-red-100 text-red-900 border-red-200",
+  },
+};
 
 export const referralStatusBadge = (
   status: ReferralStatus | string | null | undefined,

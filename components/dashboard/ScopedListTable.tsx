@@ -3,7 +3,7 @@
 /**
  * ScopedListTable — generic table wrapper shared by dashboard list pages
  * (originally the org list pages from #674 / B1-hybrid: appointments,
- * waitlist, trials, documents, recordings; now also the personal
+ * trials, documents, recordings; now also the personal
  * dashboards). Each consumer passes its own column config + row renderer;
  * this component handles the loading state, empty state, pagination, and
  * pages-of-X count.
@@ -127,12 +127,7 @@ export function ScopedListTable<T>({
               {Math.min(page * perPage, total)} of {total}
             </span>
             <div className="flex gap-2">
-              <Button
-                asChild
-                variant="outline"
-                size="sm"
-                disabled={page <= 1}
-              >
+              <Button asChild variant="outline" size="sm" disabled={page <= 1}>
                 <Link href={buildPageHref(Math.max(1, page - 1))}>Prev</Link>
               </Button>
               <Button

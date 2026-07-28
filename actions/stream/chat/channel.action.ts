@@ -186,7 +186,7 @@ export async function createDirectMessageChannel(
 
 /**
  * Create a webinar channel with all participants
- * Fetches participants from both waitlist and appointments
+ * Members are everyone connected to the webinar's session slots
  *
  * @param webinarId — Webinar entity id
  * @param organizationId — Optional explicit org override. When omitted, the
@@ -209,10 +209,6 @@ export async function createWebinarChannel(
           },
         },
       },
-      waitlist: {
-        where: { status: "BOOKED" },
-        select: { userId: true },
-      },
       appointment: {
         include: {
           slotsOfAppointment: {
@@ -232,16 +228,13 @@ export async function createWebinarChannel(
     throw new Error(`Consultant not found for webinar: ${webinarId}`);
   }
 
-  // Collect all participant IDs — only BOOKED waitlist users get chat access
-  const waitlistIds = webinar.waitlist.map((entry) => entry.userId);
+  // Registrants are the users connected to the webinar's session slots.
   const appointmentIds =
     webinar.appointment?.slotsOfAppointment?.flatMap((slot) =>
       slot.user.map((u) => u.id),
     ) || [];
 
-  const allParticipantIds = Array.from(
-    new Set([...waitlistIds, ...appointmentIds]),
-  );
+  const allParticipantIds = Array.from(new Set(appointmentIds));
 
   const allMembers = Array.from(
     new Set([consultantUserId, ...allParticipantIds]),
@@ -249,7 +242,6 @@ export async function createWebinarChannel(
 
   streamLogger.debug("Creating webinar channel", {
     webinarId,
-    waitlistCount: waitlistIds.length,
     appointmentCount: appointmentIds.length,
     totalUnique: allMembers.length,
   });
@@ -261,7 +253,7 @@ export async function createWebinarChannel(
   // `null` is treated as "explicitly no org"; `undefined` triggers fallback.
   const resolvedOrgId =
     organizationId === undefined
-      ? webinar.webinarPlan.organizationId ?? null
+      ? (webinar.webinarPlan.organizationId ?? null)
       : organizationId;
 
   return createChannel({
@@ -298,10 +290,6 @@ export async function createClassChannel(
           },
         },
       },
-      waitlist: {
-        where: { status: "BOOKED" },
-        select: { userId: true },
-      },
       appointments: {
         include: {
           slotsOfAppointment: {
@@ -321,20 +309,15 @@ export async function createClassChannel(
     throw new Error(`Consultant not found for class: ${classId}`);
   }
 
-  // Only BOOKED waitlist users get chat access
-  const waitlistIds = classData.waitlist.map((entry) => entry.userId);
   const appointmentIds =
     classData.appointments?.flatMap((apt) =>
       apt.slotsOfAppointment?.flatMap((slot) => slot.user.map((u) => u.id)),
     ) || [];
 
-  const allMembers = Array.from(
-    new Set([consultantUserId, ...waitlistIds, ...appointmentIds]),
-  );
+  const allMembers = Array.from(new Set([consultantUserId, ...appointmentIds]));
 
   streamLogger.debug("Creating class channel", {
     classId,
-    waitlistCount: waitlistIds.length,
     appointmentCount: appointmentIds.length,
     totalUnique: allMembers.length,
   });
@@ -344,7 +327,7 @@ export async function createClassChannel(
 
   const resolvedOrgId =
     organizationId === undefined
-      ? classData.classPlan.organizationId ?? null
+      ? (classData.classPlan.organizationId ?? null)
       : organizationId;
 
   return createChannel({
@@ -418,9 +401,9 @@ export async function createConsultationChannel(
 
   const resolvedOrgId =
     organizationId === undefined
-      ? consultation.consultationPlan.organizationId ??
+      ? (consultation.consultationPlan.organizationId ??
         consultation.appointment?.organizationId ??
-        null
+        null)
       : organizationId;
 
   // One DM per pair PER CONTEXT. Still not per event — multiple
@@ -505,9 +488,9 @@ export async function createSubscriptionChannel(
 
   const resolvedOrgId =
     organizationId === undefined
-      ? subscription.subscriptionPlan.organizationId ??
+      ? (subscription.subscriptionPlan.organizationId ??
         subscription.appointments[0]?.organizationId ??
-        null
+        null)
       : organizationId;
 
   // One DM per pair PER CONTEXT. Still not per event — multiple
@@ -543,9 +526,12 @@ export async function initializeAllChannels() {
             consultantProfile: { include: { user: { select: { id: true } } } },
           },
         },
-        waitlist: {
-          where: { status: "BOOKED" },
-          select: { userId: true },
+        appointment: {
+          select: {
+            slotsOfAppointment: {
+              select: { user: { select: { id: true } } },
+            },
+          },
         },
       },
     }),
@@ -556,9 +542,12 @@ export async function initializeAllChannels() {
             consultantProfile: { include: { user: { select: { id: true } } } },
           },
         },
-        waitlist: {
-          where: { status: "BOOKED" },
-          select: { userId: true },
+        appointments: {
+          select: {
+            slotsOfAppointment: {
+              select: { user: { select: { id: true } } },
+            },
+          },
         },
       },
     }),
@@ -600,14 +589,19 @@ export async function initializeAllChannels() {
     if (w.webinarPlan.consultantProfile?.user?.id) {
       userIds.add(w.webinarPlan.consultantProfile.user.id);
     }
-    w.waitlist.forEach((e) => userIds.add(e.userId));
+    (w.appointment?.slotsOfAppointment ?? [])
+      .flatMap((slot) => slot.user)
+      .forEach((u) => userIds.add(u.id));
   });
 
   classes.forEach((c) => {
     if (c.classPlan.consultantProfile?.user?.id) {
       userIds.add(c.classPlan.consultantProfile.user.id);
     }
-    c.waitlist.forEach((e) => userIds.add(e.userId));
+    c.appointments
+      .flatMap((apt) => apt.slotsOfAppointment)
+      .flatMap((slot) => slot.user)
+      .forEach((u) => userIds.add(u.id));
   });
 
   consultations.forEach((c) => {
@@ -904,7 +898,10 @@ export async function addMemberToChannel(
       channelId,
       userId,
     });
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "stream" } },
+    );
     throw error;
   }
 }

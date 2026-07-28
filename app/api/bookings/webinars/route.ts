@@ -130,18 +130,6 @@ export async function GET(request: NextRequest) {
                 },
               },
             },
-            // Get webinars where consultee is in waitlist
-            {
-              waitlist: {
-                some: {
-                  user: {
-                    consulteeProfile: {
-                      id: consulteeProfileId,
-                    },
-                  },
-                },
-              },
-            },
           ],
           ...dateFilter,
         },
@@ -180,26 +168,6 @@ export async function GET(request: NextRequest) {
                 },
               },
               payment: true,
-            },
-          },
-          waitlist: {
-            where: {
-              user: {
-                consulteeProfile: {
-                  id: consulteeProfileId,
-                },
-              },
-            },
-            include: {
-              user: {
-                select: {
-                  id: true,
-                  name: true,
-                  email: true,
-                  image: true,
-                  consulteeProfile: true,
-                },
-              },
             },
           },
         },
@@ -243,7 +211,6 @@ export async function GET(request: NextRequest) {
               },
             },
           },
-          waitlist: true,
         },
       });
     } else {
@@ -268,7 +235,6 @@ export async function GET(request: NextRequest) {
               },
             },
           },
-          waitlist: true,
         },
       });
     }
@@ -280,7 +246,10 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ data: transformedWebinars }, { status: 200 });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "bookings" } },
+    );
     console.error("Error fetching webinars:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching webinars" },
@@ -351,13 +320,15 @@ export async function POST(request: Request) {
             },
           },
         },
-        waitlist: true,
       },
     });
 
     return NextResponse.json({ data: webinar }, { status: 201 });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "bookings" } },
+    );
     console.error("Error creating webinar:", error);
     return NextResponse.json(
       { error: "An error occurred while creating the webinar" },

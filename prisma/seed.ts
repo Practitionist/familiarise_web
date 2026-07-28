@@ -28,7 +28,7 @@ import { createSlotsOfAvailability } from "./seedFiles/5a-create-slots-of-availa
 import { createAppointments } from "./seedFiles/6a-create-appointments";
 
 // Phase 7: Engagement
-import { createNewsletters } from "./seedFiles/7a-create-newsletters";
+import { createWaitlistSubscribers } from "./seedFiles/7a-create-waitlist-subscribers";
 import { createConsultantReviews } from "./seedFiles/7b-create-consultant-reviews";
 
 // Phase 8: Payments
@@ -38,9 +38,6 @@ import { createPayments } from "./seedFiles/8b-create-payments";
 // Phase 9: Support & Feedback
 import { createFeedbacks } from "./seedFiles/9a-create-feedbacks";
 import { createSupportTickets } from "./seedFiles/9b-create-support-tickets";
-
-// Phase 10: Waitlists
-import { createWaitlists } from "./seedFiles/10a-create-waitlists";
 
 // Phase 11: Documents & Meetings
 import { createAppointmentDocuments } from "./seedFiles/11a-create-appointment-documents";
@@ -133,8 +130,8 @@ async function seed() {
 
     // Phase 7: Engagement data
     console.log("\n[Phase 7] Creating engagement data...");
-    console.log("Creating newsletters...");
-    await createNewsletters();
+    console.log("Creating waitlist subscribers...");
+    await createWaitlistSubscribers();
 
     console.log("Creating consultant reviews...");
     await createConsultantReviews(consultants, consultees);
@@ -154,10 +151,6 @@ async function seed() {
 
     console.log("Creating support tickets...");
     await createSupportTickets(users);
-
-    // Phase 10: Waitlists
-    console.log("\n[Phase 10] Creating waitlists...");
-    await createWaitlists(users);
 
     // Phase 11: Documents & Meetings
     console.log("\n[Phase 11] Creating documents & meeting sessions...");

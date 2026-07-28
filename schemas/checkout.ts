@@ -11,11 +11,7 @@ export const appointmentTypeSchema = z.enum([
   "TRIAL",
 ]);
 
-export const paymentGatewaySchema = z.enum([
-  "STRIPE",
-  "RAZORPAY",
-  "CARD",
-]);
+export const paymentGatewaySchema = z.enum(["STRIPE", "RAZORPAY", "CARD"]);
 
 // The implemented checkout gateways — a strict subset of the PaymentGateway
 // Prisma enum. Post-MVP stubs (e.g. DODO_PAYMENTS, #984) are NOT valid at
@@ -50,14 +46,10 @@ export const consultationSearchParamsSchema = searchParamsSchema
       path: ["slotOfAvailabilityWeeklyId"],
     },
   )
-  .refine(
-    (data) =>
-      new Date(data.startsAt) < new Date(data.endsAt),
-    {
-      message: "Start time must be before end time",
-      path: ["startsAt"],
-    },
-  );
+  .refine((data) => new Date(data.startsAt) < new Date(data.endsAt), {
+    message: "Start time must be before end time",
+    path: ["startsAt"],
+  });
 
 // Subscription-specific validation
 export const subscriptionSearchParamsSchema = searchParamsSchema.extend({
@@ -94,7 +86,6 @@ export const checkoutSchema = z
     paymentGateway: paymentGatewaySchema.default("RAZORPAY"), // Server auto-routes; client hint only
     displayCurrency: z.string().length(3).optional(), // Currency shown in the checkout UI
     notes: z.string().optional(),
-    fromWaitlist: z.string().optional(), // Waitlist ID if coming from waitlist flow
     useReferralCredits: z.boolean().optional(), // Apply available referral credits
     // Enterprise: optional org context. When set, the payment is tagged with
     // organizationId and billing is routed per the BillingAccount's
@@ -313,7 +304,6 @@ export const createCheckoutData = (params: {
   discountCode?: string;
   displayCurrency?: string;
   notes?: string;
-  fromWaitlist?: string;
   useReferralCredits?: boolean;
   organizationId?: string;
 }): CheckoutInput => {
@@ -331,7 +321,6 @@ export const createCheckoutData = (params: {
     discountCode: params.discountCode,
     displayCurrency: params.displayCurrency?.toUpperCase(),
     notes: params.notes,
-    fromWaitlist: params.fromWaitlist,
     useReferralCredits: params.useReferralCredits,
     organizationId: params.organizationId,
   };

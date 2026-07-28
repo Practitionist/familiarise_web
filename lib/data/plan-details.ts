@@ -39,7 +39,10 @@ export async function fetchWebinarPlanDetail(webinarPlanId: string) {
               image: true,
               workExperiences: {
                 select: { company: true, companyDomain: true, isCurrent: true },
-                orderBy: [{ isCurrent: "desc" as const }, { startDate: "desc" as const }],
+                orderBy: [
+                  { isCurrent: "desc" as const },
+                  { startDate: "desc" as const },
+                ],
                 take: 3,
               },
             },
@@ -60,13 +63,6 @@ export async function fetchWebinarPlanDetail(webinarPlanId: string) {
                   },
                 },
               },
-            },
-          },
-          waitlist: {
-            select: {
-              userId: true,
-              position: true,
-              status: true,
             },
           },
         },
@@ -122,7 +118,10 @@ export async function fetchClassPlanDetail(classPlanId: string) {
               image: true,
               workExperiences: {
                 select: { company: true, companyDomain: true, isCurrent: true },
-                orderBy: [{ isCurrent: "desc" as const }, { startDate: "desc" as const }],
+                orderBy: [
+                  { isCurrent: "desc" as const },
+                  { startDate: "desc" as const },
+                ],
                 take: 3,
               },
             },
@@ -143,13 +142,6 @@ export async function fetchClassPlanDetail(classPlanId: string) {
                   },
                 },
               },
-            },
-          },
-          waitlist: {
-            select: {
-              userId: true,
-              position: true,
-              status: true,
             },
           },
         },

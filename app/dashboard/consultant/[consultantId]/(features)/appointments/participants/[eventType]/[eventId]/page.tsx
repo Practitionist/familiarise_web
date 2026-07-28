@@ -27,18 +27,15 @@ import Link from "next/link";
 import { notFound, useParams } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { format } from "date-fns";
 
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
 import { DashboardHeader } from "@/components/dashboard/PageScaffold";
-import type { WaitlistParticipant } from "@/types/participants";
+import { effectiveMaxParticipants } from "@/lib/events/capacity";
 
 import type { ClassEvent, WebinarEvent } from "@/types/planner-events";
 
@@ -55,22 +52,12 @@ type EventKind = keyof typeof EVENT_KINDS;
  * `appointments: Appointment[]`, a webinar a single `appointment | null`.
  * Narrowing on the key rather than casting keeps that difference honest.
  */
-type ParticipantsResponse = { waitlist?: WaitlistParticipant[] } & (
+type ParticipantsResponse =
   | { webinarEvent: WebinarEvent; classEvent?: never }
-  | { classEvent: ClassEvent; webinarEvent?: never }
-);
+  | { classEvent: ClassEvent; webinarEvent?: never };
 
 // Registered-participant rows are flattened from the event's slot users.
 type RegisteredParticipant = { id: string; name?: string; email?: string };
-
-// Waitlist status pill colors — semantic, kept with dark: variants.
-function getWaitlistStatusColor(status: string): string {
-  if (status === "NOTIFIED")
-    return "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300";
-  if (status === "EXPIRED")
-    return "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300";
-  return "bg-muted text-muted-foreground";
-}
 
 const fetchParticipants = async (
   apiSegment: string,
@@ -149,7 +136,6 @@ export default function EventParticipantsPage() {
   const event = data?.webinarEvent ?? data?.classEvent;
   if (!event) return <div>Event not found</div>;
 
-  const waitlist = data?.waitlist ?? [];
   const plan = "webinarPlan" in event ? event.webinarPlan : event.classPlan;
 
   // A class has many appointments; a webinar has at most one. Normalise so
@@ -173,6 +159,9 @@ export default function EventParticipantsPage() {
         .map((user) => [user.id, user]),
     ).values(),
   );
+
+  // The instance may override the plan's capacity.
+  const effectiveCapacity = effectiveMaxParticipants(event, plan);
 
   const registeredColumns: ResponsiveColumn<RegisteredParticipant>[] = [
     { key: "name", header: "Name", primary: true, cell: (p) => p.name },
@@ -199,43 +188,13 @@ export default function EventParticipantsPage() {
     </Button>
   );
 
-  const waitlistColumns: ResponsiveColumn<WaitlistParticipant>[] = [
-    {
-      key: "position",
-      header: "Position",
-      cell: (entry) => (
-        <Badge variant="outline" className="font-mono">
-          #{entry.position ?? "-"}
-        </Badge>
-      ),
-    },
-    { key: "name", header: "Name", primary: true, cell: (e) => e.user.name },
-    { key: "email", header: "Email", cell: (e) => e.user.email },
-    {
-      key: "joined",
-      header: "Joined",
-      cell: (e) => format(new Date(e.joinedAt), "MMM d, yyyy h:mm a"),
-    },
-    {
-      key: "status",
-      header: "Status",
-      cell: (e) => (
-        <span
-          className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getWaitlistStatusColor(
-            e.status,
-          )}`}
-        >
-          {e.status}
-        </span>
-      ),
-    },
-  ];
-
   return (
     <>
       <DashboardHeader
         title={`${plan.title} — Participants`}
-        subtitle={`${participants.length}/${plan.maxParticipants} ${kind.countNoun} · ${waitlist.length} on waitlist`}
+        subtitle={`${participants.length}/${effectiveCapacity} ${kind.countNoun}${
+          participants.length >= effectiveCapacity ? " · sold out" : ""
+        }`}
         actions={
           <Link
             href={`/dashboard/consultant/${params.consultantId}/appointments`}
@@ -249,46 +208,17 @@ export default function EventParticipantsPage() {
       />
       <Card className="mt-6">
         <CardContent className="pt-6">
-          <Tabs defaultValue="registered" className="w-full">
-            <TabsList className="mb-4">
-              <TabsTrigger value="registered">Registered</TabsTrigger>
-              <TabsTrigger value="waitlist">
-                Waitlist
-                {waitlist.length > 0 && (
-                  <Badge variant="secondary" className="ml-2 h-5 px-1.5 min-w-5">
-                    {waitlist.length}
-                  </Badge>
-                )}
-              </TabsTrigger>
-            </TabsList>
-
-            <TabsContent value="registered">
-              <ResponsiveTable<RegisteredParticipant>
-                columns={registeredColumns}
-                rows={participants}
-                getRowId={(p) => p.id}
-                rowActions={renderRegisteredActions}
-                empty={
-                  <div className="py-8 text-center text-muted-foreground">
-                    No registered participants yet.
-                  </div>
-                }
-              />
-            </TabsContent>
-
-            <TabsContent value="waitlist">
-              <ResponsiveTable<WaitlistParticipant>
-                columns={waitlistColumns}
-                rows={waitlist}
-                getRowId={(e) => e.id}
-                empty={
-                  <div className="py-8 text-center text-muted-foreground">
-                    Waitlist is empty.
-                  </div>
-                }
-              />
-            </TabsContent>
-          </Tabs>
+          <ResponsiveTable<RegisteredParticipant>
+            columns={registeredColumns}
+            rows={participants}
+            getRowId={(p) => p.id}
+            rowActions={renderRegisteredActions}
+            empty={
+              <div className="py-8 text-center text-muted-foreground">
+                No registered participants yet.
+              </div>
+            }
+          />
         </CardContent>
       </Card>
     </>

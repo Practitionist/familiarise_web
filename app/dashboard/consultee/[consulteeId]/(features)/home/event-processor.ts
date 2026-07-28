@@ -15,7 +15,6 @@ import type {
   TConsulteeClass,
 } from "@/types/consultee-events";
 import type { MeetingAppointment, MeetingSlot } from "@/lib/meeting";
-import type { BookingStatus } from "@/components/ui/waitlist-status-badge";
 
 /**
  * Unified event type for display in the dashboard
@@ -26,6 +25,9 @@ interface ProcessedCollaborator {
   image?: string | null;
   role: string;
 }
+
+/** Whether the consultee holds a seat on a group event. */
+export type BookingStatus = "CONFIRMED" | null;
 
 export interface ProcessedEvent {
   id: string;
@@ -41,9 +43,9 @@ export interface ProcessedEvent {
   // Data needed for joining meetings
   joinableAppointment?: MeetingAppointment;
   joinableSlot?: MeetingSlot;
-  // Booking status for webinars/classes (CONFIRMED = paid, WAITLISTED/NOTIFIED = on waitlist)
+  // Registration state for webinars/classes. There is no queue any more —
+  // either the consultee holds a seat or the row is a plain event card.
   bookingStatus?: BookingStatus;
-  waitlistPosition?: number;
   // Collaborators (co-hosts) for webinars/classes
   collaborators?: ProcessedCollaborator[];
   // Org sponsorship — `Appointment.organizationId` (null = personal).
@@ -217,7 +219,11 @@ function processSubscription(
     startsAt: nextSlot.startsAt,
     endsAt: nextSlot.endsAt,
     status: subscription.status ?? "PENDING",
-    slots: allSlots.map((s) => ({ startsAt: s.startsAt, endsAt: s.endsAt, appointmentId: s.appointmentId })),
+    slots: allSlots.map((s) => ({
+      startsAt: s.startsAt,
+      endsAt: s.endsAt,
+      appointmentId: s.appointmentId,
+    })),
     appointmentId: nextSlot.appointmentId,
     joinableAppointment,
     joinableSlot: nextSlot.rawSlot,
@@ -228,9 +234,7 @@ function processSubscription(
 /**
  * Process a webinar into a ProcessedEvent
  */
-function processWebinar(
-  webinar: TConsulteeWebinar,
-): ProcessedEvent | null {
+function processWebinar(webinar: TConsulteeWebinar): ProcessedEvent | null {
   const allSlots: SlotWithContext[] = [];
   const appointmentId = webinar.appointment?.id ?? "";
 
@@ -274,26 +278,11 @@ function processWebinar(
     },
   };
 
-  // Determine booking status
-  // If user has appointment with slots, they're confirmed (paid)
-  // Otherwise check waitlist status
-  const hasConfirmedSlot =
-    (webinar.appointment?.slotsOfAppointment?.length ?? 0) > 0;
-  const waitlistEntry = webinar.waitlist?.[0]; // User's waitlist entry (filtered by API)
-
-  let bookingStatus: BookingStatus = null;
-  let waitlistPosition: number | undefined;
-
-  if (hasConfirmedSlot) {
-    bookingStatus = "CONFIRMED";
-  } else if (waitlistEntry) {
-    if (waitlistEntry.status === "NOTIFIED") {
-      bookingStatus = "NOTIFIED";
-    } else if (waitlistEntry.status === "WAITING") {
-      bookingStatus = "WAITLISTED";
-      waitlistPosition = waitlistEntry.position ?? undefined;
-    }
-  }
+  // Registered = the consultee is connected to at least one session slot.
+  const bookingStatus: BookingStatus =
+    (webinar.appointment?.slotsOfAppointment?.length ?? 0) > 0
+      ? "CONFIRMED"
+      : null;
 
   // Extract collaborators
   const collaborators: ProcessedCollaborator[] = (
@@ -314,12 +303,15 @@ function processWebinar(
     startsAt: nextSlot.startsAt,
     endsAt: nextSlot.endsAt,
     status: webinar.status ?? "APPROVED",
-    slots: allSlots.map((s) => ({ startsAt: s.startsAt, endsAt: s.endsAt, appointmentId: s.appointmentId })),
+    slots: allSlots.map((s) => ({
+      startsAt: s.startsAt,
+      endsAt: s.endsAt,
+      appointmentId: s.appointmentId,
+    })),
     appointmentId,
     joinableAppointment,
     joinableSlot: nextSlot.rawSlot,
     bookingStatus,
-    waitlistPosition,
     collaborators,
     organizationId: webinar.appointment?.organizationId ?? null,
   };
@@ -328,9 +320,7 @@ function processWebinar(
 /**
  * Process a class into a ProcessedEvent
  */
-function processClass(
-  classEvent: TConsulteeClass,
-): ProcessedEvent | null {
+function processClass(classEvent: TConsulteeClass): ProcessedEvent | null {
   const allSlots: SlotWithContext[] = [];
 
   classEvent.appointments?.forEach((appointment) => {
@@ -379,28 +369,12 @@ function processClass(
     },
   };
 
-  // Determine booking status
-  // If user has appointment with slots, they're confirmed (paid)
-  // Otherwise check waitlist status
-  const hasConfirmedSlot =
-    classEvent.appointments?.some(
+  const bookingStatus: BookingStatus =
+    (classEvent.appointments?.some(
       (a) => (a.slotsOfAppointment?.length ?? 0) > 0,
-    ) ?? false;
-  const waitlistEntry = classEvent.waitlist?.[0]; // User's waitlist entry (filtered by API)
-
-  let bookingStatus: BookingStatus = null;
-  let waitlistPosition: number | undefined;
-
-  if (hasConfirmedSlot) {
-    bookingStatus = "CONFIRMED";
-  } else if (waitlistEntry) {
-    if (waitlistEntry.status === "NOTIFIED") {
-      bookingStatus = "NOTIFIED";
-    } else if (waitlistEntry.status === "WAITING") {
-      bookingStatus = "WAITLISTED";
-      waitlistPosition = waitlistEntry.position ?? undefined;
-    }
-  }
+    ) ?? false)
+      ? "CONFIRMED"
+      : null;
 
   // Extract collaborators
   const collaborators: ProcessedCollaborator[] = (
@@ -421,12 +395,15 @@ function processClass(
     startsAt: nextSlot.startsAt,
     endsAt: nextSlot.endsAt,
     status: classEvent.status ?? "APPROVED",
-    slots: allSlots.map((s) => ({ startsAt: s.startsAt, endsAt: s.endsAt, appointmentId: s.appointmentId })),
+    slots: allSlots.map((s) => ({
+      startsAt: s.startsAt,
+      endsAt: s.endsAt,
+      appointmentId: s.appointmentId,
+    })),
     appointmentId: nextSlot.appointmentId,
     joinableAppointment,
     joinableSlot: nextSlot.rawSlot,
     bookingStatus,
-    waitlistPosition,
     collaborators,
     organizationId: nextAppointment?.organizationId ?? null,
   };

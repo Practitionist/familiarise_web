@@ -58,7 +58,7 @@ export function UrlTabs({
       const params = new URLSearchParams(searchParams?.toString() ?? "");
       params.set(paramName, value);
       // Panels that paginate all read the same `?page=`. Without this, moving
-      // to page 3 of Waitlist and then clicking Trials would open Trials on
+      // to page 3 of Documents and then clicking Trials would open Trials on
       // page 3 — or on an empty page, if it has fewer.
       params.delete("page");
       router.replace(`${pathname}?${params.toString()}`, { scroll: false });
