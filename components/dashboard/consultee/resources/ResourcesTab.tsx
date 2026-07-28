@@ -21,7 +21,11 @@ import { motion } from "framer-motion";
 import { ArrowUpDown, FolderOpen, RefreshCw } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { DashboardHeader } from "@/components/dashboard/PageScaffold";
-import { EventResourceCard, type EventResource } from "./EventResourceCard";
+import {
+  EventResourceCard,
+  type EventResource,
+  type ResourceArtifact,
+} from "./EventResourceCard";
 
 interface ResourcesData {
   consultations: EventResource[];
@@ -34,6 +38,14 @@ interface ResourcesData {
 interface ResourcesTabProps {
   data: ResourcesData | undefined;
   onRefresh?: () => void;
+  /**
+   * Which artifact this view is for. Documents and Recordings are separate
+   * destinations now; the event-type tabs stay as GROUPING, because "which
+   * session was this from" is the question people actually ask of a file.
+   */
+  artifact?: ResourceArtifact;
+  title?: string;
+  subtitle?: string;
 }
 
 const EVENT_TYPES = [
@@ -44,6 +56,11 @@ const EVENT_TYPES = [
   { key: "trials", label: "Trials" },
 ] as const;
 
+/**
+ * `with_recordings` / `with_materials` only make sense on the combined view —
+ * on the Documents page every event shown already has materials. The pages pass
+ * an `artifact` and the control hides the redundant options itself.
+ */
 type FilterOption = "all" | "with_recordings" | "with_materials" | "completed";
 
 function filterEvents(
@@ -68,7 +85,13 @@ function sortEvents(
   });
 }
 
-export function ResourcesTab({ data, onRefresh }: ResourcesTabProps) {
+export function ResourcesTab({
+  data,
+  onRefresh,
+  artifact = "both",
+  title,
+  subtitle,
+}: ResourcesTabProps) {
   const { toast } = useToast();
   const [isSyncing, setIsSyncing] = useState(false);
   const [sortDir, setSortDir] = useState<"desc" | "asc">("desc");
@@ -179,8 +202,10 @@ export function ResourcesTab({ data, onRefresh }: ResourcesTabProps) {
       transition={{ duration: 0.3 }}
     >
       <DashboardHeader
-        title="Resources"
-        subtitle="Materials and recordings from your enrolled events"
+        title={title ?? "Resources"}
+        subtitle={
+          subtitle ?? "Materials and recordings from your enrolled events"
+        }
         actions={
           <TooltipProvider>
             <Tooltip>
@@ -262,7 +287,11 @@ export function ResourcesTab({ data, onRefresh }: ResourcesTabProps) {
                   </p>
                 ) : (
                   items.map((event) => (
-                    <EventResourceCard key={event.id} event={event} />
+                    <EventResourceCard
+                    key={event.id}
+                    event={event}
+                    artifact={artifact}
+                  />
                   ))
                 )}
               </div>

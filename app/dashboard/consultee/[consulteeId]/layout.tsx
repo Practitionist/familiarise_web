@@ -8,11 +8,14 @@ import {
   Home,
   CalendarCheck,
   MessageSquare,
-  FolderOpen,
   CreditCard,
   Gift,
   LifeBuoy,
   Settings,
+  FileText,
+  Video,
+  MessageSquareText,
+  HelpCircle,
   Building2,
   UserRound,
   Lock,
@@ -51,8 +54,16 @@ const NAV_GROUPS: CollapsibleSidebarGroup[] = [
     ],
   },
   {
-    label: "Activity",
-    items: [{ name: "Resources", icon: FolderOpen, path: "resources" }],
+    // Was "Activity" wrapping a single "Resources" item — a label that said
+    // less than the thing under it. Now the group IS Resources, and the two
+    // artifacts are the entries: "where is the recording" and "where is the
+    // handout" are different errands, and one page tabbed by event type
+    // answered neither directly.
+    label: "Resources",
+    items: [
+      { name: "Documents", icon: FileText, path: "documents" },
+      { name: "Recordings", icon: Video, path: "recordings" },
+    ],
   },
   {
     label: "Billing",
@@ -62,10 +73,18 @@ const NAV_GROUPS: CollapsibleSidebarGroup[] = [
     ],
   },
   {
-    // Labelless on purpose: a group header reading "Support" above a single
-    // item also called "Support" is redundant nesting — the header would
-    // restate the only thing under it. Rendered as a standalone entry.
-    items: [{ name: "Support", icon: LifeBuoy, path: "support" }],
+    // Now a real group rather than a lone entry: requests, feedback and help
+    // were tabs on one page, and they are distinct destinations — a ticket
+    // list, a form and an FAQ share no state and answer different questions.
+    // Settings sits here as the fourth: it is the other thing people come
+    // looking for when something is wrong.
+    label: "Support",
+    items: [
+      { name: "Support requests", icon: LifeBuoy, path: "support" },
+      { name: "Feedback", icon: MessageSquareText, path: "feedback" },
+      { name: "Help", icon: HelpCircle, path: "help" },
+      { name: "Settings", icon: Settings, path: "settings" },
+    ],
   },
 ];
 
@@ -89,6 +108,10 @@ const PAGE_LABELS: Record<string, string> = {
   referrals: "Referrals",
   support: "Support",
   settings: "Settings",
+  documents: "Documents",
+  recordings: "Recordings",
+  feedback: "Feedback",
+  help: "Help",
 };
 
 // Opaque record ids (cuid / uuid) in nested routes carry no meaning as crumbs.
@@ -372,12 +395,10 @@ function ConsulteeLayoutInner({ children, params }: Readonly<PageProps>) {
   // the consultant/org shells' IA); Sign Out renders as the standalone red
   // button below the chip.
   const bottomUserChipActions = [
-    {
-      type: "item" as const,
-      label: "Settings",
-      href: `${basePath}/settings`,
-      icon: Settings,
-    },
+    // Settings deliberately absent: it is a sidebar entry under Support now,
+    // and a second link to the same href is the duplicate-destination problem
+    // ADR 19 exists to stop. The chip answers "who am I / which context",
+    // the sidebar answers "where do I go".
     ...(orgMemberships.length > 0
       ? [
           { type: "separator" as const },

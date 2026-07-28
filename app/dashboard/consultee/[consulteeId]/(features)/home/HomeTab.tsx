@@ -48,7 +48,7 @@ import {
 import {
   isInactiveStatus,
   isApprovedStatus,
-} from "../appointments/utils/status-guards";
+} from "@/lib/appointments/status-guards";
 import { DEFAULT_MEETING_DURATION_MS } from "../appointments/types";
 
 // Webinars/classes carry WebinarStatus/ClassStatus; consultations and

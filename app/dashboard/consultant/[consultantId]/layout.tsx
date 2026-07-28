@@ -18,6 +18,8 @@ import {
   BarChart3,
   Gift,
   Settings,
+  MessageSquareText,
+  HelpCircle,
   LifeBuoy,
   Building2,
   UserRound,
@@ -75,10 +77,13 @@ const NAV_GROUPS: CollapsibleSidebarGroup[] = [
     ],
   },
   {
-    label: "Content",
+    // "Resources" rather than "Content", matching the consultee side — the
+    // same two artifacts under the same name on both dashboards, so a
+    // consultant who also books sessions is not learning two vocabularies.
+    label: "Resources",
     items: [
-      { name: "Recordings", icon: Video, path: "recordings" },
       { name: "Documents", icon: FileText, path: "documents" },
+      { name: "Recordings", icon: Video, path: "recordings" },
     ],
   },
   {
@@ -90,10 +95,17 @@ const NAV_GROUPS: CollapsibleSidebarGroup[] = [
     ],
   },
   {
-    // Labelless on purpose: a group header reading "Support" above a single
-    // item also called "Support" is redundant nesting — the header would
-    // restate the only thing under it. Rendered as a standalone entry.
-    items: [{ name: "Support", icon: LifeBuoy, path: "support" }],
+    // A real group now rather than a lone entry: requests, feedback and help
+    // were tabs on one page and are distinct destinations. Settings joins them
+    // as the fourth — the other thing people go looking for when something is
+    // wrong. Mirrors the consultee shell exactly.
+    label: "Support",
+    items: [
+      { name: "Support requests", icon: LifeBuoy, path: "support" },
+      { name: "Feedback", icon: MessageSquareText, path: "feedback" },
+      { name: "Help", icon: HelpCircle, path: "help" },
+      { name: "Settings", icon: Settings, path: "settings" },
+    ],
   },
 ];
 
@@ -127,7 +139,9 @@ const PAGE_LABELS: Record<string, string> = {
   analytics: "Analytics",
   referrals: "Referrals",
   settings: "Settings",
-  support: "Support",
+  support: "Support requests",
+  feedback: "Feedback",
+  help: "Help",
 };
 
 // Opaque record ids (cuid / uuid) in nested routes carry no meaning as crumbs.
@@ -601,12 +615,8 @@ function ConsultantLayoutInner({
   // where Settings/Help live (they left the main nav, matching the org
   // shell's IA); Sign Out renders as the standalone red button below.
   const bottomUserChipActions = [
-    {
-      type: "item" as const,
-      label: "Settings",
-      href: settingsHref,
-      icon: Settings,
-    },
+    // Settings is a sidebar entry under Support now; a second link to the same
+    // href is the duplicate-destination problem ADR 19 exists to stop.
     ...(orgMemberships.length > 0
       ? [
           { type: "separator" as const },
