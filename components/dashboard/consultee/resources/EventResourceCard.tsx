@@ -12,7 +12,7 @@ import {
   Video,
 } from "lucide-react";
 import { cn } from "@/utils/tailwind";
-import { eventUnionStatusBadge } from "../appointments/utils/status-guards";
+import { eventUnionStatusBadge } from "@/lib/appointments/status-guards";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 
 export interface EventResource {
@@ -79,8 +79,27 @@ function getEmptyStateMessage(status: string): string {
   }
 }
 
-export function EventResourceCard({ event }: { event: EventResource }) {
-  const totalItems = event.materials.length + event.recordings.length;
+/**
+ * Which artifacts this card renders.
+ *
+ * Documents and Recordings are separate destinations now, so one card is asked
+ * for one kind at a time. "both" is the original behaviour and stays for any
+ * caller that wants the combined view.
+ */
+export type ResourceArtifact = "materials" | "recordings" | "both";
+
+export function EventResourceCard({
+  event,
+  artifact = "both",
+}: {
+  event: EventResource;
+  artifact?: ResourceArtifact;
+}) {
+  const showMaterials = artifact === "materials" || artifact === "both";
+  const showRecordings = artifact === "recordings" || artifact === "both";
+  const totalItems =
+    (showMaterials ? event.materials.length : 0) +
+    (showRecordings ? event.recordings.length : 0);
   const [expanded, setExpanded] = useState(totalItems > 0);
 
   return (
@@ -114,13 +133,13 @@ export function EventResourceCard({ event }: { event: EventResource }) {
           <StatusBadge {...eventUnionStatusBadge(event.status)} size="sm" />
           {totalItems > 0 && (
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              {event.materials.length > 0 && (
+              {showMaterials && event.materials.length > 0 && (
                 <span className="flex items-center gap-1">
                   <FileText className="w-3.5 h-3.5" />
                   {event.materials.length}
                 </span>
               )}
-              {event.recordings.length > 0 && (
+              {showRecordings && event.recordings.length > 0 && (
                 <span className="flex items-center gap-1">
                   <Video className="w-3.5 h-3.5" />
                   {event.recordings.length}
@@ -146,7 +165,7 @@ export function EventResourceCard({ event }: { event: EventResource }) {
           )}
 
           {/* Materials */}
-          {event.materials.length > 0 && (
+          {showMaterials && event.materials.length > 0 && (
             <div>
               <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
                 Materials ({event.materials.length})
@@ -191,7 +210,7 @@ export function EventResourceCard({ event }: { event: EventResource }) {
           )}
 
           {/* Recordings */}
-          {event.recordings.length > 0 && (
+          {showRecordings && event.recordings.length > 0 && (
             <div>
               <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
                 Recordings ({event.recordings.length})

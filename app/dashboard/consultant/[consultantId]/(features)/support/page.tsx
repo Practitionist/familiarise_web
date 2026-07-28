@@ -1,15 +1,14 @@
-import { SupportSurface } from "@/components/dashboard/shared/support/SupportSurface";
+import { SupportRequestsPage } from "@/components/dashboard/shared/support/SupportPages";
 
 /**
- * Consultant Support — requests, feedback, and help in one place.
- * Was `/help`: a static FAQ reachable only from the avatar dropdown, with no
- * way to raise a request or leave feedback.
+ * Support requests. Feedback and Help are sibling entries now rather than tabs
+ * here — see SupportPages for why.
  */
-export default async function ConsultantSupportPage({
+export default async function SupportPage({
   params,
 }: {
   params: Promise<{ consultantId: string }>;
 }) {
-  const { consultantId } = await params;
-  return <SupportSurface profileId={consultantId} />;
+  const p = await params;
+  return <SupportRequestsPage profileId={p.consultantId} />;
 }
