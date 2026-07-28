@@ -124,30 +124,12 @@ export interface RefundListResponse {
   totalPages: number;
 }
 
-// ─── Dispute List (admin/disputes) ─────────────────────────────────
-export interface Dispute {
-  id: string;
-  disputeId: string | null;
-  /** Paise — see the note on Refund.amountPaise. */
-  amountPaise: number;
-  currency: string;
-  status: string;
-  reason: string | null;
-  paymentGateway: string;
-  dueBy: string | null;
-  createdAt: string;
-  payment: {
-    id: string;
-    paymentIntent: string;
-  } | null;
-}
-
-export interface DisputeListResponse {
-  disputes: Dispute[];
-  total: number;
-  page: number;
-  totalPages: number;
-}
+// ─── Dispute List ──────────────────────────────────────────────────
+// Deliberately absent. `Dispute` and `DisputeListResponse` used to be declared
+// here as well as in types/disputes.ts, and nothing imported this copy — the
+// live dispute surfaces all use types/disputes.ts. Two same-named interfaces
+// over one model is how a fix lands on the copy nobody renders, so this one is
+// gone rather than kept in sync.
 
 // ─── Admin Dashboard Stats (admin/home) ────────────────────────────
 export interface RecentPayment {
@@ -200,6 +182,17 @@ export interface EarningsStats {
     platformFeePaise: number;
   };
   ready: {
+    count: number;
+    consultantSharePaise: number;
+    platformFeePaise: number;
+  };
+  /**
+   * #837 split BATCHED out of READY. `getEarningsStats` has returned this
+   * bucket ever since; this interface never declared it, so the admin earnings
+   * dashboard had no way to render money that had left "Ready" and not yet
+   * reached "Paid" — cleared earnings in transit, counted nowhere.
+   */
+  batched: {
     count: number;
     consultantSharePaise: number;
     platformFeePaise: number;

@@ -60,9 +60,22 @@ describe("client money interfaces name the field the schema declares", () => {
     // carried whatever the model declared and nothing typechecked the gap.
     ["Refund", "types/payments.ts", "PaymentDetailRefund"],
     ["Dispute", "types/payments.ts", "PaymentDetailDispute"],
-    ["Dispute", "types/payments.ts", "Dispute"],
+    // Dormant when found — nothing renders the ticket's linked refund yet — so
+    // this was a primed "₹NaN" rather than a live one. Covered because the
+    // whole point is to catch these before someone wires up the JSX.
+    ["Refund", "types/tickets.ts", "LinkedRefund"],
     ["Dispute", "types/disputes.ts", "Dispute"],
     ["Dispute", "types/disputes.ts", "DisputeDetails"],
+    // The `Payment`-backed interfaces. These are correct today and cost
+    // nothing to hold in place; `RecentRefund` was correct once too. Their
+    // model declares a bare `amount`, so they also stop an over-eager rename
+    // sweep from "fixing" them into `amountPaise`.
+    ["Payment", "types/payments.ts", "Payment"],
+    ["Payment", "types/payments.ts", "RecentPayment"],
+    ["Payment", "types/payments.ts", "PaymentDetail"],
+    ["Payment", "types/tickets.ts", "LinkedPayment"],
+    ["Payment", "types/subscriptions.ts", "SubscriptionListItem"],
+    ["ConsultantPayout", "types/payouts.ts", "Payout"],
   ])("%s (schema) matches %s → %s", (model, file, iface) => {
     expect(interfaceMoneyField(read(file), iface)).toBe(
       schemaMoneyField(model),

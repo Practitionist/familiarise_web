@@ -4012,16 +4012,22 @@ enum RefundStatus {
 }
 
 model Dispute {
-  id                 String         @id @default(uuid())
-  amountPaise        BigInt // Disputed amount in paise
-  currency           Currency       @default(INR)
-  reason             String // Dispute reason from gateway
-  status             DisputeStatus
-  disputeId          String         @unique // Gateway-specific dispute ID
-  paymentGateway     PaymentGateway
-  evidence           Json? // Evidence submitted to gateway
-  dueBy              DateTime?      @db.Timestamptz // Deadline to respond to dispute
-  isChargeRefundable Boolean        @default(true)
+  id                  String         @id @default(uuid())
+  amountPaise         BigInt // Disputed amount in paise
+  currency            Currency       @default(INR)
+  reason              String // Dispute reason from gateway
+  status              DisputeStatus
+  disputeId           String         @unique // Gateway-specific dispute ID
+  paymentGateway      PaymentGateway
+  evidence            Json? // Evidence submitted to gateway
+  // The dispute detail page has always rendered "Evidence was submitted on
+  // <date>" and no column backed it, so it read "N/A" for every dispute that
+  // had evidence. Nullable and not backfilled: rows written before this stamp
+  // genuinely do not know their submission time, and the UI says so rather
+  // than inventing one.
+  evidenceSubmittedAt DateTime?      @db.Timestamptz
+  dueBy               DateTime?      @db.Timestamptz // Deadline to respond to dispute
+  isChargeRefundable  Boolean        @default(true)
 
   payment   Payment @relation(fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: Restrict)
   paymentId String

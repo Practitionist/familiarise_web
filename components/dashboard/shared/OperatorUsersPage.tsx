@@ -127,16 +127,19 @@ export function OperatorUsersPage() {
   const { data: moderationStats } = useQuery({
     queryKey: ["operator-moderation-stats"],
     queryFn: async (): Promise<{
-      stats: { pendingVerifications: number };
+      stats: { pendingProfiles: number };
     } | null> => {
       const response = await fetch("/api/staff/moderation/stats");
       if (!response.ok) return null;
       return response.json();
     },
   });
-  // The endpoint nests counts under `stats` and names this one
-  // `pendingVerifications` — reading a flat `pendingProfiles` left it stuck at 0.
-  const pendingCount = moderationStats?.stats.pendingVerifications ?? 0;
+  // `stats.pendingProfiles` is what /api/staff/moderation/stats returns. The
+  // comment that used to sit here asserted the opposite, and the code followed
+  // it: #1029 renamed the field to `pendingProfiles` in the same commit that
+  // extracted this component, so reading `pendingVerifications` pinned the
+  // badge at 0 and hid every pending consultant verification from the tab.
+  const pendingCount = moderationStats?.stats.pendingProfiles ?? 0;
 
   // Calculate user counts from current data
   const userCounts = useMemo(

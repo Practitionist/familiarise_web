@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 import { useQuery } from "@tanstack/react-query";
+import { formatCurrencyAmount } from "@/utils/formatting";
 
 async function fetchAnalytics() {
   const response = await fetch("/api/admin/analytics");
@@ -166,13 +167,13 @@ export default function AdminAnalyticsPage() {
               <div className="flex justify-between items-center">
                 <span className="text-muted-foreground">Total Revenue</span>
                 <span className="font-bold">
-                  ${(data?.totalRevenue || 0).toLocaleString()}
+                  {formatCurrencyAmount(data?.totalRevenue ?? 0, "INR")}
                 </span>
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-muted-foreground">This Month</span>
                 <span className="font-bold text-green-600 dark:text-green-400">
-                  ${(data?.revenueThisMonth || 0).toLocaleString()}
+                  {formatCurrencyAmount(data?.revenueThisMonth ?? 0, "INR")}
                 </span>
               </div>
               <div className="flex justify-between items-center">
@@ -180,13 +181,13 @@ export default function AdminAnalyticsPage() {
                   Average Session Value
                 </span>
                 <span className="font-bold">
-                  ${(data?.avgSessionValue || 0).toFixed(2)}
+                  {formatCurrencyAmount(data?.avgSessionValue ?? 0, "INR")}
                 </span>
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-muted-foreground">Refunds</span>
                 <span className="font-bold text-red-600 dark:text-red-400">
-                  ${(data?.totalRefunds || 0).toLocaleString()}
+                  {formatCurrencyAmount(data?.totalRefunds ?? 0, "INR")}
                 </span>
               </div>
             </div>

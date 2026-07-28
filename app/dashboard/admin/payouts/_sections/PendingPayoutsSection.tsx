@@ -42,7 +42,15 @@ async function fetchPendingPayouts(): Promise<PayoutListResponse> {
   return response.json() as Promise<PayoutListResponse>;
 }
 
-async function approvePayout(id: string): Promise<Payout> {
+type PayoutActionResult = { success: boolean; message: string };
+
+/**
+ * The route answers with `{ success, message }`, not a Payout. These were typed
+ * `Promise<Payout>` and cast to match, which no caller noticed only because
+ * both mutations discard the value — the first `onSuccess: (data) => ...` to
+ * read `data.amount` would have got undefined from a type promising a number.
+ */
+async function approvePayout(id: string): Promise<PayoutActionResult> {
   const response = await fetch(`/api/admin/payouts/${id}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -52,10 +60,13 @@ async function approvePayout(id: string): Promise<Payout> {
     const error = await response.json();
     throw new Error(error.error || "Failed to approve payout");
   }
-  return response.json() as Promise<Payout>;
+  return response.json() as Promise<PayoutActionResult>;
 }
 
-async function rejectPayout(id: string, reason: string): Promise<Payout> {
+async function rejectPayout(
+  id: string,
+  reason: string,
+): Promise<PayoutActionResult> {
   const response = await fetch(`/api/admin/payouts/${id}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -65,7 +76,7 @@ async function rejectPayout(id: string, reason: string): Promise<Payout> {
     const error = await response.json();
     throw new Error(error.error || "Failed to reject payout");
   }
-  return response.json() as Promise<Payout>;
+  return response.json() as Promise<PayoutActionResult>;
 }
 
 export default function PendingPayoutsSection() {
