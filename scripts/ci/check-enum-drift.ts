@@ -29,8 +29,8 @@
  * Requires DATABASE_URL. Skips cleanly when absent so local runs and forked PRs
  * without secrets do not fail on a check they cannot perform.
  */
-import fs from "fs";
-import path from "path";
+import fs from "node:fs";
+import path from "node:path";
 
 // The repo's configured singleton, not a hand-rolled client: Prisma 7 needs an
 // explicit adapter (`lib/prisma.ts` builds a PrismaPg one), and every other
@@ -57,10 +57,14 @@ function schemaEnums(): Map<string, Set<string>> {
     const [, name, body] = m;
     const values = new Set<string>();
     for (const raw of body.split("\n")) {
-      // Strip trailing `// comment` and doc lines, then take the bare label.
-      const line = raw.replace(/\/\/.*$/, "").trim();
+      // Strip trailing `// comment` and `///` doc lines, then take the bare
+      // label. indexOf rather than a regex: the label pattern below is the only
+      // thing that needs to be exact, and a scan for two characters cannot
+      // backtrack.
+      const comment = raw.indexOf("//");
+      const line = (comment === -1 ? raw : raw.slice(0, comment)).trim();
       if (!line || line.startsWith("@@")) continue;
-      const value = /^([A-Za-z_][A-Za-z0-9_]*)$/.exec(line);
+      const value = /^([A-Za-z_]\w*)$/.exec(line);
       if (value) values.add(value[1]);
     }
     out.set(name, values);
