@@ -35,14 +35,23 @@ Razorpay does NOT guarantee exactly-once delivery. The same event can be deliver
 **Mitigation**: Track `lastEventId` in your database AND maintain a `processed_webhook_events` table.
 
 ### Webhook Retry Schedule
-When your handler fails (non-2xx or timeout), Razorpay retries:
-- **Retry 1**: ~5 minutes after first failure
-- **Retry 2**: ~30 minutes after retry 1
-- **Retry 3**: ~1 hour after retry 2
-- **Total retries**: 3 (so 4 total attempts including the original)
-- After all retries exhausted, the event is dropped — check Dashboard → Webhooks → Delivery attempts
-- Razorpay Dashboard shows all delivery attempts with response codes for debugging
-- **There is no "replay" button** — if all retries fail, you must reconcile manually by fetching the subscription/payment directly from the API
+Every event that gets a non-2xx response is a delivery failure, and Razorpay retries on an
+**exponential backoff for 24 hours** from the event creation timestamp. The individual
+intervals are not published — only the 24-hour envelope, so don't build timing assumptions
+on a specific schedule.
+
+If failures continue for the full 24 hours the **webhook is disabled** and stays disabled
+until someone re-enables it in the Dashboard. Razorpay emails the Alert Email Address
+configured on the webhook, falling back to the account email under Account & Settings.
+This is the failure mode worth alerting on: a disabled webhook is silent, and every event
+that fires while it is disabled is unrecoverable — not even a support replay can retrieve
+those.
+
+**There is no self-serve "replay" button.** Replay is a support ticket, one event at a
+time, only for events ≤15 days old that fired while the webhook was enabled. Reconcile
+against the API instead.
+
+Source: <https://razorpay.com/docs/webhooks/best-practices/> · <https://razorpay.com/docs/webhooks/faqs/>
 
 ### Webhook Timeout
 - Razorpay waits **5 seconds** for a 2xx response
@@ -65,19 +74,23 @@ invoice events:      event.payload.invoice.entity.subscription_id
 ```
 Some events (standalone payments, orders) have NO subscription_id — return 200 and skip.
 
-### Current Period End (three field names)
-```
-entity.current_period_end   (most common)
-entity.current_end          (some events)
-entity.end_at               (older API versions)
-```
-All are Unix timestamps in SECONDS (not milliseconds). Convert: `new Date(value * 1000)`.
+### Current Period End
+The subscription entity carries `current_start` / `current_end`, with `end_at` as a
+fallback on some payloads. Both are Unix timestamps in SECONDS (not milliseconds):
+`new Date(value * 1000)`.
+
+**`current_period_end` does not exist on Razorpay.** It is Stripe terminology, and it
+appears in enough third-party material that people reach for it and silently read
+`undefined`. An app-side *column* may be named `current_period_end` — that is fine, as
+long as it is populated from the payload's `current_end`.
+
+Source: <https://razorpay.com/docs/api/payments/subscriptions/entity/>
 
 ## Signature Verification
 
 ### Two Different Secrets
 - **Webhook signature**: Uses `RAZORPAY_WEBHOOK_SECRET`
-- **Payment verification**: Uses `RAZORPAY_KEY_SECRET`
+- **Payment verification**: Uses `RAZORPAY_SECRET`
 These are DIFFERENT values. Using the wrong one = silent signature mismatch.
 
 ### Two Different Signature Formats
@@ -282,8 +295,13 @@ There is no Razorpay API to look up which plan corresponds to a plan ID. You mus
 
 ## GST Notes
 
-### SAC Code for SaaS
-Use `998314` (Information technology design and development services) for Indian SaaS companies.
+### SAC Code
+Do not hardcode one here. This repo's SAC codes are project constants in
+`lib/payments/payouts/constants.ts` — `999293` for consulting, `999294` education,
+`999295` training — and `OrganizationInvoice.hsnCode` defaults to `999293`. Derive from
+those constants so invoices, payouts and generated code cannot drift apart. (`998314`,
+"information technology design and development services", is the code generic SaaS advice
+reaches for; it is the wrong family for a consulting marketplace.)
 
 ### Tax-Inclusive Plans
 When creating plans with `tax_inclusive: true`, the `amount` field is the total customer pays (including GST). To calculate the breakout:
@@ -298,7 +316,7 @@ sgst = gst - cgst  (handles odd paise rounding)
 
 ### Razorpay Does NOT Handle GST on Subscriptions
 Razorpay charges the plan amount as-is. If your plan is 49900 paise (Rs 499), Razorpay charges exactly 49900 paise. It does NOT automatically add GST on top, nor does it break out GST components. YOU must:
-- Calculate GST yourself (18% for SaaS — SAC code 998314)
+- Calculate GST yourself (18%), with the SAC code taken from `lib/payments/payouts/constants.ts`
 - Either set plan price as GST-inclusive (Rs 499 includes GST, base = 499/1.18 = Rs 422.88)
 - Or set plan price as base and add GST on top when displaying to the user
 

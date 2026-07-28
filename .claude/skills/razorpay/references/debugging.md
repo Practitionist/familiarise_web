@@ -1,8 +1,3 @@
----
-description: Debug common Razorpay integration issues — webhook failures, signature mismatches, subscription state problems, SDK quirks. Use when the user says "webhook not working", "signature failing", "razorpay broken", "payment not going through", or needs to troubleshoot any Razorpay integration problem.
-argument-hint: "[webhook|signature|subscription|payment]"
----
-
 # Razorpay Debugging Guide
 
 Common issues and their solutions, organized by symptom.
@@ -27,7 +22,7 @@ ngrok http 3000
 
 **Most common causes:**
 
-1. **Using wrong secret**: Webhook signature uses `RAZORPAY_WEBHOOK_SECRET`. Payment verification uses `RAZORPAY_KEY_SECRET`. They are DIFFERENT values.
+1. **Using wrong secret**: Webhook signature uses `RAZORPAY_WEBHOOK_SECRET`. Payment verification uses `RAZORPAY_SECRET`. They are DIFFERENT values.
 
 2. **Parsing body as JSON first**: Signature is computed on the RAW string body. If you parse to JSON and re-stringify, whitespace changes break the signature.
    ```typescript
@@ -121,16 +116,17 @@ The cast is only needed on SDK versions whose typings declare `fail_existing` as
 4. **Webhook timeout**: Your handler must return 200 within 5 seconds. If it takes 6 seconds, Razorpay marks it failed and retries. Check your handler latency.
 5. **Check idempotency**: Is `lastEventId` causing a skip? A previous delivery may have succeeded in Razorpay's view but failed to commit in your DB.
 6. **Check signature**: Was 400 returned? Means wrong secret or parsed JSON body.
-7. **Payment succeeded but webhook never arrived**: This happens when your webhook URL is down or DNS fails. Two recovery paths:
-   - **Dashboard replay** (events ≤15 days old): Dashboard → Developers → Webhooks → select the webhook → delivery logs → replay the individual event. There is no bulk replay — resend one event at a time. Useful right after a brief outage or bad deploy.
-   - **API reconciliation** (any age, or many events): build a `/api/billing/sync` endpoint that fetches subscription status directly from the Razorpay API and reconciles:
+7. **Payment succeeded but webhook never arrived**: usually the webhook URL was down or DNS failed. Reach for these in order:
+   - **The sweeper** — `scripts/cleanup/sweep-stuck-webhook-events.ts` re-drives every `WebhookEvent` row still at `processed = false` through the same dispatcher. This covers the common case: the event arrived, the handler died mid-way.
+   - **API reconciliation** — if the event never reached us at all there is no row to sweep, so read the truth back from Razorpay:
    ```typescript
-   // Recovery endpoint — call manually or via cron
-   const rzpSub = await razorpay.subscriptions.fetch(subscriptionId);
-   if (rzpSub.status === "active" && dbSub.status !== "active") {
-     await activateSubscription(dbSub, rzpSub, null);
+   const order = await razorpayClient.orders.fetch(payment.paymentIntent);
+   if (order.status === "paid" && payment.paymentStatus !== "SUCCEEDED") {
+     // app/api/checkout/verify/route.ts already does exactly this, guarded by a
+     // conditional updateMany on PENDING so it cannot race the webhook.
    }
    ```
+   - **Support-ticket replay**, last: there is no self-serve replay button. Dashboard → Help → Technical Support → "Issue regarding Webhooks/API", one event per request, event ≤15 days old, and only if the webhook was enabled when it fired. See `webhooks.md`.
 
 ## Auto-Capture Is Silently Off
 
@@ -184,7 +180,7 @@ async function verifyWebhookSignatureEdge(
 
 **Better fix**: Don't use Edge Runtime for webhook routes. In Next.js, ensure your webhook route uses Node.js runtime:
 ```typescript
-// app/api/billing/webhook/route.ts
+// app/api/webhooks/razorpay/route.ts
 export const runtime = "nodejs"; // Force Node.js runtime — NOT edge
 ```
 
@@ -213,7 +209,7 @@ export const runtime = "nodejs"; // Force Node.js runtime — NOT edge
 
 ```bash
 # Check if webhook endpoint is reachable
-curl -X POST https://your-app.com/api/billing/webhook \
+curl -X POST https://your-app.com/api/webhooks/razorpay \
   -H "Content-Type: application/json" \
   -d '{"test": true}'
 # Should return 400 (missing signature), NOT 404 or 500
@@ -322,7 +318,7 @@ Sent when a payment attempt fails (e.g., insufficient funds, card declined).
 
 ```bash
 # Test webhook locally (skip signature verification in test mode or use a known test secret)
-curl -X POST http://localhost:3000/api/billing/webhook \
+curl -X POST http://localhost:3000/api/webhooks/razorpay \
   -H "Content-Type: application/json" \
   -H "x-razorpay-event-id: evt_test_001" \
   -H "x-razorpay-signature: <generate with your webhook secret>" \

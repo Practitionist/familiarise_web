@@ -1,9 +1,3 @@
----
-name: go-live
-description: Production-ready checklist and security hardening for Razorpay integration — rate limiting, error monitoring, compliance. Use when the user asks to "launch to production", "go live", "run the security checklist", "harden my integration", or is preparing a Razorpay integration for real customers.
-argument-hint: "[checklist|security|monitoring]"
----
-
 # Go-Live Checklist & Production Hardening
 
 Use this guide before launching a Razorpay integration to production, or to harden an existing live integration.
@@ -13,8 +7,8 @@ Use this guide before launching a Razorpay integration to production, or to hard
 
 Complete every item before going live:
 
-- [ ] **CRITICAL: Verify auto-capture wasn't disabled** — Auto-capture is **ON by default** ("once your customer completes a payment, it is automatically moved to the captured state"). Confirm at Dashboard → Account & Settings → Payment Capture. The Orders API `payment.capture` field (and per-order capture settings) override this dashboard default, so check both. If capture is off, payments stay `authorized` and webhook `payment.captured` never fires.
-- [ ] **Authorized-but-uncaptured payments are auto-refunded** if not captured within the configured window (default ~3 days, max 5) — don't leave payments sitting in `authorized`.
+- [ ] **CRITICAL: Verify auto-capture wasn't disabled** — Auto-capture is **ON by default** ("once your customer completes a payment, it is automatically moved to the captured state"). Confirm at Dashboard → Settings → Payments → "Automatic capture delay" (labelled Account & Settings → Payment Capture in some Dashboard versions). The Orders API `payment.capture` field (and per-order capture settings) override this dashboard default, so check both. If capture is off, payments stay `authorized` and webhook `payment.captured` never fires. <https://razorpay.com/docs/payments/payments/capture-settings/>
+- [ ] **Authorized-but-uncaptured payments are auto-refunded after 3 days** — the capture-settings page is explicit and repeats it ("payments that are not captured within this period will be refunded automatically", "the maximum value (default) is 3 days"). Razorpay's own Payments FAQ still says 5 days; that is stale, build against 3. The auto-refund goes out at Normal speed, so the customer sees it in 5–7 working days. Don't leave payments sitting in `authorized`.
 - [ ] Switch to live API keys (`rzp_live_` prefix)
 - [ ] Create live plans (separate from test plans — test plan IDs don't work in live mode)
 - [ ] Register webhook with production URL (HTTPS required, port 443)
@@ -22,7 +16,7 @@ Complete every item before going live:
 - [ ] Enable all needed webhook events
 - [ ] Test with a real Rs 1 payment end-to-end
 - [ ] Verify refund flow works in live mode (refunds take 5-7 business days in live, instant in test)
-- [ ] Confirm settlement schedule — default settlement is **T+2 working days** domestic, **T+7** international (T = capture date)
+- [ ] Confirm settlement schedule — the standard domestic cycle is **T+2 working days** (T = capture date), where working days exclude Sundays, 2nd/4th Saturdays and bank holidays. **T+7 is the international cycle**, not a probation period for new merchants; there is no documented new-merchant T+7 default. <https://razorpay.com/docs/payments/settlements/>
 - [ ] Remove all `console.log` of sensitive data
 - [ ] Verify `.env` is in `.gitignore`
 - [ ] Webhook route uses `runtime = "nodejs"` NOT edge (crypto module required)
@@ -79,7 +73,7 @@ Signature verification is sufficient for authenticity. Additionally:
 ### c. Never Expose API Secret Client-Side
 
 - Only `NEXT_PUBLIC_RAZORPAY_KEY_ID` should be public
-- `RAZORPAY_KEY_SECRET` and `RAZORPAY_WEBHOOK_SECRET` are **server-only**
+- `RAZORPAY_SECRET` and `RAZORPAY_WEBHOOK_SECRET` are **server-only**
 - Never prefix secrets with `NEXT_PUBLIC_` in Next.js
 
 ### d. API Route Protection
@@ -100,13 +94,13 @@ Signature verification is sufficient for authenticity. Additionally:
 ```
 # .env.local (development)
 RAZORPAY_KEY_ID=rzp_test_xxx
-RAZORPAY_KEY_SECRET=test_secret
+RAZORPAY_SECRET=test_secret
 NEXT_PUBLIC_RAZORPAY_KEY_ID=rzp_test_xxx
 RAZORPAY_WEBHOOK_SECRET=test_webhook_secret
 
 # Production (Vercel/Railway/etc)
 RAZORPAY_KEY_ID=rzp_live_xxx
-RAZORPAY_KEY_SECRET=live_secret
+RAZORPAY_SECRET=live_secret
 NEXT_PUBLIC_RAZORPAY_KEY_ID=rzp_live_xxx
 RAZORPAY_WEBHOOK_SECRET=live_webhook_secret
 ```
@@ -222,5 +216,5 @@ export async function POST(req: Request) {
 - **Store payment records for minimum 8 years** (Indian tax law)
 - **PCI compliance**: Never store card details — Razorpay handles tokenization and PCI-DSS
 - **Display pricing inclusive of GST** on your website
-- Include **SAC code 998314** for SaaS services in invoices
+- Include the **SAC code from `lib/payments/payouts/constants.ts`** (`999293` consulting, `999294` education, `999295` training) — never a hardcoded literal, or invoices and payouts drift apart
 - Provide clear cancellation and refund policies on your website

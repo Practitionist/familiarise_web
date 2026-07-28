@@ -1,9 +1,3 @@
----
-name: local-testing
-description: Set up local Razorpay testing — test keys, ngrok tunnel, webhook registration, end-to-end test flow. Use when the user asks to "test locally", "set up ngrok", "test razorpay webhooks", "get test card numbers", or needs to verify their Razorpay integration before going live.
-argument-hint: "[setup|webhook|e2e]"
----
-
 # Local Razorpay Testing Guide
 
 Complete guide to testing your Razorpay integration locally before touching production.
@@ -20,7 +14,7 @@ Complete guide to testing your Razorpay integration locally before touching prod
 Update `.env.local`:
 ```
 RAZORPAY_KEY_ID=rzp_test_xxxxx
-RAZORPAY_KEY_SECRET=your_test_secret
+RAZORPAY_SECRET=your_test_secret
 NEXT_PUBLIC_RAZORPAY_KEY_ID=rzp_test_xxxxx
 ```
 
@@ -89,7 +83,7 @@ ngrok free tier gives a random URL each time. Paid plans give a stable subdomain
 
 1. Go to **Razorpay Dashboard → Account & Settings → Webhooks** (in test mode)
 2. Click **Add New Webhook**
-3. Set the URL: `https://abc123.ngrok-free.app/api/billing/webhook`
+3. Set the URL: `https://abc123.ngrok-free.app/api/webhooks/razorpay`
 4. Set a webhook secret (any strong string) — save it as `RAZORPAY_WEBHOOK_SECRET` in `.env.local`
 5. Select events to listen for:
    - `subscription.authenticated`
@@ -185,7 +179,7 @@ export PAYLOAD='{"event":"subscription.activated","payload":{"subscription":{"en
 SIGNATURE=$(echo -n "$PAYLOAD" | openssl dgst -sha256 -hmac "$WEBHOOK_SECRET" | awk '{print $NF}')
 
 # Send test webhook
-curl -X POST http://localhost:3000/api/billing/webhook \
+curl -X POST http://localhost:3000/api/webhooks/razorpay \
   -H "Content-Type: application/json" \
   -H "x-razorpay-event-id: evt_test_$(date +%s)" \
   -H "x-razorpay-signature: $SIGNATURE" \
@@ -220,7 +214,7 @@ Before switching from test to live:
 4. Verify you're in **test mode** on the dashboard (not live)
 
 ### Signature verification failing
-1. Check you're using `RAZORPAY_WEBHOOK_SECRET`, not `RAZORPAY_KEY_SECRET`
+1. Check you're using `RAZORPAY_WEBHOOK_SECRET`, not `RAZORPAY_SECRET`
 2. Check you're reading raw body with `request.text()`, not `request.json()`
 3. Check the secret matches what you set in Razorpay Dashboard
 
