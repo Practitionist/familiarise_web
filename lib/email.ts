@@ -673,16 +673,19 @@ export async function sendWaitlistConfirmEmail({
   name?: string | null;
   issuedAt: number;
 }) {
-  const confirmLink = buildConfirmUrl(email, issuedAt);
-
-  // Dev affordance: mirrors sendVerificationEmail so the flow is testable
-  // without a Resend key.
-  if (!process.env.RESEND_API_KEY) {
-    console.log(`[waitlist-confirm] ${email} -> ${confirmLink}`);
-  }
-
   let sentMessage: RenderedEmail | undefined;
   try {
+    // Signing lives inside the boundary: it throws when
+    // WAITLIST_HMAC_SECRET is unset in production, and a sender must never
+    // throw into its caller.
+    const confirmLink = buildConfirmUrl(email, issuedAt);
+
+    // Dev affordance: mirrors sendVerificationEmail so the flow is testable
+    // without a Resend key.
+    if (!process.env.RESEND_API_KEY) {
+      console.log(`[waitlist-confirm] ${email} -> ${confirmLink}`);
+    }
+
     const resend = getResendClient();
     if (!resend) {
       return { success: false, error: "Email service not configured" };
