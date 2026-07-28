@@ -32,7 +32,9 @@ export interface PaymentListResponse {
 export interface PaymentDetailRefund {
   id: string;
   refundId: string | null;
-  amount: number;
+  /** `Refund.amountPaise`. Declaring `amount` here rendered "£NaN" on the
+   *  payment detail page for every refund and dispute — see [PaymentDetailDispute]. */
+  amountPaise: number;
   currency: string;
   status: string;
   reason: string | null;
@@ -42,8 +44,11 @@ export interface PaymentDetailRefund {
 
 export interface PaymentDetailDispute {
   id: string;
+  /** Non-null in the schema (`@unique`), but kept nullable here so the UI
+   *  keeps its existing guards; narrowing it is a separate change. */
   disputeId: string | null;
-  amount: number;
+  /** `Dispute.amountPaise` — neither money model has ever had an `amount`. */
+  amountPaise: number;
   currency: string;
   status: string;
   reason: string | null;
@@ -189,11 +194,31 @@ export interface AdminDashboardStats {
 
 // ─── Earnings (admin/payouts) ──────────────────────────────────────
 export interface EarningsStats {
-  pending: { count: number; consultantSharePaise: number; platformFeePaise: number };
-  ready: { count: number; consultantSharePaise: number; platformFeePaise: number };
-  paid: { count: number; consultantSharePaise: number; platformFeePaise: number };
-  held: { count: number; consultantSharePaise: number; platformFeePaise: number };
-  refunded: { count: number; consultantSharePaise: number; platformFeePaise: number };
+  pending: {
+    count: number;
+    consultantSharePaise: number;
+    platformFeePaise: number;
+  };
+  ready: {
+    count: number;
+    consultantSharePaise: number;
+    platformFeePaise: number;
+  };
+  paid: {
+    count: number;
+    consultantSharePaise: number;
+    platformFeePaise: number;
+  };
+  held: {
+    count: number;
+    consultantSharePaise: number;
+    platformFeePaise: number;
+  };
+  refunded: {
+    count: number;
+    consultantSharePaise: number;
+    platformFeePaise: number;
+  };
   totalPlatformRevenue: number;
 }
 

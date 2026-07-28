@@ -53,6 +53,12 @@ describe("client money interfaces name the field the schema declares", () => {
     // operator home page. Covering every hand-written interface over a money
     // model is the point; covering some of them is how this recurred.
     ["Refund", "types/payments.ts", "RecentRefund"],
+    // The shared payment-detail view (admin + staff) had it in both of its
+    // money lists at once, which is what "£NaN" under Refunds AND Disputes on
+    // one screen looks like. Its API used a bare `include`, so the payload
+    // carried whatever the model declared and nothing typechecked the gap.
+    ["Refund", "types/payments.ts", "PaymentDetailRefund"],
+    ["Dispute", "types/payments.ts", "PaymentDetailDispute"],
     ["Dispute", "types/payments.ts", "Dispute"],
     ["Dispute", "types/disputes.ts", "Dispute"],
     ["Dispute", "types/disputes.ts", "DisputeDetails"],

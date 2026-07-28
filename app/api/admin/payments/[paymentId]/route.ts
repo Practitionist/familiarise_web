@@ -40,11 +40,41 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
             discountValue: true,
           },
         },
+        // Explicit selects, for two reasons. A bare `include` returns whatever
+        // the model happens to carry, which is how the detail page came to read
+        // `refund.amount` — a name neither model has — and render "₹NaN" from
+        // `undefined / 100`. Naming the columns makes that a type error at the
+        // boundary instead of a runtime NaN.
+        //
+        // It also stops shipping the whole row to the browser. `Dispute` holds
+        // `internalNotes` and `evidence`, and `Refund` holds `metadata` and
+        // `failureReason`; none of it is rendered, and operator notes on a
+        // chargeback are not something to hand out because the page happened
+        // to over-fetch.
         refunds: {
           orderBy: { createdAt: "desc" },
+          select: {
+            id: true,
+            refundId: true,
+            amountPaise: true,
+            currency: true,
+            status: true,
+            reason: true,
+            paymentGateway: true,
+            createdAt: true,
+          },
         },
         disputes: {
           orderBy: { createdAt: "desc" },
+          select: {
+            id: true,
+            disputeId: true,
+            amountPaise: true,
+            currency: true,
+            status: true,
+            reason: true,
+            createdAt: true,
+          },
         },
       },
     });
