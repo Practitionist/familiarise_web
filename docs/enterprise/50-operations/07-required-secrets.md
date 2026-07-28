@@ -190,7 +190,17 @@ and no FIRC reference is stored. `lib/payments/tax/tax-engine.ts` carries a TODO
 listing exactly these. Worth a professional opinion before international volume
 grows.
 
-**4. Decide whether non-resident consultants are supported at all.** The payout
+**4. ~~Decide whether non-resident consultants are supported~~ — decided,
+2026-07-29: not yet.** Consultees stay worldwide; consultants must be able to
+receive INR in India. The payout throw is the intended behaviour, the product
+now says so during consultant onboarding and on the earnings page
+(`components/payouts/IndiaOnlyPayoutNotice.tsx`), and the reasoning is written
+up in `docs/payments/gateways/README.md`. Revisit only when there are
+consultants abroad actually waiting to be paid; the work is Section 195
+withholding, TRC/Form 10F capture and 15CA/15CB filing, and it needs a CA.
+Original note follows.
+
+**Was:** decide whether non-resident consultants are supported at all. The payout
 pipeline hard-throws for them today. Section 194-O does not apply to
 non-residents, so supporting them means Section 195 withholding, DTAA relief
 against a Tax Residency Certificate and Form 10F, and Form 15CA/15CB per

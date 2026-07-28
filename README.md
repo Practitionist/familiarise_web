@@ -38,7 +38,7 @@ Think of it as the "Airbnb for expertise": a platform where professionals can mo
 | **In-App Messaging**     | Direct communication and document sharing between sessions                        |
 | **Document Review**      | Upload resumes, portfolios, or code for expert feedback                           |
 | **Smart Scheduling**     | Timezone-aware booking with weekly and custom availability                        |
-| **Secure Payments**      | Stripe (global) and Razorpay (India) with escrow protection                       |
+| **Secure Payments**      | Razorpay (primary, INR settlement) and Stripe (request→approve bookings), with escrow protection. **Consultees book from anywhere; consultants must be able to receive INR in India** — see below. |
 | **Earnings Dashboard**   | 80/20 revenue split with transparent payout tracking                              |
 | **Referral System**      | Viral growth via referral links, credit rewards for referrer and referee          |
 | **Collaborators**        | Multi-creator webinars and classes with role-based revenue sharing                |
@@ -49,6 +49,29 @@ Think of it as the "Airbnb for expertise": a platform where professionals can mo
 - 8+ domains (Technology, Business, Design, Marketing, Career Coaching, Education, Startups, Languages)
 - Multiple session types to fit any learning style
 - Money-back guarantee for unsatisfied sessions
+
+## Who can use this, and from where
+
+This distinction is load-bearing and easy to get backwards, so it is stated up
+front rather than buried in the payments docs.
+
+**Consultees can be anywhere in the world.** International cards are accepted,
+Razorpay converts at the buyer's bank and settles INR to the platform, and the
+FIRC needed under FEMA is generated automatically. Nothing blocks a foreign
+buyer and nothing should — this is live and working.
+
+**Consultants must be able to receive INR into an Indian bank account.** This is
+not a preference, it is what is currently built. TDS is withheld under Section
+194-O, which by definition applies only to residents; paying a non-resident
+instead requires Section 195 withholding, treaty relief against a tax residency
+certificate and Form 10F, and a Form 15CA/15CB filing per remittance, none of
+which exists yet. RazorpayX also cannot pay a foreign bank account at all. The
+payout pipeline enforces this: `processSinglePayout` throws rather than
+half-paying someone, and the UI says so during consultant onboarding.
+
+If you are changing payout code and wondering why the non-resident branch
+refuses instead of falling through — that is deliberate, and removing it would
+create a statutory withholding failure, not a feature.
 
 ## Quick Start
 

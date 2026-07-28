@@ -28,6 +28,7 @@ import {
   ShieldQuestion,
 } from "lucide-react";
 import { formatCurrencyAmount } from "@/utils/formatting";
+import { IndiaOnlyPayoutNotice } from "@/components/payouts/IndiaOnlyPayoutNotice";
 
 interface EarningsSummary {
   consultantProfileId: string;
@@ -464,6 +465,7 @@ export default function EarningsPage({
                 <p className="text-sm font-medium text-zinc-700">
                   Payout Information
                 </p>
+                <IndiaOnlyPayoutNotice variant="compact" className="mt-1" />
                 {eligibility.isEligible ? (
                   <p className="text-xs text-zinc-500 mt-1">
                     {formatSummaryAmount(eligibility.readyAmount)} ready —

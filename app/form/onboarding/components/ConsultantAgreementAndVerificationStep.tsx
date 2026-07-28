@@ -14,6 +14,7 @@ import {
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import TermsAndPrivacyAgreement from "./TermsAndPrivacyAgreement";
 import type { OnboardingFormData } from "@/utils/onboarding";
+import { IndiaOnlyPayoutNotice } from "@/components/payouts/IndiaOnlyPayoutNotice";
 
 interface ConsultantAgreementAndVerificationStepProps {
   onNext: (data: Partial<OnboardingFormData>) => void;
@@ -141,6 +142,11 @@ export default function ConsultantAgreementAndVerificationStep({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-8">
+      {/* Payout eligibility comes before verification deliberately: a
+          consultant who cannot receive INR into an Indian account should learn
+          that here, not after building a profile and earning money. */}
+      <IndiaOnlyPayoutNotice />
+
       {/* Verification Section */}
       <div className="space-y-6">
         <Alert className="border-border bg-muted">

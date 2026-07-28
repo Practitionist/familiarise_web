@@ -65,6 +65,39 @@ moved through it, no fees are payable on it, and it appears in no reconciliation
 or filing. The only live rails are Razorpay (primary, INR settlement) and Stripe
 (the request→approve booking path).
 
+### Who can transact, and from where
+
+A decision, not merely an observation of the current code — confirmed
+2026-07-29.
+
+**Consultees: worldwide, and deliberately so.** International cards are
+accepted, `routeGateway()` sends a non-IN buyer to Razorpay IBT, settlement is
+INR, and the FIRC is generated automatically. This earns money today and should
+not be restricted. The open item is evidentiary rather than functional: a
+zero-rated export needs a billing address, an LUT, receipt in convertible
+foreign exchange and a FIRC reference on file, and none of that is captured yet
+(`lib/payments/tax/tax-engine.ts` carries the TODO). Buyer-country detection now
+defaults to `IN` unless a country was explicitly asserted, so the error
+direction is over-collection, which is recoverable.
+
+**Consultants: India only, until Section 195 is built.** TDS is withheld under
+Section 194-O, which applies to residents by definition. A non-resident
+consultant needs Section 195 withholding, DTAA relief against a tax residency
+certificate and Form 10F, and a Form 15CA/15CB filing per remittance — and
+RazorpayX cannot pay a foreign bank account regardless. `processSinglePayout`
+throws for a non-resident rather than half-paying, `lib/compliance/tds.ts` has
+the DTAA engine written but unreachable (both callers hardcode
+`residencyStatus: "RESIDENT"`), and `lib/compliance/form15.ts` is an
+uncalled stub.
+
+That throw is the correct behaviour and should not be "fixed" without building
+the withholding path behind it. Removing it would produce a statutory
+withholding failure rather than a feature. The constraint is surfaced to
+consultants in the product by
+`components/payouts/IndiaOnlyPayoutNotice.tsx`, shown during consultant
+onboarding and again on the earnings page, so nobody discovers it only after
+earning money they cannot withdraw.
+
 ### Not under consideration
 
 Lemon Squeezy and XFlow were evaluated in March 2026 and rejected — Lemon
