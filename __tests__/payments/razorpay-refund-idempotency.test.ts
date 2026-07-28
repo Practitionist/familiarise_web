@@ -90,16 +90,23 @@ describe("X-Refund-Idempotency header", () => {
     expect(headersOf()).not.toHaveProperty("X-Refund-Idempotency");
   });
 
-  it("drops a key that cannot satisfy Razorpay's >=10 char rule", async () => {
+  it("refuses a key that cannot satisfy Razorpay's >=10 char rule", async () => {
     fetchMock.mockResolvedValue(okResponse());
 
-    await createRazorpayRefund({
-      paymentIntentId: "order_1",
-      amount: 5000,
-      idempotencyKey: "short",
-    });
+    // Previously this silently dropped the header and issued the refund anyway,
+    // which downgraded an explicitly-idempotent call to at-least-once delivery
+    // against a customer's card with no signal. A caller that supplies a key is
+    // asking for exactly-once; if we can't honour that, refuse.
+    await expect(
+      createRazorpayRefund({
+        paymentIntentId: "order_1",
+        amount: 5000,
+        idempotencyKey: "short",
+      }),
+    ).rejects.toThrow(/unusable after sanitization/);
 
-    expect(headersOf()).not.toHaveProperty("X-Refund-Idempotency");
+    // And crucially: no request was sent, so no money moved.
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("strips characters Razorpay rejects", async () => {

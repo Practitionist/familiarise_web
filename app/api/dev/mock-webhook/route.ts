@@ -52,11 +52,22 @@ interface MockWebhookResponse {
 // Development Check
 // ============================================
 
+/**
+ * This route reaches `handlePaymentSuccess`, `refundEarnings` and
+ * `handlePayoutWebhook` with NO signature and NO authentication. The gate is
+ * therefore the only thing standing between the open internet and the money
+ * pipeline.
+ *
+ * It used to also admit `ALLOW_MOCK_WEBHOOKS === "true"`, which meant a single
+ * environment variable — one dashboard toggle, one copied .env line — turned a
+ * production deployment into an unauthenticated "confirm any payment" endpoint.
+ * That disjunct is gone. The gate is now build-time posture only: a production
+ * build cannot be opened up by configuration.
+ */
 function isDevelopment(): boolean {
   return (
     process.env.NODE_ENV === "development" ||
-    process.env.VERCEL_ENV === "preview" ||
-    process.env.ALLOW_MOCK_WEBHOOKS === "true"
+    process.env.VERCEL_ENV === "preview"
   );
 }
 

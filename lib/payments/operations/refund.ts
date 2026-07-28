@@ -59,6 +59,8 @@ import { recordTdsReversal } from "@/lib/payments/tax/tds-service";
 import { generateOrgCreditNoteNumber } from "@/lib/payments/billing/credit-note-numbering";
 import { recordSystemError } from "@/lib/enterprise/system-events";
 import { sumPaise } from "@/lib/payments/utils/money";
+import { withSerializableRetry } from "@/lib/db/serializable-retry";
+import { reverseCreditsForPayment } from "@/lib/referrals/service";
 
 // ============================================================================
 // Public types
@@ -239,79 +241,91 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
   // placeholder is exactly what `reconcile-pending-refunds` recovers if we
   // crash between the gateway call and Phase 3 (the "two-phase refund
   // pattern" that cron documents).
-  const reserved = await prisma.$transaction(
-    async (tx) => {
-      // Re-derive `refundable` inside the Serializable tx — defends
-      // against two refunds racing through the outer read. Must mirror the
-      // outer computation EXACTLY (refunds + lost chargebacks): the outer
-      // read also nets disputes, and a chargeback can commit between the
-      // outer read and here. Reading the dispute table inside this
-      // Serializable tx makes SSI abort the loser when a lost-chargeback tx
-      // (also Serializable, see handleDisputeUpdated) interleaves — closing
-      // the refund×chargeback double-reversal the netting was added to fix.
-      const refundsLocked = await tx.refund.findMany({
-        where: {
-          paymentId: input.paymentId,
-          status: { in: [RefundStatus.SUCCEEDED, RefundStatus.PENDING] },
-        },
-        select: { amountPaise: true },
-      });
-      const refundedNow = refundsLocked.reduce((a, r) => a + r.amountPaise, 0);
-      const chargedBackNow = await tx.dispute.aggregate({
-        where: {
-          paymentId: input.paymentId,
-          status: { in: ["LOST", "CHARGE_REFUNDED"] },
-        },
-        _sum: { amountPaise: true },
-      });
-      const remainingNow =
-        payment.amount -
-        refundedNow -
-        sumPaise(chargedBackNow._sum.amountPaise);
-      if (requested > remainingNow) {
-        throw new RefundValidationError(
-          `Race-loss: refund amount ${requested} exceeds refundable ${remainingNow} on payment ${input.paymentId}`,
-          "AMOUNT_EXCEEDS_REFUNDABLE",
+  //
+  // Wrapped in withSerializableRetry for the same reason Phase 3b is: this tx
+  // deliberately creates a rw-antidependency against the dispute table so SSI
+  // aborts a racing lost-chargeback, which means P2034 here is an EXPECTED
+  // outcome, not an anomaly. Unwrapped, that surfaced to the caller as a raw
+  // Prisma error instead of being retried into the correct answer (either a
+  // successful reservation or a typed AMOUNT_EXCEEDS_REFUNDABLE rejection).
+  const reserved = await withSerializableRetry(() =>
+    prisma.$transaction(
+      async (tx) => {
+        // Re-derive `refundable` inside the Serializable tx — defends
+        // against two refunds racing through the outer read. Must mirror the
+        // outer computation EXACTLY (refunds + lost chargebacks): the outer
+        // read also nets disputes, and a chargeback can commit between the
+        // outer read and here. Reading the dispute table inside this
+        // Serializable tx makes SSI abort the loser when a lost-chargeback tx
+        // (also Serializable, see handleDisputeUpdated) interleaves — closing
+        // the refund×chargeback double-reversal the netting was added to fix.
+        const refundsLocked = await tx.refund.findMany({
+          where: {
+            paymentId: input.paymentId,
+            status: { in: [RefundStatus.SUCCEEDED, RefundStatus.PENDING] },
+          },
+          select: { amountPaise: true },
+        });
+        const refundedNow = refundsLocked.reduce(
+          (a, r) => a + r.amountPaise,
+          0,
         );
-      }
+        const chargedBackNow = await tx.dispute.aggregate({
+          where: {
+            paymentId: input.paymentId,
+            status: { in: ["LOST", "CHARGE_REFUNDED"] },
+          },
+          _sum: { amountPaise: true },
+        });
+        const remainingNow =
+          payment.amount -
+          refundedNow -
+          sumPaise(chargedBackNow._sum.amountPaise);
+        if (requested > remainingNow) {
+          throw new RefundValidationError(
+            `Race-loss: refund amount ${requested} exceeds refundable ${remainingNow} on payment ${input.paymentId}`,
+            "AMOUNT_EXCEEDS_REFUNDABLE",
+          );
+        }
 
-      // #1008 — re-check for a live dispute inside the Serializable tx. Reading
-      // the dispute table here makes SSI abort the loser when a dispute-status
-      // change (handleDisputeUpdated, also Serializable) interleaves between the
-      // outer read and this reservation.
-      const liveDisputeNow = await tx.dispute.findFirst({
-        where: {
-          paymentId: input.paymentId,
-          status: { notIn: DISPUTE_INACTIVE_FOR_GATING },
-        },
-        select: { id: true },
-      });
-      if (liveDisputeNow) {
-        throw new RefundValidationError(
-          `Payment ${input.paymentId} has an open dispute; resolve it before refunding`,
-          "REFUND_BLOCKED_BY_DISPUTE",
-        );
-      }
+        // #1008 — re-check for a live dispute inside the Serializable tx. Reading
+        // the dispute table here makes SSI abort the loser when a dispute-status
+        // change (handleDisputeUpdated, also Serializable) interleaves between the
+        // outer read and this reservation.
+        const liveDisputeNow = await tx.dispute.findFirst({
+          where: {
+            paymentId: input.paymentId,
+            status: { notIn: DISPUTE_INACTIVE_FOR_GATING },
+          },
+          select: { id: true },
+        });
+        if (liveDisputeNow) {
+          throw new RefundValidationError(
+            `Payment ${input.paymentId} has an open dispute; resolve it before refunding`,
+            "REFUND_BLOCKED_BY_DISPUTE",
+          );
+        }
 
-      return tx.refund.create({
-        data: {
-          paymentId: input.paymentId,
-          amountPaise: requested,
-          currency: payment.currency,
-          reason: input.reason,
-          status: RefundStatus.PENDING,
-          refundId: `pending_${globalThis.crypto.randomUUID()}`,
-          paymentGateway: payment.paymentGateway,
-          exchangeRateAtRefund: payment.exchangeRateAtCheckout,
-          displayCurrency: payment.displayCurrencyAtCheckout,
-          metadata: {
-            initiatedByUserId: input.initiatedByUserId ?? null,
-            source: "app",
-          } as Prisma.InputJsonValue,
-        },
-      });
-    },
-    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+        return tx.refund.create({
+          data: {
+            paymentId: input.paymentId,
+            amountPaise: requested,
+            currency: payment.currency,
+            reason: input.reason,
+            status: RefundStatus.PENDING,
+            refundId: `pending_${globalThis.crypto.randomUUID()}`,
+            paymentGateway: payment.paymentGateway,
+            exchangeRateAtRefund: payment.exchangeRateAtCheckout,
+            displayCurrency: payment.displayCurrencyAtCheckout,
+            metadata: {
+              initiatedByUserId: input.initiatedByUserId ?? null,
+              source: "app",
+            } as Prisma.InputJsonValue,
+          },
+        });
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    ),
   );
 
   // PHASE 2 — the actual gateway refund (M1: this call was previously
@@ -333,10 +347,13 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
       idempotencyKey: reserved.id,
     });
   } catch (err) {
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), {
-      tags: { subsystem: "payments", feature: "refund" },
-      extra: { paymentId: input.paymentId, refundRowId: reserved.id },
-    });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      {
+        tags: { subsystem: "payments", feature: "refund" },
+        extra: { paymentId: input.paymentId, refundRowId: reserved.id },
+      },
+    );
     // Keep the PENDING placeholder: the reconcile cron matches it against
     // the gateway (covers "call actually landed but we never heard back")
     // or FAILs it after 24h, which triggers the payer notification (#779).
@@ -437,6 +454,33 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
         where: { id: reserved.id },
         data: { status: RefundStatus.SUCCEEDED },
       });
+
+      // Restore referral credits. This closes the #B20 gap: credit restoration
+      // used to live ONLY in the gateway-refund webhook, so a refund initiated
+      // through the app (or through the reversal engine) settled without ever
+      // giving the buyer their credits back.
+      //
+      // It must run AFTER the SUCCEEDED update above, because
+      // reverseCreditsForPayment derives its restoration target from the
+      // cumulative SUCCEEDED refund total for the payment — called before, this
+      // refund would be missing from that sum and credits would be
+      // under-restored. It is re-entrant, so the webhook calling it again for
+      // the same refund is a no-op.
+      // `payment.amount` is the denominator, matching what the webhook passes
+      // at app/api/webhooks/utils.ts — the proportion is (cumulative refunded /
+      // amount charged), and the two paths must agree or a payment refunded
+      // partly through each would restore the wrong total.
+      const restoredCredits = await reverseCreditsForPayment(
+        input.paymentId,
+        tx,
+        requested,
+        payment.amount,
+      );
+      if (restoredCredits > 0) {
+        console.log(
+          `🔄 Restored ${restoredCredits} referral credits for app-initiated refund on payment ${input.paymentId}`,
+        );
+      }
 
       return {
         refundId: reserved.id,
@@ -718,11 +762,14 @@ export async function applyRefundCascade(
       case "CARD":
       case "REFERRAL_CREDIT": {
         // CARD: gateway handles the actual money via the Refund row.
-        // REFERRAL_CREDIT: restoration is deliberately NOT part of this
-        // cascade — the gateway-refund webhook calls
-        // reverseCreditsForPayment (app/api/webhooks/utils.ts) so credits
-        // restore exactly once per gateway refund. Reversal-engine paths
-        // that bypass the webhook do not restore credits (#B20 audit note).
+        // REFERRAL_CREDIT: restoration is not part of this cascade because it
+        // must run after the Refund row reads SUCCEEDED (it targets the
+        // cumulative SUCCEEDED refund total). Both settle paths now call
+        // reverseCreditsForPayment right after that update — the webhook in
+        // app/api/webhooks/utils.ts and the app path at the end of Phase 3b —
+        // and the function is re-entrant, so whichever runs second is a no-op.
+        // This closes the #B20 gap where app-initiated refunds restored
+        // nothing at all.
         break;
       }
 
@@ -1214,10 +1261,15 @@ export async function applyRefundCascade(
     console.error(
       `[ledger] refund reversal posting FAILED for payment ${payment.id} — rolling back the cascade: ${err instanceof Error ? err.message : String(err)}`,
     );
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), {
-      tags: { subsystem: "payments" },
-      contexts: { refund: { paymentId: payment.id, refundId: input.refundId } },
-    });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      {
+        tags: { subsystem: "payments" },
+        contexts: {
+          refund: { paymentId: payment.id, refundId: input.refundId },
+        },
+      },
+    );
     void recordSystemError({
       organizationId: payment.organizationId ?? null,
       category: "LEDGER",

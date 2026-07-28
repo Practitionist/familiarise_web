@@ -38,6 +38,8 @@ import { applyReversal } from "@/lib/payments/operations/reversal-engine";
 import { recordTdsReversal } from "@/lib/payments/tax/tds-service";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { recordSystemError } from "@/lib/enterprise/system-events";
+import { withSerializableRetry } from "@/lib/db/serializable-retry";
+import { mapGatewayRefundStatus } from "@/lib/payments/refund-status";
 
 // Re-export payment handlers from lib (architectural fix)
 export {
@@ -641,7 +643,7 @@ export async function handleRefundCreated(
         },
       });
       if (topUp) {
-        const mapped = mapRefundStatus(status);
+        const mapped = mapGatewayRefundStatus(status);
         if (mapped === "SUCCEEDED") {
           // Clamp: cannot refund more than was credited to this wallet.
           const refundAmt = Math.min(amount, topUp.amountPaise);
@@ -719,7 +721,7 @@ export async function handleRefundCreated(
         },
       });
       if (invoice) {
-        const mapped = mapRefundStatus(status);
+        const mapped = mapGatewayRefundStatus(status);
         if (mapped === "SUCCEEDED") {
           if (invoice.status === "REFUNDED") {
             console.log(`💸 Invoice ${invoice.id} already REFUNDED, skipping`);
@@ -831,7 +833,7 @@ export async function handleRefundCreated(
       refundAmt?: number,
       originalPaymentAmt?: number,
     ) => {
-      if (mapRefundStatus(refundStatus) !== "SUCCEEDED") return;
+      if (mapGatewayRefundStatus(refundStatus) !== "SUCCEEDED") return;
 
       // #776 — route gateway refunds through the canonical cascade so card/app/cron
       // refunds share ONE engine: earnings + funding-leg + wallet + ledger +
@@ -863,23 +865,27 @@ export async function handleRefundCreated(
       }
 
       // Referral-credit restoration is NOT part of the cascade (v2 referral
-      // ledger) — keep it here so refunded credit-funded bookings still restore.
-      try {
-        const restored = await reverseCreditsForPayment(
-          paymentId,
-          tx,
-          refundAmt,
-          originalPaymentAmt,
-        );
-        if (restored > 0) {
-          console.log(
-            `🔄 Reversed ${restored} referral credits for refunded payment ${paymentId}`,
-          );
-        }
-      } catch (creditError) {
-        console.error(
-          `⚠️ Failed to reverse referral credits for payment ${paymentId}:`,
-          creditError,
+      // ledger) — it runs here, and in the app path at the end of refund.ts
+      // Phase 3b. It must run AFTER the Refund row reads SUCCEEDED, because it
+      // derives its restoration target from the cumulative SUCCEEDED refund
+      // total for the payment.
+      //
+      // This used to swallow its error, alone among the steps in this
+      // transaction. A failure silently left a buyer's credits consumed against
+      // a booking they were refunded for, with no actor to retry it. Rethrow
+      // for the same reason the cascade above does: reverseCreditsForPayment is
+      // re-entrant (the partial path nets against `restoredAmount`, the full
+      // path deletes the usage row), so rolling back and re-driving is safe and
+      // is strictly better than committing a partial refund.
+      const restored = await reverseCreditsForPayment(
+        paymentId,
+        tx,
+        refundAmt,
+        originalPaymentAmt,
+      );
+      if (restored > 0) {
+        console.log(
+          `🔄 Reversed ${restored} referral credits for refunded payment ${paymentId}`,
         );
       }
     };
@@ -887,7 +893,7 @@ export async function handleRefundCreated(
     if (existingRefund) {
       // Update status if changed
       if (existingRefund.status !== status) {
-        const newStatus = mapRefundStatus(status);
+        const newStatus = mapGatewayRefundStatus(status);
         const wasSucceeded = existingRefund.status === "SUCCEEDED";
 
         await tx.refund.update({
@@ -917,7 +923,7 @@ export async function handleRefundCreated(
     // initiated from the Razorpay dashboard, not our app) would otherwise mint
     // an orphan FAILED Refund row attached to the B2C payment. No money moves
     // either way on a failed refund, so there's nothing to record — skip it.
-    if (mapRefundStatus(status) === "FAILED" && !existingRefund) {
+    if (mapGatewayRefundStatus(status) === "FAILED" && !existingRefund) {
       console.log(
         `↩️ Ignoring refund.failed for unknown refund ${refundId} (no existing row, no money movement)`,
       );
@@ -931,7 +937,7 @@ export async function handleRefundCreated(
         // #781 §A — gateway hands back a free-form ISO code; an unsupported
         // one throws here and dead-letters the event rather than booking it.
         currency: toCurrencyEnum(currency),
-        status: mapRefundStatus(status),
+        status: mapGatewayRefundStatus(status),
         refundId,
         paymentGateway: gateway,
         paymentId: payment.id,
@@ -959,25 +965,6 @@ export async function handleRefundCreated(
   });
 }
 
-function mapRefundStatus(
-  status: string,
-): "PENDING" | "SUCCEEDED" | "FAILED" | "CANCELLED" {
-  switch (status.toLowerCase()) {
-    case "succeeded":
-    case "processed":
-      return "SUCCEEDED";
-    case "pending":
-      return "PENDING";
-    case "failed":
-      return "FAILED";
-    case "canceled":
-    case "cancelled":
-      return "CANCELLED";
-    default:
-      return "PENDING";
-  }
-}
-
 // ============================================================================
 // Dispute Webhook Handlers
 // ============================================================================
@@ -996,150 +983,169 @@ export async function handleDisputeCreated(
   isChargeRefundable: boolean,
   gateway: "STRIPE" | "RAZORPAY",
 ) {
-  return await prisma.$transaction(async (tx) => {
-    // Find payment by charge ID or payment intent
-    // For Stripe, we need to get the payment intent from the charge
-    let payment;
-    // #873 — page once per dispute-unlink incident: the Razorpay-lookup catch
-    // and the !payment branch below must not both fire for the same webhook.
-    let unlinkAlertRecorded = false;
-    if (gateway === "STRIPE" && stripeClient) {
-      try {
-        const charge = await stripeClient.charges.retrieve(chargeId);
-        if (charge.payment_intent) {
-          payment = await tx.payment.findUnique({
-            where: {
-              paymentIntent:
-                typeof charge.payment_intent === "string"
-                  ? charge.payment_intent
-                  : charge.payment_intent.id,
-            },
-          });
-        }
-      } catch (error) {
-        console.error("Failed to retrieve charge:", error);
+  // Resolve `chargeId` to OUR paymentIntent BEFORE opening the transaction.
+  // This lookup is an external HTTP call to Stripe or Razorpay; leaving it
+  // inside the tx held a database transaction open across a network round trip,
+  // and made the tx unsafe to retry (an SSI retry would re-hit the gateway).
+  // Both matter now that this handler runs Serializable to match
+  // handleDisputeUpdated.
+  let resolvedPaymentIntent: string | undefined;
+  // #873 — page once per dispute-unlink incident: the lookup catch and the
+  // !payment branch below must not both fire for the same webhook.
+  let unlinkAlertRecorded = false;
+
+  if (gateway === "STRIPE" && stripeClient) {
+    try {
+      const charge = await stripeClient.charges.retrieve(chargeId);
+      if (charge.payment_intent) {
+        resolvedPaymentIntent =
+          typeof charge.payment_intent === "string"
+            ? charge.payment_intent
+            : charge.payment_intent.id;
       }
-    } else {
-      // For Razorpay, chargeId is the payment_id. We need to fetch the payment
-      // from Razorpay to get the order_id, which is stored as our paymentIntent.
-      if (razorpayClient) {
-        try {
-          const rzpPayment = await razorpayClient.payments.fetch(chargeId);
-          if (rzpPayment.order_id) {
-            payment = await tx.payment.findUnique({
-              where: { paymentIntent: rzpPayment.order_id },
-            });
+    } catch (error) {
+      console.error("Failed to retrieve charge:", error);
+    }
+  } else if (razorpayClient) {
+    // For Razorpay, chargeId is the payment_id. We need to fetch the payment
+    // from Razorpay to get the order_id, which is stored as our paymentIntent.
+    try {
+      const rzpPayment = await razorpayClient.payments.fetch(chargeId);
+      if (rzpPayment.order_id) {
+        resolvedPaymentIntent = rzpPayment.order_id;
+      }
+    } catch (error) {
+      console.error(
+        `Failed to fetch Razorpay payment ${chargeId} to link dispute:`,
+        error,
+      );
+      // PM-4 — without the gateway lookup we can't link the dispute, so
+      // earnings won't be held. The 6h reconcile-disputes cron is the only
+      // backstop; page so it isn't silently dropped for 6h.
+      void recordSystemError({
+        category: "WEBHOOK",
+        summary: `CRITICAL_DISPUTE_UNLINKED: Razorpay payment lookup failed for dispute ${disputeId}`,
+        err: error,
+        context: { disputeId, chargeId, gateway },
+        correlationId: disputeId,
+      }).catch(() => {});
+      unlinkAlertRecorded = true;
+    }
+  }
+
+  // Serializable + bounded retry, matching handleDisputeUpdated. The earnings
+  // HELD writes are CAS'd, but this tx also reads Payment and Dispute before
+  // deciding, and a concurrent refund reservation (refundPayment Phase 1, also
+  // Serializable) reads the same dispute rows. Under READ COMMITTED both could
+  // pass their pre-checks against a stale snapshot and commit; under SSI the
+  // rw-antidependency aborts one and the retry sees the winner's effect.
+  return await withSerializableRetry(() =>
+    prisma.$transaction(
+      async (tx) => {
+        const payment = resolvedPaymentIntent
+          ? await tx.payment.findUnique({
+              where: { paymentIntent: resolvedPaymentIntent },
+            })
+          : null;
+
+        if (!payment) {
+          console.warn(`Payment not found for dispute: ${disputeId}`);
+          // PM-4 — dispute couldn't be linked to a payment (lookup miss, or the
+          // gateway fetch above threw). Dropping it silently means disputed
+          // earnings stay payable until the 6h reconcile-disputes cron — page on it,
+          // unless the lookup-failure catch above already paged for this incident.
+          if (!unlinkAlertRecorded) {
+            void recordSystemError({
+              category: "WEBHOOK",
+              summary: `CRITICAL_DISPUTE_UNLINKED: no payment matched dispute ${disputeId}`,
+              err: new Error("dispute payment not found"),
+              context: { disputeId, chargeId, gateway },
+              correlationId: disputeId,
+            }).catch(() => {});
           }
-        } catch (error) {
-          console.error(
-            `Failed to fetch Razorpay payment ${chargeId} to link dispute:`,
-            error,
-          );
-          // PM-4 — without the gateway lookup we can't link the dispute, so
-          // earnings won't be held. The 6h reconcile-disputes cron is the only
-          // backstop; page so it isn't silently dropped for 6h.
-          void recordSystemError({
-            category: "WEBHOOK",
-            summary: `CRITICAL_DISPUTE_UNLINKED: Razorpay payment lookup failed for dispute ${disputeId}`,
-            err: error,
-            context: { disputeId, chargeId, gateway },
-            correlationId: disputeId,
-          }).catch(() => {});
-          unlinkAlertRecorded = true;
+          return;
         }
-      }
-    }
 
-    if (!payment) {
-      console.warn(`Payment not found for dispute: ${disputeId}`);
-      // PM-4 — dispute couldn't be linked to a payment (lookup miss, or the
-      // gateway fetch above threw). Dropping it silently means disputed
-      // earnings stay payable until the 6h reconcile-disputes cron — page on it,
-      // unless the lookup-failure catch above already paged for this incident.
-      if (!unlinkAlertRecorded) {
-        void recordSystemError({
-          category: "WEBHOOK",
-          summary: `CRITICAL_DISPUTE_UNLINKED: no payment matched dispute ${disputeId}`,
-          err: new Error("dispute payment not found"),
-          context: { disputeId, chargeId, gateway },
-          correlationId: disputeId,
-        }).catch(() => {});
-      }
-      return;
-    }
+        // Check if dispute already exists
+        const existingDispute = await tx.dispute.findUnique({
+          where: { disputeId },
+        });
 
-    // Check if dispute already exists
-    const existingDispute = await tx.dispute.findUnique({
-      where: { disputeId },
-    });
+        if (existingDispute) {
+          console.log(`Dispute ${disputeId} already exists`);
+          return;
+        }
 
-    if (existingDispute) {
-      console.log(`Dispute ${disputeId} already exists`);
-      return;
-    }
+        // Create dispute record. An unmapped gateway status falls back to the
+        // protective NEEDS_RESPONSE hold — at creation the safe error is to
+        // treat the dispute as live and hold earnings, never to drop it.
+        const createdStatus = mapDisputeStatus(status);
+        if (createdStatus === null) {
+          console.warn(
+            `Unknown dispute status "${status}" for ${disputeId} — defaulting to NEEDS_RESPONSE`,
+          );
+        }
+        await tx.dispute.create({
+          data: {
+            amountPaise: amount,
+            currency: toCurrencyEnum(currency),
+            reason,
+            status: createdStatus ?? "NEEDS_RESPONSE",
+            disputeId,
+            paymentGateway: gateway,
+            dueBy: dueBy ? new Date(dueBy * 1000) : null,
+            isChargeRefundable,
+            paymentId: payment.id,
+          },
+        });
 
-    // Create dispute record. An unmapped gateway status falls back to the
-    // protective NEEDS_RESPONSE hold — at creation the safe error is to
-    // treat the dispute as live and hold earnings, never to drop it.
-    const createdStatus = mapDisputeStatus(status);
-    if (createdStatus === null) {
-      console.warn(
-        `Unknown dispute status "${status}" for ${disputeId} — defaulting to NEEDS_RESPONSE`,
-      );
-    }
-    await tx.dispute.create({
-      data: {
-        amountPaise: amount,
-        currency: toCurrencyEnum(currency),
-        reason,
-        status: createdStatus ?? "NEEDS_RESPONSE",
-        disputeId,
-        paymentGateway: gateway,
-        dueBy: dueBy ? new Date(dueBy * 1000) : null,
-        isChargeRefundable,
-        paymentId: payment.id,
+        console.log(
+          `✅ Dispute ${disputeId} created for payment ${payment.id}`,
+        );
+
+        // M1 FIX: Hold consultant earnings to prevent payout of disputed funds
+        const heldResult = await tx.consultantEarnings.updateMany({
+          where: {
+            paymentId: payment.id,
+            status: { in: ["PENDING", "READY"] },
+          },
+          data: { status: "HELD" },
+        });
+        if (heldResult.count > 0) {
+          console.log(
+            `🔒 ${heldResult.count} earnings held due to dispute ${disputeId}`,
+          );
+        }
+
+        // #1008 — hold the HOST org's earnings too (mirrors the consultant hold).
+        // PENDING_TRUST is left alone — it's already un-releasable. Single CAS, so
+        // it's race-safe against payout batching without upgrading isolation.
+        const orgHeld = await tx.organizationEarnings.updateMany({
+          where: {
+            paymentId: payment.id,
+            status: { in: ["PENDING", "READY"] },
+          },
+          data: { status: "HELD" },
+        });
+        if (orgHeld.count > 0) {
+          console.log(
+            `🔒 ${orgHeld.count} org earnings held due to dispute ${disputeId}`,
+          );
+        }
+
+        // --- Novu notification (fire-and-forget) ---
+        void notifyDisputeCreated([payment.userId], {
+          disputeId,
+          amount,
+          currency,
+          reason,
+          status: createdStatus ?? "NEEDS_RESPONSE",
+          dashboardUrl: `${getAppUrl()}/dashboard`,
+        });
       },
-    });
-
-    console.log(`✅ Dispute ${disputeId} created for payment ${payment.id}`);
-
-    // M1 FIX: Hold consultant earnings to prevent payout of disputed funds
-    const heldResult = await tx.consultantEarnings.updateMany({
-      where: {
-        paymentId: payment.id,
-        status: { in: ["PENDING", "READY"] },
-      },
-      data: { status: "HELD" },
-    });
-    if (heldResult.count > 0) {
-      console.log(
-        `🔒 ${heldResult.count} earnings held due to dispute ${disputeId}`,
-      );
-    }
-
-    // #1008 — hold the HOST org's earnings too (mirrors the consultant hold).
-    // PENDING_TRUST is left alone — it's already un-releasable. Single CAS, so
-    // it's race-safe against payout batching without upgrading isolation.
-    const orgHeld = await tx.organizationEarnings.updateMany({
-      where: { paymentId: payment.id, status: { in: ["PENDING", "READY"] } },
-      data: { status: "HELD" },
-    });
-    if (orgHeld.count > 0) {
-      console.log(
-        `🔒 ${orgHeld.count} org earnings held due to dispute ${disputeId}`,
-      );
-    }
-
-    // --- Novu notification (fire-and-forget) ---
-    void notifyDisputeCreated([payment.userId], {
-      disputeId,
-      amount,
-      currency,
-      reason,
-      status: createdStatus ?? "NEEDS_RESPONSE",
-      dashboardUrl: `${getAppUrl()}/dashboard`,
-    });
-  });
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    ),
+  );
 }
 
 /**
@@ -1676,7 +1682,6 @@ export async function applyB2cChargebackReversal(
     postings,
   });
 }
-
 
 // ============================================================================
 // Webhook Event Logging

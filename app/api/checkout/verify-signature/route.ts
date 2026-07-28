@@ -5,6 +5,24 @@
  * Verifies HMAC-SHA256(order_id|payment_id, RAZORPAY_SECRET) returned by
  * the Razorpay checkout modal, providing defense-in-depth alongside webhooks
  * and enabling instant UI feedback without waiting for the webhook.
+ *
+ * ADR 21 — this route drives the CANONICAL confirmation pipeline; it does not
+ * write payment status itself.
+ *
+ * It used to flip `Payment.paymentStatus` PENDING -> SUCCEEDED with a bare
+ * `updateMany` and nothing else. That created a second writer for payment
+ * truth, and the client's return from the Razorpay modal normally beats the
+ * webhook. When it won, the later `payment.captured` webhook hit the
+ * already-SUCCEEDED early-return in `handlePaymentSuccess` and skipped the
+ * entire pipeline: no appointment confirmation, no `ConsultantEarnings`, no
+ * `booking:<paymentId>` ledger transaction, no GST accrual, and no
+ * capture-amount parity check (which sits below that early-return). The money
+ * was taken and never journalled.
+ *
+ * So the route now calls the same `routeCapturedPayment` the webhook calls.
+ * Every handler beneath it is Serializable and idempotent, so whichever of the
+ * two arrives first does the work and the other is a no-op — the race is safe
+ * in both directions.
  */
 
 import * as Sentry from "@sentry/nextjs";
@@ -12,12 +30,17 @@ import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
+import { razorpayClient } from "@/lib/payments/core/razorpay";
+import { routeCapturedPayment } from "@/app/api/webhooks/razorpay-dispatch";
 import { z } from "zod";
 
 const verifySignatureSchema = z.object({
   razorpay_order_id: z.string().startsWith("order_"),
   razorpay_payment_id: z.string().startsWith("pay_"),
-  razorpay_signature: z.string().length(64).regex(/^[0-9a-fA-F]+$/),
+  razorpay_signature: z
+    .string()
+    .length(64)
+    .regex(/^[0-9a-fA-F]+$/),
 });
 
 export async function POST(req: NextRequest) {
@@ -33,7 +56,9 @@ export async function POST(req: NextRequest) {
 
     const keySecret = process.env.RAZORPAY_SECRET;
     if (!keySecret) {
-      console.error("RAZORPAY_SECRET not configured for signature verification");
+      console.error(
+        "RAZORPAY_SECRET not configured for signature verification",
+      );
       return NextResponse.json(
         { error: "Payment verification unavailable" },
         { status: 500 },
@@ -78,28 +103,98 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Atomically update only if still PENDING (prevents race with webhook handler)
-    const updated = await prisma.payment.updateMany({
-      where: {
-        id: payment.id,
-        paymentStatus: "PENDING",
-      },
-      data: {
+    // Already confirmed by the webhook (or by an earlier call). Nothing to do —
+    // report the current truth rather than re-driving.
+    if (payment.paymentStatus === "SUCCEEDED") {
+      return NextResponse.json({
+        verified: true,
         paymentStatus: "SUCCEEDED",
-        paymentMethod: "razorpay",
-        description: `Verified via signature (payment: ${razorpay_payment_id})`,
-      },
+        orderId: razorpay_order_id,
+        paymentId: razorpay_payment_id,
+      });
+    }
+
+    // The gateway is the authority on what was actually captured and on the
+    // `notes` that select the handler. The signature only proves the pair
+    // (order_id, payment_id) came from Razorpay; it carries neither amount nor
+    // notes, and both are needed to run the same pipeline the webhook runs.
+    let notes: Record<string, string> = {};
+    let capturedAmountPaise: number | undefined;
+    try {
+      if (!razorpayClient) throw new Error("RAZORPAY_NOT_INITIALIZED");
+      const gatewayPayment =
+        await razorpayClient.payments.fetch(razorpay_payment_id);
+      // Razorpay types `notes` as a string|number map; the handlers all read
+      // string values, so normalize rather than cast.
+      notes = Object.fromEntries(
+        Object.entries(gatewayPayment.notes ?? {}).map(([k, v]) => [
+          k,
+          String(v),
+        ]),
+      );
+      capturedAmountPaise = Number(gatewayPayment.amount);
+    } catch (fetchError) {
+      // Do NOT fall back to confirming without gateway truth: that is exactly
+      // the bare-flip behaviour this route is fixing. The webhook remains the
+      // durable path and the stuck-event sweeper backstops it, so report
+      // "still processing" and let the client poll.
+      Sentry.captureException(
+        fetchError instanceof Error
+          ? fetchError
+          : new Error(String(fetchError)),
+        {
+          tags: { subsystem: "payments" },
+          contexts: {
+            payment: { paymentId: payment.id, orderId: razorpay_order_id },
+          },
+        },
+      );
+      console.error(
+        `verify-signature: gateway fetch failed for ${razorpay_payment_id}; deferring to webhook`,
+        fetchError,
+      );
+      return NextResponse.json({
+        verified: true,
+        paymentStatus: payment.paymentStatus,
+        pendingConfirmation: true,
+        orderId: razorpay_order_id,
+        paymentId: razorpay_payment_id,
+      });
+    }
+
+    // Same entry point the `payment.captured` webhook uses. Idempotent and
+    // Serializable, so a concurrent webhook either loses the SSI race and
+    // retries into a no-op, or wins and makes this a no-op.
+    await routeCapturedPayment({
+      orderId: razorpay_order_id,
+      notes,
+      amountPaise: capturedAmountPaise,
+      gatewayPaymentId: razorpay_payment_id,
     });
 
-    if (updated.count > 0) {
-      console.log(
-        `✅ Payment ${payment.id} marked SUCCEEDED via signature verification (before webhook)`,
-      );
-    }
+    const confirmed = await prisma.payment.findUnique({
+      where: { id: payment.id },
+      select: { paymentStatus: true, appointmentId: true },
+    });
+
+    // Only the default (booking) route produces an appointment. Org top-ups,
+    // invoice payments and member-overage side-charges legitimately have none,
+    // so requiring one there would leave the client polling forever.
+    const NON_BOOKING_NOTE_TYPES = new Set([
+      "credit_purchase",
+      "invoice_payment",
+      "overage_member",
+    ]);
+    const expectsAppointment = !NON_BOOKING_NOTE_TYPES.has(notes.type ?? "");
 
     return NextResponse.json({
       verified: true,
-      paymentStatus: "SUCCEEDED",
+      paymentStatus: confirmed?.paymentStatus ?? "PENDING",
+      // The client renders "confirming your booking" rather than an
+      // unqualified success while this is true (#E1).
+      pendingConfirmation:
+        confirmed?.paymentStatus !== "SUCCEEDED" ||
+        (expectsAppointment && !confirmed?.appointmentId),
       orderId: razorpay_order_id,
       paymentId: razorpay_payment_id,
     });
@@ -111,7 +206,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "checkout" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "checkout" } },
+    );
     console.error("Signature verification error:", error);
     return NextResponse.json(
       { verified: false, error: "Verification failed" },
