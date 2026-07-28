@@ -28,7 +28,6 @@ import {
   createEarningsFromPayment,
   type AppointmentType,
 } from "@/lib/payments/payouts";
-import { markWaitlistAsBooked } from "@/lib/waitlist/slot-handler";
 import {
   notifyPaymentSuccess,
   notifyPaymentFailed,
@@ -131,6 +130,29 @@ interface EventData {
  *
  * Used by both webhook handlers and mock payment flows
  */
+// #837 — discriminated Phase-1 outcomes so Phase 2 can auto-refund the two
+// captured-but-blocked cases (amount mismatch, double-booking loser) instead of
+// parking the funds on manual ops. `null` = already-processed / metadata-fail.
+type PaymentSuccessTxResult =
+  | {
+      outcome: "amount_mismatch";
+      paymentId: string;
+      gatewayAmountPaise: number;
+      expectedAmount: number;
+    }
+  | {
+      outcome: "confirmed";
+      paymentId: string;
+      appointmentId: string;
+      appointmentType: string;
+      userId: string;
+      userName: string | null;
+      amount: number;
+      currency: string;
+      capturedAfterTerminal: boolean;
+      doubleBookingBlocked: boolean;
+    };
+
 export async function handlePaymentSuccess(
   paymentIntentId: string,
   rawMetadata: Record<string, string>,
@@ -143,7 +165,7 @@ export async function handlePaymentSuccess(
   const metadata = normalizeLegacySlotKeys(rawMetadata);
   // C1 FIX: Split into two phases:
   //   Phase 1 (transaction): Critical payment + appointment processing
-  //   Phase 2 (post-tx): Earnings, invoice, waitlist, notifications
+  //   Phase 2 (post-tx): Earnings, invoice, notifications
   //
   // Previously, earnings/invoice creation used the global `prisma` client
   // inside the transaction, meaning they ran outside isolation but errors
@@ -159,126 +181,149 @@ export async function handlePaymentSuccess(
   // winner confirmed and blocks. The SUCCEEDED early-return keeps the retry
   // idempotent.
   const txResult = await withSerializableRetry(() =>
-    prisma.$transaction(async (tx) => {
-    const payment = await tx.payment.findUnique({
-      where: { paymentIntent: paymentIntentId },
-      include: { user: { include: { consulteeProfile: true } } },
-    });
+    prisma.$transaction(
+      async (tx): Promise<PaymentSuccessTxResult | null> => {
+        const payment = await tx.payment.findUnique({
+          where: { paymentIntent: paymentIntentId },
+          include: { user: { include: { consulteeProfile: true } } },
+        });
 
-    if (!payment) {
-      throw new Error(
-        `Payment record not found for intent: ${paymentIntentId}`,
-      );
-    }
+        if (!payment) {
+          throw new Error(
+            `Payment record not found for intent: ${paymentIntentId}`,
+          );
+        }
 
-    if (payment.paymentStatus === PaymentStatus.SUCCEEDED) {
-      console.log(`Payment ${paymentIntentId} has already been processed.`);
-      return null; // Signal: already processed, skip Phase 2
-    }
+        if (payment.paymentStatus === PaymentStatus.SUCCEEDED) {
+          console.log(`Payment ${paymentIntentId} has already been processed.`);
+          return null; // Signal: already processed, skip Phase 2
+        }
 
-    // #677 — defence-in-depth amount parity (mirrors handleOrgPaymentSuccess).
-    // The gateway order is created at checkout for exactly Payment.amount and the
-    // webhook is HMAC-verified, so a captured amount that differs is a gateway
-    // anomaly or our-own bug — never silently confirm a booking for the wrong
-    // money. Mark for manual recovery + page (like the metadata-failure path) and
-    // skip confirmation; the captured funds are reconciled by hand.
-    if (
-      gatewayAmountPaise !== undefined &&
-      gatewayAmountPaise !== payment.amount
-    ) {
-      Sentry.captureException(
-        new Error(
-          `Capture amount mismatch for ${paymentIntentId}: gateway=${gatewayAmountPaise} expected=${payment.amount}`,
-        ),
-        {
-          tags: { subsystem: "payments" },
-          level: "fatal",
-          contexts: {
-            payment: {
-              paymentIntentId,
-              paymentId: payment.id,
-              userId: payment.userId,
+        // #677 — defence-in-depth amount parity (mirrors handleOrgPaymentSuccess).
+        // The gateway order is created at checkout for exactly Payment.amount and the
+        // webhook is HMAC-verified, so a captured amount that differs is a gateway
+        // anomaly or our-own bug — never silently confirm a booking for the wrong
+        // money. Mark for manual recovery + page (like the metadata-failure path) and
+        // skip confirmation; the captured funds are reconciled by hand.
+        if (
+          gatewayAmountPaise !== undefined &&
+          gatewayAmountPaise !== payment.amount
+        ) {
+          Sentry.captureException(
+            new Error(
+              `Capture amount mismatch for ${paymentIntentId}: gateway=${gatewayAmountPaise} expected=${payment.amount}`,
+            ),
+            {
+              tags: { subsystem: "payments" },
+              level: "fatal",
+              contexts: {
+                payment: {
+                  paymentIntentId,
+                  paymentId: payment.id,
+                  userId: payment.userId,
+                },
+              },
             },
-          },
-        },
-      );
-      await tx.payment.update({
-        where: { id: payment.id },
-        data: {
-          paymentStatus: PaymentStatus.SUCCEEDED,
-          description: `REQUIRES_MANUAL_RECOVERY: capture amount ${gatewayAmountPaise}p ≠ expected ${payment.amount}p. Booking NOT confirmed.`,
-        },
-      });
-      console.error(
-        JSON.stringify({
-          event: "CRITICAL_PAYMENT_AMOUNT_MISMATCH",
-          alert_priority: "P1",
-          payment_id: payment.id,
-          payment_intent: paymentIntentId,
-          user_id: payment.userId,
-          gateway_amount_paise: gatewayAmountPaise,
-          expected_amount_paise: payment.amount,
-          action_required:
-            "IMMEDIATE: reconcile captured funds; confirm or refund manually",
-          timestamp: new Date().toISOString(),
-        }),
-      );
-      return null; // Skip confirmation + Phase 2 — requires manual intervention
-    }
+          );
+          // #837 — mark SUCCEEDED (gateway truth) + stamp REQUIRES_MANUAL_RECOVERY as
+          // the FALLBACK. Phase 2 auto-refunds the wrong-amount capture; the manual
+          // marker only survives if that refund call itself throws.
+          await tx.payment.update({
+            where: { id: payment.id },
+            data: {
+              paymentStatus: PaymentStatus.SUCCEEDED,
+              description: `REQUIRES_MANUAL_RECOVERY: capture amount ${gatewayAmountPaise}p ≠ expected ${payment.amount}p. Booking NOT confirmed; auto-refund attempted.`,
+            },
+          });
+          console.error(
+            JSON.stringify({
+              event: "CRITICAL_PAYMENT_AMOUNT_MISMATCH",
+              alert_priority: "P1",
+              payment_id: payment.id,
+              payment_intent: paymentIntentId,
+              user_id: payment.userId,
+              gateway_amount_paise: gatewayAmountPaise,
+              expected_amount_paise: payment.amount,
+              action_required:
+                "auto-refund attempted; reconcile only if it failed",
+              timestamp: new Date().toISOString(),
+            }),
+          );
+          // Signal Phase 2 to auto-refund post-commit — the gateway refund call must
+          // not run inside this Serializable tx.
+          return {
+            outcome: "amount_mismatch",
+            paymentId: payment.id,
+            gatewayAmountPaise,
+            expectedAmount: payment.amount,
+          };
+        }
 
-    // VALIDATION: Check metadata before processing
-    try {
-      validateWebhookMetadata(metadata);
-    } catch (validationError) {
-      const errorMessage =
-        validationError instanceof ZodError
-          ? validationError.errors
-              .map((e) => `${e.path.join(".")}: ${e.message}`)
-              .join("; ")
-          : validationError instanceof Error
-            ? validationError.message
-            : String(validationError);
+        // VALIDATION: Check metadata before processing
+        try {
+          validateWebhookMetadata(metadata);
+        } catch (validationError) {
+          const errorMessage =
+            validationError instanceof ZodError
+              ? validationError.errors
+                  .map((e) => `${e.path.join(".")}: ${e.message}`)
+                  .join("; ")
+              : validationError instanceof Error
+                ? validationError.message
+                : String(validationError);
 
-      Sentry.captureException(
-        validationError instanceof Error ? validationError : new Error(String(validationError)),
-        { tags: { subsystem: "payments" }, level: "fatal", contexts: { payment: { paymentIntentId, paymentId: payment.id, userId: payment.userId } } },
-      );
-      console.error(
-        `❌ Metadata validation failed for payment ${paymentIntentId}:`,
-        errorMessage,
-      );
+          Sentry.captureException(
+            validationError instanceof Error
+              ? validationError
+              : new Error(String(validationError)),
+            {
+              tags: { subsystem: "payments" },
+              level: "fatal",
+              contexts: {
+                payment: {
+                  paymentIntentId,
+                  paymentId: payment.id,
+                  userId: payment.userId,
+                },
+              },
+            },
+          );
+          console.error(
+            `❌ Metadata validation failed for payment ${paymentIntentId}:`,
+            errorMessage,
+          );
 
-      // FIX Issue #8: Enhanced alerting for metadata validation failures
-      // This is a CRITICAL condition - customer charged but no appointment created!
-      await tx.payment.update({
-        where: { id: payment.id },
-        data: {
-          paymentStatus: PaymentStatus.SUCCEEDED,
-          description: `REQUIRES_MANUAL_RECOVERY: Metadata validation failed: ${errorMessage}. Customer charged but appointment NOT created.`,
-        },
-      });
+          // FIX Issue #8: Enhanced alerting for metadata validation failures
+          // This is a CRITICAL condition - customer charged but no appointment created!
+          await tx.payment.update({
+            where: { id: payment.id },
+            data: {
+              paymentStatus: PaymentStatus.SUCCEEDED,
+              description: `REQUIRES_MANUAL_RECOVERY: Metadata validation failed: ${errorMessage}. Customer charged but appointment NOT created.`,
+            },
+          });
 
-      // CRITICAL ALERT - Log in structured format for monitoring systems
-      console.error(
-        JSON.stringify({
-          event: "CRITICAL_PAYMENT_WITHOUT_APPOINTMENT",
-          alert_priority: "P1",
-          payment_id: payment.id,
-          payment_intent: paymentIntentId,
-          user_id: payment.userId,
-          user_email: payment.user.email,
-          amount: payment.amount,
-          currency: payment.currency,
-          error: errorMessage,
-          action_required:
-            "IMMEDIATE: Manual appointment creation or full refund required",
-          dashboard_url: `${getAppUrl()}/admin/payments/${payment.id}`,
-          timestamp: new Date().toISOString(),
-        }),
-      );
+          // CRITICAL ALERT - Log in structured format for monitoring systems
+          console.error(
+            JSON.stringify({
+              event: "CRITICAL_PAYMENT_WITHOUT_APPOINTMENT",
+              alert_priority: "P1",
+              payment_id: payment.id,
+              payment_intent: paymentIntentId,
+              user_id: payment.userId,
+              user_email: payment.user.email,
+              amount: payment.amount,
+              currency: payment.currency,
+              error: errorMessage,
+              action_required:
+                "IMMEDIATE: Manual appointment creation or full refund required",
+              dashboard_url: `${getAppUrl()}/admin/payments/${payment.id}`,
+              timestamp: new Date().toISOString(),
+            }),
+          );
 
-      console.error(
-        `
+          console.error(
+            `
 ================================================================================
                     CRITICAL ALERT: PAYMENT WITHOUT APPOINTMENT
 ================================================================================
@@ -293,81 +338,135 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
                  Either create appointment manually or issue full refund.
 ================================================================================
         `,
-      );
+          );
 
-      return null; // Exit early — requires manual intervention
-    }
+          return null; // Exit early — requires manual intervention
+        }
 
-    await tx.payment.update({
-      where: { id: payment.id },
-      data: { paymentStatus: PaymentStatus.SUCCEEDED },
-    });
+        await tx.payment.update({
+          where: { id: payment.id },
+          data: { paymentStatus: PaymentStatus.SUCCEEDED },
+        });
 
-    let appointment;
-    if (payment.appointmentId) {
-      // NEW FLOW: Appointment already created during checkout (tentative)
-      appointment = await tx.appointment.findUnique({
-        where: { id: payment.appointmentId },
-      });
+        let appointment;
+        if (payment.appointmentId) {
+          // NEW FLOW: Appointment already created during checkout (tentative)
+          appointment = await tx.appointment.findUnique({
+            where: { id: payment.appointmentId },
+          });
 
-      console.log(
-        JSON.stringify({
-          event: "webhook_confirming_existing_appointment",
-          paymentIntent: paymentIntentId,
-          appointmentId: payment.appointmentId,
-          timestamp: new Date().toISOString(),
-        }),
-      );
-    } else {
-      // LEGACY FLOW: Appointment not created during checkout
-      appointment = await createAppointmentFromWebhook(tx, metadata, payment);
+          console.log(
+            JSON.stringify({
+              event: "webhook_confirming_existing_appointment",
+              paymentIntent: paymentIntentId,
+              appointmentId: payment.appointmentId,
+              timestamp: new Date().toISOString(),
+            }),
+          );
+        } else {
+          // LEGACY FLOW: Appointment not created during checkout
+          appointment = await createAppointmentFromWebhook(
+            tx,
+            metadata,
+            payment,
+          );
 
-      console.log(
-        JSON.stringify({
-          event: "webhook_creating_new_appointment",
-          paymentIntent: paymentIntentId,
+          console.log(
+            JSON.stringify({
+              event: "webhook_creating_new_appointment",
+              paymentIntent: paymentIntentId,
+              appointmentId: appointment.id,
+              appointmentType: metadata.appointmentType,
+              timestamp: new Date().toISOString(),
+            }),
+          );
+        }
+
+        if (!appointment) {
+          throw new Error("Failed to create or find appointment");
+        }
+
+        // Confirm appointment: set isTentative = false and update status to APPROVED
+        const confirmResult = await confirmExistingAppointment(
+          tx,
+          appointment.id,
+          payment.userId,
+        );
+
+        console.log(
+          `✅ Payment ${paymentIntentId} processed successfully. Appointment ID: ${appointment.id}`,
+        );
+
+        // Return data needed for Phase 2
+        return {
+          outcome: "confirmed",
+          paymentId: payment.id,
           appointmentId: appointment.id,
           appointmentType: metadata.appointmentType,
-          timestamp: new Date().toISOString(),
-        }),
-      );
-    }
-
-    if (!appointment) {
-      throw new Error("Failed to create or find appointment");
-    }
-
-    // Confirm appointment: set isTentative = false and update status to APPROVED
-    const confirmResult = await confirmExistingAppointment(
-      tx,
-      appointment.id,
-      payment.userId,
-    );
-
-    console.log(
-      `✅ Payment ${paymentIntentId} processed successfully. Appointment ID: ${appointment.id}`,
-    );
-
-    // Return data needed for Phase 2
-    return {
-      paymentId: payment.id,
-      appointmentId: appointment.id,
-      appointmentType: metadata.appointmentType,
-      userId: payment.userId,
-      userName: payment.user.name,
-      amount: payment.amount,
-      currency: payment.currency,
-      // #855 — a capture that landed after the booking was cancelled; Phase 2
-      // auto-refunds it instead of treating it as a confirmed booking.
-      capturedAfterTerminal: confirmResult.capturedAfterTerminal,
-    };
-    },
-    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+          userId: payment.userId,
+          userName: payment.user.name,
+          amount: payment.amount,
+          currency: payment.currency,
+          // #855 — a capture that landed after the booking was cancelled; Phase 2
+          // auto-refunds it instead of treating it as a confirmed booking.
+          capturedAfterTerminal: confirmResult.capturedAfterTerminal,
+          // #837 — the #827 first-confirmed-wins guard blocked this booking; Phase 2
+          // auto-refunds the loser and releases its tentative hold.
+          doubleBookingBlocked: confirmResult.doubleBookingBlocked ?? false,
+        };
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
     ),
   );
 
   // If transaction returned null, the payment was already processed or had a metadata error
   if (!txResult) return;
+
+  // #837 — the gateway captured a different amount than we ordered. Auto-refund
+  // the whole capture (never confirm a booking for the wrong money) and skip
+  // Phase 2. REQUIRES_MANUAL_RECOVERY stays stamped as the fallback if the
+  // refund throws. Idempotent: on webhook replay the payment is already
+  // SUCCEEDED so the SUCCEEDED early-return fires before this path is reached,
+  // and refundPayment's refundable-balance guard blocks any double-refund.
+  if (txResult.outcome === "amount_mismatch") {
+    try {
+      await refundPayment({
+        paymentId: txResult.paymentId,
+        reason: "capture amount mismatch",
+        initiatedByUserId: null,
+      });
+      // Refund succeeded — clear the Phase 1 REQUIRES_MANUAL_RECOVERY marker so
+      // ops dashboards don't flag a payment that no longer needs manual recovery.
+      await prisma.payment.update({
+        where: { id: txResult.paymentId },
+        data: {
+          description: `Auto-refunded: capture amount ${txResult.gatewayAmountPaise}p ≠ expected ${txResult.expectedAmount}p. Booking NOT confirmed.`,
+        },
+      });
+    } catch (refundError) {
+      Sentry.captureException(
+        refundError instanceof Error
+          ? refundError
+          : new Error(String(refundError)),
+        {
+          tags: { subsystem: "payments" },
+          level: "error",
+          contexts: {
+            payment: {
+              paymentId: txResult.paymentId,
+              gatewayAmountPaise: txResult.gatewayAmountPaise,
+              expectedAmount: txResult.expectedAmount,
+            },
+          },
+        },
+      );
+      console.error(
+        "Failed to auto-refund amount-mismatch capture; REQUIRES_MANUAL_RECOVERY (Phase 2):",
+        refundError,
+      );
+    }
+    return;
+  }
 
   // #855 — the capture landed after the booking was cancelled. The payment is
   // SUCCEEDED (gateway truth) but the booking is dead, so auto-refund and skip
@@ -382,7 +481,9 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
       });
     } catch (refundError) {
       Sentry.captureException(
-        refundError instanceof Error ? refundError : new Error(String(refundError)),
+        refundError instanceof Error
+          ? refundError
+          : new Error(String(refundError)),
         { tags: { subsystem: "payments" }, level: "error" },
       );
       console.error(
@@ -393,7 +494,54 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
     return;
   }
 
-  // Phase 2: Non-critical post-transaction work (earnings, invoice, waitlist, notifications)
+  // #837 — the #827 first-confirmed-wins guard blocked this booking: the payment
+  // is SUCCEEDED but the slots lost to an overlapping confirmed booking, so
+  // auto-refund and release the tentative hold (otherwise a paid customer holds
+  // no booking and their slots block rebooking). Skip the rest of Phase 2 — no
+  // earnings/invoice/notifications for a booking that never confirmed.
+  // Idempotent: webhook replay hits the SUCCEEDED early-return before here;
+  // refundPayment's refundable-balance guard blocks a double-refund; the slot
+  // release runs after a successful refund so a refund failure leaves the hold
+  // for the #830 orphan sweep + manual recovery rather than freeing it unpaid.
+  if (txResult.doubleBookingBlocked) {
+    try {
+      await refundPayment({
+        paymentId: txResult.paymentId,
+        reason: "double-booking blocked at confirmation",
+        initiatedByUserId: null,
+      });
+      // Release the tentative hold only once the money is back.
+      await withSerializableRetry(() =>
+        prisma.$transaction(
+          (tx) => cleanupFailedPaymentAppointment(tx, txResult.appointmentId),
+          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+        ),
+      );
+    } catch (refundError) {
+      Sentry.captureException(
+        refundError instanceof Error
+          ? refundError
+          : new Error(String(refundError)),
+        {
+          tags: { subsystem: "payments" },
+          level: "error",
+          contexts: {
+            booking: {
+              paymentId: txResult.paymentId,
+              appointmentId: txResult.appointmentId,
+            },
+          },
+        },
+      );
+      console.error(
+        "Failed to auto-refund double-booking loser; slots left for #830 sweep (Phase 2):",
+        refundError,
+      );
+    }
+    return;
+  }
+
+  // Phase 2: Non-critical post-transaction work (earnings, invoice, notifications)
   // Failures here are logged but do NOT roll back the payment.
   // The `sync-payment-earnings` and related background jobs serve as safety nets.
 
@@ -524,11 +672,19 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
       }
     }
   } catch (earningsError) {
-    Sentry.captureException(
-      earningsError instanceof Error ? earningsError : new Error(String(earningsError)),
-      { tags: { subsystem: "payments" }, level: "warning" },
-    );
-    // Log but don't fail — sync-payment-earnings job will pick up the gap
+    // C-01 #837 — payment + booking are committed but earnings + the BOOKING
+    // journal are not. Real money moved, so we don't roll back and we don't
+    // pretend success with a silent warning: page (ERROR) and durably record
+    // the ledger gap. The healer is the data-state sync-payment-earnings scan
+    // (SUCCEEDED payment + earnings:none), keyed on row state — not on this
+    // marker — so it's guaranteed and idempotent even if this alert is lost.
+    await recordSystemError({
+      category: "PAYOUT",
+      summary: `Earnings + booking journal not written for committed payment ${paymentId} (webhook path)`,
+      err: earningsError,
+      correlationId: paymentId,
+      context: { paymentId, appointmentId, userId, path: "webhook" },
+    });
     console.error(
       `⚠️ Failed to create earnings for payment ${paymentId}:`,
       earningsError,
@@ -541,7 +697,9 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
     await processQualifyingAction(userId, "first_paid_booking");
   } catch (referralError) {
     Sentry.captureException(
-      referralError instanceof Error ? referralError : new Error(String(referralError)),
+      referralError instanceof Error
+        ? referralError
+        : new Error(String(referralError)),
       { tags: { subsystem: "payments" }, level: "warning" },
     );
     console.error(
@@ -558,7 +716,9 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
     await processConsultantBookingReferral({ id: paymentId }, userId);
   } catch (consultantReferralError) {
     Sentry.captureException(
-      consultantReferralError instanceof Error ? consultantReferralError : new Error(String(consultantReferralError)),
+      consultantReferralError instanceof Error
+        ? consultantReferralError
+        : new Error(String(consultantReferralError)),
       { tags: { subsystem: "payments" }, level: "warning" },
     );
     console.error(
@@ -573,60 +733,41 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
   // consultees request a receipt via support@familiarise.work until v1.1
   // re-introduces a per-Payment surface.
 
-  // --- Waitlist update ---
-  if (metadata.fromWaitlist) {
-    try {
-      await markWaitlistAsBooked(metadata.fromWaitlist);
-      console.log(
-        JSON.stringify({
-          event: "waitlist_booking_completed",
-          waitlistId: metadata.fromWaitlist,
-          paymentIntent: paymentIntentId,
-          timestamp: new Date().toISOString(),
-        }),
-      );
-    } catch (waitlistError) {
-      Sentry.captureException(
-        waitlistError instanceof Error ? waitlistError : new Error(String(waitlistError)),
-        { tags: { subsystem: "payments" }, level: "warning" },
-      );
-      console.error(
-        `⚠️ Failed to update waitlist status for payment ${paymentId}:`,
-        waitlistError,
-      );
-    }
-  }
-
   // --- Novu notifications (M5 FIX: moved outside transaction) ---
   try {
+    // #734 — the notification only needs the consultant's id/name; the old
+    // 4-level include dragged full User + profile rows for all four shapes.
+    const consultantUserSelect = {
+      select: { user: { select: { id: true, name: true } } },
+    } as const;
     const appointmentForNotif = await prisma.appointment.findUnique({
       where: { id: appointmentId },
-      include: {
+      select: {
         consultation: {
-          include: {
+          select: {
             consultationPlan: {
-              include: { consultantProfile: { include: { user: true } } },
+              select: { consultantProfile: consultantUserSelect },
             },
           },
         },
         subscription: {
-          include: {
+          select: {
             subscriptionPlan: {
-              include: { consultantProfile: { include: { user: true } } },
+              select: { consultantProfile: consultantUserSelect },
             },
           },
         },
         webinar: {
-          include: {
+          select: {
             webinarPlan: {
-              include: { consultantProfile: { include: { user: true } } },
+              select: { consultantProfile: consultantUserSelect },
             },
           },
         },
         class: {
-          include: {
+          select: {
             classPlan: {
-              include: { consultantProfile: { include: { user: true } } },
+              select: { consultantProfile: consultantUserSelect },
             },
           },
         },
@@ -773,37 +914,35 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
  */
 export async function handlePaymentFailure(paymentIntentId: string) {
   return await prisma.$transaction(async (tx) => {
+    // #734 — narrowed from a 5-level include; the failure path only reads
+    // the payer's email/name and the consultant's name for notifications.
+    const consultantUserSelect = {
+      select: {
+        consultantProfile: {
+          select: { user: { select: { id: true, name: true } } },
+        },
+      },
+    } as const;
     const payment = await tx.payment.findUnique({
       where: { paymentIntent: paymentIntentId },
-      include: {
-        user: true,
+      select: {
+        id: true,
+        paymentStatus: true,
+        userId: true,
+        appointmentId: true,
+        amount: true,
+        currency: true,
+        description: true,
+        user: { select: { email: true, name: true } },
         appointment: {
-          include: {
+          select: {
+            id: true,
+            appointmentType: true,
             consultation: {
-              include: {
-                consultationPlan: {
-                  include: {
-                    consultantProfile: {
-                      include: {
-                        user: true,
-                      },
-                    },
-                  },
-                },
-              },
+              select: { consultationPlan: consultantUserSelect },
             },
             subscription: {
-              include: {
-                subscriptionPlan: {
-                  include: {
-                    consultantProfile: {
-                      include: {
-                        user: true,
-                      },
-                    },
-                  },
-                },
-              },
+              select: { subscriptionPlan: consultantUserSelect },
             },
           },
         },
@@ -1006,7 +1145,8 @@ async function createConsultation(tx: Tx, data: ConsultationData) {
           startsAt: new Date(data.startsAt),
           endsAt: new Date(data.endsAt),
           isTentative: false,
-          consultantProfileId: consultation.consultationPlan.consultantProfileId,
+          consultantProfileId:
+            consultation.consultationPlan.consultantProfileId,
           user: { connect: { id: data.userId } },
         },
       },
@@ -1059,11 +1199,7 @@ async function createSubscription(tx: Tx, data: SubscriptionData) {
   };
 
   // Only add slots if NOT a scheduling period request
-  if (
-    !isSchedulingPeriodRequest &&
-    data.startsAt &&
-    data.endsAt
-  ) {
+  if (!isSchedulingPeriodRequest && data.startsAt && data.endsAt) {
     appointmentData.slotsOfAppointment = {
       create: {
         startsAt: new Date(data.startsAt),
@@ -1186,7 +1322,10 @@ async function confirmApprovalStatus(
       where: {
         id: entityId,
         status: {
-          in: [AppointmentStatus.PENDING, AppointmentStatus.APPROVED_PENDING_PAYMENT],
+          in: [
+            AppointmentStatus.PENDING,
+            AppointmentStatus.APPROVED_PENDING_PAYMENT,
+          ],
         },
       },
       data: { status: AppointmentStatus.APPROVED },
@@ -1277,7 +1416,7 @@ export async function confirmExistingAppointment(
   tx: Tx,
   appointmentId: string,
   userId?: string,
-): Promise<{ capturedAfterTerminal: boolean }> {
+): Promise<{ capturedAfterTerminal: boolean; doubleBookingBlocked?: boolean }> {
   // First fetch appointment to determine type
   const appointment = await tx.appointment.findUnique({
     where: { id: appointmentId },
@@ -1333,7 +1472,17 @@ export async function confirmExistingAppointment(
       if (conflict) {
         Sentry.captureException(
           new Error("CONFIRMATION_BLOCKED_DOUBLE_BOOKING"),
-          { tags: { subsystem: "payments" }, level: "error", contexts: { booking: { appointmentId, conflictingAppointmentId: conflict.appointmentId, slotId: slot.id } } },
+          {
+            tags: { subsystem: "payments" },
+            level: "error",
+            contexts: {
+              booking: {
+                appointmentId,
+                conflictingAppointmentId: conflict.appointmentId,
+                slotId: slot.id,
+              },
+            },
+          },
         );
         console.error(
           JSON.stringify({
@@ -1355,8 +1504,11 @@ export async function confirmExistingAppointment(
             slotId: slot.id,
           },
         }).catch(() => {});
-        // slots stay tentative; do not confirm over the winner
-        return { capturedAfterTerminal: false };
+        // #837 — slots stay tentative here; the webhook's Phase 2 auto-refunds
+        // the loser and releases the hold. The #830 sweep re-drives via this
+        // same guard and reports (doesn't refund), so signalling the block up is
+        // what routes the refund without fighting the guard.
+        return { capturedAfterTerminal: false, doubleBookingBlocked: true };
       }
     }
   }
@@ -1574,7 +1726,9 @@ async function sendPaymentSuccessNotification(
 
     if (!appointment) {
       Sentry.captureException(
-        new Error(`Cannot send payment success email: appointment ${appointmentId} not found`),
+        new Error(
+          `Cannot send payment success email: appointment ${appointmentId} not found`,
+        ),
         { tags: { subsystem: "payments" }, level: "warning" },
       );
       console.error(
@@ -1640,80 +1794,40 @@ async function sendPaymentSuccessNotification(
  */
 async function sendPaymentFailureNotification(
   tx: Tx,
-  payment: MoneyAsNumber<
-    Prisma.PaymentGetPayload<{
-      include: {
-        user: true;
-        appointment: {
-          include: {
-            consultation: {
-              include: {
-                consultationPlan: {
-                  include: {
-                    consultantProfile: {
-                      include: {
-                        user: true;
-                      };
-                    };
-                  };
-                };
-              };
-            };
-            subscription: {
-              include: {
-                subscriptionPlan: {
-                  include: {
-                    consultantProfile: {
-                      include: {
-                        user: true;
-                      };
-                    };
-                  };
-                };
-              };
-            };
-          };
-        };
-      };
-    }>
-  >,
+  payment: {
+    id: string;
+    appointmentId: string | null;
+    amount: number;
+    currency: string;
+    description: string | null;
+    user: { email: string | null; name: string | null };
+  },
 ) {
   try {
+    const consultantUserSelect = {
+      select: {
+        consultantProfile: {
+          select: { user: { select: { name: true } } },
+        },
+      },
+    } as const;
     const appointment = await tx.appointment.findUnique({
       where: { id: payment.appointmentId || "" },
-      include: {
+      select: {
         consultation: {
-          include: {
-            consultationPlan: {
-              include: {
-                consultantProfile: {
-                  include: {
-                    user: true,
-                  },
-                },
-              },
-            },
-          },
+          select: { id: true, consultationPlan: consultantUserSelect },
         },
         subscription: {
-          include: {
-            subscriptionPlan: {
-              include: {
-                consultantProfile: {
-                  include: {
-                    user: true,
-                  },
-                },
-              },
-            },
-          },
+          select: { id: true, subscriptionPlan: consultantUserSelect },
         },
       },
     });
 
     if (!appointment) {
       Sentry.captureException(
-        new Error(`Cannot send payment failure email: appointment not found for payment ${payment.id}`),
+        new Error(
+          `Cannot send payment failure email: appointment not found for payment ${payment.id}`,
+        ),
         { tags: { subsystem: "payments" }, level: "warning" },
       );
       console.error(

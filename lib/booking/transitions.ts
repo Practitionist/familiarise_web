@@ -117,6 +117,44 @@ export const EVENT_ALLOWED_FROM: Record<WebinarStatus, WebinarStatus[]> = {
 export const CLASS_EVENT_ALLOWED_FROM: Record<ClassStatus, ClassStatus[]> =
   EVENT_ALLOWED_FROM;
 
+export async function transitionWebinarEvent(
+  tx: Pick<Tx, "webinar">,
+  args: {
+    where: { id: string };
+    to: WebinarStatus;
+    data?: Omit<Prisma.WebinarUncheckedUpdateManyInput, "status">;
+    fromIn?: WebinarStatus[];
+  },
+): Promise<void> {
+  const res = await tx.webinar.updateMany({
+    where: {
+      ...args.where,
+      status: { in: args.fromIn ?? EVENT_ALLOWED_FROM[args.to] },
+    },
+    data: { status: args.to, ...args.data },
+  });
+  if (res.count === 0) throw new IllegalTransitionError("Webinar", args.to);
+}
+
+export async function transitionClassEvent(
+  tx: Pick<Tx, "class">,
+  args: {
+    where: { id: string };
+    to: ClassStatus;
+    data?: Omit<Prisma.ClassUncheckedUpdateManyInput, "status">;
+    fromIn?: ClassStatus[];
+  },
+): Promise<void> {
+  const res = await tx.class.updateMany({
+    where: {
+      ...args.where,
+      status: { in: args.fromIn ?? CLASS_EVENT_ALLOWED_FROM[args.to] },
+    },
+    data: { status: args.to, ...args.data },
+  });
+  if (res.count === 0) throw new IllegalTransitionError("Class", args.to);
+}
+
 //////////////////////////////////////////////// SlotOfAppointment ////////////////////////////////////////////////
 
 // A reschedule may re-mark a SCHEDULED or already-RESCHEDULED slot tentative,

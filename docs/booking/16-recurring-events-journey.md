@@ -32,7 +32,7 @@ Recurring events are multi-session programs that span days, weeks, or months. Th
 | Session duration | `sessionDurationInHours` (0.5-4) | `sessionDurationInHours` (0.5-4) |
 | Total sessions | `callsPerWeek x weeks x months` | `meetingsPerWeek x weeks x months` |
 | Capacity | Always 1 consultee | `maxParticipants` (configurable) |
-| Free trial | Yes (30 or 60 min) | No |
+| Trial | Yes (30 or 60 min) | No |
 | Collaborators | No | Yes (co-instructors, TAs, guest lecturers) |
 | Certificates | No | Optional |
 | Recording | No | Optional (Stream S3 or Supabase permanent) |
@@ -60,8 +60,9 @@ Both share the same core flow: **Plan Creation -> Checkout -> Payment -> Slot Al
 | `durationInMonths` | Int (1-24) | How many months the subscription runs |
 | `callsPerWeek` | Int (0-7) | How many sessions per week |
 | `sessionDurationInHours` | Float (0.5-4) | Duration of each individual session |
-| `freeTrialEnabled` | Boolean | Whether to offer a free trial first |
-| `freeTrialDurationMinutes` | 30 or 60 | Trial session length |
+| `trialEnabled` | Boolean | Whether to offer a trial first |
+| `trialDurationMinutes` | 30 or 60 | Trial session length |
+| `trialPriceInPaise` | Int (paise) | Trial price (0 = free, the default until paid-trial checkout ships) |
 | `subscriptionContents[]` | Array | Session-by-session curriculum (title, description, order) |
 | `topics[]` | Array | Topic tags for discoverability |
 | `learningOutcomes[]` | Array | What the consultee will learn |
@@ -481,10 +482,10 @@ All cron jobs are triggered via GitHub Actions workflows in `.github/workflows/`
 | **Appointments** | 1 Appointment per session, each has N slots | 1 Appointment per session (shared by all participants via M2M user relation on slots) |
 | **Slot sharing** | Slots connected to consultant + 1 consultee | New enrollees are linked to ALL existing slots of ALL appointments (`handleClassCheckout` line 1510-1524) |
 | **Collaborators** | Not supported | `ClassCollaborator[]` with revenue shares |
-| **Free trial** | Yes (`TrialSession` model) | No |
+| **Trial** | Yes (`TrialSession` model) | No |
 | **Recording** | No | Optional |
 | **Certificate** | No | Optional |
-| **Waitlist** | No | Yes (`Waitlist` model, status: WAITING -> NOTIFIED -> BOOKED/EXPIRED) |
+| **Capacity** | No (1:1) | Yes (per-instance `maxParticipants`; full means sold out) |
 | **Curriculum model** | `SubscriptionContent` (session-by-session) | `ClassContent` (ordered, with `hoursAllotted`) |
 | **Scheduling field** | `callsPerWeek` | `meetingsPerWeek` |
 | **Request model** | `Subscription.status` (PENDING -> APPROVED -> SCHEDULED) | `Class.status` (SCHEDULED -> IN_PROGRESS -> COMPLETED) |
@@ -503,7 +504,7 @@ All cron jobs are triggered via GitHub Actions workflows in `.github/workflows/`
 | Checkout and payment integration | `docs/booking/10-checkout-payment-integration.md` |
 | Cancellation flow | `docs/booking/08-cancellation-flow.md` |
 | Trial sessions (subscription-only) | `docs/booking/09-trial-sessions.md` |
-| Waitlist system (class/webinar-only) | `docs/booking/11-waitlist-system.md` |
+| Event capacity (class/webinar-only) | `docs/booking/02-event-types-and-validation.md` |
 | Payout architecture | `docs/payments/payouts/01-architecture.md` |
 | Earnings lifecycle | `docs/payments/payouts/02-earnings-lifecycle.md` |
 | Revenue distribution models | `docs/finances/02-revenue-distribution.md` |

@@ -20,6 +20,7 @@
 import prisma from "@/lib/prisma";
 import type { AppointmentsType, Prisma } from "@prisma/client";
 import type { Scope } from "./parse";
+import { assertNeverScope } from "./parse";
 
 export interface ListAppointmentsParams {
   scope: Scope;
@@ -43,14 +44,15 @@ export interface ListAppointmentsResult {
  * Build the Prisma `where` clause for the requested scope.
  *
  *   - `personal`: rows with `organizationId IS NULL` AND the user
- *     participates (consultee on Consultation/Subscription/Trial OR
- *     consultant on the linked plan). v1 narrows to consultee for
- *     simplicity; consultant-side filtering can layer on later.
+ *     participates — either as the consultee (booked the session) OR as the
+ *     consultant (owns the linked plan). Both sides are covered (#674): a
+ *     consultant's own B2C sessions appear in their personal list; org-hosted
+ *     sessions carry an organizationId and fall under `org` scope instead.
  *   - `org`: rows where `organizationId = orgId`. No user filter —
  *     MANAGER+ sees the org's full activity.
  *   - `all`: no scope filter; admin-only.
  */
-function buildWhere(
+export function buildWhere(
   params: ListAppointmentsParams,
 ): Prisma.AppointmentWhereInput {
   const base: Prisma.AppointmentWhereInput = {
@@ -60,23 +62,92 @@ function buildWhere(
   };
 
   if (params.scope.kind === "personal") {
+    // #org-appts — the personal dashboards are now purely B2C on BOTH sides.
+    // Every org-hosted session (delivered OR attended) lives in that org's
+    // dashboard under `orgMember` scope, so both arms are constrained to
+    // `organizationId: null`. This retires the earlier #674 carve-out that
+    // force-showed delivered org sessions here — they were double-listed once
+    // experts got a real org appointments surface. Trials stay B2C (personal)
+    // even when org-tagged for analytics.
+    const uid = params.userId;
     return {
       ...base,
       organizationId: null,
       OR: [
-        { consultation: { requestedBy: { userId: params.userId } } },
-        { subscription: { requestedBy: { userId: params.userId } } },
-        { trialSession: { consulteeProfile: { userId: params.userId } } },
+        // Consultee side — self-funded bookings.
+        { consultation: { requestedBy: { userId: uid } } },
+        { subscription: { requestedBy: { userId: uid } } },
+        { trialSession: { consulteeProfile: { userId: uid } } },
+        // Consultant side — sessions the user delivers B2C.
+        { consultation: { consultationPlan: { consultantProfile: { userId: uid } } } },
+        { subscription: { subscriptionPlan: { consultantProfile: { userId: uid } } } },
+        { trialSession: { consultantProfile: { userId: uid } } },
+        { webinar: { webinarPlan: { consultantProfile: { userId: uid } } } },
+        { class: { classPlan: { consultantProfile: { userId: uid } } } },
+      ],
+    };
+  }
+
+  if (params.scope.kind === "orgMember") {
+    // #org-appts — ONE member's own appointments WITHIN this org: sessions they
+    // booked (as a learner) OR deliver (as an expert). Hoists `organizationId:
+    // orgId` so it is strictly this org's activity. Distinct from `org`
+    // (all-org, MANAGER+).
+    //
+    // Trials are intentionally EXCLUDED: a trial is a B2C acquisition session
+    // (org-tagged only for conversion analytics, never org-sponsored), so it
+    // belongs in the member's PERSONAL appointments, not the org view.
+    const uid = params.scope.userId;
+    return {
+      ...base,
+      organizationId: params.scope.orgId,
+      OR: [
+        // Consumed as a learner (org-sponsored bookings).
+        { consultation: { requestedBy: { userId: uid } } },
+        { subscription: { requestedBy: { userId: uid } } },
+        // Delivered as an expert (owns the plan).
+        { consultation: { consultationPlan: { consultantProfile: { userId: uid } } } },
+        { subscription: { subscriptionPlan: { consultantProfile: { userId: uid } } } },
+        { webinar: { webinarPlan: { consultantProfile: { userId: uid } } } },
+        { class: { classPlan: { consultantProfile: { userId: uid } } } },
       ],
     };
   }
 
   if (params.scope.kind === "org") {
-    return { ...base, organizationId: params.scope.orgId };
+    // Hosted OR funded, because those are two different columns answering two
+    // different questions.
+    //
+    // For a webinar or class every registrant shares ONE Appointment, and
+    // checkout deliberately tags it with the HOST's org (`plan.organizationId`)
+    // rather than the first registrant's — otherwise whoever booked first would
+    // decide which org the event belonged to. Per-registrant funding lives on
+    // `Payment.organizationId` instead.
+    //
+    // Filtering on `organizationId` alone therefore showed an org only the
+    // events it HOSTS. A sponsor that paid to put five employees into someone
+    // else's public webinar saw nothing: the money appeared on its invoice and
+    // the seats came off its program, but the session itself was invisible.
+    // 1:1 kinds were never affected — there the appointment's org already IS
+    // the funding org.
+    //
+    // No new exposure: the select carries no attendee list, and `getMember`
+    // renders "—" for group events. A sponsor sees that the session exists, on
+    // what plan, when — not who else was in the room. ADR 20 holds.
+    return {
+      ...base,
+      OR: [
+        { organizationId: params.scope.orgId },
+        { payment: { some: { organizationId: params.scope.orgId } } },
+      ],
+    };
   }
 
-  // all — admin/staff
-  return base;
+  // Explicit rather than a fall-through: `base` alone is the admin/staff arm,
+  // so an unhandled kind reaching it would return every tenant's rows.
+  if (params.scope.kind === "all") return base;
+
+  return assertNeverScope(params.scope);
 }
 
 export async function listAppointmentsScoped(
@@ -91,9 +162,49 @@ export async function listAppointmentsScoped(
     prisma.appointment.findMany({
       where,
       include: {
+        // Who from the VIEWING org was funded into this session.
+        //
+        // Scoped to `scope.orgId` and nothing else, which is the whole point: a
+        // webinar's registrants may span several sponsors and the public, and a
+        // sponsor is entitled to see the five people it paid for — not the
+        // twenty it did not. Empty for 1:1 kinds, where `getMember` already
+        // names the counterpart, and empty for a hosted-but-not-funded event.
+        ...(params.scope.kind === "org"
+          ? {
+              payment: {
+                where: { organizationId: params.scope.orgId },
+                select: {
+                  id: true,
+                  user: { select: { id: true, name: true, email: true } },
+                },
+              },
+            }
+          : {}),
+        // #org-appts — slot fields drive the in-context Join (getOrCreate needs
+        // slot id + startsAt); consultantProfile.user.id lets the caller stamp
+        // per-appointment identity into the Stream call (host/guest derivation).
+        slotsOfAppointment: {
+          select: {
+            id: true,
+            startsAt: true,
+            endsAt: true,
+            isTentative: true,
+            completionStatus: true,
+          },
+          orderBy: { startsAt: "asc" },
+        },
         consultation: {
           select: {
-            consultationPlan: { select: { title: true } },
+            consultationPlan: {
+              select: {
+                title: true,
+                consultantProfile: {
+                  select: {
+                    user: { select: { id: true, name: true, email: true } },
+                  },
+                },
+              },
+            },
             requestedBy: {
               select: { user: { select: { id: true, name: true, email: true } } },
             },
@@ -101,14 +212,49 @@ export async function listAppointmentsScoped(
         },
         subscription: {
           select: {
-            subscriptionPlan: { select: { title: true } },
+            subscriptionPlan: {
+              select: {
+                title: true,
+                consultantProfile: {
+                  select: {
+                    user: { select: { id: true, name: true, email: true } },
+                  },
+                },
+              },
+            },
             requestedBy: {
               select: { user: { select: { id: true, name: true, email: true } } },
             },
           },
         },
-        webinar: { select: { webinarPlan: { select: { title: true } } } },
-        class: { select: { classPlan: { select: { title: true } } } },
+        webinar: {
+          select: {
+            webinarPlan: {
+              select: {
+                title: true,
+                consultantProfile: {
+                  select: {
+                    user: { select: { id: true, name: true, email: true } },
+                  },
+                },
+              },
+            },
+          },
+        },
+        class: {
+          select: {
+            classPlan: {
+              select: {
+                title: true,
+                consultantProfile: {
+                  select: {
+                    user: { select: { id: true, name: true, email: true } },
+                  },
+                },
+              },
+            },
+          },
+        },
         trialSession: {
           select: {
             consulteeProfile: {

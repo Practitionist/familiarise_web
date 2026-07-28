@@ -34,6 +34,11 @@ type AppointmentPayment = {
   gateway: string;
 } | null;
 
+/** Group events stand in for a person in the staff list — "12 attendees". */
+function attendeeLabel(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
+}
+
 export type StaffAppointment = {
   id: string;
   type: string;
@@ -268,6 +273,9 @@ export async function getStaffAppointments(
             startsAt: true,
             endsAt: true,
             isTentative: true,
+            // Group events share their slots across every registrant, so one
+            // slot's user count is the attendee count.
+            _count: { select: { user: true } },
           },
         },
         consultation: {
@@ -372,9 +380,6 @@ export async function getStaffAppointments(
                 },
               },
             },
-            _count: {
-              select: { waitlist: true },
-            },
           },
         },
         class: {
@@ -401,9 +406,6 @@ export async function getStaffAppointments(
                   },
                 },
               },
-            },
-            _count: {
-              select: { waitlist: true },
             },
           },
         },
@@ -445,12 +447,12 @@ export async function getStaffAppointments(
     let title = "";
     let aptStatus = null;
     let duration = 0;
+    const attendeeCount = apt.slotsOfAppointment[0]?._count.user ?? 0;
 
     switch (apt.appointmentType) {
       case "CONSULTATION":
         if (apt.consultation) {
-          consultant =
-            apt.consultation.consultationPlan.consultantProfile.user;
+          consultant = apt.consultation.consultationPlan.consultantProfile.user;
           consultee = apt.consultation.requestedBy.user;
           title = apt.consultation.consultationPlan.title;
           aptStatus = apt.consultation.status;
@@ -459,8 +461,7 @@ export async function getStaffAppointments(
         break;
       case "SUBSCRIPTION":
         if (apt.subscription) {
-          consultant =
-            apt.subscription.subscriptionPlan.consultantProfile.user;
+          consultant = apt.subscription.subscriptionPlan.consultantProfile.user;
           consultee = apt.subscription.requestedBy.user;
           title = apt.subscription.subscriptionPlan.title;
           aptStatus = apt.subscription.status;
@@ -471,7 +472,7 @@ export async function getStaffAppointments(
           consultant = apt.webinar.webinarPlan.consultantProfile?.user || null;
           consultee = {
             id: "",
-            name: `${apt.webinar._count.waitlist} attendees`,
+            name: attendeeLabel(attendeeCount, "attendee"),
             email: "",
             image: null,
           };
@@ -484,7 +485,7 @@ export async function getStaffAppointments(
           consultant = apt.class.classPlan.consultantProfile?.user || null;
           consultee = {
             id: "",
-            name: `${apt.class._count.waitlist} students`,
+            name: attendeeLabel(attendeeCount, "student"),
             email: "",
             image: null,
           };

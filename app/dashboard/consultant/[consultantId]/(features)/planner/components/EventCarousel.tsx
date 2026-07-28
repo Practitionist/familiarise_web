@@ -20,7 +20,7 @@ import {
   ConsultationPlanEvent,
   SubscriptionPlanEvent,
   Event,
-} from "../types/event";
+} from "@/types/planner-events";
 import { EventCard } from "./EventCard";
 import { FormConfirmationDialog } from "./form-fields/FormConfirmationDialog";
 
@@ -117,8 +117,8 @@ const emptyStateConfig = {
     title: "No subscription plans",
     description:
       "Set up subscription plans for ongoing mentorship relationships.",
-    iconBg: "bg-purple-50",
-    iconColor: "text-purple-600",
+    iconBg: "bg-teal-50",
+    iconColor: "text-teal-600",
   },
 };
 
@@ -264,20 +264,20 @@ export function EventCarousel({
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3 }}
-        className="flex flex-col items-center justify-center py-10 sm:py-16 text-center rounded-xl border border-dashed border-zinc-200 bg-zinc-50/50 mx-1 sm:mx-0"
+        className="mx-0 flex flex-col items-center justify-center rounded-2xl border border-dashed border-zinc-200 bg-gradient-to-b from-zinc-50/80 to-white px-6 py-12 text-center sm:py-14"
       >
         <div
           className={cn(
-            "mb-3 sm:mb-4 flex h-12 w-12 sm:h-16 sm:w-16 items-center justify-center rounded-xl sm:rounded-2xl",
+            "mb-4 flex h-12 w-12 items-center justify-center rounded-2xl ring-1 ring-black/5",
             config.iconBg,
           )}
         >
-          <Icon className={cn("h-6 w-6 sm:h-8 sm:w-8", config.iconColor)} />
+          <Icon className={cn("h-6 w-6", config.iconColor)} />
         </div>
-        <h4 className="text-base sm:text-lg font-semibold text-zinc-900">
+        <h4 className="text-sm font-semibold tracking-tight text-zinc-900 sm:text-base">
           {config.title}
         </h4>
-        <p className="mt-1.5 sm:mt-2 text-xs sm:text-sm text-zinc-500 max-w-sm px-4">
+        <p className="mt-1.5 max-w-sm text-xs leading-relaxed text-zinc-500 sm:text-sm">
           {config.description}
         </p>
       </motion.div>
@@ -287,7 +287,7 @@ export function EventCarousel({
   return (
     <div className="w-full">
       <motion.div
-        className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4 sm:gap-5 lg:gap-6 w-full"
+        className="grid w-full grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-5 xl:grid-cols-3"
         variants={containerVariants}
         initial="hidden"
         animate="visible"

@@ -6,6 +6,7 @@
 
 import { listDisputes, submitDisputeEvidence } from "@/lib/payments";
 import prisma from "@/lib/prisma";
+import { hasBackofficePermission } from "@/lib/auth/backoffice-permissions";
 import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
@@ -53,7 +54,15 @@ export async function GET(req: NextRequest) {
       where: { id: session.user.id },
     });
 
-    if (user?.role !== "ADMIN" && user?.role !== "STAFF") {
+    // Submitting evidence pushes an irreversible decision to the payment
+    // gateway, so it is `disputes.manage` (ADMIN) — not the `disputes.read`
+    // that staff hold. The dashboard already told staff this
+    // ("As a staff member… you cannot submit evidence") and hid the button;
+    // the route contradicted its own UI and accepted the call anyway.
+    if (
+      !user?.role ||
+      !hasBackofficePermission(user.role, "disputes.manage")
+    ) {
       return NextResponse.json(
         { error: "Forbidden - Admin access required" },
         { status: 403 },
@@ -152,7 +161,15 @@ export async function POST(req: NextRequest) {
       where: { id: session.user.id },
     });
 
-    if (user?.role !== "ADMIN" && user?.role !== "STAFF") {
+    // Submitting evidence pushes an irreversible decision to the payment
+    // gateway, so it is `disputes.manage` (ADMIN) — not the `disputes.read`
+    // that staff hold. The dashboard already told staff this
+    // ("As a staff member… you cannot submit evidence") and hid the button;
+    // the route contradicted its own UI and accepted the call anyway.
+    if (
+      !user?.role ||
+      !hasBackofficePermission(user.role, "disputes.manage")
+    ) {
       return NextResponse.json(
         { error: "Forbidden - Admin access required" },
         { status: 403 },

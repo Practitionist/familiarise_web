@@ -104,7 +104,7 @@ CONSULTANT (DashboardSidebar - shared)  CONSULTEE (Top nav - different)
 │   ◉ Event Planner       │
 │   ◉ Requests            │
 │   ◉ Collaborations      │
-│   ◉ Free Trials         │
+│   ◉ Trials         │
 │ ── Content ──────────── │
 │   ◉ Recordings          │
 │   ◉ Documents           │

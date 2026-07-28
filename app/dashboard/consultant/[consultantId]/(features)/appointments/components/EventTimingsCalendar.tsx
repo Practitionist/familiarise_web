@@ -9,7 +9,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useParams } from "next/navigation";
-import { SafeUnifiedCalendar } from "../../shared/components/SafeUnifiedCalendar";
+import { SafeUnifiedCalendar } from "@/components/scheduling/SafeUnifiedCalendar";
 import type { UnscheduledAppointment } from "../utils/unscheduledAppointments";
 import { getClassPlanDefaults, type ClassPlanType } from "@/utils/classPlans";
 
@@ -170,9 +170,8 @@ export function EventTimingsCalendar({
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      {/* FIX: Added max-h-[90vh] + overflow-y-auto to prevent footer cutoff on small screens */}
-      <DialogContent className="max-w-7xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
+      <DialogContent className="max-w-7xl max-h-[90dvh] overflow-hidden flex flex-col">
+        <DialogHeader className="shrink-0">
           <DialogTitle>
             {appointment.appointmentType === "CLASS"
               ? "Manage Class Timings"
@@ -180,7 +179,7 @@ export function EventTimingsCalendar({
           </DialogTitle>
           <DialogDescription>{getDescriptionText()}</DialogDescription>
           {appointment.appointmentType === "CLASS" && (
-            <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
               <Badge variant="outline">
                 Plan: {eventDetails.planType || "Custom"}
               </Badge>
@@ -196,7 +195,7 @@ export function EventTimingsCalendar({
 
         {/* Guidance prompt for class rules */}
         {appointment.appointmentType === "CLASS" && (
-          <div className="mb-2 rounded-md border bg-muted/30 px-3 py-2 text-xs">
+          <div className="mb-2 shrink-0 rounded-md border bg-muted/30 px-3 py-2 text-xs">
             Tip: Each class is{" "}
             {Math.ceil((eventDetails.durationInHours || 1) / 0.5)} consecutive
             30‑min slots. Complete an in‑progress class before starting another.
@@ -233,7 +232,7 @@ export function EventTimingsCalendar({
           onAllocationComplete={handleAllocationComplete}
           onClose={onClose}
           showAllocationButtons={true}
-          className="min-h-[500px]"
+          className="min-h-0 flex-1"
           // UI guard rails: restrict selection window based on validation period
           allowedStart={
             appointment.appointmentType === "SUBSCRIPTION"

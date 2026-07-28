@@ -25,6 +25,9 @@ jest.mock("../../lib/prisma", () => ({
     $transaction: jest.fn(),
     appointment: { findUnique: jest.fn() },
     slotOfAppointment: { findMany: jest.fn(), deleteMany: jest.fn() },
+    // #1008 — the cancel/reschedule routes call hasActiveDisputeForAppointment,
+    // which reads prisma.dispute.findFirst. Default to no live dispute.
+    dispute: { findFirst: jest.fn().mockResolvedValue(null) },
     $disconnect: jest.fn(),
   },
 }));
@@ -34,21 +37,26 @@ jest.mock("../../lib/auth-server", () => ({
   getSession: jest.fn(),
 }));
 
-// Mock waitlist handler
-jest.mock("../../lib/waitlist/slot-handler", () => ({
-  handleSlotOpening: jest.fn().mockResolvedValue({ notified: 0 }),
-}));
-
 // Mock novu notifications
 jest.mock("../../lib/novu", () => ({
   notifyAppointmentCancelled: jest.fn().mockResolvedValue(undefined),
+}));
+
+// #776 §C — whole-event (class/webinar) cancel refunds are exercised in their
+// own suite; here the cancel route just needs a benign summary back.
+jest.mock("../../lib/payments/operations/event-refunds", () => ({
+  refundWholeEventPayments: jest.fn().mockResolvedValue({
+    refundsIssued: 0,
+    refundedPaise: 0,
+    childRefundIds: [],
+    failures: [],
+  }),
 }));
 
 // ─── Imports ────────────────────────────────────────────────────────────────
 
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
-import { handleSlotOpening } from "@/lib/waitlist/slot-handler";
 import { notifyAppointmentCancelled } from "@/lib/novu";
 import { POST as rescheduleHandler } from "@/app/api/appointments/[appointmentId]/reschedule/route";
 import { POST as cancelHandler } from "@/app/api/appointments/[appointmentId]/cancel/route";
@@ -216,6 +224,10 @@ function makeMockTx() {
       update: jest.fn(),
       // B2 — the cancel/reschedule CAS guards use updateMany.
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      // #448 — a PARTIAL (slotIds) subscription reschedule only terminal-guards
+      // via count (no status write); a positive count means the from-state is
+      // still reschedulable so the route proceeds without flipping to PENDING.
+      count: jest.fn().mockResolvedValue(1),
     },
     webinar: {
       update: jest.fn(),
@@ -508,7 +520,12 @@ describe("Reschedule Route Handler - POST", () => {
         where: {
           id: "cons-1",
           status: {
-            in: ["PENDING", "APPROVED", "APPROVED_PENDING_PAYMENT", "SCHEDULED"],
+            in: [
+              "PENDING",
+              "APPROVED",
+              "APPROVED_PENDING_PAYMENT",
+              "SCHEDULED",
+            ],
           },
         },
         data: { status: "PENDING" },
@@ -562,7 +579,12 @@ describe("Reschedule Route Handler - POST", () => {
         where: {
           id: "sub-1",
           status: {
-            in: ["PENDING", "APPROVED", "APPROVED_PENDING_PAYMENT", "SCHEDULED"],
+            in: [
+              "PENDING",
+              "APPROVED",
+              "APPROVED_PENDING_PAYMENT",
+              "SCHEDULED",
+            ],
           },
         },
         data: { status: "PENDING" },
@@ -882,7 +904,12 @@ describe("Cancel Route Handler - POST", () => {
         where: {
           id: "cons-1",
           status: {
-            in: ["PENDING", "APPROVED", "APPROVED_PENDING_PAYMENT", "SCHEDULED"],
+            in: [
+              "PENDING",
+              "APPROVED",
+              "APPROVED_PENDING_PAYMENT",
+              "SCHEDULED",
+            ],
           },
         },
         data: expect.objectContaining({
@@ -935,7 +962,12 @@ describe("Cancel Route Handler - POST", () => {
         where: {
           id: "sub-1",
           status: {
-            in: ["PENDING", "APPROVED", "APPROVED_PENDING_PAYMENT", "SCHEDULED"],
+            in: [
+              "PENDING",
+              "APPROVED",
+              "APPROVED_PENDING_PAYMENT",
+              "SCHEDULED",
+            ],
           },
         },
         data: expect.objectContaining({
@@ -950,7 +982,7 @@ describe("Cancel Route Handler - POST", () => {
   // ─── WEBINAR Cancellation ───────────────────────────────────────────────
 
   describe("WEBINAR", () => {
-    it("should update webinar to CANCELLED without notifying waitlist", async () => {
+    it("should update webinar to CANCELLED", async () => {
       const appointment = makeWebinarAppointment();
       (prisma.appointment.findUnique as jest.Mock).mockResolvedValue(
         appointment,
@@ -965,16 +997,13 @@ describe("Cancel Route Handler - POST", () => {
         where: { id: "web-1", status: { in: ["SCHEDULED", "IN_PROGRESS"] } },
         data: { status: "CANCELLED" },
       });
-
-      // Whole-event cancel should NOT notify waitlist (event is dead)
-      expect(handleSlotOpening).not.toHaveBeenCalled();
     });
   });
 
   // ─── CLASS Cancellation ─────────────────────────────────────────────────
 
   describe("CLASS", () => {
-    it("should update class to CANCELLED without notifying waitlist", async () => {
+    it("should update class to CANCELLED", async () => {
       const appointment = makeClassAppointment();
       (prisma.appointment.findUnique as jest.Mock).mockResolvedValue(
         appointment,
@@ -989,9 +1018,6 @@ describe("Cancel Route Handler - POST", () => {
         where: { id: "cls-1", status: { in: ["SCHEDULED", "IN_PROGRESS"] } },
         data: { status: "CANCELLED" },
       });
-
-      // Whole-event cancel should NOT notify waitlist (event is dead)
-      expect(handleSlotOpening).not.toHaveBeenCalled();
     });
   });
 
@@ -1042,30 +1068,6 @@ describe("Cancel Route Handler - POST", () => {
         reason: "OTHER",
       }),
     );
-  });
-
-  it("should not call waitlist for non-webinar/class cancellations", async () => {
-    (prisma.appointment.findUnique as jest.Mock).mockResolvedValue(
-      makeConsultationAppointment(),
-    );
-
-    const req = makeCancelRequest("apt-1");
-    await cancelHandler(req, makeParams("apt-1"));
-
-    expect(handleSlotOpening).not.toHaveBeenCalled();
-  });
-
-  it("should never call waitlist on any cancellation (whole-event cancel)", async () => {
-    (prisma.appointment.findUnique as jest.Mock).mockResolvedValue(
-      makeWebinarAppointment(),
-    );
-
-    const req = makeCancelRequest("apt-1");
-    const res = await cancelHandler(req, makeParams("apt-1"));
-
-    expect(res.status).toBe(200);
-    // Cancel route always cancels the entire event, so no waitlist notification
-    expect(handleSlotOpening).not.toHaveBeenCalled();
   });
 
   // ─── Response ──────────────────────────────────────────────────────────
@@ -1166,6 +1168,7 @@ describe("cleanupTentativeSlots", () => {
         endsAt: new Date("2025-01-01T10:30:00.000Z"),
         isTentative: true,
         createdAt: new Date("2024-12-01T00:00:00.000Z"),
+        updatedAt: new Date("2024-12-01T00:00:00.000Z"),
         appointment: {
           payment: [],
           consultation: {
@@ -1201,6 +1204,7 @@ describe("cleanupTentativeSlots", () => {
         endsAt: new Date(),
         isTentative: true,
         createdAt: new Date("2024-12-01"),
+        updatedAt: new Date("2024-12-01"),
         appointment: { payment: [], consultation: null, subscription: null },
       },
       {
@@ -1210,6 +1214,7 @@ describe("cleanupTentativeSlots", () => {
         endsAt: new Date(),
         isTentative: true,
         createdAt: new Date("2024-12-01"),
+        updatedAt: new Date("2024-12-01"),
         appointment: { payment: [], consultation: null, subscription: null },
       },
       {
@@ -1219,6 +1224,7 @@ describe("cleanupTentativeSlots", () => {
         endsAt: new Date(),
         isTentative: true,
         createdAt: new Date("2024-12-01"),
+        updatedAt: new Date("2024-12-01"),
         appointment: { payment: [], consultation: null, subscription: null },
       },
     ];

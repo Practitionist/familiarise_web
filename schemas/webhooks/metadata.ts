@@ -18,7 +18,6 @@ const baseMetadataSchema = z.object({
   planId: z.string().optional(),
   eventId: z.string().optional(),
   notes: z.string().optional(),
-  fromWaitlist: z.string().cuid().optional(), // Waitlist entry ID if coming from waitlist flow
 });
 
 /**

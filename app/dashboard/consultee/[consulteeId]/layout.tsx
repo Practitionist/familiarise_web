@@ -8,7 +8,6 @@ import {
   Home,
   CalendarCheck,
   MessageSquare,
-  ListOrdered,
   FolderOpen,
   CreditCard,
   Gift,
@@ -26,6 +25,10 @@ import {
   PersonalDashboardShellSkeleton,
 } from "@/components/dashboard/PersonalDashboardShell";
 import type { CollapsibleSidebarGroup } from "@/components/dashboard/CollapsibleSidebar";
+import {
+  BreadcrumbOverrideProvider,
+  useBreadcrumbOverride,
+} from "@/components/dashboard/breadcrumb-override";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import StreamProvider from "@/providers/StreamProvider";
 import NovuProvider from "@/providers/NovuProvider";
@@ -49,10 +52,7 @@ const NAV_GROUPS: CollapsibleSidebarGroup[] = [
   },
   {
     label: "Activity",
-    items: [
-      { name: "Waitlists", icon: ListOrdered, path: "waitlists" },
-      { name: "Resources", icon: FolderOpen, path: "resources" },
-    ],
+    items: [{ name: "Resources", icon: FolderOpen, path: "resources" }],
   },
   {
     label: "Billing",
@@ -62,8 +62,10 @@ const NAV_GROUPS: CollapsibleSidebarGroup[] = [
     ],
   },
   {
-    label: "Support",
-    items: [{ name: "Support", icon: LifeBuoy, path: "feedback" }],
+    // Labelless on purpose: a group header reading "Support" above a single
+    // item also called "Support" is redundant nesting — the header would
+    // restate the only thing under it. Rendered as a standalone entry.
+    items: [{ name: "Support", icon: LifeBuoy, path: "support" }],
   },
 ];
 
@@ -73,7 +75,7 @@ const MOBILE_TABS: { label: string; path: string; Icon: LucideIcon }[] = [
   { label: "Appointments", path: "appointments", Icon: CalendarCheck },
   { label: "Messages", path: "messages", Icon: MessageSquare },
   { label: "Payments", path: "payments", Icon: CreditCard },
-  { label: "Support", path: "feedback", Icon: LifeBuoy },
+  { label: "Support", path: "support", Icon: LifeBuoy },
 ];
 
 // Map URL segments to human-readable page names so the breadcrumbs match
@@ -81,17 +83,20 @@ const MOBILE_TABS: { label: string; path: string; Icon: LucideIcon }[] = [
 const PAGE_LABELS: Record<string, string> = {
   home: "Home",
   appointments: "Appointments",
-  waitlists: "Waitlists",
   resources: "Resources",
   messages: "Messages",
   payments: "Payments",
   referrals: "Referrals",
-  feedback: "Support",
+  support: "Support",
   settings: "Settings",
 };
 
-// Opaque record ids (cuids) in nested routes carry no meaning as crumbs.
-const looksLikeRecordId = (segment: string) => /^[a-z0-9]{20,}$/i.test(segment);
+// Opaque record ids (cuid / uuid) in nested routes carry no meaning as crumbs.
+const looksLikeRecordId = (segment: string) =>
+  /^[a-z0-9]{20,}$/i.test(segment) ||
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+    segment,
+  );
 
 interface PageProps {
   children: React.ReactNode;
@@ -132,10 +137,15 @@ function AccessCard({
   );
 }
 
-export default function ConsulteeLayout({
-  children,
-  params,
-}: Readonly<PageProps>) {
+export default function ConsulteeLayout(props: Readonly<PageProps>) {
+  return (
+    <BreadcrumbOverrideProvider>
+      <ConsulteeLayoutInner {...props} />
+    </BreadcrumbOverrideProvider>
+  );
+}
+
+function ConsulteeLayoutInner({ children, params }: Readonly<PageProps>) {
   const resolvedParams = use(params);
   const consulteeId = resolvedParams.consulteeId;
   const basePath = `/dashboard/consultee/${consulteeId}`;
@@ -166,10 +176,7 @@ export default function ConsulteeLayout({
   // Consultee profile fetch — result unused directly, but it gates the
   // initial skeleton (profile 404s surface here) and warms the cache for
   // feature pages.
-  const {
-    error: profileError,
-    isLoading: isLoadingProfile,
-  } = useQuery({
+  const { error: profileError, isLoading: isLoadingProfile } = useQuery({
     queryKey: ["consultee-profile", consulteeId],
     queryFn: () => fetchConsulteeDetails(consulteeId),
     enabled: !!consulteeId,
@@ -179,31 +186,23 @@ export default function ConsulteeLayout({
     placeholderData: (previousData) => previousData,
   });
 
-  // Check if user has access to this consultee dashboard:
-  // - ADMIN: Can access ANY dashboard
-  // - STAFF: Can view consultant and consultee dashboards
-  // - CONSULTEE: Can only access their OWN dashboard
-  // - CONSULTANT: Cannot access consultee dashboards (they have their own)
+  // Capability-based (#org-appts): access is owning THIS consulteeProfile, NOT
+  // "role !== CONSULTANT". A marketplace CONSULTANT sponsored by an org as a
+  // learner owns a consulteeProfile and must reach their consumer surfaces —
+  // the old `role !== "CONSULTANT"` lock barred them from their own dashboard.
+  // ADMIN/STAFF may inspect anyone's.
   const hasConsulteeAccess =
     userDetails &&
     (userDetails.role === "ADMIN" ||
       userDetails.role === "STAFF" ||
-      (userDetails.consulteeProfileId === consulteeId &&
-        userDetails.role !== "CONSULTANT"));
+      userDetails.consulteeProfileId === consulteeId);
 
-  // Redirect unauthorized users to their appropriate dashboard
+  // Redirect unauthorized users to their own dashboard (capability-routed).
   useEffect(() => {
     if (isLoadingUser || isSessionLoading || !userId) return;
 
     if (userDetails && !hasConsulteeAccess) {
       if (
-        userDetails.role === "CONSULTANT" &&
-        userDetails.consultantProfileId
-      ) {
-        router.replace(
-          `/dashboard/consultant/${userDetails.consultantProfileId}/home`,
-        );
-      } else if (
         userDetails.consulteeProfileId &&
         userDetails.consulteeProfileId !== consulteeId
       ) {
@@ -246,16 +245,42 @@ export default function ConsulteeLayout({
     }));
   }, [session?.user]);
 
-  // Full breadcrumb trail — every URL segment after the consultee id
-  // becomes a crumb; opaque record ids are dropped.
+  const { overrideLabel } = useBreadcrumbOverride();
+
+  // Full breadcrumb trail — opaque record ids are dropped (or replaced with
+  // an override label such as the appointment title).
   const breadcrumbs = useMemo(() => {
-    return pathname
-      .replace(basePath, "")
-      .split("/")
-      .filter(Boolean)
-      .filter((seg) => !looksLikeRecordId(seg))
-      .map((seg) => PAGE_LABELS[seg] ?? seg);
-  }, [pathname, basePath]);
+    const parts = pathname.replace(basePath, "").split("/").filter(Boolean);
+
+    const crumbs: { label: string; href?: string }[] = [];
+    let acc = basePath;
+    let lastSegWasRecordId = false;
+
+    for (const seg of parts) {
+      acc = `${acc}/${seg}`;
+      if (looksLikeRecordId(seg)) {
+        lastSegWasRecordId = true;
+        continue;
+      }
+      lastSegWasRecordId = false;
+      crumbs.push({
+        label: PAGE_LABELS[seg] ?? seg,
+        href: acc,
+      });
+    }
+
+    if (lastSegWasRecordId && overrideLabel) {
+      crumbs.push({ label: overrideLabel });
+    }
+
+    return crumbs.map((crumb, index) => {
+      const isLast = index === crumbs.length - 1;
+      if (isLast && crumb.href && pathname === crumb.href) {
+        return { label: crumb.label };
+      }
+      return crumb;
+    });
+  }, [pathname, basePath, overrideLabel]);
 
   const isLoading = isLoadingUser || isLoadingProfile;
   const error = (userError || profileError) as Error | null;

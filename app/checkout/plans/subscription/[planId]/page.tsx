@@ -16,6 +16,7 @@ import {
   checkoutResponseSchema,
   subscriptionSearchParamsSchema,
   createCheckoutData,
+  type SupportedCheckoutGateway,
 } from "@/schemas/checkout";
 import type { AppliedDiscount } from "@/types/checkout";
 import { OrgPayerSelector } from "@/app/checkout/components/OrgPayerSelector";
@@ -23,7 +24,6 @@ import {
   ConsultantProfile,
   ConsultantReview,
   SubscriptionPlan,
-  PaymentGateway,
 } from "@prisma/client";
 import { CreditCard as CreditCardIcon } from "lucide-react";
 import { CompanyLogo } from "@/components/ui/company-logo";
@@ -204,7 +204,7 @@ export default function SubscriptionCheckoutPage({
   );
 
   const handleCheckout = useCallback(
-    async (gateway: PaymentGateway, isMockPayment: boolean = false) => {
+    async (gateway: SupportedCheckoutGateway, isMockPayment: boolean = false) => {
       // Block checkout during maintenance mode
       if (isMaintenanceBlocked) {
         toast({

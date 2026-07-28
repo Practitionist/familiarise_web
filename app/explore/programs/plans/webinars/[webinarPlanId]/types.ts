@@ -32,9 +32,6 @@ export type TWebinarPlanData = Omit<
               payment: true;
             };
           };
-          waitlist: {
-            select: { userId: true; position: true; status: true };
-          };
         };
       };
     };

@@ -17,6 +17,8 @@ import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth-helpers";
+import { checkConsent } from "@/lib/compliance/dpdp";
+import { PURPOSE_CODES } from "@/lib/compliance/purpose-codes";
 import { MemberRoleSchema } from "@/lib/labels/org-labels";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { isOnboardingBlocked } from "@/lib/enterprise/org-status";
@@ -92,6 +94,26 @@ export async function POST(req: NextRequest) {
   const normalizedRole = roleResult.data;
 
   const userId = auth.session.user.id;
+
+  // #701 — DPDP: the invitee must hold live core-processing consent before we
+  // provision membership (which processes their PII on the org's behalf).
+  // Everyone gets PRIMARY_PROCESSING at signup; a withdrawal blocks acceptance
+  // until re-granted. TODO(#701): offer an inline grant step in the accept UI.
+  if (
+    !(await checkConsent({
+      userId,
+      purposeCode: PURPOSE_CODES.PRIMARY_PROCESSING,
+    }))
+  ) {
+    return NextResponse.json(
+      {
+        error:
+          "Consent required to join an organization. Restore data-processing consent in your privacy settings, then accept again.",
+        code: "CONSENT_REQUIRED",
+      },
+      { status: 403 },
+    );
+  }
 
   // ENT-5: A second concurrent accept for the same (user, org) pair can
   // race past the in-tx existence check and hit P2002 on Membership's

@@ -91,8 +91,17 @@ function makeMockTx() {
       update: jest.fn(),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
-    webinar: { findUnique: jest.fn(), update: jest.fn() },
-    class: { findUnique: jest.fn(), update: jest.fn() },
+    webinar: {
+      findUnique: jest.fn(),
+      update: jest.fn(),
+      // Guarded transitions (transitionWebinarEvent) use WHERE-guarded updateMany
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
+    class: {
+      findUnique: jest.fn(),
+      update: jest.fn(),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
     // #440 — createAppointments denormalizes the consultant onto each slot.
     consultantProfile: {
       findFirst: jest.fn().mockResolvedValue({ id: "consultant-profile-1" }),
@@ -1128,9 +1137,14 @@ describe("Auto allocation", () => {
       mode: "auto",
     });
 
-    expect(mockTx.webinar.update).toHaveBeenCalledWith(
+    // Guarded transition: WHERE-guarded updateMany (EVENT_ALLOWED_FROM),
+    // so a CANCELLED/COMPLETED webinar can no longer be resurrected.
+    expect(mockTx.webinar.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "webinar-1" },
+        where: expect.objectContaining({
+          id: "webinar-1",
+          status: expect.objectContaining({ in: expect.any(Array) }),
+        }),
         data: expect.objectContaining({ status: "SCHEDULED" }),
       }),
     );
@@ -1382,7 +1396,7 @@ describe("updateEventStatus", () => {
       slots: ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"],
     });
 
-    const updateData = mockTx.webinar.update.mock.calls[0][0].data;
+    const updateData = mockTx.webinar.updateMany.mock.calls[0][0].data;
     expect(updateData.status).toBe("SCHEDULED");
     // Webinar should NOT have scheduling period fields
     expect(updateData.schedulingPeriodStartsAt).toBeUndefined();
@@ -1406,10 +1420,11 @@ describe("updateEventStatus", () => {
       slots: ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"],
     });
 
-    const updateData = mockTx.class.update.mock.calls[0][0].data;
-    expect(updateData.status).toBe("SCHEDULED");
-    expect(updateData.schedulingPeriodStartsAt).toBeDefined();
-    expect(updateData.schedulingPeriodEndsAt).toBeDefined();
+    // Guarded transition: status rides transitionClassEvent's updateMany
+    const updateCall = mockTx.class.updateMany.mock.calls[0][0];
+    expect(updateCall.data.status).toBe("SCHEDULED");
+    expect(updateCall.data.schedulingPeriodStartsAt).toBeDefined();
+    expect(updateCall.data.schedulingPeriodEndsAt).toBeDefined();
   });
 });
 
@@ -2183,14 +2198,10 @@ describe("Edge cases", () => {
 
       // Correct model was queried (read runs on the base client now)
       expect((prisma as any)[eventType].findUnique).toHaveBeenCalled();
-      // Correct model was updated — consultation/subscription go through
-      // the #836 CAS transition helpers (updateMany); webinar/class still
-      // use a plain update in updateEventStatus.
-      const mutator =
-        eventType === "consultation" || eventType === "subscription"
-          ? freshTx[eventType].updateMany
-          : freshTx[eventType].update;
-      expect(mutator).toHaveBeenCalled();
+      // Correct model was updated — ALL four types now go through
+      // WHERE-guarded CAS transitions (updateMany): #836 for
+      // consultation/subscription, EVENT_ALLOWED_FROM for webinar/class.
+      expect(freshTx[eventType].updateMany).toHaveBeenCalled();
     }
   });
 });
@@ -2213,8 +2224,12 @@ describe("Manual allocation - distributed lock", () => {
       slots: ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"],
     });
 
-    // Lock should have been acquired with the consultant profile ID
-    expect(lockAutoAllocate).toHaveBeenCalledWith("consultant-profile-1");
+    // Lock should have been acquired with the consultant profile ID,
+    // day-sharded (#860) by the earliest target slot's day.
+    expect(lockAutoAllocate).toHaveBeenCalledWith(
+      "consultant-profile-1",
+      "2025-01-06",
+    );
     // Lock should have been released in finally block
     expect(unlockAutoAllocate).toHaveBeenCalled();
   });

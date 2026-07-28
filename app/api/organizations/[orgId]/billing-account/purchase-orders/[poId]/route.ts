@@ -7,6 +7,7 @@
  * hard-deleted. Otherwise mark CANCELLED via PATCH.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
@@ -42,7 +43,7 @@ export async function GET(
   },
 ) {
   const { orgId, poId } = await params;
-  const access = await requireOrgAccess(orgId, { minimumRole: "MANAGER", canSponsor: true });
+  const access = await requireOrgAccess(orgId, { permission: "purchaseOrders.read", canSponsor: true });
   if (access.error) return access.error;
 
   const po = await prisma.purchaseOrder.findFirst({
@@ -166,6 +167,7 @@ export async function PATCH(
         { status },
       );
     }
+    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
     throw err;
   }
 }
@@ -212,6 +214,7 @@ export async function DELETE(
         typeof err.httpStatus === "number" ? err.httpStatus : 500;
       return NextResponse.json({ error: err.message }, { status });
     }
+    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
     throw err;
   }
 }

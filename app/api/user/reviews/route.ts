@@ -1,12 +1,18 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { consultantPublicScalars } from "@/lib/data/consultant-public";
 import { Prisma } from "@prisma/client";
 import { notifyNewReview } from "@/lib/novu";
 import { CreateReviewSchema } from "@/schemas/feedbacks";
 import { apiError } from "@/lib/errors";
 import { getSession } from "@/lib/auth-server";
 import { spamLimiter, applyRateLimit } from "@/lib/rate-limit";
+import {
+  hasCompletedBookingWith,
+  recomputeConsultantRating,
+} from "@/lib/reviews";
+import { withSerializableRetry } from "@/lib/db/serializable-retry";
 
 export async function GET(req: NextRequest) {
   try {
@@ -39,17 +45,20 @@ export async function GET(req: NextRequest) {
       };
     }
 
+    // #693 — moderation-removed reviews stay hidden
+    whereClause.deletedAt = null;
     const reviews = await prisma.consultantReview.findMany({
       where: whereClause,
       take: 50,
       include: {
+        // #946 allowlist. This route is PUBLIC (middleware.ts marks it so) and
+        // its response is CDN-cached, so a bare `include:` here published every
+        // reviewed consultant's panNumber / ibanOrAccount / swiftBic /
+        // udyamNumber to anonymous callers.
         consultantProfile: {
-          include: {
-            user: {
-              select: {
-                name: true,
-              },
-            },
+          select: {
+            ...consultantPublicScalars,
+            user: { select: { name: true } },
           },
         },
         consulteeProfile: {
@@ -104,35 +113,80 @@ export async function POST(req: NextRequest) {
     }
     const validatedData = result.data;
 
-    const newReview = await prisma.consultantReview.create({
-      data: {
-        rating: validatedData.rating,
-        reviewDescription: validatedData.reviewDescription,
-        consultantProfileId: validatedData.consultantProfileId,
-        consulteeProfileId: validatedData.consulteeProfileId,
-      },
-      include: {
-        consultantProfile: {
-          include: {
-            user: {
-              select: {
-                name: true,
+    // Reviews are always authored as the session user's own consultee
+    // profile — the body's consulteeProfileId is only accepted if it matches.
+    const sessionConsulteeProfileId = session.user.consulteeProfileId;
+    if (!sessionConsulteeProfileId) {
+      return NextResponse.json(
+        { error: "You need a consultee profile to post a review" },
+        { status: 403 },
+      );
+    }
+    if (validatedData.consulteeProfileId !== sessionConsulteeProfileId) {
+      return NextResponse.json(
+        { error: "You can only post reviews as yourself" },
+        { status: 403 },
+      );
+    }
+
+    // Only consultees with a completed booking may review the consultant.
+    const eligible = await hasCompletedBookingWith(
+      sessionConsulteeProfileId,
+      validatedData.consultantProfileId,
+    );
+    if (!eligible) {
+      return NextResponse.json(
+        {
+          error:
+            "You can only review consultants after a completed session with them",
+        },
+        { status: 403 },
+      );
+    }
+
+    // Create + rating recompute in one transaction so the denormalized
+    // ConsultantProfile.rating (explore sort/filter) never drifts. Serializable
+    // + retry so two concurrent reviews for the same consultant can't lose-update
+    // the recomputed average (P2034 aborts one, retry then sees the committed row).
+    const newReview = await withSerializableRetry(() =>
+      prisma.$transaction(async (tx) => {
+      const created = await tx.consultantReview.create({
+        data: {
+          rating: validatedData.rating,
+          reviewDescription: validatedData.reviewDescription,
+          consultantProfileId: validatedData.consultantProfileId,
+          consulteeProfileId: sessionConsulteeProfileId,
+        },
+        include: {
+          // #946 allowlist — the response goes back to the consultee who wrote
+          // the review; a bare `include:` handed them the consultant's PAN and
+          // bank account.
+          consultantProfile: {
+            select: {
+              ...consultantPublicScalars,
+              user: { select: { name: true } },
+            },
+          },
+          consulteeProfile: {
+            include: {
+              user: {
+                select: {
+                  name: true,
+                  image: true,
+                },
               },
             },
           },
         },
-        consulteeProfile: {
-          include: {
-            user: {
-              select: {
-                name: true,
-                image: true,
-              },
-            },
-          },
-        },
+      });
+
+      await recomputeConsultantRating(tx, created.consultantProfileId);
+
+      return created;
       },
-    });
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      ),
+    );
 
     // Notify the consultant about the new review
     void notifyNewReview(newReview.consultantProfile.userId, {
@@ -145,6 +199,16 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(newReview, { status: 201 });
   } catch (error) {
+    // @@unique([consultantProfileId, consulteeProfileId]) — one review per pair.
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    ) {
+      return NextResponse.json(
+        { error: "You have already reviewed this consultant" },
+        { status: 409 },
+      );
+    }
     Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
     return apiError({ tag: "[Reviews.POST]", error });
   }

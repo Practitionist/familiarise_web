@@ -13,6 +13,12 @@ export async function createSubscriptionPlans(consultants: UserWithProfiles[]) {
       console.warn(`Skipping consultant ${consultant.id} - no profile found`);
       continue;
     }
+    // Trials are paid by default (₹100–₹200); the first couple of
+    // consultants keep a free basic trial to exercise the ₹0 path.
+    const basicTrialPriceInPaise =
+      i < 2 ? 0 : faker.number.int({ min: 100, max: 150 }) * 100;
+    const extendedTrialPriceInPaise =
+      faker.number.int({ min: 150, max: 200 }) * 100;
     try {
       await prisma.subscriptionPlan.createMany({
         data: [
@@ -44,6 +50,9 @@ export async function createSubscriptionPlans(consultants: UserWithProfiles[]) {
               "Gain practical skills",
               "Improve problem-solving abilities",
             ],
+            trialEnabled: true,
+            trialDurationMinutes: 30,
+            trialPriceInPaise: basicTrialPriceInPaise,
           },
           {
             consultantProfileId: consultant.consultantProfile.id,
@@ -75,6 +84,9 @@ export async function createSubscriptionPlans(consultants: UserWithProfiles[]) {
               "Enhance decision-making skills",
               "Build practical expertise",
             ],
+            trialEnabled: true,
+            trialDurationMinutes: 45,
+            trialPriceInPaise: extendedTrialPriceInPaise,
           },
           {
             consultantProfileId: consultant.consultantProfile.id,
@@ -107,6 +119,9 @@ export async function createSubscriptionPlans(consultants: UserWithProfiles[]) {
               "Achieve mastery level skills",
               "Build professional portfolio",
             ],
+            trialEnabled: true,
+            trialDurationMinutes: 60,
+            trialPriceInPaise: 20000, // ₹200 — premium plan, premium trial
           },
         ],
       });

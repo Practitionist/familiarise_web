@@ -8,7 +8,6 @@ import { motion } from "framer-motion";
 import {
   Home,
   Users,
-  Mail,
   GraduationCap,
   Briefcase,
   CreditCard,
@@ -22,31 +21,46 @@ import {
   Clock,
   FileText,
   CalendarCheck,
-  ListOrdered,
-  Sparkles,
+  MessageSquare,
+  ClipboardCheck,
   Video,
   Receipt,
   ShieldCheck,
-  Webhook,
-  KeyRound,
-  Download,
   ShieldAlert,
   type LucideIcon,
 } from "lucide-react";
 
-// Mobile bottom-tab configuration — 5 most-accessed org pages.
-// Role gating happens at the API layer; the tabs are always visible so the
-// user discovers what exists even before they have elevated permissions.
+// Mobile bottom-tab configuration — 5 most-accessed org pages. Gated by
+// the same permission matrix as the desktop sidebar (a LEARNER previously
+// saw all five and got redirected by four of them).
 const MOBILE_TABS: {
   label: string;
   path: string;
   Icon: LucideIcon;
+  surface?: OrgSurface;
+  needsSponsor?: boolean;
 }[] = [
   { label: "Overview", path: "home", Icon: Home },
-  { label: "Members", path: "members", Icon: Users },
-  { label: "Billing", path: "billing", Icon: CreditCard },
-  { label: "Analytics", path: "analytics", Icon: BarChart3 },
-  { label: "Settings", path: "settings", Icon: Settings },
+  { label: "Members", path: "members", Icon: Users, surface: "members.read" },
+  {
+    label: "Billing",
+    path: "billing",
+    Icon: CreditCard,
+    surface: "billing.read",
+    needsSponsor: true,
+  },
+  {
+    label: "Analytics",
+    path: "analytics",
+    Icon: BarChart3,
+    surface: "operations.read",
+  },
+  {
+    label: "Settings",
+    path: "settings",
+    Icon: Settings,
+    surface: "settings.manage",
+  },
 ];
 
 import {
@@ -59,11 +73,7 @@ import { LinkPendingIcon } from "@/components/ui/NavLink";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { useSession } from "@/lib/auth-client";
 import { signOutEverywhere } from "@/lib/auth/sign-out";
-import {
-  isAtLeastRole,
-  canSeeOperatorSurface,
-  canSeeFinanceSurface,
-} from "@/lib/auth/role-ranks";
+import { hasOrgPermission, type OrgSurface } from "@/lib/auth/org-permissions";
 import {
   MEMBER_ROLE_LABEL,
   deriveCapabilityKind,
@@ -73,7 +83,7 @@ import {
   FUNDING_SOURCE_BADGE_CLASS,
 } from "@/lib/labels/org-labels";
 import { resolvePersonalDashboardHref } from "@/lib/labels/personal-dashboard";
-import type { MemberRole, OrgStatus } from "@prisma/client";
+import type { OrgStatus } from "@prisma/client";
 import {
   fetchOrgDetails,
   orgDetailsQueryKey,
@@ -88,7 +98,10 @@ import {
  * returning 409 ORG_NOT_VERIFIED.
  */
 function OrgStatusBanner({ status }: { status: OrgStatus }) {
-  const copy: Record<OrgStatus, { title: string; body: string; tone: string } | null> = {
+  const copy: Record<
+    OrgStatus,
+    { title: string; body: string; tone: string } | null
+  > = {
     PENDING_VERIFICATION: {
       title: "Awaiting platform review",
       body: "You can set up branding and draft programs now. Inviting members and moving money unlocks as soon as an admin verifies your organization.",
@@ -166,44 +179,23 @@ export default function OrgLayout({
   });
 
   // Compute grouped sidebar items from capabilities + fundingSource + role.
-  // The API layer enforces the same gates, but hiding what the user can't
-  // act on keeps the sidebar tidy. Five clusters (People / Commerce /
-  // Operations / Insights / Configuration) plus an ungrouped Overview
-  // block. Each cluster's items get role-gated independently; groups
-  // with zero remaining items drop out entirely.
-  //
-  // Role visibility decisions baked in here (see audit doc):
-  //   - SUPPORT (rank 30) gets read access to Members + Operations +
-  //     Audit + Analytics so L1/L2 can investigate tickets without
-  //     escalating. Previously the layout's isAtLeast("MANAGER") gate
-  //     denied SUPPORT every operational tab — a real bug.
-  //   - OWNER's Operations group defaults collapsed. The OWNER has
-  //     permission to drill in (rank 100 ≥ MANAGER 60) but the cluster
-  //     is operational MANAGER/SUPPORT work — not part of the OWNER's
-  //     primary nav. They can still expand it when they want to.
-  //   - BILLING_ADMIN stays operator-blind (no Members/Invitations/
-  //     People surfaces) — finance-only remit. Operations group is
-  //     hidden for them entirely (no read need for booking-side data).
+  // Visibility comes from the org permission matrix
+  // (lib/auth/org-permissions.ts) — the SAME source the page guards and
+  // API routes check, so a tab can't drift into "shown but rejected".
+  // Capability gates (canSponsor/canHost/requiresPO/fundingSource) remain
+  // separate structural conditions combined per item. Five clusters
+  // (People / Commerce / Resources / Insights / Configuration) plus an
+  // ungrouped Overview block; groups with zero remaining items drop out.
   const sidebarGroups: CollapsibleSidebarGroup[] = useMemo(() => {
     if (!org) return [];
     const { canSponsor, canHost, fundingSource, requiresPO } = org.organization;
     const role = org.membership.role;
+    const can = (surface: OrgSurface) => hasOrgPermission(role, surface);
 
-    const isAtLeast = (min: MemberRole) => isAtLeastRole(role, min);
-    const isOperator = canSeeOperatorSurface(role);
-    const isFinance = canSeeFinanceSurface(role);
-    const isSupport = role === "SUPPORT";
-
-    // "Operational read" gate — MANAGER+ or SUPPORT. Used by
-    // Operations + Members + Analytics + Audit. Encodes the L1/L2
-    // support carve-out from the rank ladder.
-    const isOperationsReader = isOperator && (isAtLeast("MANAGER") || isSupport);
-
-    // Operations group defaults collapsed for OWNER + MAINTAINER —
-    // their primary job isn't appointment-level data triage. Open by
-    // default for MANAGER + SUPPORT who live in those tabs.
-    const operationsCollapsedDefault =
-      isOperator && (role === "OWNER" || role === "MAINTAINER");
+    // Resources group defaults collapsed for OWNER + MAINTAINER — their
+    // primary job isn't document triage. Open by default for MANAGER +
+    // SUPPORT who live in those tabs.
+    const resourcesCollapsedDefault = role === "OWNER" || role === "MAINTAINER";
 
     type ItemSpec = {
       name: string;
@@ -215,49 +207,94 @@ export default function OrgLayout({
     // Top (no label) — Overview + consumer-role landing pages. The
     // LEARNER / EXPERT cases are the only sidebar items those roles
     // ever see. Operators (MANAGER+) get the richer per-tab views.
+    //
+    // My Program stays separate from Commerce's Programs on purpose: they are
+    // different objects, not two scopes of one. `my-program` is a LEARNER's
+    // own assignment and coverage detail; `programs` is the sponsor's catalog
+    // CRUD. Appointments was the only genuine same-object scope split, and it
+    // is now one entry with a Mine/Everyone toggle.
     const topItems: ItemSpec[] = [
       { name: "Overview", icon: Home, path: "home" },
       {
         name: "My Program",
         icon: GraduationCap,
         path: "my-program",
-        show: role === "LEARNER" && canSponsor,
+        show: can("myProgram.read") && canSponsor,
       },
       {
-        name: "My Arrangement",
+        name: "Compensation",
         icon: UserCog,
-        path: "my-arrangement",
-        show: role === "EXPERT" && canHost,
+        path: "compensation",
+        show: can("myArrangement.read") && canHost,
+      },
+      {
+        // Any ACTIVE member — learners who ATTEND org sessions and experts
+        // who DELIVER them both need their own per-org appointments surface.
+        // Deliberately NOT gated on canHost (that would exclude pure
+        // learners): requireOrgAccess already floors this at active
+        // membership, so show it to everyone who reaches the org dashboard.
+        // Operators additionally get the "Everyone" scope inside the page.
+        name: "Appointments",
+        icon: CalendarCheck,
+        path: "appointments",
+      },
+      {
+        // Participant surface, same floor as Appointments. Chat is scoped to
+        // this org purely by living on this route — `useOrgScope` pins under
+        // /dashboard/organization/[orgId]/ — so a member of several orgs gets
+        // one clean inbox per org with no picker.
+        //
+        // Not an operator surface: Stream only returns channels the viewer is a
+        // member of, and there is no org-wide chat query behind it. ADR 20
+        // keeps session content with the participants.
+        name: "Messages",
+        icon: MessageSquare,
+        path: "messages",
+      },
+      {
+        // Delivery surface: allocating slots is something only the person
+        // delivering the session can do, so it shows for members who hold a
+        // consultant profile. The page itself redirects anyone else — gating on
+        // the profile rather than on MemberRole.EXPERT means an OWNER who also
+        // delivers still gets it.
+        name: "Requests",
+        icon: ClipboardCheck,
+        path: "requests",
+        // Same gate as Compensation, which is the other EXPERT delivery
+        // surface: `myArrangement.read` is EXPERT-only and `canHost` means the
+        // org actually has experts. The page re-checks the membership's own
+        // consultantProfileId and redirects if absent, so a mismatch degrades
+        // to a redirect rather than a broken tab.
+        show: can("myArrangement.read") && canHost,
       },
     ];
 
-    // People — governance + roster surfaces. Intentionally hidden for
-    // BILLING_ADMIN. SUPPORT gets read access to Members for
-    // ticket investigation (see isOperationsReader rationale above).
+    // People — governance + roster surfaces (BILLING_ADMIN is
+    // operator-blind; SUPPORT reads Members for ticket investigation).
+    //
+    // Learners, Experts and Invitations are tabs on Members rather than
+    // sidebar entries: the first two were `?role=` filters on the very
+    // endpoint Members already reads, and splitting one roster across four
+    // nav slots made the group harder to scan than the data warranted.
     const peopleItems: ItemSpec[] = [
       {
+        // members.read is the widest of the four tab grants
+        // (OPERATIONS_READERS, vs GOVERNANCE for invitations and OPERATORS
+        // for learners/experts), so it alone decides the nav entry.
         name: "Members",
         icon: Users,
         path: "members",
-        show: isOperationsReader,
+        show: can("members.read"),
       },
       {
-        name: "Invitations",
-        icon: Mail,
-        path: "invitations",
-        show: isOperator && isAtLeast("MAINTAINER"),
-      },
-      {
-        name: "Learners",
-        icon: GraduationCap,
-        path: "learners",
-        show: canSponsor && isOperator && isAtLeast("MANAGER"),
-      },
-      {
-        name: "Experts",
-        icon: UserCog,
-        path: "experts",
-        show: canHost && isOperator && isAtLeast("MANAGER"),
+        // #org-appts / #1025 — collaborators on THIS org's hosted webinar/class
+        // plans. Mirrors Compensation's gate: only host-capable orgs have
+        // collaborator-bearing plans, and inviting/managing collaborators is
+        // the plan-owning EXPERT's own surface.
+        name: "Collaborations",
+        icon: Users,
+        path: "collaborations",
+        show: can("myArrangement.read") && canHost,
       },
     ];
 
@@ -271,10 +308,13 @@ export default function OrgLayout({
     // the sidebar entries are visibility-only.
     const commerceItems: ItemSpec[] = [
       {
+        // Contract terms are org-structural (spec: MAINTAINER floor) —
+        // the old `≥MAINTAINER || finance` expression showed a dead tab
+        // to MANAGER + BILLING_ADMIN, whose page guard rejected them.
         name: "Contracts",
         icon: FileText,
         path: "contracts",
-        show: canSponsor && (isAtLeast("MAINTAINER") || isFinance),
+        show: canSponsor && can("contracts.read"),
       },
       {
         // Only orgs running India AP 3-way-match (requiresPO=true) need
@@ -284,34 +324,38 @@ export default function OrgLayout({
         name: "Purchase Orders",
         icon: Receipt,
         path: "purchase-orders",
-        show:
-          canSponsor &&
-          requiresPO &&
-          (isAtLeast("MAINTAINER") || isFinance),
+        show: canSponsor && requiresPO && can("purchaseOrders.read"),
       },
       {
         name: "Programs",
         icon: Briefcase,
         path: "programs",
-        show: canSponsor && (isAtLeast("MAINTAINER") || isFinance),
+        show: canSponsor && can("programs.manage"),
       },
       {
+        // canSponsor only — the old extra `fundingSource === "WALLET"`
+        // branch was unreachable-by-construction (fundingSource lives on
+        // BillingAccount, which only exists when canSponsor=true) and
+        // produced a dead tab on any org where it could have fired.
         name: "Billing",
         icon: CreditCard,
         path: "billing",
-        show: (canSponsor || fundingSource === "WALLET") && isFinance,
+        show: canSponsor && can("billing.read"),
       },
       {
         name: "Payouts",
         icon: Wallet,
         path: "payouts",
-        show: canHost && isFinance,
+        show: canHost && can("payouts.read"),
       },
       {
         name: "Reimbursements",
         icon: Wallet,
         path: "reimbursements",
-        show: canSponsor && fundingSource === "PERSONAL" && isFinance,
+        show:
+          canSponsor &&
+          fundingSource === "PERSONAL" &&
+          can("reimbursements.read"),
       },
       {
         // #776 §C — per-org dispute/chargeback surface. Finance-only; the
@@ -319,44 +363,34 @@ export default function OrgLayout({
         name: "Disputes",
         icon: ShieldAlert,
         path: "disputes",
-        show: isFinance,
+        show: can("disputes.read"),
       },
     ];
 
-    // Operations — booking-side data feeds. MANAGER + SUPPORT live
-    // here. OWNER + MAINTAINER have access but the group is
-    // collapsed by default (see operationsCollapsedDefault).
-    // BILLING_ADMIN is excluded — no booking-side remit.
-    const operationsItems: ItemSpec[] = [
-      {
-        name: "Appointments",
-        icon: CalendarCheck,
-        path: "appointments",
-        show: isOperationsReader,
-      },
-      {
-        name: "Waitlist",
-        icon: ListOrdered,
-        path: "waitlist",
-        show: isOperationsReader,
-      },
-      {
-        name: "Trials",
-        icon: Sparkles,
-        path: "trials",
-        show: isOperationsReader,
-      },
+    // Resources — the artefacts a session leaves behind. MANAGER + SUPPORT
+    // live here. OWNER + MAINTAINER have access but the group is collapsed
+    // by default (see resourcesCollapsedDefault). BILLING_ADMIN is excluded
+    // — no booking-side remit.
+    //
+    // Two entries, not one tabbed "Resources" page: a group labelled
+    // Resources holding a single item also called Resources is redundant
+    // nesting, and the two lists answer different questions — Documents is a
+    // review queue, Recordings is an archive.
+    //
+    // Trials are deliberately absent: a trial IS an appointment, so it
+    // belongs on Appointments rather than in a list of its own.
+    const resourcesItems: ItemSpec[] = [
       {
         name: "Documents",
         icon: FileText,
         path: "documents",
-        show: isOperationsReader,
+        show: can("operations.read"),
       },
       {
         name: "Recordings",
         icon: Video,
         path: "recordings",
-        show: isOperationsReader,
+        show: can("operations.read"),
       },
     ];
 
@@ -369,19 +403,19 @@ export default function OrgLayout({
         name: "Analytics",
         icon: BarChart3,
         path: "analytics",
-        show: isOperationsReader,
+        show: can("operations.read"),
       },
       {
         name: "Audit",
         icon: ClipboardList,
         path: "audit",
-        show: isAtLeast("MAINTAINER") || isSupport,
+        show: can("audit.read"),
       },
       {
         name: "Consent",
         icon: ShieldCheck,
         path: "consent",
-        show: isOperator && isAtLeast("MANAGER"),
+        show: can("consent.read"),
       },
     ];
 
@@ -389,30 +423,16 @@ export default function OrgLayout({
     // Settings stays MAINTAINER+ (org-config is sensitive). Webhooks +
     // SCIM + Data exports are BILLING_ADMIN-reachable for finance
     // integrations.
+    // Webhooks, SCIM and Data exports are tabs on Settings, alongside SSO —
+    // which had no sidebar entry at all and was reachable only via a link
+    // buried inside the settings page. One Configuration destination, five
+    // tabs, each still gated on its own matrix key.
     const configurationItems: ItemSpec[] = [
       {
         name: "Settings",
         icon: Settings,
         path: "settings",
-        show: isAtLeast("MAINTAINER"),
-      },
-      {
-        name: "Webhooks",
-        icon: Webhook,
-        path: "integrations/webhooks",
-        show: isFinance,
-      },
-      {
-        name: "SCIM",
-        icon: KeyRound,
-        path: "integrations/scim",
-        show: isFinance,
-      },
-      {
-        name: "Data exports",
-        icon: Download,
-        path: "integrations/data-exports",
-        show: isFinance,
+        show: can("settings.manage") || can("integrations.read"),
       },
     ];
 
@@ -426,9 +446,9 @@ export default function OrgLayout({
       { label: "People", items: filterItems(peopleItems) },
       { label: "Commerce", items: filterItems(commerceItems) },
       {
-        label: "Operations",
-        items: filterItems(operationsItems),
-        defaultCollapsed: operationsCollapsedDefault,
+        label: "Resources",
+        items: filterItems(resourcesItems),
+        defaultCollapsed: resourcesCollapsedDefault,
       },
       { label: "Insights", items: filterItems(insightsItems) },
       { label: "Configuration", items: filterItems(configurationItems) },
@@ -508,21 +528,25 @@ export default function OrgLayout({
     (m) => m.organizationId !== orgId,
   );
 
-  // Bottom chip dropdown — context switching + account actions.
+  // Bottom chip dropdown — context switching only.
   // Top header stays static (org identity + collapse arrow). Single dropdown
   // at the bottom keeps the "which dropdown has what" confusion at zero.
-  const settingsHref = `/dashboard/organization/${orgId}/settings`;
-
+  //
+  // No "Organization settings" entry here: it pointed at the very href the
+  // Configuration → Settings sidebar item already owns, so the same
+  // destination appeared twice in one sidebar.
   const bottomUserChipActions: NonNullable<
     React.ComponentProps<typeof CollapsibleSidebar>["bottomUserChipActions"]
   > = [
     ...(personalHref
-      ? [{
-          type: "item" as const,
-          label: "Personal Dashboard",
-          href: personalHref,
-          icon: LayoutDashboard,
-        }]
+      ? [
+          {
+            type: "item" as const,
+            label: "Personal Dashboard",
+            href: personalHref,
+            icon: LayoutDashboard,
+          },
+        ]
       : []),
     ...(otherOrgs.length > 0
       ? [
@@ -536,13 +560,6 @@ export default function OrgLayout({
           })),
         ]
       : []),
-    { type: "separator" },
-    {
-      type: "item",
-      label: "Organization settings",
-      href: settingsHref,
-      icon: Settings,
-    },
   ];
 
   // Subtitle under the org name: the user's role in THIS org. Capability
@@ -553,25 +570,27 @@ export default function OrgLayout({
   // Map URL segments to human-readable page names so the breadcrumbs match
   // the heading the user actually sees on the page.
   const PAGE_LABELS: Record<string, string> = {
-    home:         "Overview",
-    members:      "Members",
-    invitations:  "Invitations",
-    learners:     "Learners",
-    experts:      "Experts",
-    programs:     "Programs",
-    contracts:    "Contracts",
+    home: "Overview",
+    "my-program": "My Program",
+    compensation: "Compensation",
+    collaborations: "Collaborations",
     appointments: "Appointments",
-    waitlist:     "Waitlist",
-    trials:       "Trials",
-    documents:    "Documents",
-    recordings:   "Recordings",
-    billing:      "Billing",
-    payouts:      "Payouts",
-    disputes:     "Disputes",
-    analytics:    "Analytics",
-    audit:        "Audit",
-    settings:     "Settings",
-    sso:          "SSO",
+    messages: "Messages",
+    requests: "Requests",
+    members: "Members",
+    programs: "Programs",
+    contracts: "Contracts",
+    "purchase-orders": "Purchase Orders",
+    documents: "Documents",
+    recordings: "Recordings",
+    billing: "Billing",
+    payouts: "Payouts",
+    reimbursements: "Reimbursements",
+    disputes: "Disputes",
+    analytics: "Analytics",
+    audit: "Audit",
+    consent: "Consent",
+    settings: "Settings",
   };
 
   // Full breadcrumb trail — every URL segment after /organization/{orgId}
@@ -663,7 +682,12 @@ export default function OrgLayout({
 
         {/* Mobile bottom tab bar — only visible below md breakpoint */}
         <nav className="md:hidden fixed bottom-0 left-0 right-0 z-20 bg-white border-t border-zinc-200 flex">
-          {MOBILE_TABS.map(({ label, path, Icon }) => {
+          {MOBILE_TABS.filter(
+            ({ surface, needsSponsor }) =>
+              !org ||
+              ((!surface || hasOrgPermission(org.membership.role, surface)) &&
+                (!needsSponsor || org.organization.canSponsor)),
+          ).map(({ label, path, Icon }) => {
             const isActive = pathname.includes(
               `/dashboard/organization/${orgId}/${path}`,
             );

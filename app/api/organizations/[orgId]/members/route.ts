@@ -18,8 +18,6 @@ import { MemberRoleSchema } from "@/lib/labels/org-labels";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import {
-  canSeeOperatorSurface,
-  canSeeFinanceSurface,
   isAtLeastRole,
 } from "@/lib/auth/role-ranks";
 import type { MemberRole, MemberStatus } from "@prisma/client";
@@ -78,18 +76,12 @@ export async function GET(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId);
+  // members.read (OWNER/MAINTAINER/MANAGER/SUPPORT) — the roster is an
+  // operator surface. The old `|| finance` branch admitted BILLING_ADMIN,
+  // contradicting its operator-blind role design; the consent member-picker
+  // it served is itself consent.read-gated (no BILLING_ADMIN) now.
+  const access = await requireOrgAccess(orgId, { permission: "members.read" });
   if (access.error) return access.error;
-
-  // #777 FDE Group B P2 — the roster is an operational/finance read
-  // surface, not member-facing. Bare membership let any LEARNER/EXPERT
-  // pull the full directory. Floor it to the operator set (OWNER/
-  // MAINTAINER/MANAGER/SUPPORT) plus finance (BILLING_ADMIN reconciles +
-  // builds the consent member-picker). Only LEARNER/EXPERT are excluded.
-  const role = access.member.role;
-  if (!canSeeOperatorSurface(role) && !canSeeFinanceSurface(role)) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
 
   const url = new URL(req.url);
   const roles = parseRoleFilter(url.searchParams.get("role"));

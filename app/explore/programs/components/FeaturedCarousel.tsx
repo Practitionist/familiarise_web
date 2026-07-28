@@ -7,7 +7,7 @@ import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { CompanyLogo } from "@/components/ui/company-logo";
 import { useCurrency } from "@/hooks/useCurrency";
-import { isClassProgram, Program } from "../utils";
+import { isClassProgram, Program } from "@/lib/explore/programs";
 
 interface FeaturedCarouselProps {
   programs: Program[];

@@ -12,27 +12,21 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { CheckCircle } from "lucide-react";
-import { ClassPlanProgram } from "@/app/explore/programs/utils";
-import {
-  isUserEnrolled,
-  countUniqueParticipants,
-} from "@/lib/payments/utils/participants";
+import { ClassPlanProgram } from "@/lib/explore/programs";
+import { isUserEnrolled } from "@/lib/payments/utils/participants";
 import { useCurrency } from "@/hooks/useCurrency";
 import { formatInTimeZone } from "date-fns-tz";
-import { JoinWaitlistButton } from "@/components/waitlist/JoinWaitlistButton";
-import { WaitlistBadge } from "@/components/waitlist/WaitlistBadge";
+import { getClassCapacity } from "@/lib/events/capacity";
 
 type ClientClassRegistrationProps = {
   readonly plan: ClassPlanProgram;
   maxParticipants?: number;
-  waitlist?: Array<{ userId: string; position?: number | null }>;
   consultantUserId?: string;
 };
 
 export function ClientClassRegistration({
   plan,
   maxParticipants,
-  waitlist = [],
   consultantUserId,
 }: ClientClassRegistrationProps) {
   const { id: classId, price, classes } = plan;
@@ -57,20 +51,16 @@ export function ClientClassRegistration({
     ? isUserEnrolled(appointments, userId)
     : false;
 
-  // Calculate capacity - use plan's maxParticipants or prop override
-  const effectiveMaxParticipants =
-    maxParticipants ?? plan.maxParticipants ?? 100;
-  const currentParticipants = countUniqueParticipants(
-    appointments,
-    consultantUserId ? [consultantUserId] : [],
-  );
-  const isFull = currentParticipants >= effectiveMaxParticipants;
-
-  // Check if user is on the waitlist
-  const userWaitlistEntry = userId
-    ? waitlist.find((w) => w.userId === userId)
-    : null;
-  const isOnWaitlist = !!userWaitlistEntry;
+  // Capacity comes from the class instance when it sets one, else the plan.
+  const capacity = getClassCapacity({
+    classInstance: {
+      maxParticipants: classes?.[0]?.maxParticipants ?? null,
+      appointments,
+    },
+    plan: { maxParticipants: maxParticipants ?? plan.maxParticipants ?? 100 },
+    excludeUserIds: consultantUserId ? [consultantUserId] : [],
+  });
+  const isFull = capacity.isFull;
 
   const handleRegistration = () => {
     const checkoutUrl = `/checkout/plans/class/${classId}`;
@@ -86,7 +76,7 @@ export function ClientClassRegistration({
 
   if (!isLoggedIn) {
     // Determine button state for non-logged in users
-    const signInButtonText = isFull ? "Class is Full" : "Sign in to Register";
+    const signInButtonText = isFull ? "Sold out" : "Sign in to Register";
     const signInButtonDisabled = isFull;
 
     return (
@@ -105,8 +95,7 @@ export function ClientClassRegistration({
               variant="secondary"
               className="mb-4 bg-amber-100 text-amber-800"
             >
-              Class is full ({currentParticipants}/{effectiveMaxParticipants}{" "}
-              spots)
+              Sold out — all {capacity.max} seats taken
             </Badge>
           )}
           {!isFull && (
@@ -154,11 +143,8 @@ export function ClientClassRegistration({
     );
   }
 
-  // Show waitlist UI when class is full
+  // Sold out — enrollment is closed until the host opens more seats.
   if (isFull && isLoggedIn && !isAlreadyEnrolled) {
-    // Get the first class instance ID for waitlist operations
-    const classInstanceId = classes?.[0]?.id;
-
     return (
       <Card>
         <CardHeader>
@@ -174,32 +160,17 @@ export function ClientClassRegistration({
             variant="secondary"
             className="mb-4 bg-amber-100 text-amber-800"
           >
-            Class is full ({currentParticipants}/{effectiveMaxParticipants}{" "}
-            spots)
+            Sold out — all {capacity.max} seats taken
           </Badge>
+          <p className="text-sm text-muted-foreground">
+            Enrollment for this class is closed. Check back in case the
+            instructor opens more seats.
+          </p>
         </CardContent>
         <CardFooter>
-          {isOnWaitlist ? (
-            <div className="w-full text-center">
-              <WaitlistBadge
-                position={userWaitlistEntry?.position ?? null}
-                variant="extended"
-              />
-              <p className="text-xs text-muted-foreground mt-2">
-                We'll notify you when a spot opens up
-              </p>
-            </div>
-          ) : classInstanceId ? (
-            <JoinWaitlistButton
-              eventType="class"
-              eventId={classInstanceId}
-              className="w-full"
-            />
-          ) : (
-            <p className="text-sm text-muted-foreground text-center">
-              No class instance available for waitlist
-            </p>
-          )}
+          <Button className="w-full" disabled>
+            Sold out
+          </Button>
         </CardFooter>
       </Card>
     );

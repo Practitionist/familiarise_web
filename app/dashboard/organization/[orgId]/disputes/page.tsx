@@ -18,7 +18,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { formatCurrencyAmount } from "@/utils/formatting";
-import { useRequireFinanceSurface } from "../useOrgRole";
+import { useRequireOrgAccess } from "../useOrgRole";
 
 interface DisputeItem {
   id: string;
@@ -74,9 +74,9 @@ export default function OrgDisputesPage({
   params: Promise<{ orgId: string }>;
 }) {
   const { orgId } = use(params);
-  const { allowed } = useRequireFinanceSurface(orgId);
+  const { allowed } = useRequireOrgAccess(orgId, { permission: "disputes.read" });
 
-  const { data, isPending } = useQuery({
+  const { data, isPending, isError } = useQuery({
     queryKey: ["org-disputes", orgId],
     queryFn: () => fetchDisputes(orgId),
     enabled: allowed,
@@ -105,6 +105,20 @@ export default function OrgDisputesPage({
               <StatCardSkeleton key={i} />
             ))}
           </DashboardGrid>
+        ) : isError || !data ? (
+          /* A failed fetch used to render "0 open · ₹0.00 lost to
+             chargebacks · No disputes raised against this organization" —
+             chargeback exposure reading as clean when it simply hadn't
+             loaded. */
+          <div className="rounded-lg border border-border bg-card p-6 text-sm">
+            <p className="font-medium text-foreground">
+              Couldn&apos;t load disputes
+            </p>
+            <p className="mt-1 text-muted-foreground">
+              This is a loading problem, not a clean record — refresh to try
+              again.
+            </p>
+          </div>
         ) : (
           <>
             <DashboardGrid columns={3}>

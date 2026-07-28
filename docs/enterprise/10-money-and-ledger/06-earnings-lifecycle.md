@@ -37,18 +37,20 @@ The table below summarises which row each settlement path produces.
 
 ## 2. The `EarningStatus` state machine
 
-Both row types move through the same `EarningStatus` enum (`prisma/schema.prisma`): `PENDING`, `PENDING_TRUST`, `HELD`, `READY`, `PAID`, and `REFUNDED`. The diagram below shows the legal transitions; each is explained in the paragraphs that follow.
+Both row types move through the same `EarningStatus` enum (`prisma/schema.prisma`): `PENDING`, `PENDING_TRUST`, `HELD`, `READY`, `BATCHED`, `PAID`, and `REFUNDED`. The diagram below shows the legal transitions; each is explained in the paragraphs that follow.
 
 ```mermaid
 stateDiagram-v2
-  [*] --> PENDING: payment settles (org verified, or consultant row)
-  [*] --> PENDING_TRUST: payment settles (org PENDING_VERIFICATION, no paid invoice)
+  [*] --> PENDING: payment settles (sponsoring org verified, or no sponsor)
+  [*] --> PENDING_TRUST: payment settles (sponsoring org PENDING_VERIFICATION, no paid invoice)
   PENDING_TRUST --> PENDING: org ACTIVE or first invoice paid
   PENDING --> READY: holdUntil elapsed (release cron)
   PENDING --> HELD: dispute opened
   READY --> HELD: dispute opened
   HELD --> READY: dispute resolved for the seller
-  READY --> PAID: rolled into a payout, gateway confirmed
+  READY --> BATCHED: claimed into a payout batch
+  BATCHED --> PAID: payout COMPLETED with a UTR
+  BATCHED --> READY: batch failed before cash moved
   PENDING --> REFUNDED: payment refunded (fully)
   HELD --> REFUNDED: dispute resolved for the buyer
   READY --> REFUNDED: payment refunded (fully)
@@ -57,7 +59,7 @@ stateDiagram-v2
   REFUNDED --> [*]
 ```
 
-A new consultant row, and an org row whose sponsoring org is already verified, begins in **`PENDING`** — the hold period. A row whose org is still `PENDING_VERIFICATION` and has never paid an invoice begins in **`PENDING_TRUST`** instead; this is the #687 guard explained in §3.
+Both the consultant row and any org row begin in **`PENDING`** — the hold period — when the booking's **sponsoring** org (`payment.organizationId`) is already verified or the booking has no sponsor. When the sponsoring org is still `PENDING_VERIFICATION` and has never paid an invoice, every row the booking writes — the consultant row included — begins in **`PENDING_TRUST`** instead; this is the #687 guard explained in §3.
 
 The **`PENDING_TRUST → PENDING`** promotion is performed by the `release-pending-trust-earnings` cron (`jobs/cleanup/release-pending-trust-earnings.ts`) once the sponsoring org transitions to `ACTIVE` or its first invoice clears. Until then the row is invisible to payout batching, which only ever claims `READY` rows.
 
@@ -65,7 +67,7 @@ The **`PENDING → READY`** transition is the hold elapsing. The hourly `release
 
 The **`PENDING → HELD`** and **`READY → HELD`** transitions freeze a row for a dispute. `holdEarnings` (`earnings-service.ts`) refuses to act unless the row is currently `PENDING` or `READY`, so a `PAID` or `REFUNDED` row can never be re-frozen. The inverse **`HELD → READY`** transition is `releaseHeldEarnings`, called when the dispute resolves in the seller's favour; it acts only on a row that is currently `HELD`.
 
-The **`READY → PAID`** transition is the only one this doc hands off to the payout pipeline. When a payout's gateway leg confirms (`PROCESSING → COMPLETED`), the linked earnings are flipped to `PAID` and the settlement is posted to the ledger — see [payout pipeline §3](07-payout-pipeline.md). Note that batching claims a row by stamping its `payoutId` / `orgPayoutId` while it is still `READY`; the org-side batch additionally flips the claimed rows to `PAID` at batch-creation time, and a later failure releases them back to `READY` (§5).
+The **`READY → BATCHED → PAID`** progression is where this doc hands off to the payout pipeline. Batching claims a row by stamping its `payoutId` / `orgPayoutId` and flipping it from `READY` to the intermediate **`BATCHED`** status at batch-creation time — on both the consultant and the org rail. A `BATCHED` row is committed to a payout but its cash has **not** yet left, so it is neither eligible to be batched again nor counted as disbursed by finance exports or dashboards. Only when the payout's gateway leg confirms (`PROCESSING → COMPLETED` **with a UTR**) does the pipeline flip `BATCHED → PAID` and post the settlement to the ledger — see [payout pipeline §3](07-payout-pipeline.md). A batch that fails before any cash moves releases its `BATCHED` rows back to `READY` for the next run (§5).
 
 The transitions into **`REFUNDED`** are driven by `refundEarnings` and are covered in §5. The guard `assertEarningStatusTransitionLegal` (`lib/payments/payouts/earning-status.ts`) makes `REFUNDED` terminal and permits a `PAID` row to move only to `REFUNDED` — any other transition out of `PAID`, or any transition out of `REFUNDED`, throws `IllegalEarningStatusTransitionError`. This is what stops a settled row, which has already triggered a real bank transfer and a TDS deduction, from being silently rewritten.
 
@@ -73,9 +75,11 @@ The transitions into **`REFUNDED`** are driven by `refundEarnings` and are cover
 
 ## 3. `PENDING_TRUST` — the #687 invoice-fraud guard
 
-`PENDING_TRUST` exists to close a fraud hole. An organization that is still `PENDING_VERIFICATION` and funds its bookings by INVOICE could otherwise accrue real consultant earnings against bookings it has not yet paid for, and then disappear before its first invoice ever clears — leaving the platform owing experts for work an unverified, unpaid org commissioned. To prevent that, when `createEarningsFromPayment` is about to write an `OrganizationEarnings` row, it checks the sponsoring org's status: if the org is `PENDING_VERIFICATION` and its count of `PAID` `OrganizationInvoice` rows is zero, the earnings row is minted in `PENDING_TRUST` rather than `PENDING` (`earnings-service.ts`).
+`PENDING_TRUST` exists to close a fraud hole. An organization that is still `PENDING_VERIFICATION` and funds its bookings by INVOICE could otherwise accrue real consultant earnings against bookings it has not yet paid for, and then disappear before its first invoice ever clears — leaving the platform owing experts for work an unverified, unpaid org commissioned. To prevent that, `createEarningsFromPayment` resolves the booking's **sponsoring** org (`payment.organizationId` — the org that owes the invoice, not the expert's HOST org) once, up front: if that sponsoring org is `PENDING_VERIFICATION` and its count of `PAID` `OrganizationInvoice` rows is zero, **every** earnings row the booking writes — the consultant row, the primary org row, and each collaborator-org row — is minted in `PENDING_TRUST` rather than `PENDING` (`earnings-service.ts`). Keying on the sponsor rather than the host is what stops an unverified sponsor from letting either consultant *or* org earnings clear.
 
 A row parked in `PENDING_TRUST` is excluded from the hold-release cron (which only touches `PENDING` rows) and therefore can never reach `READY` or be batched into a payout. The `release-pending-trust-earnings` cron promotes it to `PENDING` only once the org has earned trust — it goes `ACTIVE`, or it pays its first invoice. The rejected alternative, accruing straight to `PENDING`, would have been one less state to carry but would have re-opened the ghost-org hole.
+
+Upstream of parking, the checkout path now hard-requires a **verified domain claim** before an org may fund anything by INVOICE at all (`assertVerifiedDomainOrThrow`, called on the INVOICE funding branch of `checkout.ts`). The ghost-org window is therefore narrowed on two fronts: an unverified sponsor cannot accrue INVOICE debt without first proving domain ownership, and any earnings its bookings do generate park in `PENDING_TRUST` until it earns trust.
 
 ---
 

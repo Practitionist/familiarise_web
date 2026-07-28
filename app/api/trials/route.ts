@@ -15,8 +15,8 @@ import { consultantPublicScalars } from "@/lib/data/consultant-public";
  */
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
-  let consultantProfileId = searchParams.get("consultantProfileId");
-  let consulteeProfileId = searchParams.get("consulteeProfileId");
+  const consultantProfileId = searchParams.get("consultantProfileId");
+  const consulteeProfileId = searchParams.get("consulteeProfileId");
   const subscriptionPlanId = searchParams.get("subscriptionPlanId");
   const status = searchParams.get("status") as TrialSessionStatus | null;
   const page = parseInt(searchParams.get("page") || "1");
@@ -34,47 +34,39 @@ export async function GET(request: NextRequest) {
     const isPrivileged =
       session.user.role === "ADMIN" || session.user.role === "STAFF";
 
-    // Auto-infer profile filter for non-privileged users
+    // #org-appts — profile ids are carried independently of the singular
+    // platform role, so a dual-profile user (e.g. a host EXPERT whose
+    // marketplace role is CONSULTEE) must see a trial whether they are its
+    // consultee OR its delivering consultant. Trials stay B2C: this is a pure
+    // ownership union, never org-scoped. When neither side is requested via an
+    // explicit `?consultant/consulteeProfileId=`, we fall back to the union of
+    // whichever profiles the caller holds (built below as an OR).
+    let applyOwnershipOr = false;
     if (!isPrivileged) {
-      if (session.user.role === "CONSULTANT") {
-        // Verify consultant has a valid profile
-        if (!session.user.consultantProfileId) {
-          return NextResponse.json(
-            {
-              error:
-                "Consultant profile not configured. Please complete onboarding.",
-            },
-            { status: 422 },
-          );
-        }
-        // Auto-set filter to own profile if not specified
-        if (!consultantProfileId) {
-          consultantProfileId = session.user.consultantProfileId;
-        } else if (session.user.consultantProfileId !== consultantProfileId) {
-          // Reject if trying to access another consultant's trials
-          return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-        }
-      } else if (session.user.role === "CONSULTEE") {
-        // Verify consultee has a valid profile
-        if (!session.user.consulteeProfileId) {
-          return NextResponse.json(
-            {
-              error:
-                "Consultee profile not configured. Please complete onboarding.",
-            },
-            { status: 422 },
-          );
-        }
-        // Auto-set filter to own profile if not specified
-        if (!consulteeProfileId) {
-          consulteeProfileId = session.user.consulteeProfileId;
-        } else if (session.user.consulteeProfileId !== consulteeProfileId) {
-          // Reject if trying to access another consultee's trials
-          return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-        }
-      } else {
+      if (!session.user.consultantProfileId && !session.user.consulteeProfileId) {
+        return NextResponse.json(
+          {
+            error:
+              "No consultant or consultee profile configured. Please complete onboarding.",
+          },
+          { status: 422 },
+        );
+      }
+      // Explicit profile-id filters stay locked to the caller's own ids.
+      if (
+        consultantProfileId &&
+        consultantProfileId !== session.user.consultantProfileId
+      ) {
         return NextResponse.json({ error: "Forbidden" }, { status: 403 });
       }
+      if (
+        consulteeProfileId &&
+        consulteeProfileId !== session.user.consulteeProfileId
+      ) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
+      // No explicit side requested → union both identities the caller holds.
+      applyOwnershipOr = !consultantProfileId && !consulteeProfileId;
     }
 
     // #674 org-scope filter. TrialSession.organizationId is populated by
@@ -82,12 +74,13 @@ export async function GET(request: NextRequest) {
     // bookings into the consultant's "Trials" tab.
     const callerMemberships = await prisma.membership.findMany({
       where: { userId: session.user.id, status: "ACTIVE" },
-      select: { organizationId: true, status: true },
+      select: { organizationId: true, status: true, role: true },
     });
     const scopeResolution = resolveOrgScope({
       raw: searchParams.get("orgScope"),
       memberships: callerMemberships,
       userRole: session.user.role,
+      userId: session.user.id,
       // Non-admin callers are already locked to their own
       // consultant/consulteeProfileId (lines 50-73), so `?orgScope=all`
       // means "all of MY trials" — safe for any role.
@@ -107,12 +100,29 @@ export async function GET(request: NextRequest) {
           ? { organizationId: scopeResolution.scope.orgId }
           : {};
 
-    if (consultantProfileId) {
-      whereClause.consultantProfileId = consultantProfileId;
-    }
+    if (applyOwnershipOr) {
+      // #org-appts — dual-identity union; AND-nested so it composes with the
+      // search OR below without clobbering it.
+      const ownershipArms: Prisma.TrialSessionWhereInput[] = [];
+      if (session.user.consultantProfileId) {
+        ownershipArms.push({
+          consultantProfileId: session.user.consultantProfileId,
+        });
+      }
+      if (session.user.consulteeProfileId) {
+        ownershipArms.push({
+          consulteeProfileId: session.user.consulteeProfileId,
+        });
+      }
+      whereClause.AND = [{ OR: ownershipArms }];
+    } else {
+      if (consultantProfileId) {
+        whereClause.consultantProfileId = consultantProfileId;
+      }
 
-    if (consulteeProfileId) {
-      whereClause.consulteeProfileId = consulteeProfileId;
+      if (consulteeProfileId) {
+        whereClause.consulteeProfileId = consulteeProfileId;
+      }
     }
 
     if (subscriptionPlanId) {
@@ -275,7 +285,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Verify the subscription plan exists and has free trial enabled
+    // Verify the subscription plan exists and has trials enabled
     const subscriptionPlan = await prisma.subscriptionPlan.findUnique({
       where: { id: subscriptionPlanId },
       include: {
@@ -301,9 +311,19 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!subscriptionPlan.freeTrialEnabled) {
+    if (!subscriptionPlan.trialEnabled) {
       return NextResponse.json(
-        { error: "Free trial is not available for this plan" },
+        { error: "A trial is not available for this plan" },
+        { status: 400 },
+      );
+    }
+
+    // Paid-trial checkout isn't wired yet (createApprovalPaymentIntent must
+    // accept TRIAL first) — fail closed rather than booking an uncollected
+    // paid trial. The wiring PR removes this gate.
+    if (subscriptionPlan.trialPriceInPaise > 0) {
+      return NextResponse.json(
+        { error: "Paid trials are not yet available. Please check back soon." },
         { status: 400 },
       );
     }
@@ -331,8 +351,8 @@ export async function POST(request: NextRequest) {
 
     // Enterprise: if the caller passed `organizationId`, verify they're
     // an ACTIVE LEARNER (or higher) member of that org before we stamp
-    // attribution. Trials are free, so this is org-tagging for analytics
-    // (conversion-rate per org) — never a payment claim. Silently
+    // attribution. This is org-tagging for analytics (conversion-rate
+    // per org) — never a payment claim. Silently
     // dropping the field on membership mismatch would let a curious
     // user forge org-tagged trial attribution; we return 403 instead so
     // the client bug becomes obvious. `findFirst` with `userId`

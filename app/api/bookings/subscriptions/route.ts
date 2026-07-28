@@ -1,5 +1,9 @@
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
+import {
+  PROFILE_WITH_USER_SELECT,
+  APPOINTMENT_LIST_SELECT,
+} from "@/lib/booking/list-selects";
 import { Prisma, AppointmentStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { addMonths } from "date-fns";
@@ -17,7 +21,7 @@ import {
 import { transitionSubscriptionRequest } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
-import { resolveOrgScope } from "@/lib/api/scope/parse";
+import { resolveOrgScope, scopeOrgId } from "@/lib/api/scope/parse";
 
 export async function GET(request: NextRequest) {
   // Require authentication
@@ -36,25 +40,44 @@ export async function GET(request: NextRequest) {
     const whereClause: Prisma.SubscriptionWhereInput = {};
 
     // Authorization: filter by ownership for non-privileged users.
-    // `?? "__none__"` (the participants-route idiom) is load-bearing: a
-    // session with a missing profile id would otherwise put `undefined`
-    // into the where clause, which Prisma IGNORES — silently dropping the
-    // ownership filter and serving every consultant's subscriptions.
+    // #org-appts — profile ids are carried independently of the singular
+    // platform role. An explicit ?consultant/consulteeProfileId= narrows to THAT
+    // side — validated against the session so a caller can only request their
+    // OWN profile. With no filter, union whichever profiles the session carries,
+    // so a dual-profile user sees both sides; a single-identity user matches one
+    // arm. Nested under AND so it composes with the orgScope filter below.
     if (!isPrivileged(session.user.role)) {
-      if (session.user.role === "CONSULTANT") {
-        // Consultants can only see their own subscriptions
-        whereClause.subscriptionPlan = {
-          consultantProfile: {
-            id: session.user.consultantProfileId ?? "__none__",
-          },
-        };
-      } else if (session.user.role === "CONSULTEE") {
-        // Consultees can only see their own subscriptions
-        whereClause.requestedById = session.user.consulteeProfileId ?? "__none__";
-      } else {
-        // Unknown role - deny access
+      const ownershipArms: Prisma.SubscriptionWhereInput[] = [];
+      if (consultantProfileId) {
+        if (consultantProfileId !== session.user.consultantProfileId) {
+          return forbiddenResponse("Access denied");
+        }
+        ownershipArms.push({ subscriptionPlan: { consultantProfileId } });
+      }
+      if (consulteeProfileId) {
+        if (consulteeProfileId !== session.user.consulteeProfileId) {
+          return forbiddenResponse("Access denied");
+        }
+        ownershipArms.push({ requestedById: consulteeProfileId });
+      }
+      if (ownershipArms.length === 0) {
+        // No explicit side → union whichever profiles the session carries.
+        if (session.user.consultantProfileId) {
+          ownershipArms.push({
+            subscriptionPlan: {
+              consultantProfileId: session.user.consultantProfileId,
+            },
+          });
+        }
+        if (session.user.consulteeProfileId) {
+          ownershipArms.push({ requestedById: session.user.consulteeProfileId });
+        }
+      }
+      if (ownershipArms.length === 0) {
+        // No profile of either kind - deny access.
         return forbiddenResponse("Access denied");
       }
+      whereClause.AND = [{ OR: ownershipArms }];
     } else {
       // Privileged users can filter by any profile
       if (consultantProfileId) {
@@ -74,20 +97,33 @@ export async function GET(request: NextRequest) {
 
     // Personal-vs-org scope filter (same mechanism as /api/slots/appointments:
     // the denormalized Appointment.organizationId, here through the
-    // subscription's to-many `appointments`). ADDITIVE: when the param is
-    // absent, behavior is unchanged (unfiltered union). A subscription whose
-    // appointments carry no org stamp — including one with zero appointment
-    // rows — is definitionally personal.
+    // subscription's to-many `appointments`). #org-appts — an ABSENT param now
+    // means PERSONAL/B2C (matching resolveOrgScope's default), NOT the old
+    // union: the personal dashboards dropped the org switcher and must stay B2C.
+    // A subscription whose appointments carry no org stamp — including one with
+    // zero appointment rows — is personal.
     const rawOrgScope = searchParams.get("orgScope");
-    if (rawOrgScope) {
+    const explicitPersonal =
+      rawOrgScope === "mine" || rawOrgScope === "personal";
+    // Absent param defaults to personal for non-privileged callers (B2C
+    // dashboards) but stays unfiltered for ADMIN/STAFF (they oversee all).
+    const defaultPersonal = !rawOrgScope && !isPrivileged(session.user.role);
+    if (explicitPersonal || defaultPersonal) {
+      // Personal — no membership lookup needed.
+      whereClause.appointments = {
+        none: { organizationId: { not: null } },
+      };
+    } else if (rawOrgScope) {
+      // Explicit org / all (privileged + absent falls through → no filter).
       const memberships = await prisma.membership.findMany({
         where: { userId: session.user.id, status: "ACTIVE" },
-        select: { organizationId: true, status: true },
+        select: { organizationId: true, status: true, role: true },
       });
       const scopeResolution = resolveOrgScope({
         raw: rawOrgScope,
         memberships,
         userRole: session.user.role,
+        userId: session.user.id,
         // Self-scoped: the ownership filter above already locks non-admin
         // callers to their own rows, so "all" just means "all of MY data".
         allowAllForOwner: true,
@@ -98,56 +134,47 @@ export async function GET(request: NextRequest) {
           { status: scopeResolution.status },
         );
       }
-      if (scopeResolution.scope.kind === "personal") {
+      // `orgMember` pins an org exactly as `org` does — see scopeOrgId.
+      const scopedOrgId = scopeOrgId(scopeResolution.scope);
+      if (scopedOrgId) {
         whereClause.appointments = {
-          none: { organizationId: { not: null } },
-        };
-      } else if (scopeResolution.scope.kind === "org") {
-        whereClause.appointments = {
-          some: { organizationId: scopeResolution.scope.orgId },
+          some: { organizationId: scopedOrgId },
         };
       }
       // kind === "all": no additional filter
     }
 
+    // #997 Phase 0 — narrow SELECTs replace the old include tree. The deep
+    // includes joined consultantProfile.domain/subDomains/tags (M2M) and a
+    // per-slot user M2M that no list consumer reads, and over-shared user
+    // PII (email/role/phone) against the #946 allowlist direction. Field
+    // superset verified across RequestSlotAllocationTab, the Mini tab,
+    // fetchApprovals, and useEvents consumers.
     const [subscriptions, total] = await Promise.all([
       prisma.subscription.findMany({
         where: whereClause,
-        include: {
+        select: {
+          id: true,
+          status: true,
+          requestedAt: true,
+          bookingSource: true,
+          schedulingPeriodStartsAt: true,
+          schedulingPeriodEndsAt: true,
+          schedulingTimezone: true,
           subscriptionPlan: {
-            include: {
-              consultantProfile: {
-                include: {
-                  user: { select: { id: true, name: true, email: true, image: true, role: true, phone: true } },
-                  domain: true,
-                  subDomains: true,
-                  tags: true,
-                },
-              },
+            select: {
+              id: true,
+              title: true,
+              callsPerWeek: true,
+              durationInMonths: true,
+              sessionDurationInHours: true,
+              totalSessions: true,
+              consultantProfileId: true,
+              consultantProfile: PROFILE_WITH_USER_SELECT,
             },
           },
-          requestedBy: {
-            include: {
-              user: {
-                select: {
-                  id: true,
-                  name: true,
-                  email: true,
-                  image: true,
-                },
-              },
-            },
-          },
-          appointments: {
-            include: {
-              slotsOfAppointment: {
-                include: {
-                  user: { select: { id: true, name: true, email: true, image: true, role: true, phone: true } },
-                },
-              },
-              payment: { select: { id: true, paymentStatus: true, amount: true, currency: true } },
-            },
-          },
+          requestedBy: PROFILE_WITH_USER_SELECT,
+          appointments: APPOINTMENT_LIST_SELECT,
         },
         orderBy: {
           requestedAt: "desc",

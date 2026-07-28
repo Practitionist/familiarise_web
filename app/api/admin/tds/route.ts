@@ -6,7 +6,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { requireAdminAuth, requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { requireAdminAuth, requireBackofficeSurface } from "@/lib/auth-helpers";
 import { ENABLE_TDS_ADMIN_VIEW } from "@/lib/feature-flags";
 import {
   getTDSSummary,
@@ -33,7 +33,7 @@ export async function GET(req: NextRequest) {
   const gated = notFoundIfGated();
   if (gated) return gated;
   try {
-    const auth = await requirePrivilegedAuth();
+    const auth = await requireBackofficeSurface("tds.read");
     if (auth.error) return auth.error;
     const session = auth.session;
 

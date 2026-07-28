@@ -18,6 +18,10 @@ import Link from "next/link";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { getMyProgramData } from "@/lib/data/org-member-program";
+import {
+  DashboardHeader,
+  DashboardContent,
+} from "@/components/dashboard/PageScaffold";
 
 const PROGRAM_TYPE_LABEL: Record<string, string> = {
   LICENSED_SEAT: "Licensed seat",
@@ -62,21 +66,21 @@ export default async function MyProgramPage({
     consulteeProfileId: access.member.consulteeProfileId,
   });
 
-  // Deep-link to the learner's appointments tab scoped to THIS org so
-  // org-funded sessions show. /dashboard alone lands on /home which has no
-  // OrgContextFilter and defaults to personal scope, hiding the rows.
-  const appointmentsHref = access.member.consulteeProfileId
-    ? `/dashboard/consultee/${access.member.consulteeProfileId}/appointments?orgScope=${orgId}`
-    : `/dashboard?orgScope=${orgId}`;
+  // Stay inside the org dashboard. This used to deep-link into the personal
+  // consultee dashboard with `?orgScope=<orgId>`, which stopped working when
+  // #1023 pinned personal scope to `organizationId: null` — org-funded
+  // sessions were exactly what that link was meant to show, and exactly what
+  // the personal dashboard now excludes. The org appointments page's "mine"
+  // scope is the surface that actually holds them.
+  const appointmentsHref = `/dashboard/organization/${orgId}/appointments?scope=mine`;
 
   return (
-    <div className="space-y-6">
-      <header>
-        <h1 className="text-2xl font-semibold">My Program</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          {access.org.name} sponsors your bookings through the programs below.
-        </p>
-      </header>
+    <>
+      <DashboardHeader
+        title="My Program"
+        subtitle={`${access.org.name} sponsors your bookings through the programs below.`}
+      />
+      <DashboardContent>
 
       {/* #777 §C.5/§F — outstanding overage deep-link banner. */}
       {outstandingOveragePaise > 0 && (
@@ -166,13 +170,24 @@ export default async function MyProgramPage({
           {assignments.map((a) => {
             const seat = a.program.licensedSeatConfig;
             const pool = a.program.creditPoolConfig;
-            const cap =
-              a.program.type === "LICENSED_SEAT"
+            // The two program types meter on DIFFERENT axes, and this used
+            // `engagementsUsed` for both — so a CREDIT_POOL learner who had
+            // spent ₹49,500 of a ₹50,000 budget over 3 bookings was shown
+            // "49,997 of 50,000 credits remaining · 1% consumed", and then
+            // hard-blocked on the next booking. The server meters pools in
+            // paise (`consumedPaise` vs `creditBudgetPerCycle * 100`, see the
+            // schema doc on ProgramAssignment); only LICENSED_SEAT counts
+            // engagements. Both are normalised to the pool's own unit here:
+            // whole-rupee credits, where 1 credit = ₹1 = 100 paise.
+            const isPool = a.program.type === "CREDIT_POOL";
+            const cap = isPool
+              ? (pool?.creditBudgetPerCycle ?? null)
+              : a.program.type === "LICENSED_SEAT"
                 ? (seat?.coveredEngagementsPerCycle ?? null)
-                : a.program.type === "CREDIT_POOL"
-                  ? (pool?.creditBudgetPerCycle ?? null)
-                  : null;
-            const used = a.engagementsUsed;
+                : null;
+            const used = isPool
+              ? Math.round(Number(a.consumedPaise ?? 0) / 100)
+              : a.engagementsUsed;
             // ceil, not round (#752) — "1 of 10,000 used" must read 1%, never
             // a pool-looks-untouched 0%. cap=0 can't pass Zod (min 1) but a
             // hand-written row must not render Infinity%.
@@ -249,12 +264,18 @@ export default async function MyProgramPage({
                   )}
                 </div>
 
-                {seat && (
+                {/* Was rendered for LICENSED_SEAT only, so a CREDIT_POOL
+                    learner saw a budget with no indication of what happens at
+                    the limit. Under CHARGE_MEMBER the cap isn't a stop — it's
+                    the point where their own card starts being charged, which
+                    they should know before they book. */}
+                {(seat ?? pool) && (
                   <p className="mt-3 text-xs text-muted-foreground">
                     {cap === null
                       ? "Unlimited — no cap"
-                      : (OVERAGE_BEHAVIOR_LABEL[seat.overageBehavior] ??
-                        seat.overageBehavior)}
+                      : (OVERAGE_BEHAVIOR_LABEL[
+                          (seat ?? pool)!.overageBehavior
+                        ] ?? (seat ?? pool)!.overageBehavior)}
                   </p>
                 )}
 
@@ -376,7 +397,8 @@ export default async function MyProgramPage({
           </p>
         </section>
       )}
-    </div>
+      </DashboardContent>
+    </>
   );
 }
 

@@ -4,6 +4,7 @@ import { AppointmentsType, Prisma } from "@prisma/client";
 import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
 import { resolveOrgScope } from "@/lib/api/scope/parse";
 import { getConsultantAppointments } from "@/lib/data/consultant-appointments";
+import { computeWeeklyConfirmedCallCounts } from "@/lib/booking/weekly-call-counts";
 
 export async function GET(request: NextRequest) {
   const authResult = await requireApiAuth();
@@ -110,12 +111,13 @@ export async function GET(request: NextRequest) {
   // Appointment.organizationId column populated by the #674 backfill.
   const callerMembershipsForScope = await prisma.membership.findMany({
     where: { userId: session.user.id, status: "ACTIVE" },
-    select: { organizationId: true, status: true },
+    select: { organizationId: true, status: true, role: true },
   });
   const scopeResolution = resolveOrgScope({
     raw: searchParams.get("orgScope"),
     memberships: callerMembershipsForScope,
     userRole: session.user.role,
+    userId: session.user.id,
     // Self-scoped: non-admin callers are already locked to their own
     // profileId via `hasOwnFilter` above, so `?orgScope=all` here just
     // means "all of MY data" — safe for any role.
@@ -160,7 +162,26 @@ export async function GET(request: NextRequest) {
       orgScopeFilter: apptOrgFilter,
     });
 
-    return NextResponse.json({ data: appointments });
+    // #997 Phase 3 — opt-in aggregate, only computed when the caller scopes
+    // to a single subscription and states its per-call slot count (both
+    // already known client-side from the plan config — no extra DB read).
+    const slotsPerCallParam = searchParams.get("slotsPerCall");
+    const slotsPerCall = slotsPerCallParam
+      ? parseInt(slotsPerCallParam, 10)
+      : NaN;
+    const weeklyConfirmedCallCounts =
+      subscriptionId && Number.isFinite(slotsPerCall) && slotsPerCall > 0
+        ? computeWeeklyConfirmedCallCounts(
+            appointments,
+            subscriptionId,
+            slotsPerCall,
+          )
+        : undefined;
+
+    return NextResponse.json({
+      data: appointments,
+      ...(weeklyConfirmedCallCounts ? { weeklyConfirmedCallCounts } : {}),
+    });
   } catch (error) {
     console.error("Error fetching appointments:", error);
     return NextResponse.json(

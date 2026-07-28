@@ -47,7 +47,7 @@ import { SubmitButton } from "./form-fields/SubmitButton";
 import { FormConfirmationDialog } from "./form-fields/FormConfirmationDialog";
 import { TopicsMultiSelect } from "./TopicsMultiSelect";
 import { PlannerService } from "../services/planner";
-import { WebinarEvent, WebinarPlannerProps } from "../types/event";
+import { WebinarEvent, WebinarPlannerProps } from "@/types/planner-events";
 import { PlanMaterialsUpload } from "./PlanMaterialsUpload";
 import { CollaboratorsTab } from "@/components/collaborators/CollaboratorsTab";
 import { PlanImageUploader } from "@/components/plans/PlanImageUploader";
@@ -129,7 +129,10 @@ export function EventPlannerForWebinar({
         const fetchedTopics = await PlannerService.getTopics("");
         setAvailableTopics(fetchedTopics);
       } catch (error) {
-        Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
+        Sentry.captureException(
+          error instanceof Error ? error : new Error(String(error)),
+          { tags: { subsystem: "client" } },
+        );
         console.error("Failed to fetch topics:", error);
         toast({
           title: "Error",
@@ -166,7 +169,10 @@ export function EventPlannerForWebinar({
       price: (initialData?.webinarPlan?.price ?? 0) / 100,
       priceCurrency: initialData?.webinarPlan?.priceCurrency ?? "INR",
       durationInHours: initialData?.webinarPlan?.durationInHours ?? 1,
-      maxParticipants: initialData?.webinarPlan?.maxParticipants ?? 100,
+      maxParticipants:
+        initialData?.maxParticipants ??
+        initialData?.webinarPlan?.maxParticipants ??
+        100,
       language: initialData?.webinarPlan?.language ?? "English",
       level: initialData?.webinarPlan?.level ?? "Beginner",
       prerequisites: initialData?.webinarPlan?.prerequisites ?? "",
@@ -192,7 +198,9 @@ export function EventPlannerForWebinar({
         price: (initialData.webinarPlan.price ?? 0) / 100,
         priceCurrency: initialData.webinarPlan.priceCurrency ?? "INR",
         durationInHours: initialData.webinarPlan.durationInHours,
-        maxParticipants: initialData.webinarPlan.maxParticipants,
+        maxParticipants:
+          initialData.maxParticipants ??
+          initialData.webinarPlan.maxParticipants,
         language: initialData.webinarPlan.language ?? "English",
         level: initialData.webinarPlan.level ?? "Beginner",
         prerequisites: initialData.webinarPlan.prerequisites ?? "",
@@ -283,7 +291,8 @@ export function EventPlannerForWebinar({
           priceCurrency: toCurrencyEnum(formData.priceCurrency),
           certificateProvided: formData.certificateProvided ?? false,
           recordingEnabled: formData.recordingEnabled ?? false,
-          recordingStoragePolicy: initialData?.webinarPlan?.recordingStoragePolicy ?? "STREAM_ONLY",
+          recordingStoragePolicy:
+            initialData?.webinarPlan?.recordingStoragePolicy ?? "STREAM_ONLY",
           durationInHours: formData.durationInHours,
           maxParticipants: formData.maxParticipants,
           language: formData.language ?? "English",
@@ -314,7 +323,10 @@ export function EventPlannerForWebinar({
       });
       onClose();
     } catch (error) {
-      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "client" } },
+      );
       console.error("Error saving webinar:", error);
       toast({
         title: "Error",
@@ -337,8 +349,8 @@ export function EventPlannerForWebinar({
           if (!open) onClose();
         }}
       >
-        <ResponsiveModalContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
-          <ResponsiveModalHeader>
+        <ResponsiveModalContent className="max-w-3xl max-h-[90dvh] overflow-hidden flex flex-col">
+          <ResponsiveModalHeader className="shrink-0">
             <ResponsiveModalTitle className="text-xl">
               {initialData ? "Edit" : "Create New"} Webinar
             </ResponsiveModalTitle>
@@ -350,413 +362,420 @@ export function EventPlannerForWebinar({
           </ResponsiveModalHeader>
 
           <Form {...form}>
-            <form onSubmit={handleFormSubmit} className="space-y-6 py-4">
-              {/* Basic Information Section */}
-              <FormSection
-                title="Basic Information"
-                description="Define your webinar content"
-                icon={FileText}
-              >
-                <FormField
-                  control={form.control}
-                  name="title"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Title</FormLabel>
-                      <FormControl>
-                        <Input
-                          placeholder="e.g., Introduction to Machine Learning"
-                          {...field}
-                        />
-                      </FormControl>
-                      <FormDescription>
-                        A clear, engaging title for your webinar
-                      </FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                <FormField
-                  control={form.control}
-                  name="description"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Description</FormLabel>
-                      <FormControl>
-                        <Textarea
-                          {...field}
-                          className="min-h-[100px] resize-none"
-                          placeholder="Describe what attendees will learn during this webinar..."
-                        />
-                      </FormControl>
-                      <FormDescription>
-                        Detailed overview of the webinar content
-                      </FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                <FormField
-                  control={form.control}
-                  name="topics"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormControl>
-                        <TopicsMultiSelect
-                          initialTopics={field.value}
-                          onTopicsChange={(topics) => field.onChange(topics)}
-                          availableTopics={availableTopics}
-                          isLoading={isLoadingTopics}
-                          label="Topics"
-                          error={form.formState.errors.topics?.message}
-                          helpText="Select from existing topics or create new ones"
-                        />
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
-              </FormSection>
-
-              {/* Scheduling Section */}
-              <FormSection
-                title="Scheduling"
-                description="Set the date, time, and duration"
-                icon={Calendar}
-              >
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <form
+              onSubmit={handleFormSubmit}
+              className="flex min-h-0 flex-1 flex-col"
+            >
+              <div className="min-h-0 flex-1 space-y-6 overflow-y-auto py-4">
+                {/* Basic Information Section */}
+                <FormSection
+                  title="Basic Information"
+                  description="Define your webinar content"
+                  icon={FileText}
+                >
                   <FormField
                     control={form.control}
-                    name="scheduledAt"
+                    name="title"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Scheduled Date & Time</FormLabel>
-                        <FormControl>
-                          <Input type="datetime-local" {...field} />
-                        </FormControl>
-                        <FormDescription>
-                          Must be at least 1 hour in the future
-                        </FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  <FormField
-                    control={form.control}
-                    name="durationInHours"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Duration (hours)</FormLabel>
+                        <FormLabel>Title</FormLabel>
                         <FormControl>
                           <Input
-                            type="number"
-                            step="0.5"
-                            min="0.5"
-                            placeholder="1"
+                            placeholder="e.g., Introduction to Machine Learning"
                             {...field}
-                            onChange={(e) => {
-                              const value = e.target.value;
-                              field.onChange(
-                                value === "" ? 0 : Number.parseFloat(value),
-                              );
-                            }}
                           />
                         </FormControl>
                         <FormDescription>
-                          Must be in 30-minute increments
+                          A clear, engaging title for your webinar
                         </FormDescription>
                         <FormMessage />
                       </FormItem>
                     )}
-                  />
-                </div>
-              </FormSection>
-
-              {/* Pricing & Capacity Section */}
-              <FormSection
-                title="Pricing & Capacity"
-                description="Set your price and attendee limit"
-                icon={DollarSign}
-              >
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <PriceField
-                    control={form.control}
-                    priceName="price"
-                    currencyName="priceCurrency"
-                    description="Leave as 0 for free webinars"
                   />
 
                   <FormField
                     control={form.control}
-                    name="maxParticipants"
+                    name="description"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Maximum Participants</FormLabel>
+                        <FormLabel>Description</FormLabel>
                         <FormControl>
-                          <Input
-                            type="number"
-                            min="1"
-                            placeholder="100"
+                          <Textarea
                             {...field}
-                            onChange={(e) =>
-                              field.onChange(Number.parseInt(e.target.value))
-                            }
+                            className="min-h-[100px] resize-none"
+                            placeholder="Describe what attendees will learn during this webinar..."
                           />
                         </FormControl>
                         <FormDescription>
-                          Maximum number of attendees
+                          Detailed overview of the webinar content
                         </FormDescription>
                         <FormMessage />
                       </FormItem>
                     )}
                   />
-                </div>
-              </FormSection>
 
-              {/* Session Details Section */}
-              <FormSection
-                title="Session Details"
-                description="Language, level, and certificate options"
-                icon={Settings}
-              >
-                <LanguageLevelFields control={form.control} />
+                  <FormField
+                    control={form.control}
+                    name="topics"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormControl>
+                          <TopicsMultiSelect
+                            initialTopics={field.value}
+                            onTopicsChange={(topics) => field.onChange(topics)}
+                            availableTopics={availableTopics}
+                            isLoading={isLoadingTopics}
+                            label="Topics"
+                            error={form.formState.errors.topics?.message}
+                            helpText="Select from existing topics or create new ones"
+                          />
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+                </FormSection>
 
-                <FormField
-                  control={form.control}
-                  name="certificateProvided"
-                  render={({ field }) => (
-                    <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4 mt-4">
-                      <div className="space-y-0.5">
-                        <FormLabel className="text-base">
-                          Certificate of Completion
-                        </FormLabel>
-                        <FormDescription>
-                          Provide attendees with a certificate after the webinar
-                        </FormDescription>
-                      </div>
-                      <FormControl>
-                        <Switch
-                          checked={field.value}
-                          onCheckedChange={field.onChange}
-                        />
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
+                {/* Scheduling Section */}
+                <FormSection
+                  title="Scheduling"
+                  description="Set the date, time, and duration"
+                  icon={Calendar}
+                >
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <FormField
+                      control={form.control}
+                      name="scheduledAt"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Scheduled Date & Time</FormLabel>
+                          <FormControl>
+                            <Input type="datetime-local" {...field} />
+                          </FormControl>
+                          <FormDescription>
+                            Must be at least 1 hour in the future
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
 
-                <FormField
-                  control={form.control}
-                  name="recordingEnabled"
-                  render={({ field }) => (
-                    <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4 mt-4">
-                      <div className="space-y-0.5">
-                        <FormLabel className="text-base">
-                          Enable Recording
-                        </FormLabel>
-                        <FormDescription>
-                          Allow recording of this webinar for attendees to watch
-                          later
-                        </FormDescription>
-                      </div>
-                      <FormControl>
-                        <Switch
-                          checked={field.value}
-                          onCheckedChange={field.onChange}
-                        />
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
-
-                <FormField
-                  control={form.control}
-                  name="recordingStoragePolicy"
-                  render={({ field }) => (
-                    <FormItem className="rounded-lg border p-4 mt-4">
-                      <FormLabel className="text-base">
-                        Recording Storage
-                      </FormLabel>
-                      <FormDescription>
-                        Choose how long recordings are stored
-                      </FormDescription>
-                      <FormControl>
-                        <div
-                          role="radiogroup"
-                          aria-label="Recording storage policy"
-                          className="flex flex-col gap-3 mt-2"
-                        >
-                          <label
-                            htmlFor="webinar-storage-stream"
-                            className="flex items-start gap-3 cursor-pointer"
-                          >
-                            <input
-                              id="webinar-storage-stream"
-                              type="radio"
-                              name="recordingStoragePolicy"
-                              value="STREAM_ONLY"
-                              checked={field.value === "STREAM_ONLY"}
-                              onChange={() => field.onChange("STREAM_ONLY")}
-                              className="mt-1"
+                    <FormField
+                      control={form.control}
+                      name="durationInHours"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Duration (hours)</FormLabel>
+                          <FormControl>
+                            <Input
+                              type="number"
+                              step="0.5"
+                              min="0.5"
+                              placeholder="1"
+                              {...field}
+                              onChange={(e) => {
+                                const value = e.target.value;
+                                field.onChange(
+                                  value === "" ? 0 : Number.parseFloat(value),
+                                );
+                              }}
                             />
-                            <div>
-                              <div className="font-medium text-sm">
-                                Standard Storage (2 weeks)
-                              </div>
-                              <div className="text-xs text-muted-foreground">
-                                Recordings are available for 2 weeks after the
-                                session, then automatically removed.
-                              </div>
-                            </div>
-                          </label>
-                          <label
-                            htmlFor="webinar-storage-permanent"
-                            className="flex items-start gap-3 cursor-pointer"
-                          >
-                            <input
-                              id="webinar-storage-permanent"
-                              type="radio"
-                              name="recordingStoragePolicy"
-                              value="SUPABASE_PERMANENT"
-                              checked={field.value === "SUPABASE_PERMANENT"}
-                              onChange={() =>
-                                field.onChange("SUPABASE_PERMANENT")
+                          </FormControl>
+                          <FormDescription>
+                            Must be in 30-minute increments
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+                </FormSection>
+
+                {/* Pricing & Capacity Section */}
+                <FormSection
+                  title="Pricing & Capacity"
+                  description="Set your price and attendee limit"
+                  icon={DollarSign}
+                >
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <PriceField
+                      control={form.control}
+                      priceName="price"
+                      currencyName="priceCurrency"
+                      description="Leave as 0 for free webinars"
+                    />
+
+                    <FormField
+                      control={form.control}
+                      name="maxParticipants"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Maximum Participants</FormLabel>
+                          <FormControl>
+                            <Input
+                              type="number"
+                              min="1"
+                              placeholder="100"
+                              {...field}
+                              onChange={(e) =>
+                                field.onChange(Number.parseInt(e.target.value))
                               }
-                              className="mt-1"
                             />
-                            <div>
-                              <div className="font-medium text-sm">
-                                Permanent Storage
-                              </div>
-                              <div className="text-xs text-muted-foreground">
-                                Recordings are automatically transferred to
-                                permanent storage and never expire.
-                              </div>
-                            </div>
-                          </label>
+                          </FormControl>
+                          <FormDescription>
+                            Seats for this session. Raise it at any time to
+                            reopen registration; you cannot drop below the
+                            number already registered.
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+                </FormSection>
+
+                {/* Session Details Section */}
+                <FormSection
+                  title="Session Details"
+                  description="Language, level, and certificate options"
+                  icon={Settings}
+                >
+                  <LanguageLevelFields control={form.control} />
+
+                  <FormField
+                    control={form.control}
+                    name="certificateProvided"
+                    render={({ field }) => (
+                      <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4 mt-4">
+                        <div className="space-y-0.5">
+                          <FormLabel className="text-base">
+                            Certificate of Completion
+                          </FormLabel>
+                          <FormDescription>
+                            Provide attendees with a certificate after the
+                            webinar
+                          </FormDescription>
                         </div>
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
-              </FormSection>
-
-              {/* Learning Content Section */}
-              <FormSection
-                title="Learning Content"
-                description="Define prerequisites and outcomes"
-                icon={GraduationCap}
-              >
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <FormField
-                    control={form.control}
-                    name="prerequisites"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Prerequisites</FormLabel>
                         <FormControl>
-                          <Textarea
-                            {...field}
-                            placeholder="e.g., Basic programming knowledge"
-                            value={field.value ?? ""}
-                            className="min-h-[80px] resize-none"
+                          <Switch
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
                           />
                         </FormControl>
-                        <FormDescription>
-                          What should attendees know beforehand?
-                        </FormDescription>
-                        <FormMessage />
                       </FormItem>
                     )}
                   />
 
                   <FormField
                     control={form.control}
-                    name="materialProvided"
+                    name="recordingEnabled"
                     render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Materials Provided</FormLabel>
+                      <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4 mt-4">
+                        <div className="space-y-0.5">
+                          <FormLabel className="text-base">
+                            Enable Recording
+                          </FormLabel>
+                          <FormDescription>
+                            Allow recording of this webinar for attendees to
+                            watch later
+                          </FormDescription>
+                        </div>
                         <FormControl>
-                          <Textarea
-                            {...field}
-                            placeholder="e.g., Slides, code samples, recording"
-                            value={field.value ?? ""}
-                            className="min-h-[80px] resize-none"
+                          <Switch
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
                           />
                         </FormControl>
-                        <FormDescription>
-                          Resources you will provide
-                        </FormDescription>
-                        <FormMessage />
                       </FormItem>
                     )}
                   />
-                </div>
 
-                <LearningOutcomesField
-                  control={form.control}
-                  name="learningOutcomes"
-                  placeholder="e.g., Understand the fundamentals of ML"
-                  description="What attendees will learn from this webinar"
-                />
-              </FormSection>
-
-              {/* Cover Image Section - Only show when editing an existing plan */}
-              {initialData?.webinarPlan?.id && (
-                <FormSection
-                  title="Cover Image"
-                  description="Upload a cover image for your webinar"
-                  icon={Upload}
-                >
-                  <PlanImageUploader
-                    planType="webinar-plans"
-                    planId={initialData.webinarPlan.id}
-                    currentImageUrl={initialData.webinarPlan.imageUrl}
+                  <FormField
+                    control={form.control}
+                    name="recordingStoragePolicy"
+                    render={({ field }) => (
+                      <FormItem className="rounded-lg border p-4 mt-4">
+                        <FormLabel className="text-base">
+                          Recording Storage
+                        </FormLabel>
+                        <FormDescription>
+                          Choose how long recordings are stored
+                        </FormDescription>
+                        <FormControl>
+                          <div
+                            role="radiogroup"
+                            aria-label="Recording storage policy"
+                            className="flex flex-col gap-3 mt-2"
+                          >
+                            <label
+                              htmlFor="webinar-storage-stream"
+                              className="flex items-start gap-3 cursor-pointer"
+                            >
+                              <input
+                                id="webinar-storage-stream"
+                                type="radio"
+                                name="recordingStoragePolicy"
+                                value="STREAM_ONLY"
+                                checked={field.value === "STREAM_ONLY"}
+                                onChange={() => field.onChange("STREAM_ONLY")}
+                                className="mt-1"
+                              />
+                              <div>
+                                <div className="font-medium text-sm">
+                                  Standard Storage (2 weeks)
+                                </div>
+                                <div className="text-xs text-muted-foreground">
+                                  Recordings are available for 2 weeks after the
+                                  session, then automatically removed.
+                                </div>
+                              </div>
+                            </label>
+                            <label
+                              htmlFor="webinar-storage-permanent"
+                              className="flex items-start gap-3 cursor-pointer"
+                            >
+                              <input
+                                id="webinar-storage-permanent"
+                                type="radio"
+                                name="recordingStoragePolicy"
+                                value="SUPABASE_PERMANENT"
+                                checked={field.value === "SUPABASE_PERMANENT"}
+                                onChange={() =>
+                                  field.onChange("SUPABASE_PERMANENT")
+                                }
+                                className="mt-1"
+                              />
+                              <div>
+                                <div className="font-medium text-sm">
+                                  Permanent Storage
+                                </div>
+                                <div className="text-xs text-muted-foreground">
+                                  Recordings are automatically transferred to
+                                  permanent storage and never expire.
+                                </div>
+                              </div>
+                            </label>
+                          </div>
+                        </FormControl>
+                      </FormItem>
+                    )}
                   />
                 </FormSection>
-              )}
 
-              {/* Materials Section - Only show when editing an existing plan */}
-              {initialData?.id && (
+                {/* Learning Content Section */}
                 <FormSection
-                  title="Plan Materials"
-                  description="Upload materials for attendees"
-                  icon={Upload}
+                  title="Learning Content"
+                  description="Define prerequisites and outcomes"
+                  icon={GraduationCap}
                 >
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => setShowMaterialsDialog(true)}
-                    className="w-full"
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <FormField
+                      control={form.control}
+                      name="prerequisites"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Prerequisites</FormLabel>
+                          <FormControl>
+                            <Textarea
+                              {...field}
+                              placeholder="e.g., Basic programming knowledge"
+                              value={field.value ?? ""}
+                              className="min-h-[80px] resize-none"
+                            />
+                          </FormControl>
+                          <FormDescription>
+                            What should attendees know beforehand?
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <FormField
+                      control={form.control}
+                      name="materialProvided"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Materials Provided</FormLabel>
+                          <FormControl>
+                            <Textarea
+                              {...field}
+                              placeholder="e.g., Slides, code samples, recording"
+                              value={field.value ?? ""}
+                              className="min-h-[80px] resize-none"
+                            />
+                          </FormControl>
+                          <FormDescription>
+                            Resources you will provide
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+
+                  <LearningOutcomesField
+                    control={form.control}
+                    name="learningOutcomes"
+                    placeholder="e.g., Understand the fundamentals of ML"
+                    description="What attendees will learn from this webinar"
+                  />
+                </FormSection>
+
+                {/* Cover Image Section - Only show when editing an existing plan */}
+                {initialData?.webinarPlan?.id && (
+                  <FormSection
+                    title="Cover Image"
+                    description="Upload a cover image for your webinar"
+                    icon={Upload}
                   >
-                    <Upload className="mr-2 h-4 w-4" />
-                    Manage Materials
-                  </Button>
-                </FormSection>
-              )}
-
-              {/* Collaborators Section */}
-              <FormSection
-                title="Collaborators"
-                description="Invite other consultants to co-host this webinar"
-                icon={Users}
-              >
-                {initialData?.webinarPlan?.id ? (
-                  <CollaboratorsTab
-                    planType="webinar"
-                    planId={initialData.webinarPlan.id}
-                    isOwner={true}
-                    excludeId={consultantId}
-                  />
-                ) : (
-                  <p className="text-sm text-zinc-500 text-center py-4">
-                    Save this webinar first to add collaborators
-                  </p>
+                    <PlanImageUploader
+                      planType="webinar-plans"
+                      planId={initialData.webinarPlan.id}
+                      currentImageUrl={initialData.webinarPlan.imageUrl}
+                    />
+                  </FormSection>
                 )}
-              </FormSection>
 
-              <ResponsiveModalFooter className="pt-6 border-t">
+                {/* Materials Section - Only show when editing an existing plan */}
+                {initialData?.id && (
+                  <FormSection
+                    title="Plan Materials"
+                    description="Upload materials for attendees"
+                    icon={Upload}
+                  >
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => setShowMaterialsDialog(true)}
+                      className="w-full"
+                    >
+                      <Upload className="mr-2 h-4 w-4" />
+                      Manage Materials
+                    </Button>
+                  </FormSection>
+                )}
+
+                {/* Collaborators Section */}
+                <FormSection
+                  title="Collaborators"
+                  description="Invite other consultants to co-host this webinar"
+                  icon={Users}
+                >
+                  {initialData?.webinarPlan?.id ? (
+                    <CollaboratorsTab
+                      planType="webinar"
+                      planId={initialData.webinarPlan.id}
+                      isOwner={true}
+                      excludeId={consultantId}
+                    />
+                  ) : (
+                    <p className="text-sm text-zinc-500 text-center py-4">
+                      Save this webinar first to add collaborators
+                    </p>
+                  )}
+                </FormSection>
+              </div>
+              <ResponsiveModalFooter className="shrink-0 border-t pt-4">
                 <Button
                   type="button"
                   variant="outline"

@@ -501,6 +501,12 @@ at all. The following table states what is allowed across those layers.
 | EXPERT and LEARNER inside the same org | No — by decision (2026-06-07) | `@@unique([userId, organizationId])` allows one role per org, and the LEARNER↔EXPERT transition is blocked. Allowing a dual-side membership would make `ProgramAssignment` attribution ambiguous and open self-dealing (an expert consuming their own org's sponsored budget). The remediation is remove + re-invite, or a second org for genuinely separate capacities. |
 | Operator role plus sponsored consumption in the same org | No | Same single-role constraint; operators have no consumer profile linkage. An operator who needs sponsored sessions takes a LEARNER membership in a different org or books personally funded sessions. |
 
+A fourth layer is easy to mistake for a gate on the three above, so it is worth stating plainly that it is not one. `UserRole` is a single nullable scalar on `User` holding one of CONSULTANT, CONSULTEE, ADMIN, STAFF or ORG_WORKSPACE, and it decides two things only: which dashboard a newly onboarded user lands on, and which back-office surfaces they reach through `lib/auth/backoffice-permissions.ts`. No code anywhere reads it when assigning a `MemberRole`. Identity on this platform is driven by which profiles exist, not by that field, which is why the dashboard switcher offers every facet a user holds rather than the single one `UserRole` names. A user whose `UserRole` is CONSULTANT can therefore hold a LEARNER membership without contradiction, and does so routinely.
+
+Acquiring the two profiles is deliberately asymmetric, and the asymmetry is the safeguard rather than an inconsistency. Consuming is cheap to grant, so accepting a LEARNER invitation lazy-creates a `ConsulteeProfile` on the spot — the click is the user's own consenting action and the profile carries nothing that needs verifying. Delivering is not, so accepting an EXPERT invitation refuses to lazy-create a `ConsultantProfile` and fails with `NOT_A_CONSULTANT`; a consultant identity carries domain, rates, verification state and payout prerequisites that no invitation click can substitute for. The practical effect is that a consultant can become a learner in a single step, while a consultee becomes an expert only by building the delivering identity first.
+
+One consequence of that openness needed its own guard. Because the two profiles are independent, a member can hold a `ConsultantProfile` with plans of their own while holding a LEARNER membership in a sponsoring organization, and nothing about that combination is blocked or should be. What must be blocked is the specific act it enables: booking one's own plan. The same-org EXPERT/LEARNER rule in the table above does not reach it, because that rule governs a single `Membership` row and this needs no EXPERT membership at all — only a consultee profile and a plan. Left unguarded, a sponsored member could book their own session against the organization's credit pool and route the sponsor's money into their own payout account. `revalidateInsideLock` in `lib/payments/operations/checkout.ts` therefore refuses any checkout where the plan's owning `ConsultantProfile` is the booking user's own, under the same distributed lock that enforces the ADR 18 panel and exclusivity checks, and for every funding path rather than only the sponsored ones.
+
 ### Who creates the identity: the who-is-acting rule
 
 Identity creation follows one rule, settled in #819: **creating a profile
@@ -528,12 +534,16 @@ page it lands on and the reason for that choice.
 |------|----------|-----|
 | `OWNER` / `MAINTAINER` / `MANAGER` / `SUPPORT` | `/home` | Operator overview (analytics, members, billing). |
 | `LEARNER` | `/my-program` | Per-cycle ProgramAssignment + utilization. The only in-org consumer surface for sponsored bookings. |
-| `EXPERT` | `/my-arrangement` | Membership.payoutRecipient + RateCard split + recent earnings on org-tagged payments. |
+| `EXPERT` | `/compensation` | Membership.payoutRecipient + RateCard split + recent earnings on org-tagged payments. |
 | no membership | personal dashboard fallback (`resolvePersonalDashboardHref` → `/dashboard`) | Stranger to this org — bounce out entirely. |
 
-Both `/my-program` and `/my-arrangement` are read-only in v1. A LEARNER
+Both `/my-program` and `/compensation` are read-only in v1. A LEARNER
 cannot self-assign to a Program; an EXPERT cannot flip their own
-`payoutRecipient`. Mutations remain on operator pages. The "Personal
+`payoutRecipient`. Mutations remain on operator pages. Membership also
+carries an `exclusiveEngagement` boolean (ADR 18) recording an
+org-declared exclusivity arrangement for internal consultants; it is an
+unenforced schema stub today and must not surface in any UI until an
+enforcement feature ships. The "Personal
 Dashboard" footer chip on the sidebar (`resolvePersonalDashboardHref`)
 stays so consumers can hop back to their personal surface without
 hunting for the URL.

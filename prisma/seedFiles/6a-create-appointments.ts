@@ -18,10 +18,10 @@ import prisma from "../../lib/prisma";
 import { UserWithProfiles } from "./1a-create-users";
 import { config, getTotalAppointments } from "./config";
 
-// #780 — the extended client reads plan `price` as number; the raw model
-// types still say bigint.
-type PlanRead<T extends { price: bigint }> = Omit<T, "price"> & {
-  price: number;
+// #780 — the extended client reads plan money columns (price,
+// trialPriceInPaise) as number; the raw model types still say bigint.
+type PlanRead<T extends { price: bigint }> = {
+  [K in keyof T]: T[K] extends bigint ? number : T[K];
 };
 
 // Appointment volumes - configurable via SEED_MODE environment variable
@@ -50,7 +50,9 @@ const getAppointmentStatus = (
   const rand = Math.random();
 
   if (isPastAppointment) {
-    return rand < 0.8 ? AppointmentStatus.APPROVED : AppointmentStatus.CANCELLED;
+    return rand < 0.8
+      ? AppointmentStatus.APPROVED
+      : AppointmentStatus.CANCELLED;
   }
 
   if (rand < 0.3) return AppointmentStatus.PENDING;
@@ -397,9 +399,6 @@ const createWebinarAppointment = async (
   endsAt: Date,
   consultantUserId?: string,
 ): Promise<Prisma.AppointmentCreateInput> => {
-  // Limit waitlist size to prevent transaction timeout
-  const waitlistSize = Math.min(faker.number.int({ min: 0, max: 3 }), 3);
-
   // Pick 2-4 additional participants to simulate a group webinar
   const otherConsultees = consultees.filter((c) => c.id !== consultee.id);
   const additionalCount = Math.min(
@@ -436,24 +435,6 @@ const createWebinarAppointment = async (
           ? WebinarStatus.COMPLETED
           : faker.helpers.arrayElement(Object.values(WebinarStatus)),
         feedbackSummary: isPastAppointment ? faker.lorem.paragraph() : null,
-        waitlist: isPastAppointment
-          ? undefined
-          : waitlistSize > 0
-            ? {
-                create: Array.from(
-                  new Set(
-                    Array.from(
-                      { length: waitlistSize },
-                      () => faker.helpers.arrayElement(consultees).id,
-                    ),
-                  ),
-                ).map((userId) => ({
-                  user: {
-                    connect: { id: userId },
-                  },
-                })),
-              }
-            : undefined,
       },
     },
   };
@@ -469,9 +450,8 @@ const createClassAppointment = async (
   numSlots: number,
   consultantUserId?: string,
 ): Promise<Prisma.AppointmentCreateInput> => {
-  // Limit slots and waitlist to prevent transaction timeout
+  // Limit slots to prevent transaction timeout
   const limitedSlots = Math.min(numSlots, 4);
-  const waitlistSize = Math.min(faker.number.int({ min: 0, max: 3 }), 3);
 
   // Pick 2-4 additional participants to simulate a group class
   const otherConsultees = consultees.filter((c) => c.id !== consultee.id);
@@ -531,24 +511,6 @@ const createClassAppointment = async (
           () => faker.internet.url(),
         ),
         feedbackSummary: isPastAppointment ? faker.lorem.paragraph() : null,
-        waitlist: isPastAppointment
-          ? undefined
-          : waitlistSize > 0
-            ? {
-                create: Array.from(
-                  new Set(
-                    Array.from(
-                      { length: waitlistSize },
-                      () => faker.helpers.arrayElement(consultees).id,
-                    ),
-                  ),
-                ).map((userId) => ({
-                  user: {
-                    connect: { id: userId },
-                  },
-                })),
-              }
-            : undefined,
       },
     },
   };

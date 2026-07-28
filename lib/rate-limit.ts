@@ -5,10 +5,9 @@
  * - authLimiter:            10/15min per IP  — POST /api/auth/sign-in, sign-up, forget-password (brute-force)
  * - checkoutLimiter:        5/min per user   — POST /api/checkout (fraud)
  * - discountLimiter:        10/min per user  — POST /api/payments/discounts/validate (brute-force)
- * - newsletterLimiter:      3/hr per IP      — POST /api/newsletter/subscribe (spam)
+ * - waitlistLimiter:        3/hr per IP      — POST /api/waitlist (newsletter signup spam)
  * - referralApplyLimiter:   3/24h per user   — POST /api/referrals/apply (farming)
  * - spamLimiter:            5/hr per user    — support-tickets, feedbacks, reviews, report
- * - waitlistLimiter:        5/hr per user    — POST /api/waitlist
  * - trialRequestLimiter:    3/24h per user   — POST /api/trials (spam prevention)
  * - requestApprovalLimiter: 10/hr per user   — POST /api/slots/request-for-approval
  * - searchLimiter:          60/min per IP    — GET /api/user/consultants, /api/consultants/search
@@ -61,17 +60,14 @@ export const cancelPendingLimiter = makeLimiter(10, "1 m", "rl:cancel-pending");
 /** 10 per minute — POST /api/payments/discounts/validate */
 export const discountLimiter = makeLimiter(10, "1 m", "rl:discount");
 
-/** 3 per hour — POST /api/newsletter/subscribe (IP-based) */
-export const newsletterLimiter = makeLimiter(3, "1 h", "rl:newsletter");
+/** 3 per hour — POST /api/waitlist newsletter signup (IP-based) */
+export const waitlistLimiter = makeLimiter(3, "1 h", "rl:waitlist");
 
 /** 3 per 24 hours — POST /api/referrals/apply */
 export const referralApplyLimiter = makeLimiter(3, "24 h", "rl:referral-apply");
 
 /** 5 per hour — support-tickets, feedbacks, reviews, report (scope key by route) */
 export const spamLimiter = makeLimiter(5, "1 h", "rl:spam");
-
-/** 5 per hour — POST /api/waitlist */
-export const waitlistLimiter = makeLimiter(5, "1 h", "rl:waitlist");
 
 /** 3 per 24 hours — POST /api/trials (prevents flooding consultant inboxes) */
 export const trialRequestLimiter = makeLimiter(3, "24 h", "rl:trial-request");
@@ -105,14 +101,22 @@ export const eventMutationLimiter = makeLimiter(10, "1 m", "rl:event-mutation");
  * can both balloon storage cost and flood the reviewer; bursts of a few
  * files at once stay under the limit.
  */
-export const documentUploadLimiter = makeLimiter(10, "1 m", "rl:document-upload");
+export const documentUploadLimiter = makeLimiter(
+  10,
+  "1 m",
+  "rl:document-upload",
+);
 
 /**
  * 30 per minute per user — #347 bulk document review. One request reviews many
  * documents in a single transaction (replacing the old N-PATCH fan-out), so the
  * limit is generous; it only guards against a script hammering the endpoint.
  */
-export const documentReviewLimiter = makeLimiter(30, "1 m", "rl:document-review");
+export const documentReviewLimiter = makeLimiter(
+  30,
+  "1 m",
+  "rl:document-review",
+);
 
 // ============================================================================
 // Enterprise (arch-4) — per-org / per-IP buckets for org-specific surfaces.
@@ -249,9 +253,5 @@ export function getClientIp(req: {
  */
 export function isBypassableIp(ip: string): boolean {
   if (process.env.NODE_ENV === "production") return false;
-  return (
-    ip === "::1" ||
-    ip === "127.0.0.1" ||
-    ip === "unknown_ip"
-  );
+  return ip === "::1" || ip === "127.0.0.1" || ip === "unknown_ip";
 }

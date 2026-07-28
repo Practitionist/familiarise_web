@@ -77,6 +77,10 @@ export async function PATCH(
         eventId: subscriptionId,
         mode,
         slots: body.slots,
+        // #837 — client dedupe key; a double-submit with the same value returns
+        // the first batch instead of allocating twice.
+        idempotencyKey: request.headers.get("Idempotency-Key") ?? undefined,
+        initialAllocation: body.initialAllocation,
       });
 
       const duration = Date.now() - startTime;

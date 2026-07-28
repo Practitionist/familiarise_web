@@ -9,7 +9,7 @@ import {
   forbiddenResponse,
 } from "@/lib/auth-helpers";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
-import { resolveOrgScope } from "@/lib/api/scope/parse";
+import { resolveOrgScope, scopeOrgId } from "@/lib/api/scope/parse";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
 
 export async function GET(request: NextRequest) {
@@ -64,12 +64,13 @@ export async function GET(request: NextRequest) {
     // filter via the `webinarPlan.organizationId` relation.
     const callerMemberships = await prisma.membership.findMany({
       where: { userId: session.user.id, status: "ACTIVE" },
-      select: { organizationId: true, status: true },
+      select: { organizationId: true, status: true, role: true },
     });
     const scopeResolution = resolveOrgScope({
       raw: searchParams.get("orgScope"),
       memberships: callerMemberships,
       userRole: session.user.role,
+      userId: session.user.id,
       // Self-scoped: non-admin callers are already locked to their own
       // consultant/consulteeProfileId above, so `?orgScope=all` means
       // "all of MY webinars" — safe for any role.
@@ -81,11 +82,13 @@ export async function GET(request: NextRequest) {
         { status: scopeResolution.status },
       );
     }
+    // `orgMember` pins an org exactly as `org` does — see scopeOrgId.
+    const scopedOrgId = scopeOrgId(scopeResolution.scope);
     const webinarPlanOrgWhere: Prisma.WebinarPlanWhereInput | null =
       scopeResolution.scope.kind === "personal"
         ? { organizationId: null }
-        : scopeResolution.scope.kind === "org"
-          ? { organizationId: scopeResolution.scope.orgId }
+        : scopedOrgId
+          ? { organizationId: scopedOrgId }
           : null; // "all" → no filter
 
     let webinars;
@@ -122,18 +125,6 @@ export async function GET(request: NextRequest) {
                           id: consulteeProfileId,
                         },
                       },
-                    },
-                  },
-                },
-              },
-            },
-            // Get webinars where consultee is in waitlist
-            {
-              waitlist: {
-                some: {
-                  user: {
-                    consulteeProfile: {
-                      id: consulteeProfileId,
                     },
                   },
                 },
@@ -179,26 +170,6 @@ export async function GET(request: NextRequest) {
               payment: true,
             },
           },
-          waitlist: {
-            where: {
-              user: {
-                consulteeProfile: {
-                  id: consulteeProfileId,
-                },
-              },
-            },
-            include: {
-              user: {
-                select: {
-                  id: true,
-                  name: true,
-                  email: true,
-                  image: true,
-                  consulteeProfile: true,
-                },
-              },
-            },
-          },
         },
       });
     } else if (consultantProfileId) {
@@ -240,7 +211,6 @@ export async function GET(request: NextRequest) {
               },
             },
           },
-          waitlist: true,
         },
       });
     } else {
@@ -265,7 +235,6 @@ export async function GET(request: NextRequest) {
               },
             },
           },
-          waitlist: true,
         },
       });
     }
@@ -277,7 +246,10 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ data: transformedWebinars }, { status: 200 });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "bookings" } },
+    );
     console.error("Error fetching webinars:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching webinars" },
@@ -348,13 +320,15 @@ export async function POST(request: Request) {
             },
           },
         },
-        waitlist: true,
       },
     });
 
     return NextResponse.json({ data: webinar }, { status: 201 });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "bookings" } },
+    );
     console.error("Error creating webinar:", error);
     return NextResponse.json(
       { error: "An error occurred while creating the webinar" },

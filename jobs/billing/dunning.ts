@@ -27,6 +27,7 @@
 
 import "dotenv/config";
 import prisma from "@/lib/prisma";
+import { ENABLE_DUNNING_SUSPEND } from "@/lib/feature-flags";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { notifyOrgInvoiceOverdue } from "@/lib/novu/org-workflows";
 import { getAppUrl } from "@/lib/url";
@@ -43,7 +44,7 @@ const MAX_REMINDERS = 3;
 // cascade only runs when ENABLE_DUNNING_SUSPEND=true, so wiring it changes
 // nothing until explicitly enabled. The booking-side gate lives in checkout.ts
 // behind the SAME flag.
-const SUSPEND_ENABLED = process.env.ENABLE_DUNNING_SUSPEND === "true";
+const SUSPEND_ENABLED = ENABLE_DUNNING_SUSPEND;
 const SUSPEND_GRACE_MS = 7 * 24 * 60 * 60 * 1000; // 7d past the final reminder
 
 // #779 — only dun orgs that are still reachable. DEACTIVATED orgs are torn

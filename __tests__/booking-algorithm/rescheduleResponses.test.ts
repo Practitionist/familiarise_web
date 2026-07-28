@@ -21,16 +21,14 @@ jest.mock("../../lib/prisma", () => ({
     $transaction: jest.fn(),
     appointment: { findUnique: jest.fn() },
     slotOfAppointment: { findMany: jest.fn(), deleteMany: jest.fn() },
+    // #1008 — reschedule/cancel routes read prisma.dispute.findFirst.
+    dispute: { findFirst: jest.fn().mockResolvedValue(null) },
     $disconnect: jest.fn(),
   },
 }));
 
 jest.mock("../../lib/auth-server", () => ({
   getSession: jest.fn(),
-}));
-
-jest.mock("../../lib/waitlist/slot-handler", () => ({
-  handleSlotOpening: jest.fn().mockResolvedValue({ notified: 0 }),
 }));
 
 jest.mock("../../lib/novu", () => ({
@@ -155,6 +153,10 @@ function makeMockTx(appointmentData: any) {
       update: jest.fn(),
       // B2 — the cancel/reschedule CAS guards use updateMany.
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      // #448 — a PARTIAL (slotIds) subscription reschedule only terminal-guards
+      // via count (no status write); positive count keeps the route on the
+      // happy path without flipping the whole subscription to PENDING.
+      count: jest.fn().mockResolvedValue(1),
     },
     webinar: {
       update: jest.fn(),

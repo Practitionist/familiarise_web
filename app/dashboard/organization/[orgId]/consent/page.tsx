@@ -9,7 +9,7 @@
  * member. Withdrawal is exposed at exactly the same prominence as grant
  * — DPDP §6(4) requires that withdrawing consent be as easy as giving it.
  *
- * Gated via `useRequireFinanceSurface` so OWNER + MAINTAINER +
+ * Gated via the org permission matrix (consent.read) so OWNER + MAINTAINER +
  * BILLING_ADMIN + MANAGER reach it (mirrors the DPDP data-exports sibling
  * and the MANAGER floor on /api/organizations/[orgId]/consent). Self-
  * service withdrawal from a member's own account settings is a separate
@@ -22,7 +22,7 @@
 
 import { use, useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useRequireFinanceSurface } from "../useOrgRole";
+import { useRequireOrgAccess } from "../useOrgRole";
 import {
   DashboardHeader,
   DashboardContent,
@@ -107,7 +107,7 @@ function LocalDateTime({ value }: { value: string | Date | null | undefined }) {
 
 export default function ConsentPage({ params }: Readonly<PageProps>) {
   const { orgId } = use(params);
-  const { allowed, isLoading: isGateLoading } = useRequireFinanceSurface(orgId);
+  const { allowed, isLoading: isGateLoading } = useRequireOrgAccess(orgId, { permission: "consent.read" });
   const qc = useQueryClient();
 
   // Grant-form state. Minimal local state (no RHF) — one member picker,

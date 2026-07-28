@@ -18,7 +18,7 @@ import {
   BarChart3,
   Gift,
   Settings,
-  HelpCircle,
+  LifeBuoy,
   Building2,
   UserRound,
   UserX,
@@ -33,6 +33,10 @@ import {
   PersonalDashboardShellSkeleton,
 } from "@/components/dashboard/PersonalDashboardShell";
 import type { CollapsibleSidebarGroup } from "@/components/dashboard/CollapsibleSidebar";
+import {
+  BreadcrumbOverrideProvider,
+  useBreadcrumbOverride,
+} from "@/components/dashboard/breadcrumb-override";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import StreamProvider from "@/providers/StreamProvider";
 import NovuProvider from "@/providers/NovuProvider";
@@ -57,7 +61,7 @@ const NAV_GROUPS: CollapsibleSidebarGroup[] = [
   {
     items: [
       { name: "Home", icon: Home, path: "home" },
-      { name: "Chats", icon: MessageSquare, path: "chats" },
+      { name: "Messages", icon: MessageSquare, path: "messages" },
       { name: "Appointments", icon: CalendarCheck, path: "appointments" },
     ],
   },
@@ -67,7 +71,7 @@ const NAV_GROUPS: CollapsibleSidebarGroup[] = [
       { name: "Event Planner", icon: CalendarRange, path: "planner" },
       { name: "Requests", icon: Inbox, path: "requests" },
       { name: "Collaborations", icon: Users, path: "collaborations" },
-      { name: "Free Trials", icon: Sparkles, path: "trials" },
+      { name: "Trials", icon: Sparkles, path: "trials" },
     ],
   },
   {
@@ -85,6 +89,12 @@ const NAV_GROUPS: CollapsibleSidebarGroup[] = [
       { name: "Referrals", icon: Gift, path: "referrals" },
     ],
   },
+  {
+    // Labelless on purpose: a group header reading "Support" above a single
+    // item also called "Support" is redundant nesting — the header would
+    // restate the only thing under it. Rendered as a standalone entry.
+    items: [{ name: "Support", icon: LifeBuoy, path: "support" }],
+  },
 ];
 
 // Mobile bottom-tab configuration — 5 most-accessed consultant pages.
@@ -100,7 +110,7 @@ const MOBILE_TABS: { label: string; path: string; Icon: LucideIcon }[] = [
 // the heading the user actually sees on the page.
 const PAGE_LABELS: Record<string, string> = {
   home: "Home",
-  chats: "Chats",
+  messages: "Messages",
   appointments: "Appointments",
   participants: "Participants",
   classes: "Class",
@@ -110,18 +120,22 @@ const PAGE_LABELS: Record<string, string> = {
   planner: "Event Planner",
   requests: "Requests",
   collaborations: "Collaborations",
-  trials: "Free Trials",
+  trials: "Trials",
   recordings: "Recordings",
   documents: "Documents",
   earnings: "Earnings",
   analytics: "Analytics",
   referrals: "Referrals",
   settings: "Settings",
-  help: "Help",
+  support: "Support",
 };
 
-// Opaque record ids (cuids) in nested routes carry no meaning as crumbs.
-const looksLikeRecordId = (segment: string) => /^[a-z0-9]{20,}$/i.test(segment);
+// Opaque record ids (cuid / uuid) in nested routes carry no meaning as crumbs.
+const looksLikeRecordId = (segment: string) =>
+  /^[a-z0-9]{20,}$/i.test(segment) ||
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+    segment,
+  );
 
 interface PageProps {
   children: React.ReactNode;
@@ -307,7 +321,15 @@ function AccessCard({
   );
 }
 
-export default function ConsultantLayout({
+export default function ConsultantLayout(props: Readonly<PageProps>) {
+  return (
+    <BreadcrumbOverrideProvider>
+      <ConsultantLayoutInner {...props} />
+    </BreadcrumbOverrideProvider>
+  );
+}
+
+function ConsultantLayoutInner({
   children,
   params,
 }: Readonly<PageProps>) {
@@ -357,12 +379,15 @@ export default function ConsultantLayout({
   // - ADMIN: Can access ANY dashboard
   // - STAFF: Can view consultant and consultee dashboards
   // - CONSULTANT: Can only access their OWN dashboard
+  // Capability-based (#org-appts): access is owning the consultantProfile, NOT
+  // holding UserRole=CONSULTANT — an org EXPERT whose marketplace identity is
+  // CONSULTEE still owns a consultantProfile and must reach their delivery
+  // surfaces. ADMIN/STAFF may inspect anyone's.
   const hasConsultantAccess =
     userDetails &&
     (userDetails.role === "ADMIN" ||
       userDetails.role === "STAFF" ||
-      (userDetails.role === "CONSULTANT" &&
-        userDetails.consultantProfileId === consultantId));
+      userDetails.consultantProfileId === consultantId);
 
   // Redirect unauthorized users to their appropriate dashboard
   useEffect(() => {
@@ -412,9 +437,7 @@ export default function ConsultantLayout({
   // ADMIN/STAFF inspecting someone's dashboard must never be gated (and
   // /api/verification/status reads the SIGNED-IN user, which would be the
   // admin's own — mismatched — record). Gate + fetch only for the owner.
-  const isOwnDashboard =
-    userDetails?.role === "CONSULTANT" &&
-    userDetails?.consultantProfileId === consultantId;
+  const isOwnDashboard = userDetails?.consultantProfileId === consultantId;
   const { data: verification } = useVerificationStatus(
     userId,
     !!verificationStatus &&
@@ -429,7 +452,7 @@ export default function ConsultantLayout({
       NAV_GROUPS.map((group) => ({
         ...group,
         items: group.items.map((item) =>
-          item.path === "chats" && chatUnreadCount > 0
+          item.path === "messages" && chatUnreadCount > 0
             ? {
                 ...item,
                 badge: chatUnreadCount > 99 ? "99+" : chatUnreadCount,
@@ -451,16 +474,49 @@ export default function ConsultantLayout({
     }));
   }, [session?.user]);
 
+  const { overrideLabel } = useBreadcrumbOverride();
+
   // Full breadcrumb trail — every URL segment after the consultant id
-  // becomes a crumb; opaque record ids are dropped.
+  // becomes a crumb; opaque record ids are dropped (or replaced with an
+  // override label such as the appointment title). Parent crumbs keep an
+  // href so users can click back (e.g. Appointments from a detail page).
   const breadcrumbs = useMemo(() => {
-    return pathname
+    const parts = pathname
       .replace(basePath, "")
       .split("/")
-      .filter(Boolean)
-      .filter((seg) => !looksLikeRecordId(seg))
-      .map((seg) => PAGE_LABELS[seg] ?? seg);
-  }, [pathname, basePath]);
+      .filter(Boolean);
+
+    const crumbs: { label: string; href?: string }[] = [];
+    let acc = basePath;
+    let lastSegWasRecordId = false;
+
+    for (const seg of parts) {
+      acc = `${acc}/${seg}`;
+      if (looksLikeRecordId(seg)) {
+        lastSegWasRecordId = true;
+        continue;
+      }
+      lastSegWasRecordId = false;
+      crumbs.push({
+        label: PAGE_LABELS[seg] ?? seg,
+        href: acc,
+      });
+    }
+
+    if (lastSegWasRecordId && overrideLabel) {
+      crumbs.push({ label: overrideLabel });
+    }
+
+    return crumbs.map((crumb, index) => {
+      const isLast = index === crumbs.length - 1;
+      // Keep a link when the visible crumb is still a parent of the URL
+      // (happens when the last segment was an opaque id we stripped).
+      if (isLast && crumb.href && pathname === crumb.href) {
+        return { label: crumb.label };
+      }
+      return crumb;
+    });
+  }, [pathname, basePath, overrideLabel]);
 
   // Memoize StreamProvider children to prevent re-initialization on tab
   // switches. Must be called before any early returns (Rules of Hooks).
@@ -551,7 +607,6 @@ export default function ConsultantLayout({
       href: settingsHref,
       icon: Settings,
     },
-    { type: "item" as const, label: "Help", href: `${basePath}/help`, icon: HelpCircle },
     ...(orgMemberships.length > 0
       ? [
           { type: "separator" as const },

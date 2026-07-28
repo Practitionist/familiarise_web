@@ -149,7 +149,13 @@ ChannelItem.displayName = "ChannelItem";
 export const ChatSidebar = () => {
   const { client, setActiveChannel } = useChatContext();
   const userRole = client?.user?.role as string | undefined;
-  const { scope } = useOrgScope();
+  // Route-pinned under /dashboard/organization/[orgId]/ — that mount scopes
+  // itself to the org and this option is ignored there. Everywhere else this
+  // component renders is a PERSONAL dashboard, and ADR 19 pins personal to
+  // `organizationId: null`, so B2C is the right default rather than the hook's
+  // `first-org` (which silently hid a member's B2C threads behind whichever org
+  // happened to be first, and hid a second org's entirely).
+  const { scope } = useOrgScope({ defaultForOrgMember: "personal" });
   const [teamChannels, setTeamChannels] = useState<Channel[]>([]);
   const [directMessages, setDirectMessages] = useState<Channel[]>([]);
   const [activeChannelId, setActiveChannelId] = useState<string | null>(null);
@@ -676,11 +682,20 @@ export const ChatSidebar = () => {
     activeChannelIdRef.current = activeChannelId;
   }, [activeChannelId]);
 
+  // Debug Stream tools: local hostname only — never on deployed/preview hosts
+  // even if NODE_ENV were somehow still "development".
+  const [showLocalDebugTools, setShowLocalDebugTools] = useState(false);
+  useEffect(() => {
+    if (process.env.NODE_ENV !== "development") return;
+    const host = window.location.hostname;
+    setShowLocalDebugTools(host === "localhost" || host === "127.0.0.1");
+  }, []);
+
   return (
     <div className="w-80 bg-blue-600 text-white flex flex-col h-full">
       {/* Header with Title and Refresh */}
       <div className="p-4 border-b border-blue-700 flex justify-between items-center">
-        <h1 className="text-xl font-bold">Familiarise</h1>
+        <h1 className="text-xl font-bold">Chats</h1>
         <TooltipProvider delayDuration={200}>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -819,9 +834,9 @@ export const ChatSidebar = () => {
         )}
       </div>
 
-      {/* Footer Section — Debug tools, hidden in production */}
-      {process.env.NODE_ENV === "development" && (
-        <div className="p-4 border-t border-blue-700 mt-auto space-y-2">
+      {/* Footer Section — Debug tools, localhost only */}
+      {showLocalDebugTools && (
+        <div className="mt-auto space-y-2 border-t border-blue-700 p-4">
           <InitializeUserChannelsButton
             userId={client?.userID || ""}
             className="w-full"

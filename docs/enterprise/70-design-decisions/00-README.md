@@ -21,7 +21,7 @@ Every ADR follows the same four-part shape, written in full sentences:
 
 ## Index
 
-All seventeen ADRs below are written and live (#793 wrote the first twelve; #872 added 15–17); this index is the authoritative list. Each row links to its record.
+All twenty ADRs below are written and live (#793 wrote the first twelve; #872 added 15–17; #971 added 18, and the dashboard consolidation added 19–20); this index is the authoritative list. Each row links to its record.
 
 | # | ADR | Decision in one line |
 |---|---|---|
@@ -42,3 +42,6 @@ All seventeen ADRs below are written and live (#793 wrote the first twelve; #872
 | 15 | [Currency as enum with display fields](15-currency-as-enum-with-display-fields.md) | Settlement currency stays the `Currency` enum; gateway and buyer codes live in free-text display fields, and the ledger is keyed INR-only (#783). |
 | 16 | [Slot freshness without realtime](16-slot-freshness-without-realtime.md) | Slot freshness comes from server-authoritative 409 conflicts plus focused refetch and invalidate-on-mutation, not Supabase Realtime. |
 | 17 | [Timezone pinned to IST for launch](17-timezone-pinned-to-ist-for-launch.md) | The platform pins to IST and removes the speculative DST materialization layer; the full IANA-TZID implementation is deferred to #872. |
+| 18 | [Open B2B/B2C boundary](18-open-b2b-b2c-boundary.md) | Sponsors fund any marketplace consultant and collaborations stay org-blind by design; `ProgramConsultantAllowlist` and `Membership.exclusiveEngagement` began as schema stubs and have both been enforced at checkout since 2026-07-11. |
+| 19 | [Personal-vs-org dashboard split](19-personal-vs-org-dashboard-split.md) | Dashboards split by the org-ness of the underlying session, plan or payment — views split, instruments do not; a nav entry must be a distinct destination, so scope variants become on-page toggles and filters become tabs; admin and staff keep two URL trees over one implementation, with access decided by a permission matrix rather than by which tree you landed in. |
+| 20 | [Org visibility into member sessions](20-org-visibility-into-member-sessions.md) | An organization sees that a session happened — member, counterpart, plan title, time, status, cost — and never what happened in it; notes, feedback, recordings, document contents and chat stay with the two participants, enforced by select allowlists that branch on whether the scope constrains the caller to be one of them. |

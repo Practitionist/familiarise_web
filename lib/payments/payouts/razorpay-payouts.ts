@@ -301,6 +301,27 @@ export class RazorpayPayoutsService {
     });
   }
 
+  /**
+   * #863 — current RazorpayX account balance in paise, or null when the
+   * response shape isn't what we expect. Used ONLY by the pre-batch balance
+   * preflight; a null is treated as "unknown" (fail-open) by the caller, so a
+   * shape mismatch or transient error never blocks payouts. The exact endpoint
+   * must be re-verified against the sandbox before ENABLE_LIVE_PAYOUTS flips.
+   */
+  async getAccountBalance(): Promise<number | null> {
+    try {
+      const res = await this.apiRequest<{
+        balance?: number;
+        balances?: Array<{ balance?: number }>;
+      }>("GET", `/accounts/${encodeURIComponent(this.config.accountNumber)}`);
+      if (typeof res.balance === "number") return res.balance;
+      const first = res.balances?.[0]?.balance;
+      return typeof first === "number" ? first : null;
+    } catch {
+      return null;
+    }
+  }
+
   // ============================================
   // Payouts API
   // ============================================

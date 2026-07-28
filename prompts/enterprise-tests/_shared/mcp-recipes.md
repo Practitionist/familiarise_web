@@ -298,7 +298,7 @@ ORDER BY "createdAt" DESC LIMIT 1;
 ### "Org-scoped FK populated (Round-3)"
 ```sql
 SELECT id, "organizationId"
-FROM "Waitlist"
+FROM "Recording"
 WHERE "createdAt" > NOW() - INTERVAL '5 minutes';
 -- Expect: organizationId NOT NULL when the parent plan is org-owned
 ```

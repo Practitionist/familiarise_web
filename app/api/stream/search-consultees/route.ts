@@ -3,13 +3,11 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "lib/prisma";
 
 import { getSession } from "@/lib/auth-server";
-export type ConsulteeSearchResult = {
-  id: string;
-  name: string | null;
-  email: string | null;
-  image: string | null;
-  relationshipType: "consultation" | "subscription" | "webinar" | "class";
-};
+// See schemas/stream-search.ts for why the shape does not live here.
+import {
+  ConsulteeSearchResultSchema,
+  type ConsulteeSearchResult,
+} from "@/schemas/stream-search";
 
 /**
  * Search consultees of the current consultant
@@ -26,20 +24,19 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    // Verify user is a consultant
-    const user = await prisma.user.findUnique({
-      where: { id: session.user.id },
-      select: { role: true, consultantProfileId: true },
-    });
-
-    if (user?.role !== "CONSULTANT" || !user.consultantProfileId) {
+    // Capability, not UserRole (#org-appts): gate on owning a consultantProfile.
+    // An org EXPERT (whose top-level role may be CONSULTEE) legitimately searches
+    // the consultees they're delivering to; the old `role !== "CONSULTANT"` half
+    // wrongly blocked them. The query is already scoped to their own profile id.
+    // consultantProfileId is already on the session (customSession) — no re-query.
+    if (!session.user.consultantProfileId) {
       return NextResponse.json(
         { error: "Only consultants can search consultees" },
         { status: 403 },
       );
     }
 
-    const consultantProfileId = user.consultantProfileId;
+    const consultantProfileId = session.user.consultantProfileId;
     const url = new URL(req.url);
     const searchTerm = url.searchParams.get("term")?.trim().toLowerCase() || "";
     const excludeIds = url.searchParams.get("exclude")?.split(",") || [];
@@ -150,7 +147,7 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // 3. Get attendees from webinars (only BOOKED/WAITING/NOTIFIED waitlist users)
+    // 3. Get attendees from webinars — everyone connected to a session slot.
     const webinars = await prisma.webinar.findMany({
       where: {
         webinarPlan: {
@@ -161,17 +158,18 @@ export async function GET(req: NextRequest) {
         },
       },
       include: {
-        waitlist: {
-          where: {
-            status: { in: ["BOOKED", "WAITING", "NOTIFIED"] },
-          },
-          include: {
-            user: {
+        appointment: {
+          select: {
+            slotsOfAppointment: {
               select: {
-                id: true,
-                name: true,
-                email: true,
-                image: true,
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    image: true,
+                  },
+                },
               },
             },
           },
@@ -180,8 +178,10 @@ export async function GET(req: NextRequest) {
     });
 
     for (const webinar of webinars) {
-      for (const waitlistEntry of webinar.waitlist) {
-        const attendeeUser = waitlistEntry.user;
+      const webinarAttendees = (
+        webinar.appointment?.slotsOfAppointment ?? []
+      ).flatMap((slot) => slot.user);
+      for (const attendeeUser of webinarAttendees) {
         if (
           attendeeUser &&
           !seenUserIds.has(attendeeUser.id) &&
@@ -201,7 +201,7 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // 4. Get attendees from classes (only BOOKED/WAITING/NOTIFIED waitlist users)
+    // 4. Get attendees from classes — everyone connected to a session slot.
     const classes = await prisma.class.findMany({
       where: {
         classPlan: {
@@ -212,17 +212,18 @@ export async function GET(req: NextRequest) {
         },
       },
       include: {
-        waitlist: {
-          where: {
-            status: { in: ["BOOKED", "WAITING", "NOTIFIED"] },
-          },
-          include: {
-            user: {
+        appointments: {
+          select: {
+            slotsOfAppointment: {
               select: {
-                id: true,
-                name: true,
-                email: true,
-                image: true,
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    image: true,
+                  },
+                },
               },
             },
           },
@@ -231,8 +232,10 @@ export async function GET(req: NextRequest) {
     });
 
     for (const classItem of classes) {
-      for (const waitlistEntry of classItem.waitlist) {
-        const attendeeUser = waitlistEntry.user;
+      const classAttendees = classItem.appointments.flatMap((apt) =>
+        apt.slotsOfAppointment.flatMap((slot) => slot.user),
+      );
+      for (const attendeeUser of classAttendees) {
         if (
           attendeeUser &&
           !seenUserIds.has(attendeeUser.id) &&
@@ -255,13 +258,20 @@ export async function GET(req: NextRequest) {
     // Sort by name
     results.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
 
+    // Validated against the same schema the dialog derives its type from, so
+    // a drift in this handler fails here rather than showing up as a blank row.
     return NextResponse.json({
       success: true,
-      consultees: results.slice(0, 50), // Limit to 50 results
+      consultees: ConsulteeSearchResultSchema.array().parse(
+        results.slice(0, 50),
+      ),
       total: results.length,
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "stream" } },
+    );
     console.error("Error searching consultees:", error);
     return NextResponse.json(
       { error: "Failed to search consultees" },

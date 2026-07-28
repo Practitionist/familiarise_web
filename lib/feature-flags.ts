@@ -17,12 +17,17 @@
  * `OrganizationEarnings`), code paths, and API routes for hosting orgs
  * all exist in this codebase but are gated by this flag. When false (the
  * default pre-MVP):
- *   - POST /api/organizations rejects `canHost=true` with 501
- *   - POST /api/organizations/[id]/members rejects `role === "EXPERT"` with 501
- *   - The org-create wizard hides the "host experts" capability checkbox
- *   - /api/organizations/[id]/{payouts,payout-account,earnings,rate-cards}
- *     return 501
- *   - /dashboard/organization/[id]/{experts,payouts} nav links hidden
+ *   - POST /api/organizations rejects `canHost=true` with 400 HOST_ORGS_GATED
+ *   - POST /api/organizations/[id]/members rejects `role === "EXPERT"`
+ *   - The org-create wizard hides the "host consultants" capability checkbox
+ *     (the render sites read this server flag and pass hostOrgsEnabled to the
+ *     wizard; the 400 gate above stays as the server-side backstop) — #863
+ *   - The public /explore/enterprise/organisations directory shows an honest
+ *     "coming soon" state instead of a silently-empty grid — #863
+ *   - The host earnings/payout surfaces stay gated
+ *   - The Experts tab and the Payouts nav item are hidden — but note those
+ *     are gated on the org's own `canHost`, not on this flag; an org can
+ *     only have `canHost=true` because the create gate above let it through
  *   - The earnings split in lib/payments/payouts/earnings-service.ts takes
  *     the sponsor-only path even if the org has `canHost=true`
  *
@@ -65,13 +70,17 @@ export const ENABLE_LIVE_PAYOUTS = process.env.ENABLE_LIVE_PAYOUTS === "true";
  * Sub-₹5cr orgs ride along on the stub `{ status: "FAILED", reason: "STUB" }`
  * return and don't need IRN to claim ITC. When the platform crosses the
  * threshold (or onboards a customer who does):
- *   1. Set `ENABLE_IRP_UPLOADER=true` in the deployment environment
+ *   1. Set the `ENABLE_IRP_UPLOADER=true` repo VARIABLE on GitHub Actions
  *   2. Set CLEARTAX_API_KEY + CLEARTAX_GSP_TOKEN + CLEARTAX_GSTIN
  *      secrets on GitHub Actions
  *   3. Run the workflow once manually (workflow_dispatch) to confirm
  *   4. See Issue #713 for the full IRP rollout checklist
+ *
+ * No exported const: the only gate is the CI repo variable read in
+ * `.github/workflows/irp-uploader.yml` (`vars.ENABLE_IRP_UPLOADER`). The former
+ * `export const ENABLE_IRP_UPLOADER` had zero importers — removed to avoid
+ * implying an app-runtime gate that never existed.
  */
-export const ENABLE_IRP_UPLOADER = process.env.ENABLE_IRP_UPLOADER === "true";
 
 /**
  * Admin TDS dashboard + Form 26Q filing surfaces.
@@ -113,4 +122,20 @@ export const ENABLE_TDS_ADMIN_VIEW = process.env.ENABLE_TDS_ADMIN_VIEW === "true
  */
 export const ENABLE_BETTERSTACK_TELEMETRY =
   process.env.ENABLE_BETTERSTACK_TELEMETRY === "true";
+
+/**
+ * Dunning stage-3 booking-suspend cascade (#812).
+ *
+ * The dunning cron always sends reminders and marks invoices OVERDUE. When this
+ * flag is ON, its final stage also stamps `OrganizationInvoice.dunningSuspendedAt`
+ * and the checkout path blocks new sponsored bookings for an org with a
+ * suspended overdue invoice (paying it lifts the block). When OFF (default),
+ * dunning notifies only — no auto-suspend.
+ *
+ * Read on the server at both gate sites (jobs/billing/dunning.ts +
+ * lib/payments/operations/checkout.ts). Previously read as raw `process.env` at
+ * both; centralized here so the flag inventory is complete.
+ */
+export const ENABLE_DUNNING_SUSPEND =
+  process.env.ENABLE_DUNNING_SUSPEND === "true";
 

@@ -24,6 +24,7 @@ import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
 import { computeMsmePaymentDeadline } from "@/lib/compliance/msme";
 import { randomUUID } from "crypto";
 import { acquireLock, releaseLock } from "@/lib/redis";
+import { assertPayoutBalance } from "./balance-preflight";
 import {
   getCurrentFYCumulativePayments,
   getFYDateRange,
@@ -332,7 +333,11 @@ export async function createPayoutBatch(
           },
         });
 
-        // Link the exact earnings we summed, with guards against concurrent state changes
+        // Link the exact earnings we summed, with guards against concurrent state changes.
+        // #837 E-03/E-04 — mark BATCHED (not left READY): the earning is now in a
+        // batch and must NOT be re-picked by the next batch. Cash hasn't moved yet;
+        // the PAID flip happens only at COMPLETED in handlePayoutWebhook. The CAS
+        // re-asserts the pre-batch state (READY + payoutId null).
         const linkResult = await tx.consultantEarnings.updateMany({
           where: {
             id: { in: readyEarnings.map((e) => e.id) },
@@ -341,6 +346,7 @@ export async function createPayoutBatch(
           },
           data: {
             payoutId: payout.id,
+            status: EarningStatus.BATCHED,
           },
         });
 
@@ -420,11 +426,13 @@ export async function rejectPayout(
     );
   }
 
-  // Unlink earnings and set them back to READY
+  // Unlink earnings and set them back to READY. #837 — a rejectable payout is
+  // PENDING, so its earnings are BATCHED (never PAID); release only those.
   await prisma.consultantEarnings.updateMany({
-    where: { payoutId },
+    where: { payoutId, status: EarningStatus.BATCHED },
     data: {
       payoutId: null,
+      status: EarningStatus.READY,
     },
   });
 
@@ -479,6 +487,16 @@ export async function processApprovedPayouts(): Promise<PayoutResult[]> {
         },
       },
     });
+
+    // #863 — hold the whole batch if RazorpayX can't cover it (a no-op unless
+    // ENABLE_LIVE_PAYOUTS is on + the gateway is configured). Conservative:
+    // sums gross; the real debit is net of TDS. Fails open on an unknown balance.
+    const batchTotalPaise = approvedPayouts.reduce((s, p) => s + p.amount, 0);
+    const preflight = await assertPayoutBalance(batchTotalPaise);
+    if (!preflight.ok) {
+      console.warn(`[Payouts] Holding approved batch — ${preflight.reason}`);
+      return [];
+    }
 
     const results: PayoutResult[] = [];
 
@@ -741,9 +759,11 @@ async function processSinglePayout(payout: {
     // picked up by the next batch. Without this, earnings linked to a
     // payout that failed before the gateway call (e.g., "No payout account")
     // would remain orphaned since no webhook fires to unlink them.
+    // #837 — pre-gateway failure means cash never moved; earnings are BATCHED
+    // (never PAID) so release them back to READY.
     await prisma.consultantEarnings.updateMany({
-      where: { payoutId: payout.id },
-      data: { payoutId: null },
+      where: { payoutId: payout.id, status: EarningStatus.BATCHED },
+      data: { payoutId: null, status: EarningStatus.READY },
     });
 
     return {
@@ -945,9 +965,11 @@ export async function handlePayoutWebhook(
       const cumulativeCreditedPayments =
         sumPaise(previousCompletedPayouts._sum.amount) + payout.amount;
 
-      // Update earnings to PAID
+      // Update earnings to PAID. #837 E-03/E-04 — this COMPLETED webhook (with
+      // gatewayUtr above) is the ONLY place consultant earnings become PAID;
+      // createPayoutBatch staged them as BATCHED.
       await tx.consultantEarnings.updateMany({
-        where: { payoutId: payout.id },
+        where: { payoutId: payout.id, status: EarningStatus.BATCHED },
         data: {
           status: EarningStatus.PAID,
           paidAt: new Date(),
@@ -1014,10 +1036,13 @@ export async function handlePayoutWebhook(
       payoutStatus === PayoutStatus.FAILED ||
       payoutStatus === PayoutStatus.CANCELLED
     ) {
+      // #837 — a FAILED/CANCELLED payout never disbursed; its earnings are
+      // BATCHED (never PAID) so release them back to READY for the next batch.
       await tx.consultantEarnings.updateMany({
-        where: { payoutId: payout.id },
+        where: { payoutId: payout.id, status: EarningStatus.BATCHED },
         data: {
           payoutId: null,
+          status: EarningStatus.READY,
         },
       });
 

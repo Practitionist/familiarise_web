@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 // lib/meeting (which imports the SDK) here — that would pull the heavy SDK into
 // the dashboard-HOME bundle / critical path. The video client + meeting helper
 // are acquired lazily inside the Join handler (only when a user clicks Join).
-import { useLazyJoinMeeting } from "../shared/hooks/useLazyJoinMeeting";
+import { useLazyJoinMeeting } from "@/hooks/scheduling/useLazyJoinMeeting";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
@@ -51,11 +51,16 @@ import {
   getRoleBadgeStyle,
 } from "../../utils/appointmentHelpers";
 
-import { getBadgeStyle } from "../../types";
+import { ActionRequiredPanel } from "@/components/dashboard/ActionRequiredPanel";
+import { deriveConsultantActionItems } from "@/lib/dashboard/action-items";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { eventUnionStatusBadge } from "@/lib/appointments/status";
+import { getProximityLabel } from "@/lib/appointments/slots";
+import { getAppointmentLifecycleStatus } from "@/lib/appointments/map-consultant";
 import { TAppointment } from "@/types/appointment";
 import { getJoinableSlot } from "../../utils/joinState";
 import { getInitials } from "@/utils/formatting";
-import { RequestSlotAllocationTabMini } from "../requests/RequestSlotAllocationTabMini";
+import { RequestSlotAllocationTabMini } from "@/components/dashboard/shared/requests/RequestSlotAllocationTabMini";
 import { PerformanceSnapshot } from "./PerformanceSnapshot";
 import { FinancialSummary } from "./FinancialSummary";
 import type {
@@ -161,6 +166,24 @@ export function HomeTab({
 
   const firstName = consultantName?.split(" ")[0];
 
+  // "Needs you now" — derived from data already on the page, so no extra
+  // fetch. The upcoming list is flattened to {startsAt,title} because the
+  // derivation only cares about when a session starts and what it's called.
+  const actionItems = useMemo(
+    () =>
+      deriveConsultantActionItems({
+        pendingApprovals: pendingRequestsCount,
+        upcomingSessions: allUpcomingAppointments.flatMap((a) =>
+          (a.slotsOfAppointment ?? []).map((slot) => ({
+            startsAt: slot.startsAt,
+            title: getAppointmentTypeAndPlan(a),
+          })),
+        ),
+        basePath: `/dashboard/consultant/${consultantId}`,
+      }),
+    [allUpcomingAppointments, pendingRequestsCount, consultantId],
+  );
+
   return (
     <>
       <DashboardHeader
@@ -175,6 +198,10 @@ export function HomeTab({
           animate="visible"
           className="space-y-6"
         >
+          {/* What's actually blocked on this consultant, above everything
+              else. Renders nothing when the queue is clear. */}
+          <ActionRequiredPanel items={actionItems} className="space-y-2" />
+
           {/* Performance Snapshot */}
           {performanceSnapshot && (
             <motion.div variants={fadeInUp}>
@@ -196,7 +223,6 @@ export function HomeTab({
                   <div className="divide-y divide-zinc-100">
                     {todayAppointments.map((appointment) => {
                       const userName = getConsumeeName(appointment);
-                      const status = getAppointmentStatus(appointment);
                       const startTime = getStartTime(appointment);
                       const joinableSlot = getJoinableSlot(
                         appointment.slotsOfAppointment ?? [],
@@ -270,11 +296,25 @@ export function HomeTab({
                             </span>
                           </div>
 
-                          <Badge
-                            className={`flex-shrink-0 ${getBadgeStyle(status)}`}
-                          >
-                            {status}
-                          </Badge>
+                          <div className="flex flex-col items-end gap-0.5 flex-shrink-0">
+                            <StatusBadge
+                              {...eventUnionStatusBadge(
+                                getAppointmentLifecycleStatus(appointment),
+                              )}
+                              withDot
+                              size="sm"
+                            />
+                            {(() => {
+                              const proximity = getProximityLabel(
+                                getNextUpcomingSlotTime(appointment),
+                              );
+                              return proximity ? (
+                                <span className="text-[10px] text-zinc-400">
+                                  {proximity}
+                                </span>
+                              ) : null;
+                            })()}
+                          </div>
 
                           {(isDev || isJoinable) && (
                             <TooltipProvider>
@@ -355,7 +395,6 @@ export function HomeTab({
                         groupKey.startsWith("class-");
                       const firstAppointment = groupAppointments[0];
                       const userName = getConsumeeName(firstAppointment);
-                      const status = getAppointmentStatus(firstAppointment);
                       const startTime = isRecurring
                         ? getNextUpcomingSlotTime(firstAppointment)
                         : getStartTime(firstAppointment);
@@ -443,9 +482,25 @@ export function HomeTab({
                             )}
                           </div>
 
-                          <Badge className={getBadgeStyle(status)}>
-                            {status}
-                          </Badge>
+                          <div className="flex flex-col items-end gap-0.5 flex-shrink-0">
+                            <StatusBadge
+                              {...eventUnionStatusBadge(
+                                getAppointmentLifecycleStatus(firstAppointment),
+                              )}
+                              withDot
+                              size="sm"
+                            />
+                            {(() => {
+                              const proximity = getProximityLabel(
+                                startTime ?? null,
+                              );
+                              return proximity ? (
+                                <span className="text-[10px] text-zinc-400">
+                                  {proximity}
+                                </span>
+                              ) : null;
+                            })()}
+                          </div>
 
                           <ChevronRight className="h-5 w-5 text-zinc-300 group-hover:text-zinc-500 transition-colors" />
                         </motion.div>

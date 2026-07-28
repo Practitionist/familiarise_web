@@ -193,6 +193,20 @@ export async function addUserToEventChannel(
       },
     );
 
+    // Lazy-create bypasses createChannel, so the #899 channel-scoped host
+    // grant is repeated here. Non-fatal: chat still works without it.
+    try {
+      await channelWithData.assignRoles([
+        { user_id: consultantId, channel_role: "channel_moderator" },
+      ]);
+    } catch (grantError) {
+      streamLogger.warn("Failed to grant channel_moderator to event host", {
+        channelId,
+        consultantId,
+        error: grantError,
+      });
+    }
+
     markChannelExists(channelType, channelId);
     markMembership(channelId, userId, true);
     created = true;
@@ -205,7 +219,10 @@ export async function addUserToEventChannel(
 
     return { success: true, channelId, created };
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "stream" } },
+    );
     streamLogger.error("Failed to add user to event channel", error, {
       eventType,
       eventId,
@@ -273,10 +290,6 @@ async function getEventData(eventType: EventType, eventId: string) {
               },
             },
           },
-          waitlist: {
-            where: { status: "BOOKED" },
-            select: { userId: true },
-          },
           appointment: {
             include: {
               slotsOfAppointment: {
@@ -291,12 +304,10 @@ async function getEventData(eventType: EventType, eventId: string) {
       const consultantId = webinar.webinarPlan.consultantProfile?.user?.id;
       if (!consultantId) return null;
 
-      const members = [
-        ...webinar.waitlist.map((w) => w.userId),
-        ...(webinar.appointment?.slotsOfAppointment?.flatMap((s) =>
+      const members =
+        webinar.appointment?.slotsOfAppointment?.flatMap((s) =>
           s.user.map((u) => u.id),
-        ) || []),
-      ];
+        ) || [];
 
       return { consultantId, members, name: webinar.webinarPlan.title };
     }
@@ -312,10 +323,6 @@ async function getEventData(eventType: EventType, eventId: string) {
               },
             },
           },
-          waitlist: {
-            where: { status: "BOOKED" },
-            select: { userId: true },
-          },
           appointments: {
             include: {
               slotsOfAppointment: {
@@ -330,13 +337,11 @@ async function getEventData(eventType: EventType, eventId: string) {
       const consultantId = classData.classPlan.consultantProfile?.user?.id;
       if (!consultantId) return null;
 
-      const members = [
-        ...classData.waitlist.map((w) => w.userId),
-        ...(classData.appointments?.flatMap(
+      const members =
+        classData.appointments?.flatMap(
           (a) =>
             a.slotsOfAppointment?.flatMap((s) => s.user.map((u) => u.id)) || [],
-        ) || []),
-      ];
+        ) || [];
 
       return { consultantId, members, name: classData.classPlan.title };
     }
@@ -433,7 +438,10 @@ export async function getUserEventChannels(userId: string) {
       memberCount: Object.keys(channel.state.members || {}).length,
     }));
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "stream" } },
+    );
     streamLogger.error("Failed to get user event channels", error, { userId });
     throw error;
   }
@@ -488,10 +496,13 @@ export async function syncUserEventChannels(
       await upsertUserToStream(userId);
     } catch (err) {
       if (err instanceof ConsentRequiredError) {
-        streamLogger.info("Skipping channel sync — Stream consent not granted", {
-          userId,
-          purposeCode: err.purposeCode,
-        });
+        streamLogger.info(
+          "Skipping channel sync — Stream consent not granted",
+          {
+            userId,
+            purposeCode: err.purposeCode,
+          },
+        );
         // Mark sync "completed" for this session so we don't retry the gated
         // upsert on every navigation; a re-grant clears caches via the consent
         // flow and a forced re-sync re-attempts it.
@@ -542,8 +553,8 @@ export async function syncUserEventChannels(
     // Build the set of channel IDs this user is expected to be in
     const expectedChannelIds = new Set([
       ...eventIds.map(({ type, id }) => getChannelId(type, id)),
-      ...dmPairs.map(({ consultantUserId, consulteeUserId }) =>
-        getDmChannelId(consultantUserId, consulteeUserId),
+      ...dmPairs.map(({ consultantUserId, consulteeUserId, organizationId }) =>
+        getDmChannelId(consultantUserId, consulteeUserId, organizationId),
       ),
     ]);
 
@@ -569,7 +580,9 @@ export async function syncUserEventChannels(
       }
     }
 
-    // --- DM pair add-pass: join/create one channel per consultant-consultee pair ---
+    // --- DM add-pass: one channel per pair PER FUNDING CONTEXT ---
+    // A pair working both B2C and through an org now has two threads, and this
+    // pass joins the user to each. `dmPairs` is already keyed that way.
     for (let i = 0; i < dmPairs.length; i += BATCH_SIZE) {
       const batch = dmPairs.slice(i, i + BATCH_SIZE);
       const results = await Promise.allSettled(
@@ -578,6 +591,7 @@ export async function syncUserEventChannels(
             pair.consultantUserId,
             pair.consulteeUserId,
             userId,
+            pair.organizationId,
           ),
         ),
       );
@@ -673,7 +687,10 @@ export async function syncUserEventChannels(
       durationMs: duration,
     };
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "stream" } },
+    );
     streamLogger.error("Channel sync failed", error, { userId });
     throw error;
   }
@@ -682,17 +699,56 @@ export async function syncUserEventChannels(
 /**
  * Get unique consultant-consultee DM pairs for a user, across consultations and subscriptions.
  */
+/** A DM the user should be a member of, in one specific funding context. */
+interface DmPair {
+  consultantUserId: string;
+  consulteeUserId: string;
+  /** null = personal (B2C). Part of the channel key — see getDmChannelId. */
+  organizationId: string | null;
+}
+
+/**
+ * The org context a DM channel was created under.
+ *
+ * Precedence MUST match `createConsultationChannel` / `createSubscriptionChannel`
+ * exactly — `plan.organizationId ?? appointment.organizationId ?? null` — because
+ * this function recomputes the channel id those creators already used. They are
+ * two distinct cases: a plan can be org-HOSTED while the booking is self-funded,
+ * and a personal plan can be booked through an org-funded membership.
+ *
+ * Reading only the appointment treated every org-hosted-plan booking as
+ * personal, so the reconcile set looked for `dm-<a>-<b>` while the real channel
+ * was `dmo-…`. At best it was never re-joined; at worst the real one was treated
+ * as stale and the user removed from it.
+ *
+ * Subscriptions carry many appointments but are funded once, so the first is
+ * representative.
+ */
+function bookingOrgId(booking: {
+  consultationPlan?: { organizationId: string | null } | null;
+  subscriptionPlan?: { organizationId: string | null } | null;
+  appointment?: { organizationId: string | null } | null;
+  appointments?: { organizationId: string | null }[];
+}): string | null {
+  return (
+    booking.consultationPlan?.organizationId ??
+    booking.subscriptionPlan?.organizationId ??
+    booking.appointment?.organizationId ??
+    booking.appointments?.[0]?.organizationId ??
+    null
+  );
+}
+
 async function getDmPairsForUser(
   userId: string,
   user: {
     consultantProfileId: string | null;
     consulteeProfileId: string | null;
   },
-): Promise<{ consultantUserId: string; consulteeUserId: string }[]> {
-  const pairMap = new Map<
-    string,
-    { consultantUserId: string; consulteeUserId: string }
-  >();
+): Promise<DmPair[]> {
+  // Keyed by channel id, so a pair working in two contexts yields two entries
+  // rather than one overwriting the other.
+  const pairMap = new Map<string, DmPair>();
 
   if (user.consultantProfileId) {
     const [consultations, subscriptions] = await Promise.all([
@@ -703,6 +759,12 @@ async function getDmPairsForUser(
         },
         include: {
           requestedBy: { include: { user: { select: { id: true } } } },
+          // The DM channel key includes the funding context, so the reconcile
+          // set has to know it too — otherwise it looks for a personal channel
+          // that an org booking never created. Plan org FIRST, matching
+          // createConsultationChannel's precedence exactly.
+          consultationPlan: { select: { organizationId: true } },
+          appointment: { select: { organizationId: true } },
         },
       }),
       prisma.subscription.findMany({
@@ -712,14 +774,21 @@ async function getDmPairsForUser(
         },
         include: {
           requestedBy: { include: { user: { select: { id: true } } } },
+          subscriptionPlan: { select: { organizationId: true } },
+          appointments: { select: { organizationId: true }, take: 1 },
         },
       }),
     ]);
     for (const c of [...consultations, ...subscriptions]) {
       const consulteeUserId = c.requestedBy?.user?.id;
       if (!consulteeUserId) continue;
-      const channelId = getDmChannelId(userId, consulteeUserId);
-      pairMap.set(channelId, { consultantUserId: userId, consulteeUserId });
+      const organizationId = bookingOrgId(c);
+      const channelId = getDmChannelId(userId, consulteeUserId, organizationId);
+      pairMap.set(channelId, {
+        consultantUserId: userId,
+        consulteeUserId,
+        organizationId,
+      });
     }
   }
 
@@ -738,6 +807,7 @@ async function getDmPairsForUser(
               },
             },
           },
+          appointment: { select: { organizationId: true } },
         },
       }),
       prisma.subscription.findMany({
@@ -753,20 +823,32 @@ async function getDmPairsForUser(
               },
             },
           },
+          appointments: { select: { organizationId: true }, take: 1 },
         },
       }),
     ]);
     for (const c of consultations) {
       const consultantUserId = c.consultationPlan?.consultantProfile?.user?.id;
       if (!consultantUserId) continue;
-      const channelId = getDmChannelId(consultantUserId, userId);
-      pairMap.set(channelId, { consultantUserId, consulteeUserId: userId });
+      const organizationId = bookingOrgId(c);
+      const channelId = getDmChannelId(consultantUserId, userId, organizationId);
+      pairMap.set(channelId, {
+        consultantUserId,
+        consulteeUserId: userId,
+        organizationId,
+      });
     }
-    for (const s of subscriptions) {
-      const consultantUserId = s.subscriptionPlan?.consultantProfile?.user?.id;
+    for (const sub of subscriptions) {
+      const consultantUserId =
+        sub.subscriptionPlan?.consultantProfile?.user?.id;
       if (!consultantUserId) continue;
-      const channelId = getDmChannelId(consultantUserId, userId);
-      pairMap.set(channelId, { consultantUserId, consulteeUserId: userId });
+      const organizationId = bookingOrgId(sub);
+      const channelId = getDmChannelId(consultantUserId, userId, organizationId);
+      pairMap.set(channelId, {
+        consultantUserId,
+        consulteeUserId: userId,
+        organizationId,
+      });
     }
   }
 
@@ -780,8 +862,14 @@ async function addUserToDmChannel(
   consultantUserId: string,
   consulteeUserId: string,
   currentUserId: string,
+  /** Funding context — the channel key differs per org (see getDmChannelId). */
+  organizationId: string | null,
 ): Promise<{ success: boolean; channelId: string; created?: boolean }> {
-  const channelId = getDmChannelId(consultantUserId, consulteeUserId);
+  const channelId = getDmChannelId(
+    consultantUserId,
+    consulteeUserId,
+    organizationId,
+  );
   const channelType = "messaging";
 
   if (getMembershipCached(channelId, currentUserId) === true) {
@@ -823,6 +911,20 @@ async function addUserToDmChannel(
     },
   );
 
+  // Lazy-create bypasses createChannel, so the #899 channel-scoped host
+  // grant is repeated here. Non-fatal: chat still works without it.
+  try {
+    await channelWithData.assignRoles([
+      { user_id: consultantUserId, channel_role: "channel_moderator" },
+    ]);
+  } catch (grantError) {
+    streamLogger.warn("Failed to grant channel_moderator to DM consultant", {
+      channelId,
+      consultantUserId,
+      error: grantError,
+    });
+  }
+
   markChannelExists(channelType, channelId);
   markMembership(channelId, currentUserId, true);
   streamLogger.info("Created DM channel", {
@@ -858,12 +960,8 @@ async function getWebinarIdsForUser(
     );
   }
 
-  // Consultee: get webinars from booked waitlist or appointments
+  // Consultee: get webinars they registered for
   queries.push(
-    prisma.webinar.findMany({
-      where: { waitlist: { some: { userId, status: "BOOKED" } } },
-      select: { id: true },
-    }),
     prisma.webinar.findMany({
       where: {
         appointment: {
@@ -903,12 +1001,8 @@ async function getClassIdsForUser(
     );
   }
 
-  // Consultee: get classes from booked waitlist or appointments
+  // Consultee: get classes they enrolled in
   queries.push(
-    prisma.class.findMany({
-      where: { waitlist: { some: { userId, status: "BOOKED" } } },
-      select: { id: true },
-    }),
     prisma.class.findMany({
       where: {
         appointments: {

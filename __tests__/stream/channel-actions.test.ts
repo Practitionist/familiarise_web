@@ -39,11 +39,27 @@ jest.mock("../../actions/stream/chat/user.action", () => ({
   upsertUsersToStream: jest.fn().mockResolvedValue({ users: {} }),
 }));
 
+// #899 — addMemberToChannel is session-gated; mocking auth-server also keeps
+// jest away from lib/auth's better-auth ESM imports. Default: privileged.
+const mockGetSession = jest.fn();
+jest.mock("../../lib/auth-server", () => ({
+  getSession: () => mockGetSession(),
+}));
+
+// auth-helpers imports next/server (NextResponse), which needs the fetch
+// globals jest's node env lacks — mirror the real one-liner instead.
+jest.mock("../../lib/auth-helpers", () => ({
+  isPrivileged: (role?: string | null) => role === "ADMIN" || role === "STAFF",
+}));
+
 describe("Channel Actions", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockStreamClient.channel.mockReturnValue(mockChannel);
     mockStreamClient.queryChannels.mockResolvedValue([]);
+    mockGetSession.mockResolvedValue({
+      user: { id: "staff-user", role: "ADMIN" },
+    });
   });
 
   describe("createChannel", () => {
@@ -264,6 +280,63 @@ describe("Channel Actions", () => {
       await expect(addMemberToChannel("", "user")).rejects.toThrow();
       await expect(addMemberToChannel("channel", "")).rejects.toThrow();
     });
+
+    // #899 — server-side Stream calls bypass Stream's permission system, so
+    // the app-layer guard is the only gate.
+    it("should reject unauthenticated callers", async () => {
+      mockGetSession.mockResolvedValueOnce(null);
+
+      const { addMemberToChannel } =
+        await import("../../actions/stream/chat/channel.action");
+
+      await expect(
+        addMemberToChannel("consultation-123", "new-user-id"),
+      ).rejects.toThrow("Unauthorized");
+      expect(mockChannel.addMembers).not.toHaveBeenCalled();
+    });
+
+    it("should reject a non-privileged caller who is not the creator", async () => {
+      mockGetSession.mockResolvedValueOnce({
+        user: { id: "random-user", role: "CONSULTEE" },
+      });
+      // mockReset flushes unconsumed query Onces leaked from earlier tests
+      // (clearAllMocks doesn't), which would otherwise shift this value
+      mockChannel.query.mockReset();
+      mockChannel.query.mockResolvedValue({
+        channel: { created_by: { id: "someone-else" } },
+      });
+
+      const { addMemberToChannel } =
+        await import("../../actions/stream/chat/channel.action");
+
+      await expect(
+        addMemberToChannel("consultation-123", "new-user-id"),
+      ).rejects.toThrow("Forbidden");
+      expect(mockChannel.addMembers).not.toHaveBeenCalled();
+      expect(mockChannel.create).not.toHaveBeenCalled();
+    });
+
+    it("should allow the channel creator without lazy channel creation", async () => {
+      mockGetSession.mockResolvedValueOnce({
+        user: { id: "creator-user", role: "CONSULTANT" },
+      });
+      mockChannel.query.mockReset();
+      mockChannel.query.mockResolvedValue({
+        channel: { created_by: { id: "creator-user" } },
+      });
+
+      const { addMemberToChannel } =
+        await import("../../actions/stream/chat/channel.action");
+
+      const result = await addMemberToChannel(
+        "consultation-123",
+        "new-user-id",
+      );
+
+      expect(result.success).toBe(true);
+      expect(mockChannel.addMembers).toHaveBeenCalledWith(["new-user-id"]);
+      expect(mockChannel.create).not.toHaveBeenCalled();
+    });
   });
 });
 
@@ -275,14 +348,13 @@ describe("Entity Channel Creation", () => {
   });
 
   describe("createWebinarChannel", () => {
-    it("should create channel for webinar with waitlist and appointments", async () => {
+    it("should create channel for webinar registrants", async () => {
       mockPrisma.webinar.findUnique.mockResolvedValueOnce({
         id: "webinar-123",
         webinarPlan: {
           title: "Test Webinar",
           consultantProfile: { user: { id: "consultant-1" } },
         },
-        waitlist: [{ userId: "user-1" }, { userId: "user-2" }],
         appointment: {
           slotsOfAppointment: [{ user: [{ id: "user-3" }, { id: "user-1" }] }],
         },
@@ -320,7 +392,6 @@ describe("Entity Channel Creation", () => {
       mockPrisma.webinar.findUnique.mockResolvedValueOnce({
         id: "webinar-123",
         webinarPlan: { title: "Test", consultantProfile: null },
-        waitlist: [],
         appointment: null,
       });
 
@@ -348,7 +419,6 @@ describe("Entity Channel Creation", () => {
           title: "Test Class",
           consultantProfile: { user: { id: "consultant-2" } },
         },
-        waitlist: [{ userId: "user-a" }],
         appointments: [
           { slotsOfAppointment: [{ user: [{ id: "user-b" }] }] },
           { slotsOfAppointment: [{ user: [{ id: "user-c" }] }] },
@@ -387,7 +457,6 @@ describe("Entity Channel Creation", () => {
       mockPrisma.class.findUnique.mockResolvedValueOnce({
         id: "class-456",
         classPlan: { title: "Test", consultantProfile: { user: null } },
-        waitlist: [],
         appointments: [],
       });
 
@@ -546,14 +615,14 @@ describe("initializeAllChannels", () => {
       {
         id: "w1",
         webinarPlan: { consultantProfile: { user: { id: "c1" } } },
-        waitlist: [{ userId: "u1" }],
+        appointment: { slotsOfAppointment: [{ user: [{ id: "u1" }] }] },
       },
     ]);
     mockPrisma.class.findMany.mockResolvedValueOnce([
       {
         id: "cl1",
         classPlan: { consultantProfile: { user: { id: "c2" } } },
-        waitlist: [],
+        appointments: [],
       },
     ]);
     mockPrisma.consultation.findMany.mockResolvedValueOnce([
@@ -578,13 +647,11 @@ describe("initializeAllChannels", () => {
         title: "Webinar",
         consultantProfile: { user: { id: "c1" } },
       },
-      waitlist: [{ userId: "u1" }],
       appointment: null,
     });
     mockPrisma.class.findUnique.mockResolvedValue({
       id: "cl1",
       classPlan: { title: "Class", consultantProfile: { user: { id: "c2" } } },
-      waitlist: [],
       appointments: [],
     });
     mockPrisma.consultation.findUnique.mockResolvedValue({
@@ -612,7 +679,7 @@ describe("initializeAllChannels", () => {
       {
         id: "w1",
         webinarPlan: { consultantProfile: { user: { id: "c1" } } },
-        waitlist: [],
+        appointment: null,
       },
     ]);
     mockPrisma.class.findMany.mockResolvedValueOnce([]);
@@ -637,6 +704,9 @@ describe("addMemberToChannel error handling", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockStreamClient.channel.mockReturnValue(mockChannel);
+    mockGetSession.mockResolvedValue({
+      user: { id: "staff-user", role: "ADMIN" },
+    });
   });
 
   it("should throw error when addMembers fails", async () => {

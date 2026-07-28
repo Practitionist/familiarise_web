@@ -210,14 +210,20 @@ async function sendRemindersForWindow(window: {
 
       const baseUrl = getAppUrl();
 
-      await notifyAppointmentReminder(uniqueUserIds, {
-        appointmentType,
-        consultantName,
-        consulteeName,
-        planTitle,
-        dateTime: slot.startsAt.toISOString(),
-        dashboardUrl: `${baseUrl}/dashboard`,
-      });
+      await notifyAppointmentReminder(
+        uniqueUserIds,
+        {
+          appointmentType,
+          consultantName,
+          consulteeName,
+          planTitle,
+          dateTime: slot.startsAt.toISOString(),
+          dashboardUrl: `${baseUrl}/dashboard`,
+        },
+        // 24h and 1h payloads are identical — key the Novu transactionId by
+        // window so the second reminder isn't deduped away.
+        `${apt.id}:${window.label}`,
+      );
 
       sent++;
     } catch (error) {

@@ -8,6 +8,8 @@ import { markChannelExists } from "@/lib/stream-cache";
 import { upsertUsersToStream } from "./user.action";
 import { getDmChannelId } from "@/lib/stream-utils";
 import { getChannelTypeFromId } from "@/lib/stream-channel-ids";
+import { getSession } from "@/lib/auth-server";
+import { isPrivileged } from "@/lib/auth-helpers";
 import * as Sentry from "@sentry/nextjs";
 
 // Input validation schemas
@@ -30,6 +32,29 @@ const createChannelSchema = z.object({
   // (non-org) channels keep their existing shape (no stray null field).
   organizationId: z.string().min(1).nullable().optional(),
 });
+
+/**
+ * Best-effort channel-scoped `channel_moderator` grant (#899). Non-fatal: chat
+ * still works without it. Shared by createChannel and the collaborator-channel
+ * path so the grant contract lives in one place.
+ */
+async function grantChannelModerator(
+  channel: ReturnType<ReturnType<typeof getStreamChatClient>["channel"]>,
+  userId: string,
+  channelId: string,
+): Promise<void> {
+  try {
+    await channel.assignRoles([
+      { user_id: userId, channel_role: "channel_moderator" },
+    ]);
+  } catch (error) {
+    streamLogger.warn("Failed to grant channel_moderator to channel host", {
+      channelId,
+      userId,
+      error,
+    });
+  }
+}
 
 /**
  * Generic function to create a channel
@@ -98,6 +123,23 @@ export async function createChannel(input: {
 
   const channelData = await channel.create();
 
+  // Channel-scoped moderation replaces the old global-admin Stream role
+  // (#899). Only the channel HOST may moderate — never an arbitrary creator:
+  //  - team channels (webinar/class): the creator IS the consultant host.
+  //  - messaging channels: only consultation/subscription DMs carry a
+  //    `dm_consultant_user_id`; grant moderation to that consultant. Peer DMs
+  //    (createDirectMessageChannel) have no host, so `moderatorId` is
+  //    undefined and no grant is issued — this prevents a consultee who
+  //    opens a 1:1 DM from being able to mute/remove the consultant (#981).
+  const moderatorId =
+    validated.channelType === "team"
+      ? validated.createdById
+      : (mergedAdditionalData.dm_consultant_user_id as string | undefined);
+
+  if (moderatorId) {
+    await grantChannelModerator(channel, moderatorId, validated.channelId);
+  }
+
   // Cache the channel existence
   markChannelExists(validated.channelType, validated.channelId);
 
@@ -119,24 +161,32 @@ export async function createChannel(input: {
 export async function createDirectMessageChannel(
   currentUserId: string,
   targetUserId: string,
+  /**
+   * Context this conversation belongs to. Omitted (or null) means personal —
+   * the channel then lives in the B2C dashboards and carries no org tag. Pass
+   * an org id to open the thread inside that organization instead; the two are
+   * separate channels by design (see getDmChannelId).
+   */
+  organizationId?: string | null,
 ) {
   // Validate inputs
   memberIdSchema.parse(currentUserId);
   memberIdSchema.parse(targetUserId);
 
-  const channelId = getDmChannelId(currentUserId, targetUserId);
+  const channelId = getDmChannelId(currentUserId, targetUserId, organizationId);
 
   return createChannel({
     channelType: "messaging",
     channelId,
     members: [currentUserId, targetUserId],
     createdById: currentUserId,
+    organizationId,
   });
 }
 
 /**
  * Create a webinar channel with all participants
- * Fetches participants from both waitlist and appointments
+ * Members are everyone connected to the webinar's session slots
  *
  * @param webinarId — Webinar entity id
  * @param organizationId — Optional explicit org override. When omitted, the
@@ -159,10 +209,6 @@ export async function createWebinarChannel(
           },
         },
       },
-      waitlist: {
-        where: { status: "BOOKED" },
-        select: { userId: true },
-      },
       appointment: {
         include: {
           slotsOfAppointment: {
@@ -182,16 +228,13 @@ export async function createWebinarChannel(
     throw new Error(`Consultant not found for webinar: ${webinarId}`);
   }
 
-  // Collect all participant IDs — only BOOKED waitlist users get chat access
-  const waitlistIds = webinar.waitlist.map((entry) => entry.userId);
+  // Registrants are the users connected to the webinar's session slots.
   const appointmentIds =
     webinar.appointment?.slotsOfAppointment?.flatMap((slot) =>
       slot.user.map((u) => u.id),
     ) || [];
 
-  const allParticipantIds = Array.from(
-    new Set([...waitlistIds, ...appointmentIds]),
-  );
+  const allParticipantIds = Array.from(new Set(appointmentIds));
 
   const allMembers = Array.from(
     new Set([consultantUserId, ...allParticipantIds]),
@@ -199,7 +242,6 @@ export async function createWebinarChannel(
 
   streamLogger.debug("Creating webinar channel", {
     webinarId,
-    waitlistCount: waitlistIds.length,
     appointmentCount: appointmentIds.length,
     totalUnique: allMembers.length,
   });
@@ -211,7 +253,7 @@ export async function createWebinarChannel(
   // `null` is treated as "explicitly no org"; `undefined` triggers fallback.
   const resolvedOrgId =
     organizationId === undefined
-      ? webinar.webinarPlan.organizationId ?? null
+      ? (webinar.webinarPlan.organizationId ?? null)
       : organizationId;
 
   return createChannel({
@@ -248,10 +290,6 @@ export async function createClassChannel(
           },
         },
       },
-      waitlist: {
-        where: { status: "BOOKED" },
-        select: { userId: true },
-      },
       appointments: {
         include: {
           slotsOfAppointment: {
@@ -271,20 +309,15 @@ export async function createClassChannel(
     throw new Error(`Consultant not found for class: ${classId}`);
   }
 
-  // Only BOOKED waitlist users get chat access
-  const waitlistIds = classData.waitlist.map((entry) => entry.userId);
   const appointmentIds =
     classData.appointments?.flatMap((apt) =>
       apt.slotsOfAppointment?.flatMap((slot) => slot.user.map((u) => u.id)),
     ) || [];
 
-  const allMembers = Array.from(
-    new Set([consultantUserId, ...waitlistIds, ...appointmentIds]),
-  );
+  const allMembers = Array.from(new Set([consultantUserId, ...appointmentIds]));
 
   streamLogger.debug("Creating class channel", {
     classId,
-    waitlistCount: waitlistIds.length,
     appointmentCount: appointmentIds.length,
     totalUnique: allMembers.length,
   });
@@ -294,7 +327,7 @@ export async function createClassChannel(
 
   const resolvedOrgId =
     organizationId === undefined
-      ? classData.classPlan.organizationId ?? null
+      ? (classData.classPlan.organizationId ?? null)
       : organizationId;
 
   return createChannel({
@@ -368,17 +401,18 @@ export async function createConsultationChannel(
 
   const resolvedOrgId =
     organizationId === undefined
-      ? consultation.consultationPlan.organizationId ??
+      ? (consultation.consultationPlan.organizationId ??
         consultation.appointment?.organizationId ??
-        null
+        null)
       : organizationId;
 
-  // DM channel is per consultant-consultee pair (not per event).
-  // Per-event IDs are not stored on the channel since multiple
-  // consultations/subscriptions between the same pair share one DM.
+  // One DM per pair PER CONTEXT. Still not per event — multiple
+  // consultations/subscriptions between the same pair in the same context share
+  // one thread — but a personal booking and an org-funded one no longer collide
+  // into a single channel that can only live in one dashboard (ADR 19).
   return createChannel({
     channelType: "messaging",
-    channelId: getDmChannelId(consultantId, consulteeId),
+    channelId: getDmChannelId(consultantId, consulteeId, resolvedOrgId),
     members: [consultantId, consulteeId],
     createdById: consultantId,
     additionalData: {
@@ -454,17 +488,18 @@ export async function createSubscriptionChannel(
 
   const resolvedOrgId =
     organizationId === undefined
-      ? subscription.subscriptionPlan.organizationId ??
+      ? (subscription.subscriptionPlan.organizationId ??
         subscription.appointments[0]?.organizationId ??
-        null
+        null)
       : organizationId;
 
-  // DM channel is per consultant-consultee pair (not per event).
-  // Per-event IDs are not stored on the channel since multiple
-  // consultations/subscriptions between the same pair share one DM.
+  // One DM per pair PER CONTEXT. Still not per event — multiple
+  // consultations/subscriptions between the same pair in the same context share
+  // one thread — but a personal booking and an org-funded one no longer collide
+  // into a single channel that can only live in one dashboard (ADR 19).
   return createChannel({
     channelType: "messaging",
-    channelId: getDmChannelId(consultantId, consulteeId),
+    channelId: getDmChannelId(consultantId, consulteeId, resolvedOrgId),
     members: [consultantId, consulteeId],
     createdById: consultantId,
     additionalData: {
@@ -491,9 +526,12 @@ export async function initializeAllChannels() {
             consultantProfile: { include: { user: { select: { id: true } } } },
           },
         },
-        waitlist: {
-          where: { status: "BOOKED" },
-          select: { userId: true },
+        appointment: {
+          select: {
+            slotsOfAppointment: {
+              select: { user: { select: { id: true } } },
+            },
+          },
         },
       },
     }),
@@ -504,9 +542,12 @@ export async function initializeAllChannels() {
             consultantProfile: { include: { user: { select: { id: true } } } },
           },
         },
-        waitlist: {
-          where: { status: "BOOKED" },
-          select: { userId: true },
+        appointments: {
+          select: {
+            slotsOfAppointment: {
+              select: { user: { select: { id: true } } },
+            },
+          },
         },
       },
     }),
@@ -548,14 +589,19 @@ export async function initializeAllChannels() {
     if (w.webinarPlan.consultantProfile?.user?.id) {
       userIds.add(w.webinarPlan.consultantProfile.user.id);
     }
-    w.waitlist.forEach((e) => userIds.add(e.userId));
+    (w.appointment?.slotsOfAppointment ?? [])
+      .flatMap((slot) => slot.user)
+      .forEach((u) => userIds.add(u.id));
   });
 
   classes.forEach((c) => {
     if (c.classPlan.consultantProfile?.user?.id) {
       userIds.add(c.classPlan.consultantProfile.user.id);
     }
-    c.waitlist.forEach((e) => userIds.add(e.userId));
+    c.appointments
+      .flatMap((apt) => apt.slotsOfAppointment)
+      .flatMap((slot) => slot.user)
+      .forEach((u) => userIds.add(u.id));
   });
 
   consultations.forEach((c) => {
@@ -747,6 +793,10 @@ export async function createCollaboratorChannel(
   await channel.create();
   markChannelExists("messaging", channelId);
 
+  // Host moderates their own collab channel — this path bypasses
+  // createChannel, so the #899 channel-scoped grant is repeated here.
+  await grantChannelModerator(channel, hostUserId, channelId);
+
   // Query current channel membership for diffing
   const channelData = await channel.query();
   const currentMemberIds = (channelData.members ?? [])
@@ -794,7 +844,12 @@ export async function createCollaboratorChannel(
 }
 
 /**
- * Adds a user to a specific channel
+ * Adds a user to a specific channel.
+ *
+ * Stream's server-side API bypasses its permission system entirely, so the
+ * authz gate lives here (#899): ADMIN/STAFF may add to any channel; anyone
+ * else only to a channel they created — mirroring the create-route checks.
+ * Non-privileged callers never lazily create channels they don't own.
  */
 export async function addMemberToChannel(
   channelId: string,
@@ -803,6 +858,11 @@ export async function addMemberToChannel(
 ) {
   channelIdSchema.parse(channelId);
   memberIdSchema.parse(userId);
+
+  const session = await getSession();
+  if (!session?.user?.id) {
+    throw new Error("Unauthorized: sign in to manage channel members");
+  }
 
   const client = getStreamChatClient();
 
@@ -816,7 +876,18 @@ export async function addMemberToChannel(
 
   try {
     const channel = client.channel(resolvedChannelType, channelId);
-    await channel.create(); // Creates if doesn't exist, no-op if exists
+    const privileged = isPrivileged(session.user.role);
+    if (privileged) {
+      await channel.create(); // Creates if doesn't exist, no-op if exists
+    } else {
+      const state = await channel.query({});
+      const createdById = state.channel?.created_by?.id;
+      if (createdById !== session.user.id) {
+        throw new Error(
+          "Forbidden: only the channel creator or staff may add members",
+        );
+      }
+    }
 
     const response = await channel.addMembers([userId]);
 
@@ -827,7 +898,10 @@ export async function addMemberToChannel(
       channelId,
       userId,
     });
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "stream" } },
+    );
     throw error;
   }
 }

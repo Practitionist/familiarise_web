@@ -53,7 +53,7 @@ flowchart TB
   subgraph ACCESS["C · Membership & access"]
     ROLES["Roles · Invitations<br/>Membership.role"]:::wired
     SSO["SSO + domain claims + break-glass<br/>OrganizationSSOSettings"]:::wired
-    SCIM["SCIM provisioning"]:::parked
+    SCIM["SCIM provisioning"]:::wired
   end
 
   subgraph PROG["D · Programs & rate plans"]
@@ -277,12 +277,11 @@ Each section also lists:
 - **Why:** Self-serve recovery after an admin rejection, instead of forcing a support ticket to re-open the KYB review.
 - **Future work:** none open.
 
-### C.5 SCIM provisioning — ⏸ Parked (stubbed 501)
+### C.5 SCIM provisioning — ✅ Live
 
 - **Schema:** `ScimToken`, `ScimGroupMapping`.
-- **Code paths:** Routes return 501 by default.
-- **Why:** Schema is ready for the first customer that asks. Zero customers today, so the route handlers are stubbed instead of implemented — saves ~500 LoC of speculative provisioning code while keeping the option open.
-- **Future work:** Implement when a customer commits to SCIM.
+- **Code paths:** The SCIM 2.0 endpoints are implemented under `/scim/v2/**`, authenticated by bearer token (`requireScimAuth`, `lib/scim/auth.ts`). Tokens are stored as SHA-256 hashes, scoped to an org, and honour an optional `expiresAt` deadline — an expired token stops authenticating with a 401 while its row stays ACTIVE so an operator can see it lapsed (#789). Earlier docs describing SCIM as "parked / stubbed 501" are stale.
+- **Future work:** Rotation-reminder cron over `ScimToken.expiresAt` (the enforcement read already ships).
 
 ---
 
@@ -438,7 +437,7 @@ Each route lives at `/dashboard/organization/[orgId]/<slug>`. All are MANAGER+ u
 | `/home` | Stat grid (members / programs / wallet / invoices / reimbursements (PERSONAL only, C.B.4) / earnings) + Get Started checklist + activity feed |
 | `/members` | Roster + invite role gating + role-transition guards |
 | `/my-program` | LEARNER-only view of their own ProgramAssignment |
-| `/my-arrangement` | EXPERT-only view of their rate-card + earnings |
+| `/compensation` | EXPERT-only view of their rate-card + earnings |
 | `/programs` | LICENSED_SEAT / CREDIT_POOL CRUD + assignment + overage view |
 | `/contracts` | Contract CRUD + LICENSE flat-fee on-create flow |
 | `/purchase-orders` | PO CRUD + remainingAmountPaise display |
@@ -449,19 +448,22 @@ Each route lives at `/dashboard/organization/[orgId]/<slug>`. All are MANAGER+ u
 | `/audit` | OrgAuditLog list + CSV export |
 | `/consent` | ConsentArtifact register |
 | `/analytics` | Cross-section aggregates (driven by `/api/organizations/[orgId]/analytics`) |
-| `/appointments` | Org-tagged appointment list |
-| `/waitlist` | Org-tagged waitlist entries |
-| `/trials` | Org-tagged trial sessions |
+| `/appointments` | Org-tagged appointment list, with a `Mine \| Everyone` scope toggle whose wider arm is gated on `operations.read` |
 | `/documents` | Bulk-review surface for org-scoped AppointmentDocuments |
 | `/recordings` | Recordings by org, governed by `streamRecordingRetentionDays` |
 | `/reimbursements` | PERSONAL spend dashboard (date filter + CSV export — C.B.4) |
 | `/domain-claims` | DNS TXT verification |
-| `/invitations` | Pending invitations |
-| `/experts` | EXPERT roster (canHost only) |
-| `/learners` | LEARNER roster |
-| `/integrations` | SCIM tokens, webhook endpoints, data-exports |
 
-OrgWorkspace cross-org operator pages live separately at `/dashboard/org-workspace/*` — 5 pages (`/home`, `/activity`, `/billing`, `/settings`, `/create`).
+Several routes in earlier revisions of this table no longer exist, and their
+destinations after the ADR 19 consolidation are as follows. `/invitations`,
+`/experts` and `/learners` became `?tab=` panels on `/members`, since all three
+were `?role=` queries against the endpoint the roster already read.
+`/integrations` split into the SCIM, webhooks and data-export panels on
+`/settings`, alongside SSO. `/trials` folded into `/appointments`, a trial being
+an appointment. `/waitlist` is gone because the waitlist feature is being
+retired rather than relocated.
+
+OrgWorkspace cross-org operator pages live separately at `/dashboard/org-workspace/*` — 6 pages (`/home`, `/activity`, `/billing`, `/settings`, `/support`, `/create`).
 
 ---
 

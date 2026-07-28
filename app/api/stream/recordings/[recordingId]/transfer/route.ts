@@ -26,8 +26,10 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Only consultants can trigger transfers
-    if (session.user.role !== "CONSULTANT") {
+    // Capability, not UserRole (#org-appts): owning a consultantProfile is what
+    // matters (an org EXPERT counts); the per-appointment ownership check below
+    // is the real authz.
+    if (!session.user.consultantProfileId) {
       return NextResponse.json(
         { error: "Only consultants can transfer recordings" },
         { status: 403 },

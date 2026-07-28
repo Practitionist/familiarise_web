@@ -133,7 +133,20 @@ export async function PUT(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    // PRIVILEGE ESCALATION GUARD. The check above admits a user editing
+    // THEMSELVES, and `role` used to flow from the body straight into the
+    // update below — so any consultee could PUT their own id with
+    // {"role":"ADMIN"} and become a platform admin. Only an ADMIN may set a
+    // role, and never on themselves (that would let a compromised admin
+    // session quietly re-grant itself after a demotion).
+    const isAdmin = session.user.role === "ADMIN";
     const body = await req.json();
+    if (body.role !== undefined && (!isAdmin || session.user.id === id)) {
+      return NextResponse.json(
+        { error: "Forbidden — role cannot be changed here" },
+        { status: 403 },
+      );
+    }
     const {
       name,
       email,

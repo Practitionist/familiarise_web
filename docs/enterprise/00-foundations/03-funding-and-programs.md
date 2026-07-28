@@ -287,7 +287,7 @@ The sell-supported matrix — capability (`canSponsor`/`canHost`, see [organizat
 | HYBRID | any above | `canSponsor:true, canHost:true` | sponsor leg as above **plus** an `OrganizationEarnings` row on the host side | + payout cron |
 | HOST | — | `canHost:true` + `OrganizationPayoutAccount` | no sponsor leg; earns `OrganizationEarnings` on member bookings | payout cron (`orgpayout:` posting) |
 
-`ENABLE_HOST_ORGS` (renamed from the dead `ENABLE_PROVIDER_ORGS`) gates the entire host side: while false (the pre-MVP default) `canHost=true` and `role=EXPERT` are rejected at create with 501, the host routes (`payouts`/`payout-account`/`earnings`/`rate-cards`) return 501, and the earnings split in `lib/payments/payouts/earnings-service.ts` takes the sponsor-only path. The sponsor-side funding sources above are unaffected by the flag. See [feature-flags-and-rollout](../30-programs-and-lifecycle/06-feature-flags-and-rollout.md).
+`ENABLE_HOST_ORGS` (renamed from the dead `ENABLE_PROVIDER_ORGS`) gates the entire host side: while false (the pre-MVP default) creating an org with `canHost=true` is rejected with a 400 `HOST_ORGS_GATED` response and `role=EXPERT` is likewise rejected at create, the host routes (`payouts`/`payout-account`/`earnings`/`rate-cards`) stay gated, and the earnings split in `lib/payments/payouts/earnings-service.ts` takes the sponsor-only path. The org-create wizard also hides the host capability entirely while the flag is off, so the 400 gate is a backstop rather than the first thing a user sees. The sponsor-side funding sources above are unaffected by the flag. See [feature-flags-and-rollout](../30-programs-and-lifecycle/06-feature-flags-and-rollout.md).
 
 ## Related docs
 

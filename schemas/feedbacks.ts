@@ -22,3 +22,9 @@ export const CreateReviewSchema = z.object({
   consultantProfileId: z.string().min(1, "Consultant profile ID is required"),
   consulteeProfileId: z.string().min(1, "Consultee profile ID is required"),
 });
+
+// PUT only mutates the two consultee-owned fields; a partial keeps either optional.
+export const UpdateReviewSchema = CreateReviewSchema.pick({
+  rating: true,
+  reviewDescription: true,
+}).partial();

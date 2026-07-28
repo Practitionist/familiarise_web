@@ -1,7 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { handleSlotOpening } from "@/lib/waitlist/slot-handler";
 import {
   requireApiAuth,
   isPrivileged,
@@ -23,10 +22,6 @@ const PARTICIPANT_USER_SELECT = {
   image: true,
 } as const;
 
-// Bound the waitlist payload; the UI shows a roster, not an export. The
-// truncated flag tells the client the count is a floor, not an exact size.
-const WAITLIST_CAP = 500;
-
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ classId: string }> },
@@ -40,16 +35,31 @@ export async function GET(
 
   try {
     const { classId } = await params;
-    // Non-privileged users can only view participants for classes they own as consultant
-    const classEvent = await prisma.class.findUnique({
+    // Non-privileged users can view the roster if they own the plan OR are an
+    // accepted collaborator granted canSeeAttendees (#768). Everyone else 404s.
+    const classEvent = await prisma.class.findFirst({
       where: {
         id: classId,
         ...(isPrivileged(session.user.role)
           ? {}
           : {
               classPlan: {
-                consultantProfileId:
-                  session.user.consultantProfileId ?? "__none__",
+                OR: [
+                  {
+                    consultantProfileId:
+                      session.user.consultantProfileId ?? "__none__",
+                  },
+                  {
+                    collaborators: {
+                      some: {
+                        consultantProfileId:
+                          session.user.consultantProfileId ?? "__none__",
+                        status: "ACCEPTED",
+                        canSeeAttendees: true,
+                      },
+                    },
+                  },
+                ],
               },
             }),
       },
@@ -87,31 +97,15 @@ export async function GET(
       ).values(),
     );
 
-    // Get waitlist entries with user details
-    const waitlist = await prisma.waitlist.findMany({
-      where: {
-        classId: classId,
-        status: {
-          in: ["WAITING", "NOTIFIED", "EXPIRED"],
-        },
-      },
-      include: {
-        user: { select: PARTICIPANT_USER_SELECT },
-      },
-      orderBy: {
-        joinedAt: "asc",
-      },
-      take: WAITLIST_CAP,
-    });
-
     return NextResponse.json({
       classEvent,
       participants,
-      waitlist,
-      waitlistTruncated: waitlist.length === WAITLIST_CAP,
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "bookings" } },
+    );
     console.error("[CLASS_PARTICIPANTS_GET]", error);
     return new NextResponse("Internal error", { status: 500 });
   }
@@ -145,7 +139,7 @@ export async function DELETE(
     // Ownership check only — the old shape loaded the entire roster
     // (every appointment × every slot × every full User row) just to find
     // the one participant being removed.
-    const classEvent = await prisma.class.findUnique({
+    const classEvent = await prisma.class.findFirst({
       where: {
         id: classId,
         ...(isPrivileged(session.user.role)
@@ -187,22 +181,13 @@ export async function DELETE(
         }),
       ),
     );
-    const participantRemoved = userSlots.length > 0;
-
-    // Trigger waitlist notification if a participant was removed
-    if (participantRemoved) {
-      try {
-        await handleSlotOpening({ classId, slotsAvailable: 1 });
-      } catch (error) {
-        // Log error but don't fail the request - participant removal succeeded
-        Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
-        console.error("[CLASS_WAITLIST_NOTIFICATION]", error);
-      }
-    }
 
     return new NextResponse(null, { status: 204 });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "bookings" } },
+    );
     console.error("[CLASS_PARTICIPANT_DELETE]", error);
     return new NextResponse("Internal error", { status: 500 });
   }

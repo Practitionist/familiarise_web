@@ -51,7 +51,7 @@ import { ConsultantResponseUpload } from "./ConsultantResponseUpload";
 import {
   formatFileSize,
   getDocumentTypeIcon,
-} from "@/app/dashboard/shared/utils/document-utils";
+} from "@/lib/documents/document-utils";
 
 // Appointment types are fixed on the server (Consultation | Subscription).
 // Hardcoding here so the type filter dropdown isn't dependent on the current
@@ -654,15 +654,15 @@ export function DocumentsTab({
 
       {/* Review Dialog */}
       <ResponsiveModal open={reviewDialogOpen} onOpenChange={setReviewDialogOpen}>
-        <ResponsiveModalContent className="sm:max-w-[425px]">
-          <ResponsiveModalHeader>
+        <ResponsiveModalContent className="sm:max-w-[425px] max-h-[90dvh] overflow-hidden flex flex-col">
+          <ResponsiveModalHeader className="shrink-0">
             <ResponsiveModalTitle>Review Document</ResponsiveModalTitle>
             <ResponsiveModalDescription>
               Update the review status and add notes for{" "}
               {selectedDocument?.originalName}
             </ResponsiveModalDescription>
           </ResponsiveModalHeader>
-          <div className="grid gap-4 py-4">
+          <div className="min-h-0 flex-1 grid gap-4 overflow-y-auto py-4">
             <div className="space-y-2">
               <label className="text-sm font-medium">Review Status</label>
               <Select value={reviewStatus} onValueChange={setReviewStatus}>
@@ -707,7 +707,7 @@ export function DocumentsTab({
               </div>
             )}
           </div>
-          <ResponsiveModalFooter>
+          <ResponsiveModalFooter className="shrink-0">
             <Button
               variant="outline"
               onClick={() => setReviewDialogOpen(false)}
@@ -736,8 +736,8 @@ export function DocumentsTab({
           }
         }}
       >
-        <ResponsiveModalContent className="sm:max-w-[500px]">
-          <ResponsiveModalHeader>
+        <ResponsiveModalContent className="sm:max-w-[500px] max-h-[90dvh] overflow-hidden flex flex-col">
+          <ResponsiveModalHeader className="shrink-0">
             <ResponsiveModalTitle>
               Review {selectedIds.size} Documents
             </ResponsiveModalTitle>
@@ -745,7 +745,7 @@ export function DocumentsTab({
               Set a review status and optional notes for all selected documents.
             </ResponsiveModalDescription>
           </ResponsiveModalHeader>
-          <div className="grid gap-4 py-4">
+          <div className="min-h-0 flex-1 grid gap-4 overflow-y-auto py-4">
             <div className="space-y-2">
               <label className="text-sm font-medium">Review Status</label>
               <Select value={bulkReviewStatus} onValueChange={setBulkReviewStatus}>
@@ -795,7 +795,7 @@ export function DocumentsTab({
               </div>
             </div>
           </div>
-          <ResponsiveModalFooter>
+          <ResponsiveModalFooter className="shrink-0">
             <Button
               variant="outline"
               onClick={() => setBulkReviewDialogOpen(false)}

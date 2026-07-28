@@ -28,6 +28,8 @@ jest.mock("../../lib/prisma", () => ({
     $transaction: jest.fn(),
     appointment: { findUnique: jest.fn() },
     slotOfAppointment: { findMany: jest.fn(), deleteMany: jest.fn() },
+    // #1008 — reschedule/cancel routes read prisma.dispute.findFirst.
+    dispute: { findFirst: jest.fn().mockResolvedValue(null) },
     $disconnect: jest.fn(),
   },
 }));
@@ -36,10 +38,14 @@ jest.mock("../../lib/auth-server", () => ({
   getSession: jest.fn(),
 }));
 
-jest.mock("../../lib/waitlist/slot-handler", () => ({
-  handleSlotOpening: jest.fn().mockResolvedValue({ notified: 0 }),
+jest.mock("../../lib/payments/operations/event-refunds", () => ({
+  refundWholeEventPayments: jest.fn().mockResolvedValue({
+    refundsIssued: 0,
+    refundedPaise: 0,
+    childRefundIds: [],
+    failures: [],
+  }),
 }));
-
 jest.mock("../../lib/novu", () => ({
   notifyAppointmentCancelled: jest.fn().mockResolvedValue(undefined),
 }));
@@ -48,10 +54,7 @@ jest.mock("../../lib/novu", () => ({
 
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
-import {
-  authorizeEventAccess,
-  isPrivileged,
-} from "@/lib/auth-helpers";
+import { authorizeEventAccess, isPrivileged } from "@/lib/auth-helpers";
 import { POST as rescheduleHandler } from "@/app/api/appointments/[appointmentId]/reschedule/route";
 import { POST as cancelHandler } from "@/app/api/appointments/[appointmentId]/cancel/route";
 

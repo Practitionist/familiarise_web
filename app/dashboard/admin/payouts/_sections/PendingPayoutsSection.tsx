@@ -171,6 +171,37 @@ export default function PendingPayoutsSection() {
       ),
     },
     {
+      key: "dueBy",
+      header: "Due by (MSME)",
+      cell: (payout) => {
+        if (!payout.mustPayByDate) {
+          return <span className="text-sm text-muted-foreground">—</span>;
+        }
+        const due = new Date(payout.mustPayByDate);
+        const daysLeft = Math.ceil(
+          (due.getTime() - Date.now()) / 86_400_000,
+        );
+        // <5 days (or overdue) is the §43B(h) alert window — flag it red.
+        const urgent = daysLeft < 5;
+        return (
+          <span
+            className={
+              urgent
+                ? "text-sm font-semibold text-destructive"
+                : "text-sm text-muted-foreground"
+            }
+          >
+            {due.toLocaleDateString()}
+            {urgent && (
+              <span className="ml-1">
+                ({daysLeft < 0 ? "overdue" : `${daysLeft}d`})
+              </span>
+            )}
+          </span>
+        );
+      },
+    },
+    {
       key: "date",
       header: "Date",
       cell: (payout) => (

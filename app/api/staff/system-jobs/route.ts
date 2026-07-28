@@ -7,7 +7,7 @@ import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 
-import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
 // Job configuration matching SystemJobsPanel
 const SYSTEM_JOBS = [
   {
@@ -81,7 +81,7 @@ const SYSTEM_JOBS = [
  */
 export async function GET() {
   try {
-    const auth = await requirePrivilegedAuth();
+    const auth = await requireBackofficeSurface("systemJobs.manage");
     if (auth.error) return auth.error;
 
     // Get recent execution stats for each job

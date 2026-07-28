@@ -220,7 +220,6 @@ export const pastEvent: EventWithType = {
   ],
   createdAt: new Date(),
   updatedAt: new Date(),
-  waitlist: [], // Added required waitlist
   // Add other required top-level Class fields from EventWithType if known
   startDate: null, // Added
   endDate: null, // Added

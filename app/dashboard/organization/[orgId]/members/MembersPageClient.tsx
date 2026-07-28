@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { UserPlus, Trash2, Pencil, Search } from "lucide-react";
 
 import type { MemberRole, MemberStatus } from "@prisma/client";
-import { useOrgRole, useRequireOperatorSurface } from "../useOrgRole";
+import { useOrgRole, useRequireOrgAccess } from "../useOrgRole";
 import {
   MEMBER_ROLE_LABEL,
   MEMBER_STATUS_LABEL,
@@ -15,6 +15,7 @@ import {
   AddMemberPayloadSchema,
   MembersListResponseSchema,
   UpdateMemberPayloadSchema,
+  ORG_MEMBERS_PER_PAGE,
   type MemberRow,
 } from "@/schemas/organizations";
 import {
@@ -25,10 +26,7 @@ import {
 import { humanizeOrgError } from "@/lib/labels/org-errors";
 import { isBlockedRoleTransition } from "@/lib/enterprise/role-transitions";
 import { useSession } from "@/lib/auth-client";
-import {
-  DashboardHeader,
-  DashboardContent,
-} from "@/components/dashboard/PageScaffold";
+import { PanelHeader } from "@/components/dashboard/PageScaffold";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -216,7 +214,7 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
   // SUPPORT). SUPPORT gets the roster READ-ONLY for ticket investigation,
   // so the sidebar Members entry isn't a dead redirect. Mutation controls
   // below stay MAINTAINER-gated (isAtLeast("MAINTAINER")).
-  const { allowed } = useRequireOperatorSurface(orgId);
+  const { allowed } = useRequireOrgAccess(orgId, { permission: "members.read" });
   const queryClient = useQueryClient();
   const roleOptions = selectableRoles(canSponsor, canHost);
   // Default to the most common consumer role for the org's capability:
@@ -233,7 +231,7 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
   // input; `debouncedSearch` is what actually hits the API (250ms) so a
   // fast typist doesn't fire a request per keystroke. Page resets to 1
   // whenever the search term changes.
-  const PER_PAGE = 20;
+  const PER_PAGE = ORG_MEMBERS_PER_PAGE;
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [page, setPage] = useState(1);
@@ -424,9 +422,8 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
 
   return (
     <>
-      <DashboardHeader
-        title="Members"
-        subtitle="Everyone with a seat in this organization"
+      <PanelHeader
+        description="Everyone with a seat in this organization"
         actions={
           isAtLeast("MAINTAINER") && (
             <Button size="sm" onClick={() => setShowInvite(true)}>
@@ -435,7 +432,7 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
           )
         }
       />
-      <DashboardContent>
+      <div className="space-y-6">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0">
             <CardTitle className="text-base">
@@ -500,7 +497,7 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
             )}
           </CardContent>
         </Card>
-      </DashboardContent>
+      </div>
 
       <ResponsiveModal open={showInvite} onOpenChange={setShowInvite}>
         <ResponsiveModalContent>

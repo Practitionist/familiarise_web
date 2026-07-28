@@ -57,7 +57,6 @@ graph TD
     end
 
     subgraph "Other (4)"
-        W27[waitlist-spot-available]
         W28[dispute-created]
         W29[dispute-resolved]
         W30[recording-available]
@@ -196,16 +195,14 @@ sequenceDiagram
 
 ---
 
-### Waitlist, Disputes, Recordings
+### Disputes, Recordings
 
 | Workflow ID               | Trigger Function                               | Recipients      | Payload Type       |
 | ------------------------- | ---------------------------------------------- | --------------- | ------------------ |
-| `waitlist-spot-available` | `notifyWaitlistSpotAvailable(userId, payload)` | Waitlisted user | `WaitlistPayload`  |
 | `dispute-created`         | `notifyDisputeCreated(userIds[], payload)`     | Both parties    | `DisputePayload`   |
 | `dispute-resolved`        | `notifyDisputeResolved(userIds[], payload)`    | Both parties    | `DisputePayload`   |
 | `recording-available`     | `notifyRecordingAvailable(userIds[], payload)` | Both parties    | `RecordingPayload` |
 
-**WaitlistPayload**: `consultantName`, `planTitle`, `dashboardUrl`
 
 **DisputePayload**: `disputeId?`, `amount`, `currency`, `reason?`, `status?`, `consultantName?`, `consulteeName?`, `dashboardUrl`
 
@@ -232,19 +229,6 @@ These emails bypass Novu and are sent directly through Resend with React Email t
 | `sendPaymentLinkEmail({email, name, consultantName, appointmentType, amount, currency, paymentUrl, expiresAt})`                  | "Payment Required - {Type} with {Consultant}"  | payments@familiarise.com |
 | `sendPaymentSuccessEmail({email, name, consultantName, appointmentType, amount, currency, receiptUrl?, dashboardUrl?})`          | "Payment Confirmed - {Type} with {Consultant}" | payments@familiarise.com |
 | `sendPaymentFailedEmail({email, name, consultantName, appointmentType, amount, currency, retryUrl, failureReason?, expiresAt?})` | "Payment Failed - {Type} with {Consultant}"    | payments@familiarise.com |
-
-### Waitlist Emails (`lib/waitlist/notifications.ts`)
-
-| Function                                                                                                               | Subject                                              | From                          |
-| ---------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- | ----------------------------- |
-| `sendWaitlistJoinedEmail({email, name, eventTitle, eventType, position, estimatedWait?})`                              | "You're on the waitlist for {eventTitle}"            | notifications@familiarise.com |
-| `sendWaitlistSpotAvailableEmail({email, name, eventTitle, eventType, eventId, scheduledDate?, expiresAt, waitlistId})` | "A spot is available for {eventTitle}!"              | notifications@familiarise.com |
-| `sendWaitlistExpiringEmail({email, name, eventTitle, eventType, eventId, expiresAt, waitlistId})`                      | "Reminder: Your spot for {eventTitle} expires soon!" | notifications@familiarise.com |
-| `sendWaitlistExpiredEmail({email, name, eventTitle, eventType, rejoinUrl?})`                                           | "Your spot for {eventTitle} has expired"             | notifications@familiarise.com |
-
----
-
-## API Endpoints
 
 ### POST /api/novu/subscriber
 
@@ -372,7 +356,6 @@ graph TD
 
     subgraph "Cron Jobs"
         CJ1["Appointment reminders"] -->|APPOINTMENT_REMINDER workflow| NOVU
-        CJ2["Waitlist expiration"] -->|sendWaitlistExpiringEmail| RES
         CJ3["Auto-complete"] -->|notifyAppointmentCompleted| NOVU
     end
 

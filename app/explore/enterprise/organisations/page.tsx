@@ -5,6 +5,7 @@ import Image from "next/image";
 import Link from "next/link";
 import prisma from "@/lib/prisma";
 import { emptyOnTransientDbError } from "@/lib/data/fail-open";
+import { ENABLE_HOST_ORGS } from "@/lib/feature-flags";
 
 // Stream behind the static layout's instant skeleton; don't prerender at build (#932).
 // (Replaces the prior `revalidate = 60`, which was inert while the layout forced dynamic.)
@@ -230,9 +231,11 @@ export default async function ExploreOrganisationsPage({
   const { industry } = await searchParams;
   // Outside the orgs Suspense boundary — a transient timeout here would crash the
   // whole page, so degrade to no industry filters rather than erroring (#925).
-  const industries = await fetchIndustryList().catch(
-    emptyOnTransientDbError("org industries"),
-  );
+  // #1019 — skip the query entirely while host orgs are gated: the grid + filters
+  // are replaced by the "coming soon" state, so the industries list is unused.
+  const industries = ENABLE_HOST_ORGS
+    ? await fetchIndustryList().catch(emptyOnTransientDbError("org industries"))
+    : [];
 
   return (
     <main className="min-h-screen bg-background">
@@ -263,7 +266,29 @@ export default async function ExploreOrganisationsPage({
         </div>
       </section>
 
-      {/* Filters + Grid */}
+      {/* #863 — host orgs are gated (ENABLE_HOST_ORGS). While off, this
+          directory (which filters canHost=true) is guaranteed empty, so show an
+          honest announcement instead of a blank grid. */}
+      {!ENABLE_HOST_ORGS ? (
+        <section className="py-16 md:py-24">
+          <div className="max-w-xl mx-auto px-4 text-center">
+            <div className="inline-flex items-center gap-2 px-4 py-2 bg-muted rounded-full mb-6">
+              <Sparkles className="w-4 h-4 text-muted-foreground" />
+              <span className="text-sm font-medium text-muted-foreground">
+                Coming soon
+              </span>
+            </div>
+            <h2 className="text-2xl font-semibold text-foreground mb-3">
+              The organisation directory isn&apos;t open yet
+            </h2>
+            <p className="text-muted-foreground">
+              We&apos;re onboarding expert networks and agencies now. Check back
+              soon to discover and book their curated experts.
+            </p>
+          </div>
+        </section>
+      ) : (
+      /* Filters + Grid */
       <section className="py-10 md:py-16">
         <div className="max-w-[1400px] mx-auto px-4 md:px-8">
           {/* Industry filter chips — Link-based for SSR filtering */}
@@ -311,6 +336,7 @@ export default async function ExploreOrganisationsPage({
           </Suspense>
         </div>
       </section>
+      )}
     </main>
   );
 }

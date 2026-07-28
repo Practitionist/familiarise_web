@@ -15,7 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/components/ui/use-toast";
 import { Loader2Icon, SearchIcon, UserPlusIcon, XIcon } from "lucide-react";
-import type { ConsulteeSearchResult } from "@/app/api/stream/search-consultees/route";
+import type { ConsulteeSearchResult } from "@/schemas/stream-search";
 
 interface AddMembersDialogProps {
   open: boolean;

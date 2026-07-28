@@ -2,7 +2,6 @@ import * as Sentry from "@sentry/nextjs";
 import { drainActiveSessions } from "@/actions/maintenance/drain-sessions";
 import { freezeAppointments } from "@/actions/maintenance/freeze-appointments";
 import { pauseDiscountCodes } from "@/actions/maintenance/pause-discount-codes";
-import { pauseWaitlistExpiry } from "@/actions/maintenance/pause-waitlist-expiry";
 import { runPostRecovery } from "@/actions/maintenance/post-recovery";
 import { MaintenancePhase } from "@prisma/client";
 import crypto from "crypto";
@@ -13,8 +12,6 @@ import { createIncident, resolveIncident } from "@/lib/betterstack";
 import { requireAdminAuth } from "@/lib/auth-helpers";
 import { getMaintenanceState, setMaintenanceState } from "@/lib/maintenance";
 import prisma from "@/lib/prisma";
-
-const DEFAULT_WINDOW_MS = 4 * 60 * 60 * 1000;
 
 // Local wrapper preserves the existing call sites that expect `{ userId }`.
 // Maintenance is now strictly ADMIN-only (was previously allowing STAFF too).
@@ -41,7 +38,6 @@ type OfflineActivationResult = {
   drain?: Awaited<ReturnType<typeof drainActiveSessions>>;
   freeze?: Awaited<ReturnType<typeof freezeAppointments>>;
   discounts?: Awaited<ReturnType<typeof pauseDiscountCodes>>;
-  waitlist?: Awaited<ReturnType<typeof pauseWaitlistExpiry>>;
   errors: string[];
 };
 
@@ -63,34 +59,35 @@ async function runOfflineActivation(
 ): Promise<OfflineActivationResult> {
   const result: OfflineActivationResult = { errors: [] };
   const start = new Date();
-  const end = estimatedEnd ?? new Date(start.getTime() + DEFAULT_WINDOW_MS);
 
   try {
     result.drain = await drainActiveSessions();
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "admin" } },
+    );
     result.errors.push(formatError("drainActiveSessions failed", error));
   }
 
   try {
     result.freeze = await freezeAppointments(start, estimatedEnd);
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "admin" } },
+    );
     result.errors.push(formatError("freezeAppointments failed", error));
   }
 
   try {
     result.discounts = await pauseDiscountCodes();
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "admin" } },
+    );
     result.errors.push(formatError("pauseDiscountCodes failed", error));
-  }
-
-  try {
-    result.waitlist = await pauseWaitlistExpiry(start, end);
-  } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
-    result.errors.push(formatError("pauseWaitlistExpiry failed", error));
   }
 
   return result;
@@ -218,9 +215,6 @@ export async function POST(request: NextRequest) {
     ...(offlineActivation?.discounts !== undefined
       ? { discounts: offlineActivation.discounts }
       : {}),
-    ...(offlineActivation?.waitlist !== undefined
-      ? { waitlist: offlineActivation.waitlist }
-      : {}),
     ...(offlineActivation && offlineActivation.errors.length > 0
       ? { setupErrors: offlineActivation.errors }
       : {}),
@@ -331,9 +325,6 @@ export async function PATCH(request: NextRequest) {
       : {}),
     ...(offlineActivation?.discounts !== undefined
       ? { discounts: offlineActivation.discounts }
-      : {}),
-    ...(offlineActivation?.waitlist !== undefined
-      ? { waitlist: offlineActivation.waitlist }
       : {}),
     ...(offlineActivation && offlineActivation.errors.length > 0
       ? { setupErrors: offlineActivation.errors }

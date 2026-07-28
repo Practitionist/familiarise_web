@@ -12,6 +12,7 @@ import {
 import { notifyAppointmentRescheduled } from "@/lib/novu/service";
 import { logActivity } from "@/lib/activity/log-activity";
 import { getAppUrl } from "@/lib/url";
+import { hasActiveDisputeForAppointment } from "@/lib/payments/dispute-guard";
 import {
   CLASS_EVENT_ALLOWED_FROM,
   EVENT_ALLOWED_FROM,
@@ -56,6 +57,19 @@ export async function POST(
     const { appointmentId } = await params;
     const { searchParams } = new URL(request.url);
     const appointmentType = searchParams.get("type");
+
+    // #1008 — an appointment with a live payment dispute is frozen: its state is
+    // evidence and must not move while the dispute is contested.
+    if (await hasActiveDisputeForAppointment(appointmentId)) {
+      return NextResponse.json(
+        {
+          error:
+            "This appointment has an open payment dispute and can't be rescheduled until it resolves.",
+          code: "DISPUTE_ACTIVE",
+        },
+        { status: 409 },
+      );
+    }
 
     // Parse request body for optional slotIds (used for individual/multiple session reschedule)
     let slotIds: string[] | undefined;
@@ -206,12 +220,14 @@ export async function POST(
             ? allSubscriptionSlots
             : appointment.slotsOfAppointment;
 
-        // For SUBSCRIPTION with slotIds, only reschedule the specific slots
+        // For SUBSCRIPTION/CLASS with slotIds, only reschedule the specific
+        // slots. CLASS previously fell through to the whole-class branch, so
+        // a per-session class reschedule silently escalated to every session.
         if (
-          derivedType === "SUBSCRIPTION" &&
           slotIds &&
           slotIds.length > 0 &&
-          appointment.subscription
+          ((derivedType === "SUBSCRIPTION" && appointment.subscription) ||
+            (derivedType === "CLASS" && appointment.class))
         ) {
           // Filter to only the requested slots from ALL subscription slots
           slotsToReschedule = allSubscriptionSlots.filter((s) =>
@@ -243,10 +259,10 @@ export async function POST(
 
         // Mark the appropriate slots as tentative
         if (
-          derivedType === "SUBSCRIPTION" &&
           slotIds &&
           slotIds.length > 0 &&
-          appointment.subscription
+          ((derivedType === "SUBSCRIPTION" && appointment.subscription) ||
+            (derivedType === "CLASS" && appointment.class))
         ) {
           // Individual/multiple session reschedule - mark ALL slots of the affected appointments
           // (e.g. a 1.5h session has 3 consecutive slots; all must be marked tentative together)
@@ -321,15 +337,32 @@ export async function POST(
             })
           ).count;
         } else if (appointment.subscription) {
-          movedStatus = (
-            await tx.subscription.updateMany({
-              where: {
-                id: appointment.subscription.id,
-                status: { in: [...RESCHEDULABLE_FROM] },
-              },
-              data: { status: "PENDING" },
-            })
-          ).count;
+          // #448 — a single/multi-session reschedule must NOT flip the WHOLE
+          // subscription to PENDING. Subscription has no per-session status;
+          // the affected slots already carry isTentative + RESCHEDULED, so the
+          // session-level state is captured there. Only a full-subscription
+          // reschedule (no slotIds) genuinely re-enters PENDING. The partial
+          // path still terminal-guards (count, no write): rescheduling a
+          // session of a cancelled/completed subscription stays a 409.
+          const isPartialSubscriptionReschedule = Boolean(
+            slotIds && slotIds.length > 0,
+          );
+          movedStatus = isPartialSubscriptionReschedule
+            ? await tx.subscription.count({
+                where: {
+                  id: appointment.subscription.id,
+                  status: { in: [...RESCHEDULABLE_FROM] },
+                },
+              })
+            : (
+                await tx.subscription.updateMany({
+                  where: {
+                    id: appointment.subscription.id,
+                    status: { in: [...RESCHEDULABLE_FROM] },
+                  },
+                  data: { status: "PENDING" },
+                })
+              ).count;
         } else if (appointment.webinar) {
           // Explicit allowed-from (was notIn) — robust against future enum
           // additions (#837).

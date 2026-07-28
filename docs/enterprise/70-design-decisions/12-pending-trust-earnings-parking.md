@@ -27,16 +27,24 @@ payable consultant liabilities until some trust signal arrives.
 
 ## Decision
 
-Earnings accrued for a `PENDING_VERIFICATION`, INVOICE-funded org that has
-never paid an invoice are parked in a dedicated
-`EarningStatus.PENDING_TRUST` instead of the normal `PENDING`. The
-earnings service makes this decision at accrual time
-(`lib/payments/payouts/earnings-service.ts`): when an org-share earning is
-about to be created, it checks the sponsoring org's status, and if the org
-is `PENDING_VERIFICATION` it counts that org's `PAID`
-`OrganizationInvoice` rows; only if that count is zero does it set
-`initialStatus = EarningStatus.PENDING_TRUST` (the same guard runs on the
-collaborator-split path). The enum carries the rationale inline
+Earnings accrued for a booking whose **sponsoring** org — the org that owes
+the invoice, `payment.organizationId`, not the expert's HOST org — is
+`PENDING_VERIFICATION` and has never paid an invoice are parked in a
+dedicated `EarningStatus.PENDING_TRUST` instead of the normal `PENDING`.
+The earnings service makes this decision **once** at accrual time
+(`lib/payments/payouts/earnings-service.ts`): it reads the sponsoring org's
+status, and if that org is `PENDING_VERIFICATION` it counts its `PAID`
+`OrganizationInvoice` rows; only if that count is zero does it park. The
+decision then applies to **every** row the booking writes — the consultant
+earning, the primary org earning, and each collaborator-org earning — so
+an unverified sponsor cannot let consultant *or* org money clear. (Keying
+on the sponsor rather than the host is the fix for the earlier version,
+which keyed on the expert's HOST org and parked only the org-share row.)
+Upstream of accrual, the checkout path additionally hard-requires a
+verified domain claim before the org may fund anything by INVOICE at all
+(`assertVerifiedDomainOrThrow`), so an unverified sponsor cannot even
+accrue the INVOICE debt without first proving domain ownership. The enum
+carries the rationale inline
 (`prisma/schema.prisma`, `EarningStatus.PENDING_TRUST`): "Without this
 state, an unverified org could accumulate real consultant earnings and
 ghost." A parked earning never reaches the payout pipeline, because that

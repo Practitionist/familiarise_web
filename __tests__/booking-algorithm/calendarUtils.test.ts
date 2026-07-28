@@ -38,7 +38,7 @@ import {
   getAppointmentUser,
   type TimeSlot,
   type Appointment,
-} from "@/app/dashboard/consultant/[consultantId]/(features)/shared/utils/calendarUtils";
+} from "@/lib/scheduling/calendarUtils";
 import { ScheduleType, DayOfWeek, AppointmentsType } from "@prisma/client";
 import {
   makeTimeSlot,
@@ -438,7 +438,8 @@ describe("Delegated week functions", () => {
 
   it("startOfWeekSunday should return Sunday", () => {
     const result = startOfWeekSunday(new Date("2025-01-08")); // Wednesday
-    expect(result.getDay()).toBe(0);
+    // UTC weekday — this helper is UTC-based; local getDay() shifts by machine TZ
+    expect(result.getUTCDay()).toBe(0);
   });
 });
 

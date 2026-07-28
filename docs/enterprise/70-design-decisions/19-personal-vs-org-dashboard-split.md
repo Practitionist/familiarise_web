@@ -1,0 +1,47 @@
+---
+title: Personal-vs-org dashboard split by org-ness, and one navigation entry per destination
+band: 70-design-decisions
+audience: sde3
+status: live
+last-reviewed: 2026-07-26
+---
+
+# ADR 19 — Dashboards split by org-ness, and a nav entry is a destination
+
+## Context
+
+A user of this platform can be several things at once. The same person may book sessions as a consultee, deliver them as a consultant, belong to a sponsoring organization as a LEARNER, and deliver into a hosting organization as an EXPERT. Every one of those facets produces appointments, payments, documents and support requests, and for a long time the dashboards tried to show all of them everywhere, sliced by a context switcher that the user had to remember to set. The result was that the same session could appear in two dashboards with different money attached to it, and neither view was authoritative.
+
+By July 2026 that had produced a second, quieter problem. Six dashboard trees had grown to roughly 113 pages, and their navigation had been extended one item at a time without anyone holding the whole shape in view. The admin and staff dashboards were about eighty-five percent the same product: twelve of seventeen staff pages had an admin twin, and `users/page.tsx` was four hundred and fifty-one lines on both sides with a twelve-line difference between them. Both rendered flat sidebars of sixteen to eighteen items. The organization dashboard showed "My Appointments" and "Appointments" next to each other — the same noun, differing only in scope, and an OWNER saw both. The cross-org portfolio and the per-org dashboard both presented tabs labelled Overview, Billing and Settings. Several sidebar entries were not destinations at all: `learners` and `experts` were `?role=` queries against the very endpoint the members roster already read, and four more were single read-only tables with no actions on them.
+
+The forces in play were these. A navigation item is a promise that something distinct lives behind it, and a user who finds two items leading to near-identical content stops trusting the navigation as a whole. Duplicated page trees drift: the two ticket queues had each grown a feature the other lacked, so neither was a superset and the product was worse in both places. And access control that is expressed by which URL tree you landed in cannot be reasoned about, because the rule lives in the routing table rather than anywhere a reader would look for it.
+
+## Decision
+
+**Data splits by the org-ness of the underlying session, plan or payment.** Anything hosted, sponsored or funded by an organization lives in that organization's dashboard; anything B2C lives in the personal consultant and consultee dashboards. The personal scope pins `organizationId: null` on both sides. Users move between contexts through the top-level dashboard switcher, not through a context filter embedded in a personal dashboard — that filter was removed, and with it the ambiguity about which scope a given page was currently showing. This aligns with [ADR 18](18-open-b2b-b2c-boundary.md): an organization is a tag on the work, not a parallel system with its own copy of everything.
+
+Transaction **views** split the same way, but **instruments do not**. A `PayoutAccount` belongs to a `ConsultantProfile`, receives both B2C and org-attributed earnings, and settles once. Saved cards belong to the user. Org-sponsored sessions are funded by the organization's instrument rather than the member's. A `Dispute` carries no organization column of its own and inherits its context from the `Payment` it is linked to. The ledger is backend money-truth and is inert to this split; dashboards render statements derived from it and never surface ledger rows as a user-facing concept.
+
+**A navigation entry must be a distinct destination.** Where two entries differed only by scope of the same object, they became one entry with a scope control on the page: `Appointments` carries a `Mine | Everyone` toggle, with the wider scope gated on `operations.read` and hidden entirely from anyone without it, so the page cannot present a control that would then be refused. Where an entry was a filter over a list another entry already showed, or a single table with no actions, it became a `?tab=` panel on that list — `learners`, `experts` and `invitations` onto Members; `trials` onto Appointments, a trial being an appointment; SSO and the three integrations onto Settings. An earlier revision of this decision folded documents and recordings onto a single Operations page as well. That was over-applied and did not ship: the two are separate objects with separate audiences, and nesting a lone Resources item under a Resources group restated itself in the nav — the failure the rule exists to prevent. They remain distinct entries. `waitlist` is absent because the feature is being retired rather than relocated. Tabs are addressable so a link into a specific panel still resolves, and each is gated on the same `OrgSurface` key its route guard used.
+
+This rule has a deliberate limit. Surfaces that share a prefix but describe **different objects** stay separate: `my-program` is a LEARNER's own assignment and coverage detail while `programs` is the sponsor's catalog CRUD, and no toggle sensibly spans them. Appointments was the only genuine same-object scope split.
+
+**The admin and staff dashboards remain two URL trees with one implementation behind them.** They are not merged, because the two audiences want different landing pages and different framing, and because a staff-facing surface should be able to diverge without negotiating with the admin surface. What is merged is everything underneath: both sidebars build from a single grouped definition in `lib/dashboard/backoffice-nav.ts`, and the pages that exist in both render the same component from `components/dashboard/shared/`.
+
+**Back-office access is a matrix, not a URL tree.** `lib/auth/backoffice-permissions.ts` maps each `UserRole` to a set of named surfaces, mirroring the `lib/auth/org-permissions.ts` pattern that the organization dashboard already proved. The sidebar, the page guards and the route handlers all read that one map, which is what prevents a surface drifting into the state where a tab is visible, the page redirects, and the API returns 403 — a class of bug the 2026-07 role audit found nine instances of on the org side.
+
+The policy that matrix encodes: staff own support, moderation, appointment triage, waitlists and user verification end to end. They **read** every money surface, because a support agent who cannot see a payment cannot resolve a billing ticket, and they **mutate none of it**. Admin alone executes money, owns organization lifecycle and platform configuration, and takes the destructive user actions — ban, role change, deletion — because staff are interns and employees with turnover and irreversible actions should concentrate on the account that answers for them. An admin may enter the staff tree to reproduce what a staff member reports; staff cannot enter the admin tree.
+
+There is deliberately **no maker-checker** step on money. With a single admin, an approval queue would have exactly one person able to clear it, which adds latency without separating any duties. The surface keys are already named such that a maker-checker layer can be introduced when a second admin exists.
+
+## Consequences
+
+The navigation is smaller and each entry means something. The organization sidebar went from twenty-eight items to at most eighteen for a fully-capable hybrid org, and about twelve for a typical sponsor-only organization. The back-office resolves twenty items for an admin and thirteen for a staff member, from one definition rather than two hand-maintained arrays.
+
+A consultant who works through an organization now visits two dashboards to see all of their money: personal earnings for B2C work, and the organization's compensation page for org-routed work. This is the intended consequence of splitting views by org-ness — each number is authoritative in exactly one place — but it is a real ergonomic cost, and a future cross-context earnings summary would have to be built as a derived read rather than by re-merging the views.
+
+Deleting the personal org-context filter retired the `#674` carve-out, where the personal consultant scope force-included delivered organization sessions. Anything that deep-linked into a personal dashboard with an `orgScope` parameter had to be repointed; one such link, on the organization `my-program` page, had been silently broken since the scope was pinned to `organizationId: null`.
+
+Because the same permission matrix now backs the navigation, the guards and the routes, adding a back-office surface means adding a key to one map. Forgetting to do so fails closed — the item does not render — rather than producing a visible tab that refuses to load.
+
+No redirect layer was written for the routes that moved. The product is pre-MVP, no URL has escaped into a bookmark, a sent email or a delivered notification, and the three in-app callers of moved routes were repointed instead. A post-launch move of the same kind would need redirects and should not read this decision as precedent.

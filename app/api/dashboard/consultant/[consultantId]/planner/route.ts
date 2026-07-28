@@ -8,7 +8,7 @@ import {
   isPrivileged,
   forbiddenResponse,
 } from "@/lib/auth-helpers";
-import { resolveOrgScope } from "@/lib/api/scope/parse";
+import { resolveOrgScope, scopeOrgId } from "@/lib/api/scope/parse";
 
 // =============================================================================
 // Prisma Query Types - Derived from actual query shape for type safety
@@ -34,7 +34,6 @@ const webinarInclude = {
       },
     },
   },
-  waitlist: true,
 } satisfies Prisma.WebinarInclude;
 
 const classInclude = {
@@ -218,13 +217,14 @@ export async function GET(
     const callerMemberships = consultantUser
       ? await prisma.membership.findMany({
           where: { userId: consultantUser.userId, status: "ACTIVE" },
-          select: { organizationId: true, status: true },
+          select: { organizationId: true, status: true, role: true },
         })
       : [];
     const scopeResolution = resolveOrgScope({
       raw: url.searchParams.get("orgScope"),
       memberships: callerMemberships,
       userRole: session.user.role,
+      userId: session.user.id,
       // Self-scoped consultant endpoint.
       allowAllForOwner: true,
     });
@@ -243,6 +243,8 @@ export async function GET(
     // freshly created unbooked events, hiding them from the consultant's
     // own inventory view. Issue: #732 (planner inventory vs booking-history
     // semantics — flagged in the May 2026 readiness audit).
+    // `orgMember` pins an org exactly as `org` does — see scopeOrgId.
+    const plannerOrgId = scopeOrgId(scopeResolution.scope);
     const webinarApptOrg: Prisma.WebinarWhereInput | undefined =
       scopeResolution.scope.kind === "personal"
         ? {
@@ -251,10 +253,10 @@ export async function GET(
               { appointment: { is: { organizationId: null } } },
             ],
           }
-        : scopeResolution.scope.kind === "org"
+        : plannerOrgId
           ? {
               appointment: {
-                is: { organizationId: scopeResolution.scope.orgId },
+                is: { organizationId: plannerOrgId },
               },
             }
           : undefined;
@@ -266,10 +268,10 @@ export async function GET(
               { appointments: { some: { organizationId: null } } },
             ],
           }
-        : scopeResolution.scope.kind === "org"
+        : plannerOrgId
           ? {
               appointments: {
-                some: { organizationId: scopeResolution.scope.orgId },
+                some: { organizationId: plannerOrgId },
               },
             }
           : undefined;
@@ -399,7 +401,10 @@ export async function GET(
       success: true,
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "dashboard" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "dashboard" } },
+    );
     console.error("Error fetching planner data:", error);
     return NextResponse.json(
       { error: "Failed to fetch planner data" },

@@ -15,6 +15,7 @@ import {
   notifyCollaboratorRemoved,
 } from "@/lib/novu/service";
 import { getAppUrl } from "@/lib/url";
+import { scopeToWhereOrgId, type Scope } from "@/lib/api/scope/parse";
 
 type PlanType = "webinar" | "class";
 
@@ -69,6 +70,28 @@ function asPlanRole(planType: PlanType, role: string): CollaboratorRole | null {
 /**
  * Invite a collaborator to a webinar or class plan.
  */
+// #768 lockdown #12 — capability booleans, set from invite input. Default
+// false so an unspecified permission is never silently granted.
+// Enforced: canSeeAttendees (participant-roster GET).
+// TODO #768 — enforce canApprovePayment / canViewAnalytics / canEditEvent
+// once collaborator-facing payment-approval, analytics, and event-edit
+// surfaces exist; today they have no endpoint to gate, so only the SET lands.
+export interface CollaboratorPermissions {
+  canApprovePayment?: boolean;
+  canViewAnalytics?: boolean;
+  canEditEvent?: boolean;
+  canSeeAttendees?: boolean;
+}
+
+function normalizePermissions(permissions?: CollaboratorPermissions) {
+  return {
+    canApprovePayment: permissions?.canApprovePayment ?? false,
+    canViewAnalytics: permissions?.canViewAnalytics ?? false,
+    canEditEvent: permissions?.canEditEvent ?? false,
+    canSeeAttendees: permissions?.canSeeAttendees ?? false,
+  };
+}
+
 export async function inviteCollaborator(
   planType: PlanType,
   planId: string,
@@ -76,6 +99,7 @@ export async function inviteCollaborator(
   role: string,
   revenueSharePercentage: number,
   invitedById: string,
+  permissions?: CollaboratorPermissions,
 ): Promise<Collaborator | null> {
   // Validate percentage range
   if (revenueSharePercentage <= 0 || revenueSharePercentage > 90) {
@@ -84,6 +108,8 @@ export async function inviteCollaborator(
 
   const planRole = asPlanRole(planType, role);
   if (!planRole) return null;
+
+  const perms = normalizePermissions(permissions);
 
   // Verify the invited consultant profile exists before creating a collaborator record.
   // Without this check, a stale or fabricated consultantProfileId creates an orphaned row.
@@ -125,6 +151,7 @@ export async function inviteCollaborator(
               status: "PENDING",
               invitedById,
               respondedAt: null,
+              ...perms,
             },
           });
         }
@@ -140,6 +167,7 @@ export async function inviteCollaborator(
           revenueShareBps: pctToBps(revenueSharePercentage),
           status: "PENDING",
           invitedById,
+          ...perms,
         },
       });
     },
@@ -661,12 +689,23 @@ export async function getMyCollaborations(consultantProfileId: string) {
 /**
  * Get all plans owned by this consultant that have collaborators.
  * Returns plans with their collaborator lists and schedule data (host perspective).
+ *
+ * #org-appts / #1025 — split by the PLAN's org-ness, not the consultant's:
+ * `personal` (default) surfaces only B2C plans (organizationId: null), an
+ * `org` scope surfaces only that org's plans. Received invitations
+ * (getMyCollaborations) are unaffected — those still aggregate personally.
  */
-export async function getHostedCollaborations(consultantProfileId: string) {
+export async function getHostedCollaborations(
+  consultantProfileId: string,
+  scope: Scope = { kind: "personal" },
+) {
+  const orgFilter = scopeToWhereOrgId(scope);
+
   const [webinarPlans, classPlans] = await Promise.all([
     prisma.webinarPlan.findMany({
       where: {
         consultantProfileId,
+        ...orgFilter,
         collaborators: {
           some: { status: { in: ["PENDING", "ACCEPTED"] } },
         },
@@ -713,6 +752,7 @@ export async function getHostedCollaborations(consultantProfileId: string) {
     prisma.classPlan.findMany({
       where: {
         consultantProfileId,
+        ...orgFilter,
         collaborators: {
           some: { status: { in: ["PENDING", "ACCEPTED"] } },
         },

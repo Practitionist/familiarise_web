@@ -7,7 +7,12 @@ import type {
   Organization,
   Membership,
   MemberRole,
+  UserRole,
 } from "@prisma/client";
+import {
+  hasBackofficePermission,
+  type BackofficeSurface,
+} from "@/lib/auth/backoffice-permissions";
 
 /**
  * Requires API authentication and returns the session or an error response.
@@ -20,6 +25,16 @@ export async function requireApiAuth(): Promise<
   if (!session?.user?.id) {
     return {
       error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
+    };
+  }
+  // #693 defense-in-depth — ban-time session deletion + the sign-in gate
+  // cover the normal paths; this catches a session minted in the race window.
+  if (session.user.banned === true) {
+    return {
+      error: NextResponse.json(
+        { error: "Account suspended" },
+        { status: 403 },
+      ),
     };
   }
   return { session };
@@ -102,6 +117,39 @@ export async function requirePrivilegedAuth(): Promise<
     return {
       error: NextResponse.json(
         { error: "Forbidden — admin or staff access required" },
+        { status: 403 },
+      ),
+    };
+  }
+  return { session: auth.session };
+}
+
+/**
+ * Surface-scoped back-office auth — the granular flavor of
+ * `requirePrivilegedAuth`. Resolves the caller's UserRole against
+ * `BACKOFFICE_PERMISSIONS`, so the API route, the page guard, and the
+ * sidebar all agree on who may reach a surface.
+ *
+ * Prefer this over `requireAdminAuth` / `requireStaffAuth` on any route the
+ * merged `/dashboard/admin` renders: those two only express "is this an
+ * admin", which is why `admin/feedback` ended up calling `/api/staff/*` and
+ * `staff/refunds` calling `/api/admin/*`. Pick the surface, not the role.
+ *
+ * @see lib/auth/backoffice-permissions.ts for the matrix and its rationale.
+ */
+export async function requireBackofficeSurface(
+  surface: BackofficeSurface,
+): Promise<
+  { session: Session; error?: never } | { session?: never; error: NextResponse }
+> {
+  const auth = await requireApiAuth();
+  if (auth.error) return { error: auth.error };
+
+  const role = auth.session.user.role as UserRole | undefined;
+  if (!role || !hasBackofficePermission(role, surface)) {
+    return {
+      error: NextResponse.json(
+        { error: "Forbidden — insufficient back-office permissions" },
         { status: 403 },
       ),
     };
@@ -269,6 +317,10 @@ export async function authorizeEventAccess(
 // ============================================================================
 
 import { isAtLeastRole } from "@/lib/auth/role-ranks";
+import {
+  hasOrgPermission,
+  type OrgSurface,
+} from "@/lib/auth/org-permissions";
 
 export type OrgAccessGrant = {
   session: Session;
@@ -290,6 +342,14 @@ export type OrgAccessGrant = {
  */
 export type OrgCapabilityGate = {
   minimumRole?: MemberRole;
+  /**
+   * Surface grant from the org permission matrix
+   * (lib/auth/org-permissions.ts) — the preferred gate for surface access.
+   * Unlike `minimumRole` it expresses the operations/finance track split
+   * (SUPPORT reads operations; BILLING_ADMIN is operator-blind) that the
+   * rank ladder cannot. Both may be set; both must pass.
+   */
+  permission?: OrgSurface;
   canSponsor?: true;
   canHost?: true;
   fundingSource?: FundingSource;
@@ -321,8 +381,14 @@ export async function requireOrgAccess(
 ): Promise<({ error?: never } & OrgAccessGrant) | { error: NextResponse }> {
   const options: OrgCapabilityGate =
     typeof opts === "string" ? { minimumRole: opts } : (opts ?? {});
-  const { minimumRole, canSponsor, canHost, fundingSource, requireActive } =
-    options;
+  const {
+    minimumRole,
+    permission,
+    canSponsor,
+    canHost,
+    fundingSource,
+    requireActive,
+  } = options;
 
   const auth = await requireApiAuth();
   if (auth.error) return { error: auth.error };
@@ -420,6 +486,7 @@ export async function requireOrgAccess(
       consultantProfileId: null,
       payoutRecipient: "SELF",
       rateCardOverrideId: null,
+      exclusiveEngagement: false,
       betterAuthMemberId: null,
       // PR #655 SCIM addition — the stub satisfies the Membership type
       // by tracking every schema column. Admin sessions never have a
@@ -457,6 +524,15 @@ export async function requireOrgAccess(
     return {
       error: NextResponse.json(
         { error: `Forbidden — ${minimumRole} or higher required` },
+        { status: 403 },
+      ),
+    };
+  }
+
+  if (permission && !hasOrgPermission(member.role, permission)) {
+    return {
+      error: NextResponse.json(
+        { error: `Forbidden — your role does not grant ${permission}` },
         { status: 403 },
       ),
     };

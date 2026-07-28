@@ -24,6 +24,7 @@ import {
   recordSystemError,
 } from "../../lib/enterprise/system-events";
 import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
+import { freezeWalletSpend } from "../../lib/payments/wallet-freeze";
 import * as Sentry from "@sentry/nextjs";
 
 async function main(): Promise<void> {
@@ -102,6 +103,46 @@ async function main(): Promise<void> {
           },
         },
       );
+
+      // #837 — a wallet cache/journal drift means the balance can't be trusted,
+      // so freeze spend on each drifted account (scoped, not platform-wide) and
+      // page P0. Only WALLET_BALANCE_DRIFT freezes; other finding kinds page via
+      // the captureException above but don't gate spend.
+      const walletDrift = report.findings.filter(
+        (f) => f.kind === "WALLET_BALANCE_DRIFT" && f.billingAccountId,
+      );
+      for (const f of walletDrift) {
+        const froze = await freezeWalletSpend({
+          billingAccountId: f.billingAccountId!,
+          organizationId: f.organizationId ?? null,
+          reason: `ledger reconcile ${report.id}: wallet cache ${f.actualPaise}p ≠ journal ${f.expectedPaise}p (Δ${f.deltaPaise}p)`,
+        });
+        Sentry.captureException(
+          new Error(
+            `WALLET_BALANCE_DRIFT — wallet spend frozen for billing account ${f.billingAccountId}`,
+          ),
+          {
+            level: "fatal",
+            tags: { subsystem: "jobs", job: "reconcile-ledgers" },
+            contexts: {
+              wallet: {
+                billingAccountId: f.billingAccountId,
+                organizationId: f.organizationId ?? null,
+                // JSON can't serialize BigInt; walletBalance is BigInt at runtime.
+                expectedPaise: Number(f.expectedPaise),
+                actualPaise: Number(f.actualPaise),
+                deltaPaise: Number(f.deltaPaise),
+                reportId: report.id,
+                newlyFrozen: froze,
+              },
+            },
+          },
+        );
+      }
+      // #837 — captureException queues asynchronously; process.exit would drop
+      // the discrepancy alert + wallet-freeze P0 pages before the transport
+      // flushes. Drain first so the pages actually reach Sentry.
+      await Sentry.flush(2000);
       process.exit(2);
     }
   } catch (error) {
@@ -121,6 +162,7 @@ async function main(): Promise<void> {
       summary: "Ledger reconciliation crashed",
       err: error,
     });
+    await Sentry.flush(2000);
     process.exit(1);
   } finally {
     await prisma.$disconnect();

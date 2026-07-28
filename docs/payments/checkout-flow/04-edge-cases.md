@@ -10,7 +10,6 @@
 4. [Capacity Edge Cases](#4-capacity-edge-cases)
 5. [Validation Edge Cases](#5-validation-edge-cases)
 6. [Mock Payment Mode](#6-mock-payment-mode)
-7. [Waitlist Management](#7-waitlist-management)
 8. [Multi-Session Handling](#8-multi-session-handling)
 9. [Code Locations Reference](#9-code-locations-reference)
 10. [Integration Points](#10-integration-points)
@@ -547,47 +546,6 @@ const currentParticipants = uniqueUserIds.size;
 
 **Edge Case:** User enrolled twice with different accounts → Counted as 2 participants.
 
-### 4.3 Waitlist Overflow
-
-**Scenario:** Waitlist is enabled, capacity is 10, 30 people want to join.
-
-**Current Behavior:**
-
-- First 10 get confirmed enrollment
-- Next 20 should join waitlist (functionality not in payment code)
-
-**Integration Point (Hypothetical):**
-
-```typescript
-// Check if waitlist exists for this event
-if (currentParticipants >= plan.capacity) {
-  if (event.waitlistEnabled) {
-    // Add to waitlist instead of failing
-    await tx.waitlistEntry.create({
-      data: {
-        userId,
-        eventId: event.id,
-        position: currentWaitlistSize + 1,
-      },
-    });
-
-    return {
-      status: "waitlisted",
-      position: currentWaitlistSize + 1,
-      message: "Added to waitlist",
-    };
-  } else {
-    throw new Error("Event is at capacity");
-  }
-}
-```
-
-**Note:** Waitlist management is not currently implemented in payment flow.
-
----
-
-## 5. Validation Edge Cases
-
 ### 5.1 Slot Time Validation
 
 **Issue:** No validation for slot time in the past.
@@ -790,112 +748,6 @@ sequenceDiagram
 - Pre-production testing
 - Integration testing with real gateways
 - Load testing (different performance profile)
-
----
-
-## 7. Waitlist Management
-
-### 7.1 Waitlist Architecture (Hypothetical)
-
-**Note:** Waitlist is NOT currently implemented in payment flow. This section describes recommended integration.
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                   Waitlist Integration Points                │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                ┌─────────────┼─────────────┬─────────────┐
-                │             │             │             │
-                ▼             ▼             ▼             ▼
-    ┌───────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
-    │  Capacity     │ │  User Joins  │ │ Cancellation │ │  Capacity    │
-    │  Full Check   │ │  Waitlist    │ │ Promotes    │ │  Increase    │
-    └───────────────┘ └──────────────┘ └──────────────┘ └──────────────┘
-```
-
-### 7.2 Recommended Waitlist Data Model
-
-```prisma
-model WaitlistEntry {
-  id        String   @id @default(uuid())
-  userId    String
-  eventId   String
-  eventType AppointmentsType
-  position  Int
-  status    WaitlistStatus
-  expiresAt DateTime?
-  notifiedAt DateTime?
-
-  user User @relation(fields: [userId], references: [id])
-  // Relations to specific event types...
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@unique([userId, eventId, eventType])
-  @@index([eventId, status, position])
-}
-
-enum WaitlistStatus {
-  WAITING       // On waitlist
-  NOTIFIED      // Slot available, notified
-  PROMOTED      // Joined from waitlist
-  EXPIRED       // Notification expired
-  CANCELLED     // User cancelled
-}
-```
-
-### 7.3 Waitlist Integration with Payment Flow
-
-```typescript
-// In checkout flow
-if (currentParticipants >= capacity) {
-  if (event.waitlistEnabled) {
-    // Option 1: Add to waitlist without payment
-    await addToWaitlist(userId, event.id);
-    return { status: "waitlisted" };
-
-    // Option 2: Create payment but keep PENDING until promoted
-    const payment = await createPaymentIntent({...});
-    await addToWaitlistWithPayment(userId, event.id, payment.id);
-    return { status: "waitlisted_with_reservation", payment };
-  } else {
-    throw new Error("Event is full");
-  }
-}
-```
-
-### 7.4 Waitlist Promotion Flow
-
-```typescript
-async function promoteFromWaitlist(eventId: string) {
-  // Find first waiting entry
-  const entry = await prisma.waitlistEntry.findFirst({
-    where: {
-      eventId,
-      status: "WAITING",
-    },
-    orderBy: { position: "asc" },
-  });
-
-  if (!entry) return null;
-
-  // Update status and send notification
-  await prisma.waitlistEntry.update({
-    where: { id: entry.id },
-    data: {
-      status: "NOTIFIED",
-      notifiedAt: new Date(),
-      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours
-    },
-  });
-
-  // Send notification to user
-  await sendWaitlistPromotionNotification(entry.userId, eventId);
-
-  return entry;
-}
-```
 
 ---
 

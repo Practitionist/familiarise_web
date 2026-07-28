@@ -3,14 +3,14 @@ import prisma from "@/lib/prisma";
 import { toPlain } from "@/lib/data/serialize";
 import type { Prisma } from "@prisma/client";
 import { marketplaceVisibilityWhere } from "@/lib/api/plans/visibility";
-import { generateProgramImageUrl } from "@/app/explore/programs/utils";
+import { generateProgramImageUrl } from "@/lib/explore/programs";
 import type {
   Program,
   ClassPlanProgram,
   WebinarPlanProgram,
   ProgramType,
   TopicWithCount,
-} from "@/app/explore/programs/utils";
+} from "@/lib/explore/programs";
 
 /**
  * Server-side data access for the explore programs page.

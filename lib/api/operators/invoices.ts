@@ -1,9 +1,11 @@
 /**
  * Shared operator invoice listing.
  *
- * Used by both `app/api/admin/invoices/route.ts` and
- * `app/api/staff/invoices/route.ts` — extracted to remove the previously
- * line-for-line duplicated query/response shape between the two routes.
+ * Used by `app/api/admin/invoices/route.ts`, which both back-office trees now
+ * call. This util was extracted when there were two routes duplicating the
+ * query/response shape line-for-line; the staff route has since been deleted
+ * rather than kept in sync, since `requirePrivilegedAuth` already admits both
+ * roles and nothing about the listing differed between them.
  *
  * "Invoices" are surfaced as Payment rows whose status is SUCCEEDED (or any
  * status the caller passes via `status`). The shared util takes the parsed

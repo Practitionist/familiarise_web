@@ -15,7 +15,7 @@
  */
 
 import prisma from "@/lib/prisma";
-import { WaitlistStatus, type Prisma } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 import type { Scope } from "@/lib/api/scope/parse";
 import { toPlain } from "@/lib/data/serialize";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
@@ -37,7 +37,7 @@ export async function readConsulteeEvents(
   consulteeId: string,
   scope: Scope,
 ): Promise<TConsulteeEventsResponse> {
-  // Get the userId from consultee profile to check waitlist memberships
+  // Get the userId from the consultee profile to match slot membership
   const consulteeProfile = await prisma.consulteeProfile.findUnique({
     where: { id: consulteeId },
     select: { userId: true },
@@ -171,37 +171,19 @@ export async function readConsulteeEvents(
         orderBy: { requestedAt: "desc" },
         take: EVENTS_TAKE,
       }),
-      // Webinars: User registered via appointment slots OR waitlisted
+      // Webinars the user registered for.
       prisma.webinar.findMany({
         where: {
-          OR: [
-            {
-              appointment: {
-                slotsOfAppointment: {
-                  // TTFB bound: the registered-via-slot branch only —
-                  // the user must own a slot AND it must be in-window.
-                  some: {
-                    user: { some: { id: userId } },
-                    startsAt: { gte: since },
-                  },
-                },
-                ...(oneApptOrgWhere ?? {}),
+          appointment: {
+            slotsOfAppointment: {
+              // TTFB bound: the user must own a slot AND it must be in-window.
+              some: {
+                user: { some: { id: userId } },
+                startsAt: { gte: since },
               },
             },
-            {
-              // Waitlist branch left unbounded by date — a waitlisted
-              // entry may have no scheduled slot yet. Org scope still
-              // applies (via the webinar's 1:1 appointment) so an org view
-              // can't leak waitlisted entries from another tenant/personal.
-              waitlist: {
-                some: {
-                  userId,
-                  status: { in: [WaitlistStatus.WAITING, WaitlistStatus.NOTIFIED, WaitlistStatus.BOOKED] },
-                },
-              },
-              ...(oneApptOrgWhere && { appointment: { is: oneApptOrgWhere } }),
-            },
-          ],
+            ...(oneApptOrgWhere ?? {}),
+          },
         },
         include: {
           webinarPlan: {
@@ -251,46 +233,25 @@ export async function readConsulteeEvents(
               payment: true,
             },
           },
-          waitlist: {
-            where: { userId },
-          },
         },
         orderBy: { createdAt: "desc" },
         take: EVENTS_TAKE,
       }),
-      // Classes: User registered via appointment slots OR waitlisted
+      // Classes the user enrolled in.
       prisma.class.findMany({
         where: {
-          OR: [
-            {
-              appointments: {
+          appointments: {
+            some: {
+              slotsOfAppointment: {
+                // TTFB bound: the user must own a slot AND it must be in-window.
                 some: {
-                  slotsOfAppointment: {
-                    // TTFB bound: registered-via-slot branch only — the
-                    // user must own a slot AND it must be in-window.
-                    some: {
-                      user: { some: { id: userId } },
-                      startsAt: { gte: since },
-                    },
-                  },
-                  ...(manyApptOrgWhere ?? {}),
+                  user: { some: { id: userId } },
+                  startsAt: { gte: since },
                 },
               },
+              ...(manyApptOrgWhere ?? {}),
             },
-            {
-              // Waitlist branch left unbounded by date — a waitlisted
-              // entry may have no scheduled slot yet. Org scope still
-              // applies (via any child appointment) so an org view can't
-              // leak waitlisted entries from another tenant/personal.
-              waitlist: {
-                some: {
-                  userId,
-                  status: { in: [WaitlistStatus.WAITING, WaitlistStatus.NOTIFIED, WaitlistStatus.BOOKED] },
-                },
-              },
-              ...(manyApptOrgWhere && { appointments: { some: manyApptOrgWhere } }),
-            },
-          ],
+          },
         },
         include: {
           classPlan: {
@@ -340,14 +301,11 @@ export async function readConsulteeEvents(
               payment: true,
             },
           },
-          waitlist: {
-            where: { userId },
-          },
         },
         orderBy: { createdAt: "desc" },
         take: EVENTS_TAKE,
       }),
-      // Trial sessions: Free trials requested by the consultee
+      // Trial sessions requested by the consultee
       prisma.trialSession.findMany({
         where: {
           consulteeProfileId: consulteeId,

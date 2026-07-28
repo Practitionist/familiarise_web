@@ -19,6 +19,10 @@ import {
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
 import { DashboardHeader } from "@/components/dashboard/PageScaffold";
+// Paise-aware and per-currency: the local helper this replaces divided by 100
+// and rounded to whole rupees, so 12,345 paise printed as ₹123 rather than
+// ₹123.45, and any currency with different minor-unit rules was wrong too.
+import { formatCurrencyAmount } from "@/utils/formatting";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   Search,
@@ -63,14 +67,6 @@ const getStatusIcon = (status: string) => {
     default:
       return null;
   }
-};
-
-const formatCurrency = (amount: number, currency: string = "INR") => {
-  return new Intl.NumberFormat("en-IN", {
-    style: "currency",
-    currency: currency,
-    maximumFractionDigits: 0,
-  }).format(amount / 100);
 };
 
 const formatDate = (dateString: string) => {
@@ -155,6 +151,10 @@ export function DisputesPage({
   const totalPages = data?.totalPages ?? 1;
   const total = data?.total ?? 0;
   const urgentCount = data?.urgentDisputes ?? 0;
+  // #997 secondary findings — server-computed, dashboard-wide (not the
+  // current page's rows via .filter()).
+  const underReviewCount = data?.stats?.underReviewCount ?? 0;
+  const wonCount = data?.stats?.wonCount ?? 0;
 
   const handleViewDispute = (disputeId: string) => {
     router.push(`${basePath}/disputes/${disputeId}`);
@@ -196,7 +196,7 @@ export function DisputesPage({
       key: "amount",
       header: "Amount",
       className: "font-medium",
-      cell: (dispute) => formatCurrency(dispute.amount, dispute.currency),
+      cell: (dispute) => formatCurrencyAmount(dispute.amountPaise, dispute.currency),
     },
     {
       key: "gateway",
@@ -319,9 +319,7 @@ export function DisputesPage({
               <Clock className="h-5 w-5 text-yellow-600" />
             </div>
             <div>
-              <p className="text-2xl font-bold">
-                {disputes.filter((d) => d.status === "UNDER_REVIEW").length}
-              </p>
+              <p className="text-2xl font-bold">{underReviewCount}</p>
               <p className="text-sm text-muted-foreground">Under Review</p>
             </div>
           </CardContent>
@@ -332,9 +330,7 @@ export function DisputesPage({
               <CheckCircle className="h-5 w-5 text-green-600" />
             </div>
             <div>
-              <p className="text-2xl font-bold">
-                {disputes.filter((d) => d.status === "WON").length}
-              </p>
+              <p className="text-2xl font-bold">{wonCount}</p>
               <p className="text-sm text-muted-foreground">Won</p>
             </div>
           </CardContent>
@@ -389,8 +385,6 @@ export function DisputesPage({
                 <SelectItem value="all">All Gateways</SelectItem>
                 <SelectItem value="STRIPE">Stripe</SelectItem>
                 <SelectItem value="RAZORPAY">Razorpay</SelectItem>
-                <SelectItem value="LEMON_SQUEEZY">Lemon Squeezy</SelectItem>
-                <SelectItem value="XFLOW">xFlow</SelectItem>
               </SelectContent>
             </Select>
           </div>

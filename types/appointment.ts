@@ -77,7 +77,6 @@ export type TWebinar = Prisma.WebinarGetPayload<{
           };
         };
         topics: true;
-
       };
     };
     appointment: {
@@ -93,7 +92,6 @@ export type TWebinar = Prisma.WebinarGetPayload<{
         payment: true;
       };
     };
-    waitlist: true;
   };
 }>;
 
@@ -116,7 +114,6 @@ export type TClass = Prisma.ClassGetPayload<{
         };
       };
     };
-    waitlist: true;
     appointments: {
       include: {
         slotsOfAppointment: {
@@ -170,6 +167,9 @@ export type TAppointment = Prisma.AppointmentGetPayload<{
             user: true;
           };
         };
+        // #997 Phase 3 — weekly-confirmed-call-count aggregate buckets by this
+        // column (ADR B9), read in app/api/slots/appointments/route.ts.
+        schedulingTimezone: true;
       };
     };
     webinar: {
@@ -181,7 +181,7 @@ export type TAppointment = Prisma.AppointmentGetPayload<{
                 user: true;
               };
             };
-    
+
             title: true;
           };
         };
@@ -196,7 +196,6 @@ export type TAppointment = Prisma.AppointmentGetPayload<{
                 user: true;
               };
             };
-    
           };
         };
       };

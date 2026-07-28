@@ -59,13 +59,15 @@ export async function GET(request: NextRequest) {
     // If specific plan is requested, check if it has trial enabled
     let planTrialEnabled = true;
     let planTrialDuration = 30;
+    let planTrialPriceInPaise = 0;
 
     if (subscriptionPlanId) {
       const plan = await prisma.subscriptionPlan.findUnique({
         where: { id: subscriptionPlanId },
         select: {
-          freeTrialEnabled: true,
-          freeTrialDurationMinutes: true,
+          trialEnabled: true,
+          trialDurationMinutes: true,
+          trialPriceInPaise: true,
           title: true,
         },
       });
@@ -77,20 +79,22 @@ export async function GET(request: NextRequest) {
         );
       }
 
-      planTrialEnabled = plan.freeTrialEnabled;
-      planTrialDuration = plan.freeTrialDurationMinutes;
+      planTrialEnabled = plan.trialEnabled;
+      planTrialDuration = plan.trialDurationMinutes;
+      planTrialPriceInPaise = plan.trialPriceInPaise;
     }
 
     // Get all plans with trial enabled for this consultant
     const plansWithTrialEnabled = await prisma.subscriptionPlan.findMany({
       where: {
         consultantProfileId,
-        freeTrialEnabled: true,
+        trialEnabled: true,
       },
       select: {
         id: true,
         title: true,
-        freeTrialDurationMinutes: true,
+        trialDurationMinutes: true,
+        trialPriceInPaise: true,
       },
     });
 
@@ -110,11 +114,12 @@ export async function GET(request: NextRequest) {
           : null,
         planTrialEnabled,
         planTrialDuration,
+        planTrialPriceInPaise,
         plansWithTrialEnabled,
         reason: !isEligible
           ? existingTrial
             ? "You have already requested or completed a trial with this consultant"
-            : "This plan does not offer free trials"
+            : "This plan does not offer trials"
           : null,
       },
     });

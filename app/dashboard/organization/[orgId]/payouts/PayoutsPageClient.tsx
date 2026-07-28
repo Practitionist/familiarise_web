@@ -57,10 +57,32 @@ interface PayoutItem {
   createdAt: string;
 }
 
+interface PayoutsResponse {
+  data: PayoutItem[];
+  pagination: { total: number; limit: number; offset: number; hasMore: boolean };
+  // #997 secondary findings — server-aggregated, org-wide (ignores the
+  // status filter/page) so the summary cards don't shift as the table is
+  // narrowed/paged.
+  stats: {
+    totalPaidPaise: number;
+    pendingPaise: number;
+    counts: Record<string, number>;
+  };
+}
+
+const PAGE_SIZE = 25;
+
 async function fetchPayouts(
   orgId: string,
-): Promise<{ data: PayoutItem[] }> {
-  const res = await fetch(`/api/organizations/${orgId}/payouts`);
+  offset: number,
+  status: StatusFilter,
+): Promise<PayoutsResponse> {
+  const params = new URLSearchParams({
+    limit: String(PAGE_SIZE),
+    offset: String(offset),
+  });
+  if (status !== "ALL") params.set("status", status);
+  const res = await fetch(`/api/organizations/${orgId}/payouts?${params}`);
   if (!res.ok) throw new Error("Failed to load payouts");
   return res.json();
 }
@@ -124,16 +146,17 @@ export function PayoutsPageClient({
   const { orgId } = use(params);
   const { isAtLeast } = useOrgRole(orgId);
   const { allowed } = useRequireOrgAccess(orgId, {
-    minRole: "MANAGER",
+    permission: "payouts.read",
     canHost: true,
   });
   const queryClient = useQueryClient();
   const [createError, setCreateError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
+  const [page, setPage] = useState(1);
 
-  const { data, isPending } = useQuery({
-    queryKey: ["org-payouts", orgId],
-    queryFn: () => fetchPayouts(orgId),
+  const { data, isPending, isError } = useQuery({
+    queryKey: ["org-payouts", orgId, page, statusFilter],
+    queryFn: () => fetchPayouts(orgId, (page - 1) * PAGE_SIZE, statusFilter),
     enabled: allowed,
   });
 
@@ -164,33 +187,25 @@ export function PayoutsPageClient({
   });
 
   const payouts = data?.data ?? [];
+  const pagination = data?.pagination;
+  const totalPages = pagination ? Math.max(1, Math.ceil(pagination.total / PAGE_SIZE)) : 1;
 
-  // Statuses come from prisma `enum PayoutStatus`: PENDING / APPROVED /
-  // PROCESSING / COMPLETED / FAILED / CANCELLED. "Total paid out"
-  // counts only fully-disbursed COMPLETED payouts; "Pending" rolls up
-  // everything in flight (PENDING approval, APPROVED but not sent,
-  // and PROCESSING).
-  const completedPayouts = payouts.filter((p) => p.status === "COMPLETED");
-  const totalPaid = completedPayouts.reduce(
-    (s, p) => s + p.netPayoutPaise,
-    0,
-  );
-  const pendingAmount = payouts
-    .filter(
-      (p) =>
-        p.status === "PENDING" ||
-        p.status === "APPROVED" ||
-        p.status === "PROCESSING",
-    )
-    .reduce((s, p) => s + p.netPayoutPaise, 0);
+  // #997 secondary findings — server-aggregated org-wide totals (was an
+  // unbounded fetch-all + per-render reduce). Statuses come from prisma
+  // `enum PayoutStatus`: PENDING / APPROVED / PROCESSING / COMPLETED /
+  // FAILED / CANCELLED. "Total paid out" counts only fully-disbursed
+  // COMPLETED payouts; "Pending" rolls up everything in flight.
+  const stats = data?.stats;
+  const totalPaid = stats?.totalPaidPaise ?? 0;
+  const pendingAmount = stats?.pendingPaise ?? 0;
+  const completedCount = stats?.counts.COMPLETED ?? 0;
+  const totalPayoutsCount = stats?.counts.total ?? 0;
+  const hasProcessingPayouts = (stats?.counts.PROCESSING ?? 0) > 0;
 
-  // Client-side filter over the already-fetched rows (#777 §B). Summary
-  // cards above stay on the full set so the totals don't shift as you
-  // narrow the table.
-  const visiblePayouts =
-    statusFilter === "ALL"
-      ? payouts
-      : payouts.filter((p) => p.status === statusFilter);
+  // The list itself is now server-paginated + server-filtered (`status`
+  // query param), so `payouts` is already the page to render — no more
+  // client-side re-filtering over an unbounded fetch (#777 §B superseded).
+  const visiblePayouts = payouts;
 
   if (!allowed) return null;
 
@@ -207,6 +222,21 @@ export function PayoutsPageClient({
               <StatCardSkeleton key={i} />
             ))}
           </DashboardGrid>
+        ) : isError || !data ? (
+          /* Without this the failure path fell straight through to
+             `stats?.totalPaidPaise ?? 0` and rendered "₹0.00 paid out ·
+             ₹0.00 pending · No payouts yet." — a fetch error was
+             indistinguishable from a genuinely empty settlement ledger.
+             /home already handles this correctly; these surfaces did not. */
+          <div className="rounded-lg border border-border bg-card p-6 text-sm">
+            <p className="font-medium text-foreground">
+              Couldn&apos;t load payouts
+            </p>
+            <p className="mt-1 text-muted-foreground">
+              We couldn&apos;t reach the settlement ledger. This is a loading
+              problem, not a zero balance — refresh to try again.
+            </p>
+          </div>
         ) : (
           <>
             {/* Summary cards */}
@@ -214,7 +244,7 @@ export function PayoutsPageClient({
               <StatCard
                 title="Total paid out"
                 value={formatCurrencyAmount(totalPaid, "INR")}
-                subtitle={`${completedPayouts.length} payouts`}
+                subtitle={`${completedCount} payouts`}
                 icon={Wallet}
                 variant="success"
               />
@@ -226,7 +256,7 @@ export function PayoutsPageClient({
               />
               <StatCard
                 title="Total payouts"
-                value={payouts.length}
+                value={totalPayoutsCount}
                 icon={CheckCircle2}
               />
             </DashboardGrid>
@@ -234,8 +264,7 @@ export function PayoutsPageClient({
             {/* #776 §B: disbursement is gated until live payouts go-live;
                 say so honestly rather than letting PROCESSING rows imply
                 money is moving. */}
-            {!livePayoutsEnabled &&
-              payouts.some((p) => p.status === "PROCESSING") && (
+            {!livePayoutsEnabled && hasProcessingPayouts && (
                 <div className="mt-4 flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
                   <PauseCircle className="mt-0.5 h-4 w-4 shrink-0" />
                   <p>
@@ -269,10 +298,13 @@ export function PayoutsPageClient({
             <Card className="mt-6">
               <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0">
                 <CardTitle className="text-base">Payout History</CardTitle>
-                {payouts.length > 0 && (
+                {totalPayoutsCount > 0 && (
                   <Select
                     value={statusFilter}
-                    onValueChange={(v) => setStatusFilter(v as StatusFilter)}
+                    onValueChange={(v) => {
+                      setStatusFilter(v as StatusFilter);
+                      setPage(1);
+                    }}
                   >
                     <SelectTrigger className="h-8 w-[180px]">
                       <SelectValue />
@@ -288,7 +320,7 @@ export function PayoutsPageClient({
                 )}
               </CardHeader>
               <CardContent>
-                {payouts.length === 0 ? (
+                {totalPayoutsCount === 0 ? (
                   <p className="text-sm text-zinc-500 text-center py-8">
                     No payouts yet. Earnings will accumulate and you can create a
                     payout batch when ready.
@@ -425,6 +457,32 @@ export function PayoutsPageClient({
                 )}
               </CardContent>
             </Card>
+
+            {/* Pagination — the list is now server-paginated (#997 secondary
+                findings), so paging is a real fetch, not a client slice. */}
+            {totalPages > 1 && (
+              <div className="mt-4 flex justify-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={page <= 1}
+                  onClick={() => setPage((p) => p - 1)}
+                >
+                  Previous
+                </Button>
+                <span className="flex items-center px-4 text-sm text-zinc-500">
+                  Page {page} of {totalPages}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={page >= totalPages}
+                  onClick={() => setPage((p) => p + 1)}
+                >
+                  Next
+                </Button>
+              </div>
+            )}
           </>
         )}
       </DashboardContent>

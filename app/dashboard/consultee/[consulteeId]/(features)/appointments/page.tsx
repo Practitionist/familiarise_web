@@ -5,6 +5,7 @@ import {
 } from "@tanstack/react-query";
 import AppointmentsPageClient from "./AppointmentsPageClient";
 import { readConsulteeEvents } from "@/lib/data/consultee-events-read";
+import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
 
 type PageProps = {
   params: Promise<{ consulteeId: string }>;
@@ -15,6 +16,10 @@ export default async function AppointmentsPage({
   params,
 }: Readonly<PageProps>) {
   const { consulteeId } = await params;
+  // Ownership is enforced HERE, not by the layout: the layout is a client
+  // component, so its check runs after this server render has already read
+  // and streamed the data. See lib/auth/personal-dashboard-access.ts.
+  await requirePersonalProfileAccess("consultee", consulteeId);
   const queryClient = new QueryClient();
 
   // #890 — SSR prefetch the default (personal) scope so the client

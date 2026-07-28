@@ -1,9 +1,12 @@
 /**
- * DPDP (Digital Personal Data Protection Act, 2023) — INDIA COMPLIANCE STUB.
+ * DPDP (Digital Personal Data Protection Act, 2023) — INDIA COMPLIANCE.
  *
- * STATUS: stub. `recordConsent` creates a ConsentArtifact row with a mock
- * hash; `checkConsent` returns `true` unconditionally. Live impl lands in
- * a follow-up PR.
+ * STATUS: consent primitives are LIVE. `recordConsent` writes a ConsentArtifact
+ * row with a real SHA-256 payload hash; `checkConsent` is fail-closed — it
+ * returns `true` only when a non-withdrawn, non-expired artifact exists for the
+ * (user, purpose) pair, else `false`. The substantive operator obligations
+ * below (Consent Manager registration, breach reporting, rights fulfilment)
+ * remain follow-up work.
  *
  * ─────────────────────────────────────────────────────────────────────────
  * LIVE IMPLEMENTATION REQUIREMENTS (follow-up PR)
@@ -183,6 +186,42 @@ export async function checkConsent(params: {
   });
 
   return artifact !== null;
+}
+
+/**
+ * Batch form of `checkConsent` (#1019) — resolve consent for many users in ONE
+ * query instead of N. Same fail-closed semantics (a live, non-withdrawn,
+ * in-retention artifact carrying the purpose code). Returns the set of userIds
+ * that HAVE consent; absentees are implicitly denied. Pool-safe for large
+ * exports where a per-user loop (sequential or Promise.all) would either be slow
+ * or spike the connection pool.
+ */
+export async function checkConsentBatch(params: {
+  userIds: string[];
+  purposeCode: PurposeCode;
+}): Promise<Set<string>> {
+  const { userIds, purposeCode } = params;
+  if (userIds.length === 0) return new Set();
+
+  // Chunk the id list so a very large org can't overflow Postgres's bind
+  // parameter ceiling (65,535). 10k per query keeps the round-trip count tiny
+  // while staying well under the limit.
+  const CHUNK = 10_000;
+  const now = new Date();
+  const consented = new Set<string>();
+  for (let i = 0; i < userIds.length; i += CHUNK) {
+    const artifacts = await prisma.consentArtifact.findMany({
+      where: {
+        userId: { in: userIds.slice(i, i + CHUNK) },
+        purposeCodes: { has: purposeCode },
+        withdrawnAt: null,
+        auditRetainedUntil: { gt: now },
+      },
+      select: { userId: true },
+    });
+    for (const a of artifacts) consented.add(a.userId);
+  }
+  return consented;
 }
 
 /**

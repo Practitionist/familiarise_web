@@ -20,4 +20,6 @@ export interface Payout {
   approvedBy?: string;
   processedAt?: string;
   failureReason?: string;
+  /** #863 — MSME §43B(h) statutory pay-by date; null for non-MSME vendors. */
+  mustPayByDate?: string | null;
 }

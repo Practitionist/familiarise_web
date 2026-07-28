@@ -13,6 +13,11 @@ import { getSession } from "@/lib/auth-server";
 import { isPrivileged } from "@/lib/auth-helpers";
 import { refundPayment } from "@/lib/payments/operations/refund";
 import {
+  refundWholeEventPayments,
+  type WholeEventRefundSummary,
+} from "@/lib/payments/operations/event-refunds";
+import { hasActiveDisputeForAppointment } from "@/lib/payments/dispute-guard";
+import {
   computeRefundPct,
   parsePolicySnapshot,
 } from "@/lib/payments/operations/cancellation-policy";
@@ -186,6 +191,19 @@ export async function POST(
       planTitle = appointment.subscription.subscriptionPlan?.title;
     }
 
+    // #1008 — refuse to cancel while a dispute is live on this appointment: the
+    // cancel would fire refunds that double-pay against a gateway chargeback.
+    if (await hasActiveDisputeForAppointment(appointmentId)) {
+      return NextResponse.json(
+        {
+          error:
+            "This appointment has an open payment dispute and can't be cancelled until it resolves.",
+          code: "DISPUTE_ACTIVE",
+        },
+        { status: 409 },
+      );
+    }
+
     // Prepare cancellation data
     const cancellationData = {
       status: "CANCELLED" as const,
@@ -303,8 +321,9 @@ export async function POST(
     // B1 — policy-driven refund, AFTER the cancel tx commits (refundPayment
     // runs its own Serializable tx; the CAS above guarantees this block runs
     // at most once per appointment — a second cancel 409s before reaching it).
-    // Scope: consultation/subscription. Webinar/class buyer refunds belong to
-    // the participant-removal flow, not whole-event cancellation.
+    // Scope here: consultation/subscription (single-payment, policy-tiered).
+    // Whole-event class/webinar refunds are handled just below via the
+    // reversal engine (#776 §C).
     let refund: { amountRefundedPaise: number; refundPct: number } | null =
       null;
     const isExclusiveType =
@@ -344,7 +363,12 @@ export async function POST(
         } catch (refundErr) {
           // The cancellation itself stands; a failed refund must be visible,
           // not silently swallowed — surface for ops + tell the caller.
-          Sentry.captureException(refundErr instanceof Error ? refundErr : new Error(String(refundErr)), { tags: { subsystem: "appointments" } });
+          Sentry.captureException(
+            refundErr instanceof Error
+              ? refundErr
+              : new Error(String(refundErr)),
+            { tags: { subsystem: "appointments" } },
+          );
           console.error(
             `[cancel] refund failed for payment ${paidPayment.id}:`,
             refundErr,
@@ -354,6 +378,23 @@ export async function POST(
       } else {
         refund = { amountRefundedPaise: 0, refundPct };
       }
+    }
+
+    // #776 §C — whole-event (class/webinar) cancellation refunds every attendee
+    // in full through the reversal engine: org-funded seats reverse in-ledger
+    // (CLASS_MULTI), card/mock seats credit the gateway. Same at-most-once CAS
+    // guarantee as the block above. Attendees didn't leave voluntarily (the
+    // event was cancelled on them), so this is a full refund, not policy-tiered.
+    let eventRefund: WholeEventRefundSummary | null = null;
+    if (appointment.class || appointment.webinar) {
+      const eventKind = appointment.class ? "class" : "webinar";
+      const eventId = appointment.class?.id ?? appointment.webinar!.id;
+      eventRefund = await refundWholeEventPayments(
+        eventKind,
+        eventId,
+        `whole-event ${eventKind} cancellation (${validatedData.reason ?? "cancelled"})`,
+        session.user.id,
+      );
     }
 
     // Notification metadata (for fire-and-forget notifications after transaction)
@@ -427,12 +468,7 @@ export async function POST(
       }
     }
 
-    // Note: This route cancels the entire event (sets parent to CANCELLED),
-    // so we do NOT notify waitlisted users — there is no "spot" to offer.
-    // Waitlist notifications should only fire when a participant leaves an
-    // otherwise-active event (handled in participant removal flow).
-
-    return NextResponse.json({ ...result, refund });
+    return NextResponse.json({ ...result, refund, eventRefund });
   } catch (error) {
     if (error instanceof Error && "httpStatus" in error) {
       const status =
@@ -455,7 +491,10 @@ export async function POST(
       );
     }
 
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "appointments" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "appointments" } },
+    );
     console.error("Error canceling appointment:", error);
     return NextResponse.json(
       { error: "Failed to cancel appointment" },

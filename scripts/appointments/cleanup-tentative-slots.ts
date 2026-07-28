@@ -65,7 +65,10 @@ async function cleanupTentativeSlotsUnlocked(): Promise<TentativeSlotCleanupResu
     const staleTentativeSlots = await prisma.slotOfAppointment.findMany({
       where: {
         isTentative: true,
-        createdAt: { lt: expirationDate },
+        // Grace runs from the LAST write, not creation: a reschedule flips
+        // isTentative on an old row, and measuring from createdAt gave those
+        // slots zero grace before deletion.
+        updatedAt: { lt: expirationDate },
         appointment: {
           payment: {
             none: {
@@ -94,6 +97,31 @@ async function cleanupTentativeSlotsUnlocked(): Promise<TentativeSlotCleanupResu
                     status: {
                       notIn: ["PENDING", "APPROVED_PENDING_PAYMENT"],
                     },
+                  },
+                },
+              ],
+            },
+            // Group events: a SCHEDULED/IN_PROGRESS webinar or class with
+            // tentative slots is mid-reschedule awaiting a new time — the
+            // guard set above only covered request-status event types, so
+            // these were swept (dropping attendee links) within the grace
+            // window of any unpaid event.
+            {
+              OR: [
+                { webinar: null },
+                {
+                  webinar: {
+                    status: { notIn: ["SCHEDULED", "IN_PROGRESS"] },
+                  },
+                },
+              ],
+            },
+            {
+              OR: [
+                { class: null },
+                {
+                  class: {
+                    status: { notIn: ["SCHEDULED", "IN_PROGRESS"] },
                   },
                 },
               ],
@@ -133,7 +161,9 @@ async function cleanupTentativeSlotsUnlocked(): Promise<TentativeSlotCleanupResu
     for (const slot of staleTentativeSlots) {
       console.log(`\nProcessing tentative slot ${slot.id}`);
       console.log(`   Appointment ID: ${slot.appointmentId}`);
-      console.log(`   Created: ${slot.createdAt.toISOString()}`);
+      console.log(
+        `   Created: ${slot.createdAt.toISOString()} (last write ${slot.updatedAt.toISOString()})`,
+      );
       console.log(
         `   Slot time: ${slot.startsAt.toISOString()} - ${slot.endsAt.toISOString()}`,
       );

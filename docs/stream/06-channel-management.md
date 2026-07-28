@@ -103,8 +103,8 @@ if (consultation.status === "APPROVED") {
   await createConsultationChannel(consultation.id);
 }
 
-// Lazy for events (created when first user joins waitlist)
-if (webinar.waitlist.length === 1) {
+// Lazy for events (created when the first attendee registers)
+if (registeredCount === 1) {
   await createWebinarChannel(webinar.id);
 }
 ```
@@ -142,18 +142,7 @@ export const syncUserEventChannels = async (userId: string) => {
       throw new Error("User not found");
     }
 
-    // WEBINARS: Get all webinars where user is participating
-    // Method 1: Waitlist participation
-    const webinarsFromWaitlist = await prisma.webinar.findMany({
-      where: {
-        waitlist: {
-          some: { userId: userId },
-        },
-      },
-      select: { id: true },
-    });
-
-    // Method 2: Appointment participation
+    // WEBINARS: every webinar the user holds a session slot on
     const webinarsFromAppointments = await prisma.webinar.findMany({
       where: {
         appointment: {
@@ -169,18 +158,12 @@ export const syncUserEventChannels = async (userId: string) => {
       select: { id: true },
     });
 
-    // Combine and deduplicate webinar IDs
     const allWebinarIds = Array.from(
-      new Set([
-        ...webinarsFromWaitlist.map((w) => w.id),
-        ...webinarsFromAppointments.map((w) => w.id),
-      ]),
+      new Set(webinarsFromAppointments.map((w) => w.id)),
     );
 
     console.log(
-      `User ${userId}: Found ${webinarsFromWaitlist.length} webinars from waitlist, ` +
-        `${webinarsFromAppointments.length} from appointments, ` +
-        `${allWebinarIds.length} total unique webinars`,
+      `User ${userId}: Found ${allWebinarIds.length} webinars`,
     );
 
     // Add user to all webinar channels
@@ -188,18 +171,7 @@ export const syncUserEventChannels = async (userId: string) => {
       await addUserToEventChannel("webinar", webinarId, userId);
     }
 
-    // CLASSES: Get all classes where user is participating
-    // Method 1: Waitlist participation
-    const classesFromWaitlist = await prisma.class.findMany({
-      where: {
-        waitlist: {
-          some: { userId: userId },
-        },
-      },
-      select: { id: true },
-    });
-
-    // Method 2: Appointment participation
+    // CLASSES: every class the user holds session slots on
     const classesFromAppointments = await prisma.class.findMany({
       where: {
         appointments: {
@@ -217,19 +189,11 @@ export const syncUserEventChannels = async (userId: string) => {
       select: { id: true },
     });
 
-    // Combine and deduplicate class IDs
     const allClassIds = Array.from(
-      new Set([
-        ...classesFromWaitlist.map((c) => c.id),
-        ...classesFromAppointments.map((c) => c.id),
-      ]),
+      new Set(classesFromAppointments.map((c) => c.id)),
     );
 
-    console.log(
-      `User ${userId}: Found ${classesFromWaitlist.length} classes from waitlist, ` +
-        `${classesFromAppointments.length} from appointments, ` +
-        `${allClassIds.length} total unique classes`,
-    );
+    console.log(`User ${userId}: Found ${allClassIds.length} classes`);
 
     // Add user to all class channels
     for (const classId of allClassIds) {
@@ -283,44 +247,46 @@ export const syncUserEventChannels = async (userId: string) => {
 
 ## Channel Membership Rules
 
-### Waitlist Channel Membership
+### Who May Talk to Whom (Policy)
 
-Only waitlist users with status `BOOKED` are included in event channel membership. Users with WAITING or NOTIFIED status are not added to Stream channels. This prevents users who have not yet confirmed their booking from accessing event chat.
+The platform deliberately supports only three conversation shapes. First, a consultant and a consultee who transact together share exactly one direct-message channel: consultations, subscriptions, and ad-hoc DMs between the same pair all reuse the deterministic `dm-<idA>-<idB>` channel id (the two user ids are sorted before joining, so the pair can never produce a duplicate channel regardless of who initiates). Second, group events — webinars and classes — put every booked attendee and the host into one shared event channel, and this is the sanctioned space where consultees can talk alongside other consultees. Third, consultants collaborating on a joint webinar or class get a plan-scoped `collab-{webinar|class}-{planId}` channel that is reconciled against the accepted collaborator list.
+
+Consultee↔consultee direct messages are intentionally not supported. This is a decision, not a gap: peer-to-peer DMs on a marketplace are only safe with mature moderation infrastructure, and the block stays until the moderation enforcement shipped for #693 and the #899 hardening have settled in production. The full rationale is recorded in `docs/decisions/2026-07-11-moderation-enforcement-and-peer-chat-block.md`. There is no consultee↔consultee code path to disable — reviewers should keep it that way.
+
+### Server-Side Authorization for Membership Changes
+
+Stream's server-side API bypasses its own permission system whenever a valid API secret is presented, so every membership mutation must be authorized in our application layer before the Stream call. The `addMemberToChannel` server action requires a signed-in session and allows only admins, staff, or the channel's creator to add members; non-privileged callers can no longer lazily create channels they do not own. The channel-creation route applies the same rule: event channels require the caller to be the event's creator (or privileged), and custom channels are admin/staff-only.
 
 ### Participant Sources
 
-Users can be added to event channels through multiple paths:
+Event channel membership follows the event's session slots: a user is a member
+if they are connected to one, which is exactly what registering does. The host
+is added separately.
 
 ```mermaid
 graph TB
     User[User]
 
     subgraph "Webinar Membership"
-        W1[Waitlist Entry]
         W2[Appointment Slot]
         W3[Host/Consultant]
     end
 
     subgraph "Class Membership"
-        C1[Waitlist Entry]
         C2[Appointment Slot]
         C3[Instructor/Consultant]
     end
 
-    User -->|Joins Waitlist| W1
-    User -->|Books Appointment| W2
+    User -->|Registers| W2
     User -->|Creates Plan| W3
 
-    User -->|Joins Waitlist| C1
-    User -->|Books Appointment| C2
+    User -->|Enrolls| C2
     User -->|Creates Plan| C3
 
-    W1 --> WChannel[Webinar Channel]
-    W2 --> WChannel
+    W2 --> WChannel[Webinar Channel]
     W3 --> WChannel
 
-    C1 --> CChannel[Class Channel]
-    C2 --> CChannel
+    C2 --> CChannel[Class Channel]
     C3 --> CChannel
 
     style WChannel fill:#4fc3f7
@@ -329,28 +295,20 @@ graph TB
 
 ### Deduplication Strategy
 
-**Problem**: User might join through multiple paths (waitlist + appointment)
+**Problem**: a webinar's registrants are connected to every one of its slots, so
+the same user id appears once per slot.
 
-**Solution**: Deduplicate before adding to channel
+**Solution**: Deduplicate before adding to the channel
 
 ```typescript
-// Collect from all sources
-const waitlistIds = webinar.waitlist.map((entry) => entry.userId);
 const appointmentIds =
   webinar.appointment?.slotsOfAppointment?.flatMap((slot) =>
     slot.user.map((user) => user.id),
   ) || [];
 
-// Deduplicate using Set
-const allParticipantIds = Array.from(
-  new Set([...waitlistIds, ...appointmentIds]),
-);
+const allParticipantIds = Array.from(new Set(appointmentIds));
 
-console.log(
-  `Waitlist: ${waitlistIds.length}, ` +
-    `Appointments: ${appointmentIds.length}, ` +
-    `Unique: ${allParticipantIds.length}`,
-);
+console.log(`Unique participants: ${allParticipantIds.length}`);
 ```
 
 ### Host Inclusion
@@ -457,29 +415,25 @@ flowchart TB
 
     GetUser --> CheckUser{User exists?}
     CheckUser -->|No| Error1[Throw: User not found]
-    CheckUser -->|Yes| GetWebinarsWaitlist
+    CheckUser -->|Yes| GetWebinarsAppts
 
     subgraph "Webinar Membership"
-        GetWebinarsWaitlist[Query webinars<br/>where user in waitlist]
-        GetWebinarsAppts[Query webinars<br/>where user in appointments]
+        GetWebinarsAppts[Query webinars<br/>where user holds a slot]
         DedupeWebinars[Deduplicate webinar IDs]
 
-        GetWebinarsWaitlist --> DedupeWebinars
         GetWebinarsAppts --> DedupeWebinars
     end
 
     DedupeWebinars --> AddToWebinars[For each webinar:<br/>addUserToEventChannel]
 
     subgraph "Class Membership"
-        GetClassesWaitlist[Query classes<br/>where user in waitlist]
-        GetClassesAppts[Query classes<br/>where user in appointments]
+        GetClassesAppts[Query classes<br/>where user holds slots]
         DedupeClasses[Deduplicate class IDs]
 
-        GetClassesWaitlist --> DedupeClasses
         GetClassesAppts --> DedupeClasses
     end
 
-    AddToWebinars --> GetClassesWaitlist
+    AddToWebinars --> GetClassesAppts
     DedupeClasses --> AddToClasses[For each class:<br/>addUserToEventChannel]
 
     AddToClasses --> IsConsultant{User is<br/>consultant?}
@@ -511,12 +465,10 @@ flowchart TB
 
 1. **User Retrieval**: Fetch user with consultant/consultee profiles
 2. **Webinar Collection**:
-   - Query waitlist entries
    - Query appointment slots
    - Deduplicate IDs
 3. **Webinar Channel Addition**: Add user to all webinar channels
 4. **Class Collection**:
-   - Query waitlist entries
    - Query appointment slots
    - Deduplicate IDs
 5. **Class Channel Addition**: Add user to all class channels
@@ -719,11 +671,11 @@ export async function syncAllUserChannels() {
 ### Add to Channel on Event Join
 
 ```typescript
-// When user joins webinar waitlist
+// When a user registers for a webinar
 async function handleJoinWebinar(userId: string, webinarId: string) {
   try {
-    // 1. Add to database waitlist
-    await prisma.webinarWaitlist.create({
+    // 1. Record the registration
+    await prisma.slotOfAppointment.update({
       data: {
         userId,
         webinarId,
@@ -750,13 +702,13 @@ async function handleJoinWebinar(userId: string, webinarId: string) {
 **Good**:
 
 ```typescript
-const allIds = Array.from(new Set([...waitlistIds, ...appointmentIds]));
+const allIds = Array.from(new Set(appointmentIds));
 ```
 
 **Bad**:
 
 ```typescript
-const allIds = [...waitlistIds, ...appointmentIds]; // Duplicates possible
+const allIds = appointmentIds; // Duplicates possible
 ```
 
 ### 2. Include Creator in Members
@@ -806,7 +758,6 @@ await channel.addMembers([userId]);
 ```typescript
 console.log(
   `Webinar ${webinarId} participants: ` +
-    `${waitlistCount} from waitlist, ` +
     `${appointmentCount} from appointments, ` +
     `${uniqueCount} total unique`,
 );

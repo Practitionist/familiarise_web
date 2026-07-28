@@ -49,7 +49,7 @@ import { cn } from "@/utils/tailwind";
 // #248: no static Stream SDK / lib/meeting import — the shared hook
 // lazy-loads both at click time. Type-only imports are erased.
 import type { MeetingSlot } from "@/lib/meeting";
-import { useLazyJoinMeeting } from "../shared/hooks/useLazyJoinMeeting";
+import { useLazyJoinMeeting } from "@/hooks/scheduling/useLazyJoinMeeting";
 import {
   TrialScheduleCalendar,
   SelectedSlot,
@@ -73,7 +73,7 @@ interface TrialSession {
   subscriptionPlan: {
     id: string;
     title: string;
-    freeTrialDurationMinutes: number;
+    trialDurationMinutes: number;
   };
   appointment: {
     id: string;
@@ -92,7 +92,7 @@ interface TrialSession {
 interface SubscriptionPlan {
   id: string;
   title: string;
-  freeTrialEnabled: boolean;
+  trialEnabled: boolean;
 }
 
 function formatStatus(status: string): string {
@@ -249,7 +249,7 @@ export function TrialsTab() {
       }
       const { data } = await response.json();
       setSubscriptionPlans(
-        data.filter((p: SubscriptionPlan) => p.freeTrialEnabled),
+        data.filter((p: SubscriptionPlan) => p.trialEnabled),
       );
     } catch (error) {
       console.error("Error fetching subscription plans:", error);
@@ -476,16 +476,21 @@ export function TrialsTab() {
     <TooltipProvider>
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-zinc-900">
-            Free Trial Requests
+            Trial Requests
           </h1>
           <p className="text-zinc-600 mt-1">
             Manage trial session requests from potential subscribers
           </p>
         </div>
-        <Button variant="outline" onClick={handleRefresh} disabled={isRefreshing}>
+        <Button
+          variant="outline"
+          onClick={handleRefresh}
+          disabled={isRefreshing}
+          className="w-full sm:w-auto"
+        >
           <RefreshCw
             className={`h-4 w-4 mr-2 ${isRefreshing ? "animate-spin" : ""}`}
           />
@@ -630,7 +635,7 @@ export function TrialsTab() {
             <p className="text-zinc-600">
               {statusFilter !== "all" || planFilter !== "all" || debouncedSearch
                 ? "No trial requests match your filters"
-                : "You don't have any trial requests yet. Enable free trials on your subscription plans to start receiving requests."}
+                : "You don't have any trial requests yet. Enable trials on your subscription plans to start receiving requests."}
             </p>
             {(statusFilter !== "all" ||
               planFilter !== "all" ||
@@ -694,7 +699,7 @@ export function TrialsTab() {
                   <div className="flex items-center gap-2 text-sm text-zinc-600">
                     <Clock className="h-4 w-4" />
                     <span>
-                      {trial.subscriptionPlan.freeTrialDurationMinutes} min
+                      {trial.subscriptionPlan.trialDurationMinutes} min
                       trial
                     </span>
                   </div>
@@ -866,24 +871,26 @@ export function TrialsTab() {
 
       {/* Schedule Dialog with Calendar */}
       <Dialog open={showScheduleDialog} onOpenChange={setShowScheduleDialog}>
-        <DialogContent className="max-w-4xl">
+        <DialogContent className="max-w-4xl max-h-[90dvh] overflow-hidden flex flex-col">
           <VisuallyHidden>
             <DialogTitle>Schedule Trial Session</DialogTitle>
           </VisuallyHidden>
           {selectedTrial && (
-            <TrialScheduleCalendar
-              consultantId={consultantId}
-              trialDurationMinutes={
-                selectedTrial.subscriptionPlan.freeTrialDurationMinutes
-              }
-              onSlotSelect={handleSlotSelected}
-              onCancel={() => {
-                setShowScheduleDialog(false);
-                setSelectedTrial(null);
-              }}
-              isProcessing={isProcessing}
-              consulteeUserName={selectedTrial.consulteeProfile.user.name}
-            />
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              <TrialScheduleCalendar
+                consultantId={consultantId}
+                trialDurationMinutes={
+                  selectedTrial.subscriptionPlan.trialDurationMinutes
+                }
+                onSlotSelect={handleSlotSelected}
+                onCancel={() => {
+                  setShowScheduleDialog(false);
+                  setSelectedTrial(null);
+                }}
+                isProcessing={isProcessing}
+                consulteeUserName={selectedTrial.consulteeProfile.user.name}
+              />
+            </div>
           )}
         </DialogContent>
       </Dialog>

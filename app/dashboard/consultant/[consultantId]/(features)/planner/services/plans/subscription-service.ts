@@ -3,7 +3,7 @@
  */
 
 import type { SubscriptionPlan } from "@/schemas/plans";
-import { SubscriptionPlanEvent } from "../../types/event";
+import { SubscriptionPlanEvent } from "@/types/planner-events";
 
 export class SubscriptionService {
   /**
@@ -110,8 +110,9 @@ export class SubscriptionService {
         materialProvided: plan.materialProvided,
         learningOutcomes: plan.learningOutcomes,
         topics: plan.topics ?? [],
-        freeTrialEnabled: plan.freeTrialEnabled ?? false,
-        freeTrialDurationMinutes: plan.freeTrialDurationMinutes ?? 30,
+        trialEnabled: plan.trialEnabled ?? false,
+        trialDurationMinutes: plan.trialDurationMinutes ?? 30,
+        trialPriceInPaise: plan.trialPriceInPaise ?? 0,
         subscriptionContents: plan.subscriptionContents ?? [],
         consultantProfileId: consultantId,
         ...(isUpdate && plan.id ? { id: plan.id } : {}),

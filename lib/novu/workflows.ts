@@ -54,8 +54,11 @@ export const NOVU_WORKFLOWS = {
   GENERAL_ANNOUNCEMENT: "general-announcement",
   NEW_CONSULTANT_APPLICATION: "new-consultant-application",
 
-  // Waitlist
-  WAITLIST_SPOT_AVAILABLE: "waitlist-spot-available",
+  // Moderation (#693) — staff actions against a reported user. Workflow
+  // definitions must exist in the Novu dashboard with these slugs.
+  MODERATION_WARNING: "moderation-warning",
+  ACCOUNT_SUSPENDED: "account-suspended",
+  ACCOUNT_BANNED: "account-banned",
 
   // Disputes
   DISPUTE_CREATED: "dispute-created",
@@ -230,6 +233,23 @@ export type VerificationPayload = {
   dashboardUrl: string;
 };
 
+// Moderation (#693)
+export type ModerationWarningPayload = {
+  reason?: string;
+};
+
+export type AccountSuspendedPayload = {
+  reason?: string;
+  /** ISO timestamp the suspension lapses (lazy expiry at sign-in). */
+  suspendedUntil: string;
+  appointmentsCancelled?: number;
+};
+
+export type AccountBannedPayload = {
+  reason?: string;
+  appointmentsCancelled?: number;
+};
+
 export type PayoutPayload = {
   amount: number;
   currency: string;
@@ -242,12 +262,6 @@ export type AnnouncementPayload = {
   content: string;
   linkUrl?: string;
   linkText?: string;
-};
-
-export type WaitlistPayload = {
-  consultantName: string;
-  planTitle: string;
-  dashboardUrl: string;
 };
 
 export type DisputePayload = {
@@ -370,6 +384,8 @@ export type OrgInvoiceIssuedPayload = {
   currency: string;
   dueDate: string;
   dashboardUrl: string;
+  /** #438 — deep link to the invoice PDF route (302s to a signed URL). */
+  pdfUrl?: string;
 };
 
 export type OrgInvoicePaidPayload = {

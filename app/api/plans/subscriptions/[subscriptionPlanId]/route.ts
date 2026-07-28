@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { SubscriptionPlanSchema } from "@/schemas/plans";
 import { findOrCreateTopics, transformTopicsToStrings } from "@/lib/topics";
 import { SlotCalculationService } from "@/utils/slotAllocation/SlotCalculationService";
+import { getMinTrialPriceInPaise } from "@/lib/trials/pricing-config";
 
 import { getSession } from "@/lib/auth-server";
 export async function GET(
@@ -159,6 +160,27 @@ export async function PUT(
       totalHours = totalSessions * sessionDurationInHours;
     }
 
+    // Floor check on the effective post-update trial price. Untouched
+    // plans are never retro-policed — only edits that set a price or
+    // newly enable the trial run against the platform floor.
+    const effectiveTrialEnabled =
+      validatedData.trialEnabled ?? existingPlan.trialEnabled;
+    if (
+      effectiveTrialEnabled &&
+      (validatedData.trialPriceInPaise !== undefined ||
+        validatedData.trialEnabled === true)
+    ) {
+      const effectivePrice =
+        validatedData.trialPriceInPaise ?? existingPlan.trialPriceInPaise;
+      const floor = await getMinTrialPriceInPaise();
+      if (effectivePrice < floor) {
+        return NextResponse.json(
+          { error: `Trial price must be at least ₹${floor / 100}` },
+          { status: 400 },
+        );
+      }
+    }
+
     // Handle topics if provided
     let topicsUpdate = {};
     if (validatedData.topics !== undefined) {
@@ -212,8 +234,9 @@ export async function PUT(
           prerequisites: validatedData.prerequisites,
           materialProvided: validatedData.materialProvided,
           learningOutcomes: validatedData.learningOutcomes,
-          freeTrialEnabled: body.freeTrialEnabled,
-          freeTrialDurationMinutes: body.freeTrialDurationMinutes,
+          trialEnabled: validatedData.trialEnabled,
+          trialDurationMinutes: validatedData.trialDurationMinutes,
+          trialPriceInPaise: validatedData.trialPriceInPaise,
           ...topicsUpdate,
           subscriptionContents:
             subscriptionContents !== undefined

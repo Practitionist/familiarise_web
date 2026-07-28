@@ -3,7 +3,7 @@
 import { memo, type RefObject } from "react";
 import { motion } from "framer-motion";
 import { Search } from "lucide-react";
-import type { Program } from "../utils";
+import type { Program } from "@/lib/explore/programs";
 import ProgramCard from "./ProgramCard";
 
 interface ProgramResultsProps {
@@ -11,6 +11,8 @@ interface ProgramResultsProps {
   isLoading: boolean;
   viewMode: "grid" | "list";
   sentinelRef: RefObject<HTMLDivElement>;
+  /** #664 — viewer's ACTIVE org memberships as { orgId: orgName }. */
+  viewerOrgs?: Record<string, string>;
 }
 
 function EmptyState() {
@@ -44,6 +46,7 @@ function ProgramResultsImpl({
   isLoading,
   viewMode,
   sentinelRef,
+  viewerOrgs,
 }: ProgramResultsProps) {
   return (
     <>
@@ -60,7 +63,7 @@ function ProgramResultsImpl({
                 delay: Math.min(index * 0.05, 0.6),
               }}
             >
-              <ProgramCard program={item} variant="grid" />
+              <ProgramCard program={item} variant="grid" viewerOrgs={viewerOrgs} />
             </motion.div>
           ))}
         </div>
@@ -77,7 +80,7 @@ function ProgramResultsImpl({
                 delay: Math.min(index * 0.05, 0.6),
               }}
             >
-              <ProgramCard program={item} variant="list" />
+              <ProgramCard program={item} variant="list" viewerOrgs={viewerOrgs} />
             </motion.div>
           ))}
         </div>

@@ -15,16 +15,25 @@
  * RESPONSE: minimal shape so the client can render a directory table
  * without fetching messages.
  *
- * TODO: Equivalent `/stream/calls` endpoint for video. Stream Video's
- * `queryCalls` API is custom-field filterable but uses a different SDK
- * surface (`@stream-io/node-sdk`) and slightly different filter syntax;
- * deferring to a follow-up issue.
+ * The `/stream/calls` sibling this once deferred now exists, and it writes a
+ * `STREAM_CALLS_EXPORTED` audit row on every successful pull. This half
+ * shipped without one, so reading the roster of who messages whom inside an
+ * org left no trace — even though the rows returned (channel name, member
+ * count, last activity) are a social graph, which is why the two endpoints are
+ * documented together as a compliance pair. Every successful GET now writes
+ * `STREAM_CHANNELS_EXPORTED`, matching the sibling.
+ *
+ * Message bodies are never fetched (`message_limit: 0`) and never will be:
+ * ADR 20 puts session content with the participants, and a chat channel is
+ * session content.
  */
 
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
+import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
+import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { getStreamChatClient } from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
 
@@ -103,6 +112,37 @@ export async function GET(
               : null,
       };
     });
+
+    // Mirrors the /stream/calls sibling: one row per pull, volume in
+    // `details` so the log carries the shape of the export without echoing
+    // the channel list back into it.
+    //
+    // Isolated from the outer try: `rows` is already built by this point, so a
+    // DB hiccup here would otherwise surface as a 502 "Failed to query
+    // channels" for a Stream query that in fact succeeded — and send Sentry
+    // chasing the wrong subsystem. The read still returns; the audit gap is
+    // reported on its own terms.
+    try {
+      await prisma.orgAuditLog.create({
+        data: {
+          organizationId: orgId,
+          actorMembershipId: access.member.id,
+          category: "SYSTEM",
+          action: AUDIT_ACTIONS.SYSTEM.STREAM_CHANNELS_EXPORTED,
+          description: `Listed ${rows.length} Stream chat channels`,
+          details: { page, pageSize: PAGE_SIZE, count: rows.length },
+        },
+      });
+    } catch (auditErr) {
+      Sentry.captureException(
+        auditErr instanceof Error ? auditErr : new Error(String(auditErr)),
+        { tags: { subsystem: "enterprise", surface: "stream-channels-audit" } },
+      );
+      streamLogger.error("Failed to record channel export audit", auditErr, {
+        orgId,
+        page,
+      });
+    }
 
     return NextResponse.json({
       page,

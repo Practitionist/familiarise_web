@@ -131,6 +131,12 @@ export const MemberRowSchema = z.object({
 });
 export type MemberRow = z.infer<typeof MemberRowSchema>;
 
+/** #902 — shared members page size. The SSR prefetch (lib/data/org-members) and
+ *  the client's first query MUST use this same value (and matching queryKey) or
+ *  hydration silently misses and the roster re-fetches on mount. Lives here (a
+ *  client-safe module, no prisma) so both sides can import it. */
+export const ORG_MEMBERS_PER_PAGE = 20;
+
 export const MembersListResponseSchema = z.object({
   data: z.array(MemberRowSchema).default([]),
   meta: z

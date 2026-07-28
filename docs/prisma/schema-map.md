@@ -76,7 +76,6 @@ flowchart TD
         Webinar
         Class
         TrialSession
-        Waitlist
     end
     subgraph Core["Appointment Core"]
         Appointment
@@ -423,8 +422,9 @@ erDiagram
         int callsPerWeek
         int durationInMonths
         int totalSessions
-        boolean freeTrialEnabled
-        int freeTrialDurationMinutes
+        boolean trialEnabled
+        int trialDurationMinutes
+        int trialPriceInPaise
         OrgPlanVisibility visibility
     }
     WebinarPlan {
@@ -615,7 +615,8 @@ erDiagram
         string id
         string consultantProfileId
         int price
-        boolean freeTrialEnabled
+        boolean trialEnabled
+        int trialPriceInPaise
         int callsPerWeek
         int durationInMonths
     }
@@ -637,7 +638,13 @@ erDiagram
         string appointmentId
         string convertedToSubscriptionId
         string organizationId
+        string pendingPaymentUrl
+        string paymentId
         TrialSessionStatus status
+    }
+    PlatformPricingConfig {
+        string id
+        int minTrialPriceInPaise
     }
 
     ConsulteeProfile ||--o{ Consultation : "requests"
@@ -686,25 +693,13 @@ erDiagram
         datetime schedulingPeriodStartsAt
         datetime schedulingPeriodEndsAt
     }
-    Waitlist {
-        string id
-        string userId
-        string webinarId
-        string classId
-        string organizationId
-        WaitlistStatus status
-        int priority
-        int position
-        datetime notifiedAt
-        datetime expiresAt
-        datetime bookedAt
-    }
-
     WebinarPlan ||--o{ Webinar : "schedules instances"
-    Webinar ||--o{ Waitlist : "queue"
     ClassPlan ||--o{ Class : "runs cohorts"
-    Class ||--o{ Waitlist : "queue"
 ```
+
+`Webinar.maxParticipants` and `Class.maxParticipants` are nullable per-instance
+capacity overrides; null inherits the plan's value. See
+[the capacity section of the booking docs](../booking/02-event-types-and-validation.md).
 
 ---
 
@@ -1216,6 +1211,7 @@ erDiagram
         MemberStatus status
         PayoutRecipient payoutRecipient
         string rateCardOverrideId
+        boolean exclusiveEngagement
         string departmentLabel
         string betterAuthMemberId
     }
@@ -1374,6 +1370,11 @@ erDiagram
         string name
         datetime configLockedAt
         datetime archivedAt
+    }
+    ProgramConsultantAllowlist {
+        string id
+        string programId
+        string consultantProfileId
     }
     LicensedSeatConfig {
         string programId
@@ -1875,7 +1876,8 @@ Every enum in the schema and its values.
 | `SlotCompletionStatus` | SCHEDULED, COMPLETED, UNVERIFIED, CANCELLED, RESCHEDULED |
 | `BookingSource` | DIRECT_CHECKOUT, REQUEST_SUBMITTED |
 | `TrialSessionStatus` | PENDING, SCHEDULED, COMPLETED, CONVERTED, CANCELLED, REJECTED |
-| `WaitlistStatus` | WAITING, NOTIFIED, BOOKED, EXPIRED, CANCELLED, SKIPPED |
+| `WaitlistStatus` | PENDING, SUBSCRIBED, UNSUBSCRIBED, BOUNCED (newsletter list) |
+| `WaitlistSource` | LANDING_PAGE, FOOTER, BLOG, USE_CASE_PAGE, EVENT_SOLD_OUT, IMPORT |
 | `WebinarStatus` | SCHEDULED, IN_PROGRESS, COMPLETED, CANCELLED |
 | `ClassStatus` | SCHEDULED, IN_PROGRESS, COMPLETED, CANCELLED |
 | `DayOfWeek` | MONDAY, TUESDAY, WEDNESDAY, THURSDAY, FRIDAY, SATURDAY, SUNDAY |
@@ -1884,7 +1886,7 @@ Every enum in the schema and its values.
 | `RecordingStoragePolicy` | STREAM_ONLY, SUPABASE_PERMANENT |
 | `RecordingStorageType` | STREAM_S3, SUPABASE |
 | `RecordingStatus` | RECORDING, PROCESSING, READY, TRANSFERRING, AVAILABLE, FAILED, EXPIRED |
-| `PaymentGateway` | STRIPE, RAZORPAY, LEMON_SQUEEZY, XFLOW, CARD |
+| `PaymentGateway` | STRIPE, RAZORPAY, DODO_PAYMENTS, CARD |
 | `PaymentStatus` | PENDING, SUCCEEDED, FAILED, EXPIRED |
 | `PaymentLegSource` | CARD, WALLET, REFERRAL_CREDIT, INVOICE_ACCRUAL, OVERAGE_INVOICE_ACCRUAL, LICENSE |
 | `RefundStatus` | PENDING, SUCCEEDED, FAILED, CANCELLED |

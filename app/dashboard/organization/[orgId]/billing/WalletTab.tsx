@@ -522,6 +522,18 @@ export function WalletTab({
                     {alertsMutation.isPending ? "Saving…" : "Save alerts"}
                   </Button>
                 )}
+                {/* #863 residual — the auto-top-up executor (RBI e-mandate:
+                    ₹15k AFA-free cap + 24h pre-debit notice) is NOT built. The
+                    autoTopUp* columns + settings CRUD exist as config-of-intent;
+                    nothing fires a debit. TODO(#863): build the mandate +
+                    executor when a design partner needs it. Notify-only for now. */}
+                <div className="rounded-md border border-dashed border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+                  <span className="font-medium text-foreground">
+                    Automatic top-up — coming soon.
+                  </span>{" "}
+                  Today we email finance to top up the wallet manually; auto-debit
+                  arrives with RBI-compliant payment mandates.
+                </div>
               </CardContent>
             </Card>
           )}

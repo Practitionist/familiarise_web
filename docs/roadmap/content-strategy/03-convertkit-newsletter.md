@@ -2,9 +2,16 @@
 
 > Email marketing and newsletter strategy using ConvertKit alongside Directus CMS.
 
-**Status**: Design
+**Status**: Not adopted — superseded 2026-07-28
 **Decision Date**: 2026-02-02
 **Related Issues**: #334 (ConvertKit Newsletter)
+
+> **Superseded.** ConvertKit was never wired up: `lib/newsletter/convertkit.ts`
+> only ever logged to the console, and the stub has since been deleted. The
+> mailing list now lives in Postgres as the `Waitlist` model with Resend as the
+> transport, including double opt-in, unsubscribe, and an admin broadcast
+> surface. See [the waitlist/newsletter doc](../../marketing/01-waitlist-newsletter.md).
+> This page is kept as the record of the option that was considered.
 
 ---
 

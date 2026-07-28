@@ -2,7 +2,11 @@
 
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { formatCurrencyFromMajorUnit } from "@/utils/formatting";
+// `formatCurrencyAmount`, not `formatCurrencyFromMajorUnit`: refunds carry
+// paise. The old call had both halves wrong — a field the payload has never
+// contained, passed to the rupees formatter — so it rendered ₹NaN rather than
+// a number that was merely 100× too large.
+import { formatCurrencyAmount } from "@/utils/formatting";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -151,12 +155,13 @@ export function RefundsPage({
   const totalPages = refundsData?.totalPages ?? 1;
   const total = refundsData?.total ?? 0;
 
-  // Calculate stats
+  // #997 secondary findings — server-computed, dashboard-wide (previously
+  // `.filter()` over the current page's ≤20 rows, which undercounted).
   const stats = {
-    total: total,
-    pending: refunds.filter((r) => r.status === "PENDING").length,
-    succeeded: refunds.filter((r) => r.status === "SUCCEEDED").length,
-    failed: refunds.filter((r) => r.status === "FAILED").length,
+    total,
+    pending: refundsData?.stats?.pendingCount ?? 0,
+    succeeded: refundsData?.stats?.succeededCount ?? 0,
+    failed: refundsData?.stats?.failedCount ?? 0,
   };
 
   const renderRowActions = (refund: Refund) =>
@@ -195,7 +200,7 @@ export function RefundsPage({
       header: "Amount",
       className: "font-medium",
       cell: (refund) =>
-        formatCurrencyFromMajorUnit(refund.amount, refund.currency),
+        formatCurrencyAmount(refund.amountPaise, refund.currency),
     },
     {
       key: "gateway",
@@ -343,8 +348,6 @@ export function RefundsPage({
                 <SelectItem value="all">All Gateways</SelectItem>
                 <SelectItem value="STRIPE">Stripe</SelectItem>
                 <SelectItem value="RAZORPAY">Razorpay</SelectItem>
-                <SelectItem value="LEMON_SQUEEZY">Lemon Squeezy</SelectItem>
-                <SelectItem value="XFLOW">xFlow</SelectItem>
               </SelectContent>
             </Select>
           </div>

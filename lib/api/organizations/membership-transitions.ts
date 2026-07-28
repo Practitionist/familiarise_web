@@ -109,7 +109,7 @@ export async function applyMembershipRoleEffects(
   // OWNER / MAINTAINER / BILLING_ADMIN / MANAGER / SUPPORT — operator
   // roles have no consumer or provider profile linkage. Any
   // previously-hydrated FKs are cleared so downstream joins
-  // (`/my-program`, `/my-arrangement`, checkout profile resolution)
+  // (`/my-program`, `/compensation`, checkout profile resolution)
   // don't pick up stale rows. BILLING_ADMIN sits in this group because
   // it's a finance-only operator role; it has no booking-side surface.
   return {
@@ -136,12 +136,17 @@ export async function applyMembershipRoleEffects(
  * Why we don't force logout
  * -------------------------
  * The UX cost of "you've been signed out, please log in again" is high
- * relative to the marginal security benefit. Role *downgrades* (the
- * stale-OWNER-session risk) are typically followed by an explicit
- * member-removal flow that calls BetterAuth's `revokeSession` — the
- * harder kill. The bump pattern handles the middle case: role changed,
- * membership still active, session payload must reflect the new role
- * within a single round-trip.
+ * relative to the marginal security benefit, so removal uses this same
+ * generation bump rather than a hard session kill. There is no
+ * server-side revoke-by-userId available: the `admin` plugin (which
+ * exposes `auth.api.revokeUserSessions({ body: { userId } })`) is not
+ * installed, and core BetterAuth `revokeSession`/`revokeSessions` need
+ * the target user's own session token/headers — which an admin removing
+ * someone else does not hold. This code also runs inside a Prisma
+ * `$transaction`, where a BetterAuth API call (writing outside the tx)
+ * would be unsound. So membership removal, role downgrade, and
+ * soft-suspend all rely on the bump: the next request through
+ * `customSession` sees the stale generation and refetches.
  *
  * Failure mode if not called
  * --------------------------

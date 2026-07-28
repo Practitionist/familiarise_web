@@ -14,7 +14,7 @@ import {
   authLimiter,
   searchLimiter,
   eligibilityLimiter,
-  newsletterLimiter,
+  waitlistLimiter,
   availabilityLimiter,
   orgInviteAcceptLimiter,
   ssoDomainCheckLimiter,
@@ -255,9 +255,9 @@ const RATE_LIMIT_RULES: RateRule[] = [
     skipLocalhost: false,
   },
   {
-    label: "public: newsletter subscribe",
-    match: (p, m) => m === "POST" && p.startsWith("/api/newsletter/subscribe"),
-    limiter: newsletterLimiter,
+    label: "public: waitlist signup",
+    match: (p, m) => m === "POST" && p === "/api/waitlist",
+    limiter: waitlistLimiter,
     skipLocalhost: false,
   },
   {

@@ -1,6 +1,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { consultantPublicScalars } from "@/lib/data/consultant-public";
 import { Prisma } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
 
@@ -20,11 +21,13 @@ const userSelectFields = {
 const consultationInclude = {
   consultationPlan: {
     include: {
+      // #946 allowlist. A bare `include:` shipped the consultant's panNumber /
+      // ibanOrAccount / swiftBic to the learner's own dashboard. The sibling
+      // resources/route.ts already narrows this way; this file was missed.
       consultantProfile: {
-        include: {
-          user: {
-            select: userSelectFields,
-          },
+        select: {
+          ...consultantPublicScalars,
+          user: { select: userSelectFields },
         },
       },
     },
@@ -57,7 +60,8 @@ const subscriptionInclude = {
   subscriptionPlan: {
     include: {
       consultantProfile: {
-        include: {
+        select: {
+          ...consultantPublicScalars,
           user: {
             select: userSelectFields,
           },
@@ -93,7 +97,8 @@ const webinarInclude = {
   webinarPlan: {
     include: {
       consultantProfile: {
-        include: {
+        select: {
+          ...consultantPublicScalars,
           user: {
             select: {
               id: true,
@@ -125,14 +130,14 @@ const webinarInclude = {
       payment: true,
     },
   },
-  // Note: waitlist include is dynamic based on consulteeId, handled separately
 } satisfies Prisma.WebinarInclude;
 
 const classInclude = {
   classPlan: {
     include: {
       consultantProfile: {
-        include: {
+        select: {
+          ...consultantPublicScalars,
           user: {
             select: {
               id: true,
@@ -168,7 +173,6 @@ const classInclude = {
       payment: true,
     },
   },
-  // Note: waitlist include is dynamic based on consulteeId, handled separately
 } satisfies Prisma.ClassInclude;
 
 // =============================================================================
@@ -241,7 +245,7 @@ export async function GET(
             requestedAt: "desc",
           },
         }),
-        // Webinars: User registered via waitlist or via appointment slots
+        // Webinars the consultee registered for
         prisma.webinar.findMany({
           where: {
             OR: [
@@ -261,45 +265,13 @@ export async function GET(
                   },
                 },
               },
-              // Get webinars where consultee is in waitlist
-              {
-                waitlist: {
-                  some: {
-                    user: {
-                      consulteeProfile: {
-                        id: consulteeId,
-                      },
-                    },
-                  },
-                },
-              },
             ],
           },
           include: {
             ...webinarInclude,
-            waitlist: {
-              where: {
-                user: {
-                  consulteeProfile: {
-                    id: consulteeId,
-                  },
-                },
-              },
-              include: {
-                user: {
-                  select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                    image: true,
-                    consulteeProfile: true,
-                  },
-                },
-              },
-            },
           },
         }),
-        // Classes: User registered via waitlist or via appointment slots
+        // Classes the consultee enrolled in
         prisma.class.findMany({
           where: {
             OR: [
@@ -321,31 +293,10 @@ export async function GET(
                   },
                 },
               },
-              // Get classes where consultee is in waitlist
-              {
-                waitlist: {
-                  some: {
-                    user: {
-                      consulteeProfile: {
-                        id: consulteeId,
-                      },
-                    },
-                  },
-                },
-              },
             ],
           },
           include: {
             ...classInclude,
-            waitlist: {
-              where: {
-                userId: consulteeId,
-              },
-              select: {
-                userId: true,
-                joinedAt: true,
-              },
-            },
           },
           orderBy: [
             {
@@ -370,7 +321,10 @@ export async function GET(
       },
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "dashboard" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "dashboard" } },
+    );
     console.error("Error fetching consultee events:", error);
     return NextResponse.json(
       {

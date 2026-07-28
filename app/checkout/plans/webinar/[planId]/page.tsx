@@ -14,8 +14,8 @@ import {
   createCheckoutData,
   WebinarSearchParams,
   webinarSearchParamsSchema,
+  type SupportedCheckoutGateway,
 } from "@/schemas/checkout";
-import { PaymentGateway } from "@prisma/client";
 import { CreditCard as CreditCardIcon } from "lucide-react";
 import { CompanyLogo } from "@/components/ui/company-logo";
 import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -187,7 +187,10 @@ export default function WebinarCheckoutPage({
           );
         }
       } catch (error) {
-        Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "payments" } });
+        Sentry.captureException(
+          error instanceof Error ? error : new Error(String(error)),
+          { tags: { subsystem: "payments" } },
+        );
         console.error("Error fetching referral credits:", error);
       } finally {
         setIsLoadingCredits(false);
@@ -206,7 +209,10 @@ export default function WebinarCheckoutPage({
   const razorpayHandlers = createRazorpayCheckoutHandlers(toast);
 
   const handleCheckout = useCallback(
-    async (gateway: PaymentGateway, isMockPayment: boolean = false) => {
+    async (
+      gateway: SupportedCheckoutGateway,
+      isMockPayment: boolean = false,
+    ) => {
       // Block checkout during maintenance mode
       if (isMaintenanceBlocked) {
         toast({
@@ -252,11 +258,6 @@ export default function WebinarCheckoutPage({
           throw new Error("This webinar has been cancelled.");
         }
 
-        // fromWaitlist is not in webinarSearchParamsSchema — read from raw params
-        const fromWaitlist =
-          typeof resolvedSearchParams.fromWaitlist === "string"
-            ? resolvedSearchParams.fromWaitlist
-            : undefined;
         const checkoutData = createCheckoutData({
           appointmentType: "WEBINAR",
           planId: planData.data.id,
@@ -264,7 +265,6 @@ export default function WebinarCheckoutPage({
           discountCode: appliedDiscount?.code,
           paymentGateway: gateway,
           displayCurrency: currency,
-          fromWaitlist,
           useReferralCredits: selectedOrganizationId
             ? false
             : useReferralCredits,
@@ -280,7 +280,10 @@ export default function WebinarCheckoutPage({
           isMockPayment,
         );
       } catch (error) {
-        Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "payments" } });
+        Sentry.captureException(
+          error instanceof Error ? error : new Error(String(error)),
+          { tags: { subsystem: "payments" } },
+        );
         console.error("Checkout error:", error);
         if (error instanceof Error) {
           // Provide more informative error messages based on the error type
@@ -361,7 +364,10 @@ export default function WebinarCheckoutPage({
         );
         _setReviews(reviewsData);
       } catch (error) {
-        Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "payments" } });
+        Sentry.captureException(
+          error instanceof Error ? error : new Error(String(error)),
+          { tags: { subsystem: "payments" } },
+        );
         console.error("Error fetching plan data:", error);
         setError(
           error instanceof Error
@@ -795,7 +801,9 @@ export default function WebinarCheckoutPage({
           ].map((gateway) => (
             <Card key={gateway.name} className="border-border">
               <CardHeader>
-                <CardTitle className="text-foreground">{gateway.name}</CardTitle>
+                <CardTitle className="text-foreground">
+                  {gateway.name}
+                </CardTitle>
               </CardHeader>
               <CardContent className="grid gap-4">
                 <div className="flex flex-wrap items-center justify-between gap-4">

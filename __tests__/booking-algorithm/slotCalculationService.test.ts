@@ -488,35 +488,35 @@ describe("SlotCalculationService.groupSlotsByWeek", () => {
     expect(grouped.size).toBe(2);
   });
 
-  it("should use UTC-based week boundaries (not local timezone)", () => {
+  it("should use scheduling-timezone week boundaries (default Asia/Kolkata), not the process timezone", () => {
     // Saturday Jan 4 23:30 UTC = Sunday Jan 5 in UTC+1 or later timezones
     // Sunday Jan 5 00:30 UTC = same week as Saturday in a Sunday-start system
     // Both should be in the same UTC week (week starting Sunday Jan 5 would be wrong)
-    const saturdayLateUTC = {
-      startTime: new Date("2025-01-04T23:30:00Z"), // Saturday UTC
-      endTime: new Date("2025-01-05T00:00:00Z"),
+    // ADR B9 — buckets are scheduling-timezone (default Asia/Kolkata) weeks.
+    // 18:29Z Saturday is 23:59 IST Saturday (old week); 18:30Z is 00:00 IST
+    // Sunday (new week).
+    const saturdayLateIST = {
+      startTime: new Date("2025-01-04T18:29:00Z"),
+      endTime: new Date("2025-01-04T18:59:00Z"),
       isAvailable: true,
       isBooked: false,
     };
-    const sundayEarlyUTC = {
-      startTime: new Date("2025-01-05T00:30:00Z"), // Sunday UTC
-      endTime: new Date("2025-01-05T01:00:00Z"),
+    const sundayEarlyIST = {
+      startTime: new Date("2025-01-04T18:30:00Z"),
+      endTime: new Date("2025-01-04T19:00:00Z"),
       isAvailable: true,
       isBooked: false,
     };
 
     const grouped = SlotCalculationService.groupSlotsByWeek([
-      saturdayLateUTC,
-      sundayEarlyUTC,
+      saturdayLateIST,
+      sundayEarlyIST,
     ]);
-    // Saturday belongs to week starting Dec 29 (Sun), Sunday starts new week Jan 5
+    // Saturday belongs to week of Dec 29 (Sun), Sunday starts new week Jan 5
     expect(grouped.size).toBe(2);
 
-    // Verify week keys use UTC dates
-    const keys = Array.from(grouped.keys());
-    expect(keys.every((k) => k.includes("2024") || k.includes("2025"))).toBe(
-      true,
-    );
+    const keys = Array.from(grouped.keys()).sort();
+    expect(keys).toEqual(["2024-12-29", "2025-01-05"]);
   });
 });
 

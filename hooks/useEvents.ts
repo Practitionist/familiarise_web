@@ -18,20 +18,10 @@ export type TSubscriptionWithPlan = TSubscription & {
 
 export type TWebinarWithPlan = TWebinar & {
   appointment: TAppointment | null;
-  waitlist?: Array<{
-    id: string;
-    status: string;
-    position: number | null;
-  }>;
 };
 
 export type TClassWithPlan = TClass & {
   appointment: TAppointment[];
-  waitlist?: Array<{
-    id: string;
-    status: string;
-    position: number | null;
-  }>;
 };
 
 // Trial session type for consultee dashboard
@@ -44,7 +34,8 @@ export type TTrialWithPlan = {
   subscriptionPlan: {
     id: string;
     title: string;
-    freeTrialDurationMinutes: number;
+    trialDurationMinutes: number;
+    trialPriceInPaise: number;
     consultantProfile: {
       id: string;
       user: {

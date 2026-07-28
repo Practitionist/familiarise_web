@@ -23,10 +23,16 @@ export interface MonthlyEarning {
  * Aggregates ALL rows in the window (not the paginated history slice —
  * a `limit`-truncated reduce would undercount every month but the newest).
  * Empty months are zero-filled so the chart never has gaps.
+ *
+ * `organizationId` is an OPTIONAL view-scope filter (#org-appts #1024):
+ * omitted (`undefined`) = no filter, identical to pre-#1024 behavior, for
+ * any caller outside the earnings-view path. `null` scopes to personal
+ * (B2C) earnings; a string scopes to that org's earnings.
  */
 export async function getConsultantMonthlyEarnings(
   consultantProfileId: string,
   months = 6,
+  organizationId?: string | null,
 ): Promise<MonthlyEarning[]> {
   // One clock read for the whole computation — repeated new Date() calls
   // could straddle a month rollover and misalign the buckets vs the query
@@ -34,7 +40,11 @@ export async function getConsultantMonthlyEarnings(
   const now = new Date();
   const since = startOfMonth(subMonths(now, months - 1));
   const rows = await prisma.consultantEarnings.findMany({
-    where: { consultantProfileId, createdAt: { gte: since } },
+    where: {
+      consultantProfileId,
+      createdAt: { gte: since },
+      ...(organizationId !== undefined ? { payment: { organizationId } } : {}),
+    },
     select: { createdAt: true, consultantSharePaise: true },
   });
 
@@ -63,6 +73,14 @@ export interface ConsultantEarningsPayloadOptions {
   limit?: number;
   offset?: number;
   includeMonthly?: boolean;
+  /**
+   * #org-appts (#1024) — VIEW scope. `null` (default, including when the
+   * key is omitted entirely) = personal/B2C-only, matching the personal
+   * dashboard's Earnings view. A string scopes to that org's earnings.
+   * `undefined` means "no filter" (admin `?orgScope=all`) — passed
+   * explicitly, since an omitted key defaults to personal instead.
+   */
+  organizationId?: string | null;
 }
 
 /**
@@ -75,13 +93,28 @@ export async function buildConsultantEarningsPayload(
   options: ConsultantEarningsPayloadOptions = {},
 ) {
   const { status, limit = 20, offset = 0, includeMonthly = false } = options;
+  // Explicit key check (not a destructuring default): an admin's
+  // `?orgScope=all` resolves to organizationId === undefined (no filter),
+  // which a destructuring default would silently collapse back to `null`
+  // (personal). Omitting the key entirely still defaults to personal —
+  // #org-appts (#1024): VIEW splits by org-ness; payout eligibility stays
+  // whole (shared instrument), so it's never scoped below.
+  const organizationId: string | null | undefined =
+    "organizationId" in options ? options.organizationId : null;
 
   const [summary, eligibility, history, monthlyEarnings] = await Promise.all([
-    getConsultantEarningsSummary(consultantProfileId),
+    getConsultantEarningsSummary(consultantProfileId, organizationId),
+    // #org-appts (#1024) — VIEW splits by org-ness; payout eligibility
+    // stays whole (shared instrument).
     checkPayoutEligibility(consultantProfileId),
-    getConsultantEarnings(consultantProfileId, { status, limit, offset }),
+    getConsultantEarnings(consultantProfileId, {
+      status,
+      limit,
+      offset,
+      organizationId,
+    }),
     includeMonthly
-      ? getConsultantMonthlyEarnings(consultantProfileId)
+      ? getConsultantMonthlyEarnings(consultantProfileId, 6, organizationId)
       : Promise.resolve(undefined),
   ]);
 

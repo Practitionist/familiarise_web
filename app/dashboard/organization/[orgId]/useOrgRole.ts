@@ -8,11 +8,11 @@ import {
   fetchOrgDetails,
   orgDetailsQueryKey,
 } from "@/lib/api/organizations/org-details";
+import { isAtLeastRole } from "@/lib/auth/role-ranks";
 import {
-  isAtLeastRole,
-  canSeeFinanceSurface,
-  canSeeOperatorSurface,
-} from "@/lib/auth/role-ranks";
+  hasOrgPermission,
+  type OrgSurface,
+} from "@/lib/auth/org-permissions";
 
 /**
  * Hook that returns the current user's role in the org and an `isAtLeast`
@@ -69,7 +69,11 @@ export function useOrgRole(orgId: string) {
  * API refuses to serve, and vice-versa.
  */
 export interface OrgAccessGate {
-  minRole: MemberRole;
+  /** Rank floor — for genuine hierarchy checks only. Prefer `permission`. */
+  minRole?: MemberRole;
+  /** Surface grant from the org permission matrix — expresses the
+   *  operations/finance track split the rank ladder cannot. */
+  permission?: OrgSurface;
   canSponsor?: true;
   canHost?: true;
   fundingSource?: FundingSource;
@@ -91,7 +95,8 @@ export function useRequireOrgAccess(
   const router = useRouter();
 
   const passes =
-    isAtLeast(gate.minRole) &&
+    (!gate.minRole || isAtLeast(gate.minRole)) &&
+    (!gate.permission || hasOrgPermission(role, gate.permission)) &&
     (gate.canSponsor !== true || canSponsor) &&
     (gate.canHost !== true || canHost) &&
     (!gate.fundingSource || fundingSource === gate.fundingSource);
@@ -121,59 +126,4 @@ export function useRequireOrgRole(orgId: string, minRole: MemberRole) {
   return useRequireOrgAccess(orgId, { minRole });
 }
 
-/**
- * Finance-surface page guard. Allows OWNER + MAINTAINER + BILLING_ADMIN
- * + MANAGER through. Rejects EXPERT / LEARNER / SUPPORT. Mirrors the
- * `canSeeFinanceSurface` predicate in lib/auth/role-ranks.ts.
- *
- * Why a dedicated hook rather than reusing `useRequireOrgRole`: the
- * rank ladder treats BILLING_ADMIN as above MANAGER (rank 70 vs 60),
- * so `useRequireOrgRole(orgId, "BILLING_ADMIN")` would refuse MANAGER
- * access to read-only views the role description explicitly grants.
- * The finance-surface set is governance-orthogonal, not a rank
- * floor — keeping it as its own predicate avoids that trap.
- */
-export function useRequireFinanceSurface(orgId: string): {
-  allowed: boolean;
-  isLoading: boolean;
-} {
-  const { role, isLoading } = useOrgRole(orgId);
-  const router = useRouter();
 
-  const passes = canSeeFinanceSurface(role);
-  const allowed = !isLoading && passes;
-
-  useEffect(() => {
-    if (!isLoading && !passes) {
-      router.replace(`/dashboard/organization/${orgId}/home`);
-    }
-  }, [isLoading, passes, orgId, router]);
-
-  return { allowed, isLoading };
-}
-
-/**
- * Operator-surface page guard. Allows OWNER + MAINTAINER + MANAGER +
- * SUPPORT through and rejects BILLING_ADMIN — the latter has no
- * member/booking/governance remit per the role description. Used by
- * pages that the BILLING_ADMIN sidebar fix hides; this hook is the
- * server-side counterpart so a direct URL bypass also rejects.
- */
-export function useRequireOperatorSurface(orgId: string): {
-  allowed: boolean;
-  isLoading: boolean;
-} {
-  const { role, isLoading } = useOrgRole(orgId);
-  const router = useRouter();
-
-  const passes = canSeeOperatorSurface(role);
-  const allowed = !isLoading && passes;
-
-  useEffect(() => {
-    if (!isLoading && !passes) {
-      router.replace(`/dashboard/organization/${orgId}/home`);
-    }
-  }, [isLoading, passes, orgId, router]);
-
-  return { allowed, isLoading };
-}

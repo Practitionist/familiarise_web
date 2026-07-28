@@ -51,24 +51,55 @@ export function DashboardHeader({
           </nav>
         )}
 
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
-            <h1 className="text-xl sm:text-2xl font-bold text-zinc-900 truncate">
+            <h1 className="text-xl sm:text-2xl font-bold text-zinc-900 sm:truncate">
               {title}
             </h1>
             {subtitle && (
-              <p className="text-xs sm:text-sm text-zinc-500 mt-0.5 truncate">
+              <p className="text-xs sm:text-sm text-zinc-500 mt-0.5 sm:truncate">
                 {subtitle}
               </p>
             )}
           </div>
           {actions && (
-            <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+            <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:gap-3 sm:shrink-0">
               {actions}
             </div>
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+interface PanelHeaderProps {
+  description?: string;
+  actions?: ReactNode;
+}
+
+/**
+ * Header for a tab panel, as opposed to a page.
+ *
+ * When the IA consolidation folded sidebar entries into tabs, the panels kept
+ * their old `DashboardHeader` — which renders an `h1`. Inside a tab that reads
+ * as a second page title directly under the tab you just clicked. This drops
+ * the heading and keeps only what the panel still needs: a line of context and
+ * its own actions.
+ */
+export function PanelHeader({ description, actions }: PanelHeaderProps) {
+  if (!description && !actions) return null;
+
+  return (
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      {description && (
+        <p className="text-sm text-muted-foreground">{description}</p>
+      )}
+      {actions && (
+        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:gap-3 sm:shrink-0">
+          {actions}
+        </div>
+      )}
     </div>
   );
 }

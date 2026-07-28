@@ -40,6 +40,16 @@ ALTER TABLE "WebinarPlan" ADD CONSTRAINT "webinar_plan_max_participants_min" CHE
 ALTER TABLE "ClassPlan" DROP CONSTRAINT IF EXISTS "class_plan_max_participants_min";
 -- SPLIT
 ALTER TABLE "ClassPlan" ADD CONSTRAINT "class_plan_max_participants_min" CHECK ("maxParticipants" >= 1);
+-- SPLIT
+-- Per-instance capacity override. NULL means "inherit the plan's value", so
+-- the guard has to admit NULL while still rejecting a zero or negative cap.
+ALTER TABLE "Webinar" DROP CONSTRAINT IF EXISTS "webinar_max_participants_min";
+-- SPLIT
+ALTER TABLE "Webinar" ADD CONSTRAINT "webinar_max_participants_min" CHECK ("maxParticipants" IS NULL OR "maxParticipants" >= 1);
+-- SPLIT
+ALTER TABLE "Class" DROP CONSTRAINT IF EXISTS "class_max_participants_min";
+-- SPLIT
+ALTER TABLE "Class" ADD CONSTRAINT "class_max_participants_min" CHECK ("maxParticipants" IS NULL OR "maxParticipants" >= 1);
 
 -- SPLIT
 -- #440 — DB-level double-booking backstop for 1:1 bookings. The application
@@ -162,3 +172,13 @@ ALTER TABLE "ConsultantPayout" DROP CONSTRAINT IF EXISTS "consultant_payout_tds_
 -- SPLIT
 ALTER TABLE "ConsultantPayout" ADD CONSTRAINT "consultant_payout_tds_fy_format"
   CHECK ("tdsFinancialYear" IS NULL OR "tdsFinancialYear" ~ '^[0-9]{4}-[0-9]{2}$');
+
+-- SPLIT
+-- #784 — a Collaborator references exactly one plan: a webinar XOR a class.
+-- The app-level backstop is assertCollaboratorPlanXor in
+-- lib/collaborators/service.ts; this DB CHECK is the last line. Exactly one of
+-- the two FKs is non-NULL <=> exactly one IS NULL, which `<>` expresses.
+ALTER TABLE "Collaborator" DROP CONSTRAINT IF EXISTS "collaborator_plan_xor";
+-- SPLIT
+ALTER TABLE "Collaborator" ADD CONSTRAINT "collaborator_plan_xor"
+  CHECK (("webinarPlanId" IS NULL) <> ("classPlanId" IS NULL));

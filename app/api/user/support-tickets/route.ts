@@ -169,6 +169,34 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Dedup: a payment-linked ticket reuses any still-open ticket the user
+    // already filed for the same payment. Kept a runtime check (not a schema
+    // unique) — a payment can legitimately spawn a second ticket once the
+    // first is RESOLVED/CLOSED, so uniqueness is scoped to open state.
+    if (validatedData.paymentId) {
+      const existing = await prisma.supportTicket.findFirst({
+        where: {
+          paymentId: validatedData.paymentId,
+          userId: session.user.id,
+          status: { notIn: ["RESOLVED", "CLOSED"] },
+        },
+        // Match the user-facing GET shape: hide internal staff notes
+        include: {
+          responses: {
+            where: { isInternal: false },
+            orderBy: { createdAt: "asc" },
+            include: {
+              user: { select: { name: true, role: true } },
+            },
+          },
+          attachments: { orderBy: { uploadedAt: "desc" } },
+        },
+      });
+      if (existing) {
+        return NextResponse.json(existing, { status: 200 });
+      }
+    }
+
     const ticket = await prisma.supportTicket.create({
       data: {
         title: validatedData.title,

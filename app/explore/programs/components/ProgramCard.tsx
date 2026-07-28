@@ -8,7 +8,7 @@ import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useCurrency } from "@/hooks/useCurrency";
 import { CompanyLogo } from "@/components/ui/company-logo";
-import { isClassProgram, Program } from "../utils";
+import { isClassProgram, Program } from "@/lib/explore/programs";
 
 type ProgramCardVariant = "grid" | "list" | "carousel";
 export type ProgramBadge = "featured" | "trending" | "new";
@@ -17,6 +17,8 @@ interface ProgramCardProps {
   program: Program;
   variant?: ProgramCardVariant;
   badge?: ProgramBadge;
+  /** #664 — viewer's ACTIVE org memberships as { orgId: orgName }. */
+  viewerOrgs?: Record<string, string>;
 }
 
 const badgeConfig: Record<
@@ -444,15 +446,34 @@ function ProgramCardImpl({
   program,
   variant = "grid",
   badge,
+  viewerOrgs,
 }: ProgramCardProps) {
-  switch (variant) {
-    case "list":
-      return <ListCard program={program} badge={badge} />;
-    case "carousel":
-      return <CarouselCard program={program} badge={badge} />;
-    default:
-      return <GridCard program={program} badge={badge} />;
-  }
+  const card = (() => {
+    switch (variant) {
+      case "list":
+        return <ListCard program={program} badge={badge} />;
+      case "carousel":
+        return <CarouselCard program={program} badge={badge} />;
+      default:
+        return <GridCard program={program} badge={badge} />;
+    }
+  })();
+
+  // #664 — badge a plan the viewer's org sponsors. Rendered as a chip above the
+  // card (no collision with the type/registration/extra badges on the image).
+  const orgName = program.organizationId
+    ? viewerOrgs?.[program.organizationId]
+    : undefined;
+  if (!orgName) return card;
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <span className="inline-flex w-fit items-center gap-1 rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-medium text-primary">
+        Recommended by {orgName}
+      </span>
+      {card}
+    </div>
+  );
 }
 
 const ProgramCard = memo(ProgramCardImpl);

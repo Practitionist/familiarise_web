@@ -4,7 +4,7 @@
  * Covers:
  * - manualAllocate (validation, business rules, error handling)
  * - autoAllocate (all strategies, preference filtering, error handling)
- * - preAllocate (validation, delegation)
+ * - allocateRequestedSlots (validation, delegation; formerly preAllocate)
  * - filterSlotsByPreferences (private, tested via autoAllocate)
  * - allocateConsultationSlots (session duration fix verification)
  * - allocateWebinarSlots (consecutive slot finding)
@@ -18,8 +18,8 @@ import "./setup";
 import {
   AllocationAlgorithms,
   type AllocationOptions,
-} from "@/app/dashboard/consultant/[consultantId]/(features)/shared/utils/allocationAlgorithms";
-import { AllocationService } from "@/app/dashboard/consultant/[consultantId]/(features)/shared/utils/allocationService";
+} from "@/lib/scheduling/allocationAlgorithms";
+import { AllocationService } from "@/lib/scheduling/allocationService";
 import {
   makeTimeSlot,
   makeConsecutiveTimeSlots,
@@ -606,11 +606,11 @@ describe("AllocationAlgorithms.autoAllocate", () => {
   });
 });
 
-// ─── preAllocate ────────────────────────────────────────────────────────────
+// ─── allocateRequestedSlots ─────────────────────────────────────────────────
 
-describe("AllocationAlgorithms.preAllocate", () => {
+describe("AllocationAlgorithms.allocateRequestedSlots", () => {
   it("should reject when no requested slots provided", async () => {
-    const result = await AllocationAlgorithms.preAllocate({
+    const result = await AllocationAlgorithms.allocateRequestedSlots({
       eventType: "consultation",
       eventId: "event-1",
       durationInHours: 1,
@@ -620,7 +620,7 @@ describe("AllocationAlgorithms.preAllocate", () => {
   });
 
   it("should reject when requested slots is empty array", async () => {
-    const result = await AllocationAlgorithms.preAllocate({
+    const result = await AllocationAlgorithms.allocateRequestedSlots({
       eventType: "consultation",
       eventId: "event-1",
       durationInHours: 1,
@@ -631,7 +631,7 @@ describe("AllocationAlgorithms.preAllocate", () => {
 
   it("should reject wrong number of requested slots", async () => {
     const slots = makeFutureConsecutiveSlots("2025-06-01T09:00:00Z", 1);
-    const result = await AllocationAlgorithms.preAllocate({
+    const result = await AllocationAlgorithms.allocateRequestedSlots({
       eventType: "consultation",
       eventId: "event-1",
       durationInHours: 1,
@@ -643,7 +643,7 @@ describe("AllocationAlgorithms.preAllocate", () => {
 
   it("should succeed with correct number of slots", async () => {
     const slots = makeFutureConsecutiveSlots("2025-06-01T09:00:00Z", 2);
-    const result = await AllocationAlgorithms.preAllocate({
+    const result = await AllocationAlgorithms.allocateRequestedSlots({
       eventType: "consultation",
       eventId: "event-1",
       durationInHours: 1,
@@ -655,7 +655,11 @@ describe("AllocationAlgorithms.preAllocate", () => {
       "consultation",
       "event-1",
       slots,
-      { useRequestedSlots: true },
+      {
+        useRequestedSlots: true,
+        idempotencyKey: undefined,
+        initialAllocation: undefined,
+      },
     );
   });
 
@@ -666,7 +670,7 @@ describe("AllocationAlgorithms.preAllocate", () => {
     });
 
     const slots = makeFutureConsecutiveSlots("2025-06-01T09:00:00Z", 2);
-    const result = await AllocationAlgorithms.preAllocate({
+    const result = await AllocationAlgorithms.allocateRequestedSlots({
       eventType: "consultation",
       eventId: "event-1",
       durationInHours: 1,
@@ -680,7 +684,7 @@ describe("AllocationAlgorithms.preAllocate", () => {
     mockAllocateSlots.mockRejectedValue(new Error("Connection failed"));
 
     const slots = makeFutureConsecutiveSlots("2025-06-01T09:00:00Z", 2);
-    const result = await AllocationAlgorithms.preAllocate({
+    const result = await AllocationAlgorithms.allocateRequestedSlots({
       eventType: "consultation",
       eventId: "event-1",
       durationInHours: 1,

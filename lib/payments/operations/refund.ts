@@ -47,8 +47,11 @@ import {
   RefundStatus,
 } from "@prisma/client";
 
+import { createRefund as createGatewayRefund } from "@/lib/payments";
 import { walletCredit } from "@/lib/api/organizations/wallet";
 import { reverseBookingUtilization } from "@/lib/api/organizations/program-helpers";
+import { transitionOverage } from "@/lib/payments/billing/overage-transitions";
+import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
 import { assertEarningStatusTransitionLegal } from "@/lib/payments/payouts/earning-status";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
@@ -78,6 +81,15 @@ export type RefundResult = {
   consultantEarningsReversed: number;
   organizationEarningsReversed: number;
   clawbackInitiated: boolean;
+  /** SUCCEEDED = gateway confirmed and the cascade ran; PENDING = the
+   * gateway accepted the refund but hasn't settled it — the refund webhook
+   * (or the cascadedAt backstop cron) completes it. */
+  status: "SUCCEEDED" | "PENDING";
+  /** Real gateway refund id (re_xxx / rfnd_xxx / mock_re_xxx). Absent when
+   * the gateway accepted but returned no id — the Refund row then keeps its
+   * `pending_` placeholder and the reconcile cron owns recovery (release
+   * #1014 review: never surface "" as a gateway id). */
+  gatewayRefundId?: string;
 };
 
 export class RefundValidationError extends Error {
@@ -87,6 +99,21 @@ export class RefundValidationError extends Error {
   ) {
     super(message);
     this.name = "RefundValidationError";
+  }
+}
+
+/** Gateway rejected or errored on the refund call. The Refund row is kept
+ * (PENDING with a `pending_` placeholder, or FAILED when the gateway
+ * definitively declined) so the reconcile cron / failed-refund notifier own
+ * recovery — callers must NOT retry the gateway themselves. */
+export class RefundGatewayError extends Error {
+  constructor(
+    message: string,
+    public code: string,
+    public refundRowId: string,
+  ) {
+    super(message);
+    this.name = "RefundGatewayError";
   }
 }
 
@@ -114,6 +141,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
       currency: true,
       paymentStatus: true,
       paymentGateway: true,
+      paymentIntent: true,
       displayCurrencyAtCheckout: true,
       exchangeRateAtCheckout: true,
       refunds: { select: { amountPaise: true, status: true } },
@@ -172,6 +200,25 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
     );
   }
 
+  // #1008 — block an app-initiated refund while a dispute is LIVE (non-terminal)
+  // on this payment: the gateway may still pull the money via the dispute, so
+  // refunding now risks paying the customer twice. Terminal disputes already
+  // reduce `refundable` above. Gateway-webhook-driven cascades (applyRefundCascade
+  // directly) bypass this — they reflect money the bank already moved.
+  const liveDispute = await prisma.dispute.findFirst({
+    where: {
+      paymentId: input.paymentId,
+      status: { notIn: DISPUTE_INACTIVE_FOR_GATING },
+    },
+    select: { status: true },
+  });
+  if (liveDispute) {
+    throw new RefundValidationError(
+      `Payment ${input.paymentId} has an open dispute (${liveDispute.status}); resolve it before refunding`,
+      "REFUND_BLOCKED_BY_DISPUTE",
+    );
+  }
+
   const requested = input.amountPaise ?? refundable;
   if (requested <= 0) {
     throw new RefundValidationError(
@@ -186,7 +233,13 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
     );
   }
 
-  return prisma.$transaction(
+  // PHASE 1 — reserve. Create the Refund row in PENDING with a `pending_`
+  // placeholder id inside a Serializable tx: the balance re-check and the
+  // reservation are atomic, so racing refunds can't oversubscribe, and the
+  // placeholder is exactly what `reconcile-pending-refunds` recovers if we
+  // crash between the gateway call and Phase 3 (the "two-phase refund
+  // pattern" that cron documents).
+  const reserved = await prisma.$transaction(
     async (tx) => {
       // Re-derive `refundable` inside the Serializable tx — defends
       // against two refunds racing through the outer read. Must mirror the
@@ -222,21 +275,32 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
         );
       }
 
-      // Create the Refund row in PENDING (the schema's pre-success
-      // state — there is no PROCESSING enum value). We use a synthetic
-      // `refundId` keyed `app_<uuid>` so it's distinguishable from
-      // gateway IDs (`re_xxx`/`rfnd_xxx`) and from the
-      // reconciliation-script placeholders (`pending_xxx`). Callers
-      // that bind to a real gateway refund (Stripe `re_xxx`) should
-      // update this row's `refundId` after the gateway call returns.
-      const created = await tx.refund.create({
+      // #1008 — re-check for a live dispute inside the Serializable tx. Reading
+      // the dispute table here makes SSI abort the loser when a dispute-status
+      // change (handleDisputeUpdated, also Serializable) interleaves between the
+      // outer read and this reservation.
+      const liveDisputeNow = await tx.dispute.findFirst({
+        where: {
+          paymentId: input.paymentId,
+          status: { notIn: DISPUTE_INACTIVE_FOR_GATING },
+        },
+        select: { id: true },
+      });
+      if (liveDisputeNow) {
+        throw new RefundValidationError(
+          `Payment ${input.paymentId} has an open dispute; resolve it before refunding`,
+          "REFUND_BLOCKED_BY_DISPUTE",
+        );
+      }
+
+      return tx.refund.create({
         data: {
           paymentId: input.paymentId,
           amountPaise: requested,
           currency: payment.currency,
           reason: input.reason,
           status: RefundStatus.PENDING,
-          refundId: `app_${globalThis.crypto.randomUUID()}`,
+          refundId: `pending_${globalThis.crypto.randomUUID()}`,
           paymentGateway: payment.paymentGateway,
           exchangeRateAtRefund: payment.exchangeRateAtCheckout,
           displayCurrency: payment.displayCurrencyAtCheckout,
@@ -246,28 +310,179 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
           } as Prisma.InputJsonValue,
         },
       });
+    },
+    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+  );
 
+  // PHASE 2 — the actual gateway refund (M1: this call was previously
+  // missing entirely — refunds were marked SUCCEEDED without the customer's
+  // card ever being credited). Runs OUTSIDE any transaction: external I/O
+  // must not sit inside a Serializable tx, and an SSI retry must not re-hit
+  // the gateway. Mirrors actions/maintenance/freeze-appointments.ts.
+  let gateway: Awaited<ReturnType<typeof createGatewayRefund>>;
+  try {
+    gateway = await createGatewayRefund({
+      paymentIntentId: payment.paymentIntent,
+      amount: requested,
+      reason: input.reason,
+    });
+  } catch (err) {
+    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), {
+      tags: { subsystem: "payments", feature: "refund" },
+      extra: { paymentId: input.paymentId, refundRowId: reserved.id },
+    });
+    // Keep the PENDING placeholder: the reconcile cron matches it against
+    // the gateway (covers "call actually landed but we never heard back")
+    // or FAILs it after 24h, which triggers the payer notification (#779).
+    await prisma.refund
+      .update({
+        where: { id: reserved.id },
+        data: {
+          metadata: {
+            initiatedByUserId: input.initiatedByUserId ?? null,
+            source: "app",
+            gateway_error: err instanceof Error ? err.message : String(err),
+          } as Prisma.InputJsonValue,
+        },
+      })
+      .catch(() => undefined); // best-effort annotation only
+    throw new RefundGatewayError(
+      `Gateway refund failed for payment ${input.paymentId}: ${err instanceof Error ? err.message : String(err)}`,
+      "GATEWAY_REFUND_FAILED",
+      reserved.id,
+    );
+  }
+
+  // PHASE 3a — bind the outcome OUTSIDE the cascade tx. If the cascade
+  // below fails and rolls back, the row still points at the real gateway
+  // refund, so the refund webhook / cascadedAt backstop cron complete it by
+  // id — no heuristic amount+time matching needed.
+  if (gateway.status === "FAILED") {
+    await prisma.refund.update({
+      where: { id: reserved.id },
+      data: {
+        refundId: gateway.refundId || reserved.refundId,
+        status: RefundStatus.FAILED,
+        failureReason: "Gateway declined the refund",
+        failedAt: new Date(),
+      },
+    });
+    throw new RefundGatewayError(
+      `Gateway declined refund for payment ${input.paymentId}`,
+      "GATEWAY_REFUND_DECLINED",
+      reserved.id,
+    );
+  }
+
+  await prisma.refund.update({
+    where: { id: reserved.id },
+    data: {
+      // Falsy gateway id keeps the pending_ placeholder (mirrors the FAILED
+      // branch) so the reconcile cron still matches the row — and the
+      // non-nullable unique column never gets "".
+      refundId: gateway.refundId || reserved.refundId,
+      // Merge, not replace: Phase 1's audit keys (initiatedByUserId, source)
+      // must survive gateway-id binding — the Razorpay path always returns
+      // notes, so a bare assign wiped them (release #1014 review).
+      ...(gateway.metadata
+        ? {
+            metadata: {
+              ...(reserved.metadata &&
+              typeof reserved.metadata === "object" &&
+              !Array.isArray(reserved.metadata)
+                ? reserved.metadata
+                : {}),
+              ...(gateway.metadata as Record<string, unknown>),
+            } as Prisma.InputJsonValue,
+          }
+        : {}),
+    },
+  });
+
+  if (gateway.status !== "SUCCEEDED") {
+    // Money not settled yet — no cascade, row stays PENDING under its real
+    // gateway id so the webhook reconciles instead of duplicating.
+    return {
+      refundId: reserved.id,
+      amountRefundedPaise: requested,
+      legsReversed: 0,
+      consultantEarningsReversed: 0,
+      organizationEarningsReversed: 0,
+      clawbackInitiated: false,
+      status: "PENDING" as const,
+      gatewayRefundId: gateway.refundId || undefined,
+    };
+  }
+
+  // PHASE 3b — settle: cascade + SUCCEEDED atomically. A throw here rolls
+  // back the cascade AND the cascadedAt claim, leaving the row PENDING under
+  // its gateway id for the webhook redelivery / backstop cron to re-drive.
+  const settled = await prisma.$transaction(
+    async (tx) => {
       const cascade = await applyRefundCascade(tx, {
         paymentId: input.paymentId,
-        refundId: created.id,
+        refundId: reserved.id,
         amountPaise: requested,
         reason: input.reason,
         initiatedByUserId: input.initiatedByUserId ?? null,
       });
 
       await tx.refund.update({
-        where: { id: created.id },
+        where: { id: reserved.id },
         data: { status: RefundStatus.SUCCEEDED },
       });
 
       return {
-        refundId: created.id,
+        refundId: reserved.id,
         amountRefundedPaise: requested,
         ...cascade,
+        status: "SUCCEEDED" as const,
+        gatewayRefundId: gateway.refundId || undefined,
       };
     },
     { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
   );
+
+  // #715/#716 — the parent booking was fully refunded and carried a CHARGED
+  // CHARGE_MEMBER overage on a SEPARATE side-payment. Refund it now that the
+  // parent settled: outside the tx (its own gateway call + Serializable
+  // cascade), and best-effort so a hiccup never rolls back the parent refund.
+  if (settled.memberOverageRefundDue) {
+    const sidePaymentId = settled.memberOverageRefundDue.overagePaymentId;
+    try {
+      await refundPayment({
+        paymentId: sidePaymentId,
+        reason: `overage credit-back — parent booking ${input.paymentId} refunded`,
+        initiatedByUserId: input.initiatedByUserId ?? null,
+      });
+    } catch (err) {
+      // ALREADY_FULLY_REFUNDED / PAYMENT_NOT_SUCCEEDED are benign idempotent
+      // re-drives; anything else is a real gap between the parent refund and the
+      // member's credit-back — page ops rather than fail the settled parent.
+      if (
+        !(err instanceof RefundValidationError) ||
+        (err.code !== "ALREADY_FULLY_REFUNDED" &&
+          err.code !== "PAYMENT_NOT_SUCCEEDED")
+      ) {
+        Sentry.captureException(
+          err instanceof Error ? err : new Error(String(err)),
+          {
+            tags: { subsystem: "payments", feature: "overage-credit-back" },
+            extra: { parentPaymentId: input.paymentId, sidePaymentId },
+          },
+        );
+        void recordSystemError({
+          organizationId: null,
+          category: "PAYMENT",
+          summary: `Overage credit-back refund failed for side-payment ${sidePaymentId}`,
+          err,
+          context: { parentPaymentId: input.paymentId, sidePaymentId },
+        }).catch(() => {});
+      }
+    }
+  }
+
+  return settled;
 }
 
 // ============================================================================
@@ -287,6 +502,14 @@ export type ApplyRefundCascadeResult = {
   consultantEarningsReversed: number;
   organizationEarningsReversed: number;
   clawbackInitiated: boolean;
+  /**
+   * #715/#716 — set when a fully-refunded booking had a CHARGED CHARGE_MEMBER
+   * overage. The marginal was collected on a SEPARATE side-payment that this
+   * cascade cannot touch, so the orchestrator (`refundPayment`) must refund it
+   * after this tx commits. Null for CHARGE_ORG (netted here via credit note)
+   * and when there is no charged member overage.
+   */
+  memberOverageRefundDue: { overagePaymentId: string } | null;
 };
 
 /**
@@ -316,6 +539,7 @@ export async function applyRefundCascade(
       consultantEarningsReversed: 0,
       organizationEarningsReversed: 0,
       clawbackInitiated: false,
+      memberOverageRefundDue: null,
     };
   }
 
@@ -346,6 +570,7 @@ export async function applyRefundCascade(
       consultantEarningsReversed: 0,
       organizationEarningsReversed: 0,
       clawbackInitiated: false,
+      memberOverageRefundDue: null,
     };
   }
 
@@ -703,12 +928,67 @@ export async function applyRefundCascade(
   // reversal. Idempotent on refundId, so calling it from both paths (or a cron
   // retry) is safe.
   // -----------------------------------------------------------------------
-  await mintRefundCreditNote(tx, {
+  const refundCreditNote = await mintRefundCreditNote(tx, {
     paymentId: payment.id,
     refundId: input.refundId,
     amountPaise: input.amountPaise,
     reason: input.reason,
   });
+
+  // -----------------------------------------------------------------------
+  // Step 7.6 (#715/#716): credit-back for an ALREADY-CHARGED overage on full
+  // refund. reverseBookingUtilization only cancels UNCOLLECTED overages; a
+  // CHARGED one moved real money. Full-reversal-only — a partial parent refund
+  // leaves the overage standing (no clean proration for a surcharge).
+  //   CHARGE_ORG   — the marginal rode inside this payment.amount and its
+  //                  invoice was paid, so the credit note above returns it;
+  //                  flip the event once the CN is actually minted.
+  //   CHARGE_MEMBER — the marginal was a SEPARATE side-payment; this cascade
+  //                  can't touch it, so surface it for the orchestrator to
+  //                  refund post-commit (that refund's own cascade flips it).
+  // -----------------------------------------------------------------------
+  let memberOverageRefundDue: { overagePaymentId: string } | null = null;
+  if (payment.bookingUtilization && input.amountPaise === payment.amount) {
+    const charged = await tx.overageEvent.findFirst({
+      where: {
+        bookingUtilizationId: payment.bookingUtilization.id,
+        chargeStatus: "CHARGED",
+      },
+      select: { id: true, overageBehavior: true, paymentId: true },
+    });
+    if (
+      charged?.overageBehavior === "CHARGE_ORG" &&
+      refundCreditNote.creditNoteId
+    ) {
+      await transitionOverage(
+        tx,
+        { id: charged.id },
+        "REVERSED",
+        { reversedAt: new Date() },
+        { fromIn: ["CHARGED"] },
+      );
+    } else if (
+      charged?.overageBehavior === "CHARGE_MEMBER" &&
+      charged.paymentId
+    ) {
+      memberOverageRefundDue = { overagePaymentId: charged.paymentId };
+    }
+  }
+
+  // A CHARGE_MEMBER side-payment refunding ITSELF (whether via the credit-back
+  // above or a direct refund) flips its own event. Keyed by paymentId —
+  // side-charges carry no bookingUtilization, so the branch above misses them.
+  // Scoped to side-charges (parentPaymentId set) so normal booking refunds skip
+  // this write entirely.
+  if (payment.parentPaymentId) {
+    await transitionOverage(
+      tx,
+      { paymentId: payment.id, overageBehavior: "CHARGE_MEMBER" },
+      "REVERSED",
+      { reversedAt: new Date() },
+      { fromIn: ["CHARGED"] },
+    );
+  }
 
   // #738-A — TCS u/s 52 parity: if collection ever stamped this payment
   // (flag-gated, schema-live), the refund must net it out of the next GSTR-8.
@@ -947,6 +1227,7 @@ export async function applyRefundCascade(
     consultantEarningsReversed,
     organizationEarningsReversed,
     clawbackInitiated,
+    memberOverageRefundDue,
   };
 }
 

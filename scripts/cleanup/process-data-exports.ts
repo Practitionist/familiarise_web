@@ -37,6 +37,8 @@ import { Resend } from "resend";
 import prisma from "../../lib/prisma";
 import { AUDIT_ACTIONS } from "../../lib/enterprise/audit-actions";
 import { recordSystemError } from "../../lib/enterprise/system-events";
+import { checkConsentBatch } from "../../lib/compliance/dpdp";
+import { PURPOSE_CODES } from "../../lib/compliance/purpose-codes";
 import { notifyOrgDataExportReady } from "../../lib/novu/org-workflows";
 import { getAppUrl } from "../../lib/url";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
@@ -67,6 +69,8 @@ interface ExportBundle {
   earnings: unknown[];
   payouts: unknown[];
   auditLog: unknown[];
+  /** #701 — count of members whose PII was withheld for lack of consent. */
+  excludedForConsent: number;
 }
 
 async function buildBundleFor(organizationId: string): Promise<ExportBundle> {
@@ -110,11 +114,32 @@ async function buildBundleFor(organizationId: string): Promise<ExportBundle> {
     }),
   ]);
 
-  const members = memberships
+  const seenUserIds = new Set<string>();
+  const allMembers = memberships
     .map((m) => m.user)
-    .filter(
-      (u, idx, arr) => arr.findIndex((x) => x.id === u.id) === idx,
-    );
+    .filter((u) => {
+      if (!u || seenUserIds.has(u.id)) return false;
+      seenUserIds.add(u.id);
+      return true;
+    });
+
+  // #701 — DPDP: withhold PII for members who have withdrawn core-processing
+  // consent. Their name/email are dropped from `members` and scrubbed from the
+  // membership rows (the org-relationship metadata stays). TODO(#701): extend to
+  // field-level scoping across the rest of the bundle.
+  // #1019 — one batch query instead of a per-member loop (pool-safe for large
+  // orgs). consentedIds holds the members who HAVE core-processing consent.
+  const consentedIds = await checkConsentBatch({
+    userIds: allMembers.map((u) => u.id),
+    purposeCode: PURPOSE_CODES.PRIMARY_PROCESSING,
+  });
+  const members = allMembers.filter((u) => consentedIds.has(u.id));
+  const excludedForConsent = allMembers.length - members.length;
+  const scrubbedMemberships = memberships.map((m) =>
+    m.user && !consentedIds.has(m.user.id)
+      ? { ...m, user: { id: m.user.id, name: null, email: null } }
+      : m,
+  );
 
   return {
     organizationId,
@@ -122,13 +147,14 @@ async function buildBundleFor(organizationId: string): Promise<ExportBundle> {
     schemaVersion: 1,
     organization,
     members,
-    memberships,
+    memberships: scrubbedMemberships,
     contracts,
     programs,
     invoices,
     earnings,
     payouts,
     auditLog,
+    excludedForConsent,
   };
 }
 
