@@ -159,7 +159,14 @@ export interface RecentPayment {
 
 export interface RecentRefund {
   id: string;
-  amount: number;
+  /**
+   * `Refund` stores money in `amountPaise`, and the operator-stats query
+   * selects exactly that. This interface said `amount` — a field the payload
+   * has never carried — so the admin dashboard's Recent Refunds list formatted
+   * `undefined` and rendered a literal "₹NaN". Same defect class the refunds
+   * and disputes tables already had; the drift test now covers this one too.
+   */
+  amountPaise: number;
   currency: string;
   status: string;
   paymentGateway: string;

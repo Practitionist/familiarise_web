@@ -48,6 +48,11 @@ function interfaceMoneyField(src: string, name: string): string {
 describe("client money interfaces name the field the schema declares", () => {
   it.each([
     ["Refund", "types/payments.ts", "Refund"],
+    // The admin dashboard's Recent Refunds list had the same defect and this
+    // test did not cover it, so it shipped the same literal "₹NaN" to the
+    // operator home page. Covering every hand-written interface over a money
+    // model is the point; covering some of them is how this recurred.
+    ["Refund", "types/payments.ts", "RecentRefund"],
     ["Dispute", "types/payments.ts", "Dispute"],
     ["Dispute", "types/disputes.ts", "Dispute"],
     ["Dispute", "types/disputes.ts", "DisputeDetails"],
@@ -83,5 +88,27 @@ describe("paise values reach a paise formatter", () => {
     expect(read(PAISE_PAGES[0])).not.toContain(
       "formatCurrencyFromMajorUnit(refund",
     );
+  });
+
+  it("the admin home page formats its paise aggregates instead of printing them raw", () => {
+    // These are `sumPaise(...)` totals — plain numbers in paise. They used to
+    // be interpolated straight into a template literal, so the operator home
+    // page read "264768347 total value" where the truth is ₹26,47,683.47.
+    //
+    // That is the more dangerous half of this bug class: ₹NaN is obviously
+    // broken and gets reported, whereas a plausible-looking number that is
+    // 100x off gets believed and acted on.
+    const src = read("app/dashboard/admin/home/AdminHomePageClient.tsx");
+    for (const field of [
+      "totalPaymentsValue",
+      "pendingPaymentsValue",
+      "totalRefundsValue",
+    ]) {
+      expect(src).toMatch(
+        new RegExp(`formatCurrencyAmount\\(\\s*stats\\?\\.${field}`),
+      );
+      // and never bare-interpolated
+      expect(src).not.toMatch(new RegExp(`\\$\\{stats\\?\\.${field}`));
+    }
   });
 });

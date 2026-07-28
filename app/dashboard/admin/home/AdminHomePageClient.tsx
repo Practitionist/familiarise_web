@@ -135,21 +135,21 @@ export default function AdminHomePageClient() {
               <StatCard
                 title="Total Payments"
                 value={stats?.totalPayments || 0}
-                subtitle={`${stats?.totalPaymentsValue || "₹0"} total value`}
+                subtitle={`${formatCurrencyAmount(stats?.totalPaymentsValue ?? 0, "INR")} total value`}
                 icon={CreditCard}
                 variant="default"
               />
               <StatCard
                 title="Pending Payments"
                 value={stats?.pendingPayments || 0}
-                subtitle={`${stats?.pendingPaymentsValue || "₹0"} pending`}
+                subtitle={`${formatCurrencyAmount(stats?.pendingPaymentsValue ?? 0, "INR")} pending`}
                 icon={Clock}
                 variant="warning"
               />
               <StatCard
                 title="Refunds"
                 value={stats?.totalRefunds || 0}
-                subtitle={`${stats?.totalRefundsValue || "₹0"} refunded`}
+                subtitle={`${formatCurrencyAmount(stats?.totalRefundsValue ?? 0, "INR")} refunded`}
                 icon={RefreshCw}
                 variant="default"
               />
@@ -247,7 +247,7 @@ export default function AdminHomePageClient() {
                           <div>
                             <p className="font-medium text-foreground">
                               {formatCurrencyAmount(
-                                refund.amount,
+                                refund.amountPaise,
                                 refund.currency,
                               )}
                             </p>
