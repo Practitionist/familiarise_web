@@ -18,8 +18,8 @@
  *
  * Pure static analysis: no network, no database, safe to run anywhere.
  */
-import fs from "fs";
-import path from "path";
+import fs from "node:fs";
+import path from "node:path";
 
 const ROOT = path.join(__dirname, "..", "..");
 const WORKFLOW_DIR = path.join(ROOT, ".github", "workflows");
@@ -82,7 +82,9 @@ for (const file of files) {
   }
 }
 
-for (const [secret, workflows] of Array.from(referencedBy).sort()) {
+for (const [secret, workflows] of Array.from(referencedBy).sort(([a], [b]) =>
+  a.localeCompare(b),
+)) {
   // GITHUB_TOKEN is injected by Actions itself and is never a repo secret.
   if (secret === "GITHUB_TOKEN") continue;
   if (!declared.has(secret)) {
@@ -172,9 +174,13 @@ const EVERY_MINUTE = new Set(
 // this dense).
 const SUB_DAILY = 1;
 const collisions = new Map<string, { slot: string; recurring: boolean }>();
-for (const [slot, list] of Array.from(startsAt).sort()) {
+for (const [slot, list] of Array.from(startsAt).sort(([a], [b]) =>
+  a.localeCompare(b),
+)) {
   const contenders = list.filter((s) => !EVERY_MINUTE.has(s.workflow));
-  const unique = Array.from(new Set(contenders.map((c) => c.workflow))).sort();
+  const unique = Array.from(new Set(contenders.map((c) => c.workflow))).sort(
+    (a, b) => a.localeCompare(b),
+  );
   if (unique.length < 2) continue;
   const pair = unique.map((w) => w.replace(/\.ya?ml$/, "")).join(" + ");
   const recurring = contenders.every((c) => c.firingsPerDay > SUB_DAILY);

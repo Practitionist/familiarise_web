@@ -11,8 +11,8 @@
  * Review the diff before committing. Every entry you keep is a finding you are
  * choosing not to be paged about until the expiry date.
  */
-import fs from "fs";
-import path from "path";
+import fs from "node:fs";
+import path from "node:path";
 
 import prisma from "../../lib/prisma";
 import { findingIdentity } from "../../lib/payments/ledger/baseline";

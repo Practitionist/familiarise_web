@@ -27,9 +27,9 @@
  * is the right trade for an alert that people still trust. Throttling severity
  * is a separate concern, tracked in #866 and ADR 22.
  */
-import fs from "fs";
-import path from "path";
-import { execFileSync } from "child_process";
+import fs from "node:fs";
+import path from "node:path";
+import { execFileSync } from "node:child_process";
 
 const ROOT = path.join(__dirname, "..", "..");
 const WORKFLOW_DIR = path.join(ROOT, ".github", "workflows");
@@ -52,10 +52,11 @@ function shortestIntervalMs(expr: string): number | null {
 
   const minuteStep = step(min, MIN_MS, 60);
   if (minuteStep === null) return null;
-  // A minute field that fires more than once an hour dominates the cadence.
-  if (minuteStep < 60 * MIN_MS) {
-    return hour === "*" ? minuteStep : minuteStep;
-  }
+  // A minute field that fires more than once an hour dominates the cadence,
+  // regardless of the hour restriction: the shortest gap between two firings is
+  // the minute step either way. (`13-59/30 * * * *` fires at :13 and :43 — a
+  // 30-minute gap — and restricting the hour would not shorten it.)
+  if (minuteStep < 60 * MIN_MS) return minuteStep;
   // Otherwise the hour field decides.
   const hourStep = step(hour, HOUR_MS, 24);
   if (hourStep === null) return null;
@@ -150,7 +151,7 @@ for (const file of fs
 // real cadence is visible, and headroom shrinking over time is the early
 // warning that throttling is getting worse.
 for (const s of skipped) console.log(`  skipped ${s}`);
-for (const s of ok.sort()) console.log(`  ok ${s}`);
+for (const s of ok.sort((a, b) => a.localeCompare(b))) console.log(`  ok ${s}`);
 
 if (stale.length > 0) {
   console.error(

@@ -16,8 +16,8 @@
  * Skips cleanly (exit 0) when DATABASE_URL is absent, so forks and PRs without
  * secrets are not punished.
  */
-import fs from "fs";
-import path from "path";
+import fs from "node:fs";
+import path from "node:path";
 
 import prisma from "../../lib/prisma";
 

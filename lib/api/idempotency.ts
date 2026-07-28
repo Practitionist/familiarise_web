@@ -39,7 +39,7 @@
  * When the caller sends no `Idempotency-Key` the handler runs unchanged, so
  * this is additive for every existing client.
  */
-import crypto from "crypto";
+import crypto from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 

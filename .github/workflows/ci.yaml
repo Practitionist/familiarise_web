@@ -120,6 +120,11 @@ jobs:
         # and the job still reports success — that is how #677 PM-1 came back
         # after being fixed in code. Also catches recurring cron start
         # collisions. Static only: no network, no database.
+        #
+        # `tsx` is a pinned devDependency, so npx resolves node_modules/.bin
+        # rather than fetching it. It was NOT before: every one of the 56
+        # scheduled workflows downloaded an unpinned tsx at run time, which put
+        # an unverified package on the execution path of every money cron.
         run: npx tsx scripts/ci/check-workflow-hygiene.ts
 
       - name: Database sidecar + drift guard
