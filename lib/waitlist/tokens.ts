@@ -80,6 +80,22 @@ function safeEquals(token: string, expected: () => string): boolean {
   }
 }
 
+/**
+ * Whether links can be signed at all, without throwing.
+ *
+ * Callers use this to fail the same way for every address. Deciding late —
+ * after a membership lookup has already short-circuited — makes the failure
+ * depend on membership, which turns the response into an oracle.
+ */
+export function canSignLinks(): boolean {
+  try {
+    getHmacSecret();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function buildConfirmUrl(email: string, issuedAt: number): string {
   const token = generateConfirmToken(email, issuedAt);
   return `${getAppUrl()}/api/waitlist/confirm?email=${encodeURIComponent(
