@@ -1,8 +1,3 @@
----
-description: Implement one-time payments with Razorpay — orders, invoices, HMAC verification, day passes, credits. Use when the user asks to "add a one-time purchase", "implement single payment", "create a day pass", "sell credits", or needs a non-recurring payment flow.
-argument-hint: "[order|invoice]"
----
-
 # Razorpay One-Time Payments
 
 Two flows for one-time payments: **Order flow** (Razorpay JS SDK popup) and **Invoice flow** (hosted page). Both require server-side HMAC verification.
@@ -16,12 +11,12 @@ This is a common source of confusion. One-time payments and subscriptions use **
 | **API** | Orders API (`razorpay.orders.create`) | Subscriptions API (`razorpay.subscriptions.create`) |
 | **Checkout UI** | JS SDK popup (`new Razorpay({...}).open()`) | Hosted page redirect (`short_url`) |
 | **Client script** | `checkout.js` loaded via `<Script>` tag | No client script needed |
-| **Verification** | Client-side HMAC (`order_id\|payment_id`) | Webhook (`subscription.activated`) |
-| **Payment confirmation** | Immediate — `handler` callback fires | Async — webhook fires minutes later |
-| **Where it runs** | Inline popup on your page | Separate Razorpay-hosted page |
-| **Key used for HMAC** | `RAZORPAY_KEY_SECRET` (API secret) | `RAZORPAY_WEBHOOK_SECRET` (webhook secret) |
+| **Verification** | Callback HMAC (`order_id\|payment_id`) | Hosted `short_url` flow: webhook only. JS-popup flow: callback HMAC (`payment_id\|subscription_id`) **and** webhook |
+| **Payment confirmation** | Immediate — `handler` callback fires | Webhook (`subscription.activated`) is the source of truth either way |
+| **Where it runs** | Inline popup on your page | Hosted page, or inline popup via `subscription_id` |
+| **Key used for HMAC** | `RAZORPAY_SECRET` (API secret) | Callback HMAC: `RAZORPAY_SECRET`; webhook: `RAZORPAY_WEBHOOK_SECRET` |
 
-**Do NOT mix these up.** You cannot use `short_url` for one-time orders, and you cannot use the JS SDK popup for subscriptions (it technically works but breaks on mobile/popup blockers).
+**Do NOT mix these up.** You cannot use `short_url` for one-time orders. Subscriptions, however, *are* supported in Standard Checkout — pass `subscription_id` in the options instead of `order_id`. The hosted `short_url` page is just one option; the JS SDK popup is another. **Two distinct subscription verification paths, two distinct secrets**: if you use the JS popup with `subscription_id`, the `handler` callback returns `razorpay_payment_id`/`razorpay_subscription_id`/`razorpay_signature` — verify with `HMAC_SHA256(payment_id + "|" + subscription_id, RAZORPAY_SECRET)` (note the **reversed field order** vs orders). The webhook (`subscription.activated`, verified with `RAZORPAY_WEBHOOK_SECRET` over the raw body) remains the activation source of truth in both flows.
 
 ## Flow 1: Order + JS SDK (Recommended for UX)
 
@@ -93,6 +88,15 @@ const handlePayment = async () => {
       }
     },
     theme: { color: "#3b82f6" },
+    modal: {
+      ondismiss: () => {
+        // User closed the popup without paying — reset loading state here
+      },
+    },
+    // Fallback for popup-blocked / mobile: Razorpay redirects to callback_url
+    // with the payment params instead of firing `handler`.
+    // callback_url: "https://your-app.com/api/billing/verify-payment",
+    // redirect: true,
   });
   rzp.open();
 };
@@ -100,10 +104,12 @@ const handlePayment = async () => {
 
 **Note**: Add `<Script src="https://checkout.razorpay.com/v1/checkout.js" />` to your layout.
 
+**Popup-blocked / mobile fallback**: Use `modal.ondismiss` to reset state when the user closes the popup. If the popup is blocked, set `callback_url` + `redirect: true` so Razorpay posts the result to a server endpoint instead of calling `handler`.
+
 ### Verify Payment (Server)
 
 ```typescript
-// app/api/billing/verify-payment/route.ts
+// This repo: app/api/checkout/verify-signature/route.ts
 import crypto from "crypto";
 
 export async function POST(request: Request) {
@@ -112,7 +118,7 @@ export async function POST(request: Request) {
 
   // ORDER FLOW signature: HMAC(secret, "order_id|payment_id")
   const expectedSignature = crypto
-    .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET!)
+    .createHmac("sha256", process.env.RAZORPAY_SECRET!)
     .update(`${razorpay_order_id}|${razorpay_payment_id}`)
     .digest("hex");
 
@@ -153,7 +159,7 @@ const signaturePayload = [
 ].join("|");
 
 const expectedSignature = crypto
-  .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET!)
+  .createHmac("sha256", process.env.RAZORPAY_SECRET!)
   .update(signaturePayload)
   .digest("hex");
 ```
@@ -208,7 +214,7 @@ async function grantDayPass(userId: string, orderId: string, paymentId: string) 
 2. **Two different signature formats**: Order flow = `order_id|payment_id`. Invoice flow = `invoice_id|receipt|status|payment_id`. Using the wrong format = silent failure.
 3. **`?? ""` for optional invoice fields**: Missing fields in the signature payload produce wrong HMAC. Always default to empty string.
 4. **`timingSafeEqual` requires same length**: Catch errors from length mismatch — treat as invalid.
-5. **Verify key**: Order flow uses `RAZORPAY_KEY_SECRET` (your API key secret), NOT `RAZORPAY_WEBHOOK_SECRET`. These are different secrets for different purposes!
+5. **Verify key**: Order flow uses `RAZORPAY_SECRET` (your API key secret), NOT `RAZORPAY_WEBHOOK_SECRET`. These are different secrets for different purposes!
 6. **Race condition**: Check purchase status AFTER signature verification, not before. Prevents double-grant between concurrent requests.
-7. **Razorpay JS SDK script**: Must be loaded via `<Script>` tag, not `import`. It attaches to `window.Razorpay`. This script is ONLY for one-time payments, not subscriptions.
+7. **Razorpay JS SDK script**: Must be loaded via `<Script>` tag, not `import`. It attaches to `window.Razorpay`. The same Standard Checkout script also drives subscriptions (pass `subscription_id` instead of `order_id`).
 8. **Payment confirmation is immediate**: Unlike subscriptions (which rely on async webhooks), one-time payments confirm in the `handler` callback. You verify the HMAC signature server-side and grant access right away.

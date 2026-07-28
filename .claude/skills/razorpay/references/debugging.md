@@ -1,8 +1,3 @@
----
-description: Debug common Razorpay integration issues — webhook failures, signature mismatches, subscription state problems, SDK quirks. Use when the user says "webhook not working", "signature failing", "razorpay broken", "payment not going through", or needs to troubleshoot any Razorpay integration problem.
-argument-hint: "[webhook|signature|subscription|payment]"
----
-
 # Razorpay Debugging Guide
 
 Common issues and their solutions, organized by symptom.
@@ -11,11 +6,11 @@ Common issues and their solutions, organized by symptom.
 
 **Check these in order:**
 
-1. **Webhook URL registered**: Dashboard → Settings → Webhooks → Verify URL is correct
+1. **Webhook URL registered**: Dashboard → Account & Settings → Webhooks → Verify URL is correct
 2. **HTTPS required**: Razorpay won't call HTTP endpoints (except localhost in test mode)
 3. **Events enabled**: Check which events are checked in webhook settings
 4. **Response timeout**: Razorpay expects 2xx within 5 seconds. If your handler takes longer, it times out and retries.
-5. **Check webhook logs**: Dashboard → Settings → Webhooks → Click on webhook → View delivery attempts
+5. **Check webhook logs**: Dashboard → Developers → Webhooks → select the webhook → View delivery attempts
 
 **Test locally with ngrok:**
 ```bash
@@ -27,7 +22,7 @@ ngrok http 3000
 
 **Most common causes:**
 
-1. **Using wrong secret**: Webhook signature uses `RAZORPAY_WEBHOOK_SECRET`. Payment verification uses `RAZORPAY_KEY_SECRET`. They are DIFFERENT values.
+1. **Using wrong secret**: Webhook signature uses `RAZORPAY_WEBHOOK_SECRET`. Payment verification uses `RAZORPAY_SECRET`. They are DIFFERENT values.
 
 2. **Parsing body as JSON first**: Signature is computed on the RAW string body. If you parse to JSON and re-stringify, whitespace changes break the signature.
    ```typescript
@@ -85,7 +80,7 @@ if (existing?.status === "created" && isOlderThan1Hour(existing.createdAt)) {
 
 **Symptom**: TypeScript complains about second parameter type.
 
-**Fix**: The second parameter is a boolean, not an object:
+**Fix**: On the pinned SDK (`razorpay@2.9.6`) the second parameter is a POSITIONAL BOOLEAN (`cancelAtCycleEnd`), not an options object:
 ```typescript
 // WRONG
 await razorpay.subscriptions.cancel(id, { cancel_at_cycle_end: true });
@@ -95,11 +90,13 @@ await razorpay.subscriptions.cancel(id, true);  // cancel at cycle end
 await razorpay.subscriptions.cancel(id, false); // cancel immediately
 ```
 
+**Why the object form is dangerous on 2.9.6**: the implementation is `cancelAtCycleEnd && { data: { cancel_at_cycle_end: 1 } }`. An object is always truthy, so `{ cancel_at_cycle_end: false }` does NOT cancel immediately — it silently cancels at cycle end (a foot-gun inversion of your intent). The object-with-`true` form happens to behave correctly by accident, but the object form is still wrong here. This is version-dependent: newer Razorpay SDK docs show an options-object form, so confirm the installed version before switching shapes.
+
 ## `customers.create()` TypeScript Error with `fail_existing`
 
 **Symptom**: TypeScript expects `0 | 1` but won't accept the number.
 
-**Fix**: Explicit cast:
+**Fix**: Explicit cast (version-dependent):
 ```typescript
 await razorpay.customers.create({
   email: user.email,
@@ -107,32 +104,37 @@ await razorpay.customers.create({
 });
 ```
 
+The cast is only needed on SDK versions whose typings declare `fail_existing` as `0 | 1` (a bare numeric literal then trips `tsc`). Other versions type it loosely and need no cast — check the installed `.d.ts` before adding the cast.
+
 ## Payment Succeeds But Access Not Granted
 
 **This is the #1 production issue. Debug in this order:**
 
-1. **Check auto-capture setting**: Dashboard → Settings → Payments → "Automatic capture delay". If set to manual, payments stay in `authorized` state and `payment.captured` never fires. **Fix: Set to "Auto-capture immediately" in Dashboard.**
+1. **Check auto-capture setting**: Dashboard → Account & Settings → Payment Capture (older dashboards: Settings → Payments → "Automatic capture delay"). If set to manual, payments stay in `authorized` state and `payment.captured` never fires. **Fix: enable automatic capture in Dashboard.** Auto-capture is ON by default for new accounts — check whether it was disabled.
 2. **Check event type**: Were you looking at `subscription.authenticated` or `subscription.activated`? Only `activated` means money was charged. `authenticated` just means card was verified — NO payment.
-3. **Check webhook delivery**: Dashboard → Settings → Webhooks → Click webhook → Delivery attempts. See if Razorpay even tried to send.
+3. **Check webhook delivery**: Dashboard → Developers → Webhooks → select the webhook → Delivery attempts. See if Razorpay even tried to send.
 4. **Webhook timeout**: Your handler must return 200 within 5 seconds. If it takes 6 seconds, Razorpay marks it failed and retries. Check your handler latency.
 5. **Check idempotency**: Is `lastEventId` causing a skip? A previous delivery may have succeeded in Razorpay's view but failed to commit in your DB.
 6. **Check signature**: Was 400 returned? Means wrong secret or parsed JSON body.
-7. **Payment succeeded but webhook never arrived**: This happens when your webhook URL is down or DNS fails. Recovery: build a `/api/billing/sync` endpoint that fetches subscription status directly from Razorpay API and reconciles:
+7. **Payment succeeded but webhook never arrived**: usually the webhook URL was down or DNS failed. Reach for these in order:
+   - **The sweeper** — `scripts/cleanup/sweep-stuck-webhook-events.ts` re-drives every `WebhookEvent` row still at `processed = false` through the same dispatcher. This covers the common case: the event arrived, the handler died mid-way.
+   - **API reconciliation** — if the event never reached us at all there is no row to sweep, so read the truth back from Razorpay:
    ```typescript
-   // Recovery endpoint — call manually or via cron
-   const rzpSub = await razorpay.subscriptions.fetch(subscriptionId);
-   if (rzpSub.status === "active" && dbSub.status !== "active") {
-     await activateSubscription(dbSub, rzpSub, null);
+   const order = await razorpayClient.orders.fetch(payment.paymentIntent);
+   if (order.status === "paid" && payment.paymentStatus !== "SUCCEEDED") {
+     // app/api/checkout/verify/route.ts already does exactly this, guarded by a
+     // conditional updateMany on PENDING so it cannot race the webhook.
    }
    ```
+   - **Support-ticket replay**, last: there is no self-serve replay button. Dashboard → Help → Technical Support → "Issue regarding Webhooks/API", one event per request, event ≤15 days old, and only if the webhook was enabled when it fired. See `webhooks.md`.
 
 ## Auto-Capture Is Silently Off
 
 **Symptom**: Payments show as `authorized` in Razorpay Dashboard but never move to `captured`. Webhooks like `payment.captured` never fire.
 
-**Root cause**: Dashboard → Settings → Payments → "Automatic capture delay" is set to manual or a delay. New Razorpay accounts sometimes default to manual capture.
+**Root cause**: Dashboard → Account & Settings → Payment Capture (older dashboards: Settings → Payments → "Automatic capture delay") is set to manual or a delay. Auto-capture is ON by default, but it can have been switched off — and authorized-but-uncaptured payments auto-refund after the configured window (default ~3 days).
 
-**Fix**: Set to "Auto-capture immediately" in Dashboard. Or capture manually via API:
+**Fix**: Enable automatic capture in Dashboard. Or capture manually via API:
 ```typescript
 await razorpay.payments.capture(paymentId, amount, "INR");
 ```
@@ -178,7 +180,7 @@ async function verifyWebhookSignatureEdge(
 
 **Better fix**: Don't use Edge Runtime for webhook routes. In Next.js, ensure your webhook route uses Node.js runtime:
 ```typescript
-// app/api/billing/webhook/route.ts
+// app/api/webhooks/razorpay/route.ts
 export const runtime = "nodejs"; // Force Node.js runtime — NOT edge
 ```
 
@@ -199,7 +201,7 @@ export const runtime = "nodejs"; // Force Node.js runtime — NOT edge
 | `fail_existing: 0` type mismatch | Cast: `0 as 0 \| 1` |
 | `notify_info` fails with empty object | Only include if fields are present |
 | `contact` field rejects empty string | Omit field entirely if no phone |
-| `current_period_end` vs `current_end` | Try both, plus `end_at` |
+| period-end field name | Use `current_end` (Unix s), `end_at` as fallback; `current_period_end` is a Stripe-ism, not a Razorpay field |
 | Webhook event ID in header vs payload | Prefer `x-razorpay-event-id` header |
 | Error shape varies by endpoint | Check both `.error.code` and `.statusCode` |
 
@@ -207,7 +209,7 @@ export const runtime = "nodejs"; // Force Node.js runtime — NOT edge
 
 ```bash
 # Check if webhook endpoint is reachable
-curl -X POST https://your-app.com/api/billing/webhook \
+curl -X POST https://your-app.com/api/webhooks/razorpay \
   -H "Content-Type: application/json" \
   -d '{"test": true}'
 # Should return 400 (missing signature), NOT 404 or 500
@@ -240,7 +242,7 @@ Sent when a new subscription is successfully activated after first payment.
         "plan_id": "plan_test456",
         "customer_id": "cust_test789",
         "status": "active",
-        "current_period_end": 1700000000,
+        "current_end": 1700000000,
         "notes": { "userId": "user_123", "planKey": "pro_monthly" }
       }
     },
@@ -270,7 +272,7 @@ Sent on each successful renewal payment.
         "plan_id": "plan_test456",
         "customer_id": "cust_test789",
         "status": "active",
-        "current_period_end": 1702592000,
+        "current_end": 1702592000,
         "paid_count": 2,
         "notes": { "userId": "user_123", "planKey": "pro_monthly" }
       }
@@ -316,7 +318,7 @@ Sent when a payment attempt fails (e.g., insufficient funds, card declined).
 
 ```bash
 # Test webhook locally (skip signature verification in test mode or use a known test secret)
-curl -X POST http://localhost:3000/api/billing/webhook \
+curl -X POST http://localhost:3000/api/webhooks/razorpay \
   -H "Content-Type: application/json" \
   -H "x-razorpay-event-id: evt_test_001" \
   -H "x-razorpay-signature: <generate with your webhook secret>" \

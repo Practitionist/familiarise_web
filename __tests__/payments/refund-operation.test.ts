@@ -835,6 +835,9 @@ describe("refundPayment — M1 gateway wiring", () => {
       paymentIntentId: "pay_intent_seed",
       amount: 10000,
       reason: "customer request",
+      // The Phase-1 reservation id doubles as the gateway idempotency key, so a
+      // retry replays the original refund instead of debiting the payer twice.
+      idempotencyKey: state.refunds[0]?.id,
     });
     expect(result.status).toBe("SUCCEEDED");
     expect(result.gatewayRefundId).toBe("rfnd_gw_1");

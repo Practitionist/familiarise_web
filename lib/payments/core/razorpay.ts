@@ -129,6 +129,101 @@ export async function cancelRazorpayOrder(orderId: string): Promise<void> {
 // Refund Operations
 // ============================================================================
 
+const RAZORPAY_API_BASE = "https://api.razorpay.com/v1";
+const REFUND_TIMEOUT_MS = 30_000;
+
+/** Razorpay: at least 10 chars, only letters, digits, hyphens and underscores. */
+const IDEMPOTENCY_KEY_MIN_LENGTH = 10;
+
+type RazorpayRefundResponse = {
+  id: string;
+  amount: number;
+  currency?: string;
+  status: string | null;
+  notes?: Record<string, unknown>;
+};
+
+/**
+ * POST /v1/payments/:id/refund over raw HTTP instead of the SDK.
+ *
+ * `X-Refund-Idempotency` is the only thing between a network-error retry and a
+ * second refund landing on the customer's card, and razorpay-node cannot send
+ * it at all: `getValidHeaders()` whitelists exactly `X-Razorpay-Account` and
+ * `Content-Type` and silently drops everything else, so the header is
+ * unreachable per-request *and* per-client. Raw HTTP is the only path.
+ * https://razorpay.com/docs/api/refunds/normal-refunds-idempotent/
+ *
+ * The header is sent only when the caller supplies a key. Deriving one from
+ * paymentId+amount would make two legitimate partial refunds of equal amount
+ * collide, and the second would silently return the first refund.
+ */
+async function postRefund({
+  paymentId,
+  amount,
+  notes,
+  idempotencyKey,
+}: {
+  paymentId: string;
+  amount?: number;
+  notes: Record<string, unknown>;
+  idempotencyKey?: string;
+}): Promise<RazorpayRefundResponse> {
+  const keyId = process.env.RAZORPAY_KEY_ID;
+  const keySecret = process.env.RAZORPAY_SECRET;
+  if (!keyId || !keySecret) {
+    throw new RefundError(
+      "Razorpay credentials missing - cannot process refund",
+      "RAZORPAY_NOT_INITIALIZED",
+      "RAZORPAY",
+    );
+  }
+
+  const headers: Record<string, string> = {
+    Authorization: `Basic ${Buffer.from(`${keyId}:${keySecret}`).toString("base64")}`,
+    "Content-Type": "application/json",
+  };
+  const sanitizedKey = idempotencyKey?.replace(/[^A-Za-z0-9_-]/g, "");
+  if (sanitizedKey && sanitizedKey.length >= IDEMPOTENCY_KEY_MIN_LENGTH) {
+    headers["X-Refund-Idempotency"] = sanitizedKey;
+  }
+
+  const body = JSON.stringify({ ...(amount ? { amount } : {}), notes });
+  const url = `${RAZORPAY_API_BASE}/payments/${encodeURIComponent(paymentId)}/refund`;
+
+  // Razorpay answers a *concurrent* duplicate of the same key with 409 while the
+  // original is still in flight; once it settles the same key returns the
+  // original refund. One bounded retry converts that race into the right answer.
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(url, {
+      method: "POST",
+      headers,
+      body,
+      signal: AbortSignal.timeout(REFUND_TIMEOUT_MS),
+    });
+
+    if (res.ok) {
+      return (await res.json()) as RazorpayRefundResponse;
+    }
+
+    if (res.status === 409 && attempt === 0) {
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      continue;
+    }
+
+    // Razorpay's error body is `{ error: { code, description } }` — the shape
+    // handleRazorpayRefundError already parses, so throw it through unchanged.
+    const parsed = await res.json().catch(() => null);
+    if (parsed && typeof parsed === "object" && "error" in parsed) {
+      throw parsed;
+    }
+    throw new RefundError(
+      `Razorpay refund failed with HTTP ${res.status}`,
+      res.status === 409 ? "REFUND_IN_FLIGHT" : "UNKNOWN_ERROR",
+      "RAZORPAY",
+    );
+  }
+}
+
 /**
  * Create a refund for a Razorpay payment
  * Note: Razorpay refunds are created on payment IDs, not order IDs
@@ -138,6 +233,7 @@ export async function createRazorpayRefund({
   amount,
   reason,
   metadata,
+  idempotencyKey,
 }: RefundParams): Promise<RefundResult> {
   if (!razorpayClient) {
     throw new RefundError(
@@ -165,13 +261,15 @@ export async function createRazorpayRefund({
     const payment =
       payments.items.find((p) => p.status === "captured") ?? payments.items[0];
 
-    // Create refund on the payment
-    const refund = await razorpayClient.payments.refund(payment.id, {
+    // Create refund on the payment. Raw HTTP, not the SDK — see postRefund.
+    const refund = await postRefund({
+      paymentId: payment.id,
       amount: amount || undefined, // already in smallest currency unit (paise)
       notes: {
         reason: reason || "requested_by_customer",
         ...metadata,
       },
+      idempotencyKey,
     });
 
     return {
@@ -299,14 +397,23 @@ export async function listRazorpayRefunds(
 // Mapping Helpers
 // ============================================================================
 
+// Third copy of this mapping. The other two — mapRefundStatus in
+// app/api/webhooks/utils.ts and mapGatewayRefundStatus in
+// scripts/refunds/reconcile-pending-refunds.ts — already handle cancellation;
+// without it a cancelled refund fell through to PENDING and stayed there
+// forever, so the reconcile cron kept re-polling a refund that will never move.
 function mapRazorpayRefundStatus(status: string | null): RefundStatus {
   switch (status) {
     case "processed":
+    case "succeeded":
       return "SUCCEEDED";
     case "pending":
       return "PENDING";
     case "failed":
       return "FAILED";
+    case "cancelled":
+    case "canceled":
+      return "CANCELLED";
     default:
       return "PENDING";
   }
@@ -356,6 +463,13 @@ function handleRazorpayError(error: unknown): PaymentError {
 }
 
 function handleRazorpayRefundError(error: unknown): RefundError {
+  // Already classified upstream (NO_PAYMENT_FOUND, REFUND_IN_FLIGHT,
+  // RAZORPAY_NOT_INITIALIZED) — re-wrapping would flatten it to UNKNOWN_ERROR
+  // and lose the code callers branch on.
+  if (error instanceof RefundError) {
+    return error;
+  }
+
   if (error && typeof error === "object" && "error" in error) {
     const razorpayError = error as {
       error: { code?: string; description?: string };
