@@ -31,6 +31,10 @@ export type TTrialWithPlan = {
   notes: string | null;
   requestedAt: string;
   completedAt: string | null;
+  /** Live while AWAITING_PAYMENT; drives the "Pay Now to Confirm" affordance. */
+  pendingPaymentUrl: string | null;
+  /** Deadline for that pay-link — 24h from acceptance, or the session start. */
+  paymentDueAt: string | null;
   subscriptionPlan: {
     id: string;
     title: string;

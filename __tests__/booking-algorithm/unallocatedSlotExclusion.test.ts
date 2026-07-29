@@ -85,14 +85,21 @@ describe("buildOccupiedAppointmentFilter", () => {
     expect(classFilter.class.classPlan.consultantProfileId).toBe("cp-001");
   });
 
-  it("should include trial session filter with SCHEDULED status", () => {
+  it("should include trial session filter for occupying statuses", () => {
     const filters = buildOccupiedAppointmentFilter("cp-001");
     const trialFilter = filters[4] as any;
 
     expect(trialFilter.trialSession).toBeDefined();
     expect(trialFilter.trialSession.is.consultantProfileId).toBe("cp-001");
-    expect(trialFilter.trialSession.is.status).toBe(
-      TrialSessionStatus.SCHEDULED,
+    // AWAITING_PAYMENT occupies too: a paid trial reserves its slot the moment
+    // the consultant accepts and holds it while the learner pays. Matching only
+    // SCHEDULED let someone else book the slot mid-payment, after which the
+    // capture webhook would confirm the trial into a double booking.
+    expect(trialFilter.trialSession.is.status.in).toEqual(
+      expect.arrayContaining([
+        TrialSessionStatus.SCHEDULED,
+        TrialSessionStatus.AWAITING_PAYMENT,
+      ]),
     );
   });
 
@@ -109,8 +116,11 @@ describe("buildOccupiedAppointmentFilter", () => {
     const filters = buildOccupiedAppointmentFilter();
     const trialFilter = filters[4] as any;
 
-    expect(trialFilter.trialSession.is.status).toBe(
-      TrialSessionStatus.SCHEDULED,
+    expect(trialFilter.trialSession.is.status.in).toEqual(
+      expect.arrayContaining([
+        TrialSessionStatus.SCHEDULED,
+        TrialSessionStatus.AWAITING_PAYMENT,
+      ]),
     );
     expect(trialFilter.trialSession.is.consultantProfileId).toBeUndefined();
   });
