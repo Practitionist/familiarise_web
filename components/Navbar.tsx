@@ -336,13 +336,21 @@ function DesktopDropdownPanel({
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: 8 }}
       transition={{ duration: 0.15 }}
-      className={`absolute top-full left-1/2 -translate-x-1/2 mt-2 bg-popover rounded-xl shadow-xl border border-border overflow-hidden z-[1100] ${
+      // Mega panels center on the VIEWPORT, not the trigger: `left-1/2` of a
+      // narrow left-side trigger throws an 860px panel far off to the right.
+      // Small list panels stay trigger-anchored, where alignment reads fine.
+      className={`left-1/2 -translate-x-1/2 bg-popover rounded-xl shadow-xl border border-border overflow-hidden z-[1100] ${
         isMega
-          ? group.columns.length > 2
-            ? "w-[860px]"
-            : "w-[620px]"
-          : "w-80"
+          ? `fixed max-w-[calc(100vw-2rem)] ${group.columns.length > 2 ? "w-[860px]" : "w-[620px]"}`
+          : "absolute top-full mt-2 w-80"
       }`}
+      style={
+        isMega
+          ? {
+              top: `calc(var(--maintenance-banner-height, 0px) + var(--announcement-bar-height, 0px) + var(--navbar-height) + 0.5rem)`,
+            }
+          : undefined
+      }
     >
       <div
         className={
@@ -678,35 +686,16 @@ const Navbar = () => {
                   </Button>
                 </div>
               ) : (
-                <>
-                  {/* Supply-side CTA demoted to a text link: the primary button
-                      is the only one most visitors read, and the overwhelming
-                      majority of them arrive wanting to *find* an expert. */}
-                  <Button
-                    variant="ghost"
-                    onClick={() => handleNavigation("/become-an-expert")}
-                    className={`font-medium ${showDarkStyle ? "text-zinc-300 hover:text-white hover:bg-white/10" : "text-muted-foreground hover:text-foreground hover:bg-muted"}`}
-                  >
-                    Become an expert
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    onClick={() => handleNavigation("/auth/signin")}
-                    className={`font-medium ${showDarkStyle ? "text-white hover:bg-white/10" : "text-foreground hover:bg-muted"}`}
-                  >
-                    Sign in
-                  </Button>
-                  <Button
-                    onClick={() => handleNavigation("/explore/experts")}
-                    className={
-                      showDarkStyle
-                        ? "bg-white text-zinc-900 hover:bg-zinc-200"
-                        : "bg-primary text-primary-foreground hover:bg-primary/90"
-                    }
-                  >
-                    Find an expert
-                  </Button>
-                </>
+                /* No marketing CTAs in the bar — discovery is reachable from
+                   the Explore menu, and the supply-side CTA lives in the
+                   landing hero. Sign in is the only action here. */
+                <Button
+                  variant="ghost"
+                  onClick={() => handleNavigation("/auth/signin")}
+                  className={`font-medium ${showDarkStyle ? "text-white hover:bg-white/10" : "text-foreground hover:bg-muted"}`}
+                >
+                  Sign in
+                </Button>
               )}
             </div>
 
@@ -923,26 +912,13 @@ const Navbar = () => {
                     </Button>
                   </div>
                 ) : (
-                  <div className="flex flex-col gap-3">
-                    <Button
-                      onClick={() => handleNavigation("/explore/experts")}
-                      className="w-full bg-white text-zinc-900 hover:bg-zinc-200"
-                    >
-                      Find an expert
-                    </Button>
-                    <Button
-                      onClick={() => handleNavigation("/auth/signin")}
-                      className="w-full bg-transparent border border-zinc-700 text-white hover:bg-zinc-800"
-                    >
-                      Sign in
-                    </Button>
-                    <button
-                      onClick={() => handleNavigation("/become-an-expert")}
-                      className="w-full text-sm text-zinc-400 hover:text-white transition-colors"
-                    >
-                      Become an expert
-                    </button>
-                  </div>
+                  /* Mirrors the desktop bar: no marketing CTAs, sign in only. */
+                  <Button
+                    onClick={() => handleNavigation("/auth/signin")}
+                    className="w-full bg-white text-zinc-900 hover:bg-zinc-200"
+                  >
+                    Sign in
+                  </Button>
                 )}
               </div>
             </motion.div>

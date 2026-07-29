@@ -2,7 +2,7 @@
 
 import { useCallback } from "react";
 import { motion, useInView } from "framer-motion";
-import { ArrowRight, Play, Sparkles } from "lucide-react";
+import { ArrowRight, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { useRef, useState, useEffect } from "react";
 
@@ -128,14 +128,19 @@ export function HeroSection() {
                 <ArrowRight className="ml-2 w-5 h-5 group-hover:translate-x-1 transition-transform" />
               </Button>
             </Link>
-            <Button
-              size="lg"
-              variant="outline"
-              className="border-zinc-700 bg-transparent text-white hover:bg-zinc-900 hover:text-white px-8 h-14 text-base rounded-xl group"
-            >
-              <Play className="mr-2 w-5 h-5" />
-              Watch Demo
-            </Button>
+            {/* The supply-side CTA lives here now that the navbar carries no
+                CTAs. (It replaces a "Watch Demo" button that had no href and
+                no handler — it did nothing when clicked.) */}
+            <Link href="/become-an-expert">
+              <Button
+                size="lg"
+                variant="outline"
+                className="border-zinc-700 bg-transparent text-white hover:bg-zinc-900 hover:text-white px-8 h-14 text-base rounded-xl group"
+              >
+                Become an Expert
+                <ArrowRight className="ml-2 w-5 h-5 group-hover:translate-x-1 transition-transform" />
+              </Button>
+            </Link>
           </motion.div>
 
           {/* Stats with animated counters */}
