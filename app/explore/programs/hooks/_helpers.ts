@@ -55,6 +55,8 @@ export function buildFilterParams(filters: ProgramFilters): string {
   if (filters.maxPrice !== undefined)
     params.set("maxPrice", String(filters.maxPrice));
   if (filters.search) params.set("search", filters.search);
+  if (filters.level && filters.level !== "all")
+    params.set("level", filters.level);
   const str = params.toString();
   return str ? `&${str}` : "";
 }

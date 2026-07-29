@@ -15,6 +15,7 @@ import { ArrowUpRight, MessageSquare } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { isChromeHidden } from "@/lib/navigation/public-chrome";
 import familiariseLogoWhite from "@/public/avif/static/assets/logos/images/logos/Familiarise-logos_white.avif";
 
 interface FooterLink {
@@ -22,44 +23,67 @@ interface FooterLink {
   href: string;
 }
 
-const FOOTER_LINKS: Record<string, FooterLink[]> = {
-  expertise: [
-    { label: "Technology", href: "/explore/experts?domain=Technology" },
-    { label: "Business", href: "/explore/experts?domain=Business" },
-    { label: "Creative Arts", href: "/explore/experts?domain=Creative Arts" },
-    { label: "Education", href: "/explore/experts?domain=Education" },
-    { label: "Health", href: "/explore/experts?domain=Health" },
-    {
-      label: "Personal Development",
-      href: "/explore/experts?domain=Personal Development",
-    },
-  ],
-  useCases: [
-    { label: "College Students", href: "/use-cases/college-students" },
-    { label: "Early-Career Pros", href: "/use-cases/early-career" },
-    { label: "Career Switchers", href: "/use-cases/career-switchers" },
-    { label: "Long-Term Mentorship", href: "/use-cases/mentorship" },
-  ],
-  company: [
-    { label: "About", href: "/about" },
-    { label: "Contact", href: "/contactus" },
-    { label: "Blog", href: "/blog" },
-    { label: "Pricing", href: "/pricing" },
-  ],
-  resources: [
-    { label: "How It Works", href: "/#how-it-works" },
-    { label: "Become an Expert", href: "/form/onboarding" },
-    {
-      label: "Explore Organisations",
-      href: "/explore/enterprise/organisations",
-    },
-  ],
-  legal: [
-    { label: "Terms of Service", href: "/terms" },
-    { label: "Privacy Policy", href: "/privacy" },
-    { label: "Refund Policy", href: "/refund" },
-  ],
-};
+// Mirrors the Navbar's IA (Explore / Solutions / Company / Legal). Users who
+// miss something in the nav look for it in the footer, so the two disagreeing
+// costs clicks. Programs and Organisations were previously unreachable from
+// here entirely.
+const FOOTER_COLUMNS: { heading: string; links: FooterLink[] }[] = [
+  {
+    heading: "Explore",
+    links: [
+      { label: "Find experts", href: "/explore/experts" },
+      { label: "Programs", href: "/explore/programs" },
+      {
+        label: "Organisations",
+        href: "/explore/enterprise/organisations",
+      },
+      { label: "Community", href: "/explore/community" },
+    ],
+  },
+  {
+    heading: "Solutions",
+    links: [
+      { label: "College students", href: "/use-cases/college-students" },
+      { label: "Early-career pros", href: "/use-cases/early-career" },
+      { label: "Career switchers", href: "/use-cases/career-switchers" },
+      { label: "Long-term mentorship", href: "/use-cases/mentorship" },
+      { label: "For teams", href: "/contactus" },
+    ],
+  },
+  {
+    heading: "Company",
+    links: [
+      { label: "About", href: "/about" },
+      { label: "Contact", href: "/contactus" },
+      { label: "Blog", href: "/blog" },
+      { label: "Pricing", href: "/pricing" },
+      { label: "How it works", href: "/#how-it-works" },
+      { label: "Become an expert", href: "/become-an-expert" },
+    ],
+  },
+  {
+    heading: "Legal",
+    links: [
+      { label: "Terms of Service", href: "/terms" },
+      { label: "Privacy Policy", href: "/privacy" },
+      { label: "Refund Policy", href: "/refund" },
+    ],
+  },
+];
+
+// Internal-linking band. A marketplace's value is its long-tail catalog, so
+// these deep links are worth more here than another column of company pages.
+const EXPERTISE_LINKS: FooterLink[] = [
+  { label: "Technology", href: "/explore/experts?domain=Technology" },
+  { label: "Business", href: "/explore/experts?domain=Business" },
+  { label: "Creative Arts", href: "/explore/experts?domain=Creative Arts" },
+  { label: "Education", href: "/explore/experts?domain=Education" },
+  { label: "Health", href: "/explore/experts?domain=Health" },
+  {
+    label: "Personal Development",
+    href: "/explore/experts?domain=Personal Development",
+  },
+];
 
 const SOCIAL_LINKS = [
   {
@@ -99,23 +123,19 @@ const Footer: React.FC = () => {
   // Check if we're on the home page
   const isHomePage = pathname === "/";
 
-  // Routes where footer should be hidden
-  const excludeFooter =
-    pathname.startsWith("/api/") ||
-    pathname.startsWith("/auth/") ||
-    pathname.startsWith("/form/") ||
-    pathname.startsWith("/checkout/") ||
-    pathname === "/dashboard" ||
-    pathname.startsWith("/dashboard/") ||
-    pathname.startsWith("/meetings/");
+  // Route list lives in lib/navigation/public-chrome.ts — it was duplicated
+  // across Navbar/Footer/HeaderSpacer and had already drifted.
+  if (isChromeHidden(pathname)) return null;
 
-  if (excludeFooter) return null;
-
-  const waitlistButtonLabel = {
-    idle: "Join waitlist",
-    loading: "Signing up...",
+  // The heading says "Stay in the loop" and the copy promises a weekly email,
+  // but the button still said "Join waitlist" — left over from the
+  // waitlist→newsletter rework. The endpoint is unchanged; only the label was
+  // stale.
+  const subscribeButtonLabel = {
+    idle: "Subscribe",
+    loading: "Subscribing...",
     success: "Check your email",
-    error: "Join waitlist",
+    error: "Subscribe",
   }[waitlistStatus];
 
   const handleWaitlistSubmit = async (e: React.FormEvent) => {
@@ -186,7 +206,7 @@ const Footer: React.FC = () => {
                 }
                 className="h-14 bg-white text-zinc-900 hover:bg-zinc-200 px-8 rounded-xl font-medium shrink-0"
               >
-                {waitlistButtonLabel}
+                {subscribeButtonLabel}
               </Button>
             </form>
 
@@ -211,7 +231,7 @@ const Footer: React.FC = () => {
 
       {/* Main Footer Content */}
       <div className="container mx-auto px-4 md:px-6 py-16 md:py-20 relative z-10">
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-8 lg:gap-10">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-8 lg:gap-10">
           {/* Brand Column */}
           <div className="col-span-2 md:col-span-3 lg:col-span-2">
             <Link href="/" className="inline-block mb-6">
@@ -247,124 +267,56 @@ const Footer: React.FC = () => {
             </div>
           </div>
 
-          {/* Expertise Column */}
-          <div>
-            <h3 className="font-semibold text-white mb-4">Expertise</h3>
-            <ul className="space-y-3">
-              {FOOTER_LINKS.expertise.map((link) => (
-                <li key={link.label}>
-                  <Link
-                    href={link.href}
-                    className="text-sm text-zinc-400 hover:text-white transition-colors"
-                  >
-                    {link.label}
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </div>
+          {FOOTER_COLUMNS.map((column) => (
+            <div key={column.heading}>
+              <h3 className="font-semibold text-white mb-4">
+                {column.heading}
+              </h3>
+              <ul className="space-y-3">
+                {column.links.map((link) => (
+                  <li key={link.label}>
+                    <Link
+                      href={link.href}
+                      className="text-sm text-zinc-400 hover:text-white transition-colors inline-flex items-center gap-1"
+                    >
+                      {link.label}
+                      {link.label === "Become an expert" && (
+                        <ArrowUpRight className="w-3 h-3" />
+                      )}
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
 
-          {/* Use Cases Column */}
-          <div>
-            <h3 className="font-semibold text-white mb-4">Use Cases</h3>
-            <ul className="space-y-3">
-              {FOOTER_LINKS.useCases.map((link) => (
-                <li key={link.label}>
-                  <Link
-                    href={link.href}
-                    className="text-sm text-zinc-400 hover:text-white transition-colors"
-                  >
-                    {link.label}
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          {/* Company Column */}
-          <div>
-            <h3 className="font-semibold text-white mb-4">Company</h3>
-            <ul className="space-y-3">
-              {FOOTER_LINKS.company.map((link) => (
-                <li key={link.label}>
-                  <Link
-                    href={link.href}
-                    className="text-sm text-zinc-400 hover:text-white transition-colors"
-                  >
-                    {link.label}
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          {/* Resources Column */}
-          <div>
-            <h3 className="font-semibold text-white mb-4">Resources</h3>
-            <ul className="space-y-3">
-              {FOOTER_LINKS.resources.map((link) => (
-                <li key={link.label}>
-                  <Link
-                    href={link.href}
-                    className="text-sm text-zinc-400 hover:text-white transition-colors inline-flex items-center gap-1"
-                  >
-                    {link.label}
-                    {link.label === "Become an Expert" && (
-                      <ArrowUpRight className="w-3 h-3" />
-                    )}
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          {/* Legal Column */}
-          <div>
-            <h3 className="font-semibold text-white mb-4">Legal</h3>
-            <ul className="space-y-3">
-              {FOOTER_LINKS.legal.map((link) => (
-                <li key={link.label}>
-                  <Link
-                    href={link.href}
-                    className="text-sm text-zinc-400 hover:text-white transition-colors"
-                  >
-                    {link.label}
-                  </Link>
-                </li>
-              ))}
-            </ul>
+        {/* Expertise band — deep links into the catalog */}
+        <div className="mt-12 pt-8 border-t border-zinc-800">
+          <h3 className="text-[11px] font-medium uppercase tracking-wider text-zinc-500 mb-3">
+            Find an expert in
+          </h3>
+          <div className="flex flex-wrap gap-x-5 gap-y-2">
+            {EXPERTISE_LINKS.map((link) => (
+              <Link
+                key={link.label}
+                href={link.href}
+                className="text-sm text-zinc-400 hover:text-white transition-colors"
+              >
+                {link.label}
+              </Link>
+            ))}
           </div>
         </div>
       </div>
 
-      {/* Bottom Bar */}
+      {/* Bottom Bar — legal lives in its own column above, so this carries
+          only the copyright line. */}
       <div className="border-t border-zinc-800 relative z-10">
         <div className="container mx-auto px-4 md:px-6 py-6">
-          <div className="flex flex-col md:flex-row items-center justify-between gap-4">
-            <p className="text-sm text-zinc-500">
-              © {new Date().getFullYear()} Familiarise. All rights reserved.
-            </p>
-            <div className="flex items-center gap-6">
-              <Link
-                href="/terms"
-                className="text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
-              >
-                Terms
-              </Link>
-              <Link
-                href="/privacy"
-                className="text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
-              >
-                Privacy
-              </Link>
-              <Link
-                href="/refund"
-                className="text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
-              >
-                Refunds
-              </Link>
-            </div>
-          </div>
+          <p className="text-sm text-zinc-500 text-center md:text-left">
+            © {new Date().getFullYear()} Familiarise. All rights reserved.
+          </p>
         </div>
       </div>
     </footer>

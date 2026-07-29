@@ -22,8 +22,13 @@
  *   - The org-create wizard hides the "host consultants" capability checkbox
  *     (the render sites read this server flag and pass hostOrgsEnabled to the
  *     wizard; the 400 gate above stays as the server-side backstop) — #863
- *   - The public /explore/enterprise/organisations directory shows an honest
- *     "coming soon" state instead of a silently-empty grid — #863
+ *
+ * NOT gated by this flag: the public /explore/enterprise/organisations
+ * directory. It used to be, which was a category error — this is a payments
+ * flag, and because the create gate above also blocks `canHost=true`, a
+ * directory filtered on canHost could never be non-empty while the flag was
+ * off. Discovery is now controlled solely by the owner-set
+ * `Organization.isPublic` opt-in; orgs of every capability can be listed.
  *   - The host earnings/payout surfaces stay gated
  *   - The Experts tab and the Payouts nav item are hidden — but note those
  *     are gated on the org's own `canHost`, not on this flag; an org can

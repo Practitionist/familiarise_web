@@ -11,15 +11,10 @@ import AuthSyncProvider from "@/providers/AuthSyncProvider";
 import { MaintenanceProvider } from "@/providers/MaintenanceProvider";
 import ReactQueryProvider from "@/providers/ReactQueryProvider";
 import type { Metadata, Viewport } from "next";
-import { Sora } from "next/font/google";
+
+import { sora } from "@/lib/fonts";
 
 import "./globals.css";
-
-const sora = Sora({
-  subsets: ["latin"],
-  variable: "--font-sora",
-  display: "swap",
-});
 
 export const viewport: Viewport = {
   width: "device-width",

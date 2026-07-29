@@ -109,6 +109,8 @@ export interface ProgramFilters {
   minPrice?: number;
   maxPrice?: number;
   search?: string;
+  /** "all" is the UI sentinel for "no level filter" and is never sent. */
+  level?: string;
 }
 
 // Generate program image URL based on ID with dimensions, using DB image if available
@@ -126,26 +128,9 @@ export function isClassProgram(program: Program): program is ClassPlanProgram {
   return program.type === "class";
 }
 
-// Client-side filtering for search term and level only.
-// Sort is handled server-side via API params — no need to re-sort here.
-export function filterAndSortPrograms(
-  programs: Program[],
-  searchTerm: string,
-  selectedLevel: string,
-): Program[] {
-  return programs.filter((program) => {
-    const matchesSearch =
-      !searchTerm ||
-      program.title.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesLevel =
-      selectedLevel === "all" || program.level === selectedLevel;
-    return matchesSearch && matchesLevel;
-  });
-}
-
-export function getUniqueLevels(programs: Program[]): string[] {
-  const levels = programs
-    .map((program) => program.level)
-    .filter((level): level is string => level !== null);
-  return Array.from(new Set(levels));
-}
+// `filterAndSortPrograms` and `getUniqueLevels` used to re-filter search/level
+// on the client over the already-loaded infinite-scroll page, which meant a
+// matching program on a later page never appeared and the level dropdown could
+// only offer levels that happened to be loaded. Both are now server-side:
+// `level` joins the shared where-builder in app/api/plans/shared/plan-filters.ts,
+// and the level list comes from `getCachedProgramLevels` in the RSC.

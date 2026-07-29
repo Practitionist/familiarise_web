@@ -1,103 +1,61 @@
 /**
  * GET /api/organizations/public
  *
- * Public (unauthenticated) listing of HOST/HYBRID organizations that have
- * opted in to marketplace discovery via Organization.isPublic=true.
+ * Public (unauthenticated) listing of organizations that have opted in to
+ * marketplace discovery via `Organization.isPublic = true`.
  *
- * SPONSOR-only orgs (canHost=false) are never included — they are B2B clients,
- * not marketplace participants, and exposing them publicly would be a privacy
- * concern for corporate clients who want confidentiality.
+ * Capability (canSponsor/canHost) is a filter here, not a precondition: gating
+ * the listing on canHost made it structurally empty, because ENABLE_HOST_ORGS
+ * blocks canHost from ever being set. An org appears here because its OWNER
+ * opted in, and for no other reason.
  *
- * Query params:
- *   industry  — filter by org.industry (case-insensitive contains)
- *   search    — full-text search on name/description (case-insensitive)
- *   page      — 1-indexed, default 1
- *   limit     — default 12, max 50
+ * Query params (all optional, repeated params for multi-value filters):
+ *   search      — matches name / description / industry, case-insensitive
+ *   type        — OrgDirectoryType, repeatable
+ *   industry    — exact industry, repeatable
+ *   size        — OrgSizeBucket, repeatable
+ *   capability  — host | sponsor | hybrid
+ *   hasExperts  — "true" to only list orgs with ACTIVE EXPERT members
+ *   sort        — nameAsc | nameDesc | expertsDesc | newest
+ *   page        — 1-indexed, default 1
+ *   limit       — default 24, max 50
  */
 
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
+
 import { apiError } from "@/lib/errors";
+import {
+  getOrganisationsPage,
+  ORGANISATIONS_PER_PAGE,
+} from "@/lib/data/explore-organisations";
+import { orgFiltersFromSearchParams } from "@/lib/explore/organisation-filters";
 
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = req.nextUrl;
     const page = Math.max(1, parseInt(searchParams.get("page") || "1") || 1);
     const limit = Math.min(
-      Math.max(1, parseInt(searchParams.get("limit") || "12") || 12),
+      Math.max(
+        1,
+        parseInt(searchParams.get("limit") || String(ORGANISATIONS_PER_PAGE)) ||
+          ORGANISATIONS_PER_PAGE,
+      ),
       50,
     );
-    const industry = searchParams.get("industry")?.trim();
-    const search = searchParams.get("search")?.trim();
 
-    const skip = (page - 1) * limit;
-
-    const where = {
-      isPublic: true,
-      canHost: true,
-      status: "ACTIVE" as const,
-      ...(industry && {
-        industry: { contains: industry, mode: "insensitive" as const },
-      }),
-      ...(search && {
-        OR: [
-          { name: { contains: search, mode: "insensitive" as const } },
-          { description: { contains: search, mode: "insensitive" as const } },
-        ],
-      }),
-    };
-
-    const [orgs, total] = await Promise.all([
-      prisma.organization.findMany({
-        where,
-        select: {
-          id: true,
-          name: true,
-          slug: true,
-          canSponsor: true,
-          canHost: true,
-          brandingProfile: {
-            select: {
-              logo: true,
-              bannerImage: true,
-              description: true,
-              industry: true,
-              website: true,
-            },
-          },
-          _count: {
-            select: {
-              memberships: {
-                where: { role: "EXPERT", status: "ACTIVE" },
-              },
-            },
-          },
-        },
-        orderBy: { name: "asc" },
-        skip,
-        take: limit,
-      }),
-      prisma.organization.count({ where }),
-    ]);
-
-    const data = orgs.map((org) => ({
-      id: org.id,
-      name: org.name,
-      slug: org.slug,
-      logo: org.brandingProfile?.logo ?? null,
-      bannerImage: org.brandingProfile?.bannerImage ?? null,
-      description: org.brandingProfile?.description ?? null,
-      industry: org.brandingProfile?.industry ?? null,
-      website: org.brandingProfile?.website ?? null,
-      capabilityKind: org.canSponsor ? "hybrid" : "host",
-      expertCount: org._count.memberships,
-    }));
+    const filters = orgFiltersFromSearchParams(searchParams);
+    const result = await getOrganisationsPage(filters, page, limit);
 
     return NextResponse.json(
       {
-        data,
-        meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
+        data: result.items,
+        meta: {
+          total: result.total,
+          page: result.page,
+          limit,
+          totalPages: result.totalPages,
+        },
       },
       {
         headers: {
@@ -106,7 +64,10 @@ export async function GET(req: NextRequest) {
       },
     );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "organizations" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "organizations" } },
+    );
     return apiError({ tag: "[Organizations.Public.GET]", error });
   }
 }

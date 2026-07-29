@@ -202,7 +202,9 @@ export const ConsultantCard = memo(function ConsultantCard({
                 </h3>
                 {consultant.isVerified && (
                   <span title="Verified by Familiarise">
-                    <BadgeCheck className="w-5 h-5 text-blue-500" />
+                    {/* Verification is an attribute, not a semantic status —
+                        the off-brand blue was the only chromatic accent here. */}
+                    <BadgeCheck className="w-5 h-5 text-foreground" />
                   </span>
                 )}
                 {consultant.organizationBadge && (

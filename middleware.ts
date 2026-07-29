@@ -84,6 +84,7 @@ const ROUTE_PATTERNS = {
   PUBLIC_API_PREFIXES: [
     "/api/auth/", // BetterAuth core + SSO endpoints (including /api/auth/sso/domain-check)
     "/api/health/",
+    "/api/organizations/public", // Public: explore organisations directory (shadows the private /api/organizations/ parent)
     "/api/user/consultants", // Public: explore experts list and individual profiles
     "/api/user/reviews", // Public: consultant reviews
     "/api/plans/classes", // Public: browse and view class plans (sub-routes enforce their own auth)

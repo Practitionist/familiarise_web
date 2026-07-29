@@ -23,11 +23,13 @@ function ExpertMiniCardImpl({ expert, badge }: ExpertMiniCardProps) {
         {/* Badge */}
         {badge && (
           <div className="mb-3">
+            {/* Neutral taxonomy, not a status — monochrome, and unlike the
+                previous *-100/*-700 pairs these survive dark mode. */}
             <span
               className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wide ${
                 badge === "trending"
-                  ? "bg-orange-100 text-orange-700"
-                  : "bg-emerald-100 text-emerald-700"
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-muted text-muted-foreground border border-border"
               }`}
             >
               {badge === "trending" ? (
@@ -59,7 +61,7 @@ function ExpertMiniCardImpl({ expert, badge }: ExpertMiniCardProps) {
               </h3>
               {expert.isVerified && (
                 <span title="Verified by Familiarise">
-                  <BadgeCheck className="w-3.5 h-3.5 text-blue-500 flex-shrink-0" />
+                  <BadgeCheck className="w-3.5 h-3.5 text-foreground flex-shrink-0" />
                 </span>
               )}
             </div>

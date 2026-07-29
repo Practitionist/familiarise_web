@@ -69,6 +69,10 @@ export const orgMembershipInclude = {
       organization: {
         canHost: true,
         status: "ACTIVE",
+        // The badge deep-links to /explore/enterprise/organisations/{slug},
+        // which only serves opted-in orgs — without this the card rendered a
+        // link straight to a 404 for any org that hadn't opted in.
+        isPublic: true,
       },
     },
     orderBy: { createdAt: "asc" },

@@ -7,6 +7,7 @@ import type { IConsultantCardData } from "@/types/consultant";
 import { useCurrency } from "@/hooks/useCurrency";
 import SectionHeader from "@/app/explore/components/SectionHeader";
 import FilterChips from "@/app/explore/components/FilterChips";
+import FacetRail from "@/app/explore/components/FacetRail";
 import {
   useConsultants,
   useExpertsFilters,
@@ -138,22 +139,7 @@ export default function ExpertsInteractiveContent({
             </div>
           </motion.div>
 
-          {/* Filters */}
-          <motion.div
-            className="mb-8"
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
-            transition={{ duration: 0.5, delay: 0.1 }}
-          >
-            <FilterPanel
-              metadata={metadata}
-              filters={filters}
-              updateFilters={updateFilters}
-            />
-          </motion.div>
-
-          {/* Search Bar */}
+          {/* Search banner */}
           <motion.div
             className="mb-6"
             initial={{ opacity: 0, y: 20 }}
@@ -176,35 +162,54 @@ export default function ExpertsInteractiveContent({
                 </p>
               </div>
             </div>
-            <SearchBar
-              onSearch={(term) => updateFilters({ search: term })}
-              onSort={(option) => updateFilters({ sort: option })}
-              sortBy={filters.sort}
-              initialSearch={filters.search}
-            />
           </motion.div>
 
-          {/* Active Filter Chips */}
-          {chips.length > 0 && (
-            <div className="mb-6">
-              <FilterChips
-                filters={chips}
-                onRemove={removeChip}
-                onClearAll={clearAll}
+          {/* Filters move into a sticky rail (mobile: Sheet drawer) so the
+              results keep the full column instead of starting below a
+              three-row filter grid. */}
+          <div className="grid grid-cols-1 gap-8 lg:grid-cols-[280px_1fr]">
+            <FacetRail activeCount={chips.length} onClearAll={clearAll}>
+              <FilterPanel
+                metadata={metadata}
+                filters={filters}
+                updateFilters={updateFilters}
+              />
+            </FacetRail>
+
+            <div className="min-w-0">
+              <div className="mb-6">
+                <SearchBar
+                  onSearch={(term) => updateFilters({ search: term })}
+                  onSort={(option) => updateFilters({ sort: option })}
+                  sortBy={filters.sort}
+                  initialSearch={filters.search}
+                />
+              </div>
+
+              {chips.length > 0 && (
+                <div className="mb-6">
+                  <FilterChips
+                    filters={chips}
+                    onRemove={removeChip}
+                    onClearAll={clearAll}
+                  />
+                </div>
+              )}
+
+              {/* Kept as a full-width vertical stack, not a grid: ConsultantCard
+                  is a two-column card (profile + plan tabs) that collapses
+                  badly inside a narrow grid cell. */}
+              <ExpertResults
+                consultants={consultants}
+                metadata={metadata}
+                isLoading={isLoading}
+                isRefetching={isRefetching}
+                isLoadingMore={isLoadingMore}
+                groupByDomainId={filters.domain}
+                sentinelRef={sentinelRef}
               />
             </div>
-          )}
-
-          {/* Results */}
-          <ExpertResults
-            consultants={consultants}
-            metadata={metadata}
-            isLoading={isLoading}
-            isRefetching={isRefetching}
-            isLoadingMore={isLoadingMore}
-            groupByDomainId={filters.domain}
-            sentinelRef={sentinelRef}
-          />
+          </div>
         </div>
       </div>
     </section>
