@@ -103,7 +103,9 @@ const EXPLORE_COLUMNS: NavColumn[] = [
       },
       {
         label: "Top rated",
-        href: "/explore/experts?sort=rating",
+        // Anchor as well as sort — without it the sort applies but the user
+        // lands at the top of the page and never sees the sorted list.
+        href: "/explore/experts?sort=rating#all-experts",
         description: "Highest-rated experts on Familiarise",
         icon: Star,
       },

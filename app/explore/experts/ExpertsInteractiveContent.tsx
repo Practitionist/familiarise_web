@@ -104,7 +104,13 @@ export default function ExpertsInteractiveContent({
         />
 
         {/* Browse All Experts */}
-        <div ref={browseSectionRef} id="all-experts">
+        {/* The nav's "Top rated" deep-links here with ?sort=rating, so the
+            anchor needs the same fixed-navbar offset as #domains. */}
+        <div
+          ref={browseSectionRef}
+          id="all-experts"
+          className="scroll-mt-[calc(var(--header-height,5rem)+1rem)]"
+        >
           <SectionHeader
             title="Browse Familiarise Experts"
             icon={<Search className="w-5 h-5 text-white" />}

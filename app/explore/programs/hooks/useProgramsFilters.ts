@@ -139,7 +139,9 @@ export function useProgramsFilters(): UseProgramsFiltersResult {
     if (urlSyncRef.current) clearTimeout(urlSyncRef.current);
     urlSyncRef.current = setTimeout(() => {
       const qs = paramsFromFilters(filters, programType);
-      const target = `/explore/programs${qs ? `?${qs}` : ""}`;
+      // Preserve the hash — see the note in useExpertsFilters.
+      const hash = window.location.hash;
+      const target = `/explore/programs${qs ? `?${qs}` : ""}${hash}`;
       const current = window.location.pathname + window.location.search;
       if (target !== current) {
         window.history.replaceState(window.history.state, "", target);
