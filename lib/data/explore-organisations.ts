@@ -214,13 +214,14 @@ export async function getOrganisationsPage(
       prisma.organization.count({ where }),
     ]);
     total = count;
-    const page = await prisma.organization.findMany({
+    // Named `pageRows`, not `page` — that would shadow the `page` parameter.
+    const pageRows = await prisma.organization.findMany({
       where: { id: { in: rankedIds } },
       select: orgListSelect,
     });
     // findMany ignores the id order, so restore the ranking.
     const order = new Map(rankedIds.map((id, index) => [id, index]));
-    rows = page.sort(
+    rows = pageRows.sort(
       (a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0),
     );
   } else {

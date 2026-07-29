@@ -143,24 +143,24 @@ export default function BecomeAnExpertPage() {
               handled for you.
             </p>
             <div className="flex flex-col justify-center gap-3 sm:flex-row">
-              <Link href="/auth/signup">
-                <Button
-                  size="lg"
-                  className="w-full bg-white text-zinc-900 hover:bg-zinc-200 sm:w-auto"
-                >
+              <Button
+                size="lg"
+                className="w-full bg-white text-zinc-900 hover:bg-zinc-200 sm:w-auto"
+                asChild
+              >
+                <Link href="/auth/signup">
                   Apply to join
                   <ArrowRight className="ml-2 h-4 w-4" />
-                </Button>
-              </Link>
-              <Link href="/explore/experts">
-                <Button
-                  size="lg"
-                  variant="outline"
-                  className="w-full border-zinc-700 bg-transparent text-white hover:bg-zinc-800 hover:text-white sm:w-auto"
-                >
-                  See who's already here
-                </Button>
-              </Link>
+                </Link>
+              </Button>
+              <Button
+                size="lg"
+                variant="outline"
+                className="w-full border-zinc-700 bg-transparent text-white hover:bg-zinc-800 hover:text-white sm:w-auto"
+                asChild
+              >
+                <Link href="/explore/experts">See who's already here</Link>
+              </Button>
             </div>
             <p className="mt-5 text-sm text-zinc-500">
               Free to apply · No listing fee · No minimum hours
@@ -265,8 +265,8 @@ export default function BecomeAnExpertPage() {
                     Your rates, your formats
                   </h3>
                   <p className="text-sm leading-relaxed text-muted-foreground">
-                    Offer one-off calls, ongoing mentorship, classes or
-                    webinars — priced however you choose.
+                    Offer one-off calls, ongoing mentorship, classes or webinars
+                    — priced however you choose.
                   </p>
                 </div>
               </div>
@@ -351,17 +351,20 @@ export default function BecomeAnExpertPage() {
             to you about verification.
           </p>
           <div className="flex flex-col justify-center gap-3 sm:flex-row">
-            <Link href="/auth/signup">
-              <Button size="lg" className="w-full sm:w-auto">
+            <Button size="lg" className="w-full sm:w-auto" asChild>
+              <Link href="/auth/signup">
                 Apply to join
                 <ArrowRight className="ml-2 h-4 w-4" />
-              </Button>
-            </Link>
-            <Link href="/contactus">
-              <Button size="lg" variant="outline" className="w-full sm:w-auto">
-                Talk to us first
-              </Button>
-            </Link>
+              </Link>
+            </Button>
+            <Button
+              size="lg"
+              variant="outline"
+              className="w-full sm:w-auto"
+              asChild
+            >
+              <Link href="/contactus">Talk to us first</Link>
+            </Button>
           </div>
         </div>
       </section>

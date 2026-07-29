@@ -90,6 +90,15 @@ export type UseCaseIcon = keyof typeof USE_CASE_ICONS;
 
 // ─── Shared bits ─────────────────────────────────────────────────────────────
 
+/**
+ * Shared entrance animation.
+ *
+ * Reduced motion is handled once, at the layout, via
+ * `<MotionConfig reducedMotion="user">` — framer-motion then strips transform
+ * animations (keeping opacity) for every motion component in the subtree. That
+ * beats threading a hook through all 14 call sites here, and it can't be
+ * forgotten when a new animated block is added.
+ */
 const fadeUp = {
   initial: { opacity: 0, y: 20 },
   whileInView: { opacity: 1, y: 0 },
@@ -207,24 +216,29 @@ export function UseCaseHero({ data }: { data: UseCaseHeroData }) {
             </p>
 
             <div className="flex flex-col sm:flex-row gap-3 mb-8">
-              <Link href={data.primaryCta.href} className="w-full sm:w-auto">
-                <Button
-                  size="lg"
-                  className="w-full sm:w-auto bg-white text-zinc-900 hover:bg-zinc-200 px-8 h-12 text-base"
-                >
+              <Button
+                size="lg"
+                className="w-full sm:w-auto bg-white text-zinc-900 hover:bg-zinc-200 px-8 h-12 text-base"
+                asChild
+              >
+                <Link href={data.primaryCta.href} className="w-full sm:w-auto">
                   {data.primaryCta.label}
                   <ArrowRight className="w-4 h-4 ml-2" />
-                </Button>
-              </Link>
-              <Link href={data.secondaryCta.href} className="w-full sm:w-auto">
-                <Button
-                  variant="outline"
-                  size="lg"
-                  className="w-full sm:w-auto bg-transparent border-zinc-700 text-white hover:bg-zinc-800 hover:text-white px-8 h-12 text-base"
+                </Link>
+              </Button>
+              <Button
+                variant="outline"
+                size="lg"
+                className="w-full sm:w-auto bg-transparent border-zinc-700 text-white hover:bg-zinc-800 hover:text-white px-8 h-12 text-base"
+                asChild
+              >
+                <Link
+                  href={data.secondaryCta.href}
+                  className="w-full sm:w-auto"
                 >
                   {data.secondaryCta.label}
-                </Button>
-              </Link>
+                </Link>
+              </Button>
             </div>
 
             <ul className="flex flex-wrap gap-x-6 gap-y-2">
@@ -787,24 +801,26 @@ export function UseCaseClosing({ data }: { data: UseCaseClosingData }) {
           transition={{ duration: 0.5, delay: 0.2 }}
           className="flex flex-col sm:flex-row gap-3 justify-center"
         >
-          <Link href={data.primaryCta.href} className="w-full sm:w-auto">
-            <Button
-              size="lg"
-              className="w-full sm:w-auto bg-white text-zinc-900 hover:bg-zinc-200 px-8 h-12 text-base"
-            >
+          <Button
+            size="lg"
+            className="w-full sm:w-auto bg-white text-zinc-900 hover:bg-zinc-200 px-8 h-12 text-base"
+            asChild
+          >
+            <Link href={data.primaryCta.href} className="w-full sm:w-auto">
               {data.primaryCta.label}
               <ArrowRight className="w-4 h-4 ml-2" />
-            </Button>
-          </Link>
-          <Link href={data.secondaryCta.href} className="w-full sm:w-auto">
-            <Button
-              variant="outline"
-              size="lg"
-              className="w-full sm:w-auto bg-transparent border-zinc-700 text-white hover:bg-zinc-800 hover:text-white px-8 h-12 text-base"
-            >
+            </Link>
+          </Button>
+          <Button
+            variant="outline"
+            size="lg"
+            className="w-full sm:w-auto bg-transparent border-zinc-700 text-white hover:bg-zinc-800 hover:text-white px-8 h-12 text-base"
+            asChild
+          >
+            <Link href={data.secondaryCta.href} className="w-full sm:w-auto">
               {data.secondaryCta.label}
-            </Button>
-          </Link>
+            </Link>
+          </Button>
         </motion.div>
         <p className="mt-6 text-fluid-xs text-zinc-500">{data.reassurance}</p>
       </div>

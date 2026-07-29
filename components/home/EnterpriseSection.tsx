@@ -81,24 +81,26 @@ export function EnterpriseSection() {
           viewport={{ once: true }}
           className="flex flex-col sm:flex-row gap-3"
         >
-          <Link href="/contactus">
-            <Button
-              size="lg"
-              className="w-full sm:w-auto bg-white text-zinc-900 hover:bg-zinc-200"
-            >
+          <Button
+            size="lg"
+            className="w-full sm:w-auto bg-white text-zinc-900 hover:bg-zinc-200"
+            asChild
+          >
+            <Link href="/contactus">
               Talk to us
               <ArrowRight className="w-4 h-4 ml-2" />
-            </Button>
-          </Link>
-          <Link href="/explore/enterprise/organisations">
-            <Button
-              size="lg"
-              variant="outline"
-              className="w-full sm:w-auto bg-transparent border-zinc-700 text-white hover:bg-zinc-800 hover:text-white"
-            >
+            </Link>
+          </Button>
+          <Button
+            size="lg"
+            variant="outline"
+            className="w-full sm:w-auto bg-transparent border-zinc-700 text-white hover:bg-zinc-800 hover:text-white"
+            asChild
+          >
+            <Link href="/explore/enterprise/organisations">
               Browse organisations
-            </Button>
-          </Link>
+            </Link>
+          </Button>
         </motion.div>
       </div>
     </section>

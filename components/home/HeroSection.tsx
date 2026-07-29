@@ -119,28 +119,30 @@ export function HeroSection() {
             transition={{ duration: 0.6, delay: 0.3 }}
             className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-16"
           >
-            <Link href="/explore/experts">
-              <Button
-                size="lg"
-                className="bg-white text-black hover:bg-zinc-200 px-8 h-14 text-base rounded-xl shadow-lg shadow-white/10 group font-medium"
-              >
+            <Button
+              size="lg"
+              className="bg-white text-black hover:bg-zinc-200 px-8 h-14 text-base rounded-xl shadow-lg shadow-white/10 group font-medium"
+              asChild
+            >
+              <Link href="/explore/experts">
                 Find Your Expert
                 <ArrowRight className="ml-2 w-5 h-5 group-hover:translate-x-1 transition-transform" />
-              </Button>
-            </Link>
+              </Link>
+            </Button>
             {/* The supply-side CTA lives here now that the navbar carries no
                 CTAs. (It replaces a "Watch Demo" button that had no href and
                 no handler — it did nothing when clicked.) */}
-            <Link href="/become-an-expert">
-              <Button
-                size="lg"
-                variant="outline"
-                className="border-zinc-700 bg-transparent text-white hover:bg-zinc-900 hover:text-white px-8 h-14 text-base rounded-xl group"
-              >
+            <Button
+              size="lg"
+              variant="outline"
+              className="border-zinc-700 bg-transparent text-white hover:bg-zinc-900 hover:text-white px-8 h-14 text-base rounded-xl group"
+              asChild
+            >
+              <Link href="/become-an-expert">
                 Become an Expert
                 <ArrowRight className="ml-2 w-5 h-5 group-hover:translate-x-1 transition-transform" />
-              </Button>
-            </Link>
+              </Link>
+            </Button>
           </motion.div>
 
           {/* Stats with animated counters */}

@@ -12,7 +12,9 @@ import {
   ORG_SIZE_BUCKET_LABEL,
 } from "@/lib/labels/org-labels";
 
-export default function OrgCard({ org }: { org: OrganisationListItem }) {
+export default function OrgCard({
+  org,
+}: Readonly<{ org: OrganisationListItem }>) {
   // Type is the primary badge; capability is secondary supporting detail. Both
   // are neutral taxonomy, so both render monochrome — filled for identity,
   // muted for the supporting fact.

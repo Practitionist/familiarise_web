@@ -1,5 +1,6 @@
 "use client";
 
+import { MotionConfig } from "framer-motion";
 import { ArrowRight } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
@@ -94,12 +95,12 @@ function StickyMobileCta({ cta }: { cta: UseCaseCta }) {
       }`}
       aria-hidden={!visible}
     >
-      <Link href={cta.href} tabIndex={visible ? undefined : -1}>
-        <Button size="lg" className="w-full h-12 text-base">
+      <Button asChild size="lg" className="w-full h-12 text-base">
+        <Link href={cta.href} tabIndex={visible ? undefined : -1}>
           {cta.label}
           <ArrowRight className="w-4 h-4 ml-2" />
-        </Button>
-      </Link>
+        </Link>
+      </Button>
     </div>
   );
 }
@@ -162,15 +163,28 @@ export default function UseCasePageLayout({ data }: { data: UseCasePageData }) {
   };
 
   return (
-    <div className="w-full">
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(faqJsonLd) }}
-      />
-      <UseCaseHero data={data.hero} />
-      {data.order.map(renderSection)}
-      <UseCaseClosing data={data.closing} />
-      <StickyMobileCta cta={data.hero.primaryCta} />
-    </div>
+    // reducedMotion="user" makes framer-motion honour the OS "reduce motion"
+    // setting for every motion component below: transform animations are
+    // dropped, opacity fades are kept. Set once here rather than per-variant so
+    // a newly added animated block can't miss it.
+    <MotionConfig reducedMotion="user">
+      {/* Bottom padding on mobile so the fixed CTA bar doesn't cover the last
+          section — it sits above the content, not in flow. */}
+      <div className="w-full pb-24 md:pb-0">
+        <script
+          type="application/ld+json"
+          // Escape `<` so a `</script>` inside any FAQ answer can't close this
+          // block and inject markup. Copy is hardcoded today, but this is a
+          // script-injection sink and the guard costs nothing.
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify(faqJsonLd).replace(/</g, "\\u003c"),
+          }}
+        />
+        <UseCaseHero data={data.hero} />
+        {data.order.map(renderSection)}
+        <UseCaseClosing data={data.closing} />
+        <StickyMobileCta cta={data.hero.primaryCta} />
+      </div>
+    </MotionConfig>
   );
 }
