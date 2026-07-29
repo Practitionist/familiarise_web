@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -182,6 +182,9 @@ export function OperatorAppointmentsClient() {
       status: activeTab,
       search: debouncedSearch,
     }),
+    // Tab, type, page and search all live in the key, so each combination is
+    // its own query. Same fix as #346 on the appointments list.
+    placeholderData: keepPreviousData,
     queryFn: async () => {
       const params = new URLSearchParams();
       params.set("page", page.toString());
@@ -207,7 +210,12 @@ export function OperatorAppointmentsClient() {
     }
   }, [error, toast]);
 
-  const loading = isLoading || isFetching;
+  // `isFetching` still drives the refresh button's spinner — that is what it is
+  // for. It must NOT drive the panel body: with keepPreviousData the rows are
+  // on screen and correct-but-stale, and replacing them with a spinner on every
+  // background refetch is the flash this change removes.
+  const refreshing = isLoading || isFetching;
+  const showLoadingPanel = isLoading && !data;
   const appointments = data?.appointments ?? [];
   const counts = data?.counts ?? {
     all: 0,
@@ -227,10 +235,10 @@ export function OperatorAppointmentsClient() {
           <Button
             variant="outline"
             onClick={() => refetch()}
-            disabled={loading}
+            disabled={refreshing}
           >
             <RefreshCw
-              className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`}
+              className={`h-4 w-4 mr-2 ${refreshing ? "animate-spin" : ""}`}
             />
             Refresh
           </Button>
@@ -342,7 +350,7 @@ export function OperatorAppointmentsClient() {
 
           {/* All Tabs Content */}
           <TabsContent value={activeTab} className="mt-4">
-            {loading ? (
+            {showLoadingPanel ? (
               <div className="flex items-center justify-center h-64">
                 <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
               </div>

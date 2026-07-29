@@ -32,7 +32,9 @@ export interface PaymentListResponse {
 export interface PaymentDetailRefund {
   id: string;
   refundId: string | null;
-  amount: number;
+  /** `Refund.amountPaise`. Declaring `amount` here rendered "£NaN" on the
+   *  payment detail page for every refund and dispute — see [PaymentDetailDispute]. */
+  amountPaise: number;
   currency: string;
   status: string;
   reason: string | null;
@@ -42,8 +44,11 @@ export interface PaymentDetailRefund {
 
 export interface PaymentDetailDispute {
   id: string;
+  /** Non-null in the schema (`@unique`), but kept nullable here so the UI
+   *  keeps its existing guards; narrowing it is a separate change. */
   disputeId: string | null;
-  amount: number;
+  /** `Dispute.amountPaise` — neither money model has ever had an `amount`. */
+  amountPaise: number;
   currency: string;
   status: string;
   reason: string | null;
@@ -119,30 +124,12 @@ export interface RefundListResponse {
   totalPages: number;
 }
 
-// ─── Dispute List (admin/disputes) ─────────────────────────────────
-export interface Dispute {
-  id: string;
-  disputeId: string | null;
-  /** Paise — see the note on Refund.amountPaise. */
-  amountPaise: number;
-  currency: string;
-  status: string;
-  reason: string | null;
-  paymentGateway: string;
-  dueBy: string | null;
-  createdAt: string;
-  payment: {
-    id: string;
-    paymentIntent: string;
-  } | null;
-}
-
-export interface DisputeListResponse {
-  disputes: Dispute[];
-  total: number;
-  page: number;
-  totalPages: number;
-}
+// ─── Dispute List ──────────────────────────────────────────────────
+// Deliberately absent. `Dispute` and `DisputeListResponse` used to be declared
+// here as well as in types/disputes.ts, and nothing imported this copy — the
+// live dispute surfaces all use types/disputes.ts. Two same-named interfaces
+// over one model is how a fix lands on the copy nobody renders, so this one is
+// gone rather than kept in sync.
 
 // ─── Admin Dashboard Stats (admin/home) ────────────────────────────
 export interface RecentPayment {
@@ -159,7 +146,14 @@ export interface RecentPayment {
 
 export interface RecentRefund {
   id: string;
-  amount: number;
+  /**
+   * `Refund` stores money in `amountPaise`, and the operator-stats query
+   * selects exactly that. This interface said `amount` — a field the payload
+   * has never carried — so the admin dashboard's Recent Refunds list formatted
+   * `undefined` and rendered a literal "₹NaN". Same defect class the refunds
+   * and disputes tables already had; the drift test now covers this one too.
+   */
+  amountPaise: number;
   currency: string;
   status: string;
   paymentGateway: string;
@@ -182,11 +176,42 @@ export interface AdminDashboardStats {
 
 // ─── Earnings (admin/payouts) ──────────────────────────────────────
 export interface EarningsStats {
-  pending: { count: number; consultantSharePaise: number; platformFeePaise: number };
-  ready: { count: number; consultantSharePaise: number; platformFeePaise: number };
-  paid: { count: number; consultantSharePaise: number; platformFeePaise: number };
-  held: { count: number; consultantSharePaise: number; platformFeePaise: number };
-  refunded: { count: number; consultantSharePaise: number; platformFeePaise: number };
+  pending: {
+    count: number;
+    consultantSharePaise: number;
+    platformFeePaise: number;
+  };
+  ready: {
+    count: number;
+    consultantSharePaise: number;
+    platformFeePaise: number;
+  };
+  /**
+   * #837 split BATCHED out of READY. `getEarningsStats` has returned this
+   * bucket ever since; this interface never declared it, so the admin earnings
+   * dashboard had no way to render money that had left "Ready" and not yet
+   * reached "Paid" — cleared earnings in transit, counted nowhere.
+   */
+  batched: {
+    count: number;
+    consultantSharePaise: number;
+    platformFeePaise: number;
+  };
+  paid: {
+    count: number;
+    consultantSharePaise: number;
+    platformFeePaise: number;
+  };
+  held: {
+    count: number;
+    consultantSharePaise: number;
+    platformFeePaise: number;
+  };
+  refunded: {
+    count: number;
+    consultantSharePaise: number;
+    platformFeePaise: number;
+  };
   totalPlatformRevenue: number;
 }
 

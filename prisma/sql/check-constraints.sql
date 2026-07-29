@@ -182,3 +182,116 @@ ALTER TABLE "Collaborator" DROP CONSTRAINT IF EXISTS "collaborator_plan_xor";
 -- SPLIT
 ALTER TABLE "Collaborator" ADD CONSTRAINT "collaborator_plan_xor"
   CHECK (("webinarPlanId" IS NULL) <> ("classPlanId" IS NULL));
+
+-- SPLIT
+-- ============================================================================
+-- Money invariants that were documented but unenforced (2026-07-28 audit).
+--
+-- Each of these was already asserted somewhere — in a schema doc-comment, in an
+-- ADR, or in an application guard — with nothing stopping a future writer, a
+-- raw SQL fix, or a seed script from violating it. Every one was verified to
+-- have zero violating rows on the live database before being added; a
+-- constraint that cannot be applied is worse than none, because
+-- check-db-sidecars then reports a permanent failure people learn to ignore.
+-- ============================================================================
+
+-- SPLIT
+-- The wallet's only overdraft guard is an ORM conditional updateMany
+-- (`where: { walletBalance: { gte: amount } }` in lib/api/organizations/wallet.ts).
+-- That is correct but it is the ONLY line of defence: any other writer, or a
+-- decrement that skips the guard, can drive an org's prepaid balance negative —
+-- money the platform would then owe out of its own pocket. NULL is admitted
+-- (accounts on non-WALLET funding never initialise it).
+ALTER TABLE "BillingAccount" DROP CONSTRAINT IF EXISTS "billing_account_wallet_nonnegative";
+-- SPLIT
+ALTER TABLE "BillingAccount" ADD CONSTRAINT "billing_account_wallet_nonnegative"
+  CHECK ("walletBalance" IS NULL OR "walletBalance" >= 0);
+
+-- SPLIT
+-- A purchase order can never have more left on it than it was worth.
+ALTER TABLE "PurchaseOrder" DROP CONSTRAINT IF EXISTS "purchase_order_amounts_coherent";
+-- SPLIT
+ALTER TABLE "PurchaseOrder" ADD CONSTRAINT "purchase_order_amounts_coherent"
+  CHECK (
+    "totalAmountPaise" >= 0
+    AND "remainingAmountPaise" >= 0
+    AND "remainingAmountPaise" <= "totalAmountPaise"
+  );
+
+-- SPLIT
+-- ReferralCredit.remainingAmount is a STORED derived column, and it is the one
+-- the user sees and spends. Drift means a buyer is shown — and can consume —
+-- a balance the ledger does not agree with. reverseCreditsForPayment nets
+-- against it on every refund, so a wrong value compounds.
+ALTER TABLE "ReferralCredit" DROP CONSTRAINT IF EXISTS "referral_credit_balance_consistent";
+-- SPLIT
+ALTER TABLE "ReferralCredit" ADD CONSTRAINT "referral_credit_balance_consistent"
+  CHECK (
+    "amount" >= 0
+    AND "usedAmount" >= 0
+    AND "remainingAmount" >= 0
+    AND "remainingAmount" = "amount" - "usedAmount"
+  );
+
+-- SPLIT
+ALTER TABLE "ReferralCreditUsage" DROP CONSTRAINT IF EXISTS "referral_credit_usage_nonnegative";
+-- SPLIT
+ALTER TABLE "ReferralCreditUsage" ADD CONSTRAINT "referral_credit_usage_nonnegative"
+  CHECK ("amount" >= 0 AND "originalAmount" >= 0 AND "restoredAmount" >= 0);
+
+-- SPLIT
+-- #775 states the invariant in the schema doc-comment ("marginalPaise ==
+-- basePaise + surchargePaise") but nothing enforced it. The member is charged
+-- marginalPaise while the org's accrual is carved on basePaise, so a mismatch
+-- means one side of a single booking is billed a different number.
+ALTER TABLE "OverageEvent" DROP CONSTRAINT IF EXISTS "overage_marginal_is_base_plus_surcharge";
+-- SPLIT
+ALTER TABLE "OverageEvent" ADD CONSTRAINT "overage_marginal_is_base_plus_surcharge"
+  CHECK (
+    "basePaise" >= 0
+    AND "surchargePaise" >= 0
+    AND "marginalPaise" = "basePaise" + "surchargePaise"
+  );
+
+-- SPLIT
+-- ADR 02's central claim is that `platformBps + orgBps + consultantBps = 10000`
+-- is "an integer equality that the system can assert and that always holds".
+-- It was asserted nowhere. earnings-service clamps a bad card at runtime, which
+-- silently redistributes a booking's money rather than refusing it.
+ALTER TABLE "RateCard" DROP CONSTRAINT IF EXISTS "rate_card_bps_sum_is_whole";
+-- SPLIT
+ALTER TABLE "RateCard" ADD CONSTRAINT "rate_card_bps_sum_is_whole"
+  CHECK (
+    "platformBps" >= 0 AND "orgBps" >= 0 AND "consultantBps" >= 0
+    AND "platformBps" + "orgBps" + "consultantBps" = 10000
+  );
+
+-- SPLIT
+-- A collaborator's share is a fraction of the whole, so it lives in [0, 10000].
+-- The cross-row "shares on one plan sum to <= 10000" invariant cannot be a
+-- CHECK; it is asserted by the ledger reconciler instead.
+ALTER TABLE "Collaborator" DROP CONSTRAINT IF EXISTS "collaborator_share_bps_in_range";
+-- SPLIT
+ALTER TABLE "Collaborator" ADD CONSTRAINT "collaborator_share_bps_in_range"
+  CHECK ("revenueShareBps" >= 0 AND "revenueShareBps" <= 10000);
+
+-- SPLIT
+-- The journal's direction column carries the sign, so an entry amount is
+-- strictly positive. postLedgerTxn already rejects <= 0, but the CONSTRAINT
+-- TRIGGER that enforces the balance invariant sums these values: a zero or
+-- negative entry would let an "unbalanced" transaction sum to zero and pass.
+ALTER TABLE "LedgerEntry" DROP CONSTRAINT IF EXISTS "ledger_entry_amount_positive";
+-- SPLIT
+ALTER TABLE "LedgerEntry" ADD CONSTRAINT "ledger_entry_amount_positive"
+  CHECK ("amountPaise" > 0);
+
+-- SPLIT
+-- Redemption caps are enforced only in application code today, so a race or a
+-- direct write can over-redeem a capped discount.
+ALTER TABLE "DiscountCode" DROP CONSTRAINT IF EXISTS "discount_code_uses_within_cap";
+-- SPLIT
+ALTER TABLE "DiscountCode" ADD CONSTRAINT "discount_code_uses_within_cap"
+  CHECK (
+    "currentUses" >= 0
+    AND ("maxUses" IS NULL OR "currentUses" <= "maxUses")
+  );

@@ -1688,9 +1688,13 @@ model OrganizationPayout {
   paReferenceId     String?
   form15caPartCRef  String?
   form15cbRef       String?
-  dtaaRateApplied   Decimal?
+  // Pinned to match Payment.exchangeRateAtCheckout / Refund.exchangeRateAtRefund.
+  // Left unbounded these are Postgres `numeric` with arbitrary precision, so the
+  // same FX rate could round differently on the payment and the payout sides of
+  // one booking and the reconciler would report drift that isn't real.
+  dtaaRateApplied   Decimal?           @db.Decimal(18, 6)
   rbiPurposeCode    String? // P0802 | P0807
-  fxRateUsed        Decimal?
+  fxRateUsed        Decimal?           @db.Decimal(18, 6)
   firceRef          String?
 
   payoutReference String?
@@ -1755,9 +1759,14 @@ enum MsmeStatus {
 model OrganizationInvoice {
   id               String         @id @default(uuid())
   billingAccountId String
-  billingAccount   BillingAccount @relation(fields: [billingAccountId], references: [id], onDelete: Cascade)
+  // #781 §B — financial rows Restrict their parents. An issued GST invoice is a
+  // statutory document with a gapless number; cascading it away with a hard org
+  // or billing-account delete would punch a hole in the series and destroy the
+  // filing record. Every other money model already used Restrict; these two were
+  // the outliers.
+  billingAccount   BillingAccount @relation(fields: [billingAccountId], references: [id], onDelete: Restrict)
   organizationId   String
-  organization     Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization     Organization   @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   purchaseOrderId  String?
   purchaseOrder    PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id])
   // Optional link to the Contract that governed this invoice. Lets the
@@ -1782,14 +1791,14 @@ model OrganizationInvoice {
   // shows only settleable currencies), unlike Payment.displayCurrencyAtCheckout /
   // Refund.displayCurrency, which snapshot the raw buyer-facing code as free text.
   displayCurrency    Currency
-  fxRateUsed         Decimal?
+  fxRateUsed         Decimal? @db.Decimal(18, 6)
   inrEquivalentPaise BigInt // always captured for GST filings
   subtotalPaise      BigInt
   igstPaise          BigInt   @default(0)
   cgstPaise          BigInt   @default(0)
   sgstPaise          BigInt   @default(0)
   totalPaise         BigInt
-  taxRate            Decimal?
+  taxRate            Decimal? @db.Decimal(18, 6)
 
   // Typed line items (was Json `items`). One row per line; HSN code,
   // tax-per-line, and Payment FK are queryable directly (no JSON
@@ -2239,11 +2248,19 @@ model LedgerEntry {
 // (`scripts/reconcile/reconcile-ledgers.ts`). Each run records per-scope
 // findings so operators can diff between runs and page on regressions.
 //
-// The auditor is READ-ONLY: it never mutates the three ledgers
-// (FundingLedgerEntry, WalletEntry-as-usage, SettlementLedgerEntry) or
-// the derived balances (BillingAccount.walletBalance, OrganizationInvoice
-// status). All remediation is manual — this table is the report, not the
-// fix. See `docs/enterprise/10-money-and-ledger/01-money-model-overview.md`.
+// The auditor is READ-ONLY: it never mutates the journal
+// (LedgerTransaction/LedgerEntry) or the derived caches
+// (LedgerAccountBalance, BillingAccount.walletBalance, OrganizationInvoice
+// status). The three single-entry logs this comment used to name —
+// FundingLedgerEntry, WalletEntry, SettlementLedgerEntry — were collapsed
+// into the journal by #772 and no longer exist.
+//
+// Remediation is never a patch to a cache: a finding is a symptom, the fix
+// is upstream, and a money correction is a counter-transaction. #837 added
+// the one exception, a protective wallet-spend freeze on balance drift.
+// Findings are split against a checked-in baseline
+// (lib/payments/ledger/baseline.ts) so only NEW drift fails the run.
+// See `docs/enterprise/10-money-and-ledger/13-ledger-integrity.md`.
 model LedgerReconciliationReport {
   id            String   @id @default(uuid())
   runAt         DateTime @default(now())
@@ -3932,7 +3949,16 @@ enum PaymentLegSource {
 enum PaymentGateway {
   STRIPE
   RAZORPAY
-  DODO_PAYMENTS // post-MVP: evaluation pending
+  // Schema-only, deliberately. No client, no checkout path, no webhook handler,
+  // no payout submitter, and no date attached to building any of them. The value
+  // is reserved because Postgres has no `ALTER TYPE ... DROP VALUE` — adding one
+  // is free, removing one costs a type recreation and swap.
+  //
+  // It fails loudly rather than falling through a `default:` branch: see
+  // POST_MVP_GATEWAY_STUBS in lib/payments/constants.ts and the throwing guard
+  // in lib/payments/validation/gateway-guards.ts. For a finance or CA review,
+  // treat it as not existing — no money has ever moved through it.
+  DODO_PAYMENTS
   CARD
 }
 
@@ -3995,16 +4021,22 @@ enum RefundStatus {
 }
 
 model Dispute {
-  id                 String         @id @default(uuid())
-  amountPaise        BigInt // Disputed amount in paise
-  currency           Currency       @default(INR)
-  reason             String // Dispute reason from gateway
-  status             DisputeStatus
-  disputeId          String         @unique // Gateway-specific dispute ID
-  paymentGateway     PaymentGateway
-  evidence           Json? // Evidence submitted to gateway
-  dueBy              DateTime?      @db.Timestamptz // Deadline to respond to dispute
-  isChargeRefundable Boolean        @default(true)
+  id                  String         @id @default(uuid())
+  amountPaise         BigInt // Disputed amount in paise
+  currency            Currency       @default(INR)
+  reason              String // Dispute reason from gateway
+  status              DisputeStatus
+  disputeId           String         @unique // Gateway-specific dispute ID
+  paymentGateway      PaymentGateway
+  evidence            Json? // Evidence submitted to gateway
+  // The dispute detail page has always rendered "Evidence was submitted on
+  // <date>" and no column backed it, so it read "N/A" for every dispute that
+  // had evidence. Nullable and not backfilled: rows written before this stamp
+  // genuinely do not know their submission time, and the UI says so rather
+  // than inventing one.
+  evidenceSubmittedAt DateTime?      @db.Timestamptz
+  dueBy               DateTime?      @db.Timestamptz // Deadline to respond to dispute
+  isChargeRefundable  Boolean        @default(true)
 
   payment   Payment @relation(fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: Restrict)
   paymentId String
@@ -4280,6 +4312,18 @@ model TDSRecord {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  /// Statutory withholding rows had NO unique constraint at all, so a retried
+  /// payout, a replayed webhook, or a re-run reconciler could write a second
+  /// deduction for one disbursement — over-withholding from the consultant and
+  /// over-reporting to TRACES in Form 26Q, which is a correction filing to undo.
+  /// Deduplication was app-side only, in tds-service.
+  ///
+  /// `isReversal` is part of the key because a refund legitimately writes a
+  /// second, negative row against the same payout. Postgres treats NULLs as
+  /// distinct, so rows with a null `payoutId` (adjustments not tied to a
+  /// disbursement) are unaffected — those are guarded by the Serializable
+  /// transaction in recordTdsReversal.
+  @@unique([consultantProfileId, financialYear, quarter, payoutId, isReversal])
   @@index([consultantProfileId, financialYear])
   @@index([financialYear, quarter])
   @@index([reportedInForm26Q])
@@ -4476,6 +4520,53 @@ model GstTcsAdjustment {
   @@index([paymentId])
 }
 
+/// Request-level idempotency for money mutations that have no natural dedupe
+/// key of their own.
+///
+/// Checkout and org wallet top-ups already carry one (`Payment.clientIdempotencyKey`,
+/// `WalletTopUp.providerOrderId`), but admin refunds, admin payout processing,
+/// org payout creation and invoice payment did not: a double-clicked button, a
+/// proxy retry, or an operator refreshing a slow tab issued a second real
+/// mutation. The gateway-level keys stop a duplicate REFUND reaching the card,
+/// but nothing stopped a duplicate row from being created first.
+///
+/// `scope` namespaces the key per route so a client reusing one UUID across two
+/// different operations cannot have the second silently replay the first's
+/// response. The stored response is replayed verbatim on a repeat, so the
+/// caller sees the original outcome rather than a confusing 409.
+model IdempotencyRecord {
+  id    String @id @default(cuid())
+  /// Route-owned namespace, e.g. "admin.refund" or "org.payout.create".
+  scope String
+  /// Caller-supplied `Idempotency-Key` header value.
+  key   String
+  /// Who the key belongs to — a key from one user must never replay another's
+  /// response, even within the same scope.
+  userId String
+
+  /// Hash of the request body. A repeat of the same key with a DIFFERENT body
+  /// is a client bug, not a retry, and is rejected rather than silently
+  /// replaying the original.
+  requestHash String
+
+  /// Serialized response of the first successful call, replayed on a repeat.
+  responseBody   Json?
+  responseStatus Int?
+
+  /// Set when the first call completes. A row that exists with this still null
+  /// means a request is in flight; a concurrent duplicate gets a 409 rather
+  /// than racing it.
+  completedAt DateTime? @db.Timestamptz
+
+  createdAt DateTime @default(now()) @db.Timestamptz
+  /// Swept by the cleanup-auth-tokens cron; 24h is longer than any client
+  /// retry window and short enough that the table stays small.
+  expiresAt DateTime @db.Timestamptz
+
+  @@unique([scope, key, userId])
+  @@index([expiresAt])
+}
+
 model WebhookEvent {
   id          String    @id @default(cuid())
   provider    String // razorpay, stripe, etc.
@@ -4622,8 +4713,9 @@ model ReferralCreditUsage {
 
 // #880 — single-row referral-program config (fixed id). Centralizes the
 // conservative-launch controls: the program on/off switch, a monthly budget cap
-// with auto-pause, and the ramped referrer reward. Paise stored as Int (well
-// within range for a referral budget) to keep the gate arithmetic in number.
+// with auto-pause, and the ramped referrer reward. Paise columns are BigInt
+// like every other money column (#780); the Prisma result extension converts
+// them to number at the JS boundary so the gate arithmetic stays in number.
 model ReferralProgramConfig {
   id                     String   @id @default("singleton")
   isActive               Boolean  @default(true)

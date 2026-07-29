@@ -14,14 +14,14 @@
  *       Atomic batch creation: claim READY earnings, compute aggregated
  *       totals, write the OrganizationPayout (status DRAFT/PENDING),
  *       flip the claimed earnings to BATCHED (#837 — NOT PAID; cash has
- *       not moved yet), write SettlementLedgerEntry + audit log. Optionally
+ *       not moved yet), post through postLedgerTxn + audit log. Optionally
  *       accepts an `idempotencyKey` so cron retries become no-ops via the
  *       unique constraint.
  *
  *   - processOrgPayout(payoutId)
  *       State machine progression: PENDING → PROCESSING → COMPLETED |
  *       FAILED. Today only progresses PENDING → PROCESSING and writes
- *       the audit log + SettlementLedgerEntry; live RazorpayX /
+ *       the audit log + the ORG_PAYOUT journal posting; live RazorpayX /
  *       Stripe Connect submission is gated on `ENABLE_LIVE_PAYOUTS` and
  *       lands in PR-3.
  *
@@ -108,7 +108,7 @@ export interface CreateOrgPayoutBatchOptions {
   /** Cron-safe duplicate guard. When set, a row with the same key
    *  short-circuits to an idempotent response instead of creating a dup. */
   idempotencyKey?: string;
-  /** Free-form audit notes; surfaces on SettlementLedgerEntry. */
+  /** Free-form audit notes; surfaces on the payout's audit-log entry. */
   notes?: string;
   /** Membership id to attribute on the audit log; null for cron runs. */
   actorMembershipId?: string | null;

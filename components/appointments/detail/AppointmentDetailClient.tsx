@@ -296,7 +296,14 @@ export function AppointmentDetailClient({
                 </span>
               </div>
               <Progress
-                value={(vm.group.completed / vm.group.total) * 100}
+                value={
+                  // A group whose sessions have no slots yet has total 0,
+                  // and 0/0 is NaN — which reaches Progress as an
+                  // attribute value and renders a broken bar.
+                  vm.group.total > 0
+                    ? (vm.group.completed / vm.group.total) * 100
+                    : 0
+                }
                 className="h-2"
               />
             </div>

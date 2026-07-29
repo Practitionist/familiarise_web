@@ -23,6 +23,15 @@ export type BalancePreflight = {
  * A balance-read failure or unexpected shape fails OPEN (ok:true): a brand-new
  * read dependency must never stall payouts, and RazorpayX's own
  * `queue_if_low_balance` remains the gateway-side backstop.
+ *
+ * Fail-open is deliberate and stays. What changed is that it is no longer
+ * SILENT. `getAccountBalance` swallows every error and returns null, and its
+ * own source comment admits the endpoint "must be re-verified against the
+ * sandbox before ENABLE_LIVE_PAYOUTS flips" — so a wrong URL or a changed
+ * response shape would turn this guard into a permanent no-op with nothing
+ * anywhere saying so, on the one code path that runs immediately before real
+ * money leaves. An unknown balance now pages at WARN severity: payouts still
+ * proceed, but somebody finds out the guard is blind.
  */
 export async function assertPayoutBalance(
   totalPaise: number,
@@ -33,7 +42,17 @@ export async function assertPayoutBalance(
 
   const balancePaise = await getRazorpayPayoutsService().getAccountBalance();
   if (balancePaise === null) {
-    return { ok: true, balancePaise: null }; // unknown → fail open
+    const reason =
+      "RazorpayX balance unknown (read failed or returned an unexpected shape) — " +
+      "proceeding on queue_if_low_balance, but the pre-batch balance guard is blind";
+    void recordSystemError({
+      organizationId: null,
+      category: "PAYOUT",
+      summary: `RAZORPAYX_BALANCE_UNKNOWN — ${reason}`,
+      err: new Error(reason),
+      context: { totalPaise },
+    }).catch(() => {});
+    return { ok: true, balancePaise: null, reason }; // unknown → fail open, loudly
   }
   if (balancePaise < totalPaise) {
     const reason = `RazorpayX balance ${balancePaise} < required ${totalPaise} paise`;

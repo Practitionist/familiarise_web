@@ -11,7 +11,7 @@
  */
 
 import { use, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
 
 import { useOrgRole, useRequireOrgAccess } from "../useOrgRole";
@@ -70,6 +70,10 @@ export default function PurchaseOrdersPage({
 
   const list = useQuery({
     queryKey: ["org-purchase-orders", orgId, statusFilter],
+    // Filter/page live in the key, so each value is its own query. Without
+    // this, switching to one not yet fetched dropped `data` to undefined and
+    // re-showed the loading branch. Same fix as #346 on the appointments list.
+    placeholderData: keepPreviousData,
     queryFn: () => fetchPurchaseOrders(orgId, statusFilter),
     enabled: allowed,
   });

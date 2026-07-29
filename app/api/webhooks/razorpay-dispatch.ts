@@ -72,6 +72,57 @@ const payoutEntitySchema = z.object({
 });
 
 /**
+ * Route a captured payment to the handler its `notes.type` selects.
+ *
+ * Extracted because there are now three callers — `payment.captured`,
+ * `order.paid`, and the client-return path in
+ * `app/api/checkout/verify-signature/route.ts` — and the routing MUST be
+ * identical across all of them. Before #ADR-21 the verify-signature path had no
+ * routing at all: it flipped `Payment.paymentStatus` to SUCCEEDED directly,
+ * which made the later webhook hit `handlePaymentSuccess`'s already-SUCCEEDED
+ * early-return and skip appointment confirmation, earnings, the
+ * `booking:<paymentId>` journal entry and the capture-amount parity check.
+ *
+ * Every handler below is idempotent, so whichever caller arrives first does the
+ * work and the others are no-ops.
+ */
+export async function routeCapturedPayment(params: {
+  /** Razorpay order id — this is what `Payment.paymentIntent` stores. */
+  orderId: string;
+  /** `notes` from the Razorpay order/payment entity; selects the handler. */
+  notes: Record<string, string>;
+  /** Captured amount in paise, for the parity check. */
+  amountPaise?: number;
+  /**
+   * Razorpay `pay_*` id. Present on `payment.captured` and on the client
+   * return; absent on `order.paid`, where `handleOrgPaymentSuccess` degrades
+   * to trusting notes and refuses to mark an invoice PAID.
+   */
+  gatewayPaymentId?: string;
+}): Promise<void> {
+  const { orderId, notes, amountPaise, gatewayPaymentId } = params;
+
+  if (notes.type === "credit_purchase" || notes.type === "invoice_payment") {
+    // The org path only trusts an amount that came off a PAYMENT entity. On
+    // `order.paid` the figure available is the order total, not what was
+    // actually settled, so passing it could mark an invoice PAID on a partial
+    // payment. Withholding it keeps the documented conservative behaviour in
+    // handleOrgPaymentSuccess ("no payment id -> refuse to mark PAID").
+    await handleOrgPaymentSuccess(
+      notes,
+      gatewayPaymentId,
+      gatewayPaymentId ? amountPaise : undefined,
+    );
+    return;
+  }
+  if (notes.type === "overage_member") {
+    await handleOverageMemberSuccess(orderId);
+    return;
+  }
+  await handlePaymentSuccess(orderId, notes, amountPaise);
+}
+
+/**
  * Process a Razorpay webhook event. Called via the route's `after()` callback
  * AND by the stuck-webhook sweeper on replay. Errors are caught and recorded on
  * the WebhookEvent row (via markWebhookEventProcessed) for retry/observability.
@@ -89,7 +140,10 @@ export async function processRazorpayWebhookEvent(
     eventId,
     payload: scrubWebhookPayload(event.payload),
   });
-  Sentry.logger.info(Sentry.logger.fmt`razorpay dispatch: handling ${eventType}`, { eventId });
+  Sentry.logger.info(
+    Sentry.logger.fmt`razorpay dispatch: handling ${eventType}`,
+    { eventId },
+  );
 
   let processingError: string | undefined;
   // #813/#812 — set when a handler DEFERS (event valid but its row not yet
@@ -101,49 +155,26 @@ export async function processRazorpayWebhookEvent(
     switch (eventType) {
       case "payment.captured": {
         const capturedEvent = razorpayPaymentCapturedEventSchema.parse(event);
-        const capturedNotes = capturedEvent.payload.payment.entity.notes ?? {};
-        if (
-          capturedNotes.type === "credit_purchase" ||
-          capturedNotes.type === "invoice_payment"
-        ) {
-          await handleOrgPaymentSuccess(
-            capturedNotes,
-            capturedEvent.payload.payment.entity.id,
-            capturedEvent.payload.payment.entity.amount,
-          );
-        } else if (capturedNotes.type === "overage_member") {
-          // #775 — CHARGE_MEMBER overage side-charge (no appointment; routes
-          // on the order id stamped at resume-checkout time).
-          await handleOverageMemberSuccess(
-            capturedEvent.payload.payment.entity.order_id,
-          );
-        } else {
-          await handlePaymentSuccess(
-            capturedEvent.payload.payment.entity.order_id,
-            capturedNotes,
-            capturedEvent.payload.payment.entity.amount,
-          );
-        }
+        // #775 — the overage branch inside routeCapturedPayment keys on the
+        // order id stamped at resume-checkout time, not on an appointment.
+        await routeCapturedPayment({
+          orderId: capturedEvent.payload.payment.entity.order_id,
+          notes: capturedEvent.payload.payment.entity.notes ?? {},
+          amountPaise: capturedEvent.payload.payment.entity.amount,
+          gatewayPaymentId: capturedEvent.payload.payment.entity.id,
+        });
         break;
       }
 
       case "order.paid": {
         const paidEvent = razorpayOrderPaidEventSchema.parse(event);
-        const paidNotes = paidEvent.payload.order.entity.notes ?? {};
-        if (
-          paidNotes.type === "credit_purchase" ||
-          paidNotes.type === "invoice_payment"
-        ) {
-          await handleOrgPaymentSuccess(paidNotes);
-        } else if (paidNotes.type === "overage_member") {
-          await handleOverageMemberSuccess(paidEvent.payload.order.entity.id);
-        } else {
-          await handlePaymentSuccess(
-            paidEvent.payload.order.entity.id,
-            paidNotes,
-            paidEvent.payload.order.entity.amount,
-          );
-        }
+        // No `pay_*` id on this event shape, so the org branch degrades to
+        // trusting notes and refuses to mark an invoice PAID.
+        await routeCapturedPayment({
+          orderId: paidEvent.payload.order.entity.id,
+          notes: paidEvent.payload.order.entity.notes ?? {},
+          amountPaise: paidEvent.payload.order.entity.amount,
+        });
         break;
       }
 
@@ -193,7 +224,12 @@ export async function processRazorpayWebhookEvent(
             );
             Sentry.captureException(lookupError, {
               tags: { subsystem: "payments", provider: "razorpay" },
-              contexts: { refund: { refundId: refundEvent.id, paymentId: refundEvent.payment_id } },
+              contexts: {
+                refund: {
+                  refundId: refundEvent.id,
+                  paymentId: refundEvent.payment_id,
+                },
+              },
               level: "warning",
             });
           }
@@ -238,7 +274,12 @@ export async function processRazorpayWebhookEvent(
             );
             Sentry.captureException(lookupError, {
               tags: { subsystem: "payments", provider: "razorpay" },
-              contexts: { refund: { refundId: failedRefundEvent.id, paymentId: failedRefundEvent.payment_id } },
+              contexts: {
+                refund: {
+                  refundId: failedRefundEvent.id,
+                  paymentId: failedRefundEvent.payment_id,
+                },
+              },
               level: "warning",
             });
           }
@@ -362,7 +403,10 @@ export async function processRazorpayWebhookEvent(
       default:
         console.log(`📄 Unhandled Razorpay event type: ${eventType}`);
     }
-    Sentry.logger.info(Sentry.logger.fmt`razorpay dispatch: done ${eventType}`, { eventId, deferred });
+    Sentry.logger.info(
+      Sentry.logger.fmt`razorpay dispatch: done ${eventType}`,
+      { eventId, deferred },
+    );
   } catch (handlerError) {
     processingError =
       handlerError instanceof Error

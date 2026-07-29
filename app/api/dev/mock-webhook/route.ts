@@ -52,11 +52,22 @@ interface MockWebhookResponse {
 // Development Check
 // ============================================
 
+/**
+ * This route reaches `handlePaymentSuccess`, `refundEarnings` and
+ * `handlePayoutWebhook` with NO signature and NO authentication. The gate is
+ * therefore the only thing standing between the open internet and the money
+ * pipeline.
+ *
+ * It used to also admit `ALLOW_MOCK_WEBHOOKS === "true"`, which meant a single
+ * environment variable — one dashboard toggle, one copied .env line — turned a
+ * production deployment into an unauthenticated "confirm any payment" endpoint.
+ * That disjunct is gone. The gate is now build-time posture only: a production
+ * build cannot be opened up by configuration.
+ */
 function isDevelopment(): boolean {
   return (
     process.env.NODE_ENV === "development" ||
-    process.env.VERCEL_ENV === "preview" ||
-    process.env.ALLOW_MOCK_WEBHOOKS === "true"
+    process.env.VERCEL_ENV === "preview"
   );
 }
 
@@ -119,13 +130,16 @@ async function handleMockPaymentCaptured(
     };
   }
 
-  // Update payment status to SUCCEEDED if not already
-  if (payment.paymentStatus !== PaymentStatus.SUCCEEDED) {
-    await prisma.payment.update({
-      where: { id: payment.id },
-      data: { paymentStatus: PaymentStatus.SUCCEEDED },
-    });
-  }
+  // ADR 21 — deliberately NOT flipping paymentStatus here.
+  //
+  // This used to set SUCCEEDED before calling handlePaymentSuccess below, which
+  // meant the pipeline always hit its already-SUCCEEDED early-return and did
+  // nothing: no appointment confirmation, no earnings, no journal entry. The
+  // mock webhook looked like it worked while exercising none of the code it
+  // exists to exercise — and since the only non-seed payments in the database
+  // came through this route, that made it a poor proxy for the real flow.
+  //
+  // The pipeline owns the status transition. Leave the row alone.
 
   // Extract consultant profile ID from the appointment's plan
   const getConsultantProfileId = () => {

@@ -54,12 +54,25 @@ describe("assertPayoutBalance (#863)", () => {
     expect(mockRecordSystemError).not.toHaveBeenCalled();
   });
 
-  it("fails OPEN on an unknown balance (null)", async () => {
+  it("fails OPEN on an unknown balance (null) — but pages, because the guard is now blind", async () => {
     mockGetBalance.mockResolvedValue(null);
     const r = await assertPayoutBalance(1000);
+
+    // Fail-open stays: RazorpayX's queue_if_low_balance is the gateway-side
+    // backstop, and a brand-new read dependency must not stall payouts.
     expect(r.ok).toBe(true);
     expect(r.balancePaise).toBeNull();
-    expect(mockRecordSystemError).not.toHaveBeenCalled();
+
+    // But it is no longer SILENT. getAccountBalance swallows every error and
+    // returns null, and its own source comment says the endpoint is unverified
+    // against the sandbox — so without this, a wrong URL or a changed response
+    // shape would turn the pre-batch guard into a permanent no-op with nothing
+    // anywhere saying so, on the code path that runs just before real money
+    // leaves.
+    expect(mockRecordSystemError).toHaveBeenCalledTimes(1);
+    expect(mockRecordSystemError.mock.calls[0][0].summary).toMatch(
+      /RAZORPAYX_BALANCE_UNKNOWN/,
+    );
   });
 
   it("is a no-op ok when live payouts are disabled (never reads the balance)", async () => {

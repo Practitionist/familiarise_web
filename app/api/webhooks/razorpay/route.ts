@@ -2,11 +2,7 @@ import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { after } from "next/server";
 import crypto from "node:crypto";
-import {
-  verifyWebhookSignature,
-  logWebhookEvent,
-  isDbHealthy,
-} from "../utils";
+import { verifyWebhookSignature, logWebhookEvent, isDbHealthy } from "../utils";
 import { recordSystemEvent } from "@/lib/enterprise/system-events";
 import {
   razorpayWebhookEnvelopeSchema,
@@ -47,8 +43,7 @@ export async function POST(req: NextRequest) {
     try {
       const parsed = JSON.parse(body);
       isPossiblyPayoutEvent =
-        typeof parsed.event === "string" &&
-        parsed.event.startsWith("payout.");
+        typeof parsed.event === "string" && parsed.event.startsWith("payout.");
     } catch {
       // Can't parse — not a valid webhook, reject
     }
@@ -76,7 +71,8 @@ export async function POST(req: NextRequest) {
           await recordSystemEvent({
             category: "WEBHOOK",
             severity: "WARN",
-            message: "Razorpay webhook HMAC verification failed (RazorpayX secret)",
+            message:
+              "Razorpay webhook HMAC verification failed (RazorpayX secret)",
             context: { provider: "razorpayx", event: "payout.*" },
           });
           return NextResponse.json(
@@ -99,10 +95,7 @@ export async function POST(req: NextRequest) {
         message: "Razorpay webhook HMAC verification failed",
         context: { provider: "razorpay" },
       });
-      return NextResponse.json(
-        { error: "Invalid signature" },
-        { status: 400 },
-      );
+      return NextResponse.json({ error: "Invalid signature" }, { status: 400 });
     }
   }
 
@@ -138,12 +131,24 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Composite key prevents collisions between different lifecycle events
-  // for the same entity (e.g., payment.captured vs refund.created).
-  // When no entity is present (malformed payload) we fall back to a
-  // SHA-256 hash of the raw body so the eventId stays deterministic —
-  // two identical replayed bodies collapse to the same id, which is what
-  // we want for dedup.
+  // Razorpay sends `x-razorpay-event-id`, and it is tempting as the dedup key.
+  // This repo deliberately does NOT use it — see
+  // .claude/skills/razorpay/references/webhooks.md.
+  //
+  // Two reasons, and the second is the one that matters. First, the synthesized
+  // key dedups on the *business fact* rather than the delivery, so two distinct
+  // deliveries describing the same state transition collapse to one. Second,
+  // and decisively: the HMAC covers the BODY ONLY. A header is unsigned, so
+  // keying on it would let anyone holding one captured (body, signature) pair
+  // replay it N times under N invented header values and get N full dispatches.
+  // The key below is derived entirely from signature-covered material — an
+  // entity id from the payload, or a hash of the raw body — which is what makes
+  // the dedup boundary tamper-proof rather than merely convenient.
+  //
+  // Every downstream handler is separately idempotent, so the amplification
+  // would not have moved money; it would have removed a defence-in-depth layer
+  // for no correctness gain. If you change this, you are changing what "already
+  // processed" means AND weakening a trust boundary.
   const entityId =
     event.payload?.payment?.entity?.id ||
     event.payload?.order?.entity?.id ||
@@ -168,7 +173,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ status: "ok", duplicate: true });
   }
 
-  Sentry.logger.info(Sentry.logger.fmt`razorpay webhook: ${eventType}`, { eventId });
+  Sentry.logger.info(Sentry.logger.fmt`razorpay webhook: ${eventType}`, {
+    eventId,
+  });
 
   // Return 200 immediately — process the event asynchronously
   after(async () => {

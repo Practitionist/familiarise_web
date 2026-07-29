@@ -11,7 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { ChevronDown, ChevronUp } from "lucide-react";
-import { formatCurrencyFromMajorUnit } from "@/utils/formatting";
+import { formatCurrencyAmount } from "@/utils/formatting";
 import type { HostedPlanEntry } from "./types";
 import { COLLABORATOR_STATUS_BADGE, formatRole } from "./format";
 import { RevenueSplitBar } from "./RevenueSplitBar";
@@ -79,7 +79,10 @@ export function HostedPlanCard({
             </p>
             {plan.price > 0 && (
               <p className="mt-0.5 text-sm text-zinc-500">
-                {formatCurrencyFromMajorUnit(plan.price, "INR")}
+                {/* `WebinarPlan.price` / `ClassPlan.price` are BigInt paise and
+                    the query selects them raw. The major-unit formatter takes
+                    rupees, so a ₹500 plan displayed as ₹50,000. */}
+                {formatCurrencyAmount(plan.price, "INR")}
               </p>
             )}
           </div>

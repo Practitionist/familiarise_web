@@ -142,24 +142,69 @@ export async function postLedgerTxn(
     input.postings.map((p) => resolveAccountId(db, p.account)),
   );
 
-  const txn = await db.ledgerTransaction.create({
-    data: {
-      idempotencyKey: input.idempotencyKey,
-      kind: input.kind,
-      description: input.description,
-      paymentId: input.paymentId ?? null,
-      invoiceId: input.invoiceId ?? null,
-      payoutId: input.payoutId ?? null,
-      entries: {
-        create: input.postings.map((p, i) => ({
-          accountId: accountIds[i],
-          direction: p.direction,
-          amountPaise: BigInt(p.amountPaise),
-        })),
+  let txn: { id: string };
+  try {
+    txn = await db.ledgerTransaction.create({
+      data: {
+        idempotencyKey: input.idempotencyKey,
+        kind: input.kind,
+        description: input.description,
+        paymentId: input.paymentId ?? null,
+        invoiceId: input.invoiceId ?? null,
+        payoutId: input.payoutId ?? null,
+        entries: {
+          create: input.postings.map((p, i) => ({
+            accountId: accountIds[i],
+            direction: p.direction,
+            amountPaise: BigInt(p.amountPaise),
+          })),
+        },
       },
-    },
-    select: { id: true },
-  });
+      select: { id: true },
+    });
+  } catch (err) {
+    // The findUnique above is a fast path, not a guard: between it and this
+    // create, a concurrent poster with the same key can commit. The unique
+    // index is the real protection, and it surfaces as P2002.
+    //
+    // Previously this always propagated, so correctness depended on EVERY call
+    // site being wrapped in a retry — a contract no reviewer can enforce.
+    //
+    // What we can do depends on whether `db` is the base client or a
+    // transaction client, and the caller knows but we do not:
+    //
+    //   - Base client: the failed INSERT is isolated, so re-reading gives us
+    //     the winner's id and this call becomes a correct no-op.
+    //   - Inside a transaction: Postgres has already aborted it (Prisma takes
+    //     no savepoint), so the re-read below throws 25P02 too and the original
+    //     P2002 propagates.
+    //
+    // Be honest about what that second case buys: today EVERY caller passes a
+    // `tx`, and `withSerializableRetry` retries only P2034 — so nothing retries
+    // a P2002 and this rescue is unreachable in the current call graph. It is
+    // here so that the guarantee lives with the function rather than depending
+    // on each future call site being wrapped correctly, and so a base-client
+    // caller (there is no reason there won't be one) gets the right behaviour
+    // for free. It is not a claim that today's callers recover.
+    //
+    // Trying the read and falling back covers both without having to ask.
+    if (
+      typeof err === "object" &&
+      err !== null &&
+      (err as { code?: string }).code === "P2002"
+    ) {
+      try {
+        const winner = await db.ledgerTransaction.findUnique({
+          where: { idempotencyKey: input.idempotencyKey },
+          select: { id: true },
+        });
+        if (winner) return { transactionId: winner.id, created: false };
+      } catch {
+        // Aborted transaction — fall through and rethrow the original P2002.
+      }
+    }
+    throw err;
+  }
 
   // #776 — fold this txn's postings into the maintained per-account balance
   // snapshot. Runs inside the caller's tx, so it's atomic with the journal

@@ -61,8 +61,10 @@ export interface SweepOptions {
 export async function sweepStuckWebhookEvents(
   opts: SweepOptions = {},
 ): Promise<SweepResult> {
-  return withCronLock("sweep-stuck-webhook-events", { failMode: "closed" }, () =>
-    sweepStuckWebhookEventsUnlocked(opts),
+  return withCronLock(
+    "sweep-stuck-webhook-events",
+    { failMode: "closed" },
+    () => sweepStuckWebhookEventsUnlocked(opts),
   );
 }
 
@@ -84,12 +86,42 @@ async function sweepStuckWebhookEventsUnlocked(
   // 90d archive window were left with no actor. Keep only the upper bound
   // (don't race in-flight after() callbacks via staleBefore); re-driving an old
   // event is safe (per-row idempotency keys + status guards).
+  // A handler that THREW is also stuck, and until now nothing re-drove it.
+  //
+  // `markWebhookEventProcessed(eventId, error)` runs in the dispatch's
+  // `finally`, so a thrown handler lands as `processed=true, error!=null`.
+  // Razorpay already received its 200 (the route ACKs before processing) and
+  // will not redeliver, and `logWebhookEvent`'s "previously failed, allow
+  // retry" reset only fires on a redelivery that can never come. So the
+  // sweeper's `processed: false, error: null` selector — which reads as "crashed
+  // before we recorded anything" — silently excluded every handler that failed
+  // loudly. A transient error inside handleRefundCreated meant the gateway had
+  // refunded the customer and the platform kept no record of it: no Refund row
+  // for cascade-refund-earnings to find, no `pending_` placeholder for
+  // reconcile-pending-refunds, and this sweep looking the other way.
+  //
+  // Both shapes are re-driven now. Re-driving is safe for the same reason the
+  // comment above already gives — per-row idempotency keys and status guards —
+  // and `logWebhookEvent` resets an errored row before reprocessing it.
   const stuck = await prisma.webhookEvent.findMany({
     where: {
       provider: "razorpay",
-      processed: false,
-      error: null,
       receivedAt: { lt: staleBefore },
+      OR: [
+        // Crashed before recording anything.
+        { processed: false, error: null },
+        // Recorded a failure. Nothing else will ever retry these. Bounded by
+        // the existing give-up window so a deterministically-failing row
+        // retries for a week and then stops, rather than churning until the
+        // 90-day archive collects it. A row still failing after seven days
+        // needs a human, not another attempt.
+        {
+          error: { not: null },
+          receivedAt: { gte: giveUpOlderThan },
+          // Never re-drive our own terminal marker.
+          NOT: { error: { startsWith: "gave up:" } },
+        },
+      ],
     },
     orderBy: { receivedAt: "asc" },
     take: limit,
@@ -162,7 +194,9 @@ async function sweepStuckWebhookEventsUnlocked(
           );
         } else {
           deferred++;
-          console.log(`⏳ Stuck webhook ${ev.eventId} still deferred — will retry`);
+          console.log(
+            `⏳ Stuck webhook ${ev.eventId} still deferred — will retry`,
+          );
         }
       } else {
         recovered++;

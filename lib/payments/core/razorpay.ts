@@ -9,6 +9,7 @@ import {
   RefundError,
 } from "./types";
 import { RefundStatus } from "@prisma/client";
+import { mapGatewayRefundStatus } from "@/lib/payments/refund-status";
 
 // ============================================================================
 // Razorpay Client Initialization
@@ -182,8 +183,23 @@ async function postRefund({
     Authorization: `Basic ${Buffer.from(`${keyId}:${keySecret}`).toString("base64")}`,
     "Content-Type": "application/json",
   };
-  const sanitizedKey = idempotencyKey?.replace(/[^A-Za-z0-9_-]/g, "");
-  if (sanitizedKey && sanitizedKey.length >= IDEMPOTENCY_KEY_MIN_LENGTH) {
+  // A caller that supplies a key is asking for exactly-once semantics. If the
+  // key doesn't survive sanitization we must NOT quietly send the request
+  // without the header — that downgrades a refund to at-least-once delivery
+  // against a customer's card, with no signal that it happened. Refuse instead;
+  // every real caller passes `Refund.id` (a uuid), so this only fires on a
+  // programming error.
+  if (idempotencyKey !== undefined) {
+    const sanitizedKey = idempotencyKey.replace(/[^A-Za-z0-9_-]/g, "");
+    if (sanitizedKey.length < IDEMPOTENCY_KEY_MIN_LENGTH) {
+      throw new RefundError(
+        `Refund idempotency key "${idempotencyKey}" is unusable after sanitization ` +
+          `(${sanitizedKey.length} of the required ${IDEMPOTENCY_KEY_MIN_LENGTH} chars). ` +
+          `Refusing to issue a non-idempotent refund.`,
+        "INVALID_IDEMPOTENCY_KEY",
+        "RAZORPAY",
+      );
+    }
     headers["X-Refund-Idempotency"] = sanitizedKey;
   }
 
@@ -276,7 +292,7 @@ export async function createRazorpayRefund({
       refundId: refund.id,
       amount: Number(refund.amount), // already in smallest currency unit
       currency: refund.currency?.toUpperCase() || "INR",
-      status: mapRazorpayRefundStatus(refund.status),
+      status: mapGatewayRefundStatus(refund.status),
       metadata: refund.notes
         ? (refund.notes as Record<string, unknown>)
         : undefined,
@@ -311,16 +327,19 @@ export async function getRazorpayRefund(
       refundId: refund.id,
       amount: Number(refund.amount), // already in smallest currency unit
       currency: refund.currency?.toUpperCase() || "INR",
-      status: mapRazorpayRefundStatus(refund.status),
+      status: mapGatewayRefundStatus(refund.status),
       metadata: refund.notes
         ? (refund.notes as Record<string, unknown>)
         : undefined,
     };
   } catch (error) {
     console.error("Razorpay refund retrieval failed:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), {
-      tags: { subsystem: "payments", provider: "razorpay" },
-    });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      {
+        tags: { subsystem: "payments", provider: "razorpay" },
+      },
+    );
     throw handleRazorpayRefundError(error);
   }
 }
@@ -364,14 +383,17 @@ export async function listRazorpayRefunds(
       refundId: refund.id,
       amount: Number(refund.amount), // already in smallest currency unit
       currency: refund.currency?.toUpperCase() || "INR",
-      status: mapRazorpayRefundStatus(refund.status),
+      status: mapGatewayRefundStatus(refund.status),
       metadata: refund.notes || undefined,
     }));
   } catch (error) {
     console.error("Razorpay refunds list failed:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), {
-      tags: { subsystem: "payments", provider: "razorpay" },
-    });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      {
+        tags: { subsystem: "payments", provider: "razorpay" },
+      },
+    );
     throw handleRazorpayRefundError(error);
   }
 }
@@ -396,28 +418,6 @@ export async function listRazorpayRefunds(
 // ============================================================================
 // Mapping Helpers
 // ============================================================================
-
-// Third copy of this mapping. The other two — mapRefundStatus in
-// app/api/webhooks/utils.ts and mapGatewayRefundStatus in
-// scripts/refunds/reconcile-pending-refunds.ts — already handle cancellation;
-// without it a cancelled refund fell through to PENDING and stayed there
-// forever, so the reconcile cron kept re-polling a refund that will never move.
-function mapRazorpayRefundStatus(status: string | null): RefundStatus {
-  switch (status) {
-    case "processed":
-    case "succeeded":
-      return "SUCCEEDED";
-    case "pending":
-      return "PENDING";
-    case "failed":
-      return "FAILED";
-    case "cancelled":
-    case "canceled":
-      return "CANCELLED";
-    default:
-      return "PENDING";
-  }
-}
 
 // ============================================================================
 // Error Handlers

@@ -90,6 +90,14 @@ function txStub() {
       upsert: jest.fn(async () => ({})),
     },
     systemEvent: { create: jest.fn(async () => ({})) },
+    // Referral-credit restoration now runs inside Phase 3b (it closes the #B20
+    // gap where app-initiated refunds restored nothing). None of the fixtures
+    // in this file are credit-funded, so an empty usage list is the correct
+    // shape: reverseCreditsForPayment returns 0 immediately. Credit restoration
+    // itself is covered by __tests__/referrals/service.test.ts.
+    referralCreditUsage: {
+      findMany: jest.fn(async () => []),
+    },
     payment: {
       findUnique: jest.fn(async ({ where, select, include }: any) => {
         const p = state.payments.get(where.id);
