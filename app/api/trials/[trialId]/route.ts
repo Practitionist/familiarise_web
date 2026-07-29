@@ -1,5 +1,13 @@
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
-import { TrialSessionStatus, AppointmentsType, Prisma } from "@prisma/client";
+import { createApprovalPaymentIntent } from "@/lib/payments/operations/approval-payment";
+import { computeTrialPaymentDueAt } from "@/lib/trials/eligibility";
+import {
+  TrialSessionStatus,
+  AppointmentsType,
+  PaymentGateway,
+  Prisma,
+} from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import {
   logTrialCompleted,
@@ -277,6 +285,18 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
       updateData.status = status;
 
+      // A paid trial cannot go straight to SCHEDULED: the consultant accepting
+      // only issues the pay-link. The slot is still held (the appointment is
+      // created below) so nobody else can take it while the learner pays, and
+      // the expiry job releases it if they never do.
+      const trialPriceInPaise = Number(
+        existingTrial.subscriptionPlan.trialPriceInPaise ?? 0,
+      );
+      const requiresPayment =
+        status === TrialSessionStatus.SCHEDULED &&
+        existingTrial.status === TrialSessionStatus.PENDING &&
+        trialPriceInPaise > 0;
+
       // Handle scheduling with distributed locking
       if (status === TrialSessionStatus.SCHEDULED) {
         // Support both new slotData and legacy scheduledTime
@@ -363,12 +383,18 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
               },
             });
 
-            // Update trial with appointment link and scheduled status
+            // Update trial with appointment link and the resulting status —
+            // AWAITING_PAYMENT for a paid trial, SCHEDULED for a free one.
             const updatedTrial = await tx.trialSession.update({
               where: { id: trialId },
               data: {
-                status: TrialSessionStatus.SCHEDULED,
+                status: requiresPayment
+                  ? TrialSessionStatus.AWAITING_PAYMENT
+                  : TrialSessionStatus.SCHEDULED,
                 appointmentId: appointment.id,
+                paymentDueAt: requiresPayment
+                  ? computeTrialPaymentDueAt(new Date(), startTime)
+                  : null,
               },
               include: {
                 consulteeProfile: {
@@ -426,7 +452,46 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
             startTime,
           );
 
-          // Notify the consultee that their trial has been scheduled
+          // 5. Paid trial: mint the pay-link now that the slot is held.
+          //
+          // Deliberately AFTER the transaction — createApprovalPaymentIntent
+          // takes its own distributed lock and calls the gateway, so running it
+          // inside would hold a DB transaction open across a network round trip.
+          // If it throws, the trial stays AWAITING_PAYMENT with no link; the
+          // consultee sees nothing payable and the expiry job releases the slot,
+          // which is the safe direction to fail.
+          let paymentUrl: string | null = null;
+          if (requiresPayment) {
+            try {
+              const intent = await createApprovalPaymentIntent({
+                userId: existingTrial.consulteeProfile.user.id,
+                appointmentType: "TRIAL",
+                trialId,
+                // The appointment already exists — link it so the webhook
+                // confirms it instead of creating a second one.
+                appointmentId: result.appointmentId ?? undefined,
+                planId: existingTrial.subscriptionPlanId,
+                paymentGateway: PaymentGateway.RAZORPAY,
+                startsAt: startTime.toISOString(),
+                endsAt: endTime.toISOString(),
+              });
+              paymentUrl = intent.checkoutUrl;
+              await prisma.trialSession.update({
+                where: { id: trialId },
+                data: { pendingPaymentUrl: intent.checkoutUrl },
+              });
+            } catch (error) {
+              Sentry.captureException(
+                error instanceof Error ? error : new Error(String(error)),
+                { tags: { subsystem: "trials" }, extra: { trialId } },
+              );
+              console.error("[Trials] pay-link generation failed:", error);
+            }
+          }
+
+          // Notify the consultee — "pay to confirm" for a paid trial, plain
+          // confirmation for a free one. Sending "your trial is scheduled" for
+          // something still awaiting payment would be a lie.
           void notifyTrialSessionScheduled(
             existingTrial.consulteeProfile.user.id,
             {
@@ -435,8 +500,10 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
               consulteeName: existingTrial.consulteeProfile.user.name || "User",
               planTitle: existingTrial.subscriptionPlan.title,
               dateTime: startTime.toISOString(),
-              status: TrialSessionStatus.SCHEDULED,
-              dashboardUrl: "/dashboard",
+              status: requiresPayment
+                ? TrialSessionStatus.AWAITING_PAYMENT
+                : TrialSessionStatus.SCHEDULED,
+              dashboardUrl: paymentUrl ?? "/dashboard",
             },
           );
 

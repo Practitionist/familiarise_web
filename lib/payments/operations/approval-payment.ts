@@ -30,6 +30,13 @@ export interface CreateApprovalPaymentParams {
   planId: string;
   /** Required when appointmentType is TRIAL. */
   trialId?: string;
+  /**
+   * Link the intent to an appointment that ALREADY exists. Trials create the
+   * appointment when the consultant accepts (to hold the slot), so the webhook
+   * should confirm it rather than build a new one. Consultations and
+   * subscriptions leave this unset — their appointment is made on capture.
+   */
+  appointmentId?: string;
   paymentGateway: PaymentGateway;
   startsAt?: string;
   endsAt?: string;
@@ -152,6 +159,9 @@ export async function createApprovalPaymentIntent(
         userId: params.userId,
         expiresAt: new Date(Date.now() + 48 * 60 * 60 * 1000), // 48 hours expiration
         isMockPayment: false,
+        // Null for consultations/subscriptions, whose appointment is created
+        // on capture; trials pass the appointment they already hold.
+        appointmentId: params.appointmentId ?? null,
       },
     });
 
@@ -282,7 +292,9 @@ function buildApprovalMetadata(params: CreateApprovalPaymentParams): {
   [key: string]: string;
 } {
   const metadata: Record<string, string> = {
-    appointmentId: "pending", // Will be linked after payment success
+    // Trials pass a real id (their appointment exists before the intent);
+    // everything else links after capture.
+    appointmentId: params.appointmentId ?? "pending",
     appointmentType: params.appointmentType,
     userId: params.userId,
     planId: params.planId,
