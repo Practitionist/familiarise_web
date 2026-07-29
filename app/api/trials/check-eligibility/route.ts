@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
+import { blocksNewTrialRequest } from "@/lib/trials/eligibility";
 import { NextRequest, NextResponse } from "next/server";
 import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
 
@@ -98,18 +99,25 @@ export async function GET(request: NextRequest) {
       },
     });
 
-    const isEligible = !existingTrial && planTrialEnabled;
+    // A prior trial only blocks if it's live or was actually delivered — a
+    // declined, withdrawn or lapsed-unpaid trial frees the pair. See
+    // lib/trials/eligibility.ts for the abuse trade-off this represents.
+    const blockingTrial =
+      existingTrial && blocksNewTrialRequest(existingTrial.status)
+        ? existingTrial
+        : null;
+    const isEligible = !blockingTrial && planTrialEnabled;
 
     return NextResponse.json({
       data: {
         isEligible,
-        hasExistingTrial: !!existingTrial,
-        existingTrial: existingTrial
+        hasExistingTrial: !!blockingTrial,
+        existingTrial: blockingTrial
           ? {
-              id: existingTrial.id,
-              status: existingTrial.status,
-              subscriptionPlanId: existingTrial.subscriptionPlanId,
-              requestedAt: existingTrial.requestedAt,
+              id: blockingTrial.id,
+              status: blockingTrial.status,
+              subscriptionPlanId: blockingTrial.subscriptionPlanId,
+              requestedAt: blockingTrial.requestedAt,
             }
           : null,
         planTrialEnabled,
@@ -117,7 +125,7 @@ export async function GET(request: NextRequest) {
         planTrialPriceInPaise,
         plansWithTrialEnabled,
         reason: !isEligible
-          ? existingTrial
+          ? blockingTrial
             ? "You have already requested or completed a trial with this consultant"
             : "This plan does not offer trials"
           : null,

@@ -1,4 +1,5 @@
 import prisma from "@/lib/prisma";
+import { blocksNewTrialRequest } from "@/lib/trials/eligibility";
 import { Prisma, TrialSessionStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { logTrialRequested } from "@/lib/activity/log-activity";
@@ -278,11 +279,19 @@ export async function POST(request: NextRequest) {
       },
     });
 
+    // Only a live or already-delivered trial blocks a new request. A declined,
+    // withdrawn or lapsed-unpaid trial frees the pair — never paying isn't the
+    // same as having used your trial. The freed row must be deleted rather than
+    // left in place, because the pair is @@unique. See lib/trials/eligibility.ts
+    // for the abuse trade-off and how to tighten it if this gets gamed.
     if (existingTrial) {
-      return NextResponse.json(
-        { error: "You have already requested a trial with this consultant" },
-        { status: 409 },
-      );
+      if (blocksNewTrialRequest(existingTrial.status)) {
+        return NextResponse.json(
+          { error: "You have already requested a trial with this consultant" },
+          { status: 409 },
+        );
+      }
+      await prisma.trialSession.delete({ where: { id: existingTrial.id } });
     }
 
     // Verify the subscription plan exists and has trials enabled
@@ -318,16 +327,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Paid-trial checkout isn't wired yet (createApprovalPaymentIntent must
-    // accept TRIAL first) — fail closed rather than booking an uncollected
-    // paid trial. The wiring PR removes this gate.
-    if (subscriptionPlan.trialPriceInPaise > 0) {
-      return NextResponse.json(
-        { error: "Paid trials are not yet available. Please check back soon." },
-        { status: 400 },
-      );
-    }
-
+    // Paid trials are wired: no money moves at request time. The consultant
+    // accepts first, which mints the pay-link and puts the trial in
+    // AWAITING_PAYMENT — so a declined request never needs a refund.
     // Get consultee info for activity log
     const consulteeProfile = await prisma.consulteeProfile.findUnique({
       where: { id: consulteeProfileId },

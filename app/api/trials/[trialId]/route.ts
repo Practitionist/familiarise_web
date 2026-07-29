@@ -213,11 +213,17 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
     // Handle status transitions
     if (status) {
-      // Simplified state machine: PENDING → SCHEDULED → COMPLETED → CONVERTED
-      // REJECTED = consultant declines, CANCELLED = consultee cancels
+      // State machine:
+      //   free trial   PENDING → SCHEDULED → COMPLETED → CONVERTED
+      //   paid trial   PENDING → AWAITING_PAYMENT → SCHEDULED → …
+      // REJECTED = consultant declines, CANCELLED = consultee cancels or the
+      // pay-link lapses past paymentDueAt.
       const validTransitions: Record<TrialSessionStatus, TrialSessionStatus[]> =
         {
-          PENDING: ["SCHEDULED", "CANCELLED", "REJECTED"],
+          PENDING: ["AWAITING_PAYMENT", "SCHEDULED", "CANCELLED", "REJECTED"],
+          // Only the webhook moves this to SCHEDULED (on payment capture); the
+          // expiry job and the consultee move it to CANCELLED.
+          AWAITING_PAYMENT: ["SCHEDULED", "CANCELLED"],
           SCHEDULED: ["COMPLETED", "CANCELLED"],
           COMPLETED: ["CONVERTED"],
           CONVERTED: [],

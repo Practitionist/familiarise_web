@@ -24,10 +24,12 @@ import { acquireLock, releaseLock } from "@/lib/redis";
 
 export interface CreateApprovalPaymentParams {
   userId: string;
-  appointmentType: "CONSULTATION" | "SUBSCRIPTION";
+  appointmentType: "CONSULTATION" | "SUBSCRIPTION" | "TRIAL";
   consultationId?: string;
   subscriptionId?: string;
   planId: string;
+  /** Required when appointmentType is TRIAL. */
+  trialId?: string;
   paymentGateway: PaymentGateway;
   startsAt?: string;
   endsAt?: string;
@@ -75,9 +77,13 @@ export async function createApprovalPaymentIntent(
       "subscriptionId required for SUBSCRIPTION appointment type",
     );
   }
+  if (params.appointmentType === "TRIAL" && !params.trialId) {
+    throw new Error("trialId required for TRIAL appointment type");
+  }
 
   // H3 FIX: Acquire distributed lock keyed on the resource
-  const resourceId = params.consultationId || params.subscriptionId;
+  const resourceId =
+    params.consultationId || params.subscriptionId || params.trialId;
   const lockKey = `lock:approval_payment:${resourceId}`;
   const lockToken = await acquireLock(lockKey, APPROVAL_PAYMENT_LOCK_TTL);
 
@@ -92,6 +98,7 @@ export async function createApprovalPaymentIntent(
     const hasExistingPayment = await checkExistingPayment({
       consultationId: params.consultationId,
       subscriptionId: params.subscriptionId,
+      trialId: params.trialId,
     });
 
     if (hasExistingPayment) {
@@ -171,6 +178,41 @@ async function calculateAmount(params: CreateApprovalPaymentParams): Promise<{
   currency: Currency;
   plan: { title: string };
 }> {
+  if (params.appointmentType === "TRIAL") {
+    // A trial is priced by its parent subscription plan's trialPriceInPaise,
+    // NOT the plan price — the trial is a taster of that plan, not the plan.
+    const plan = await prisma.subscriptionPlan.findUnique({
+      where: { id: params.planId },
+      select: {
+        title: true,
+        trialPriceInPaise: true,
+        trialEnabled: true,
+        priceCurrency: true,
+      },
+    });
+
+    if (!plan) {
+      throw new Error("Subscription plan not found");
+    }
+    if (!plan.trialEnabled) {
+      throw new Error("This plan does not offer trials");
+    }
+    if (plan.trialPriceInPaise <= 0) {
+      // Free trials never reach a payment intent — the accept path schedules
+      // them directly. Reaching here means the caller mis-routed.
+      throw new Error("Cannot create a payment intent for a free trial");
+    }
+
+    const currency = plan.priceCurrency;
+    validatePlanCurrency(currency); // see the note on the CONSULTATION branch
+
+    return {
+      amount: Number(plan.trialPriceInPaise),
+      currency,
+      plan: { title: `${plan.title} — trial` },
+    };
+  }
+
   if (params.appointmentType === "CONSULTATION") {
     const plan = await prisma.consultationPlan.findUnique({
       where: { id: params.planId },
@@ -258,6 +300,11 @@ function buildApprovalMetadata(params: CreateApprovalPaymentParams): {
     metadata.subscriptionId = params.subscriptionId;
   }
 
+  // Add trial-specific fields — the webhook resolves the TrialSession from this.
+  if (params.trialId) {
+    metadata.trialId = params.trialId;
+  }
+
   // Add slot times if provided
   if (params.startsAt && params.endsAt) {
     metadata.startsAt = params.startsAt;
@@ -284,7 +331,23 @@ function buildApprovalMetadata(params: CreateApprovalPaymentParams): {
 export async function checkExistingPayment(params: {
   consultationId?: string;
   subscriptionId?: string;
+  trialId?: string;
 }): Promise<boolean> {
+  if (params.trialId) {
+    // A trial owns its Payment directly (TrialSession.paymentId), so unlike the
+    // consultation/subscription arms there is no appointment to walk through —
+    // the appointment doesn't exist until the trial is paid and scheduled.
+    const trial = await prisma.trialSession.findUnique({
+      where: { id: params.trialId },
+      select: { payment: { select: { paymentStatus: true } } },
+    });
+
+    const status = trial?.payment?.paymentStatus;
+    return (
+      status === PaymentStatus.SUCCEEDED || status === PaymentStatus.PENDING
+    );
+  }
+
   if (params.consultationId) {
     const consultation = await prisma.consultation.findUnique({
       where: { id: params.consultationId },
