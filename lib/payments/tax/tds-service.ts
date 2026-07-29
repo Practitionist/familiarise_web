@@ -432,13 +432,26 @@ export async function getTDSSummary(financialYear: string) {
  * Get per-consultant TDS breakdown for a financial year.
  */
 export async function getConsultantTDSBreakdown(financialYear: string) {
-  return prisma.tDSRecord.groupBy({
+  const rows = await prisma.tDSRecord.groupBy({
     by: ["consultantProfileId", "tdsRateBps"],
     where: { financialYear },
     _sum: { tdsDeducted: true, cumulativeAmountCredited: true },
     _count: true,
     orderBy: { _sum: { tdsDeducted: "desc" } },
   });
+  // The money result extension does not apply to _sum/groupBy — its own header
+  // says so. Returning the raw rows put BigInt into NextResponse.json, which
+  // throws; the route's catch turned that into a 500, and the TDS page has no
+  // error branch, so it rendered "No consultant TDS for <FY>" — a statutory
+  // withholding report that reported nothing, indistinguishable from a year
+  // with no deductions.
+  return rows.map((r) => ({
+    ...r,
+    _sum: {
+      tdsDeducted: sumPaise(r._sum.tdsDeducted),
+      cumulativeAmountCredited: sumPaise(r._sum.cumulativeAmountCredited),
+    },
+  }));
 }
 
 /**

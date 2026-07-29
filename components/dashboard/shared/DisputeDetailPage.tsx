@@ -460,10 +460,14 @@ export function DisputeDetailPage({
                 <CheckCircle className="h-4 w-4 text-green-600" />
                 <AlertTitle>Evidence Submitted</AlertTitle>
                 <AlertDescription>
-                  Evidence was submitted on{" "}
+                  {/* This block is already gated on `dispute.evidence`, so the
+                      submission is a fact; only its timestamp can be missing,
+                      and only for disputes recorded before the column existed.
+                      Saying "submitted on N/A" made a known fact look like
+                      missing data. */}
                   {dispute.evidenceSubmittedAt
-                    ? formatDate(dispute.evidenceSubmittedAt)
-                    : "N/A"}
+                    ? `Evidence was submitted on ${formatDate(dispute.evidenceSubmittedAt)}`
+                    : "Evidence was submitted. The submission time was not recorded for this dispute."}
                 </AlertDescription>
               </Alert>
               <div className="p-4 rounded-lg bg-zinc-50 dark:bg-zinc-900">

@@ -158,7 +158,6 @@ Late filing penalty: Rs 200/day (capped at total TDS amount).
 
 | Method | Speed | Cost | Notes |
 |--------|-------|------|-------|
-| Xflow | 1–2 days | ~1% flat, 0% FX markup | RBI PA-CB licensed, JP Morgan rails, auto eFIRA |
 | Wise | 1–3 days | ~1.6–1.7% + $2 | Good UI, mid-market FX rate |
 | PayPal | 1–3 days | Up to 4.4% + FX markup | Widest reach, highest cost |
 | Payoneer | 2–5 days | 2% FX markup | Popular for freelancer payouts |
@@ -279,7 +278,7 @@ PA license requirements (for reference): Rs 15 crore net worth at application, R
 
 - [ ] EU VAT registration (only if EU sales exceed thresholds)
 - [ ] Australian GST (only if AU sales > AUD 75K/year)
-- [ ] International consultant payouts via Wise/Xflow
+- [ ] International consultant payouts (provider not yet selected; Section 195 withholding is unimplemented, see payout-service.ts)
 - [ ] Form 16A auto-generation for consultants (annual TDS certificate)
 
 ### 🚫 NOT Our Problem

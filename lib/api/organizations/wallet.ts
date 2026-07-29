@@ -276,3 +276,48 @@ export async function confirmTopUp(
     return { confirmed: true, balanceAfter: result.balanceAfter };
   });
 }
+
+/**
+ * Attach a running balance to one page of wallet-ledger rows.
+ *
+ * The client's ledger table has always had a "Balance" column, but no endpoint
+ * ever produced the field it reads. Because the client validates the payload
+ * with a required `z.number()`, the miss did not degrade to "₹NaN" — it threw,
+ * so the whole Wallet tab sat on its loading state forever for any org that had
+ * ever moved money. Computing it here is what makes the column real.
+ *
+ * `rows` must be newest-first, and `balanceAfterNewestRow` is the account
+ * balance immediately after the first row in `rows` — which for a paginated
+ * view is the whole-journal balance minus every delta newer than this page.
+ * Walking backwards from there is what makes page 2 agree with page 1.
+ *
+ * Derived from the journal rather than `BillingAccount.walletBalance`: that
+ * column is a cache the reconciler checks against exactly this sum, so
+ * anchoring on it would let a drift hide instead of showing up as a ledger
+ * whose oldest row does not land where it should.
+ */
+export function withRunningBalance<T extends { deltaPaise: number }>(
+  rows: readonly T[],
+  balanceAfterNewestRow: number,
+): (T & { balanceAfter: number })[] {
+  let running = balanceAfterNewestRow;
+  return rows.map((row) => {
+    const balanceAfter = running;
+    running -= row.deltaPaise;
+    return { ...row, balanceAfter };
+  });
+}
+
+/** Signed paise total for ledger rows: CREDIT adds, DEBIT subtracts. */
+export function signedDeltaPaise(
+  rows: readonly { direction: string; amountPaise: bigint | number }[],
+): number {
+  return rows.reduce(
+    (acc, r) =>
+      acc +
+      (r.direction === "CREDIT"
+        ? Number(r.amountPaise)
+        : -Number(r.amountPaise)),
+    0,
+  );
+}

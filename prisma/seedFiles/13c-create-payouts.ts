@@ -39,8 +39,12 @@ function generateProviderPayoutId(provider: PaymentGateway): string {
 /**
  * Get currency based on provider
  */
-function getCurrency(provider: PaymentGateway): Currency {
-  return provider === PaymentGateway.STRIPE ? Currency.USD : Currency.INR;
+function getCurrency(_provider: PaymentGateway): Currency {
+  // Always INR. Payouts settle in INR whichever provider carries them —
+  // processRazorpayPayout throws on anything else — so seeding USD payouts
+  // for Stripe produced rows the real pipeline would reject, and inflated the
+  // dashboards that sum payout amounts without grouping by currency.
+  return Currency.INR;
 }
 
 /**

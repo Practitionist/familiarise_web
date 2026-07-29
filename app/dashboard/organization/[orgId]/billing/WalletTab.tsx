@@ -91,9 +91,14 @@ const topUpStatusResponseSchema = z.object({
   topUp: z.object({
     topUpId: z.string(),
     providerPaymentId: z.string().nullable(),
-    status: z.enum(["pending", "confirmed"]),
+    // The route maps WalletTopUp.status through three values, not two.
+    // Omitting "failed" meant a rejected top-up threw here instead of being
+    // reported, and the member — who had just been through the gateway — saw a
+    // raw Zod issue dump in the still-open dialog.
+    status: z.enum(["pending", "confirmed", "failed"]),
     amountPaise: z.number(),
-    balanceAfter: z.number(),
+    // `balanceAfter` used to be required here and the route does not return it.
+    // Nothing read it, so it existed only to reject every response.
     createdAt: z.string(),
   }),
 });
@@ -186,6 +191,9 @@ async function pollTopUpUntilConfirmed(
   for (let attempt = 0; attempt < TOPUP_POLL_MAX_ATTEMPTS; attempt++) {
     const status = await fetchTopUpStatus(orgId, topUpId);
     if (status?.status === "confirmed") return status;
+    // A failed top-up is terminal; polling it to the attempt cap only delays
+    // telling the member their money did not land.
+    if (status?.status === "failed") return status;
     await new Promise((r) => setTimeout(r, TOPUP_POLL_INTERVAL_MS));
   }
   return null;
@@ -209,7 +217,7 @@ export function WalletTab({
   const { isAtLeast, role } = useOrgRole(orgId);
   const { data: session } = useSession();
   const queryClient = useQueryClient();
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error } = useQuery({
     queryKey: ["org-wallet", orgId],
     queryFn: () => fetchWallet(orgId),
   });
@@ -417,6 +425,17 @@ export function WalletTab({
             </CardDescription>
           </CardHeader>
         </Card>
+      ) : isError ? (
+        // This branch did not exist, and `isLoading || !walletResponse` sent a
+        // failed fetch back to "Loading…" — so a payload the client refused to
+        // parse presented as a tab that never finished loading, indistinguishable
+        // from a slow network.
+        <div className="text-sm">
+          <p className="text-destructive">Couldn&apos;t load the wallet.</p>
+          <p className="text-muted-foreground mt-1">
+            {error instanceof Error ? error.message : "Please try again."}
+          </p>
+        </div>
       ) : isLoading || !walletResponse ? (
         <p className="text-sm text-muted-foreground">Loading…</p>
       ) : (

@@ -20,6 +20,7 @@
 import prisma from "../../lib/prisma";
 import { PaymentStatus, PaymentGateway } from "@prisma/client";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
+import { routeCapturedPayment } from "@/app/api/webhooks/razorpay-dispatch";
 
 // Only reconcile payments older than 5 minutes (give webhooks time)
 const MIN_AGE_MINUTES = 5;
@@ -67,7 +68,9 @@ async function getStripePaymentStatus(
       const session = await stripe.checkout.sessions.retrieve(paymentIntent);
       const intentRef = session.payment_intent;
       if (!intentRef) {
-        return { status: session.status === "expired" ? "canceled" : "processing" };
+        return {
+          status: session.status === "expired" ? "canceled" : "processing",
+        };
       }
       const pi =
         typeof intentRef === "string"
@@ -93,9 +96,14 @@ async function getStripePaymentStatus(
 /**
  * Query Razorpay for order/payment status
  */
-async function getRazorpayPaymentStatus(
-  orderId: string,
-): Promise<{ status: string; paymentId?: string } | null> {
+async function getRazorpayPaymentStatus(orderId: string): Promise<{
+  status: string;
+  paymentId?: string;
+  /** `notes` off the captured payment — selects the handler in routeCapturedPayment. */
+  notes?: Record<string, string>;
+  /** Captured amount in paise, for the parity check. */
+  amountPaise?: number;
+} | null> {
   const keyId = process.env.RAZORPAY_KEY_ID;
   // #677 PM-1 — prod env defines RAZORPAY_SECRET (the canonical name the
   // core lib reads); reading only RAZORPAY_KEY_SECRET silently disabled
@@ -145,7 +153,17 @@ async function getRazorpayPaymentStatus(
           (p: { status: string }) => p.status === "captured",
         );
         if (capturedPayment) {
-          return { status: "captured", paymentId: capturedPayment.id };
+          return {
+            status: "captured",
+            paymentId: capturedPayment.id,
+            notes: Object.fromEntries(
+              Object.entries(capturedPayment.notes ?? {}).map(([k, v]) => [
+                k,
+                String(v),
+              ]),
+            ),
+            amountPaise: Number(capturedPayment.amount),
+          };
         }
       }
     }
@@ -207,8 +225,10 @@ function mapGatewayStatus(
 // #476 — locked at the core so every entry (GH Actions / HTTP) shares one
 // mutual exclusion; fail-closed: money state must not double-run unlocked.
 export async function reconcilePaymentStatus(): Promise<PaymentReconciliationResult> {
-  return withCronLock("reconcile-payment-status", { failMode: "closed", ttlMs: LONG_JOB_TTL_MS }, () =>
-    reconcilePaymentStatusUnlocked(),
+  return withCronLock(
+    "reconcile-payment-status",
+    { failMode: "closed", ttlMs: LONG_JOB_TTL_MS },
+    () => reconcilePaymentStatusUnlocked(),
   );
 }
 
@@ -243,10 +263,14 @@ async function reconcilePaymentStatusUnlocked(): Promise<PaymentReconciliationRe
     orderBy: { createdAt: "asc" },
   });
 
-  const razorpayConfigured = !!(process.env.RAZORPAY_KEY_ID &&
-    (process.env.RAZORPAY_SECRET ?? process.env.RAZORPAY_KEY_SECRET));
+  const razorpayConfigured = !!(
+    process.env.RAZORPAY_KEY_ID &&
+    (process.env.RAZORPAY_SECRET ?? process.env.RAZORPAY_KEY_SECRET)
+  );
   if (!razorpayConfigured) {
-    console.warn("⚠️ Razorpay credentials not configured — Razorpay records will be skipped");
+    console.warn(
+      "⚠️ Razorpay credentials not configured — Razorpay records will be skipped",
+    );
   }
 
   console.log(
@@ -272,6 +296,10 @@ async function reconcilePaymentStatusUnlocked(): Promise<PaymentReconciliationRe
       status: string;
       failureMessage?: string;
       paymentId?: string;
+      // Razorpay only — carried so a SUCCEEDED reconcile can drive the
+      // confirmation pipeline instead of writing the status (ADR 21).
+      notes?: Record<string, string>;
+      amountPaise?: number;
     } | null = null;
 
     if (payment.paymentGateway === PaymentGateway.STRIPE) {
@@ -315,6 +343,44 @@ async function reconcilePaymentStatusUnlocked(): Promise<PaymentReconciliationRe
 
     // Update if status changed
     if (mappedStatus !== payment.paymentStatus) {
+      // ADR 21 — a payment that reconciles to SUCCEEDED must go through the
+      // confirmation pipeline, not a status write.
+      //
+      // This job exists precisely because a `payment.captured` was missed, so
+      // it is the LEAST safe place to write the status directly: setting
+      // SUCCEEDED here poisons handlePaymentSuccess's already-SUCCEEDED guard,
+      // and Razorpay's redelivery (it retries for 24h) then no-ops. The legacy
+      // appointment-creation path and all three auto-refund guards
+      // (amount-mismatch, captured-after-terminal, double-booking-loser) are
+      // skipped permanently — and none of those are covered by another cron.
+      // The old code even logged "may need manual appointment creation!"
+      // instead of just creating it.
+      // Razorpay only: routeCapturedPayment is the Razorpay dispatch's router,
+      // and Stripe successes are confirmed by their own webhook handler. A
+      // Stripe row still takes the CAS below, which is the pre-existing
+      // behaviour for that gateway.
+      if (
+        mappedStatus === PaymentStatus.SUCCEEDED &&
+        payment.paymentGateway === PaymentGateway.RAZORPAY
+      ) {
+        try {
+          await routeCapturedPayment({
+            orderId: payment.paymentIntent,
+            notes: gatewayStatus.notes ?? {},
+            amountPaise: gatewayStatus.amountPaise,
+            gatewayPaymentId: gatewayStatus.paymentId,
+          });
+          console.log(`   Confirmed via pipeline: ${payment.id}`);
+          reconciledCount++;
+          succeededCount++;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`   Pipeline failed for ${payment.id}: ${msg}`);
+          errors.push(`Payment ${payment.id}: ${msg}`);
+        }
+        continue;
+      }
+
       // #776 — guard on the status we read. A webhook can transition this
       // payment (e.g. PENDING→SUCCEEDED) between the findMany and here; without
       // the predicate the reconcile would clobber that real transition back to
@@ -340,12 +406,7 @@ async function reconcilePaymentStatusUnlocked(): Promise<PaymentReconciliationRe
       );
       reconciledCount++;
 
-      if (mappedStatus === PaymentStatus.SUCCEEDED) {
-        succeededCount++;
-        console.log(
-          `   ⚠️ Payment succeeded - may need manual appointment creation!`,
-        );
-      } else if (mappedStatus === PaymentStatus.EXPIRED) {
+      if (mappedStatus === PaymentStatus.EXPIRED) {
         expiredCount++;
       } else if (mappedStatus === PaymentStatus.FAILED) {
         failedCount++;

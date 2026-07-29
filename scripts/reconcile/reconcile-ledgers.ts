@@ -77,6 +77,10 @@ import { checkPaymentLegsSumToAmount } from "@/lib/payments/payment-legs";
 import { ledgerBalancePaise } from "@/lib/payments/ledger/post";
 import { sumPaise } from "@/lib/payments/utils/money";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
+import {
+  applyLedgerBaseline,
+  findingIdentity,
+} from "@/lib/payments/ledger/baseline";
 
 export type ReconcileScope = {
   /** Human-readable scope tag, e.g. "full" or "org:<orgId>". */
@@ -1241,7 +1245,30 @@ async function runReconcileLedgersUnlocked(
   }
 
   const durationMs = Date.now() - startedAt;
-  const ok = findings.length === 0;
+
+  // Known, entity-specific, time-boxed drift does not fail the run. Everything
+  // is still reported and persisted — the split only decides whether ops gets
+  // paged. See lib/payments/ledger/baseline.ts for why a permanently-red
+  // reconciler is worse than a slightly narrower one.
+  const { active, baselined, expired } = applyLedgerBaseline(
+    findings,
+    new Date(),
+  );
+  if (baselined.length > 0) {
+    console.log(
+      `ℹ️  ${baselined.length} finding(s) matched the known-drift baseline and did not fail this run:`,
+    );
+    for (const f of baselined) console.log(`   · ${findingIdentity(f)}`);
+  }
+  if (expired.length > 0) {
+    console.log(
+      `⚠️  ${expired.length} baseline entr(ies) have EXPIRED — their findings now count again:`,
+    );
+    for (const e of expired) {
+      console.log(`   · ${e.kind}:${e.entityId} (expired ${e.expires})`);
+    }
+  }
+  const ok = active.length === 0;
 
   const summary = {
     orgsChecked: organizations.length,
@@ -1251,6 +1278,9 @@ async function runReconcileLedgersUnlocked(
     paymentsChecked: paymentsWithOrgLegs.length,
     payoutsChecked: payouts.length,
     discrepanciesCount: findings.length,
+    /** Findings that failed this run (baselined ones excluded). */
+    activeDiscrepanciesCount: active.length,
+    baselinedDiscrepanciesCount: baselined.length,
     earningsPaymentsWithoutBookingTxn,
   };
 

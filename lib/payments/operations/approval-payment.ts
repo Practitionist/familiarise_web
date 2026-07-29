@@ -13,6 +13,7 @@
  */
 
 import prisma from "@/lib/prisma";
+import { validatePlanCurrency } from "@/lib/payments/validation/currency-guards";
 import { Currency, PaymentGateway, PaymentStatus } from "@prisma/client";
 import { createPaymentIntent } from "../index";
 import { acquireLock, releaseLock } from "@/lib/redis";
@@ -186,6 +187,16 @@ async function calculateAmount(params: CreateApprovalPaymentParams): Promise<{
 
     // #781 §A — priceCurrency is the non-null Currency enum; no gateway fallback.
     const currency = plan.priceCurrency;
+    // The direct-checkout path has always called this; this path never did, and
+    // it is the one that charges through Stripe in the plan's own currency. A
+    // GBP-priced plan booked via request→approve therefore took a real GBP
+    // charge, wrote Payment.currency="GBP" with an amount in pence, and every
+    // stage below then treated that number as INR paise: the earnings row is
+    // hardcoded "INR", the journal posts it into an INR account, and the payout
+    // is sized off it. Nothing downstream compares an amount against its own
+    // currency, so it balances cleanly and reconciles clean while being wrong
+    // by the GBP:INR rate — with the shortfall landing on the consultant.
+    validatePlanCurrency(currency);
 
     return {
       amount: plan.price,
@@ -209,6 +220,7 @@ async function calculateAmount(params: CreateApprovalPaymentParams): Promise<{
 
     // #781 §A — priceCurrency is the non-null Currency enum; no gateway fallback.
     const currency = plan.priceCurrency;
+    validatePlanCurrency(currency); // see the note on the CONSULTATION branch
 
     return {
       amount: plan.price,

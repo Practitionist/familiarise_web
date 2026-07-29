@@ -16,6 +16,10 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { ledgerAccountId } from "@/lib/payments/ledger/post";
+import {
+  signedDeltaPaise,
+  withRunningBalance,
+} from "@/lib/api/organizations/wallet";
 
 const LedgerQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
@@ -27,7 +31,10 @@ export async function GET(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, { permission: "billing.read", canSponsor: true });
+  const access = await requireOrgAccess(orgId, {
+    permission: "billing.read",
+    canSponsor: true,
+  });
   if (access.error) return access.error;
 
   const ba = await prisma.billingAccount.findFirst({
@@ -84,12 +91,19 @@ export async function GET(
     kind: "WALLET",
     organizationId: orgId,
   });
-  const [total, entries] = await prisma.$transaction([
+  const skip = (page - 1) * perPage;
+  // `createdAt` alone is not a total order — two postings in one transaction
+  // share a timestamp — so paging on it can repeat or drop a row, and a running
+  // balance computed over an unstable order is simply wrong. `id` breaks the
+  // tie, and every query below sorts identically so they agree about which
+  // entries are "newer".
+  const ledgerOrder = [{ createdAt: "desc" as const }, { id: "desc" as const }];
+  const [total, entries, directionTotals] = await prisma.$transaction([
     prisma.ledgerEntry.count({ where: { accountId: walletAccountId } }),
     prisma.ledgerEntry.findMany({
       where: { accountId: walletAccountId },
-      orderBy: { createdAt: "desc" },
-      skip: (page - 1) * perPage,
+      orderBy: ledgerOrder,
+      skip,
       take: perPage,
       include: {
         transaction: {
@@ -97,16 +111,48 @@ export async function GET(
         },
       },
     }),
+    prisma.ledgerEntry.groupBy({
+      by: ["direction"],
+      where: { accountId: walletAccountId },
+      _sum: { amountPaise: true },
+    }),
   ]);
-  const ledger = entries.map((e) => ({
-    id: e.id,
-    deltaPaise:
-      e.direction === "CREDIT" ? Number(e.amountPaise) : -Number(e.amountPaise),
-    reason: e.transaction.kind,
-    paymentId: e.transaction.paymentId,
-    notes: e.transaction.description,
-    createdAt: e.createdAt,
-  }));
+
+  // The client's ledger table renders a "Balance" column, and nothing has ever
+  // produced the field: see withRunningBalance for what that cost. Anchor on
+  // the journal-derived balance and walk backwards through the page.
+  const journalBalance = signedDeltaPaise(
+    directionTotals.map((g) => ({
+      direction: g.direction,
+      amountPaise: g._sum.amountPaise ?? 0,
+    })),
+  );
+  const newerDelta =
+    skip === 0
+      ? 0
+      : signedDeltaPaise(
+          await prisma.ledgerEntry.findMany({
+            where: { accountId: walletAccountId },
+            orderBy: ledgerOrder,
+            take: skip,
+            select: { direction: true, amountPaise: true },
+          }),
+        );
+
+  const ledger = withRunningBalance(
+    entries.map((e) => ({
+      id: e.id,
+      deltaPaise:
+        e.direction === "CREDIT"
+          ? Number(e.amountPaise)
+          : -Number(e.amountPaise),
+      reason: e.transaction.kind,
+      paymentId: e.transaction.paymentId,
+      notes: e.transaction.description,
+      createdAt: e.createdAt,
+    })),
+    journalBalance - newerDelta,
+  );
 
   return NextResponse.json({
     billingAccount: {

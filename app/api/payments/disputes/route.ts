@@ -236,6 +236,8 @@ export async function POST(req: NextRequest) {
       data: {
         status: disputeResult.status,
         evidence: disputeResult.evidence as Prisma.InputJsonValue,
+        // Stamped alongside the evidence itself so the two can never disagree.
+        evidenceSubmittedAt: new Date(),
       },
     });
 

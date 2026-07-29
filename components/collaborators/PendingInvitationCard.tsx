@@ -15,7 +15,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { AlertTriangle, Check, X } from "lucide-react";
-import { formatCurrencyFromMajorUnit } from "@/utils/formatting";
+import { formatCurrencyAmount } from "@/utils/formatting";
 import type { CollaborationWithPlan } from "./types";
 import { ROLE_DESCRIPTIONS, formatRole } from "./format";
 
@@ -93,7 +93,11 @@ export function PendingInvitationCard({
                 <span className="text-zinc-300">·</span>
                 <span>
                   Plan price{" "}
-                  {formatCurrencyFromMajorUnit(collab.planPrice, "INR")}
+                  {/* Paise: `planPrice` is copied straight off
+                      WebinarPlan/ClassPlan.price. Shown to a collaborator who
+                      is deciding on a revenue share, so a 100x error here is
+                      not cosmetic. */}
+                  {formatCurrencyAmount(collab.planPrice, "INR")}
                 </span>
               </>
             )}

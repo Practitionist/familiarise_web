@@ -12,6 +12,7 @@
  */
 
 import type { SupportedCheckoutGateway } from "@/schemas/checkout";
+import { assertGatewayUsable } from "@/lib/payments/validation/gateway-guards";
 
 export interface GatewayRoutingResult {
   /** Selected payment gateway — always an implemented gateway, never a stub */
@@ -38,6 +39,15 @@ export function routeGateway(params: {
   requestedGateway?: SupportedCheckoutGateway;
 }): GatewayRoutingResult {
   const { buyerCountry, requestedGateway } = params;
+
+  // `SupportedCheckoutGateway` already excludes the post-MVP stubs, so this is
+  // unreachable through a type-checked caller. It exists because the value
+  // originates in a JSON request body: if the Zod enum in schemas/checkout.ts
+  // is ever widened to the full Prisma enum "for convenience", the type stops
+  // protecting us and a stub reaches order creation. Failing here is cheap.
+  if (requestedGateway) {
+    assertGatewayUsable(requestedGateway, "route a checkout");
+  }
 
   // Honor explicit STRIPE request (for testing or when Razorpay is unavailable)
   if (requestedGateway === "STRIPE") {

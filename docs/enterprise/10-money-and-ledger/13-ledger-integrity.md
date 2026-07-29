@@ -146,3 +146,44 @@ The cutover (#772) shipped with this auditor returning `ok: true`, **0 findings*
 - [Runbooks](../50-operations/03-runbooks.md) — per-finding incident response.
 - [Monitoring](../50-operations/04-monitoring.md) — alerting on report `ok:false`.
 - Ground truth: `scripts/reconcile/reconcile-ledgers.ts`, `jobs/reconcile/reconcile-ledgers.ts`, `LedgerReconciliationReport` in `prisma/schema.prisma`.
+
+## The known-drift baseline
+
+Exit code 2 means "discrepancies found", and it pages. On 2026-07-28 the
+reconciler had returned 2 on twelve consecutive nightly runs, every time on the
+same 59 findings — 45 `REVERSED_EARNING_WITHOUT_REFUND_TXN`, 12
+`COMPLETED_PAYOUT_WITHOUT_LEDGER_TXN` and 2 `EARNINGS_LEDGER_DRIFT`, all of them
+produced by seed scripts that write terminal money states without posting the
+matching journal transaction. Global ledger balance was, and is, exactly zero
+paise, so the double-entry invariant itself was never in question.
+
+That is a worse failure than it looks. Nobody was paged, because
+`SLACK_OPS_WEBHOOK_URL` was never provisioned; and had anyone been, a real
+discrepancy arriving on run thirteen would have been one line among sixty. This
+document already makes the argument in the other direction — that letting a
+known coverage gap fail the nightly run "would train ops to ignore a red
+reconciler, the worst possible outcome for a safety net" — and the same logic
+applies here.
+
+So findings are split against a checked-in baseline in
+`lib/payments/ledger/baseline.ts`. Baselined findings still print, still land in
+the persisted `LedgerReconciliationReport`, and are counted separately in the
+summary as `baselinedDiscrepanciesCount`. They simply do not flip `ok` to false.
+Only `activeDiscrepanciesCount` decides the exit code.
+
+Two properties keep this from becoming a way to switch off a money alarm, and
+both are asserted by tests:
+
+- **Entries are keyed to a specific entity id, never to a finding kind.** A new
+  `COMPLETED_PAYOUT_WITHOUT_LEDGER_TXN` on a different payout is not covered by
+  a baseline entry for an old one.
+- **Every entry expires.** Past its date the finding counts again, so a baseline
+  cannot quietly outlive the cleanup it was waiting on. The current entries
+  expire 2026-10-31 and clear at the pre-MVP database reset.
+
+The baseline is regenerated with `npm run ledger:baseline -- --expires <date>`,
+which reads the ids from an actual persisted report. It is never hand-edited:
+an id typed by hand is an alert switched off for something nobody looked at.
+`LEDGER_TXN_IMBALANCE` may never be baselined at all — a single transaction
+where Σ(DEBIT) ≠ Σ(CREDIT) means the invariant this whole system rests on has
+broken, and there is no circumstance in which that is known drift.

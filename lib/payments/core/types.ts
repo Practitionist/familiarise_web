@@ -42,6 +42,11 @@ export interface RefundParams {
   amount?: number; // Optional partial refund amount (in base currency)
   reason?: string; // Reason for refund
   metadata?: Record<string, string>;
+  // Stable per *logical* refund, not per attempt — a retry must reuse it so the
+  // gateway returns the original refund instead of issuing a second one. Must
+  // NOT be derived from paymentId+amount: two legitimate partial refunds of the
+  // same amount would collide and the second would silently under-refund.
+  idempotencyKey?: string;
 }
 
 export interface RefundResult {

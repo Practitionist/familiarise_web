@@ -19,7 +19,7 @@
 
 ## Overview
 
-The payment system uses **Razorpay** as the sole active payment gateway (Lemon Squeezy and XFlow removed, Stripe retained but inactive — see [gateways/gateway-evaluation-mar-2026.md](./gateways/gateway-evaluation-mar-2026.md)). It handles four appointment types:
+The payment system uses **Razorpay** as the sole active payment gateway, with Stripe retained as a secondary rail for Connect transfers. `DODO_PAYMENTS` exists in the `PaymentGateway` enum as a post-MVP placeholder with no implementation behind it; `POST_MVP_GATEWAY_STUBS` in `lib/payments/constants.ts` is the list, and `assertGatewayUsable` refuses one at runtime. The gateway comparison that led here is recorded in [gateways/gateway-evaluation-mar-2026.md](./gateways/gateway-evaluation-mar-2026.md). It handles four appointment types:
 
 | Type             | Description          | Slot Handling                      |
 | ---------------- | -------------------- | ---------------------------------- |

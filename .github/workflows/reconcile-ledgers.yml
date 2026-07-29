@@ -43,10 +43,13 @@ jobs:
 
       - name: Run ledger reconciliation
         id: reconcile
-        run: npx tsx jobs/reconcile/reconcile-ledgers.ts
+        run: npx --yes tsx@4.23.1 jobs/reconcile/reconcile-ledgers.ts
 
       - name: Notify on discrepancies
         if: failure()
         env:
           SLACK_OPS_WEBHOOK_URL: ${{ secrets.SLACK_OPS_WEBHOOK_URL }}
+          # Fallback sink — Slack has never been provisioned, so this is
+          # what actually pages today. See 07-required-secrets.md.
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
         run: bash scripts/ci/notify-ops-failure.sh "reconcile-ledgers"

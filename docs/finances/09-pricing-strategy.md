@@ -134,9 +134,9 @@ Creator sells a ₹10,000 consultation:
 
 **At ₹50K/month GMV via UPI on Familiarise, a creator keeps ₹45,000.** On Topmate (Stripe + FX), same GMV, they keep ~₹41,250-42,250. Differential: **₹2,750-3,750/month** (₹33K-45K/year). This is the single-biggest moat talking point.
 
-### 5.3 LemonSqueezy + Xflow removal (April 2026)
+### 5.3 Gateway consolidation (April 2026)
 
-As of commit `fb0323fb` and the April 2026 cleanup, LemonSqueezy and Xflow are removed from the schema, UI, webhooks, and seeds. The platform now routes exclusively through **Razorpay (domestic)** and **Stripe (international)**. Update `docs/finances/` to reflect this before merge to `dev`.
+The April 2026 cleanup removed the two rejected gateways from the code, the UI, the webhooks and the seeds. The platform now routes exclusively through **Razorpay** for acceptance, with **Stripe** retained as a secondary rail for Connect transfers. Their labels survive in the `PaymentGateway` database enum because Postgres cannot drop an enum value in place; that residue is tracked in `prisma/sql/known-drift.json` and is what `scripts/ci/check-db-drift.ts` watches.
 
 Rationale for the removal: two extra gateways increased integration surface area, support burden, and webhook-race complexity without a clear demand signal. Razorpay + Stripe covers > 99% of payment scenarios for the launch markets (India + cross-border).
 

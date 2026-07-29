@@ -12,6 +12,7 @@ import {
   EarningStatus,
 } from "@prisma/client";
 import { PAYOUT_CONSTANTS } from "./constants";
+import { isPostMvpGatewayStub } from "@/lib/payments/constants";
 import {
   getRazorpayPayoutsService,
   isRazorpayPayoutsConfigured,
@@ -23,7 +24,13 @@ import {
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
 import { computeMsmePaymentDeadline } from "@/lib/compliance/msme";
 import { randomUUID } from "crypto";
-import { acquireLock, releaseLock } from "@/lib/redis";
+import {
+  acquireLock,
+  releaseLock,
+  isMockRedis,
+  checkRedisHealth,
+} from "@/lib/redis";
+import { CronLockUnavailableError } from "@/lib/cron/with-cron-lock";
 import { assertPayoutBalance } from "./balance-preflight";
 import {
   getCurrentFYCumulativePayments,
@@ -203,6 +210,20 @@ const PAYOUT_BATCH_LOCK_TTL = 120_000; // 2 minutes — generous for large batch
 export async function createPayoutBatch(
   consultantProfileIds?: string[],
 ): Promise<string> {
+  // Same ADR 13 precheck processApprovedPayouts carries, for the same reason,
+  // and it matters more here: mock Redis is an in-process map, so it grants
+  // this lock to every process that asks. The NEW-2 hazard above — two callers
+  // reading the same READY earnings and cutting two payouts for one consultant
+  // — is exactly what that leaves unguarded. A real Redis outage is the milder
+  // case: the call already threw, but it told an admin the batch was "already
+  // in progress. Please wait and try again", which never becomes true.
+  if (isMockRedis()) {
+    throw new CronLockUnavailableError("create-payout-batch");
+  }
+  if (!(await checkRedisHealth())) {
+    throw new CronLockUnavailableError("create-payout-batch");
+  }
+
   const lockToken = await acquireLock(
     PAYOUT_BATCH_LOCK_KEY,
     PAYOUT_BATCH_LOCK_TTL,
@@ -254,6 +275,21 @@ export async function createPayoutBatch(
       if (!account) {
         console.warn(
           `No verified payout account for consultant ${consultantProfileId}`,
+        );
+        continue;
+      }
+
+      // Refuse a schema-only gateway HERE rather than at disbursement. The
+      // provider dispatch in processSinglePayout does throw on an unsupported
+      // value, but by then the payout row exists and its earnings have been
+      // claimed into BATCHED — so the consultant's money would sit in a status
+      // that only a completed payout can leave, waiting on a gateway that will
+      // never exist. Skipping at selection leaves the earnings READY for the
+      // next batch, which is the recoverable state.
+      if (isPostMvpGatewayStub(account.provider)) {
+        console.warn(
+          `Skipping consultant ${consultantProfileId}: payout account is on ` +
+            `"${account.provider}", which has no implementation (post-MVP stub).`,
         );
         continue;
       }
@@ -459,6 +495,22 @@ const PAYOUT_PROCESS_LOCK_KEY = "lock:payout_processing";
 const PAYOUT_PROCESS_LOCK_TTL = 300_000; // 5 minutes — generous for batch processing
 
 export async function processApprovedPayouts(): Promise<PayoutResult[]> {
+  // ADR 13's Redis degradation policy: for a money job, a HELD lock is a clean
+  // skip (the holder is doing the work) but an UNREACHABLE Redis must fail
+  // closed and page. `acquireLock` returns null for both, so without this
+  // precheck a Redis outage looked identical to a concurrent run and payouts
+  // froze silently for as long as the outage lasted. This mirrors what
+  // withCronLock does for every other money job; the two payout jobs keep
+  // their own resource locks rather than being double-wrapped (ADR 13), so
+  // the precheck has to live here.
+  if (isMockRedis()) {
+    throw new CronLockUnavailableError("process-payouts");
+  }
+  const redisHealthy = await checkRedisHealth();
+  if (!redisHealthy) {
+    throw new CronLockUnavailableError("process-payouts");
+  }
+
   const lockToken = await acquireLock(
     PAYOUT_PROCESS_LOCK_KEY,
     PAYOUT_PROCESS_LOCK_TTL,
@@ -719,20 +771,28 @@ async function processSinglePayout(payout: {
           `[payout-service] CRITICAL: gateway accepted ${providerPayoutId} but DB persist failed twice for payout ${payout.id}; manual reconcile required`,
           persistErr,
         );
-        Sentry.captureException(persistErr instanceof Error ? persistErr : new Error(String(persistErr)), {
-          tags: { subsystem: "payments" },
-          level: "fatal",
-          contexts: { payout: { payoutId: payout.id, providerPayoutId } },
-        });
+        Sentry.captureException(
+          persistErr instanceof Error
+            ? persistErr
+            : new Error(String(persistErr)),
+          {
+            tags: { subsystem: "payments" },
+            level: "fatal",
+            contexts: { payout: { payoutId: payout.id, providerPayoutId } },
+          },
+        );
       }
       console.error(
         `⚠️ Payout ${payout.id}: gateway accepted ${providerPayoutId} but DB write failed — quarantined PROCESSING (NOT failed) to avoid double-pay`,
       );
-      Sentry.captureException(new Error(`gateway-accepted-db-write-failed: payout ${payout.id}`), {
-        tags: { subsystem: "payments" },
-        level: "error",
-        contexts: { payout: { payoutId: payout.id, providerPayoutId } },
-      });
+      Sentry.captureException(
+        new Error(`gateway-accepted-db-write-failed: payout ${payout.id}`),
+        {
+          tags: { subsystem: "payments" },
+          level: "error",
+          contexts: { payout: { payoutId: payout.id, providerPayoutId } },
+        },
+      );
       return {
         payoutId: payout.id,
         success: false,
@@ -1078,10 +1138,13 @@ export async function handlePayoutWebhook(
         dashboardUrl: `${getAppUrl()}/dashboard`,
       }).catch((error) => {
         console.error("[payouts] Failed to send payout notification:", error);
-        Sentry.captureException(error instanceof Error ? error : new Error(String(error)), {
-          tags: { subsystem: "payments" },
-          level: "warning",
-        });
+        Sentry.captureException(
+          error instanceof Error ? error : new Error(String(error)),
+          {
+            tags: { subsystem: "payments" },
+            level: "warning",
+          },
+        );
       });
     }
   }

@@ -113,7 +113,30 @@ jobs:
         # #780 — no money column may be declared Int (int4 overflows at
         # ₹2.14cr). BigInt columns must also be in the lib/prisma.ts
         # boundary map; that half is enforced by the extension drift test.
-        run: npx tsx scripts/ci/check-money-columns.ts
+        run: npx --yes tsx@4.23.1 scripts/ci/check-money-columns.ts
+
+      - name: Workflow hygiene guard
+        # A `${{ secrets.X }}` that doesn't exist interpolates an empty string
+        # and the job still reports success — that is how #677 PM-1 came back
+        # after being fixed in code. Also catches recurring cron start
+        # collisions. Static only: no network, no database.
+        #
+        # tsx is pinned at the call site (`tsx@4.23.1`). It used to be a bare
+        # `npx tsx`, which resolves whatever the registry currently serves —
+        # an unversioned package on the execution path of every money cron.
+        # Adding it as a devDependency would be better still, but it pulls in
+        # esbuild and that broke the Netlify build; see the PR discussion.
+        run: npx --yes tsx@4.23.1 scripts/ci/check-workflow-hygiene.ts
+
+      - name: Database sidecar + drift guard
+        # `prisma db push` does not manage the ledger CONSTRAINT TRIGGER or any
+        # CHECK constraint, so a bare push silently drops every money invariant.
+        # These also diff live enums against the schema — the drift class that
+        # left reconcile-disputes red for a month. Both skip cleanly when
+        # DATABASE_URL is absent (forks, PRs without secrets).
+        run: |
+          npx --yes tsx@4.23.1 scripts/ci/check-db-sidecars.ts
+          npx --yes tsx@4.23.1 scripts/ci/check-db-drift.ts
 
       - name: Unit Tests
         run: npm run test

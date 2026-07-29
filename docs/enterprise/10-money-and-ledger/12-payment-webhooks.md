@@ -143,3 +143,28 @@ The **stuck-event sweeper** (`sweep-stuck-webhook-events`, §1) is the primary r
 - [Ledger & postings](03-ledger-and-postings.md) — `postLedgerTxn` idempotency keys.
 - B2C / gateway-generic details: [`docs/payments/webhooks/`](../../payments/webhooks/README.md).
 - Ground truth: `app/api/webhooks/razorpay/route.ts`, `app/api/webhooks/razorpay-dispatch.ts`, `app/api/webhooks/utils.ts`, `jobs/cleanup/sweep-stuck-webhook-events.ts`, `jobs/cleanup/archive-webhook-events.ts`.
+
+## The webhook is not the only path, but it is the only shape (ADR 21)
+
+Three paths can observe that a Razorpay payment succeeded: this webhook, the
+client's return from the checkout modal (`/api/checkout/verify-signature`), and
+the on-demand sync (`/api/checkout/verify?sync=true`). All three now call the
+same `routeCapturedPayment` in `app/api/webhooks/razorpay-dispatch.ts`, which
+selects a handler from `notes.type` exactly as the webhook switch does.
+
+None of them writes `Payment.paymentStatus` directly, and that restriction is
+the whole point rather than a stylistic preference. `handlePaymentSuccess`
+returns early when it finds a payment already `SUCCEEDED`, on the reasonable
+assumption that the status implies the pipeline ran. The moment a second writer
+can set that status without running the pipeline, the guard stops meaning "this
+work is done" and starts meaning "this work will never be done" — and the
+booking, the earnings, the `booking:<paymentId>` journal entry and the
+capture-amount parity check are all skipped for a payment that was really
+charged. ADR 21 records the full reasoning.
+
+The practical consequence for a non-webhook caller is that it must fetch the
+payment from Razorpay before routing. A signature proves the `(order_id,
+payment_id)` pair is genuine but carries neither the captured amount nor the
+notes, and both are needed. When that fetch fails, the caller reports
+`pendingConfirmation` and leaves the work to the webhook; it must never fall
+back to writing the status, because that reintroduces the defect.

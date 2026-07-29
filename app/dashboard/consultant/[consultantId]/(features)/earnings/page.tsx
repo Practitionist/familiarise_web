@@ -1,7 +1,7 @@
 "use client";
 
 import { use, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import type { EarningStatus } from "@prisma/client";
 import {
   DashboardHeader,
@@ -28,6 +28,7 @@ import {
   ShieldQuestion,
 } from "lucide-react";
 import { formatCurrencyAmount } from "@/utils/formatting";
+import { IndiaOnlyPayoutNotice } from "@/components/payouts/IndiaOnlyPayoutNotice";
 
 interface EarningsSummary {
   consultantProfileId: string;
@@ -70,6 +71,13 @@ interface EarningRecord {
 
 interface EarningsResponse {
   summary: EarningsSummary;
+  /**
+   * #776 §B — server-only ENABLE_LIVE_PAYOUTS, relayed because this page is a
+   * client component with no RSC wrapper. With disbursement gated, a BATCHED
+   * earning is reserved at the platform rather than in transit, and the UI must
+   * not imply otherwise (same posture as the org payouts page).
+   */
+  livePayoutsEnabled?: boolean;
   eligibility: {
     isEligible: boolean;
     reason?: string;
@@ -116,19 +124,27 @@ export default function EarningsPage({
   const [page, setPage] = useState(0);
   const limit = 15;
 
-  const { data, isLoading, error, refetch } = useQuery<EarningsResponse>({
-    queryKey: ["consultant-earnings", consultantId, statusFilter, page],
-    queryFn: async () => {
-      const params = new URLSearchParams();
-      if (statusFilter !== "ALL") params.set("status", statusFilter);
-      params.set("limit", String(limit));
-      params.set("offset", String(page * limit));
-      const res = await fetch(`/api/consultant/earnings?${params}`);
-      if (!res.ok) throw new Error("Failed to fetch earnings");
-      return res.json();
-    },
-    staleTime: 30_000,
-  });
+  const { data, isLoading, isPlaceholderData, error, refetch } =
+    useQuery<EarningsResponse>({
+      queryKey: ["consultant-earnings", consultantId, statusFilter, page],
+      queryFn: async () => {
+        const params = new URLSearchParams();
+        if (statusFilter !== "ALL") params.set("status", statusFilter);
+        params.set("limit", String(limit));
+        params.set("offset", String(page * limit));
+        const res = await fetch(`/api/consultant/earnings?${params}`);
+        if (!res.ok) throw new Error("Failed to fetch earnings");
+        return res.json();
+      },
+      staleTime: 30_000,
+      // `statusFilter` and `page` are in the key, so every tab and every page
+      // is a separate query. Without this, switching to a tab you have not
+      // opened in the last 30s left `data` undefined and `isLoading` true, and
+      // the branch below replaced the entire page — header, stat cards, tabs —
+      // with a centred spinner. Keeping the previous result means the outgoing
+      // rows stay put, dimmed, while the new ones load.
+      placeholderData: keepPreviousData,
+    });
 
   if (isLoading && !data) {
     return (
@@ -158,6 +174,10 @@ export default function EarningsPage({
   const summary = data?.summary;
   const earnings = data?.earnings ?? [];
   const eligibility = data?.eligibility;
+  // Default to FALSE, not true: if the flag is missing for any reason the
+  // honest reading is "disbursement may not be live", never "your money is on
+  // its way".
+  const livePayoutsEnabled = data?.livePayoutsEnabled ?? false;
   const pagination = data?.pagination;
 
   const filterTabs: { label: string; value: EarningStatus | "ALL" }[] = [
@@ -247,7 +267,9 @@ export default function EarningsPage({
     {
       key: "status",
       header: "Status",
-      cell: (earning) => <StatusBadge {...earningStatusBadge(earning.status)} />,
+      cell: (earning) => (
+        <StatusBadge {...earningStatusBadge(earning.status)} />
+      ),
     },
     {
       key: "payout",
@@ -317,8 +339,16 @@ export default function EarningsPage({
               value={formatSummaryAmount(summary.batchedEarnings)}
               icon={ArrowUpRight}
               variant="info"
-              subtitle="In a payout batch"
-              tooltip="Cleared earnings locked into an in-flight payout batch. Cash is on its way to your bank; this releases as Paid once the payout settles."
+              subtitle={
+                livePayoutsEnabled
+                  ? "In a payout batch"
+                  : "Reserved — disbursement not live yet"
+              }
+              tooltip={
+                livePayoutsEnabled
+                  ? "Cleared earnings locked into an in-flight payout batch. Cash is on its way to your bank; this releases as Paid once the payout settles."
+                  : "Cleared earnings reserved into a payout batch. Disbursement isn't switched on yet, so this money is held at the platform — calculated and reserved, not failed, and not yet in transit to your bank."
+              }
             />
           )}
           {summary && summary.pendingTrustEarnings > 0 && (
@@ -369,8 +399,15 @@ export default function EarningsPage({
           ))}
         </div>
 
-        {/* Earnings Table */}
-        <div className="mt-4 bg-white rounded-xl border border-zinc-200 overflow-hidden">
+        {/* Earnings Table — dimmed while the tab being switched to is still
+            in flight, so the rows on screen are visibly stale rather than
+            silently wrong. */}
+        <div
+          className={`mt-4 bg-white rounded-xl border border-zinc-200 overflow-hidden transition-opacity ${
+            isPlaceholderData ? "opacity-60" : "opacity-100"
+          }`}
+          aria-busy={isPlaceholderData}
+        >
           <ResponsiveTable
             columns={columns}
             rows={earnings}
@@ -428,23 +465,30 @@ export default function EarningsPage({
                 <p className="text-sm font-medium text-zinc-700">
                   Payout Information
                 </p>
+                <IndiaOnlyPayoutNotice variant="compact" className="mt-1" />
                 {eligibility.isEligible ? (
                   <p className="text-xs text-zinc-500 mt-1">
-                    {formatSummaryAmount(eligibility.readyAmount)} ready — payouts are processed weekly
+                    {formatSummaryAmount(eligibility.readyAmount)} ready —
+                    payouts are processed weekly
                   </p>
                 ) : (
                   <div className="mt-2">
                     <div className="flex items-center justify-between mb-1">
                       <p className="text-xs text-zinc-500">
-                        {formatSummaryAmount(eligibility.readyAmount)} of {formatSummaryAmount(eligibility.minimumAmount)} minimum reached
+                        {formatSummaryAmount(eligibility.readyAmount)} of{" "}
+                        {formatSummaryAmount(eligibility.minimumAmount)} minimum
+                        reached
                       </p>
                       <p className="text-xs font-medium text-zinc-600">
                         {Math.min(
                           100,
                           Math.round(
-                            (eligibility.readyAmount / eligibility.minimumAmount) * 100,
+                            (eligibility.readyAmount /
+                              eligibility.minimumAmount) *
+                              100,
                           ),
-                        )}%
+                        )}
+                        %
                       </p>
                     </div>
                     <div className="h-2 w-full overflow-hidden rounded-full bg-zinc-200">

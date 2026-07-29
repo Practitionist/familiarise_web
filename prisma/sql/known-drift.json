@@ -1,0 +1,22 @@
+{
+  "$comment": [
+    "Known, tracked divergences between prisma/schema.prisma and the live database.",
+    "scripts/ci/check-db-drift.ts fails on any drift NOT listed here, so this file is",
+    "the reviewed record of what we are knowingly carrying and until when.",
+    "",
+    "Every entry needs an owner, a reason, and an `expires` date. Past the expiry the",
+    "guard fails anyway — an allowlist without an expiry is just a permanently",
+    "disabled check, which is how the ledger reconciler ended up ignored.",
+    "",
+    "Remove an entry the moment its fix lands. Do not add one to make CI green."
+  ],
+  "enumLabelsInDbNotInSchema": [
+    {
+      "enum": "PaymentGateway",
+      "labels": ["LEMON_SQUEEZY", "XFLOW"],
+      "reason": "Commit 183d0e72 removed both labels from the schema when the gateways were retired (#984). Postgres has no ALTER TYPE ... DROP VALUE, so clearing them requires creating a replacement type and swapping every column over. No rows reference either label (verified 2026-07-28), so nothing is orphaned; the client simply rejects reads of columns typed by this enum, which is what broke reconcile-disputes and cleanup-abandoned-payments with Prisma P2023.",
+      "trackedBy": "separate gateway-enum PR",
+      "expires": "2026-09-30"
+    }
+  ]
+}

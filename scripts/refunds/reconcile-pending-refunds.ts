@@ -12,6 +12,7 @@
  */
 
 import prisma from "../../lib/prisma";
+import { mapGatewayRefundStatus } from "@/lib/payments/refund-status";
 import { PaymentGateway, Prisma, RefundStatus } from "@prisma/client";
 import { listRefunds } from "../../lib/payments";
 import { notifyRefundFailed } from "../../lib/novu/service";
@@ -37,21 +38,6 @@ export interface RefundReconciliationResult {
 /**
  * Map gateway refund status to Prisma RefundStatus
  */
-function mapGatewayRefundStatus(status: string): RefundStatus {
-  switch (status.toLowerCase()) {
-    case "succeeded":
-    case "processed":
-      return RefundStatus.SUCCEEDED;
-    case "failed":
-      return RefundStatus.FAILED;
-    case "cancelled":
-    case "canceled":
-      return RefundStatus.CANCELLED;
-    case "pending":
-    default:
-      return RefundStatus.PENDING;
-  }
-}
 
 /**
  * Find and reconcile PENDING refunds with placeholder IDs
@@ -59,8 +45,10 @@ function mapGatewayRefundStatus(status: string): RefundStatus {
 // #476 — locked at the core so every entry (GH Actions / HTTP) shares one
 // mutual exclusion; fail-closed: money state must not double-run unlocked.
 export async function reconcilePendingRefunds(): Promise<RefundReconciliationResult> {
-  return withCronLock("reconcile-pending-refunds", { failMode: "closed", ttlMs: LONG_JOB_TTL_MS }, () =>
-    reconcilePendingRefundsUnlocked(),
+  return withCronLock(
+    "reconcile-pending-refunds",
+    { failMode: "closed", ttlMs: LONG_JOB_TTL_MS },
+    () => reconcilePendingRefundsUnlocked(),
   );
 }
 
@@ -207,8 +195,10 @@ export interface FailedRefundNotifyResult {
 // #476 — locked at the core so every entry (GH Actions / HTTP) shares one
 // mutual exclusion; fail-closed: money state must not double-run unlocked.
 export async function notifyFailedRefunds(): Promise<FailedRefundNotifyResult> {
-  return withCronLock("reconcile-pending-refunds", { failMode: "closed", ttlMs: LONG_JOB_TTL_MS }, () =>
-    notifyFailedRefundsUnlocked(),
+  return withCronLock(
+    "reconcile-pending-refunds",
+    { failMode: "closed", ttlMs: LONG_JOB_TTL_MS },
+    () => notifyFailedRefundsUnlocked(),
   );
 }
 

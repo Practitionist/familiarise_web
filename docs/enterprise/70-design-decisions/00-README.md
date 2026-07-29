@@ -21,7 +21,7 @@ Every ADR follows the same four-part shape, written in full sentences:
 
 ## Index
 
-All twenty ADRs below are written and live (#793 wrote the first twelve; #872 added 15–17; #971 added 18, and the dashboard consolidation added 19–20); this index is the authoritative list. Each row links to its record.
+All twenty-two ADRs below are written and live (#793 wrote the first twelve; #872 added 15–17; #971 added 18; the dashboard consolidation added 19–20; and the money-productionization pass added 21–22); this index is the authoritative list. Each row links to its record.
 
 | # | ADR | Decision in one line |
 |---|---|---|
@@ -45,3 +45,5 @@ All twenty ADRs below are written and live (#793 wrote the first twelve; #872 ad
 | 18 | [Open B2B/B2C boundary](18-open-b2b-b2c-boundary.md) | Sponsors fund any marketplace consultant and collaborations stay org-blind by design; `ProgramConsultantAllowlist` and `Membership.exclusiveEngagement` began as schema stubs and have both been enforced at checkout since 2026-07-11. |
 | 19 | [Personal-vs-org dashboard split](19-personal-vs-org-dashboard-split.md) | Dashboards split by the org-ness of the underlying session, plan or payment — views split, instruments do not; a nav entry must be a distinct destination, so scope variants become on-page toggles and filters become tabs; admin and staff keep two URL trees over one implementation, with access decided by a permission matrix rather than by which tree you landed in. |
 | 20 | [Org visibility into member sessions](20-org-visibility-into-member-sessions.md) | An organization sees that a session happened — member, counterpart, plan title, time, status, cost — and never what happened in it; notes, feedback, recordings, document contents and chat stay with the two participants, enforced by select allowlists that branch on whether the scope constrains the caller to be one of them. |
+| 21 | [Single writer for payment confirmation](21-single-writer-for-payment-confirmation.md) | `Payment.paymentStatus` is written by the confirmation pipeline and by nothing else; the webhook, the client's signature return, the on-demand sync and the reconcile cron all call `routeCapturedPayment` rather than recording the conclusion themselves, because a second writer turns `handlePaymentSuccess`'s already-SUCCEEDED guard from "this work is done" into "this work will never be done". |
+| 22 | [Queue posture, revisited with measurements](22-queue-posture-revisited-with-measurements.md) | Measured cadence shows sub-hourly GitHub Actions schedules deliver roughly one tick per 100 minutes while nothing overlaps, so the defect is missed ticks rather than contention; the QStash escalation in ADR 14 is now authorised, Temporal stays out on cost and fit rather than on the architectural objection its 2026 Lambda workers retired, and Inngest is recorded with concrete adoption triggers. |

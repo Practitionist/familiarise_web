@@ -3,7 +3,7 @@ name: Detect Consultant No-Shows
 on:
   schedule:
     # Run hourly (offset to avoid colliding with other :00/:07 crons)
-    - cron: "17 * * * *"
+    - cron: "57 * * * *"
   workflow_dispatch: # Allow manual triggering
 
 jobs:
@@ -44,10 +44,13 @@ jobs:
         run: npx prisma generate
 
       - name: Detect consultant no-shows
-        run: npx tsx jobs/appointments/detect-consultant-no-shows.ts
+        run: npx --yes tsx@4.23.1 jobs/appointments/detect-consultant-no-shows.ts
 
       - name: Notify on failure
         if: failure()
         env:
           SLACK_OPS_WEBHOOK_URL: ${{ secrets.SLACK_OPS_WEBHOOK_URL }}
+          # Fallback sink — Slack has never been provisioned, so this is
+          # what actually pages today. See 07-required-secrets.md.
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
         run: bash scripts/ci/notify-ops-failure.sh "detect-consultant-no-shows"

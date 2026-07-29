@@ -14,7 +14,7 @@ import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import {
   Wallet,
@@ -22,6 +22,7 @@ import {
   Clock,
   CheckCircle,
   AlertTriangle,
+  Send,
 } from "lucide-react";
 import type { EarningsStats, Earning } from "@/types/payments";
 
@@ -78,6 +79,10 @@ export default function EarningsSection() {
 
   const { data: earningsData, isLoading: earningsLoading } = useQuery({
     queryKey: ["admin-earnings", status, page],
+    // Filter/page live in the key, so each value is its own query. Without
+    // this, switching to one not yet fetched dropped `data` to undefined and
+    // re-showed the loading branch. Same fix as #346 on the appointments list.
+    placeholderData: keepPreviousData,
     queryFn: () => fetchEarnings(status, page, limit),
     staleTime: 30 * 1000,
   });
@@ -85,6 +90,7 @@ export default function EarningsSection() {
   const stats: EarningsStats = statsData?.stats || {
     pending: { count: 0, consultantSharePaise: 0, platformFeePaise: 0 },
     ready: { count: 0, consultantSharePaise: 0, platformFeePaise: 0 },
+    batched: { count: 0, consultantSharePaise: 0, platformFeePaise: 0 },
     paid: { count: 0, consultantSharePaise: 0, platformFeePaise: 0 },
     held: { count: 0, consultantSharePaise: 0, platformFeePaise: 0 },
     refunded: { count: 0, consultantSharePaise: 0, platformFeePaise: 0 },
@@ -189,10 +195,10 @@ export default function EarningsSection() {
   return (
     <div className="space-y-6">
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
         {statsLoading ? (
           <>
-            {[1, 2, 3, 4, 5].map((i) => (
+            {[1, 2, 3, 4, 5, 6].map((i) => (
               <Skeleton key={i} className="h-24 w-full" />
             ))}
           </>
@@ -232,6 +238,30 @@ export default function EarningsSection() {
                     </p>
                   </div>
                   <Wallet className="w-8 h-8 text-muted-foreground" />
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* #837 split BATCHED out of READY. The producer has returned this
+                bucket ever since; the dashboard was never given a card for it,
+                so cleared earnings already committed to a payout batch stopped
+                being counted under "Ready" and started appearing nowhere at
+                all — money in transit, invisible. */}
+            <Card>
+              <CardContent className="pt-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-muted-foreground">
+                      Batched (In Transit)
+                    </p>
+                    <p className="text-xl font-bold text-blue-700 dark:text-blue-400">
+                      {stats.batched.count}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {formatAmount(stats.batched.consultantSharePaise)}
+                    </p>
+                  </div>
+                  <Send className="w-8 h-8 text-blue-500 dark:text-blue-400" />
                 </div>
               </CardContent>
             </Card>

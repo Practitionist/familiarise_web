@@ -191,7 +191,9 @@ export function PaymentDetailPage({
                   </p>
                 </div>
                 <div>
-                  <Label className="text-muted-foreground">Appointment ID</Label>
+                  <Label className="text-muted-foreground">
+                    Appointment ID
+                  </Label>
                   <p className="font-mono text-sm text-foreground break-all">
                     {payment.appointment.id}
                   </p>
@@ -239,7 +241,10 @@ export function PaymentDetailPage({
                 >
                   <div className="min-w-0">
                     <p className="font-medium text-foreground">
-                      {formatCurrencyAmount(refund.amount, refund.currency)}
+                      {formatCurrencyAmount(
+                        refund.amountPaise,
+                        refund.currency,
+                      )}
                     </p>
                     <p className="text-sm text-muted-foreground">
                       {refund.reason}
@@ -285,7 +290,10 @@ export function PaymentDetailPage({
                   <div className="flex justify-between items-start gap-3">
                     <div className="min-w-0">
                       <p className="font-medium text-foreground">
-                        {formatCurrencyAmount(dispute.amount, dispute.currency)}
+                        {formatCurrencyAmount(
+                          dispute.amountPaise,
+                          dispute.currency,
+                        )}
                       </p>
                       <p className="text-sm text-muted-foreground">
                         {dispute.reason}

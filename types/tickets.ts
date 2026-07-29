@@ -52,7 +52,7 @@ interface LinkedConsultation {
   } | null;
 }
 
-interface LinkedPayment {
+export interface LinkedPayment {
   id: string;
   amount: number;
   currency: string;
@@ -61,9 +61,15 @@ interface LinkedPayment {
   createdAt: string;
 }
 
-interface LinkedRefund {
+export interface LinkedRefund {
   id: string;
-  amount: number;
+  /**
+   * `Refund.amountPaise` — the ticket route selects exactly that. This said
+   * `amount`, a field no Refund payload carries. Nothing renders it yet, so it
+   * was a primed "₹NaN" rather than a live one; exported so the schema-drift
+   * test can hold it to the schema.
+   */
+  amountPaise: number;
   currency: string;
   status: string;
   reason: string | null;

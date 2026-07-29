@@ -51,10 +51,13 @@ jobs:
         run: npx prisma generate
 
       - name: Run settle invoice accruals job
-        run: npx tsx jobs/billing/settle-invoice-accruals.ts
+        run: npx --yes tsx@4.23.1 jobs/billing/settle-invoice-accruals.ts
 
       - name: Notify on failure
         if: failure()
         env:
           SLACK_OPS_WEBHOOK_URL: ${{ secrets.SLACK_OPS_WEBHOOK_URL }}
+          # Fallback sink — Slack has never been provisioned, so this is
+          # what actually pages today. See 07-required-secrets.md.
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
         run: bash scripts/ci/notify-ops-failure.sh "settle-invoice-accruals"
