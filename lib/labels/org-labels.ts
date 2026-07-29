@@ -335,6 +335,22 @@ export const ORG_DIRECTORY_TYPE_DESCRIPTION: Record<OrgDirectoryType, string> =
     OTHER: "An organisation on Familiarise.",
   };
 
+/**
+ * Visitor-facing phrasing for the capability pair, for the public directory.
+ * Distinct from CAPABILITY_LABEL above, which is the dashboard's internal
+ * vocabulary ("Host" / "Hybrid") and means nothing to a marketplace visitor.
+ * `inert` renders nothing rather than the internal "Inactive".
+ */
+export const ORG_PUBLIC_CAPABILITY_LABEL: Record<
+  "host" | "sponsor" | "hybrid" | "inert",
+  string
+> = {
+  host: "Hosts experts",
+  sponsor: "Sponsors members",
+  hybrid: "Hosts & sponsors",
+  inert: "",
+};
+
 export const ORG_SIZE_BUCKET_LABEL: Record<OrgSizeBucket, string> = {
   SMALL_1_50: "1–50 people",
   MEDIUM_51_200: "51–200 people",

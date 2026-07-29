@@ -8,15 +8,9 @@ import { Badge } from "@/components/ui/badge";
 import type { OrganisationListItem } from "@/lib/explore/organisation-types";
 import {
   ORG_DIRECTORY_TYPE_LABEL,
+  ORG_PUBLIC_CAPABILITY_LABEL,
   ORG_SIZE_BUCKET_LABEL,
 } from "@/lib/labels/org-labels";
-
-const CAPABILITY_LABEL: Record<OrganisationListItem["capability"], string> = {
-  host: "Hosts experts",
-  sponsor: "Sponsors members",
-  hybrid: "Hosts & sponsors",
-  inert: "",
-};
 
 export default function OrgCard({ org }: { org: OrganisationListItem }) {
   // Type is the primary badge; capability is secondary supporting detail. Both
@@ -25,7 +19,7 @@ export default function OrgCard({ org }: { org: OrganisationListItem }) {
   const typeLabel = org.directoryType
     ? ORG_DIRECTORY_TYPE_LABEL[org.directoryType]
     : null;
-  const capabilityLabel = CAPABILITY_LABEL[org.capability];
+  const capabilityLabel = ORG_PUBLIC_CAPABILITY_LABEL[org.capability];
 
   return (
     <Link
@@ -38,6 +32,7 @@ export default function OrgCard({ org }: { org: OrganisationListItem }) {
             src={org.bannerImage}
             alt=""
             fill
+            sizes="(min-width: 1280px) 33vw, (min-width: 640px) 50vw, 100vw"
             className="object-cover opacity-60"
           />
         )}

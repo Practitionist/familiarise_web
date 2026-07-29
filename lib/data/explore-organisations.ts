@@ -99,13 +99,48 @@ function orderByForSort(
   switch (sort) {
     case "nameDesc":
       return [{ name: "desc" }];
-    case "expertsDesc":
-      return [{ memberships: { _count: "desc" } }, { name: "asc" }];
     case "newest":
       return [{ createdAt: "desc" }, { name: "asc" }];
+    // expertsDesc is not expressible here — see rankByExpertCount.
     default:
       return [{ name: "asc" }];
   }
+}
+
+/**
+ * Page ids ranked by ACTIVE EXPERT membership count, descending.
+ *
+ * Prisma can't order by a *filtered* relation count, and ordering by the raw
+ * `memberships._count` counts learners, owners and support members too — so a
+ * learner-heavy org outranked one with more experts, contradicting the number
+ * rendered on its own card. Ranking here keeps the order and the displayed
+ * count derived from the same predicate.
+ *
+ * Two queries instead of one, over the opt-in directory set only (public,
+ * ACTIVE, non-deleted), which is curated and small by construction.
+ */
+async function rankByExpertCount(
+  where: Prisma.OrganizationWhereInput,
+  skip: number,
+  take: number,
+): Promise<string[]> {
+  const rows = await prisma.organization.findMany({
+    where,
+    select: {
+      id: true,
+      name: true,
+      _count: { select: { memberships: { where: EXPERT_MEMBERSHIP_WHERE } } },
+    },
+  });
+
+  return rows
+    .sort(
+      (a, b) =>
+        b._count.memberships - a._count.memberships ||
+        a.name.localeCompare(b.name),
+    )
+    .slice(skip, skip + take)
+    .map((row) => row.id);
 }
 
 const orgListSelect = {
@@ -168,17 +203,38 @@ export async function getOrganisationsPage(
 ): Promise<OrganisationsPage> {
   const where = whereFromFilters(filters);
   const safePage = Math.max(1, page);
+  const skip = (safePage - 1) * perPage;
 
-  const [rows, total] = await Promise.all([
-    prisma.organization.findMany({
-      where,
+  let rows: Prisma.OrganizationGetPayload<{ select: typeof orgListSelect }>[];
+  let total: number;
+
+  if (filters.sort === "expertsDesc") {
+    const [rankedIds, count] = await Promise.all([
+      rankByExpertCount(where, skip, perPage),
+      prisma.organization.count({ where }),
+    ]);
+    total = count;
+    const page = await prisma.organization.findMany({
+      where: { id: { in: rankedIds } },
       select: orgListSelect,
-      orderBy: orderByForSort(filters.sort),
-      skip: (safePage - 1) * perPage,
-      take: perPage,
-    }),
-    prisma.organization.count({ where }),
-  ]);
+    });
+    // findMany ignores the id order, so restore the ranking.
+    const order = new Map(rankedIds.map((id, index) => [id, index]));
+    rows = page.sort(
+      (a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0),
+    );
+  } else {
+    [rows, total] = await Promise.all([
+      prisma.organization.findMany({
+        where,
+        select: orgListSelect,
+        orderBy: orderByForSort(filters.sort),
+        skip,
+        take: perPage,
+      }),
+      prisma.organization.count({ where }),
+    ]);
+  }
 
   return {
     items: rows.map(toListItem),

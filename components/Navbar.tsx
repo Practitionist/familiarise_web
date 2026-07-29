@@ -294,6 +294,10 @@ function DropdownLink({
     <Link
       href={item.disabled ? "/contactus" : item.href}
       onClick={onClose}
+      // Not a real `disabled` — these still navigate (to /contactus), so the
+      // "Soon" state has to reach assistive tech through the label rather than
+      // a visual pill alone.
+      aria-label={item.disabled ? `${item.label} — coming soon` : undefined}
       className={`flex items-start gap-3 px-3 py-2.5 rounded-lg transition-colors ${
         item.disabled ? "opacity-60" : "hover:bg-muted"
       }`}
@@ -328,6 +332,9 @@ function DesktopDropdownPanel({
   panelId: string;
 }) {
   const isMega = group.variant === "mega";
+  const isWide = group.columns.length > 2;
+  const panelWidth = isMega ? (isWide ? "w-[860px]" : "w-[620px]") : "w-80";
+  const panelGrid = isWide ? "grid-cols-3" : "grid-cols-2";
 
   return (
     <motion.div
@@ -336,13 +343,19 @@ function DesktopDropdownPanel({
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: 8 }}
       transition={{ duration: 0.15 }}
-      // Mega panels center on the VIEWPORT, not the trigger: `left-1/2` of a
-      // narrow left-side trigger throws an 860px panel far off to the right.
-      // Small list panels stay trigger-anchored, where alignment reads fine.
-      className={`left-1/2 -translate-x-1/2 bg-popover rounded-xl shadow-xl border border-border overflow-hidden z-[1100] ${
+      // Mega panels centre on the VIEWPORT (fixed), list panels on their
+      // trigger (absolute) — an 860px panel hung off a narrow left-side trigger
+      // reads as badly misaligned.
+      //
+      // Centred with `inset-x-0 mx-auto`, never `left-1/2 -translate-x-1/2`:
+      // motion.div writes an inline `transform` for its y animation, which
+      // beats Tailwind's translate class, so the -50% shift was silently
+      // dropped and the panel sat half a viewport to the right. Margin centring
+      // can't be clobbered by a transform.
+      className={`inset-x-0 mx-auto bg-popover rounded-xl shadow-xl border border-border overflow-hidden z-[1100] ${
         isMega
-          ? `fixed max-w-[calc(100vw-2rem)] ${group.columns.length > 2 ? "w-[860px]" : "w-[620px]"}`
-          : "absolute top-full mt-2 w-80"
+          ? `fixed max-w-[calc(100vw-2rem)] ${panelWidth}`
+          : `absolute top-full mt-2 ${panelWidth}`
       }`}
       style={
         isMega
@@ -355,7 +368,7 @@ function DesktopDropdownPanel({
       <div
         className={
           isMega
-            ? `p-4 grid gap-2 ${group.columns.length > 2 ? "grid-cols-3" : "grid-cols-2"}`
+            ? `p-4 grid gap-2 ${panelGrid}`
             : "p-2"
         }
       >
@@ -443,26 +456,21 @@ function DesktopNavItem({
       triggerRef.current?.focus();
     };
 
-    const handlePointerDown = (event: PointerEvent) => {
-      if (!containerRef.current?.contains(event.target as Node)) {
-        setOpen(false);
-      }
-    };
-
-    // Close when focus moves out of the group entirely (Tab past the last link).
-    const handleFocusIn = (event: FocusEvent) => {
+    // Pointer-down outside and focus leaving the group are the same condition:
+    // the interaction moved somewhere this menu doesn't own.
+    const handleInteractionOutside = (event: Event) => {
       if (!containerRef.current?.contains(event.target as Node)) {
         setOpen(false);
       }
     };
 
     document.addEventListener("keydown", handleKeyDown);
-    document.addEventListener("pointerdown", handlePointerDown);
-    document.addEventListener("focusin", handleFocusIn);
+    document.addEventListener("pointerdown", handleInteractionOutside);
+    document.addEventListener("focusin", handleInteractionOutside);
     return () => {
       document.removeEventListener("keydown", handleKeyDown);
-      document.removeEventListener("pointerdown", handlePointerDown);
-      document.removeEventListener("focusin", handleFocusIn);
+      document.removeEventListener("pointerdown", handleInteractionOutside);
+      document.removeEventListener("focusin", handleInteractionOutside);
     };
   }, [open]);
 

@@ -21,6 +21,9 @@ import familiariseLogoWhite from "@/public/avif/static/assets/logos/images/logos
 interface FooterLink {
   label: string;
   href: string;
+  /** Renders the outbound glyph. Flagged explicitly rather than matched on
+   *  display text, which silently breaks the moment the copy is reworded. */
+  external?: boolean;
 }
 
 // Mirrors the Navbar's IA (Explore / Solutions / Company / Legal). Users who
@@ -58,7 +61,7 @@ const FOOTER_COLUMNS: { heading: string; links: FooterLink[] }[] = [
       { label: "Blog", href: "/blog" },
       { label: "Pricing", href: "/pricing" },
       { label: "How it works", href: "/#how-it-works" },
-      { label: "Become an expert", href: "/become-an-expert" },
+      { label: "Become an expert", href: "/become-an-expert", external: true },
     ],
   },
   {
@@ -280,9 +283,7 @@ const Footer: React.FC = () => {
                       className="text-sm text-zinc-400 hover:text-white transition-colors inline-flex items-center gap-1"
                     >
                       {link.label}
-                      {link.label === "Become an expert" && (
-                        <ArrowUpRight className="w-3 h-3" />
-                      )}
+                      {link.external && <ArrowUpRight className="w-3 h-3" />}
                     </Link>
                   </li>
                 ))}

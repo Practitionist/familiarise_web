@@ -206,7 +206,7 @@ function FilterPanelImpl({
     <div>
       <div className="grid gap-4 grid-cols-1">
         {/* Domain & Subdomain */}
-        <div className="bg-card rounded-xl p-4 border border-border">
+        <div className="pb-4 border-b border-border last:border-b-0">
           <div className="flex items-center gap-2 mb-4">
             <Layers className="w-4 h-4 text-muted-foreground" />
             <span className="text-sm font-medium text-muted-foreground">Category</span>
@@ -267,7 +267,7 @@ function FilterPanelImpl({
         </div>
 
         {/* Tags */}
-        <div className="bg-card rounded-xl p-4 border border-border">
+        <div className="pb-4 border-b border-border last:border-b-0">
           <div className="flex items-center gap-2 mb-4">
             <TagIcon className="w-4 h-4 text-muted-foreground" />
             <span className="text-sm font-medium text-muted-foreground">
@@ -326,7 +326,7 @@ function FilterPanelImpl({
         </div>
 
         {/* Experience & Rating (combined) */}
-        <div className="bg-card rounded-xl p-4 border border-border">
+        <div className="pb-4 border-b border-border last:border-b-0">
           <div className="flex items-center gap-2 mb-4">
             <Clock className="w-4 h-4 text-muted-foreground" />
             <span className="text-sm font-medium text-muted-foreground">
@@ -403,7 +403,7 @@ function FilterPanelImpl({
         </div>
 
         {/* Price Range — dual-thumb slider */}
-        <div className="bg-card rounded-xl p-4 border border-border">
+        <div className="pb-4 border-b border-border last:border-b-0">
           <div className="flex items-center gap-2 mb-4">
             <DollarSign className="w-4 h-4 text-muted-foreground" />
             <span className="text-sm font-medium text-muted-foreground">
@@ -440,7 +440,7 @@ function FilterPanelImpl({
         </div>
 
         {/* Companies */}
-        <div className="bg-card rounded-xl p-4 border border-border">
+        <div className="pb-4 border-b border-border last:border-b-0">
           <div className="flex items-center gap-2 mb-4">
             <Building2 className="w-4 h-4 text-muted-foreground" />
             <span className="text-sm font-medium text-muted-foreground">Company</span>
@@ -494,7 +494,7 @@ function FilterPanelImpl({
         </div>
 
         {/* Language */}
-        <div className="bg-card rounded-xl p-4 border border-border">
+        <div className="pb-4 border-b border-border last:border-b-0">
           <div className="flex items-center gap-2 mb-4">
             <Globe className="w-4 h-4 text-muted-foreground" />
             <span className="text-sm font-medium text-muted-foreground">Language</span>

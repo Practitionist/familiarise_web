@@ -385,7 +385,11 @@ export default async function OrgProfilePage({
           <div className="lg:col-span-2 space-y-6">
             {exclusiveExperts.length > 0 ? (
               <>
-                <h2 className="text-xl font-bold text-foreground tracking-tight">
+                {/* The sidebar CTA targets #experts; nothing carried that id. */}
+                <h2
+                  id="experts"
+                  className="scroll-mt-28 text-xl font-bold text-foreground tracking-tight"
+                >
                   Exclusive Experts
                 </h2>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -451,25 +455,47 @@ export default async function OrgProfilePage({
               </div>
             )}
 
-            {/* CTA — intentional dark surface */}
+            {/* CTA — intentional dark surface. Now that sponsor-only orgs can
+                be listed, an experts CTA only makes sense where a roster
+                actually exists; otherwise point at the org's own site. */}
             <div className="bg-primary rounded-2xl p-5 text-center">
               <Building2 className="w-8 h-8 text-primary-foreground/70 mx-auto mb-3" />
               <p className="text-primary-foreground font-semibold text-sm mb-1">
                 Work with {org.name}
               </p>
-              <p className="text-primary-foreground/70 text-xs mb-4">
-                Browse their experts and book a session directly.
-              </p>
-              <Button
-                asChild
-                className="w-full bg-card text-foreground hover:bg-muted font-medium rounded-xl"
-              >
-                <Link
-                  href={`/explore/enterprise/organisations/${org.slug}#experts`}
-                >
-                  Browse Experts
-                </Link>
-              </Button>
+              {exclusiveExperts.length > 0 ? (
+                <>
+                  <p className="text-primary-foreground/70 text-xs mb-4">
+                    Browse their experts and book a session directly.
+                  </p>
+                  <Button
+                    asChild
+                    className="w-full bg-card text-foreground hover:bg-muted font-medium rounded-xl"
+                  >
+                    <Link href="#experts">Browse Experts</Link>
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <p className="text-primary-foreground/70 text-xs mb-4">
+                    {org.name} is listed on Familiarise.
+                  </p>
+                  {org.website && (
+                    <Button
+                      asChild
+                      className="w-full bg-card text-foreground hover:bg-muted font-medium rounded-xl"
+                    >
+                      <a
+                        href={org.website}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        Visit website
+                      </a>
+                    </Button>
+                  )}
+                </>
+              )}
             </div>
           </div>
         </div>

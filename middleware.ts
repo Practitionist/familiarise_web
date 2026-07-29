@@ -101,8 +101,13 @@ const ROUTE_PATTERNS = {
  */
 const matchesAnyPrefix = (pathname: string, prefixes: string[]): boolean => {
   for (const prefix of prefixes) {
-    if (pathname.startsWith(prefix)) return true;
-    if (prefix.endsWith("/") && pathname === prefix.slice(0, -1)) return true;
+    // Match on SEGMENT boundaries. A bare startsWith let a prefix without a
+    // trailing slash leak across the boundary — "/api/organizations/public"
+    // would also match "/api/organizations/publicfoo", handing an unintended
+    // route the public exemption. Intended matches (exact path, or any deeper
+    // segment) are unchanged.
+    const base = prefix.endsWith("/") ? prefix.slice(0, -1) : prefix;
+    if (pathname === base || pathname.startsWith(`${base}/`)) return true;
   }
   return false;
 };

@@ -35,10 +35,25 @@ export const TRANSPARENT_HERO_ROUTES = [
   "/explore/programs",
   "/explore/community",
   "/explore/enterprise/organisations",
+  // The four persona pages open on the same full-bleed dark hero.
+  "/use-cases/college-students",
+  "/use-cases/early-career",
+  "/use-cases/career-switchers",
+  "/use-cases/mentorship",
 ] as const;
 
+/**
+ * Segment-aware prefix match. A bare `startsWith` would treat `/dashboardfoo`
+ * or `/maintenance-notes` as matching `/dashboard` / `/maintenance` and strip
+ * the chrome from an unrelated page.
+ */
+function matchesPrefix(pathname: string, prefix: string): boolean {
+  const normalised = prefix.endsWith("/") ? prefix.slice(0, -1) : prefix;
+  return pathname === normalised || pathname.startsWith(`${normalised}/`);
+}
+
 export function isChromeHidden(pathname: string): boolean {
-  return NO_CHROME_PREFIXES.some((prefix) => pathname.startsWith(prefix));
+  return NO_CHROME_PREFIXES.some((prefix) => matchesPrefix(pathname, prefix));
 }
 
 /**
@@ -47,7 +62,13 @@ export function isChromeHidden(pathname: string): boolean {
  * here — callers pass `usePathname()`.
  */
 export function hasDarkHero(pathname: string): boolean {
-  return (TRANSPARENT_HERO_ROUTES as readonly string[]).includes(pathname);
+  // Tolerate a trailing slash; still an exact-route match otherwise, because
+  // `/explore/experts` has a dark hero but `/explore/experts/[id]` does not.
+  const normalised =
+    pathname.length > 1 && pathname.endsWith("/")
+      ? pathname.slice(0, -1)
+      : pathname;
+  return (TRANSPARENT_HERO_ROUTES as readonly string[]).includes(normalised);
 }
 
 /**

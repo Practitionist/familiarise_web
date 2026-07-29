@@ -113,14 +113,23 @@ export default function FacetCombobox<T extends string>({
             ) : (
               filtered.map((option) => {
                 const isSelected = selected.includes(option.value);
+                // Match FacetGroup: a zero-count option leads to a known-empty
+                // result set, so don't offer it — unless it's already applied,
+                // which must stay removable.
+                const isEmpty = option.count === 0 && !isSelected;
                 return (
                   <button
                     key={option.value}
                     type="button"
                     role="option"
                     aria-selected={isSelected}
+                    disabled={isEmpty}
                     onClick={() => onToggle(option.value)}
-                    className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm transition-colors hover:bg-muted"
+                    className={cn(
+                      "flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm transition-colors hover:bg-muted",
+                      isEmpty &&
+                        "cursor-not-allowed opacity-50 hover:bg-transparent",
+                    )}
                   >
                     <Check
                       className={cn(

@@ -120,7 +120,7 @@ const getCachedProgramLevels = unstable_cache(
           .map((row) => row.level)
           .filter((level): level is string => Boolean(level)),
       ),
-    ].sort();
+    ].sort((a, b) => a.localeCompare(b));
   },
   ["program-levels"],
   { revalidate: 3600, tags: ["programs"] },

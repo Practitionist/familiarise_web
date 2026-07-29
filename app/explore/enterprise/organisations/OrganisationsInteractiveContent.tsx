@@ -2,7 +2,7 @@
 
 import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { Building2, Layers, Search, Users } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Input } from "@/components/ui/input";
 import {
@@ -30,6 +30,7 @@ import {
 } from "@/lib/explore/organisation-filters";
 import {
   ORG_DIRECTORY_TYPE_LABEL,
+  ORG_PUBLIC_CAPABILITY_LABEL,
   ORG_SIZE_BUCKET_LABEL,
 } from "@/lib/labels/org-labels";
 
@@ -41,12 +42,6 @@ import { useUrlSyncedFilters } from "../../hooks/useUrlSyncedFilters";
 import OrgCard, { OrgCardSkeleton } from "./OrgCard";
 
 const BASE_PATH = "/explore/enterprise/organisations";
-
-const CAPABILITY_LABEL: Record<OrgCapabilityFilter, string> = {
-  host: "Hosts experts",
-  sponsor: "Sponsors members",
-  hybrid: "Hosts & sponsors",
-};
 
 interface Props {
   metadata: OrganisationsMetadata;
@@ -81,7 +76,7 @@ export default function OrganisationsInteractiveContent({
   const queryString = orgFiltersToSearchParams(filters);
   const isDefaultView = !hasActiveOrgFilters(filters);
 
-  const { data, isFetching } = useQuery<OrgsResponse>({
+  const { data, isFetching, isPending } = useQuery<OrgsResponse>({
     queryKey: ["organisations", queryString],
     queryFn: async () => {
       const res = await fetch(`/api/organizations/public?${queryString}`);
@@ -144,7 +139,7 @@ export default function OrganisationsInteractiveContent({
       chips.push({
         key: "capability",
         label: "Role",
-        value: CAPABILITY_LABEL[filters.capability],
+        value: ORG_PUBLIC_CAPABILITY_LABEL[filters.capability],
       });
     }
     if (filters.hasExperts) {
@@ -166,6 +161,7 @@ export default function OrganisationsInteractiveContent({
       const value = separator === -1 ? "" : key.slice(separator + 1);
       switch (kind) {
         case "search":
+          pushSearch.cancel();
           setSearchInput("");
           updateFilters({ search: "" });
           break;
@@ -192,13 +188,18 @@ export default function OrganisationsInteractiveContent({
           break;
       }
     },
-    [filters, updateFilters],
+    [filters, updateFilters, pushSearch],
   );
 
   const handleClearAll = useCallback(() => {
+    // Cancel the in-flight debounce, or it lands ~300ms later and writes the
+    // pre-clear search term back over the cleared state.
+    pushSearch.cancel();
     setSearchInput("");
     clearFilters();
-  }, [clearFilters]);
+  }, [clearFilters, pushSearch]);
+
+  useEffect(() => () => pushSearch.cancel(), [pushSearch]);
 
   const facets = (
     <>
@@ -222,7 +223,7 @@ export default function OrganisationsInteractiveContent({
         singleSelect
         options={metadata.capabilities.map((entry) => ({
           value: entry.value,
-          label: CAPABILITY_LABEL[entry.value],
+          label: ORG_PUBLIC_CAPABILITY_LABEL[entry.value],
           count: entry.count,
         }))}
         selected={filters.capability ? [filters.capability] : []}
@@ -341,7 +342,16 @@ export default function OrganisationsInteractiveContent({
               {total} organisation{total !== 1 ? "s" : ""}
             </p>
 
-            {orgs.length === 0 ? (
+            {/* Landing on a filtered URL has no initialData, so without this
+                guard the first paint claimed "no organisations match" before
+                the request had even resolved. */}
+            {isPending ? (
+              <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-3">
+                {Array.from({ length: 6 }).map((_, index) => (
+                  <OrgCardSkeleton key={index} />
+                ))}
+              </div>
+            ) : orgs.length === 0 ? (
               <div className="flex flex-col items-center justify-center rounded-2xl border border-border bg-card py-24 text-center">
                 <Building2 className="mb-4 h-12 w-12 text-muted-foreground/70" />
                 <p className="text-lg font-medium text-muted-foreground">
