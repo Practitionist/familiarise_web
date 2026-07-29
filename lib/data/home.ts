@@ -50,6 +50,10 @@ export const getHomeExperts = unstable_cache(
             callsPerWeek: true,
             emailSupport: true,
             totalSessions: true,
+            // Same shape as lib/data/explore-experts.ts — both feed
+            // IConsultantCardData, so both must carry the trial fields.
+            trialEnabled: true,
+            trialPriceInPaise: true,
           },
           take: 5,
         },
