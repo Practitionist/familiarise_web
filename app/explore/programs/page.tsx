@@ -98,7 +98,9 @@ const getCachedProgramCounts = unstable_cache(
  *  already loaded (`getUniqueLevels(programs)`), so a level that only appeared
  *  on a later page was not offerable — and picking one then filtered only the
  *  loaded rows. Levels are a small, slow-moving set; read them once. */
-export const getCachedProgramLevels = unstable_cache(
+// Not exported: Next.js allows only a fixed set of exports from a page module,
+// and a stray one fails `next build` (which `tsc --noEmit` cannot catch).
+const getCachedProgramLevels = unstable_cache(
   async () => {
     const [classLevels, webinarLevels] = await Promise.all([
       prisma.classPlan.findMany({
