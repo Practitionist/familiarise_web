@@ -14,6 +14,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { motion } from "framer-motion";
 import { ClockIcon, CheckCircle2, RefreshCw } from "lucide-react";
 import { useSession } from "@/lib/auth-client";
+import Link from "next/link";
 import { useMemo, useState } from "react";
 import { PricingOption } from "../defaults";
 import { TSlotTiming } from "@/types/slots";
@@ -318,6 +319,18 @@ export default function ConsultationPricingToggle({
                 </div>
               </>
             )}
+
+            {/* Two CTAs: read first, or book now. The toggle stays a chooser
+                and hands detail off to the plan page. */}
+            <Button
+              asChild
+              variant="outline"
+              className="w-full mb-3 bg-white/[0.05] border border-white/[0.12] text-zinc-200 hover:bg-white/[0.10] hover:text-white font-medium rounded-xl h-11 text-sm transition-all duration-200"
+            >
+              <Link href={`/explore/programs/plans/consultations/${option.id}`}>
+                Open details
+              </Link>
+            </Button>
 
             <Dialog>
               <DialogTrigger asChild>

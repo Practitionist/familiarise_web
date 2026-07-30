@@ -416,7 +416,7 @@ export default async function MyProgramPage({
             {orgCatalog.map((plan) => (
               <Link
                 key={`${plan.planType}-${plan.id}`}
-                href={`/checkout/plans/${CATALOG_CHECKOUT_FAMILY[plan.planType]}/${plan.id}`}
+                href={`/explore/programs/plans/${CATALOG_DETAIL_PATH[plan.planType]}/${plan.id}`}
                 className="block rounded-lg border bg-card p-4 hover:border-muted-foreground/30 hover:shadow-sm transition-all"
               >
                 <div className="flex items-start justify-between gap-3">
@@ -445,12 +445,13 @@ export default async function MyProgramPage({
   );
 }
 
-// Plan family -> checkout route segment, mirroring the public org page.
-const CATALOG_CHECKOUT_FAMILY: Record<string, string> = {
-  CONSULTATION: "consultation",
-  SUBSCRIPTION: "subscription",
-  WEBINAR: "webinar",
-  CLASS: "class",
+// Plan family -> its public detail page, mirroring the public org page. A
+// member evaluating an internal offering should read it before paying.
+const CATALOG_DETAIL_PATH: Record<string, string> = {
+  CONSULTATION: "consultations",
+  SUBSCRIPTION: "subscriptions",
+  WEBINAR: "webinars",
+  CLASS: "classes",
 };
 
 function EmptyState({ orgId }: { orgId: string }) {

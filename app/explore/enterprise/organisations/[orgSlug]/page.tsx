@@ -160,16 +160,18 @@ const fetchOrgBySlug = cache(async (slug: string) => {
 
 type OrgData = NonNullable<Awaited<ReturnType<typeof fetchOrgBySlug>>>;
 
-// #777 §E — plan family → checkout route segment (lowercase). Booking a plan
-// from the public org page deep-links into the shared checkout flow.
-const CHECKOUT_FAMILY: Record<
+// Plan family → its public detail page. This used to be a map to checkout
+// segments, so an org buyer weighing a multi-month programme for their team
+// went straight to payment with nothing to read. All four types now have a
+// detail page, so the card links there and checkout is reached from it.
+const PLAN_DETAIL_PATH: Record<
   OrgData["organizationPlans"][number]["planType"],
   string
 > = {
-  CONSULTATION: "consultation",
-  SUBSCRIPTION: "subscription",
-  WEBINAR: "webinar",
-  CLASS: "class",
+  CONSULTATION: "consultations",
+  SUBSCRIPTION: "subscriptions",
+  WEBINAR: "webinars",
+  CLASS: "classes",
 };
 
 export async function generateMetadata({
@@ -428,7 +430,7 @@ export default async function OrgProfilePage({
                   {org.organizationPlans.map((plan) => (
                     <Link
                       key={plan.id}
-                      href={`/checkout/plans/${CHECKOUT_FAMILY[plan.planType]}/${plan.id}`}
+                      href={`/explore/programs/plans/${PLAN_DETAIL_PATH[plan.planType]}/${plan.id}`}
                       className="block p-3 rounded-xl bg-muted border border-border hover:border-border hover:bg-card hover:shadow-sm transition-all group"
                     >
                       <p className="text-sm font-semibold text-foreground mb-0.5">

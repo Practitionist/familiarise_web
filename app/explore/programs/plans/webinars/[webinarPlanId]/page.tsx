@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import { canViewPlanDetail } from "@/lib/data/plan-viewable";
 import { getWebinarPlanDetail } from "@/lib/data/plan-details";
 import { WebinarDetails } from "./components/WebinarDetails";
 

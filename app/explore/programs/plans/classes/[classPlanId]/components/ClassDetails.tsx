@@ -2,12 +2,8 @@
 
 import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  CurriculumOutline,
-  PlanFaqAccordion,
-  TargetAudience,
-  WhatsIncluded,
-} from "@/components/plans/PlanContentSections";
+import { PlanDetailBody } from "../../../components/PlanDetailBody";
+import { planLevelLabel } from "@/lib/labels/plan-labels";
 import { Badge } from "@/components/ui/badge";
 import Image from "next/image";
 import Link from "next/link";
@@ -16,12 +12,7 @@ import {
   Calendar,
   Clock,
   Users,
-  Video,
-  Globe,
   GraduationCap,
-  Book,
-  Award,
-  CheckCircle2,
   ArrowLeft,
 } from "lucide-react";
 import { formatInTimeZone } from "date-fns-tz";
@@ -31,7 +22,6 @@ import {
 } from "@/app/explore/programs/plans/schedule-utils";
 import { ClientClassRegistration } from "./ClientClassRegistration";
 import { useCurrency } from "@/hooks/useCurrency";
-import type { Topic } from "@prisma/client";
 import { generateProgramImageUrl } from "@/lib/explore/programs";
 import { FeatureItem } from "@/app/explore/programs/plans/components/FeatureItem";
 import type { TClassPlanDetailsData } from "../types";
@@ -129,129 +119,26 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
               <FeatureItem
                 icon={<GraduationCap className="h-5 w-5" />}
                 label="Level"
-                value={plan.level ?? "All Levels"}
+                value={planLevelLabel(plan.level)}
               />
             </div>
 
-            {/* About */}
-            <Card className="border-border shadow-sm">
-              <CardContent className="p-6 md:p-8">
-                <h2 className="text-xl font-semibold text-foreground mb-4">
-                  About this Class
-                </h2>
-                <p className="text-muted-foreground whitespace-pre-line leading-relaxed">
-                  {plan.description}
-                </p>
-
-                <div className="grid grid-cols-2 gap-4 mt-6 pt-6 border-t border-border">
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <Video className="h-4 w-4 text-muted-foreground/70" />
-                    {/* Was `plan.materialProvided ?? "Zoom"` — handouts shown
-                        under a video icon as if they were the platform. */}
-                    <span>Live online sessions</span>
-                  </div>
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <Globe className="h-4 w-4 text-muted-foreground/70" />
-                    <span>{plan.language ?? "English"}</span>
-                  </div>
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <Book className="h-4 w-4 text-muted-foreground/70" />
-                    <span>{plan.classContents.length} Modules</span>
-                  </div>
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <Award className="h-4 w-4 text-muted-foreground/70" />
-                    <span>
-                      {plan.certificateProvided
-                        ? "Certificate Included"
-                        : "No Certificate"}
-                    </span>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* What You'll Learn */}
-            {plan.learningOutcomes.length > 0 && (
-            <Card className="border-border shadow-sm">
-              <CardContent className="p-6 md:p-8">
-                <h2 className="text-xl font-semibold text-foreground mb-4">
-                  What you&apos;ll learn
-                </h2>
-                <div className="grid md:grid-cols-2 gap-3">
-                  {plan.learningOutcomes.map((outcome: string) => (
-                    <div key={outcome} className="flex items-start gap-3">
-                      <CheckCircle2 className="w-5 h-5 text-emerald-500 flex-shrink-0 mt-0.5" />
-                      <span className="text-muted-foreground">{outcome}</span>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-            )}
-
-            {/* Who this is for / What's included */}
-            {(plan.targetAudience.length > 0 ||
-              plan.whatsIncluded.length > 0) && (
-              <Card className="border-border shadow-sm">
-                <CardContent className="p-6 md:p-8 space-y-6">
-                  <TargetAudience items={plan.targetAudience} />
-                  <WhatsIncluded items={plan.whatsIncluded} />
-                </CardContent>
-              </Card>
-            )}
-
-            {/* Prerequisites */}
-            <Card className="border-border shadow-sm">
-              <CardContent className="p-6 md:p-8">
-                <h2 className="text-xl font-semibold text-foreground mb-4">
-                  Prerequisites
-                </h2>
-                <p className="text-muted-foreground">
-                  {plan.prerequisites ??
-                    "No prerequisites required. This class is suitable for beginners."}
-                </p>
-              </CardContent>
-            </Card>
-
-            {/* Course Content */}
-            <Card className="border-border shadow-sm">
-              <CardContent className="p-6 md:p-8">
-                <CurriculumOutline
-                  items={plan.classContents}
-                  title="Course content"
-                />
-              </CardContent>
-            </Card>
-
-            {/* FAQ */}
-            {plan.faqs.length > 0 && (
-              <Card className="border-border shadow-sm">
-                <CardContent className="p-6 md:p-8">
-                  <PlanFaqAccordion faqs={plan.faqs} />
-                </CardContent>
-              </Card>
-            )}
-
-            {/* Topics */}
-            {plan.topics.length > 0 && (
-            <Card className="border-border shadow-sm">
-              <CardContent className="p-6 md:p-8">
-                <h2 className="text-xl font-semibold text-foreground mb-4">
-                  Topics Covered
-                </h2>
-                <div className="flex flex-wrap gap-2">
-                  {plan.topics.map((topic: Topic) => (
-                    <Badge
-                      key={topic.id}
-                      className="bg-muted text-muted-foreground hover:bg-muted/70 px-3 py-1"
-                    >
-                      {topic.name}
-                    </Badge>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-            )}
+            {/* Everything between the facts grid and the schedule is the
+                shared body — see PlanDetailBody for why these four pages
+                stopped each owning a copy. */}
+            <PlanDetailBody
+              aboutHeading="About this class"
+              description={plan.description}
+              learningOutcomes={plan.learningOutcomes}
+              targetAudience={plan.targetAudience}
+              whatsIncluded={plan.whatsIncluded}
+              curriculum={plan.classContents}
+              curriculumHeading="Course content"
+              prerequisites={plan.prerequisites}
+              materialProvided={plan.materialProvided}
+              faqs={plan.faqs}
+              topics={plan.topics}
+            />
 
             {/* Schedule */}
             <Card className="border-border shadow-sm">

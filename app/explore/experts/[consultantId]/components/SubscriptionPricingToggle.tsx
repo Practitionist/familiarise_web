@@ -16,10 +16,9 @@ import {
   CheckCircle2,
   Gift,
   BookOpen,
-  Clock,
-  ChevronRight,
 } from "lucide-react";
 import { useSession } from "@/lib/auth-client";
+import Link from "next/link";
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { PricingOption } from "../defaults";
 import { useToast } from "@/hooks/use-toast";
@@ -90,7 +89,6 @@ export default function SubscriptionPricingToggle({
   );
   const [schedulingEndDate, setSchedulingEndDate] = useState<Date | null>(null);
   const [isTrialModalOpen, setIsTrialModalOpen] = useState(false);
-  const [isRoadmapModalOpen, setIsRoadmapModalOpen] = useState(false);
   const [selectedTrialPlan, setSelectedTrialPlan] = useState<{
     id: string;
     title: string;
@@ -417,15 +415,22 @@ export default function SubscriptionPricingToggle({
                 </Button>
               )}
 
-              {/* View Roadmap Button */}
-              {(selectedPlanDetails?.subscriptionContents?.length ?? 0) > 0 && (
+              {/* The toggle is a CHOOSER, not a brochure: pick a tier here,
+                  read the roadmap/FAQ on the plan page. It used to try to be
+                  both, which is what forced a 12-week roadmap into a 450px
+                  column and then into a modal. */}
+              {selectedPlanDetails?.id && (
                 <Button
+                  asChild
                   variant="outline"
                   className="w-full bg-white/[0.05] border border-white/[0.12] text-zinc-200 hover:bg-white/[0.10] hover:text-white font-medium rounded-xl h-11 text-sm transition-all duration-200"
-                  onClick={() => setIsRoadmapModalOpen(true)}
                 >
-                  <BookOpen className="w-4 h-4 mr-2" />
-                  View Session Roadmap
+                  <Link
+                    href={`/explore/programs/plans/subscriptions/${selectedPlanDetails.id}`}
+                  >
+                    <BookOpen className="w-4 h-4 mr-2" />
+                    Open details
+                  </Link>
                 </Button>
               )}
 
@@ -434,7 +439,7 @@ export default function SubscriptionPricingToggle({
                 className="w-full bg-white text-zinc-900 hover:bg-zinc-100 font-semibold rounded-xl h-12 text-sm tracking-wide transition-all duration-200 hover:shadow-[0_0_20px_rgba(255,255,255,0.15)]"
                 onClick={handleChoosePlan}
               >
-                Choose Plan
+                Subscribe
               </Button>
             </div>
           </motion.div>
@@ -575,193 +580,6 @@ export default function SubscriptionPricingToggle({
         />
       )}
 
-      {/* Session Roadmap Modal */}
-      <Dialog open={isRoadmapModalOpen} onOpenChange={setIsRoadmapModalOpen}>
-        <DialogContent className="sm:max-w-[600px] max-h-[80vh] flex flex-col bg-zinc-950 text-white p-0 border border-zinc-800 rounded-2xl shadow-2xl z-[1002]">
-          <DialogHeader className="p-6 pb-4 border-b border-zinc-800/50 flex-shrink-0">
-            <DialogTitle className="text-xl font-semibold flex items-center gap-2">
-              <BookOpen className="w-5 h-5 text-zinc-400" />
-              Session Roadmap
-            </DialogTitle>
-            <DialogDescription className="text-zinc-400">
-              {selectedPlanDetails?.title || selectedOption?.title} - What
-              you&apos;ll learn
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="flex-1 overflow-y-auto p-6 min-h-0 scrollbar-hide">
-            {(selectedPlanDetails?.subscriptionContents?.length ?? 0) > 0 ? (
-              <div className="relative">
-                {/* Timeline line */}
-                <div className="absolute left-[19px] top-8 bottom-8 w-0.5 bg-gradient-to-b from-zinc-700 via-zinc-600 to-zinc-700" />
-
-                <div className="space-y-6">
-                  {selectedPlanDetails?.subscriptionContents?.map(
-                    (content: SubscriptionContentItem, index: number) => (
-                      <motion.div
-                        key={content.id || index}
-                        initial={{ opacity: 0, x: -20 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        transition={{ delay: index * 0.1, duration: 0.3 }}
-                        className="relative flex items-start gap-4"
-                      >
-                        {/* Week badge */}
-                        {/* The consultant's own label ("Week 1", "Sprint 2")
-                            wins; the ordinal is only the fallback for plans
-                            authored before section labels existed. */}
-                        <div className="relative z-10 flex-shrink-0 min-w-[52px] h-10 px-2 rounded-full bg-zinc-800 border-2 border-zinc-700 flex items-center justify-center text-xs font-bold text-white shadow-lg whitespace-nowrap">
-                          {content.sectionLabel?.trim() ||
-                            `Week ${content.order || index + 1}`}
-                        </div>
-
-                        {/* Content card */}
-                        <div className="flex-1 bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-4 hover:bg-zinc-800/30 transition-colors">
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="flex-1 min-w-0">
-                              <h4 className="font-semibold text-white text-base mb-1 truncate">
-                                {content.title}
-                              </h4>
-                              {content.description && (
-                                <p className="text-sm text-zinc-400 line-clamp-2">
-                                  {content.description}
-                                </p>
-                              )}
-                              {content.outcomes &&
-                                content.outcomes.length > 0 && (
-                                  <ul className="mt-2 space-y-1">
-                                    {content.outcomes.map((outcome) => (
-                                      <li
-                                        key={outcome}
-                                        className="text-xs text-zinc-500 flex items-start gap-1.5"
-                                      >
-                                        <span className="mt-1.5 w-1 h-1 rounded-full bg-zinc-600 flex-shrink-0" />
-                                        {outcome}
-                                      </li>
-                                    ))}
-                                  </ul>
-                                )}
-                            </div>
-                            <ChevronRight className="w-4 h-4 text-zinc-600 flex-shrink-0 mt-1" />
-                          </div>
-
-                          {/* Meta info */}
-                          <div className="flex items-center gap-4 mt-3 text-xs text-zinc-500">
-                            {content.hoursAllotted && (
-                              <span className="flex items-center gap-1">
-                                <Clock className="w-3 h-3" />
-                                {content.hoursAllotted}h
-                              </span>
-                            )}
-                            {content.contentType && (
-                              <span className="px-2 py-0.5 bg-zinc-800 rounded-full">
-                                {content.contentType}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      </motion.div>
-                    ),
-                  )}
-                </div>
-              </div>
-            ) : (
-              <div className="text-center py-12 text-zinc-500">
-                <BookOpen className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                <p>No detailed roadmap available for this plan.</p>
-              </div>
-            )}
-
-            {/* Positioning + FAQ. Rendered in the modal's own dark palette
-                rather than via the shared PlanContentSections, which are
-                theme-token based and would fight this surface. */}
-            <DarkBulletList
-              title="Who this is for"
-              items={selectedPlanDetails?.targetAudience}
-            />
-            <DarkBulletList
-              title="What's included"
-              items={selectedPlanDetails?.whatsIncluded}
-            />
-
-            {(selectedPlanDetails?.faqs?.length ?? 0) > 0 && (
-              <div className="mt-8">
-                <h4 className="text-sm font-semibold text-white mb-3">
-                  Frequently asked questions
-                </h4>
-                <div className="space-y-3">
-                  {selectedPlanDetails!.faqs!.map((faq, i) => (
-                    <div
-                      key={faq.id || `${i}-${faq.question}`}
-                      className="bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-4"
-                    >
-                      <p className="text-sm font-medium text-white">
-                        {faq.question}
-                      </p>
-                      <p className="text-sm text-zinc-400 mt-1.5 whitespace-pre-line">
-                        {faq.answer}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Summary footer */}
-          {(selectedPlanDetails?.subscriptionContents?.length ?? 0) > 0 && (
-            <div className="p-4 border-t border-zinc-800/50 bg-zinc-900/50 flex-shrink-0">
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-zinc-400">
-                  {selectedPlanDetails!.subscriptionContents!.length} week
-                  {selectedPlanDetails!.subscriptionContents!.length > 1
-                    ? "s"
-                    : ""}{" "}
-                  •{" "}
-                  {selectedPlanDetails!.subscriptionContents!.reduce(
-                    (acc: number, c: SubscriptionContentItem) => acc + (c.hoursAllotted || 0),
-                    0,
-                  )}
-                  h total
-                </span>
-                <Button
-                  size="sm"
-                  className="bg-white text-zinc-900 hover:bg-zinc-100"
-                  onClick={() => {
-                    setIsRoadmapModalOpen(false);
-                    handleChoosePlan();
-                  }}
-                >
-                  Choose This Plan
-                </Button>
-              </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
     </Tabs>
-  );
-}
-
-/** Bullet list in the roadmap modal's dark palette. */
-function DarkBulletList({
-  title,
-  items,
-}: Readonly<{ title: string; items?: string[] | null }>) {
-  if (!items?.length) return null;
-  return (
-    <div className="mt-8">
-      <h4 className="text-sm font-semibold text-white mb-3">{title}</h4>
-      <ul className="space-y-2">
-        {items.map((item) => (
-          <li
-            key={item}
-            className="text-sm text-zinc-400 flex items-start gap-2.5"
-          >
-            <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-zinc-600 flex-shrink-0" />
-            {item}
-          </li>
-        ))}
-      </ul>
-    </div>
   );
 }

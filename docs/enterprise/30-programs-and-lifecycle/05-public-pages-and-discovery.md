@@ -60,6 +60,13 @@ reach for. The public org page was the one surface that filtered visibility but
 not the archive, so a withdrawn plan still rendered there and linked straight
 into checkout; it now composes the full filter like everything else.
 
+A third change closed a back door the list filters never covered: the four plan
+DETAIL pages are reached by primary key, not by listing, and filtered on
+nothing at all, so an `ORG_ONLY` plan was fully readable by anyone holding its
+id and an archived plan still rendered a page with a live booking button.
+`isPlanViewable()` now gates all four. Consultation and subscription detail
+pages were added at the same time, giving all four types parity.
+
 The second is that `ORG_ONLY` finally has a reader. Narrowing a plan to
 `ORG_ONLY` previously made it invisible to everyone, including the members it
 was authored for, because the marketplace filter correctly excluded it from
