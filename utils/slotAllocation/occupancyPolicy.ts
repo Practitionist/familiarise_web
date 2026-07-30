@@ -77,13 +77,25 @@ export function buildOccupiedAppointmentFilter(
     },
   ];
 
-  // Add trial session filter
+  // Add trial session filter.
+  //
+  // AWAITING_PAYMENT occupies too: a paid trial's slot is reserved the moment
+  // the consultant accepts, and stays reserved while the learner pays. Counting
+  // only SCHEDULED would let someone else book the same slot during the payment
+  // window, and the capture webhook would then confirm a trial into a
+  // double-booked slot. The expiry job releases it by moving the trial to
+  // CANCELLED, which drops out of this filter automatically.
+  const OCCUPYING_TRIAL_STATUSES = [
+    TrialSessionStatus.SCHEDULED,
+    TrialSessionStatus.AWAITING_PAYMENT,
+  ];
+
   if (consultantProfileId) {
     filters.push({
       trialSession: {
         is: {
           consultantProfileId,
-          status: TrialSessionStatus.SCHEDULED,
+          status: { in: OCCUPYING_TRIAL_STATUSES },
         },
       },
     });
@@ -91,7 +103,7 @@ export function buildOccupiedAppointmentFilter(
     filters.push({
       trialSession: {
         is: {
-          status: TrialSessionStatus.SCHEDULED,
+          status: { in: OCCUPYING_TRIAL_STATUSES },
         },
       },
     });

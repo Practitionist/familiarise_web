@@ -76,6 +76,26 @@ export const classMetadataSchema = baseMetadataSchema.extend({
 });
 
 /**
+ * Trial metadata schema
+ *
+ * A paid trial's appointment already exists when the intent is created (the
+ * consultant accepted and the slot is held), so `trialId` is what the handler
+ * needs to move the session out of AWAITING_PAYMENT. `planId` is the parent
+ * subscription plan the trial belongs to.
+ *
+ * Without this arm the switch below threw "Unsupported appointment type", which
+ * routes to CRITICAL_PAYMENT_WITHOUT_APPOINTMENT — the learner charged and the
+ * trial never scheduled.
+ */
+export const trialMetadataSchema = baseMetadataSchema.extend({
+  appointmentType: z.literal(AppointmentsType.TRIAL),
+  planId: z.string().cuid(),
+  trialId: z.string().cuid(),
+  startsAt: z.string().datetime(),
+  endsAt: z.string().datetime(),
+});
+
+/**
  * #679 transition dual-read — REMOVE after 2026-07-12.
  *
  * Razorpay persists checkout metadata as order `notes`; orders created
@@ -124,6 +144,8 @@ export function validateWebhookMetadata(rawMetadata: Record<string, string>) {
       return webinarMetadataSchema.parse(metadata);
     case AppointmentsType.CLASS:
       return classMetadataSchema.parse(metadata);
+    case AppointmentsType.TRIAL:
+      return trialMetadataSchema.parse(metadata);
     default:
       throw new Error(`Unsupported appointment type: ${appointmentType}`);
   }

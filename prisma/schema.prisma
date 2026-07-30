@@ -3059,22 +3059,33 @@ model TrialSession {
   requestedAt DateTime  @default(now())
   completedAt DateTime?
 
+  /// Deadline for a paid trial's pay-link, set when the consultant accepts.
+  /// 24h from acceptance, or the session start if that comes first — a slot
+  /// three hours out must not stay payable past the slot itself. The expiry
+  /// job cancels AWAITING_PAYMENT trials past this and frees the slot.
+  paymentDueAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // One trial per consultant
+  // One LIVE trial per consultant. The pair is unique, so re-requesting after
+  // a terminal outcome requires clearing the old row — see
+  // `TRIAL_REQUEST_BLOCKING_STATUSES` in lib/trials/eligibility.ts.
   @@unique([consulteeProfileId, consultantProfileId])
   @@index([consultantProfileId])
   @@index([subscriptionPlanId])
   @@index([organizationId])
+  // Expiry job scans for overdue unpaid trials.
+  @@index([status, paymentDueAt])
 }
 
 enum TrialSessionStatus {
   PENDING // Requested, awaiting consultant action
+  AWAITING_PAYMENT // Consultant accepted a PAID trial; pay-link issued, unpaid
   SCHEDULED // Time slot confirmed
   COMPLETED // Trial session completed
   CONVERTED // Consultee subscribed after trial
-  CANCELLED // Cancelled by consultee
+  CANCELLED // Cancelled by consultee, or lapsed unpaid past paymentDueAt
   REJECTED // Declined by consultant
 }
 

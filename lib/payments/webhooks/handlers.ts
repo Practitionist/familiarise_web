@@ -11,6 +11,7 @@ import {
   PaymentStatus,
   Prisma,
   AppointmentStatus,
+  TrialSessionStatus,
 } from "@prisma/client";
 import { calculateSubscriptionEndDate } from "@/utils/dateUtils";
 import { buildOccupiedAppointmentFilter } from "@/utils/slotAllocation/occupancyPolicy";
@@ -394,6 +395,36 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
           appointment.id,
           payment.userId,
         );
+
+        // TRIAL: the session is AWAITING_PAYMENT with its slot already held, so
+        // capture is what schedules it. Scoped to AWAITING_PAYMENT via
+        // updateMany so a re-delivered webhook is a no-op rather than
+        // resurrecting a trial the learner cancelled or the expiry job closed.
+        if (metadata.trialId) {
+          const scheduled = await tx.trialSession.updateMany({
+            where: {
+              id: metadata.trialId,
+              status: TrialSessionStatus.AWAITING_PAYMENT,
+            },
+            data: {
+              status: TrialSessionStatus.SCHEDULED,
+              paymentId: payment.id,
+              pendingPaymentUrl: null,
+              paymentDueAt: null,
+            },
+          });
+
+          console.log(
+            JSON.stringify({
+              event: scheduled.count
+                ? "webhook_trial_scheduled"
+                : "webhook_trial_not_awaiting_payment",
+              paymentIntent: paymentIntentId,
+              trialId: metadata.trialId,
+              timestamp: new Date().toISOString(),
+            }),
+          );
+        }
 
         console.log(
           `✅ Payment ${paymentIntentId} processed successfully. Appointment ID: ${appointment.id}`,

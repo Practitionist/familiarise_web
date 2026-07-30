@@ -53,6 +53,18 @@ export const SupportIssueTypeEnum = z.enum([
   "OTHER",
 ]);
 
+/**
+ * Statuses a CLIENT may request via PATCH /api/trials/[trialId].
+ *
+ * Deliberately narrower than the Prisma `TrialSessionStatus` enum:
+ * AWAITING_PAYMENT is server-set only — the accept handler assigns it and the
+ * Razorpay webhook clears it — so accepting it from a request body would let a
+ * caller mark their own trial as awaiting payment, or worse, sidestep the pay
+ * step. Cancelling one still works, because CANCELLED is listed.
+ *
+ * This list is hand-maintained rather than z.nativeEnum(TrialSessionStatus)
+ * precisely so the omission is a decision instead of drift.
+ */
 export const TrialSessionStatusEnum = z.enum([
   "PENDING",
   "SCHEDULED",
