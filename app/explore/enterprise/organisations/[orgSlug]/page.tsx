@@ -103,7 +103,15 @@ const fetchOrgBySlug = cache(async (slug: string) => {
           status: "ACTIVE",
           consultantProfile: {
             verificationStatus: "VERIFIED",
-            isIndependent: false,
+            // NOT filtered on `isIndependent: false`. That column is derived —
+            // "true iff zero ACTIVE EXPERT memberships at canHost orgs" — and is
+            // only recomputed by recomputeConsultantIsIndependent() after a
+            // membership mutation. Anything that writes memberships directly
+            // (the seed, a backfill, a manual fix) leaves it stale, and a stale
+            // `true` hid every expert on this page even though the membership
+            // being selected here is itself the proof they aren't independent.
+            // The join is the source of truth; the flag is a cache of it.
+            deletedAt: null,
           },
         },
         select: {
