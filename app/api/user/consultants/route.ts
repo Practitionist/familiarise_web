@@ -84,9 +84,30 @@ export async function GET(request: NextRequest) {
     // #781 §B — soft-deleted profiles leave public surfaces
     conditions.push({ deletedAt: null });
 
-    if (domain) conditions.push({ domainId: domain });
+    // Accept either a domain id (what FilterPanel sends, from metadata) or a
+    // domain NAME. Every human-authored link — the nav category chips, the
+    // footer expertise band, the use-case pages — spells the domain out
+    // (`?domain=Technology`), which silently matched nothing while this only
+    // compared against the cuid.
+    if (domain) {
+      conditions.push({
+        OR: [
+          { domainId: domain },
+          { domain: { name: { equals: domain, mode: "insensitive" } } },
+        ],
+      });
+    }
     if (subdomain) {
-      conditions.push({ subDomains: { some: { id: subdomain } } });
+      conditions.push({
+        OR: [
+          { subDomains: { some: { id: subdomain } } },
+          {
+            subDomains: {
+              some: { name: { equals: subdomain, mode: "insensitive" } },
+            },
+          },
+        ],
+      });
     }
     if (tags.length > 0) {
       conditions.push({ tags: { some: { name: { in: tags } } } });

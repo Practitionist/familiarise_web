@@ -15,6 +15,10 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import prisma from "@/lib/prisma";
 import { fallbackOnTransientDbError } from "@/lib/data/fail-open";
+import {
+  ORG_DIRECTORY_TYPE_LABEL,
+  ORG_SIZE_BUCKET_LABEL,
+} from "@/lib/labels/org-labels";
 import { cache } from "react";
 import type { Metadata } from "next";
 
@@ -26,7 +30,9 @@ export const dynamic = "force-dynamic";
 // instead of running this heavy org read twice (more visible now it's per-request).
 const fetchOrgBySlug = cache(async (slug: string) => {
   const row = await prisma.organization.findFirst({
-    where: { slug, isPublic: true, canHost: true, status: "ACTIVE" },
+    // canHost intentionally absent: the directory lists every opted-in ACTIVE
+    // org, so requiring it here would 404 exactly the orgs the index links to.
+    where: { slug, isPublic: true, status: "ACTIVE", deletedAt: null },
     select: {
       id: true,
       name: true,
@@ -40,6 +46,8 @@ const fetchOrgBySlug = cache(async (slug: string) => {
           description: true,
           industry: true,
           website: true,
+          sizeBucket: true,
+          directoryType: true,
         },
       },
       // #778 elegance — the org "catalog" is its org-owned per-type plans
@@ -142,6 +150,8 @@ const fetchOrgBySlug = cache(async (slug: string) => {
     description: row.brandingProfile?.description ?? null,
     industry: row.brandingProfile?.industry ?? null,
     website: row.brandingProfile?.website ?? null,
+    sizeBucket: row.brandingProfile?.sizeBucket ?? null,
+    directoryType: row.brandingProfile?.directoryType ?? null,
   };
 });
 
@@ -209,7 +219,7 @@ function ExpertMiniCard({
             {expert.user.name}
           </p>
           {expert.isVerified && (
-            <BadgeCheck className="w-4 h-4 text-blue-500 flex-shrink-0" />
+            <BadgeCheck className="w-4 h-4 text-foreground flex-shrink-0" />
           )}
         </div>
         {expert.headline && (
@@ -245,13 +255,18 @@ export default async function OrgProfilePage({
 
   if (!org) notFound();
 
-  const capabilityLabel =
-    org.canSponsor && org.canHost ? "Hybrid" : "Host Agency";
-  // Binary categorical badge, no dark: variants — monochrome (filled vs muted).
-  const capabilityClass =
-    org.canSponsor && org.canHost
-      ? "bg-primary text-primary-foreground border-transparent"
-      : "bg-muted text-muted-foreground border-border";
+  // Lead with what the org *is* rather than its billing capability — "Hybrid"
+  // is internal vocabulary that means nothing to a visitor. Falls back to the
+  // derived capability only while directoryType is unset.
+  const capabilityLabel = org.directoryType
+    ? ORG_DIRECTORY_TYPE_LABEL[org.directoryType]
+    : org.canSponsor && org.canHost
+      ? "Hybrid"
+      : "Host Agency";
+  // Neutral taxonomy, no dark: variants — monochrome (filled vs muted).
+  const capabilityClass = org.directoryType
+    ? "bg-primary text-primary-foreground border-transparent"
+    : "bg-muted text-muted-foreground border-border";
 
   const exclusiveExperts = org.memberships
     .map((m) => m.consultantProfile)
@@ -331,13 +346,23 @@ export default async function OrgProfilePage({
               )}
 
               <div className="flex flex-wrap items-center gap-4">
-                <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
-                  <Users className="w-4 h-4 text-muted-foreground/70" />
-                  <span>
-                    <strong>{exclusiveExperts.length}</strong> exclusive expert
-                    {exclusiveExperts.length !== 1 ? "s" : ""}
-                  </span>
-                </div>
+                {/* Only hosting orgs have an expert roster; a sponsor-only org
+                    showing "0 exclusive experts" reads as a defect. */}
+                {org.canHost && (
+                  <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                    <Users className="w-4 h-4 text-muted-foreground/70" />
+                    <span>
+                      <strong>{exclusiveExperts.length}</strong> exclusive
+                      expert{exclusiveExperts.length !== 1 ? "s" : ""}
+                    </span>
+                  </div>
+                )}
+                {org.sizeBucket && (
+                  <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                    <Building2 className="w-4 h-4 text-muted-foreground/70" />
+                    <span>{ORG_SIZE_BUCKET_LABEL[org.sizeBucket]}</span>
+                  </div>
+                )}
                 {org.website && (
                   <a
                     href={org.website}
@@ -360,7 +385,11 @@ export default async function OrgProfilePage({
           <div className="lg:col-span-2 space-y-6">
             {exclusiveExperts.length > 0 ? (
               <>
-                <h2 className="text-xl font-bold text-foreground tracking-tight">
+                {/* The sidebar CTA targets #experts; nothing carried that id. */}
+                <h2
+                  id="experts"
+                  className="scroll-mt-28 text-xl font-bold text-foreground tracking-tight"
+                >
                   Exclusive Experts
                 </h2>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -370,12 +399,14 @@ export default async function OrgProfilePage({
                 </div>
               </>
             ) : (
-              <div className="flex flex-col items-center justify-center py-16 text-center bg-card rounded-2xl border border-border">
-                <Users className="w-10 h-10 text-muted-foreground/70 mb-3" />
-                <p className="text-muted-foreground">
-                  No exclusive experts listed yet
-                </p>
-              </div>
+              org.canHost && (
+                <div className="flex flex-col items-center justify-center py-16 text-center bg-card rounded-2xl border border-border">
+                  <Users className="w-10 h-10 text-muted-foreground/70 mb-3" />
+                  <p className="text-muted-foreground">
+                    No exclusive experts listed yet
+                  </p>
+                </div>
+              )
             )}
           </div>
 
@@ -424,25 +455,47 @@ export default async function OrgProfilePage({
               </div>
             )}
 
-            {/* CTA — intentional dark surface */}
+            {/* CTA — intentional dark surface. Now that sponsor-only orgs can
+                be listed, an experts CTA only makes sense where a roster
+                actually exists; otherwise point at the org's own site. */}
             <div className="bg-primary rounded-2xl p-5 text-center">
               <Building2 className="w-8 h-8 text-primary-foreground/70 mx-auto mb-3" />
               <p className="text-primary-foreground font-semibold text-sm mb-1">
                 Work with {org.name}
               </p>
-              <p className="text-primary-foreground/70 text-xs mb-4">
-                Browse their experts and book a session directly.
-              </p>
-              <Button
-                asChild
-                className="w-full bg-card text-foreground hover:bg-muted font-medium rounded-xl"
-              >
-                <Link
-                  href={`/explore/enterprise/organisations/${org.slug}#experts`}
-                >
-                  Browse Experts
-                </Link>
-              </Button>
+              {exclusiveExperts.length > 0 ? (
+                <>
+                  <p className="text-primary-foreground/70 text-xs mb-4">
+                    Browse their experts and book a session directly.
+                  </p>
+                  <Button
+                    asChild
+                    className="w-full bg-card text-foreground hover:bg-muted font-medium rounded-xl"
+                  >
+                    <Link href="#experts">Browse Experts</Link>
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <p className="text-primary-foreground/70 text-xs mb-4">
+                    {org.name} is listed on Familiarise.
+                  </p>
+                  {org.website && (
+                    <Button
+                      asChild
+                      className="w-full bg-card text-foreground hover:bg-muted font-medium rounded-xl"
+                    >
+                      <a
+                        href={org.website}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        Visit website
+                      </a>
+                    </Button>
+                  )}
+                </>
+              )}
             </div>
           </div>
         </div>

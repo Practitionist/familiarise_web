@@ -63,7 +63,7 @@ export function BecomeExpertSection() {
           </div>
 
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-            <Link href="/form/onboarding">
+            <Link href="/become-an-expert">
               <Button
                 size="lg"
                 className="bg-primary hover:bg-primary/90 text-primary-foreground px-8 h-14 text-base rounded-xl shadow-elevation-3"

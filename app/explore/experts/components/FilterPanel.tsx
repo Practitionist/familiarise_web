@@ -11,7 +11,6 @@ import { Slider } from "@/components/ui/slider";
 import { memo, useState, useCallback, useRef, useEffect } from "react";
 import {
   X,
-  Filter,
   Layers,
   Tag as TagIcon,
   Clock,
@@ -200,21 +199,14 @@ function FilterPanelImpl({
       return company.toLowerCase().includes(companySearchTerm.toLowerCase());
     }) || [];
 
+  // Renders inside FacetRail (sticky column on desktop, Sheet on mobile), so
+  // this no longer draws its own card or header — the rail owns both — and the
+  // facets stack in one column instead of the old three-across grid.
   return (
-    <div className="bg-muted rounded-2xl p-6 border border-border">
-      <div className="flex items-center gap-2 mb-6">
-        <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center">
-          <Filter className="w-5 h-5 text-primary-foreground" />
-        </div>
-        <div>
-          <h3 className="font-semibold text-foreground">Filter Experts</h3>
-          <p className="text-sm text-muted-foreground">Refine your search</p>
-        </div>
-      </div>
-
-      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+    <div>
+      <div className="grid gap-4 grid-cols-1">
         {/* Domain & Subdomain */}
-        <div className="bg-card rounded-xl p-4 border border-border">
+        <div className="pb-4 border-b border-border last:border-b-0">
           <div className="flex items-center gap-2 mb-4">
             <Layers className="w-4 h-4 text-muted-foreground" />
             <span className="text-sm font-medium text-muted-foreground">Category</span>
@@ -275,7 +267,7 @@ function FilterPanelImpl({
         </div>
 
         {/* Tags */}
-        <div className="bg-card rounded-xl p-4 border border-border">
+        <div className="pb-4 border-b border-border last:border-b-0">
           <div className="flex items-center gap-2 mb-4">
             <TagIcon className="w-4 h-4 text-muted-foreground" />
             <span className="text-sm font-medium text-muted-foreground">
@@ -334,7 +326,7 @@ function FilterPanelImpl({
         </div>
 
         {/* Experience & Rating (combined) */}
-        <div className="bg-card rounded-xl p-4 border border-border">
+        <div className="pb-4 border-b border-border last:border-b-0">
           <div className="flex items-center gap-2 mb-4">
             <Clock className="w-4 h-4 text-muted-foreground" />
             <span className="text-sm font-medium text-muted-foreground">
@@ -411,7 +403,7 @@ function FilterPanelImpl({
         </div>
 
         {/* Price Range — dual-thumb slider */}
-        <div className="bg-card rounded-xl p-4 border border-border">
+        <div className="pb-4 border-b border-border last:border-b-0">
           <div className="flex items-center gap-2 mb-4">
             <DollarSign className="w-4 h-4 text-muted-foreground" />
             <span className="text-sm font-medium text-muted-foreground">
@@ -448,7 +440,7 @@ function FilterPanelImpl({
         </div>
 
         {/* Companies */}
-        <div className="bg-card rounded-xl p-4 border border-border">
+        <div className="pb-4 border-b border-border last:border-b-0">
           <div className="flex items-center gap-2 mb-4">
             <Building2 className="w-4 h-4 text-muted-foreground" />
             <span className="text-sm font-medium text-muted-foreground">Company</span>
@@ -502,7 +494,7 @@ function FilterPanelImpl({
         </div>
 
         {/* Language */}
-        <div className="bg-card rounded-xl p-4 border border-border">
+        <div className="pb-4 border-b border-border last:border-b-0">
           <div className="flex items-center gap-2 mb-4">
             <Globe className="w-4 h-4 text-muted-foreground" />
             <span className="text-sm font-medium text-muted-foreground">Language</span>

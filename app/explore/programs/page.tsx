@@ -46,18 +46,25 @@ export const dynamic = "force-dynamic";
 export default async function ExplorePrograms() {
   // Degrade gracefully: a heavy curated read that times out (cold query brushing
   // the pg query budget) renders an empty row instead of erroring the whole page.
-  const [trendingPrograms, newestPrograms, topicsWithCount, stats, viewerOrgs] =
-    await Promise.all([
-      getCuratedPrograms("all", "trending", 8).catch(
-        emptyOnTransientDbError("trending programs"),
-      ),
-      getCuratedPrograms("all", "newest", 8).catch(
-        emptyOnTransientDbError("newest programs"),
-      ),
-      getTopicsWithCount("all").catch(emptyOnTransientDbError("topics")),
-      fetchProgramStats(),
-      getViewerOrgs(),
-    ]);
+  const [
+    trendingPrograms,
+    newestPrograms,
+    topicsWithCount,
+    stats,
+    viewerOrgs,
+    levels,
+  ] = await Promise.all([
+    getCuratedPrograms("all", "trending", 8).catch(
+      emptyOnTransientDbError("trending programs"),
+    ),
+    getCuratedPrograms("all", "newest", 8).catch(
+      emptyOnTransientDbError("newest programs"),
+    ),
+    getTopicsWithCount("all").catch(emptyOnTransientDbError("topics")),
+    fetchProgramStats(),
+    getViewerOrgs(),
+    getCachedProgramLevels().catch(emptyOnTransientDbError("program levels")),
+  ]);
 
   return (
     <ProgramsInteractiveContent
@@ -66,6 +73,7 @@ export default async function ExplorePrograms() {
       initialTopics={topicsWithCount}
       initialStats={stats}
       viewerOrgs={viewerOrgs}
+      availableLevels={levels}
     />
   );
 }
@@ -81,6 +89,40 @@ const getCachedProgramCounts = unstable_cache(
     return { classCount, webinarCount };
   },
   ["program-stats"],
+  { revalidate: 3600, tags: ["programs"] },
+);
+
+/** Every level that exists across both plan families.
+ *
+ *  The level dropdown used to be derived from whatever infinite-scroll had
+ *  already loaded (`getUniqueLevels(programs)`), so a level that only appeared
+ *  on a later page was not offerable — and picking one then filtered only the
+ *  loaded rows. Levels are a small, slow-moving set; read them once. */
+// Not exported: Next.js allows only a fixed set of exports from a page module,
+// and a stray one fails `next build` (which `tsc --noEmit` cannot catch).
+const getCachedProgramLevels = unstable_cache(
+  async () => {
+    const [classLevels, webinarLevels] = await Promise.all([
+      prisma.classPlan.findMany({
+        where: { level: { not: null } },
+        select: { level: true },
+        distinct: ["level"],
+      }),
+      prisma.webinarPlan.findMany({
+        where: { level: { not: null } },
+        select: { level: true },
+        distinct: ["level"],
+      }),
+    ]);
+    return [
+      ...new Set(
+        [...classLevels, ...webinarLevels]
+          .map((row) => row.level)
+          .filter((level): level is string => Boolean(level)),
+      ),
+    ].sort((a, b) => a.localeCompare(b));
+  },
+  ["program-levels"],
   { revalidate: 3600, tags: ["programs"] },
 );
 

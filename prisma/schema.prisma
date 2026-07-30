@@ -683,8 +683,10 @@ model Organization {
   defaultCancellationPolicy String? @db.Text
   defaultRefundPolicy       String? @db.Text
 
-  // Marketplace visibility — HOST/HYBRID orgs can opt in to appear on
-  // /explore/enterprise/organisations. SPONSOR-only orgs stay private.
+  // Marketplace visibility — any ACTIVE org can opt in to appear on
+  // /explore/enterprise/organisations, regardless of capability. Discovery is
+  // deliberately not gated on canHost: that would make the directory
+  // structurally empty while ENABLE_HOST_ORGS blocks canHost from being set.
   isPublic Boolean @default(false)
 
   // Sponsorship side — one BillingAccount per org when canSponsor=true
@@ -788,6 +790,9 @@ model Organization {
   @@index([status])
   @@index([canSponsor, canHost])
   @@index([canHost, isPublic, status])
+  // Directory listing filters on isPublic+status only; the index above can't
+  // serve it because its leading column (canHost) is no longer in the predicate.
+  @@index([isPublic, status])
   @@index([dataResidencyRegion])
   @@map("organizations")
 }
@@ -1692,9 +1697,9 @@ model OrganizationPayout {
   // Left unbounded these are Postgres `numeric` with arbitrary precision, so the
   // same FX rate could round differently on the payment and the payout sides of
   // one booking and the reconciler would report drift that isn't real.
-  dtaaRateApplied   Decimal?           @db.Decimal(18, 6)
+  dtaaRateApplied   Decimal?            @db.Decimal(18, 6)
   rbiPurposeCode    String? // P0802 | P0807
-  fxRateUsed        Decimal?           @db.Decimal(18, 6)
+  fxRateUsed        Decimal?            @db.Decimal(18, 6)
   firceRef          String?
 
   payoutReference String?
@@ -3045,22 +3050,33 @@ model TrialSession {
   requestedAt DateTime  @default(now())
   completedAt DateTime?
 
+  /// Deadline for a paid trial's pay-link, set when the consultant accepts.
+  /// 24h from acceptance, or the session start if that comes first — a slot
+  /// three hours out must not stay payable past the slot itself. The expiry
+  /// job cancels AWAITING_PAYMENT trials past this and frees the slot.
+  paymentDueAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // One trial per consultant
+  // One LIVE trial per consultant. The pair is unique, so re-requesting after
+  // a terminal outcome requires clearing the old row — see
+  // `TRIAL_REQUEST_BLOCKING_STATUSES` in lib/trials/eligibility.ts.
   @@unique([consulteeProfileId, consultantProfileId])
   @@index([consultantProfileId])
   @@index([subscriptionPlanId])
   @@index([organizationId])
+  // Expiry job scans for overdue unpaid trials.
+  @@index([status, paymentDueAt])
 }
 
 enum TrialSessionStatus {
   PENDING // Requested, awaiting consultant action
+  AWAITING_PAYMENT // Consultant accepted a PAID trial; pay-link issued, unpaid
   SCHEDULED // Time slot confirmed
   COMPLETED // Trial session completed
   CONVERTED // Consultee subscribed after trial
-  CANCELLED // Cancelled by consultee
+  CANCELLED // Cancelled by consultee, or lapsed unpaid past paymentDueAt
   REJECTED // Declined by consultant
 }
 
@@ -4535,11 +4551,11 @@ model GstTcsAdjustment {
 /// response. The stored response is replayed verbatim on a repeat, so the
 /// caller sees the original outcome rather than a confusing 409.
 model IdempotencyRecord {
-  id    String @id @default(cuid())
+  id     String @id @default(cuid())
   /// Route-owned namespace, e.g. "admin.refund" or "org.payout.create".
-  scope String
+  scope  String
   /// Caller-supplied `Idempotency-Key` header value.
-  key   String
+  key    String
   /// Who the key belongs to — a key from one user must never replay another's
   /// response, even within the same scope.
   userId String
@@ -5447,8 +5463,25 @@ model OrgBrandingProfile {
   website        String?
   sizeBucket     OrgSizeBucket?
 
+  /// What kind of organisation this is, for the public directory. Deliberately
+  /// separate from the canSponsor/canHost capability pair: capability is a
+  /// commercial fact (who may host experts, who may pay for members), while
+  /// this is market identity a visitor understands. Null = untyped, still listed.
+  directoryType OrgDirectoryType?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+/// Public-directory taxonomy for organisations. Replaces nothing — the deleted
+/// `OrganizationKind` described billing capability, which now lives on
+/// Organization.canSponsor/canHost.
+enum OrgDirectoryType {
+  EXPERT_NETWORK
+  CONSULTING_AGENCY
+  LEARNING_INSTITUTION
+  CORPORATE_ACADEMY
+  OTHER
 }
 
 /// #768 lockdown #14 — append-only OverageEvent table (Stripe Meter

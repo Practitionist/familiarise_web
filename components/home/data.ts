@@ -357,3 +357,30 @@ export const COMPANY_LOGOS = [
   "Stripe",
   "Airbnb",
 ];
+
+export const ENTERPRISE_FEATURES = [
+  {
+    icon: Users,
+    title: "Team training",
+    description:
+      "Book vetted experts for a whole team, with one plan covering every seat instead of individual expensing.",
+  },
+  {
+    icon: Briefcase,
+    title: "Sponsored sessions",
+    description:
+      "Your organisation pays; your people book. Set a budget or a per-seat allowance and let them choose their own experts.",
+  },
+  {
+    icon: FileCheck,
+    title: "Invoicing built for procurement",
+    description:
+      "Purchase orders, GST-compliant invoices, and Net-60 terms — not a corporate card and a pile of receipts.",
+  },
+  {
+    icon: Shield,
+    title: "Run your own expert network",
+    description:
+      "Agencies and institutions can host their experts on Familiarise and take a share of every booking.",
+  },
+];

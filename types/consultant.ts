@@ -79,5 +79,9 @@ export interface IConsultantCardData {
     callsPerWeek: number | null;
     emailSupport: string | null;
     totalSessions: number | null;
+    /** Whether this plan offers a trial at all. */
+    trialEnabled: boolean;
+    /** 0 = free intro call; >0 = paid trial. Drives the card's Trial CTA. */
+    trialPriceInPaise: number;
   }>;
 }

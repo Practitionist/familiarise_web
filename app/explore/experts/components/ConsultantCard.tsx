@@ -10,7 +10,6 @@ import type { IConsultantCardData } from "@/types/consultant";
 import { CompanyLogo } from "@/components/ui/company-logo";
 import {
   Star,
-  MapPin,
   Clock,
   Briefcase,
   Globe,
@@ -45,6 +44,25 @@ const ConsultantInfo = ({
     <span className="text-foreground font-medium">
       {value || "Not specified"}
     </span>
+  </div>
+);
+
+/**
+ * A labelled row of badges. The label column is fixed-width so the "Domain" and
+ * "Skills" rows align with each other and with the ConsultantInfo rows above.
+ */
+const BadgeRow = ({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) => (
+  <div className="flex items-start gap-2 mt-2">
+    <span className="w-16 shrink-0 pt-1.5 text-sm text-muted-foreground">
+      {label}:
+    </span>
+    <div className="flex flex-wrap gap-2">{children}</div>
   </div>
 );
 
@@ -158,6 +176,20 @@ export const ConsultantCard = memo(function ConsultantCard({
     },
     {},
   );
+  // Trial CTA is driven by real plan data. Previously it rendered
+  // unconditionally, so an expert offering no trial — or one whose trial is
+  // priced — showed a button that dead-ended. Cheapest trial across the
+  // consultant's plans is the honest headline price.
+  const trialPlans = sortedPlans.filter((plan) => plan.trialEnabled);
+  const trialOffer =
+    trialPlans.length > 0
+      ? {
+          priceInPaise: Math.min(
+            ...trialPlans.map((plan) => plan.trialPriceInPaise ?? 0),
+          ),
+        }
+      : null;
+
   const durationSeen: Record<number, number> = {};
   const tabLabels = sortedPlans.map((plan) => {
     const base = `${plan.durationInMonths} Mo`;
@@ -196,13 +228,20 @@ export const ConsultantCard = memo(function ConsultantCard({
               {/* TODO: Add real presence indicator when online tracking is implemented */}
             </div>
             <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-1.5">
-                <h3 className="text-xl font-bold text-foreground group-hover:text-muted-foreground transition-colors">
+              {/* Name and org badge share one row, so neither may wrap: a long
+                  org name ("Indian Institute of Technology Madras") otherwise
+                  breaks onto a second line and squeezes the name into wrapping
+                  too. Both truncate instead, and the badge keeps its `title`
+                  so the full name is still reachable on hover. */}
+              <div className="flex items-center gap-1.5 min-w-0">
+                <h3 className="truncate text-xl font-bold text-foreground group-hover:text-muted-foreground transition-colors">
                   {consultant.user.name}
                 </h3>
                 {consultant.isVerified && (
-                  <span title="Verified by Familiarise">
-                    <BadgeCheck className="w-5 h-5 text-blue-500" />
+                  <span title="Verified by Familiarise" className="shrink-0">
+                    {/* Verification is an attribute, not a semantic status —
+                        the off-brand blue was the only chromatic accent here. */}
+                    <BadgeCheck className="w-5 h-5 text-foreground" />
                   </span>
                 )}
                 {consultant.organizationBadge && (
@@ -210,14 +249,16 @@ export const ConsultantCard = memo(function ConsultantCard({
                     href={`/explore/enterprise/organisations/${consultant.organizationBadge.slug}`}
                     title={consultant.organizationBadge.name}
                     onClick={(e) => e.stopPropagation()}
-                    className="relative z-10"
+                    className="relative z-10 min-w-0"
                   >
                     <Badge
                       variant="outline"
-                      className="border-border text-foreground text-[10px] px-1.5 py-0 hover:bg-muted transition-colors"
+                      className="max-w-[180px] whitespace-nowrap border-border text-foreground text-[10px] px-1.5 py-0 hover:bg-muted transition-colors"
                     >
-                      <Building2 className="w-3 h-3 mr-0.5" />
-                      {consultant.organizationBadge.name}
+                      <Building2 className="w-3 h-3 mr-0.5 shrink-0" />
+                      <span className="truncate">
+                        {consultant.organizationBadge.name}
+                      </span>
                     </Badge>
                   </Link>
                 )}
@@ -263,11 +304,8 @@ export const ConsultantCard = memo(function ConsultantCard({
                     : null
                 }
               />
-              <ConsultantInfo
-                icon={MapPin}
-                label="Domain"
-                value={consultant.domain?.name}
-              />
+              {/* Domain moved to the labelled badge row below — it was stated
+                  twice, once here and once as the first badge. */}
             </div>
             {/* Languages */}
             {consultant.languages && consultant.languages.length > 0 && (
@@ -300,27 +338,32 @@ export const ConsultantCard = memo(function ConsultantCard({
               </div>
             )}
 
-          {/* Domain & Subdomains */}
-          <div className="flex flex-wrap gap-2">
-            {consultant.domain?.name && (
-              <Badge className="bg-primary text-primary-foreground hover:bg-primary/90 px-3 py-1">
-                {consultant.domain.name}
-              </Badge>
-            )}
-            {consultant.subDomains.slice(0, 2).map((sd) => (
-              <Badge
-                key={`${consultant.id}-subdomain-${sd.id}`}
-                variant="outline"
-                className="border-border text-muted-foreground px-3 py-1"
-              >
-                {sd.name}
-              </Badge>
-            ))}
-          </div>
+          {/* Domain & Subdomains. Labelled rather than a bare run of pills:
+              domain, subdomain and skill badges are visually interchangeable,
+              so without a label the reader can't tell which taxonomy they're
+              looking at. */}
+          {(consultant.domain?.name || consultant.subDomains.length > 0) && (
+            <BadgeRow label="Domain">
+              {consultant.domain?.name && (
+                <Badge className="bg-primary text-primary-foreground hover:bg-primary/90 px-3 py-1">
+                  {consultant.domain.name}
+                </Badge>
+              )}
+              {consultant.subDomains.slice(0, 2).map((sd) => (
+                <Badge
+                  key={`${consultant.id}-subdomain-${sd.id}`}
+                  variant="outline"
+                  className="border-border text-muted-foreground px-3 py-1"
+                >
+                  {sd.name}
+                </Badge>
+              ))}
+            </BadgeRow>
+          )}
 
           {/* Tags */}
           {consultant.tags.length > 0 && (
-            <div className="flex flex-wrap gap-2 mt-2">
+            <BadgeRow label="Skills">
               {consultant.tags.slice(0, 3).map((t) => (
                 <Badge
                   key={`${consultant.id}-tag-${t.id}`}
@@ -329,7 +372,7 @@ export const ConsultantCard = memo(function ConsultantCard({
                   {t.name}
                 </Badge>
               ))}
-            </div>
+            </BadgeRow>
           )}
         </div>
 
@@ -380,14 +423,22 @@ export const ConsultantCard = memo(function ConsultantCard({
                 <ArrowRight className="w-4 h-4 ml-2" />
               </Link>
             </Button>
-            <div className="grid grid-cols-2 gap-2">
-              <Button
-                asChild
-                variant="outline"
-                className="h-10 border-border hover:bg-muted text-muted-foreground rounded-xl text-sm font-medium"
-              >
-                <Link href={`${profileHref}?action=trial`}>Trial</Link>
-              </Button>
+            <div
+              className={`grid gap-2 ${trialOffer ? "grid-cols-2" : "grid-cols-1"}`}
+            >
+              {trialOffer && (
+                <Button
+                  asChild
+                  variant="outline"
+                  className="h-10 border-border hover:bg-muted text-muted-foreground rounded-xl text-sm font-medium"
+                >
+                  <Link href={`${profileHref}?action=trial`}>
+                    {trialOffer.priceInPaise > 0
+                      ? `Trial · ${formatPrice(trialOffer.priceInPaise)}`
+                      : "Free intro call"}
+                  </Link>
+                </Button>
+              )}
               <Button
                 asChild
                 variant="outline"

@@ -1266,3 +1266,52 @@
 [role="menu"] {
   z-index: 10001 !important;
 }
+
+/* ─── Reduced motion ──────────────────────────────────────────────────────
+ *
+ * `<MotionConfig reducedMotion="user">` only governs framer-motion; it cannot
+ * reach CSS keyframes. The decorative animations below are the ones that
+ * actually trigger vestibular discomfort — blurred blobs drifting behind
+ * heroes, floating cards, pulsing rings, sweeping shine and scan lines — and
+ * they run infinitely across ~11 surfaces, so they never stop on their own.
+ *
+ * Deliberately targeted rather than the blanket
+ * `*{animation-duration:0.01ms!important}` recipe: that also freezes the
+ * marquees mid-travel and flattens hover/focus transitions, which removes
+ * useful interaction feedback. Reveal-on-scroll animations are neutralised to
+ * their end state instead of removed, so content can't get stuck invisible.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .animate-blob,
+  .animate-float,
+  .animate-float-delayed,
+  .shimmer,
+  .shimmer-dark,
+  .count-up,
+  .pulse-ring::before,
+  .chrome-shine::after,
+  .scan-line::after {
+    animation: none !important;
+  }
+
+  /* Marquees carry CONTENT, not decoration. The track renders the list three
+     times inside an `overflow-hidden` section, so simply stopping the animation
+     clips everything past the first screenful with no way to reach it — worse
+     than the motion it avoids. Stop the travel and hand scrolling to the user
+     instead, so every item stays reachable. */
+  .animate-marquee,
+  .animate-marquee-reverse {
+    animation: none !important;
+    overflow-x: auto;
+    scrollbar-width: thin;
+  }
+
+  /* Entrance animations must settle VISIBLE — `animation: none` on a rule whose
+     keyframes start at opacity 0 would leave the content permanently hidden. */
+  .reveal-up,
+  .scale-in {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+}

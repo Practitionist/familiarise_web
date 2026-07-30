@@ -126,7 +126,7 @@ function FeaturedExpertsImpl({ experts, isLoading }: FeaturedExpertsProps) {
                         </h3>
                         {expert.isVerified && (
                           <span title="Verified by Familiarise">
-                            <BadgeCheck className="w-4 h-4 text-blue-500 flex-shrink-0" />
+                            <BadgeCheck className="w-4 h-4 text-foreground flex-shrink-0" />
                           </span>
                         )}
                       </div>

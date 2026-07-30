@@ -266,7 +266,8 @@ function mapTrial(t: TTrialWithPlan, now: Date): AppointmentVM {
       t.subscriptionPlan.trialDurationMinutes,
     ),
     organizationId: t.appointment?.organizationId ?? null,
-    pendingPaymentUrl: null,
+    // Paid trials carry a live pay-link while AWAITING_PAYMENT.
+    pendingPaymentUrl: t.pendingPaymentUrl ?? null,
     collaborators: [],
     collaboratorRole: null,
     raw: {
