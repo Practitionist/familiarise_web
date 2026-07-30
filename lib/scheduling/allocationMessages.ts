@@ -33,10 +33,10 @@ export function formatWeekKey(weekKey: string): string {
 
 // --- interactive selection guards ---
 
-export const weeklyLimitReached = (callsPerWeek: number): AllocationToast => ({
+export const weeklyLimitReached = (sessionsPerWeek: number): AllocationToast => ({
   variant: "destructive",
   title: "Weekly limit reached",
-  description: `You can only schedule ${callsPerWeek} session${plural(callsPerWeek)} per week. This week is full — choose a different week.`,
+  description: `You can only schedule ${sessionsPerWeek} session${plural(sessionsPerWeek)} per week. This week is full — choose a different week.`,
 });
 
 export const dailyLimitReached = (maxPerDay: number): AllocationToast => ({

@@ -52,7 +52,7 @@ export interface UnscheduledClassLike {
   classPlan: {
     id: string;
     title: string;
-    meetingsPerWeek: number;
+    sessionsPerWeek: number;
     sessionDurationInHours: number;
     totalSessions: number;
     consultantProfile?: { user?: { name: string; image: string | null } };
@@ -320,7 +320,7 @@ function mapUnscheduledClass(
     nextAt: null,
     sessions: [],
     group: { total: plan.totalSessions, completed: 0 },
-    meta: `${plan.meetingsPerWeek} meeting${plan.meetingsPerWeek !== 1 ? "s" : ""}/week · ${plan.totalSessions} sessions · ${plan.sessionDurationInHours}h each`,
+    meta: `${plan.sessionsPerWeek} meeting${plan.sessionsPerWeek !== 1 ? "s" : ""}/week · ${plan.totalSessions} sessions · ${plan.sessionDurationInHours}h each`,
     organizationId: null,
     pendingPaymentUrl: null,
     collaborators: [],

@@ -2,6 +2,12 @@
 
 import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  CurriculumOutline,
+  PlanFaqAccordion,
+  TargetAudience,
+  WhatsIncluded,
+} from "@/components/plans/PlanContentSections";
 import { Badge } from "@/components/ui/badge";
 import Image from "next/image";
 import Link from "next/link";
@@ -113,7 +119,7 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
               <FeatureItem
                 icon={<Clock className="h-5 w-5" />}
                 label="Weekly"
-                value={`${plan.meetingsPerWeek} sessions`}
+                value={`${plan.sessionsPerWeek} sessions`}
               />
               <FeatureItem
                 icon={<Users className="h-5 w-5" />}
@@ -140,7 +146,9 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
                 <div className="grid grid-cols-2 gap-4 mt-6 pt-6 border-t border-border">
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">
                     <Video className="h-4 w-4 text-muted-foreground/70" />
-                    <span>{plan.materialProvided ?? "Zoom"}</span>
+                    {/* Was `plan.materialProvided ?? "Zoom"` — handouts shown
+                        under a video icon as if they were the platform. */}
+                    <span>Live online sessions</span>
                   </div>
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">
                     <Globe className="h-4 w-4 text-muted-foreground/70" />
@@ -163,6 +171,7 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
             </Card>
 
             {/* What You'll Learn */}
+            {plan.learningOutcomes.length > 0 && (
             <Card className="border-border shadow-sm">
               <CardContent className="p-6 md:p-8">
                 <h2 className="text-xl font-semibold text-foreground mb-4">
@@ -178,6 +187,18 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
                 </div>
               </CardContent>
             </Card>
+            )}
+
+            {/* Who this is for / What's included */}
+            {(plan.targetAudience.length > 0 ||
+              plan.whatsIncluded.length > 0) && (
+              <Card className="border-border shadow-sm">
+                <CardContent className="p-6 md:p-8 space-y-6">
+                  <TargetAudience items={plan.targetAudience} />
+                  <WhatsIncluded items={plan.whatsIncluded} />
+                </CardContent>
+              </Card>
+            )}
 
             {/* Prerequisites */}
             <Card className="border-border shadow-sm">
@@ -195,33 +216,24 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
             {/* Course Content */}
             <Card className="border-border shadow-sm">
               <CardContent className="p-6 md:p-8">
-                <h2 className="text-xl font-semibold text-foreground mb-6">
-                  Course Content
-                </h2>
-                <div className="space-y-4">
-                  {plan.classContents.map((content, index) => (
-                    <div
-                      key={content.id}
-                      className="flex items-start gap-4 p-4 bg-muted rounded-xl hover:bg-muted/70 transition-colors"
-                    >
-                      <div className="w-10 h-10 rounded-lg bg-primary text-primary-foreground flex items-center justify-center font-semibold text-sm flex-shrink-0">
-                        {index + 1}
-                      </div>
-                      <div className="min-w-0">
-                        <h3 className="font-semibold text-foreground">
-                          {content.title}
-                        </h3>
-                        <p className="text-sm text-muted-foreground mt-1">
-                          {content.description}
-                        </p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                <CurriculumOutline
+                  items={plan.classContents}
+                  title="Course content"
+                />
               </CardContent>
             </Card>
 
+            {/* FAQ */}
+            {plan.faqs.length > 0 && (
+              <Card className="border-border shadow-sm">
+                <CardContent className="p-6 md:p-8">
+                  <PlanFaqAccordion faqs={plan.faqs} />
+                </CardContent>
+              </Card>
+            )}
+
             {/* Topics */}
+            {plan.topics.length > 0 && (
             <Card className="border-border shadow-sm">
               <CardContent className="p-6 md:p-8">
                 <h2 className="text-xl font-semibold text-foreground mb-4">
@@ -239,6 +251,7 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
                 </div>
               </CardContent>
             </Card>
+            )}
 
             {/* Schedule */}
             <Card className="border-border shadow-sm">

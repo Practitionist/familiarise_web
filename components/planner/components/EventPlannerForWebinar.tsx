@@ -1,5 +1,6 @@
 "use client";
 
+import { PlanLevel } from "@prisma/client";
 import * as Sentry from "@sentry/nextjs";
 import { useState, useEffect, useCallback } from "react";
 import { useForm } from "react-hook-form";
@@ -37,9 +38,10 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
-import { WebinarPlanSchema } from "@/schemas/plans";
+import { WebinarPlanSchema, planPositioningShape } from "@/schemas/plans";
 
 import { FormSection } from "./form-fields/FormSection";
+import { PositioningSections } from "./form-fields/PositioningSections";
 import { LearningOutcomesField } from "./form-fields/LearningOutcomesField";
 import { PriceField } from "./form-fields/PriceField";
 import { LanguageLevelFields } from "./form-fields/LanguageLevelFields";
@@ -61,7 +63,7 @@ const WebinarFormSchema = z.object({
   priceCurrency: z.string().min(1, "Currency is required"),
   maxParticipants: z.number().min(1, "At least one participant is required"),
   language: z.string().min(1, "Language is required"),
-  level: z.string().min(1, "Level is required"),
+  level: z.nativeEnum(PlanLevel),
   prerequisites: z.string().optional().nullable(),
   materialProvided: z.string().optional().nullable(),
   learningOutcomes: z
@@ -74,9 +76,13 @@ const WebinarFormSchema = z.object({
   recordingStoragePolicy: z.enum(["STREAM_ONLY", "SUPABASE_PERMANENT"]),
   durationInHours: z.number().min(0.5, "Duration must be at least 30 minutes"),
   scheduledAt: z.string().min(1, "Start time is required"),
+  ...planPositioningShape,
 });
 
-type WebinarFormValues = z.infer<typeof WebinarFormSchema>;
+// Deliberately not parameterised with `z.infer` at the useForm call below:
+// the positioning fields carry `.default([])`, so the schema's input and
+// output types diverge and pinning the output type rejects the resolver.
+// Inference picks the right one, which is what the other planners do.
 
 export function EventPlannerForWebinar({
   isOpen,
@@ -162,7 +168,7 @@ export function EventPlannerForWebinar({
     return formatDateTimeForInput();
   }, [initialData]);
 
-  const form = useForm<WebinarFormValues>({
+  const form = useForm({
     resolver: zodResolver(WebinarFormSchema),
     defaultValues: {
       title: initialData?.webinarPlan?.title ?? "",
@@ -175,7 +181,7 @@ export function EventPlannerForWebinar({
         initialData?.webinarPlan?.maxParticipants ??
         100,
       language: initialData?.webinarPlan?.language ?? "English",
-      level: initialData?.webinarPlan?.level ?? "Beginner",
+      level: initialData?.webinarPlan?.level ?? PlanLevel.BEGINNER,
       prerequisites: initialData?.webinarPlan?.prerequisites ?? "",
       materialProvided: initialData?.webinarPlan?.materialProvided ?? "",
       learningOutcomes: initialData?.webinarPlan?.learningOutcomes ?? [],
@@ -185,6 +191,10 @@ export function EventPlannerForWebinar({
       recordingStoragePolicy:
         initialData?.webinarPlan?.recordingStoragePolicy ?? "STREAM_ONLY",
       topics: initialData?.webinarPlan?.topics ?? [],
+      subtitle: initialData?.webinarPlan?.subtitle ?? "",
+      targetAudience: initialData?.webinarPlan?.targetAudience ?? [],
+      whatsIncluded: initialData?.webinarPlan?.whatsIncluded ?? [],
+      faqs: initialData?.webinarPlan?.faqs ?? [],
       scheduledAt: getInitialScheduledAt(),
       consultantProfileId: consultantId,
     },
@@ -203,7 +213,7 @@ export function EventPlannerForWebinar({
           initialData.maxParticipants ??
           initialData.webinarPlan.maxParticipants,
         language: initialData.webinarPlan.language ?? "English",
-        level: initialData.webinarPlan.level ?? "Beginner",
+        level: initialData.webinarPlan.level ?? PlanLevel.BEGINNER,
         prerequisites: initialData.webinarPlan.prerequisites ?? "",
         materialProvided: initialData.webinarPlan.materialProvided ?? "",
         learningOutcomes: initialData.webinarPlan.learningOutcomes ?? [],
@@ -213,6 +223,10 @@ export function EventPlannerForWebinar({
         recordingStoragePolicy:
           initialData.webinarPlan.recordingStoragePolicy ?? "STREAM_ONLY",
         topics: initialData.webinarPlan.topics ?? [],
+        subtitle: initialData.webinarPlan.subtitle ?? "",
+        targetAudience: initialData.webinarPlan.targetAudience ?? [],
+        whatsIncluded: initialData.webinarPlan.whatsIncluded ?? [],
+        faqs: initialData.webinarPlan.faqs ?? [],
         scheduledAt: getInitialScheduledAt(),
         consultantProfileId: consultantId,
       });
@@ -297,11 +311,20 @@ export function EventPlannerForWebinar({
           durationInHours: formData.durationInHours,
           maxParticipants: formData.maxParticipants,
           language: formData.language ?? "English",
-          level: formData.level ?? "Beginner",
+          level: formData.level ?? PlanLevel.BEGINNER,
           prerequisites: formData.prerequisites ?? null,
           materialProvided: formData.materialProvided ?? null,
           learningOutcomes: formData.learningOutcomes,
           topics: formData.topics,
+          subtitle: formData.subtitle || null,
+          targetAudience: formData.targetAudience ?? [],
+          whatsIncluded: formData.whatsIncluded ?? [],
+          faqs: (formData.faqs ?? []).map((faq, index) => ({
+            ...faq,
+            id: faq.id || "",
+            order: faq.order ?? index,
+          })),
+          slug: initialData?.webinarPlan?.slug ?? null,
           consultantProfileId: consultantId,
           consultantProfile: null,
           organizationId,
@@ -440,6 +463,11 @@ export function EventPlannerForWebinar({
                     )}
                   />
                 </FormSection>
+
+                <PositioningSections
+                  control={form.control}
+                  offeringNoun="webinar"
+                />
 
                 {/* Scheduling Section */}
                 <FormSection

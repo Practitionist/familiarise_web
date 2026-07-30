@@ -872,7 +872,7 @@ export class SlotValidationService {
     const warnings: string[] = [];
 
     // Validate configuration
-    if (!config.callsPerWeek) {
+    if (!config.sessionsPerWeek) {
       return {
         isValid: false,
         errors: [
@@ -994,9 +994,9 @@ export class SlotValidationService {
       const proposedSessions = Math.floor(weekSlots.length / slotsPerSession);
       const sessionsThisWeek =
         proposedSessions + (existingSessionsPerWeek.get(weekKey) || 0);
-      if (sessionsThisWeek > config.callsPerWeek!) {
+      if (sessionsThisWeek > config.sessionsPerWeek!) {
         errors.push(
-          `[WEEKLY_LIMIT] Week of ${weekKey} has ${sessionsThisWeek} sessions but max is ${config.callsPerWeek}`,
+          `[WEEKLY_LIMIT] Week of ${weekKey} has ${sessionsThisWeek} sessions but max is ${config.sessionsPerWeek}`,
         );
       }
     });

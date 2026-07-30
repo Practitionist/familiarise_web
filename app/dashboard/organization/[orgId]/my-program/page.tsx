@@ -18,6 +18,7 @@ import Link from "next/link";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { getMyProgramData } from "@/lib/data/org-member-program";
+import { getOrgMemberCatalog } from "@/lib/data/org-member-catalog";
 import {
   DashboardHeader,
   DashboardContent,
@@ -65,6 +66,12 @@ export default async function MyProgramPage({
     userId: access.member.userId,
     consulteeProfileId: access.member.consulteeProfileId,
   });
+
+  // The org's own offerings. Separate from Programs: a Program is the
+  // entitlement that FUNDS a booking, this is the catalog of things to book.
+  // Only reachable here — ORG_ONLY plans are filtered out of /explore/** by
+  // design, so without this panel they have no buyer-facing surface at all.
+  const orgCatalog = await getOrgMemberCatalog(orgId);
 
   // Stay inside the org dashboard. This used to deep-link into the personal
   // consultee dashboard with `?orgScope=<orgId>`, which stopped working when
@@ -397,10 +404,54 @@ export default async function MyProgramPage({
           </p>
         </section>
       )}
+      {orgCatalog.length > 0 && (
+        <section className="space-y-3">
+          <div>
+            <h2 className="font-medium">Offered by {access.org.name}</h2>
+            <p className="text-sm text-muted-foreground">
+              Sessions and programmes this organisation runs itself.
+            </p>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {orgCatalog.map((plan) => (
+              <Link
+                key={`${plan.planType}-${plan.id}`}
+                href={`/checkout/plans/${CATALOG_CHECKOUT_FAMILY[plan.planType]}/${plan.id}`}
+                className="block rounded-lg border bg-card p-4 hover:border-muted-foreground/30 hover:shadow-sm transition-all"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <p className="font-medium text-sm">{plan.title}</p>
+                  {plan.isMembersOnly && (
+                    <span className="shrink-0 text-[10px] uppercase tracking-wide rounded px-1.5 py-0.5 bg-muted text-muted-foreground">
+                      Members only
+                    </span>
+                  )}
+                </div>
+                {(plan.subtitle || plan.description) && (
+                  <p className="text-xs text-muted-foreground line-clamp-2 mt-1">
+                    {plan.subtitle || plan.description}
+                  </p>
+                )}
+                <p className="text-xs font-semibold text-muted-foreground mt-2">
+                  {formatCurrencyAmount(Number(plan.price), plan.priceCurrency)}
+                </p>
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
       </DashboardContent>
     </>
   );
 }
+
+// Plan family -> checkout route segment, mirroring the public org page.
+const CATALOG_CHECKOUT_FAMILY: Record<string, string> = {
+  CONSULTATION: "consultation",
+  SUBSCRIPTION: "subscription",
+  WEBINAR: "webinar",
+  CLASS: "class",
+};
 
 function EmptyState({ orgId }: { orgId: string }) {
   return (

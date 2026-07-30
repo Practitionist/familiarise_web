@@ -64,21 +64,21 @@ const FUTURE_SUNDAY = "2026-08-02T09:00:00.000Z"; // Sunday, comfortably future
 
 describe("auto-allocate output passes manual validation (UTC bucketing)", () => {
   it.each([
-    { callsPerWeek: 1, sessionDurationInHours: 1 },
-    { callsPerWeek: 2, sessionDurationInHours: 1.5 },
-    { callsPerWeek: 3, sessionDurationInHours: 0.5 },
+    { sessionsPerWeek: 1, sessionDurationInHours: 1 },
+    { sessionsPerWeek: 2, sessionDurationInHours: 1.5 },
+    { sessionsPerWeek: 3, sessionDurationInHours: 0.5 },
   ])(
     "subscription %o: picked slots satisfy every manual validator",
-    async ({ callsPerWeek, sessionDurationInHours }) => {
+    async ({ sessionsPerWeek, sessionDurationInHours }) => {
       const startDate = new Date("2026-08-02T00:00:00.000Z"); // Sunday
       const endDate = new Date("2026-08-29T23:59:59.000Z"); // Saturday (4 weeks)
-      const totalSessions = 4 * callsPerWeek;
+      const totalSessions = 4 * sessionsPerWeek;
       const slotsPerCall = Math.ceil(sessionDurationInHours / 0.5);
 
       const options: AllocationOptions = {
         eventType: "subscription",
         eventId: "sub-1",
-        callsPerWeek,
+        sessionsPerWeek,
         sessionDurationInHours,
         startDate,
         endDate,
@@ -97,7 +97,7 @@ describe("auto-allocate output passes manual validation (UTC bucketing)", () => 
 
       // The same selection must pass the interactive validators…
       const validationOptions = {
-        callsPerWeek,
+        sessionsPerWeek,
         sessionDurationInHours,
         maxTotalCalls: totalSessions,
         startDate,
@@ -118,7 +118,7 @@ describe("auto-allocate output passes manual validation (UTC bucketing)", () => 
       // …and the manual-allocate weekly distribution check…
       const distribution = validateSlotDistribution(
         picked,
-        callsPerWeek * slotsPerCall,
+        sessionsPerWeek * slotsPerCall,
       );
       expect(distribution.isValid).toBe(true);
 
@@ -136,7 +136,7 @@ describe("auto-allocate output passes manual validation (UTC bucketing)", () => 
     const options: AllocationOptions = {
       eventType: "subscription",
       eventId: "sub-tz",
-      callsPerWeek: 1,
+      sessionsPerWeek: 1,
       sessionDurationInHours: 1,
       startDate,
       endDate,
@@ -152,7 +152,7 @@ describe("auto-allocate output passes manual validation (UTC bucketing)", () => 
     expect(result.success).toBe(true);
 
     const validationOptions = {
-      callsPerWeek: 1,
+      sessionsPerWeek: 1,
       sessionDurationInHours: 1,
       maxTotalCalls: 4,
       startDate,
@@ -186,7 +186,7 @@ describe("auto-allocate output passes manual validation (UTC bucketing)", () => 
     const options: AllocationOptions = {
       eventType: "class",
       eventId: "class-1",
-      callsPerWeek: 2,
+      sessionsPerWeek: 2,
       sessionDurationInHours: 1,
       startDate,
       endDate,
@@ -211,7 +211,7 @@ describe("required-count parity across the three modes", () => {
   const base: AllocationOptions = {
     eventType: "subscription",
     eventId: "sub-1",
-    callsPerWeek: 1,
+    sessionsPerWeek: 1,
     sessionDurationInHours: 1,
     startDate: new Date("2026-08-02T00:00:00.000Z"),
     endDate: new Date("2026-08-29T23:59:59.000Z"),
@@ -283,7 +283,7 @@ describe("getSlotLimits defensive bounds", () => {
       maxTotalCalls: 4,
       // 6 past sessions × 2 atoms — more than the plan's 4 sessions
       pastConfirmedSlotCount: 12,
-      callsPerWeek: 1,
+      sessionsPerWeek: 1,
       startDate: new Date("2026-08-02T00:00:00.000Z"),
       endDate: new Date("2026-08-29T23:59:59.000Z"),
     });

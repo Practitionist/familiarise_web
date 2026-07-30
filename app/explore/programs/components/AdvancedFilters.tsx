@@ -12,6 +12,8 @@ import {
 import { Search, LayoutGrid, List, SlidersHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { TopicWithCount, ProgramFilters } from "@/lib/explore/programs";
+import { planLevelLabel } from "@/lib/labels/plan-labels";
+import { PlanLevel } from "@prisma/client";
 import { memo, useEffect, useRef, useState } from "react";
 
 interface AdvancedFiltersProps {
@@ -21,7 +23,7 @@ interface AdvancedFiltersProps {
   onLocalSearchChange: (value: string) => void;
   selectedLevel: string;
   onLevelChange: (level: string) => void;
-  uniqueLevels: string[];
+  uniqueLevels: PlanLevel[];
   viewMode: "grid" | "list";
   onViewModeChange: (mode: "grid" | "list") => void;
   topics: TopicWithCount[];
@@ -227,7 +229,7 @@ function AdvancedFiltersImpl({
               <SelectItem value="all">All Levels</SelectItem>
               {uniqueLevels.map((level) => (
                 <SelectItem key={level} value={level}>
-                  {level}
+                  {planLevelLabel(level)}
                 </SelectItem>
               ))}
             </SelectContent>

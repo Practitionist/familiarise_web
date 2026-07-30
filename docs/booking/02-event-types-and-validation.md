@@ -10,7 +10,7 @@
 | **Slot grouping**        | Consecutive + same day    | 1 call/day max, consecutive within day                   | Consecutive               | Max 2-3 sessions/day, consecutive within session            | Single slot                      |
 | **Scheduling period**    | None                      | Required [startDate, endDate]                            | None                      | Required [startDate, endDate]                               | None                             |
 | **Appointments created** | 1                         | 1 per call (many)                                        | 1                         | 1 per session (many)                                        | 1                                |
-| **Weekly limit**         | N/A                       | `callsPerWeek` (0-7)                                     | N/A                       | `meetingsPerWeek`                                           | N/A                              |
+| **Weekly limit**         | N/A                       | `sessionsPerWeek` (0-7)                                     | N/A                       | `sessionsPerWeek`                                           | N/A                              |
 | **Status field**         | `status`           | `status`                                          | `status`                  | `status`                                                    | `status` (TrialSessionStatus)    |
 | **Allocation modes**     | auto, manual, requested   | auto, manual, requested                                  | auto, manual              | auto, manual                                                | Consultant-scheduled             |
 | **Min duration**         | 0.5h                      | 0.5h per session                                         | 0.5h                      | 0.5h per session                                            | 0.5h (fixed)                     |
@@ -51,15 +51,15 @@ flowchart TD
 
 Recurring sessions over a period of months. Most complex event type.
 
-**Config**: `sessionDurationInHours` (per call) + `durationInMonths` + `callsPerWeek` (0-7) + `schedulingPeriodStartsAt/EndsAt`
-**Total calls**: `countWeeks(startDate, endDate) * callsPerWeek`
+**Config**: `sessionDurationInHours` (per call) + `durationInMonths` + `sessionsPerWeek` (0-7) + `schedulingPeriodStartsAt/EndsAt`
+**Total calls**: `countWeeks(startDate, endDate) * sessionsPerWeek`
 **Total slots**: `totalCalls * Math.ceil(sessionDurationInHours / 0.5)`
 
 **Rules**:
 
 - All slots within scheduling period [startDate, endDate]
 - Max 1 call per **scheduling-timezone** day (consecutive slots within that call). The same-day check buckets by `SlotCalculationService.dayKey()` in the event's `schedulingTimezone` (default Asia/Kolkata) on both the client and the server (ADR B9), so the verdict is identical everywhere; the old browser-local `toDateString()` bucketing disagreed with the server's for slots near day boundaries.
-- Weekly limit: `callsPerWeek` calls per Sunday-Saturday **scheduling-timezone** week (`SlotCalculationService.weekKey()`)
+- Weekly limit: `sessionsPerWeek` calls per Sunday-Saturday **scheduling-timezone** week (`SlotCalculationService.weekKey()`)
 - Weekly distribution validation counts **calls** (complete session groups), not raw slots
 
 **Important**: Total weeks uses `SlotCalculationService.countWeeks()`, not `durationInMonths * 4`. A 6-month subscription has ~26 weeks, not 24.
@@ -101,8 +101,8 @@ Single one-time event with multiple attendees.
 
 Recurring sessions with multiple attendees over months.
 
-**Config**: `sessionDurationInHours` (per session) + `durationInMonths` + `meetingsPerWeek`
-**Total sessions**: `countWeeks(startDate, endDate) * meetingsPerWeek`
+**Config**: `sessionDurationInHours` (per session) + `durationInMonths` + `sessionsPerWeek`
+**Total sessions**: `countWeeks(startDate, endDate) * sessionsPerWeek`
 **Rules**: Complete sessions per day (slot count % slotsPerSession == 0), consecutive within day, weekly session limit, scheduling period.
 
 ```mermaid

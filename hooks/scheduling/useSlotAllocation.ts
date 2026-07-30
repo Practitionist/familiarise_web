@@ -78,7 +78,7 @@ export interface UseEventSlotAllocationOptions {
   sessionDurationInHours?: number;
 
   /** Number of calls per week for subscriptions/classes */
-  callsPerWeek?: number;
+  sessionsPerWeek?: number;
 
   /** Maximum hours per day for classes (default: 4) */
   maxHoursPerDay?: number;
@@ -408,7 +408,7 @@ export function useEventSlotAllocation(
       rawRequired = calculateRequiredSlots(
         eventType,
         options.durationInMonths,
-        options.callsPerWeek,
+        options.sessionsPerWeek,
         duration,
         options.startDate,
         options.endDate,
@@ -427,7 +427,7 @@ export function useEventSlotAllocation(
     eventType,
     options.maxTotalCalls,
     options.durationInMonths,
-    options.callsPerWeek,
+    options.sessionsPerWeek,
     options.durationInHours,
     options.sessionDurationInHours,
     options.startDate,
@@ -555,7 +555,7 @@ export function useEventSlotAllocation(
           // Subscription: weekly-limit and complete-call guards
           if (eventType === "subscription") {
             const slotsPerCall = slotLimits.slotsPerSession;
-            const callsPerWeek = options.callsPerWeek || 1;
+            const sessionsPerWeek = options.sessionsPerWeek || 1;
 
             // Determine week/day for the slot being added
             const targetWeekKey = weekKey(slot.startTime, options.schedulingTimezone);
@@ -586,9 +586,9 @@ export function useEventSlotAllocation(
             // If starting a NEW day and weekly limit already reached → block immediately
             if (
               preDaySlots.length === 0 &&
-              completeCallsThisWeek >= callsPerWeek
+              completeCallsThisWeek >= sessionsPerWeek
             ) {
-              queueToast(weeklyLimitReached(callsPerWeek));
+              queueToast(weeklyLimitReached(sessionsPerWeek));
               return currentSlots;
             }
 
@@ -596,9 +596,9 @@ export function useEventSlotAllocation(
             if (
               preDaySlots.length > 0 &&
               isCompleteCall([...preDaySlots, slot], slotsPerCall) &&
-              completeCallsThisWeek >= callsPerWeek
+              completeCallsThisWeek >= sessionsPerWeek
             ) {
-              queueToast(weeklyLimitReached(callsPerWeek));
+              queueToast(weeklyLimitReached(sessionsPerWeek));
               return currentSlots;
             }
 
@@ -717,7 +717,7 @@ export function useEventSlotAllocation(
           // Subscription: per-day consecutiveness and progress feedback
           if (eventType === "subscription" && options.sessionDurationInHours) {
             const slotsPerCall = slotLimits.slotsPerSession;
-            const callsPerWeek = options.callsPerWeek || 1;
+            const sessionsPerWeek = options.sessionsPerWeek || 1;
             const maxTotalCalls = slotLimits.maxSlots;
 
             const slotsByDay = groupSlotsByDay(
@@ -750,15 +750,15 @@ export function useEventSlotAllocation(
             // Get current day slots plus the new slot
             const dayWithNewSlot = [...(slotsByDay.get(targetDayKey) || [])];
 
-            // Block if adding this slot COMPLETES a call and the week is already at its callsPerWeek limit
+            // Block if adding this slot COMPLETES a call and the week is already at its sessionsPerWeek limit
             const existingCallsThisWeek =
               existingWeeklyConfirmedCallCounts.get(targetWeekKey) || 0;
             if (
               dayWithNewSlot.length === slotsPerCall &&
               isCompleteCall(dayWithNewSlot, slotsPerCall) &&
-              existingCallsThisWeek >= callsPerWeek
+              existingCallsThisWeek >= sessionsPerWeek
             ) {
-              queueToast(weeklyLimitReached(callsPerWeek));
+              queueToast(weeklyLimitReached(sessionsPerWeek));
               return currentSlots;
             }
 
@@ -924,7 +924,7 @@ export function useEventSlotAllocation(
         eventType,
         eventId,
         durationInMonths: options.durationInMonths,
-        callsPerWeek: options.callsPerWeek,
+        sessionsPerWeek: options.sessionsPerWeek,
         sessionDurationInHours: sessionDuration,
         startDate: options.startDate,
         endDate: options.endDate,
@@ -1089,7 +1089,7 @@ export function useEventSlotAllocation(
           eventType,
           eventId,
           durationInMonths: options.durationInMonths,
-          callsPerWeek: options.callsPerWeek,
+          sessionsPerWeek: options.sessionsPerWeek,
           sessionDurationInHours: sessionDuration,
           startDate: options.startDate,
           endDate: options.endDate,

@@ -91,8 +91,8 @@ Always use `SlotCalculationService.countWeeks()`.
 | ------------ | ----------------------------------------------------------------------------- | --------------------------------------------------- |
 | Consultation | `Math.ceil(durationInHours / 0.5)`                                            | 1.5h = 3 slots                                      |
 | Webinar      | `Math.ceil(durationInHours / 0.5)`                                            | 2h = 4 slots                                        |
-| Subscription | `countWeeks(start, end) * callsPerWeek * Math.ceil(sessionDuration / 0.5)`    | 5 weeks, 2/week, 1h sessions = 5 _ 2 _ 2 = 20 slots |
-| Class        | `countWeeks(start, end) * meetingsPerWeek * Math.ceil(sessionDuration / 0.5)` | Same formula                                        |
+| Subscription | `countWeeks(start, end) * sessionsPerWeek * Math.ceil(sessionDuration / 0.5)`    | 5 weeks, 2/week, 1h sessions = 5 _ 2 _ 2 = 20 slots |
+| Class        | `countWeeks(start, end) * sessionsPerWeek * Math.ceil(sessionDuration / 0.5)` | Same formula                                        |
 
 ## Consecutive Slot Validation
 
@@ -151,7 +151,7 @@ For one-time events (consultation, webinar):
 For recurring events (subscription, class):
 
 - `scheduled = countCompletedCalls(selectedSlots, slotsPerCall)`
-- `required = countWeeks(start, end) * callsPerWeek`
+- `required = countWeeks(start, end) * sessionsPerWeek`
 
 **`countCompletedCalls`** groups slots by day, sorts within each day, and counts complete consecutive groups of `slotsPerCall` slots. It counts **calls** (complete session groups), not individual slots.
 

@@ -115,7 +115,7 @@ describe("AllocationAlgorithms.manualAllocate", () => {
     expect(result.success).toBe(true);
   });
 
-  it("should require callsPerWeek for subscription", async () => {
+  it("should require sessionsPerWeek for subscription", async () => {
     const slots = makeFutureConsecutiveSlots("2025-06-01T09:00:00Z", 2);
     const result = await AllocationAlgorithms.manualAllocate(slots as any, {
       eventType: "subscription",
@@ -130,7 +130,7 @@ describe("AllocationAlgorithms.manualAllocate", () => {
 
   it("should validate slot distribution for subscriptions", async () => {
     // 4 slots total (matches required: 0.5hr × 1 call/wk × 4 weeks = 4 slots)
-    // but 3 are in the same week → exceeds callsPerWeek = 1
+    // but 3 are in the same week → exceeds sessionsPerWeek = 1
     const slots = [
       makeTimeSlot("2025-06-02T09:00:00Z", "2025-06-02T09:30:00Z"),
       makeTimeSlot("2025-06-03T09:00:00Z", "2025-06-03T09:30:00Z"),
@@ -142,7 +142,7 @@ describe("AllocationAlgorithms.manualAllocate", () => {
       eventType: "subscription",
       eventId: "event-1",
       durationInHours: 0.5,
-      callsPerWeek: 1,
+      sessionsPerWeek: 1,
       startDate: new Date("2025-06-01"),
       endDate: new Date("2025-06-28"),
     });
@@ -190,7 +190,7 @@ describe("AllocationAlgorithms.manualAllocate", () => {
         eventType: "class",
         eventId: "class-1",
         sessionDurationInHours: 1,
-        callsPerWeek: 2,
+        sessionsPerWeek: 2,
         durationInMonths: 1,
         startDate: new Date("2025-05-01"),
         endDate: new Date("2025-06-30"),
@@ -211,7 +211,7 @@ describe("AllocationAlgorithms.manualAllocate", () => {
         eventType: "class",
         eventId: "class-1",
         sessionDurationInHours: 1,
-        callsPerWeek: 2,
+        sessionsPerWeek: 2,
         durationInMonths: 1,
         startDate: new Date("2025-05-01"),
         endDate: new Date("2025-06-30"),
@@ -234,7 +234,7 @@ describe("AllocationAlgorithms.manualAllocate", () => {
         eventType: "subscription",
         eventId: "sub-1",
         sessionDurationInHours: 1,
-        callsPerWeek: 2,
+        sessionsPerWeek: 2,
         durationInMonths: 1,
         startDate: new Date("2025-05-01"),
         endDate: new Date("2025-06-30"),
@@ -255,7 +255,7 @@ describe("AllocationAlgorithms.manualAllocate", () => {
         eventType: "subscription",
         eventId: "sub-1",
         sessionDurationInHours: 1,
-        callsPerWeek: 2,
+        sessionsPerWeek: 2,
         durationInMonths: 1,
         startDate: new Date("2025-05-01"),
         endDate: new Date("2025-06-30"),
@@ -375,7 +375,7 @@ describe("AllocationAlgorithms.autoAllocate", () => {
         eventType: "subscription",
         eventId: "event-1",
         sessionDurationInHours: 1,
-        callsPerWeek: 1,
+        sessionsPerWeek: 1,
       });
       // Missing startDate/endDate → allocateRecurringSlots returns []
       expect(result.success).toBe(false);
@@ -391,7 +391,7 @@ describe("AllocationAlgorithms.autoAllocate", () => {
         eventType: "subscription",
         eventId: "event-1",
         sessionDurationInHours: 1,
-        callsPerWeek: 1,
+        sessionsPerWeek: 1,
         startDate: new Date("2025-06-01"),
         endDate: new Date("2025-06-14"),
       });
@@ -416,7 +416,7 @@ describe("AllocationAlgorithms.autoAllocate", () => {
         eventType: "subscription",
         eventId: "event-1",
         sessionDurationInHours: 0.5, // slotsPerCall = 1
-        callsPerWeek: 2,
+        sessionsPerWeek: 2,
         totalSessions: 2,
         startDate: new Date("2025-06-02T00:00:00Z"),
         endDate: new Date("2025-06-08T00:00:00Z"),
@@ -441,7 +441,7 @@ describe("AllocationAlgorithms.autoAllocate", () => {
         eventType: "class",
         eventId: "event-1",
         sessionDurationInHours: 0.5,
-        callsPerWeek: 2,
+        sessionsPerWeek: 2,
         totalSessions: 2,
         startDate: new Date("2025-06-02T00:00:00Z"),
         endDate: new Date("2025-06-08T00:00:00Z"),

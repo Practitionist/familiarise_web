@@ -46,13 +46,14 @@ export function marketplaceVisibilityWhere() {
 }
 
 /**
- * Discovery filter for the two ARCHIVABLE plan types (WebinarPlan, ClassPlan).
+ * Full discovery filter: publicly visible AND not withdrawn from sale.
  *
- * `marketplaceVisibilityWhere()` cannot carry this: it is also spread into
- * ConsultationPlan and SubscriptionPlan queries, and those models have no
- * `archivedAt` column — Prisma would reject the filter. So the two gates live
- * side by side here rather than one being inlined at eight call sites, for the
- * same auditability reason the header gives.
+ * This used to apply only to WebinarPlan and ClassPlan, because they were the
+ * only models with an `archivedAt` column and Prisma rejects a filter naming a
+ * column the model lacks. ConsultationPlan and SubscriptionPlan now carry it
+ * too, so this is the correct filter for all four and
+ * `marketplaceVisibilityWhere()` is the narrower one — use it only where
+ * archived rows are deliberately in scope.
  *
  * Archived means withdrawn from sale. The row is kept because it carries the
  * terms of every booking made against it, and because the plan FK chain

@@ -579,7 +579,7 @@ export class SlotAllocationService {
 
       // Find available slots (read-only; runs out-of-txn under the locks)
       // Pass appointmentIdsToExclude so their slots are excluded from bookedSlots
-      // Pass existingAppointments so callsPerWeek is scoped to this event only
+      // Pass existingAppointments so sessionsPerWeek is scoped to this event only
       const selectedSlots = await this.findAvailableSlots(
         prisma,
         consultant,
@@ -1537,7 +1537,7 @@ export class SlotAllocationService {
     const endDate =
       config.schedulingPeriodEndsAt ||
       addMonths(startDate, config.durationInMonths || 1);
-    const callsPerWeek = config.callsPerWeek || 1;
+    const sessionsPerWeek = config.sessionsPerWeek || 1;
 
     // Build a map of existing confirmed calls per week.
     // During partial reschedule, weeks with confirmed appointments already
@@ -1581,7 +1581,7 @@ export class SlotAllocationService {
       );
       let callsThisWeek = existingCallsPerWeek.get(weekKey) || 0;
 
-      for (let day = 0; day < 7 && callsThisWeek < callsPerWeek; day++) {
+      for (let day = 0; day < 7 && callsThisWeek < sessionsPerWeek; day++) {
         const currentDay = new Date(currentWeek);
         currentDay.setUTCDate(currentDay.getUTCDate() + day);
 
@@ -2586,7 +2586,7 @@ export class SlotAllocationService {
         consultantProfile = event.subscriptionPlan?.consultantProfile;
         config = {
           durationInMonths: event.subscriptionPlan?.durationInMonths,
-          callsPerWeek: event.subscriptionPlan?.callsPerWeek,
+          sessionsPerWeek: event.subscriptionPlan?.sessionsPerWeek,
           sessionDurationInHours:
             event.subscriptionPlan?.sessionDurationInHours,
           totalSessions: event.subscriptionPlan?.totalSessions,
@@ -2653,7 +2653,7 @@ export class SlotAllocationService {
 
         config = {
           durationInMonths: event.classPlan?.durationInMonths,
-          callsPerWeek: event.classPlan?.meetingsPerWeek,
+          sessionsPerWeek: event.classPlan?.sessionsPerWeek,
           sessionDurationInHours: sessionDuration,
           totalSessions: event.classPlan?.totalSessions,
           schedulingPeriodStartsAt: event.schedulingPeriodStartsAt ?? undefined,

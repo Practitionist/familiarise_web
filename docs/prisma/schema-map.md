@@ -394,7 +394,9 @@ erDiagram
 
 ## 6. Service Plans
 
-Four plan types. All owned by `ConsultantProfile`, optionally also by `Organization`. Visibility controls marketplace exposure.
+Four plan types. All owned by `ConsultantProfile`, optionally also by `Organization`. Visibility controls marketplace exposure, and `archivedAt` withdraws a plan from sale without deleting the terms past bookings still resolve against.
+
+All four carry the same buyer-facing content shape — `subtitle`, `targetAudience`, `whatsIncluded`, `imageUrl`, `slug`, a `PlanLevel` `level`, and a polymorphic `PlanFaq` child list. See [ADR 24](../enterprise/70-design-decisions/24-offering-content-model.md).
 
 ```mermaid
 erDiagram
@@ -409,48 +411,68 @@ erDiagram
         string consultantProfileId
         string organizationId
         string title
+        string subtitle
+        string[] targetAudience
+        string[] whatsIncluded
         int price
         float durationInHours
+        PlanLevel level
         OrgPlanVisibility visibility
+        datetime archivedAt
     }
     SubscriptionPlan {
         string id
         string consultantProfileId
         string organizationId
         string title
+        string subtitle
+        string[] targetAudience
+        string[] whatsIncluded
         int price
-        int callsPerWeek
+        int sessionsPerWeek
         int durationInMonths
         int totalSessions
         boolean trialEnabled
         int trialDurationMinutes
         int trialPriceInPaise
+        PlanLevel level
         OrgPlanVisibility visibility
+        datetime archivedAt
     }
     WebinarPlan {
         string id
         string consultantProfileId
         string organizationId
         string title
+        string subtitle
+        string[] targetAudience
+        string[] whatsIncluded
         int price
         int maxParticipants
         float durationInHours
         boolean certificateProvided
         RecordingStoragePolicy recordingStoragePolicy
+        PlanLevel level
         OrgPlanVisibility visibility
+        datetime archivedAt
     }
     ClassPlan {
         string id
         string consultantProfileId
         string organizationId
         string title
+        string subtitle
+        string[] targetAudience
+        string[] whatsIncluded
         int price
-        int meetingsPerWeek
+        int sessionsPerWeek
         int durationInMonths
         int totalSessions
         int maxParticipants
         boolean certificateProvided
+        PlanLevel level
         OrgPlanVisibility visibility
+        datetime archivedAt
     }
     PlanMaterial {
         string id
@@ -460,6 +482,16 @@ erDiagram
         string classPlanId
         string fileName
         string fileUrl
+        int order
+    }
+    PlanFaq {
+        string id
+        string consultationPlanId
+        string subscriptionPlanId
+        string webinarPlanId
+        string classPlanId
+        string question
+        string answer
         int order
     }
 
@@ -475,6 +507,10 @@ erDiagram
     SubscriptionPlan ||--o{ PlanMaterial : "materials"
     WebinarPlan ||--o{ PlanMaterial : "materials"
     ClassPlan ||--o{ PlanMaterial : "materials"
+    ConsultationPlan ||--o{ PlanFaq : "faqs"
+    SubscriptionPlan ||--o{ PlanFaq : "faqs"
+    WebinarPlan ||--o{ PlanFaq : "faqs"
+    ClassPlan ||--o{ PlanFaq : "faqs"
 ```
 
 ---
@@ -483,12 +519,14 @@ erDiagram
 
 Session-by-session curriculum outline for Subscription and Class plans.
 
+The two tables are deliberately kept separate rather than collapsed into one polymorphic model: a class module is a unit of syllabus delivered to a cohort while a subscription session is one appointment in a 1:1 engagement, and the two are free to diverge as the products do. Both carry the same shape today, including `sectionLabel` — the free-text "Week 1" / "Sprint 2" heading that groups adjacent items under one label while `order` still drives sequence. See [ADR 24](../enterprise/70-design-decisions/24-offering-content-model.md).
+
 ```mermaid
 erDiagram
     SubscriptionPlan {
         string id
         string title
-        int callsPerWeek
+        int sessionsPerWeek
         int durationInMonths
         int totalSessions
     }
@@ -496,6 +534,8 @@ erDiagram
         string id
         string subscriptionPlanId
         string title
+        string sectionLabel
+        string[] outcomes
         string contentType
         string contentUrl
         int order
@@ -504,7 +544,7 @@ erDiagram
     ClassPlan {
         string id
         string title
-        int meetingsPerWeek
+        int sessionsPerWeek
         int durationInMonths
         int totalSessions
     }
@@ -512,6 +552,8 @@ erDiagram
         string id
         string classPlanId
         string title
+        string sectionLabel
+        string[] outcomes
         string contentType
         string contentUrl
         int order
@@ -617,7 +659,7 @@ erDiagram
         int price
         boolean trialEnabled
         int trialPriceInPaise
-        int callsPerWeek
+        int sessionsPerWeek
         int durationInMonths
     }
     Subscription {

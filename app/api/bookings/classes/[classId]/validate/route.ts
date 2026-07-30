@@ -117,7 +117,7 @@ export async function POST(
         },
         {
           durationInMonths: classPlan.durationInMonths || 1,
-          callsPerWeek: classPlan.meetingsPerWeek || 2,
+          sessionsPerWeek: classPlan.sessionsPerWeek || 2,
           sessionDurationInHours: classPlan.sessionDurationInHours || 1,
           schedulingPeriodStartsAt:
             classEntity.schedulingPeriodStartsAt ?? undefined,

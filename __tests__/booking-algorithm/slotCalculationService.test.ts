@@ -312,7 +312,7 @@ describe("SlotCalculationService.calculateRequiredSlots", () => {
     it("should throw when dates are missing", () => {
       expect(() =>
         SlotCalculationService.calculateRequiredSlots("subscription", {
-          callsPerWeek: 2,
+          sessionsPerWeek: 2,
         }),
       ).toThrow("Start date and end date are required");
     });
@@ -323,7 +323,7 @@ describe("SlotCalculationService.calculateRequiredSlots", () => {
         SlotCalculationService.calculateRequiredSlots("subscription", {
           schedulingPeriodStartsAt: new Date("2025-01-06"),
           schedulingPeriodEndsAt: new Date("2025-01-31"),
-          callsPerWeek: 2,
+          sessionsPerWeek: 2,
           sessionDurationInHours: 1,
         }),
       ).toBe(16);
@@ -334,13 +334,13 @@ describe("SlotCalculationService.calculateRequiredSlots", () => {
         SlotCalculationService.calculateRequiredSlots("subscription", {
           schedulingPeriodStartsAt: new Date("2025-01-06"),
           schedulingPeriodEndsAt: new Date("2025-01-31"),
-          callsPerWeek: 1,
+          sessionsPerWeek: 1,
           sessionDurationInHours: 1.5,
         }),
       ).toBe(12);
     });
 
-    it("should default to 1 call/week when callsPerWeek missing", () => {
+    it("should default to 1 call/week when sessionsPerWeek missing", () => {
       const consoleSpy = jest.spyOn(console, "warn").mockImplementation();
       // 4 weeks × 1 call × 2 slots = 8
       expect(
@@ -360,7 +360,7 @@ describe("SlotCalculationService.calculateRequiredSlots", () => {
         SlotCalculationService.calculateRequiredSlots("subscription", {
           schedulingPeriodStartsAt: new Date("2025-01-06"),
           schedulingPeriodEndsAt: new Date("2025-01-31"),
-          callsPerWeek: 2,
+          sessionsPerWeek: 2,
         }),
       ).toBe(16);
       consoleSpy.mockRestore();
@@ -371,13 +371,13 @@ describe("SlotCalculationService.calculateRequiredSlots", () => {
     it("should throw when dates are missing", () => {
       expect(() =>
         SlotCalculationService.calculateRequiredSlots("class", {
-          callsPerWeek: 3,
+          sessionsPerWeek: 3,
           sessionDurationInHours: 1,
         }),
       ).toThrow("Start date and end date are required");
     });
 
-    it("should throw when callsPerWeek is missing", () => {
+    it("should throw when sessionsPerWeek is missing", () => {
       expect(() =>
         SlotCalculationService.calculateRequiredSlots("class", {
           schedulingPeriodStartsAt: new Date("2025-01-06"),
@@ -392,7 +392,7 @@ describe("SlotCalculationService.calculateRequiredSlots", () => {
         SlotCalculationService.calculateRequiredSlots("class", {
           schedulingPeriodStartsAt: new Date("2025-01-06"),
           schedulingPeriodEndsAt: new Date("2025-01-31"),
-          callsPerWeek: 2,
+          sessionsPerWeek: 2,
         }),
       ).toThrow("Session duration must be a positive number");
     });
@@ -402,7 +402,7 @@ describe("SlotCalculationService.calculateRequiredSlots", () => {
         SlotCalculationService.calculateRequiredSlots("class", {
           schedulingPeriodStartsAt: new Date("2025-01-06"),
           schedulingPeriodEndsAt: new Date("2025-01-31"),
-          callsPerWeek: 3,
+          sessionsPerWeek: 3,
           sessionDurationInHours: 1,
         }),
       ).toBe(24);
@@ -590,7 +590,7 @@ describe("SlotCalculationService.calculateProgress", () => {
       "subscription",
       {
         sessionDurationInHours: 1,
-        callsPerWeek: 2,
+        sessionsPerWeek: 2,
         schedulingPeriodStartsAt: new Date("2025-01-06"),
         schedulingPeriodEndsAt: new Date("2025-01-31"),
       },

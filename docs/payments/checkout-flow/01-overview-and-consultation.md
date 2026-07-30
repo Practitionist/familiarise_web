@@ -705,7 +705,7 @@ if (!plan) {
 **Plan Contains:**
 
 - `durationInMonths`: How many months the subscription lasts (e.g., 3)
-- `callsPerWeek`: Number of sessions per week (e.g., 2)
+- `sessionsPerWeek`: Number of sessions per week (e.g., 2)
 - `sessionDurationInHours`: Duration of each session (e.g., 1.0)
 - `price`: Total price for entire subscription
 
@@ -730,7 +730,7 @@ const endDate = calculateSubscriptionEndDate(startDate, plan.durationInMonths);
 
 // Calculate total sessions for the subscription
 const totalWeeks = Math.ceil(plan.durationInMonths * 4.33);
-const totalSessions = totalWeeks * plan.callsPerWeek;
+const totalSessions = totalWeeks * plan.sessionsPerWeek;
 
 // Get first session timing
 const firstSessionStart = new Date(data.startsAt!);
@@ -744,7 +744,7 @@ const sessionDurationMs =
 ```javascript
 // Plan: 3 months, 2 calls/week
 durationInMonths = 3
-callsPerWeek = 2
+sessionsPerWeek = 2
 
 // Calculate weeks
 totalWeeks = Math.ceil(3 * 4.33) = Math.ceil(12.99) = 13 weeks
@@ -786,7 +786,7 @@ const appointments = [];
 for (let i = 0; i < totalSessions; i++) {
   // Calculate session date based on frequency
   const sessionStart = new Date(firstSessionStart);
-  const weekOffset = Math.floor(i / plan.callsPerWeek);
+  const weekOffset = Math.floor(i / plan.sessionsPerWeek);
   sessionStart.setDate(sessionStart.getDate() + weekOffset * 7);
 
   const sessionEnd = new Date(sessionStart.getTime() + sessionDurationMs);
@@ -917,7 +917,7 @@ sequenceDiagram
 
     API->>CO: handleSubscriptionCheckout()
     CO->>DB: Get SubscriptionPlan
-    DB-->>CO: plan {<br/>  durationInMonths: 3,<br/>  callsPerWeek: 2<br/>}
+    DB-->>CO: plan {<br/>  durationInMonths: 3,<br/>  sessionsPerWeek: 2<br/>}
 
     CO->>CO: Calculate total sessions
     Note over CO: totalWeeks = ceil(3 * 4.33) = 13<br/>totalSessions = 13 * 2 = 26

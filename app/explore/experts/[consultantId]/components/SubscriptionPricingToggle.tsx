@@ -34,15 +34,21 @@ interface SubscriptionContentItem {
   order?: number;
   hoursAllotted?: number | null;
   contentType?: string | null;
+  sectionLabel?: string | null;
+  outcomes?: string[];
 }
 
 interface SubscriptionPlanDetails {
   id: string;
   title: string;
+  subtitle?: string | null;
   durationInMonths: number;
   trialEnabled?: boolean;
   trialDurationMinutes?: number | null;
   subscriptionContents?: SubscriptionContentItem[] | null;
+  targetAudience?: string[];
+  whatsIncluded?: string[];
+  faqs?: { id?: string; question: string; answer: string }[];
 }
 
 interface ConsultantDetailsForSubscription {
@@ -600,8 +606,12 @@ export default function SubscriptionPricingToggle({
                         className="relative flex items-start gap-4"
                       >
                         {/* Week badge */}
+                        {/* The consultant's own label ("Week 1", "Sprint 2")
+                            wins; the ordinal is only the fallback for plans
+                            authored before section labels existed. */}
                         <div className="relative z-10 flex-shrink-0 min-w-[52px] h-10 px-2 rounded-full bg-zinc-800 border-2 border-zinc-700 flex items-center justify-center text-xs font-bold text-white shadow-lg whitespace-nowrap">
-                          Week {content.order || index + 1}
+                          {content.sectionLabel?.trim() ||
+                            `Week ${content.order || index + 1}`}
                         </div>
 
                         {/* Content card */}
@@ -616,6 +626,20 @@ export default function SubscriptionPricingToggle({
                                   {content.description}
                                 </p>
                               )}
+                              {content.outcomes &&
+                                content.outcomes.length > 0 && (
+                                  <ul className="mt-2 space-y-1">
+                                    {content.outcomes.map((outcome) => (
+                                      <li
+                                        key={outcome}
+                                        className="text-xs text-zinc-500 flex items-start gap-1.5"
+                                      >
+                                        <span className="mt-1.5 w-1 h-1 rounded-full bg-zinc-600 flex-shrink-0" />
+                                        {outcome}
+                                      </li>
+                                    ))}
+                                  </ul>
+                                )}
                             </div>
                             <ChevronRight className="w-4 h-4 text-zinc-600 flex-shrink-0 mt-1" />
                           </div>
@@ -644,6 +668,41 @@ export default function SubscriptionPricingToggle({
               <div className="text-center py-12 text-zinc-500">
                 <BookOpen className="w-12 h-12 mx-auto mb-4 opacity-50" />
                 <p>No detailed roadmap available for this plan.</p>
+              </div>
+            )}
+
+            {/* Positioning + FAQ. Rendered in the modal's own dark palette
+                rather than via the shared PlanContentSections, which are
+                theme-token based and would fight this surface. */}
+            <DarkBulletList
+              title="Who this is for"
+              items={selectedPlanDetails?.targetAudience}
+            />
+            <DarkBulletList
+              title="What's included"
+              items={selectedPlanDetails?.whatsIncluded}
+            />
+
+            {(selectedPlanDetails?.faqs?.length ?? 0) > 0 && (
+              <div className="mt-8">
+                <h4 className="text-sm font-semibold text-white mb-3">
+                  Frequently asked questions
+                </h4>
+                <div className="space-y-3">
+                  {selectedPlanDetails!.faqs!.map((faq, i) => (
+                    <div
+                      key={faq.id || `${i}-${faq.question}`}
+                      className="bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-4"
+                    >
+                      <p className="text-sm font-medium text-white">
+                        {faq.question}
+                      </p>
+                      <p className="text-sm text-zinc-400 mt-1.5 whitespace-pre-line">
+                        {faq.answer}
+                      </p>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </div>
@@ -680,5 +739,29 @@ export default function SubscriptionPricingToggle({
         </DialogContent>
       </Dialog>
     </Tabs>
+  );
+}
+
+/** Bullet list in the roadmap modal's dark palette. */
+function DarkBulletList({
+  title,
+  items,
+}: Readonly<{ title: string; items?: string[] | null }>) {
+  if (!items?.length) return null;
+  return (
+    <div className="mt-8">
+      <h4 className="text-sm font-semibold text-white mb-3">{title}</h4>
+      <ul className="space-y-2">
+        {items.map((item) => (
+          <li
+            key={item}
+            className="text-sm text-zinc-400 flex items-start gap-2.5"
+          >
+            <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-zinc-600 flex-shrink-0" />
+            {item}
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }

@@ -185,7 +185,7 @@ function computeSubscriptionFooter(
     selectedSlots: TimeSlot[];
     allowedStart?: Date;
     allowedEnd?: Date;
-    callsPerWeek?: number;
+    sessionsPerWeek?: number;
     sessionDurationInHours?: number;
     totalSessions?: number;
     pastCompletedSessions?: number;
@@ -195,7 +195,7 @@ function computeSubscriptionFooter(
     selectedSlots,
     allowedStart,
     allowedEnd,
-    callsPerWeek,
+    sessionsPerWeek,
     sessionDurationInHours,
     totalSessions,
     pastCompletedSessions = 0,
@@ -206,9 +206,9 @@ function computeSubscriptionFooter(
   if (totalSessions && totalSessions > 0) {
     maxTotalCalls = totalSessions;
   } else {
-    if (!allowedStart || !allowedEnd || !callsPerWeek) return null;
+    if (!allowedStart || !allowedEnd || !sessionsPerWeek) return null;
     const weeks = countSundayWeeksInclusive(allowedStart, allowedEnd);
-    maxTotalCalls = weeks * callsPerWeek;
+    maxTotalCalls = weeks * sessionsPerWeek;
   }
   const slotsPerCall = getSlotsPerCall(sessionDurationInHours);
   const scheduled = Math.floor(selectedSlots.length / slotsPerCall);
@@ -319,7 +319,7 @@ export interface UnifiedCalendarProps {
   eventId?: string;
   durationInMonths?: number;
   durationInHours?: number; // For consultations/webinars
-  callsPerWeek?: number;
+  sessionsPerWeek?: number;
   sessionDurationInHours?: number; // For subscriptions/classes - individual session duration
   mode: "view" | "select" | "allocate";
   onSlotsSelected?: (slots: TimeSlot[]) => void;
@@ -338,7 +338,7 @@ export interface UnifiedCalendarProps {
   // Optional hard boundaries to restrict interactive selection
   allowedStart?: Date;
   allowedEnd?: Date;
-  totalSessions?: number; // Authoritative session count from plan (overrides weeks × callsPerWeek)
+  totalSessions?: number; // Authoritative session count from plan (overrides weeks × sessionsPerWeek)
   /** Event's scheduling timezone — defines the limit day/week buckets
    * (ADR B9). Defaults to Asia/Kolkata in the shared helpers. */
   schedulingTimezone?: string;
@@ -351,7 +351,7 @@ export function UnifiedCalendar({
   sessionDurationInHours,
   eventId,
   durationInMonths,
-  callsPerWeek,
+  sessionsPerWeek,
   mode = "view",
   onSlotsSelected,
   onAllocationComplete,
@@ -454,7 +454,7 @@ export function UnifiedCalendar({
     consultantId,
     durationInMonths,
     durationInHours,
-    callsPerWeek,
+    sessionsPerWeek,
     sessionDurationInHours,
     startDate: allowedStart,
     endDate: allowedEnd,
@@ -463,9 +463,9 @@ export function UnifiedCalendar({
     maxTotalCalls: isRecurringEventType(eventType)
       ? totalSessions && totalSessions > 0
         ? totalSessions
-        : allowedStart && allowedEnd && callsPerWeek
+        : allowedStart && allowedEnd && sessionsPerWeek
           ? countSundayWeeksInclusive(allowedStart, allowedEnd) *
-            (callsPerWeek || 1)
+            (sessionsPerWeek || 1)
           : undefined
       : undefined,
     pastConfirmedSlotCount: isRecurringEventType(eventType)
@@ -687,7 +687,7 @@ export function UnifiedCalendar({
       if (
         eventType === "subscription" &&
         eventId &&
-        callsPerWeek &&
+        sessionsPerWeek &&
         sessionDurationInHours
       ) {
         const intervalStart = new Date(status.intervalStartUTCString);
@@ -723,9 +723,9 @@ export function UnifiedCalendar({
           );
           const totalCompletedThisWeek = completedCalls + selectedCompleted;
 
-          // callsPerWeek is guaranteed truthy by the enclosing guard
-          if (totalCompletedThisWeek >= callsPerWeek) {
-            toast(weeklyLimitReached(callsPerWeek));
+          // sessionsPerWeek is guaranteed truthy by the enclosing guard
+          if (totalCompletedThisWeek >= sessionsPerWeek) {
+            toast(weeklyLimitReached(sessionsPerWeek));
             return;
           }
         }
@@ -811,7 +811,7 @@ export function UnifiedCalendar({
       // Dependencies used inside the callback
       eventType,
       eventId,
-      callsPerWeek,
+      sessionsPerWeek,
       sessionDurationInHours,
       schedulingTimezone,
       allowedStart,
@@ -1307,7 +1307,7 @@ export function UnifiedCalendar({
                     selectedSlots,
                     allowedStart,
                     allowedEnd,
-                    callsPerWeek,
+                    sessionsPerWeek,
                     sessionDurationInHours,
                     totalSessions,
                     pastCompletedSessions:
@@ -1347,7 +1347,7 @@ export function UnifiedCalendar({
                 const requiredSlotsForThisEvent = calculateRequiredSlots(
                   eventType,
                   durationInMonths,
-                  callsPerWeek,
+                  sessionsPerWeek,
                   duration,
                 );
 
@@ -1365,8 +1365,8 @@ export function UnifiedCalendar({
           {/* Only show weekly limit for subscriptions - other event types don't need secondary info */}
           {eventType === "subscription" && (
             <div className="text-xs text-muted-foreground">
-              Max {callsPerWeek || 1} session
-              {(callsPerWeek || 1) > 1 ? "s" : ""} per week
+              Max {sessionsPerWeek || 1} session
+              {(sessionsPerWeek || 1) > 1 ? "s" : ""} per week
             </div>
           )}
           {allocationError && (

@@ -325,7 +325,7 @@ export class SlotCalculationService {
           config.schedulingPeriodStartsAt,
           config.schedulingPeriodEndsAt,
         );
-        const totalCalls = totalWeeks * (config.callsPerWeek || 1);
+        const totalCalls = totalWeeks * (config.sessionsPerWeek || 1);
         return totalCalls * slotsPerCall;
       }
 
@@ -339,7 +339,7 @@ export class SlotCalculationService {
           );
         }
 
-        if (!config.callsPerWeek || config.callsPerWeek <= 0) {
+        if (!config.sessionsPerWeek || config.sessionsPerWeek <= 0) {
           throw new Error(
             "Calls per week must be a positive number for classes",
           );
@@ -364,7 +364,7 @@ export class SlotCalculationService {
           config.schedulingPeriodStartsAt,
           config.schedulingPeriodEndsAt,
         );
-        const totalSessions = totalWeeks * config.callsPerWeek;
+        const totalSessions = totalWeeks * config.sessionsPerWeek;
         return totalSessions * slotsPerSession;
       }
 
@@ -410,14 +410,14 @@ export class SlotCalculationService {
         scheduled = this.countCompletedCalls(selectedSlots, slotsPerCall);
 
         // Prefer totalSessions from plan (authoritative count) for both subscriptions and classes.
-        // Falls back to weeks × callsPerWeek only when totalSessions is not set.
+        // Falls back to weeks × sessionsPerWeek only when totalSessions is not set.
         if (config.totalSessions && config.totalSessions > 0) {
           required = config.totalSessions;
         } else {
           if (
             !config.schedulingPeriodStartsAt ||
             !config.schedulingPeriodEndsAt ||
-            !config.callsPerWeek
+            !config.sessionsPerWeek
           ) {
             throw new Error(
               "Start date, end date, and calls per week are required for subscription/class progress calculation",
@@ -428,7 +428,7 @@ export class SlotCalculationService {
             config.schedulingPeriodStartsAt,
             config.schedulingPeriodEndsAt,
           );
-          required = weeks * config.callsPerWeek;
+          required = weeks * config.sessionsPerWeek;
         }
         break;
       }
@@ -441,7 +441,7 @@ export class SlotCalculationService {
       required,
       remaining,
       sessionDuration,
-      config.callsPerWeek,
+      config.sessionsPerWeek,
     );
 
     return {
@@ -545,7 +545,7 @@ export class SlotCalculationService {
     required: number,
     remaining: number,
     sessionDuration: number,
-    callsPerWeek?: number,
+    sessionsPerWeek?: number,
   ): string {
     const durationText =
       sessionDuration === 1 ? "1 hour" : `${sessionDuration} hours`;
@@ -561,12 +561,12 @@ export class SlotCalculationService {
 
     // For subscriptions and classes
     if (scheduled === 0) {
-      const limitText = callsPerWeek
-        ? ` | Limit: ${callsPerWeek}/${eventType === "class" ? "week" : "week"}`
+      const limitText = sessionsPerWeek
+        ? ` | Limit: ${sessionsPerWeek}/${eventType === "class" ? "week" : "week"}`
         : "";
       return `📅 Schedule ${required} ${sessionWordPlural} (${durationText} each)${limitText}`;
     } else if (remaining > 0) {
-      const limitText = callsPerWeek ? ` | ${callsPerWeek}/week` : "";
+      const limitText = sessionsPerWeek ? ` | ${sessionsPerWeek}/week` : "";
       return `✅ ${scheduled} scheduled | ⏳ ${remaining} remaining (${durationText} each)${limitText}`;
     } else {
       return `✅ All ${required} ${sessionWordPlural} scheduled`;

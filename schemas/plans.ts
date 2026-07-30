@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { Currency } from "@prisma/client";
+import { Currency, PlanLevel } from "@prisma/client";
 import {
   hasDuplicates,
   isMeaningfulText,
@@ -37,6 +37,72 @@ const meaningfulArrayContentRefinement = (values: string[]) => {
 const noDuplicatesRefinement = (values: string[]) => {
   return !hasDuplicates(values);
 };
+
+// Optional free-text bullet list. Same guarantees as `learningOutcomes` but
+// nothing is required, because positioning copy is opt-in on every plan type.
+const optionalBulletList = (label: string) =>
+  z
+    .array(z.string().min(1, `${label} entry cannot be empty`))
+    .max(12, `At most 12 ${label.toLowerCase()} entries`)
+    .default([])
+    .refine(noDuplicatesRefinement, `Duplicate ${label.toLowerCase()} entries`)
+    .refine(
+      meaningfulArrayContentRefinement,
+      `${label} contains nonsensical text or gibberish`,
+    )
+    .refine(
+      profanityFreeArrayRefinement,
+      `${label} contains inappropriate language`,
+    );
+
+export const PlanFaqSchema = z.object({
+  id: z.string().optional(),
+  question: z
+    .string()
+    .min(1, "Question is required")
+    .max(200, "Question must be 200 characters or less")
+    .refine(
+      meaningfulContentRefinement,
+      "Question contains nonsensical text or gibberish",
+    )
+    .refine(profanityFreeRefinement, "Question contains inappropriate language"),
+  answer: z
+    .string()
+    .min(1, "Answer is required")
+    .max(1000, "Answer must be 1000 characters or less")
+    .refine(
+      meaningfulContentRefinement,
+      "Answer contains nonsensical text or gibberish",
+    )
+    .refine(profanityFreeRefinement, "Answer contains inappropriate language"),
+  order: z.number().int().min(0).default(0),
+});
+
+// Buyer-facing positioning shared by all four plan types. Kept as a plain
+// shape so it can be spread into schemas that do and do not extend the
+// webinar/class base.
+export const planPositioningShape = {
+  subtitle: z
+    .string()
+    .max(160, "Subtitle must be 160 characters or less")
+    .optional()
+    .nullable()
+    .refine(
+      (val) => !val || meaningfulContentRefinement(val),
+      "Subtitle contains nonsensical text or gibberish",
+    )
+    .refine(
+      (val) => !val || profanityFreeRefinement(val),
+      "Subtitle contains inappropriate language",
+    ),
+  targetAudience: optionalBulletList("Target audience"),
+  whatsIncluded: optionalBulletList("What's included"),
+  faqs: z.array(PlanFaqSchema).max(20, "At most 20 FAQs").default([]),
+};
+
+export const planLevelSchema = z
+  .nativeEnum(PlanLevel)
+  .default(PlanLevel.BEGINNER);
 
 export const DomainSchema = z.object({
   id: z.string().optional(),
@@ -97,7 +163,7 @@ export const ConsultationPlanSchema = z.object({
   price: z.number().min(0, "Price must be non-negative"),
   priceCurrency: z.nativeEnum(Currency).default(Currency.INR),
   language: z.string().min(1, "Language is required"),
-  level: z.string().min(1, "Level is required"),
+  level: planLevelSchema,
   prerequisites: z
     .string()
     .optional()
@@ -149,6 +215,7 @@ export const ConsultationPlanSchema = z.object({
       profanityFreeArrayRefinement,
       "Topics contain inappropriate language",
     ),
+  ...planPositioningShape,
 });
 
 export const SubscriptionPlanSchema = z.object({
@@ -192,10 +259,10 @@ export const SubscriptionPlanSchema = z.object({
     .int("Trial price must be a whole paise amount")
     .min(0, "Trial price must be non-negative")
     .optional(),
-  callsPerWeek: z
+  sessionsPerWeek: z
     .number()
-    .min(0, "Calls per week cannot be negative")
-    .max(7, "Cannot exceed 7 calls per week"),
+    .min(0, "Sessions per week cannot be negative")
+    .max(7, "Cannot exceed 7 sessions per week"),
   sessionDurationInHours: z
     .number()
     .min(0.5, "Session duration must be at least 30 minutes")
@@ -203,7 +270,7 @@ export const SubscriptionPlanSchema = z.object({
     .default(1),
   emailSupport: z.enum(["GENERAL", "PRIORITY", "DEDICATED"]),
   language: z.string().min(1, "Language is required"),
-  level: z.string().min(1, "Level is required"),
+  level: planLevelSchema,
   prerequisites: z
     .string()
     .optional()
@@ -255,6 +322,7 @@ export const SubscriptionPlanSchema = z.object({
       profanityFreeArrayRefinement,
       "Topics contain inappropriate language",
     ),
+  ...planPositioningShape,
 });
 
 // Base schema for common fields
@@ -292,14 +360,7 @@ const BaseEventPlanSchema = z.object({
       profanityFreeRefinement,
       "Language contains inappropriate language",
     ),
-  level: z
-    .string()
-    .default("Beginner")
-    .refine(
-      meaningfulContentRefinement,
-      "Level contains nonsensical text or gibberish",
-    )
-    .refine(profanityFreeRefinement, "Level contains inappropriate language"),
+  level: planLevelSchema,
   prerequisites: z
     .string()
     .optional()
@@ -355,6 +416,8 @@ const BaseEventPlanSchema = z.object({
   // Make consultant fields optional and nullable
   consultantProfileId: z.string().optional().nullable(),
   consultantProfile: z.any().optional().nullable(),
+
+  ...planPositioningShape,
 });
 
 // Webinar specific schema
@@ -436,15 +499,40 @@ export const ClassContentSchema = z.object({
   hoursAllotted: z
     .number()
     .min(0.5, "Hours allotted must be at least 30 minutes"),
+  // No gibberish refinement here — "Week 1" and "Sprint 2" are exactly the
+  // short alphanumeric strings isMeaningfulText rejects.
+  sectionLabel: z
+    .string()
+    .max(40, "Section label must be 40 characters or less")
+    .optional()
+    .nullable()
+    .refine(
+      (val) => !val || profanityFreeRefinement(val),
+      "Section label contains inappropriate language",
+    ),
+  outcomes: optionalBulletList("Session outcomes"),
   // Optional fields for Prisma compatibility
   createdAt: z.union([z.date(), z.string()]).optional(),
   updatedAt: z.union([z.date(), z.string()]).optional(),
   classPlanId: z.string().optional(),
 });
 
+// Subscription roadmap entries carry the same shape; only the owning FK differs.
+export const SubscriptionContentSchema = ClassContentSchema.omit({
+  classPlanId: true,
+}).extend({
+  subscriptionPlanId: z.string().optional(),
+});
+
 export const ClassPlanSchema = BaseEventPlanSchema.extend({
   planType: z.literal("class"),
-  durationInMonths: z.number().min(1, "Duration must be at least 1 month"),
+  // Bounds mirror SubscriptionPlanSchema. They were absent here, so a class
+  // could be authored at 999 months × 500 sessions/week — and `totalSessions`
+  // / `totalHours` are derived from both, which fed the allocation engine.
+  durationInMonths: z
+    .number()
+    .min(1, "Duration must be at least 1 month")
+    .max(24, "Duration cannot exceed 24 months"),
   sessionDurationInHours: z
     .number()
     .min(0.5, "Session duration must be at least 30 minutes")
@@ -455,7 +543,10 @@ export const ClassPlanSchema = BaseEventPlanSchema.extend({
   recordingStoragePolicy: z
     .enum(["STREAM_ONLY", "SUPABASE_PERMANENT"])
     .default("STREAM_ONLY"),
-  meetingsPerWeek: z.number().min(0, "Meetings per week must be non-negative"),
+  sessionsPerWeek: z
+    .number()
+    .min(0, "Sessions per week cannot be negative")
+    .max(7, "Cannot exceed 7 sessions per week"),
   emailSupport: z.enum(["GENERAL", "PRIORITY", "DEDICATED"]).default("GENERAL"),
   classContents: z
     .array(ClassContentSchema)

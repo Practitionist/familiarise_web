@@ -5,6 +5,11 @@ import Image from "next/image";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  PlanFaqAccordion,
+  TargetAudience,
+  WhatsIncluded,
+} from "@/components/plans/PlanContentSections";
 import { Badge } from "@/components/ui/badge";
 import {
   ArrowLeft,
@@ -220,7 +225,28 @@ export function WebinarDetails({
               </Card>
             )}
 
+            {/* Who this is for / What's included */}
+            {(plan.targetAudience.length > 0 ||
+              plan.whatsIncluded.length > 0) && (
+              <Card className="border-border shadow-sm">
+                <CardContent className="p-6 md:p-8 space-y-6">
+                  <TargetAudience items={plan.targetAudience} />
+                  <WhatsIncluded items={plan.whatsIncluded} />
+                </CardContent>
+              </Card>
+            )}
+
+            {/* FAQ */}
+            {plan.faqs.length > 0 && (
+              <Card className="border-border shadow-sm">
+                <CardContent className="p-6 md:p-8">
+                  <PlanFaqAccordion faqs={plan.faqs} />
+                </CardContent>
+              </Card>
+            )}
+
             {/* Topics */}
+            {plan.topics.length > 0 && (
             <Card className="border-border shadow-sm">
               <CardContent className="p-6 md:p-8">
                 <h2 className="text-xl font-semibold text-foreground mb-4">
@@ -238,6 +264,7 @@ export function WebinarDetails({
                 </div>
               </CardContent>
             </Card>
+            )}
           </motion.div>
 
           {/* Sidebar */}

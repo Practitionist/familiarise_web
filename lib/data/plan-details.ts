@@ -68,6 +68,7 @@ export async function fetchWebinarPlanDetail(webinarPlanId: string) {
         },
       },
       topics: true,
+      faqs: { orderBy: { order: "asc" } },
       collaborators: {
         where: { status: "ACCEPTED" as const },
         include: {
@@ -147,7 +148,8 @@ export async function fetchClassPlanDetail(classPlanId: string) {
         },
       },
       topics: true,
-      classContents: true,
+      faqs: { orderBy: { order: "asc" } },
+      classContents: { orderBy: { order: "asc" } },
       collaborators: {
         where: { status: "ACCEPTED" as const },
         include: {

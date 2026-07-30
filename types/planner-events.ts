@@ -13,7 +13,7 @@ import {
   TConsultation,
   TSubscription,
 } from "@/types/appointment";
-import { PlanEmailSupport } from "@prisma/client";
+import { PlanEmailSupport, PlanLevel } from "@prisma/client";
 import { ConsultationPlan, SubscriptionPlan } from "@/schemas/plans";
 
 /**
@@ -45,6 +45,11 @@ export interface IPlanMaterial {
 // UI-focused event types with topics as string[] (transformed at service boundary)
 // Services convert Topic[] from Prisma to string[] before passing to components
 
+// `faqs` is augmented on here rather than added to the T* appointment payloads
+// in types/appointment.ts: those describe a BOOKED appointment, where buyer-
+// facing sales copy is irrelevant, and widening them would force a `faqs`
+// include onto every appointment query in the codebase. The planner and the
+// public detail pages are the only readers.
 export type WebinarEvent = Omit<TWebinar, "webinarPlan"> & {
   type: "webinar";
   scheduledAt?: Date;
@@ -52,6 +57,7 @@ export type WebinarEvent = Omit<TWebinar, "webinarPlan"> & {
   webinarPlan: Omit<TWebinar["webinarPlan"], "topics" | "price"> & {
     topics: string[];
     price: number;
+    faqs?: PlanFaqInput[];
   };
 };
 
@@ -61,6 +67,7 @@ export type ClassEvent = Omit<TClass, "classPlan"> & {
   classPlan: Omit<TClass["classPlan"], "topics" | "price"> & {
     topics: string[];
     price: number;
+    faqs?: PlanFaqInput[];
   };
 };
 
@@ -143,20 +150,23 @@ export type EventPlannerProps = {
 
 export type FormData = {
   title: string;
+  subtitle?: string | null;
   description: string;
   price: number;
   maxParticipants: number;
   language: string;
-  level: string;
+  level: PlanLevel;
   prerequisites: string | null;
   materialProvided: string | null;
   learningOutcomes: string[];
+  targetAudience?: string[];
+  whatsIncluded?: string[];
+  faqs?: PlanFaqInput[];
   topics: string[];
   consultantProfileId?: string | null;
   durationInHours?: number;
   durationInMonths?: number;
-  callsPerWeek?: number;
-  meetingsPerWeek?: number;
+  sessionsPerWeek?: number;
   emailSupport?: PlanEmailSupport;
   certificateProvided?: boolean;
   recordingEnabled?: boolean;
@@ -169,20 +179,19 @@ export type FormData = {
     }
   | {
       durationInMonths: number;
-      meetingsPerWeek: number;
+      sessionsPerWeek: number;
       emailSupport: "GENERAL" | "PRIORITY" | "DEDICATED";
       certificateProvided: boolean;
-      classContents: {
-        id?: string;
-        title: string;
-        description: string;
-        contentType?: string;
-        contentUrl?: string;
-        order: number;
-        hoursAllotted: number;
-      }[];
+      classContents: ClassContentInput[];
     }
 );
+
+export type PlanFaqInput = {
+  id?: string;
+  question: string;
+  answer: string;
+  order: number;
+};
 
 interface BasePlannerProps {
   isOpen: boolean;
@@ -224,8 +233,9 @@ export interface SubscriptionPlannerProps extends BasePlannerProps {
   onSave: (data: Partial<SubscriptionPlanEvent>) => void | Promise<void>;
 }
 
-// Define input type for ClassContent based on usage
-export type ClassContentInput = {
+// Fields shared by both curriculum tables. They are separate models by
+// design, but their authoring payload is identical apart from the owning FK.
+type CurriculumItemInputBase = {
   id?: string; // Optional for new content
   title: string;
   description: string;
@@ -233,23 +243,20 @@ export type ClassContentInput = {
   contentUrl?: string | null;
   order: number;
   hoursAllotted: number;
-  classPlanId?: string;
+  sectionLabel?: string | null;
+  outcomes?: string[];
   createdAt?: string | Date;
   updatedAt?: string | Date;
 };
 
+// Define input type for ClassContent based on usage
+export type ClassContentInput = CurriculumItemInputBase & {
+  classPlanId?: string;
+};
+
 // Define input type for SubscriptionContent (session roadmap)
-type SubscriptionContentInput = {
-  id?: string; // Optional for new content
-  title: string;
-  description: string;
-  contentType?: string | null;
-  contentUrl?: string | null;
-  order: number;
-  hoursAllotted: number;
+type SubscriptionContentInput = CurriculumItemInputBase & {
   subscriptionPlanId?: string;
-  createdAt?: string | Date;
-  updatedAt?: string | Date;
 };
 
 // Form-to-Event input types - used when building event data from form submissions
@@ -285,7 +292,7 @@ export type ClassFormInput = {
     price: number;
     priceCurrency: string;
     durationInMonths: number;
-    meetingsPerWeek: number;
+    sessionsPerWeek: number;
     maxParticipants: number;
     certificateProvided: boolean;
     recordingEnabled: boolean;

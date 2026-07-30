@@ -141,7 +141,7 @@ export async function POST(
         },
         {
           durationInMonths: subscriptionPlan.durationInMonths,
-          callsPerWeek: subscriptionPlan.callsPerWeek,
+          sessionsPerWeek: subscriptionPlan.sessionsPerWeek,
           sessionDurationInHours: subscriptionPlan.sessionDurationInHours,
           schedulingPeriodStartsAt: subscription.schedulingPeriodStartsAt,
           schedulingPeriodEndsAt: subscription.schedulingPeriodEndsAt,

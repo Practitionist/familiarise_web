@@ -28,9 +28,9 @@ Recurring events are multi-session programs that span days, weeks, or months. Th
 |--------|------------------|-----------|
 | Relationship | 1:1 (one consultant, one consultee) | 1:many (one consultant + collaborators, many consultees) |
 | Duration | `durationInMonths` (1-24) | `durationInMonths` (1+) |
-| Sessions/week | `callsPerWeek` (0-7) | `meetingsPerWeek` (1+) |
+| Sessions/week | `sessionsPerWeek` (0-7) | `sessionsPerWeek` (1+) |
 | Session duration | `sessionDurationInHours` (0.5-4) | `sessionDurationInHours` (0.5-4) |
-| Total sessions | `callsPerWeek x weeks x months` | `meetingsPerWeek x weeks x months` |
+| Total sessions | `sessionsPerWeek x weeks x months` | `sessionsPerWeek x weeks x months` |
 | Capacity | Always 1 consultee | `maxParticipants` (configurable) |
 | Trial | Yes (30 or 60 min) | No |
 | Collaborators | No | Yes (co-instructors, TAs, guest lecturers) |
@@ -58,7 +58,7 @@ Both share the same core flow: **Plan Creation -> Checkout -> Payment -> Slot Al
 | `description` | Text | Plan description |
 | `price` | Int (paise) | Total subscription price (e.g., 50000 = Rs 500) |
 | `durationInMonths` | Int (1-24) | How many months the subscription runs |
-| `callsPerWeek` | Int (0-7) | How many sessions per week |
+| `sessionsPerWeek` | Int (0-7) | How many sessions per week |
 | `sessionDurationInHours` | Float (0.5-4) | Duration of each individual session |
 | `trialEnabled` | Boolean | Whether to offer a trial first |
 | `trialDurationMinutes` | 30 or 60 | Trial session length |
@@ -72,7 +72,7 @@ Both share the same core flow: **Plan Creation -> Checkout -> Payment -> Slot Al
 1. Validates input with Zod schema
 2. Finds or creates `Topic` records
 3. Calculates `totalSessions` using `SlotCalculationService.countWeeks()`:
-   - `totalSessions = callsPerWeek x countWeeks(schedulingStart, schedulingEnd)`
+   - `totalSessions = sessionsPerWeek x countWeeks(schedulingStart, schedulingEnd)`
    - Where `countWeeks()` counts Sunday-start weeks in the date range
 4. Calculates `totalHours = totalSessions x sessionDurationInHours`
 5. Creates `SubscriptionPlan` record with `SubscriptionContent[]` (curriculum)
@@ -90,7 +90,7 @@ Both share the same core flow: **Plan Creation -> Checkout -> Payment -> Slot Al
 | Field | Type | Description |
 |-------|------|-------------|
 | `maxParticipants` | Int | Capacity limit for enrollment |
-| `meetingsPerWeek` | Int | Sessions per week (replaces `callsPerWeek`) |
+| `sessionsPerWeek` | Int | Sessions per week (replaces `sessionsPerWeek`) |
 | `recordingEnabled` | Boolean | Whether sessions are recorded |
 | `recordingStoragePolicy` | Enum | `STREAM_ONLY` (2-week temp) or `SUPABASE_PERMANENT` |
 | `certificateProvided` | Boolean | Whether completers get a certificate |
@@ -225,13 +225,13 @@ Database: Appointment + SlotOfAppointment records created
 
 **Atomic unit:** 30-minute slots. There are 48 slots per day (00:00-23:30 UTC).
 
-**For a subscription** with `callsPerWeek=2`, `sessionDurationInHours=1`, `durationInMonths=1`:
+**For a subscription** with `sessionsPerWeek=2`, `sessionDurationInHours=1`, `durationInMonths=1`:
 1. `weeks = countWeeks(startDate, endDate)` -- e.g., 4 weeks
-2. `totalSessions = callsPerWeek x weeks = 2 x 4 = 8` sessions
+2. `totalSessions = sessionsPerWeek x weeks = 2 x 4 = 8` sessions
 3. `slotsPerSession = ceil(sessionDurationInHours / 0.5) = ceil(1 / 0.5) = 2` slots
 4. `totalSlots = totalSessions x slotsPerSession = 8 x 2 = 16` thirty-minute slots
 
-**For a class**, the math is identical but uses `meetingsPerWeek` instead of `callsPerWeek`, and slots are shared across all enrolled consultees.
+**For a class**, the math is identical but uses `sessionsPerWeek` instead of `sessionsPerWeek`, and slots are shared across all enrolled consultees.
 
 ### 4d. Availability Model
 
@@ -257,7 +257,7 @@ Before allocation, `SlotValidationService` checks:
 3. All slots fall within consultant's weekly or custom availability
 4. All slots are within the subscription/class scheduling period
 5. Slots are consecutive where required (per session)
-6. Weekly distribution limits are respected (no more than `callsPerWeek` sessions in a Sunday-start week)
+6. Weekly distribution limits are respected (no more than `sessionsPerWeek` sessions in a Sunday-start week)
 7. **For classes:** `maxParticipants` occupancy check via `occupancyPolicy.ts`
 
 ### 4f. What Gets Created
@@ -487,7 +487,7 @@ All cron jobs are triggered via GitHub Actions workflows in `.github/workflows/`
 | **Certificate** | No | Optional |
 | **Capacity** | No (1:1) | Yes (per-instance `maxParticipants`; full means sold out) |
 | **Curriculum model** | `SubscriptionContent` (session-by-session) | `ClassContent` (ordered, with `hoursAllotted`) |
-| **Scheduling field** | `callsPerWeek` | `meetingsPerWeek` |
+| **Scheduling field** | `sessionsPerWeek` | `sessionsPerWeek` |
 | **Request model** | `Subscription.status` (PENDING -> APPROVED -> SCHEDULED) | `Class.status` (SCHEDULED -> IN_PROGRESS -> COMPLETED) |
 | **Hold period** | 168h (7 days) | 24h |
 

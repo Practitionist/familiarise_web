@@ -162,7 +162,7 @@ function makeSubscriptionEvent(overrides: any = {}) {
     subscriptionPlan: {
       consultantProfileId: "consultant-profile-1",
       durationInMonths: 1,
-      callsPerWeek: 1,
+      sessionsPerWeek: 1,
       sessionDurationInHours: 1,
       consultantProfile: makeConsultantProfile(),
     },
@@ -192,7 +192,7 @@ function makeClassEvent(overrides: any = {}) {
     classPlan: {
       consultantProfileId: "consultant-profile-1",
       durationInMonths: 1,
-      meetingsPerWeek: 1,
+      sessionsPerWeek: 1,
       sessionDurationInHours: 1,
       consultantProfile: makeConsultantProfile(),
       classContents: [],
@@ -1110,7 +1110,7 @@ describe("Auto allocation", () => {
         subscriptionPlan: {
           consultantProfileId: "consultant-profile-1",
           durationInMonths: 1,
-          callsPerWeek: 1,
+          sessionsPerWeek: 1,
           sessionDurationInHours: 1,
           consultantProfile: makeConsultantProfile(),
         },
@@ -1239,7 +1239,7 @@ describe("fetchEventData - config extraction", () => {
     expect(result.success).toBe(true);
   });
 
-  it("should extract subscription config including callsPerWeek and scheduling period", async () => {
+  it("should extract subscription config including sessionsPerWeek and scheduling period", async () => {
     mockTx.subscription.findUnique.mockResolvedValue(makeSubscriptionEvent());
 
     await SlotAllocationService.allocate({
@@ -1256,7 +1256,7 @@ describe("fetchEventData - config extraction", () => {
       expect.any(Array),
       expect.objectContaining({ userId: "consultant-1" }),
       expect.objectContaining({
-        callsPerWeek: 1,
+        sessionsPerWeek: 1,
         sessionDurationInHours: 1,
         schedulingPeriodStartsAt: expect.any(Date),
         schedulingPeriodEndsAt: expect.any(Date),
@@ -1287,18 +1287,18 @@ describe("fetchEventData - config extraction", () => {
     );
   });
 
-  it("should extract class config with meetingsPerWeek and classContents", async () => {
+  it("should extract class config with sessionsPerWeek and classContents", async () => {
     mockTx.class.findUnique.mockResolvedValue(
       makeClassEvent({
         classPlan: {
           consultantProfileId: "consultant-profile-1",
           durationInMonths: 2,
-          meetingsPerWeek: 2,
+          sessionsPerWeek: 2,
           sessionDurationInHours: 1.5,
           consultantProfile: makeConsultantProfile(),
           classContents: [{ hoursAllotted: 1 }, { hoursAllotted: 2 }],
         },
-        // 1 week with meetingsPerWeek=2, 1.5hr sessions (3 slots each) → requires 6 slots
+        // 1 week with sessionsPerWeek=2, 1.5hr sessions (3 slots each) → requires 6 slots
         schedulingPeriodEndsAt: new Date("2025-01-10T00:00:00Z"),
       }),
     );
@@ -1324,7 +1324,7 @@ describe("fetchEventData - config extraction", () => {
       expect.any(Array),
       expect.any(Object),
       expect.objectContaining({
-        callsPerWeek: 2,
+        sessionsPerWeek: 2,
         sessionDurationInHours: 1.5,
       }),
       expect.any(Array), // appointmentIdsToExclude
@@ -1367,7 +1367,7 @@ describe("updateEventStatus", () => {
         subscriptionPlan: {
           consultantProfileId: "consultant-profile-1",
           durationInMonths: 1,
-          callsPerWeek: 1,
+          sessionsPerWeek: 1,
           sessionDurationInHours: 1,
           consultantProfile: makeConsultantProfile(),
         },
@@ -1467,7 +1467,7 @@ describe("createAppointments - grouping and validation", () => {
         subscriptionPlan: {
           consultantProfileId: "consultant-profile-1",
           durationInMonths: 1,
-          callsPerWeek: 1,
+          sessionsPerWeek: 1,
           sessionDurationInHours: 1.5, // 3 slots per call
           consultantProfile: makeConsultantProfile(),
         },
@@ -1996,7 +1996,7 @@ describe("partial reschedule slot count", () => {
       subscriptionPlan: {
         consultantProfileId: "consultant-profile-1",
         durationInMonths: 1,
-        callsPerWeek: 2,
+        sessionsPerWeek: 2,
         sessionDurationInHours: 0.5,
         totalSessions: 10,
         consultantProfile: makeConsultantProfile(),
@@ -2114,7 +2114,7 @@ describe("Edge cases", () => {
     ).toHaveLength(4);
   });
 
-  it("should handle class with meetingsPerWeek mapping to callsPerWeek", async () => {
+  it("should handle class with sessionsPerWeek mapping to sessionsPerWeek", async () => {
     mockTx.class.findUnique.mockResolvedValue(makeClassEvent());
 
     const result = await SlotAllocationService.allocate({

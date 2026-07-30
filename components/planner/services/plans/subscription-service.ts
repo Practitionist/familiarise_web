@@ -100,7 +100,7 @@ export class SubscriptionService {
         description: plan.description,
         durationInMonths: plan.durationInMonths,
         sessionDurationInHours: plan.sessionDurationInHours,
-        callsPerWeek: plan.callsPerWeek,
+        sessionsPerWeek: plan.sessionsPerWeek,
         price: plan.price,
         priceCurrency: plan.priceCurrency,
         emailSupport: plan.emailSupport,

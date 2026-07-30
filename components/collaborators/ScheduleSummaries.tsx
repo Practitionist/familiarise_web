@@ -187,7 +187,7 @@ export function ClassScheduleSummary({ plan }: { plan: ClassPlanSchedule }) {
           <Clock className="w-3 h-3 text-zinc-400" />
           <span>
             {plan.sessionDurationInHours}h/session &middot;{" "}
-            {plan.meetingsPerWeek}x/week
+            {plan.sessionsPerWeek}x/week
           </span>
         </div>
         {nextSlot && (

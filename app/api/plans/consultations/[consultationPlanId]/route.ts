@@ -2,6 +2,7 @@ import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { ConsultationPlanSchema } from "@/schemas/plans";
+import { faqReplaceNested } from "@/lib/api/plans/content";
 import { findOrCreateTopics, transformTopicsToStrings } from "@/lib/topics";
 
 import { getSession } from "@/lib/auth-server";
@@ -37,6 +38,7 @@ export async function GET(
         },
         consultations: true,
         topics: true,
+        faqs: { orderBy: { order: "asc" } },
       },
     });
 
@@ -139,6 +141,10 @@ export async function PUT(
         prerequisites: validatedData.prerequisites,
         materialProvided: validatedData.materialProvided,
         learningOutcomes: validatedData.learningOutcomes,
+        subtitle: validatedData.subtitle,
+        targetAudience: validatedData.targetAudience,
+        whatsIncluded: validatedData.whatsIncluded,
+        faqs: faqReplaceNested(validatedData.faqs),
         ...topicsUpdate,
       },
       include: {
@@ -159,6 +165,7 @@ export async function PUT(
         },
         consultations: true,
         topics: true,
+        faqs: { orderBy: { order: "asc" } },
       },
     });
 

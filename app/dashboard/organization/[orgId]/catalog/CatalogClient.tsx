@@ -178,7 +178,7 @@ export function CatalogClient({
         visibility: plan.visibility,
         maxParticipants: plan.maxParticipants,
         durationInMonths: plan.durationInMonths,
-        meetingsPerWeek: plan.meetingsPerWeek,
+        sessionsPerWeek: plan.sessionsPerWeek,
         sessionDurationInHours: plan.sessionDurationInHours,
         language: plan.language ?? "English",
         level: plan.level ?? "Beginner",

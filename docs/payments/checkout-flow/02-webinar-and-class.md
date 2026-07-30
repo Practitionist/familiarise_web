@@ -519,7 +519,7 @@ ClassPlan {
   id: "plan_class_123",
   title: "Python Bootcamp",
   durationInMonths: 3,
-  callsPerWeek: 1,
+  sessionsPerWeek: 1,
   maxParticipants: 20,
   price: 50000,  // $500
 }

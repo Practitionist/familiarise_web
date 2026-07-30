@@ -21,7 +21,7 @@ Every ADR follows the same four-part shape, written in full sentences:
 
 ## Index
 
-All twenty-two ADRs below are written and live (#793 wrote the first twelve; #872 added 15–17; #971 added 18; the dashboard consolidation added 19–20; and the money-productionization pass added 21–22); this index is the authoritative list. Each row links to its record.
+All twenty-four ADRs below are written and live (#793 wrote the first twelve; #872 added 15–17; #971 added 18; the dashboard consolidation added 19–20; the money-productionization pass added 21–22; #1051 added 23; and the offering content model added 24); this index is the authoritative list. Each row links to its record.
 
 | # | ADR | Decision in one line |
 |---|---|---|
@@ -48,3 +48,4 @@ All twenty-two ADRs below are written and live (#793 wrote the first twelve; #87
 | 21 | [Single writer for payment confirmation](21-single-writer-for-payment-confirmation.md) | `Payment.paymentStatus` is written by the confirmation pipeline and by nothing else; the webhook, the client's signature return, the on-demand sync and the reconcile cron all call `routeCapturedPayment` rather than recording the conclusion themselves, because a second writer turns `handlePaymentSuccess`'s already-SUCCEEDED guard from "this work is done" into "this work will never be done". |
 | 22 | [Queue posture, revisited with measurements](22-queue-posture-revisited-with-measurements.md) | Measured cadence shows sub-hourly GitHub Actions schedules deliver roughly one tick per 100 minutes while nothing overlaps, so the defect is missed ticks rather than contention; the QStash escalation in ADR 14 is now authorised, Temporal stays out on cost and fit rather than on the architectural objection its 2026 Lambda workers retired, and Inngest is recorded with concrete adoption triggers. |
 | 23 | [Notification scope](23-notification-scope.md) | A notification inherits the org-ness of the record that triggered it: dual-context payloads carry a required `NotificationScope`, deep links resolve to the owning dashboard rather than bouncing everyone to their personal tree, the Inbox filters the shared feed back apart by scope, and three org categories make the previously unmutable `ORG_*` family configurable. |
+| 24 | [The offering content model](24-offering-content-model.md) | An offering is described by structured content rather than one free-text blob: `subtitle`, `targetAudience`, `whatsIncluded` and a polymorphic `PlanFaq` land on all four plan types, the two curriculum tables stay separate but both gain a free-text `sectionLabel` that groups sessions under a heading, `level` becomes the `PlanLevel` enum, and subscription detail is a modal rather than a route. |

@@ -64,7 +64,7 @@ interface Request {
   requiredSlots?: number;
   allocatedSlots?: string[];
   durationInMonths?: number;
-  callsPerWeek?: number;
+  sessionsPerWeek?: number;
   sessionDurationInHours?: number;
   durationInHours?: number;
   startDate?: Date;
@@ -72,7 +72,7 @@ interface Request {
   /** Limit day/week bucket timezone (ADR B9); Subscription column default. */
   schedulingTimezone?: string;
   bookingSource?: "DIRECT_CHECKOUT" | "REQUEST_SUBMITTED"; // Booking source - direct checkout or request submitted
-  totalSessions?: number; // Authoritative session count from plan (overrides weeks × callsPerWeek)
+  totalSessions?: number; // Authoritative session count from plan (overrides weeks × sessionsPerWeek)
   // Reschedule info
   tentativeSlotCount?: number;
   totalSlotCount?: number;
@@ -288,18 +288,18 @@ export function RequestSlotAllocationTab({
                       const endDate = subscription.schedulingPeriodEndsAt
                         ? new Date(subscription.schedulingPeriodEndsAt)
                         : undefined;
-                      const callsPerWeek =
-                        subscription.subscriptionPlan?.callsPerWeek ?? 0;
+                      const sessionsPerWeek =
+                        subscription.subscriptionPlan?.sessionsPerWeek ?? 0;
                       if (startDate && endDate) {
                         const weeks = countSundayWeeksInclusive(
                           startDate,
                           endDate,
                         );
-                        return weeks * callsPerWeek * slotsPerSession;
+                        return weeks * sessionsPerWeek * slotsPerSession;
                       }
                       // No totalSessions AND no period: the server throws for
                       // such subscriptions, so any client guess (the old
-                      // callsPerWeek×4×months) produced an allocation the
+                      // sessionsPerWeek×4×months) produced an allocation the
                       // server rejected. Surface a degraded state instead.
                       Sentry.captureMessage(
                         "Subscription plan missing totalSessions and scheduling period",
@@ -318,7 +318,7 @@ export function RequestSlotAllocationTab({
                   ? tentativeCount / slotsPerSession
                   : subscription.subscriptionPlan?.totalSessions,
               durationInMonths: subscription.subscriptionPlan?.durationInMonths,
-              callsPerWeek: subscription.subscriptionPlan?.callsPerWeek,
+              sessionsPerWeek: subscription.subscriptionPlan?.sessionsPerWeek,
               sessionDurationInHours: sessionDuration,
               // Scheduling period for subscriptions (using correct field names from Prisma schema)
               startDate: subscription.schedulingPeriodStartsAt
@@ -894,9 +894,9 @@ export function RequestSlotAllocationTab({
                     ? selectedRequest.durationInHours
                     : undefined
                 }
-                callsPerWeek={
+                sessionsPerWeek={
                   selectedRequest.type === "SUBSCRIPTION"
-                    ? selectedRequest.callsPerWeek
+                    ? selectedRequest.sessionsPerWeek
                     : undefined
                 }
                 sessionDurationInHours={

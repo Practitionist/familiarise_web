@@ -2827,18 +2827,27 @@ model SlotOfAvailabilityCustom {
 // 1-1 Consultation
 
 model ConsultationPlan {
-  id               String   @id @default(cuid())
+  id               String    @id @default(cuid())
   title            String
-  description      String?  @db.Text
-  durationInHours  Float    @default(1)
+  // One-line pitch rendered under the title. Distinct from `description`,
+  // which is long-form and gets truncated in cards.
+  subtitle         String?   @db.VarChar(160)
+  description      String?   @db.Text
+  durationInHours  Float     @default(1)
   price            BigInt // in paise (smallest currency unit, e.g. 50000 = ₹500)
-  priceCurrency    Currency @default(INR)
-  language         String   @default("English")
-  level            String   @default("Beginner")
-  prerequisites    String?  @default("None")
-  materialProvided String?  @default("None")
-  learningOutcomes String[] @default([])
-  topics           Topic[]  @relation("TopicToConsultationPlan")
+  priceCurrency    Currency  @default(INR)
+  language         String    @default("English")
+  level            PlanLevel @default(BEGINNER)
+  prerequisites    String?   @default("None")
+  materialProvided String?   @default("None")
+  learningOutcomes String[]  @default([])
+  // Buyer-facing positioning: who the offering is for, and what the price buys.
+  targetAudience   String[]  @default([])
+  whatsIncluded    String[]  @default([])
+  imageUrl         String?
+  // Reserved for SEO-friendly plan URLs. Nullable until routing lands (#696).
+  slug             String?   @unique
+  topics           Topic[]   @relation("TopicToConsultationPlan")
 
   consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultantProfileId String
@@ -2852,8 +2861,14 @@ model ConsultationPlan {
   // narrowed to ORG_ONLY to keep them out of /explore/**.
   visibility OrgPlanVisibility @default(PUBLIC)
 
+  // #catalog-archive — see WebinarPlan.archivedAt. A plan row is the TERMS of
+  // every sale made against it, so retirement is a soft withdrawal, never a
+  // delete. Null means live; set means withdrawn, and it is reversible.
+  archivedAt DateTime?
+
   consultations Consultation[]
   materials     PlanMaterial[]
+  faqs          PlanFaq[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2905,20 +2920,29 @@ model Consultation {
 model SubscriptionPlan {
   id                     String           @id @default(cuid())
   title                  String
+  // See ConsultationPlan.subtitle.
+  subtitle               String?          @db.VarChar(160)
   description            String?          @db.Text
   durationInMonths       Int              @default(1)
   price                  BigInt // in paise (smallest currency unit, e.g. 50000 = ₹500)
   priceCurrency          Currency         @default(INR)
-  callsPerWeek           Int              @default(1)
+  // #1011 — was `callsPerWeek`. Renamed to match ClassPlan so both recurring
+  // plan types name the same quantity the same way before the schema freeze.
+  sessionsPerWeek        Int              @default(1)
   sessionDurationInHours Float            @default(1.0) // Duration of each session in hours
-  totalSessions          Int              @default(4) // callsPerWeek × durationInMonths × 4
+  totalSessions          Int              @default(4) // sessionsPerWeek × durationInMonths × 4
   totalHours             Float            @default(4.0) // totalSessions × sessionDurationInHours
   emailSupport           PlanEmailSupport @default(GENERAL)
   language               String           @default("English")
-  level                  String           @default("Beginner")
+  level                  PlanLevel        @default(BEGINNER)
   prerequisites          String?          @default("None")
   materialProvided       String?          @default("None")
   learningOutcomes       String[]         @default([])
+  // See ConsultationPlan.targetAudience.
+  targetAudience         String[]         @default([])
+  whatsIncluded          String[]         @default([])
+  imageUrl               String?
+  slug                   String?          @unique
   topics                 Topic[]          @relation("TopicToSubscriptionPlan")
 
   // Trial session offer. Free by default ONLY until paid-trial checkout is
@@ -2940,10 +2964,14 @@ model SubscriptionPlan {
   // #726 — marketplace leak guard. See ConsultationPlan.visibility.
   visibility OrgPlanVisibility @default(PUBLIC)
 
+  // #catalog-archive — see ConsultationPlan.archivedAt.
+  archivedAt DateTime?
+
   subscriptions        Subscription[]
   subscriptionContents SubscriptionContent[]
   trialSessions        TrialSession[]
   materials            PlanMaterial[]
+  faqs                 PlanFaq[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -3147,6 +3175,8 @@ enum BookingSource {
 model WebinarPlan {
   id                     String                 @id @default(cuid())
   title                  String
+  // See ConsultationPlan.subtitle.
+  subtitle               String?                @db.VarChar(160)
   topics                 Topic[]                @relation("TopicToWebinarPlan")
   description            String?                @db.Text
   price                  BigInt // in paise (smallest currency unit, e.g. 50000 = ₹500)
@@ -3157,11 +3187,15 @@ model WebinarPlan {
   durationInHours        Float                  @default(1) // Duration in hours
   maxParticipants        Int                    @default(100)
   language               String?                @default("English")
-  level                  String?                @default("Beginner")
+  level                  PlanLevel              @default(BEGINNER)
   prerequisites          String?                @default("None")
   materialProvided       String?                @default("None")
   learningOutcomes       String[]               @default([])
+  // See ConsultationPlan.targetAudience.
+  targetAudience         String[]               @default([])
+  whatsIncluded          String[]               @default([])
   imageUrl               String?
+  slug                   String?                @unique
 
   consultantProfile   ConsultantProfile? @relation(fields: [consultantProfileId], references: [id])
   consultantProfileId String?
@@ -3182,10 +3216,10 @@ model WebinarPlan {
   // discovery. Null means live; set means withdrawn, and it is reversible.
   archivedAt DateTime?
 
-
   webinars      Webinar[]
   materials     PlanMaterial[]
   collaborators Collaborator[]
+  faqs          PlanFaq[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -3235,6 +3269,8 @@ enum WebinarStatus {
 model ClassPlan {
   id                     String                 @id @default(cuid())
   title                  String
+  // See ConsultationPlan.subtitle.
+  subtitle               String?                @db.VarChar(160)
   description            String                 @db.Text
   topics                 Topic[]                @relation("TopicToClassPlan")
   classContents          ClassContent[]
@@ -3244,18 +3280,23 @@ model ClassPlan {
   recordingEnabled       Boolean                @default(false) // Allow consultant to record sessions
   recordingStoragePolicy RecordingStoragePolicy @default(STREAM_ONLY)
   durationInMonths       Int                    @default(1) // Duration in months
-  meetingsPerWeek        Int                    @default(1)
+  // #1011 — was `meetingsPerWeek`. See SubscriptionPlan.sessionsPerWeek.
+  sessionsPerWeek        Int                    @default(1)
   sessionDurationInHours Float                  @default(1.0) // Duration of each session in hours
-  totalSessions          Int                    @default(4) // meetingsPerWeek × durationInMonths × 4
+  totalSessions          Int                    @default(4) // sessionsPerWeek × durationInMonths × 4
   totalHours             Float                  @default(4.0) // totalSessions × sessionDurationInHours
   emailSupport           PlanEmailSupport       @default(GENERAL)
   maxParticipants        Int                    @default(1)
   language               String?                @default("English")
-  level                  String?                @default("Beginner")
+  level                  PlanLevel              @default(BEGINNER)
   prerequisites          String?                @default("None")
   materialProvided       String?                @default("None")
   learningOutcomes       String[]               @default([])
+  // See ConsultationPlan.targetAudience.
+  targetAudience         String[]               @default([])
+  whatsIncluded          String[]               @default([])
   imageUrl               String?
+  slug                   String?                @unique
 
   consultantProfile   ConsultantProfile? @relation(fields: [consultantProfileId], references: [id])
   consultantProfileId String?
@@ -3276,10 +3317,10 @@ model ClassPlan {
   // discovery. Null means live; set means withdrawn, and it is reversible.
   archivedAt DateTime?
 
-
   classes       Class[]
   materials     PlanMaterial[]
   collaborators Collaborator[]
+  faqs          PlanFaq[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -3323,13 +3364,18 @@ model Class {
 }
 
 model ClassContent {
-  id            String  @id @default(cuid())
+  id            String   @id @default(cuid())
   title         String
-  description   String  @db.Text
+  description   String   @db.Text
   contentType   String?
   contentUrl    String?
   order         Int
   hoursAllotted Float
+  // The "Week 1" / "Phase 2" / "Sprint 1" chip. Free text because consultants
+  // group by weeks, modules and phases interchangeably; items sharing a label
+  // render under one heading while `order` still drives sequence.
+  sectionLabel  String?
+  outcomes      String[] @default([])
 
   classPlan   ClassPlan @relation(fields: [classPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   classPlanId String
@@ -3344,13 +3390,16 @@ model ClassContent {
 // Session-by-session curriculum for subscriptions (similar to ClassContent)
 
 model SubscriptionContent {
-  id            String  @id @default(cuid())
+  id            String   @id @default(cuid())
   title         String
-  description   String  @db.Text
+  description   String   @db.Text
   contentType   String? // e.g., "Video Call", "Review Session", "Q&A"
   contentUrl    String? // Optional link to resources
   order         Int // Session sequence (1, 2, 3...)
-  hoursAllotted Float   @default(1.0)
+  hoursAllotted Float    @default(1.0)
+  // See ClassContent.sectionLabel.
+  sectionLabel  String?
+  outcomes      String[] @default([])
 
   subscriptionPlan   SubscriptionPlan @relation(fields: [subscriptionPlanId], references: [id], onDelete: Cascade)
   subscriptionPlanId String
@@ -3597,6 +3646,33 @@ model PlanMaterial {
   @@index([webinarPlanId])
   @@index([classPlanId])
   @@index([order])
+}
+
+// Buyer-facing Q&A on an offering. Polymorphic across the four plan types the
+// same way PlanMaterial is — exactly one FK should be set.
+model PlanFaq {
+  id       String @id @default(cuid())
+  question String @db.Text
+  answer   String @db.Text
+  order    Int    @default(0)
+
+  consultationPlanId String?
+  subscriptionPlanId String?
+  webinarPlanId      String?
+  classPlanId        String?
+
+  consultationPlan ConsultationPlan? @relation(fields: [consultationPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  subscriptionPlan SubscriptionPlan? @relation(fields: [subscriptionPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  webinarPlan      WebinarPlan?      @relation(fields: [webinarPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  classPlan        ClassPlan?        @relation(fields: [classPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([consultationPlanId, order])
+  @@index([subscriptionPlanId, order])
+  @@index([webinarPlanId, order])
+  @@index([classPlanId, order])
 }
 
 model SlotOfAppointment {
@@ -4870,11 +4946,13 @@ enum EarningRole {
 
 //////////////////////////////////////////////////// ENUMS ////////////////////////////////////////////////////
 
-enum PlanDuration {
-  ONE_MONTH
-  THREE_MONTHS
-  SIX_MONTHS
-  TWELVE_MONTHS
+// Was a free-text String on all four plans, so "beginner", "Begineer" and
+// "Anyone" all coexisted and the explore Level facet could never match reliably.
+enum PlanLevel {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+  ALL_LEVELS
 }
 
 enum PlanEmailSupport {
