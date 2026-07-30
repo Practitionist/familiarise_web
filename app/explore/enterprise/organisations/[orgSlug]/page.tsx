@@ -400,7 +400,11 @@ export default async function OrgProfilePage({
                 >
                   Exclusive Experts
                 </h2>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {/* Single column at every width: two-up halved the card and
+                    truncated most headlines mid-word ("Executive Coa…"), which
+                    is the one line that tells you what the expert actually
+                    does. Full width lets them read. */}
+                <div className="grid grid-cols-1 gap-3">
                   {exclusiveExperts.map((expert) => (
                     <ExpertMiniCard key={expert.id} expert={expert} />
                   ))}
