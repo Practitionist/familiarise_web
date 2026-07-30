@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import { Inbox } from "@novu/nextjs";
 import { Bell } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -7,9 +8,61 @@ import { useSession } from "@/lib/auth-client";
 
 const NOVU_APP_ID = process.env.NEXT_PUBLIC_NOVU_APP_ID;
 
+type OrgMembershipLite = {
+  organizationId: string;
+  organizationName: string;
+};
+
 export function NotificationInbox() {
   const router = useRouter();
   const { data: session } = useSession();
+
+  const memberships = useMemo(() => {
+    const raw = (session?.user as Record<string, unknown> | undefined)
+      ?.organizationMemberships;
+    if (!Array.isArray(raw)) return [] as OrgMembershipLite[];
+    // Validate rather than coerce. `String(someObject)` yields
+    // "[object Object]", which would become a tab filter matching nothing and a
+    // label rendering that literal — a malformed entry should drop out, not
+    // produce a broken tab. (Also the SonarCloud finding on this block.)
+    return raw.flatMap((m): OrgMembershipLite[] => {
+      if (typeof m !== "object" || m === null) return [];
+      const { organizationId, organizationName } = m as Record<string, unknown>;
+      if (typeof organizationId !== "string" || organizationId === "") return [];
+      return [
+        {
+          organizationId,
+          organizationName:
+            typeof organizationName === "string" && organizationName !== ""
+              ? organizationName
+              : "Organization",
+        },
+      ];
+    });
+  }, [session?.user]);
+
+  /**
+   * ADR 23 — one subscriber per user means every context shares a feed. Tabs
+   * filter it back apart on the `scope` / `organizationId` the payloads now
+   * carry.
+   *
+   * Only rendered for someone who actually belongs to an organization: a purely
+   * B2C consultant has one context, and an "All / Personal" pair that always
+   * shows the same list is noise. `scope` exists precisely so this filter can be
+   * written — Novu matches payload fields by equality, and "organizationId is
+   * null" is not expressible that way.
+   */
+  const tabs = useMemo(() => {
+    if (memberships.length === 0) return undefined;
+    return [
+      { label: "All", filter: {} },
+      { label: "Personal", filter: { data: { scope: "personal" } } },
+      ...memberships.map((m) => ({
+        label: m.organizationName,
+        filter: { data: { organizationId: m.organizationId } },
+      })),
+    ];
+  }, [memberships]);
 
   if (!session?.user?.id || !NOVU_APP_ID) {
     return null;
@@ -19,6 +72,7 @@ export function NotificationInbox() {
     <Inbox
       applicationIdentifier={NOVU_APP_ID}
       subscriberId={session.user.id}
+      tabs={tabs}
       placement="bottom-end"
       placementOffset={12}
       renderBell={(unreadCount) => {

@@ -497,6 +497,15 @@ model NotificationPreference {
   subscriptionAlerts   Boolean @default(true)
   marketingEmails      Boolean @default(false)
 
+  // Org category preferences (ADR 23). The seven categories above are all
+  // B2C-shaped, so the entire ORG_* workflow family was unmutable — an org
+  // OWNER could not turn off invoice dunning. Split three ways rather than one
+  // "org" switch because the audiences differ: an operator wants billing but
+  // not every roster change, an EXPERT wants delivery but no invoices at all.
+  orgBillingAlerts    Boolean @default(true) // invoices, wallet, payouts, overages
+  orgMembershipAlerts Boolean @default(true) // invites, roster + role changes
+  orgProgramAlerts    Boolean @default(true) // caps, exhaustion, renewals
+
   // Quiet hours
   quietHoursEnabled  Boolean @default(false)
   quietHoursStart    String? // "22:00" format in user timezone
@@ -3164,6 +3173,16 @@ model WebinarPlan {
   // #726 — marketplace leak guard. See ConsultationPlan.visibility.
   visibility OrgPlanVisibility @default(PUBLIC)
 
+  // #catalog-archive — retiring a plan MUST NOT delete it. The FK chain is
+  // onDelete: Cascade the whole way down (WebinarPlan -> Webinar -> Appointment
+  // -> Payment), so removing a booked plan would physically destroy settled
+  // money records. A plan row is also the TERMS of every sale made against it,
+  // which past appointments, invoices and earnings still resolve. Archiving
+  // keeps the history intact and only withdraws the plan from booking and
+  // discovery. Null means live; set means withdrawn, and it is reversible.
+  archivedAt DateTime?
+
+
   webinars      Webinar[]
   materials     PlanMaterial[]
   collaborators Collaborator[]
@@ -3247,6 +3266,16 @@ model ClassPlan {
 
   // #726 — marketplace leak guard. See ConsultationPlan.visibility.
   visibility OrgPlanVisibility @default(PUBLIC)
+
+  // #catalog-archive — retiring a plan MUST NOT delete it. The FK chain is
+  // onDelete: Cascade the whole way down (WebinarPlan -> Webinar -> Appointment
+  // -> Payment), so removing a booked plan would physically destroy settled
+  // money records. A plan row is also the TERMS of every sale made against it,
+  // which past appointments, invoices and earnings still resolve. Archiving
+  // keeps the history intact and only withdraws the plan from booking and
+  // discovery. Null means live; set means withdrawn, and it is reversible.
+  archivedAt DateTime?
+
 
   classes       Class[]
   materials     PlanMaterial[]

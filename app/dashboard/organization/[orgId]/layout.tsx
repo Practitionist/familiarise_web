@@ -27,6 +27,7 @@ import {
   Receipt,
   ShieldCheck,
   ShieldAlert,
+  Library,
   type LucideIcon,
 } from "lucide-react";
 
@@ -56,10 +57,14 @@ const MOBILE_TABS: {
     surface: "operations.read",
   },
   {
+    // No surface gate, matching the desktop entry (ADR 23). The Settings page
+    // floors at active membership and each tab carries its own gate, so an
+    // ordinary member reaches it for the Notifications tab and nothing else.
+    // Gating only the desktop sidebar would have left mobile LEARNER/EXPERT
+    // users with no route to their own notification preferences.
     label: "Settings",
     path: "settings",
     Icon: Settings,
-    surface: "settings.manage",
   },
 ];
 
@@ -72,6 +77,7 @@ import { DashboardContextBar } from "@/components/dashboard/DashboardContextBar"
 import { LinkPendingIcon } from "@/components/ui/NavLink";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { useSession } from "@/lib/auth-client";
+import { useNovuSubscriberSync } from "@/hooks/useNovuSubscriberSync";
 import { signOutEverywhere } from "@/lib/auth/sign-out";
 import { hasOrgPermission, type OrgSurface } from "@/lib/auth/org-permissions";
 import {
@@ -167,6 +173,12 @@ export default function OrgLayout({
   const router = useRouter();
   const { data: session, isPending: isSessionLoading } = useSession();
 
+  // ADR 23 — the personal dashboards did this and the org tree did not, so a
+  // user onboarded straight into an org by invite was never POSTed to
+  // /api/novu/subscriber. Their Novu record stayed bare and any template
+  // interpolating subscriber.firstName / email degraded.
+  useNovuSubscriberSync();
+
   const {
     data: org,
     error,
@@ -189,7 +201,8 @@ export default function OrgLayout({
   const sidebarGroups: CollapsibleSidebarGroup[] = useMemo(() => {
     if (!org) return [];
     const { canSponsor, canHost, fundingSource, requiresPO } = org.organization;
-    const role = org.membership.role;
+    const membership = org.membership;
+    const role = membership.role;
     const can = (surface: OrgSurface) => hasOrgPermission(role, surface);
 
     // Resources group defaults collapsed for OWNER + MAINTAINER — their
@@ -260,12 +273,16 @@ export default function OrgLayout({
         name: "Requests",
         icon: ClipboardCheck,
         path: "requests",
-        // Same gate as Compensation, which is the other EXPERT delivery
-        // surface: `myArrangement.read` is EXPERT-only and `canHost` means the
-        // org actually has experts. The page re-checks the membership's own
-        // consultantProfileId and redirects if absent, so a mismatch degrades
-        // to a redirect rather than a broken tab.
-        show: can("myArrangement.read") && canHost,
+        // The comment above described this gate for months but the code did
+        // not implement it: `myArrangement.read` is exact-role EXPERT, so an
+        // OWNER or MANAGER who also delivers got no nav entry even though the
+        // page admits anyone holding a consultantProfileId. That is ADR 19's
+        // "gate and page disagree" failure inverted — a reachable page with no
+        // way to reach it. The profile is the real predicate; the role check
+        // stays as the cheap path for the common EXPERT case.
+        show:
+          (can("myArrangement.read") || membership.consultantProfileId !== null) &&
+          canHost,
       },
     ];
 
@@ -325,6 +342,17 @@ export default function OrgLayout({
         icon: Receipt,
         path: "purchase-orders",
         show: canSponsor && requiresPO && can("purchaseOrders.read"),
+      },
+      {
+        // What the org SELLS, above what it SPONSORS — the two are different
+        // objects, not two scopes of one, so this is a separate entry rather
+        // than a toggle on Programs (ADR 19's my-program/programs precedent).
+        // Catalog is the host-side offering the org owns; Programs is the
+        // sponsor-side entitlement that funds bookings of anyone's plans.
+        name: "Catalog",
+        icon: Library,
+        path: "catalog",
+        show: canHost && can("catalog.manage"),
       },
       {
         name: "Programs",
@@ -432,7 +460,12 @@ export default function OrgLayout({
         name: "Settings",
         icon: Settings,
         path: "settings",
-        show: can("settings.manage") || can("integrations.read"),
+        // Ungated as of ADR 23. The PAGE has always floored at active
+        // membership — each tab carries its own gate and UrlTabs renders
+        // nothing when none apply — but the nav entry demanded an operator
+        // grant, so a LEARNER or EXPERT could reach Settings only by typing the
+        // URL. That gap became user-visible once the member-level Notifications
+        // tab landed there. Non-operators now see Settings with that one tab.
       },
     ];
 
@@ -578,6 +611,7 @@ export default function OrgLayout({
     messages: "Messages",
     requests: "Requests",
     members: "Members",
+    catalog: "Catalog",
     programs: "Programs",
     contracts: "Contracts",
     "purchase-orders": "Purchase Orders",

@@ -13,6 +13,7 @@ import { AppointmentsPageSkeleton } from "@/components/appointments/skeletons";
 import { mapConsultantAppointments } from "@/lib/appointments/map-consultant";
 import { createConsultantQueries } from "@/lib/dashboard-queries";
 import { useConsultantAppointmentsAdapter } from "./ConsultantAppointmentsAdapter";
+import { TrialsTab } from "../trials/TrialsTab";
 
 /** Old HomeTab deep-links carry groupRecurringAppointments keys — map the
  *  non-recurring "single-<appointmentId>" form onto the VM row id. */
@@ -196,6 +197,16 @@ export default function AppointmentsPageClient({
             adapter={adapter}
             highlightedId={highlightedId}
             notices={notices}
+            // ADR 19 folded trials onto Appointments on the org side because a
+            // trial IS an appointment. This is the personal half of that move —
+            // the standalone /trials nav entry is gone.
+            extraTabs={[
+              {
+                value: "trials",
+                label: "Trials",
+                content: <TrialsTab />,
+              },
+            ]}
           />
         )}
       </div>

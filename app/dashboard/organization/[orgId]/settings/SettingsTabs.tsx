@@ -29,6 +29,7 @@ import { SsoPanel } from "./SsoPanel";
 import { WebhooksPanel } from "./WebhooksPanel";
 import { ScimPanel } from "./ScimPanel";
 import { DataExportsPanel } from "./DataExportsPanel";
+import { NotificationPreferencesPanel } from "@/components/notifications/NotificationPreferencesPanel";
 
 export function SettingsTabs({ orgId }: { orgId: string }) {
   const { role, isLoading } = useOrgRole(orgId);
@@ -82,6 +83,18 @@ export function SettingsTabs({ orgId }: { orgId: string }) {
       label: "Data exports",
       content: <DataExportsPanel orgId={orgId} />,
       show: canIntegrations,
+    },
+    {
+      // ADR 23 — the org dashboard carried a notification bell but no way to
+      // configure it, and no org category existed at all, so the whole ORG_*
+      // family was unmutable. Deliberately ungated: this configures the
+      // VIEWER's own delivery, not org config, so it needs no matrix key and
+      // every active member reaches it — the same floor as Appointments and
+      // Messages. The preferences themselves are per-user, not per-org, which
+      // is why the panel is the same one the personal dashboards mount.
+      value: "notifications",
+      label: "Notifications",
+      content: <NotificationPreferencesPanel />,
     },
   ];
 

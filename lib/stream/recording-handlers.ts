@@ -11,6 +11,8 @@ import {
   notifyRecordingAvailable,
   notifyRecordingFailed,
 } from "@/lib/novu/service";
+import { notificationScope } from "@/lib/novu/workflows";
+import { notificationHref } from "@/lib/novu/resolve-href";
 import { getAppUrl } from "@/lib/url";
 import {
   generateRecordingTitle,
@@ -369,10 +371,18 @@ export async function handleRecordingReady(
       // notification via `after()` so it survives the webhook response.
       after(() =>
         notifyRecordingAvailable(userIds, {
+          // ADR 20 still holds: `userIds` here is the participant list from
+          // getEventAttendeeIds, never an org roster, so the recordingUrl below
+          // does not reach an operator. The scope tag is attribution only — it
+          // does not widen who receives this.
+          ...notificationScope(appointment?.organizationId),
           appointmentType,
           consultantName,
           recordingUrl: url,
-          dashboardUrl: `${getAppUrl()}/dashboard`,
+          dashboardUrl: notificationHref(
+            appointment?.organizationId,
+            "recordings",
+          ),
         }).catch((err) =>
           streamLogger.error("Failed to send recording notification", err, {
             streamCallId,

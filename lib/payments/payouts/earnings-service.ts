@@ -137,8 +137,16 @@ import { prorate, sumPaise } from "@/lib/payments/utils/money";
  * membership at a canHost org. Returns null for independent consultants
  * or when the HOST-orgs feature flag is off.
  *
- * For multi-org consultants, uses the first active canHost membership.
- * (Future: allow consultant to select which org gets credit per-booking.)
+ * For multi-org consultants the OWNING org wins when the plan has one — an
+ * org that publishes a plan through its catalog is the seller, so it must be
+ * the org that gets paid for it. Without that, an expert who is EXPERT at two
+ * host orgs sends Org B's catalog revenue to Org A purely because they joined
+ * Org A first. That was unreachable until the org catalog could set
+ * `Plan.organizationId`; it is reachable now.
+ *
+ * With no owning org (a personal B2C plan) the previous rule stands: the
+ * oldest active canHost membership. ADR 18 records that as known-crude, and it
+ * remains the fallback rather than the primary rule.
  */
 async function resolveOrgSplit(
   tx: Tx,
@@ -150,25 +158,61 @@ async function resolveOrgSplit(
    *  would silently rewrite what the consultant was owed for bookings
    *  made before the bump. */
   at: Date = new Date(),
+  /** The booked plan, when it is one of the two org-ownable kinds. Read
+   *  inside this transaction rather than by the caller, so plan ownership and
+   *  the earnings rows it decides are read and written under one snapshot. */
+  plan: { id: string; kind: "webinar" | "class" } | null = null,
 ): Promise<OrgEarningsSplit | null> {
   if (!ENABLE_HOST_ORGS) return null;
 
+  // Only Webinar and Class can be org-owned — Consultation and Subscription
+  // require a consultantProfileId, so an org can never solely own one.
+  const ownerOrgId = plan
+    ? ((
+        await (plan.kind === "webinar"
+          ? tx.webinarPlan.findUnique({
+              where: { id: plan.id },
+              select: { organizationId: true },
+            })
+          : tx.classPlan.findUnique({
+              where: { id: plan.id },
+              select: { organizationId: true },
+            }))
+      )?.organizationId ?? null)
+    : null;
+
   // Arch-4: Membership where role=EXPERT and parent org canHost=true.
-  // Oldest membership wins (multi-org consultants route deterministically
-  // to the same org). Rate card resolved via the time-scoped resolver at
-  // the booking instant.
-  const membership = await tx.membership.findFirst({
-    where: {
-      consultantProfileId,
-      role: "EXPERT",
-      status: "ACTIVE",
-      organization: { canHost: true, status: "ACTIVE" },
-    },
-    orderBy: { createdAt: "asc" },
-    include: {
-      organization: { select: { id: true } },
-    },
-  });
+  // Rate card resolved via the time-scoped resolver at the booking instant.
+  //
+  // The owning org is tried FIRST. The membership still has to exist and be
+  // ACTIVE at a canHost org — an org cannot direct earnings to itself for
+  // someone who is not its expert, and the catalog endpoint enforces the same
+  // thing at publish time.
+  const membership =
+    (ownerOrgId
+      ? await tx.membership.findFirst({
+          where: {
+            consultantProfileId,
+            role: "EXPERT",
+            status: "ACTIVE",
+            organizationId: ownerOrgId,
+            organization: { canHost: true, status: "ACTIVE" },
+          },
+          include: { organization: { select: { id: true } } },
+        })
+      : null) ??
+    // Fallback: oldest membership wins, so multi-org consultants selling their
+    // OWN plans route deterministically to the same org.
+    (await tx.membership.findFirst({
+      where: {
+        consultantProfileId,
+        role: "EXPERT",
+        status: "ACTIVE",
+        organization: { canHost: true, status: "ACTIVE" },
+      },
+      orderBy: { createdAt: "asc" },
+      include: { organization: { select: { id: true } } },
+    }));
 
   if (!membership) return null;
 
@@ -282,6 +326,7 @@ export async function createEarningsFromPayment({
     planId = payment.appointment.class.classPlanId;
   }
 
+
   // FIX #9: Wrap earnings creation + balance updates in a transaction for atomicity.
   // Also handles P2002 unique constraint violations gracefully for idempotency.
   // #896 — Serializable isolation + P2034 retry so the waiver eligibility count()
@@ -312,6 +357,7 @@ export async function createEarningsFromPayment({
             consultantProfileId,
             grossAmount,
             payment.createdAt,
+            planId && planType ? { id: planId, kind: planType } : null,
           );
 
           // #687 E-01/E-02 — the PENDING_TRUST park keys on the SPONSORING org
@@ -397,6 +443,11 @@ export async function createEarningsFromPayment({
             );
             for (const split of splits) {
               if (split.role === "OWNER" || split.share <= 0) continue;
+              // No ownerOrgId on purpose. ADR 18: collaborations are org-blind
+              // and "each collaborator's earnings resolve to their own org
+              // independently". A collaborator on someone else's org-owned plan
+              // is not that org's expert, so their share settles to THEIR host
+              // org, not the seller's.
               const collabOrgSplit = await resolveOrgSplit(
                 tx,
                 split.consultantProfileId,

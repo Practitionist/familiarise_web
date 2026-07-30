@@ -16,6 +16,7 @@ import { mapGatewayRefundStatus } from "@/lib/payments/refund-status";
 import { PaymentGateway, Prisma, RefundStatus } from "@prisma/client";
 import { listRefunds } from "../../lib/payments";
 import { notifyRefundFailed } from "../../lib/novu/service";
+import { notificationScope } from "../../lib/novu/workflows";
 import { getAppUrl } from "../../lib/url";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 
@@ -209,7 +210,7 @@ async function notifyFailedRefundsUnlocked(): Promise<FailedRefundNotifyResult> 
       status: RefundStatus.FAILED,
       failedNotifiedAt: null,
     },
-    include: { payment: { select: { userId: true } } },
+    include: { payment: { select: { userId: true, organizationId: true } } },
     orderBy: { createdAt: "asc" },
   });
 
@@ -243,6 +244,7 @@ async function notifyFailedRefundsUnlocked(): Promise<FailedRefundNotifyResult> 
 
     // Fire-and-forget — committed state, no DB writes in the notify path.
     void notifyRefundFailed(refund.payment.userId, {
+      ...notificationScope(refund.payment.organizationId),
       amount: refund.amountPaise,
       currency: refund.currency,
       reason: failureReason,

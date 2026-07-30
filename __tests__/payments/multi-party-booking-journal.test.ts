@@ -118,6 +118,16 @@ jest.mock("../../lib/prisma", () => {
         ),
     },
     membership: { findFirst: jest.fn() },
+    // #catalog-archive — resolveOrgSplit now reads plan ownership in-transaction
+    // so an org-published plan settles to the org that SOLD it. These fixtures
+    // use personal plans, so no owner is found and the previous
+    // oldest-membership behaviour (which these assertions encode) still applies.
+    webinarPlan: {
+      findUnique: jest.fn().mockResolvedValue({ organizationId: null }),
+    },
+    classPlan: {
+      findUnique: jest.fn().mockResolvedValue({ organizationId: null }),
+    },
   };
   return {
     __esModule: true,

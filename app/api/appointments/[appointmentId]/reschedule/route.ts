@@ -10,8 +10,9 @@ import {
   AppointmentNotFoundError,
 } from "@/utils/errors/RescheduleErrors";
 import { notifyAppointmentRescheduled } from "@/lib/novu/service";
+import { notificationScope } from "@/lib/novu/workflows";
+import { notificationHref } from "@/lib/novu/resolve-href";
 import { logActivity } from "@/lib/activity/log-activity";
-import { getAppUrl } from "@/lib/url";
 import { hasActiveDisputeForAppointment } from "@/lib/payments/dispute-guard";
 import {
   CLASS_EVENT_ALLOWED_FROM,
@@ -585,13 +586,18 @@ export async function POST(
               : "class";
 
         if (uniqueUserIds.length > 0) {
-          const baseUrl = getAppUrl();
           void notifyAppointmentRescheduled(uniqueUserIds, {
+            ...notificationScope(appointment.organizationId),
             appointmentType,
             consultantName: plan?.consultantProfile?.user?.name ?? "Consultant",
             consulteeName: requestedBy?.user?.name ?? "Participant",
             planTitle: plan?.title ?? "Unknown",
-            dashboardUrl: `${baseUrl}/dashboard`,
+            // Group events fan out to every attendee, so one href must serve
+            // them all — org route when org-hosted, router bounce otherwise.
+            dashboardUrl: notificationHref(
+              appointment.organizationId,
+              "appointments",
+            ),
           }).catch((err) =>
             console.error("[reschedule] Failed to send notification:", err),
           );

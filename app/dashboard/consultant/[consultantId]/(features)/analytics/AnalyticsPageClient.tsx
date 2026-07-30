@@ -27,7 +27,6 @@ import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import {
   DashboardContent,
   DashboardGrid,
-  DashboardHeader,
 } from "@/components/dashboard/PageScaffold";
 import { StatCard, StatCardSkeleton } from "@/components/dashboard/StatCard";
 import { DataCard, EmptyState } from "@/components/dashboard/DataCard";
@@ -144,11 +143,9 @@ export default function AnalyticsPageClient({
   const summary = earningsData?.summary;
 
   return (
+    // No DashboardHeader — this is the Analytics tab of the Earnings page now,
+    // which renders one header above the tab strip.
     <DashboardErrorBoundary>
-      <DashboardHeader
-        title="Analytics"
-        subtitle="Earnings and session performance across your practice"
-      />
       <DashboardContent className="px-0 lg:px-0">
         {/* KPI grid */}
         {earningsLoading || appointmentsLoading ? (

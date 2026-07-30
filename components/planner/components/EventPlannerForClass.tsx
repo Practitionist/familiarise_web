@@ -70,6 +70,7 @@ export function EventPlannerForClass({
   initialData,
   isSaving: externalIsSaving,
   consultantId,
+  organizationId = null,
 }: Readonly<ClassPlannerProps>) {
   const [internalIsSaving, setInternalIsSaving] = useState(false);
   const [showConfirmation, setShowConfirmation] = useState(false);
@@ -305,10 +306,15 @@ export function EventPlannerForClass({
           topics: formData.topics,
           consultantProfileId: consultantId,
           consultantProfile: null,
-          organizationId: null,
-          // #726 — personal plans default to PUBLIC; org-owned plans
-          // surface a visibility toggle in their dedicated catalog UI.
-          visibility: initialData?.classPlan?.visibility ?? "PUBLIC",
+          organizationId,
+          // A plan is created live; archiving is a later, explicit act.
+          archivedAt: null,
+          // #726 — personal plans default to PUBLIC. Org-owned plans default to
+          // ORG_AND_PUBLIC per the enum's own doc comment, and the catalog form
+          // renders the toggle that narrows them to ORG_ONLY.
+          visibility:
+            initialData?.classPlan?.visibility ??
+            (organizationId ? "ORG_AND_PUBLIC" : "PUBLIC"),
           certificateProvided: formData.certificateProvided ?? false,
           recordingEnabled: formData.recordingEnabled ?? false,
           recordingStoragePolicy:

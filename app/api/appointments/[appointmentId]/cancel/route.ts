@@ -2,7 +2,11 @@ import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import { CancellationReason } from "@prisma/client";
-import { notifyAppointmentCancelled } from "@/lib/novu";
+import {
+  notifyAppointmentCancelled,
+} from "@/lib/novu";
+import { notificationScope } from "@/lib/novu/workflows";
+import { notificationHref } from "@/lib/novu/resolve-href";
 import { CancelAppointmentSchema } from "@/schemas/appointments";
 import {
   logConsultationCancelled,
@@ -416,12 +420,18 @@ export async function POST(
     ].filter((id): id is string => !!id);
     if (userIds.length > 0) {
       void notifyAppointmentCancelled(userIds, {
+        ...notificationScope(appointment.organizationId),
+        appointmentId,
         appointmentType: notificationMeta.appointmentType,
         consultantName: notificationMeta.consultantName || "Consultant",
         consulteeName: notificationMeta.consulteeName || "Consultee",
         planTitle: notificationMeta.planTitle || "N/A",
         dateTime: notificationMeta.dateTime,
-        dashboardUrl: "/dashboard",
+        // Both parties receive one payload, so the href has to suit either.
+        dashboardUrl: notificationHref(
+          appointment.organizationId,
+          "appointments",
+        ),
         reason: validatedData.reason || undefined,
         cancelledBy:
           notificationMeta.cancelledBy === notificationMeta.consultantUserId

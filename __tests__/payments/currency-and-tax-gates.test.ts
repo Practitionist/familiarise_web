@@ -100,7 +100,7 @@ describe("the planner cannot create an unsettleable plan", () => {
     const src = require("fs").readFileSync(
       require("path").join(
         process.cwd(),
-        "app/dashboard/consultant/[consultantId]/(features)/planner/components/form-fields/PriceField.tsx",
+        "components/planner/components/form-fields/PriceField.tsx",
       ),
       "utf8",
     );

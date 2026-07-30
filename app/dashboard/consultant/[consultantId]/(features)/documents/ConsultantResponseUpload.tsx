@@ -16,7 +16,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { Upload, X, FileText, Loader2 } from "lucide-react";
 import { formatFileSize } from "@/lib/documents/document-utils";
-import { ConsultantDocumentService } from "../../(features)/planner/services/materials-service";
+import { ConsultantDocumentService } from "@/components/planner/services/materials-service";
 import { IDocument } from "../../types";
 
 interface ConsultantResponseUploadProps {

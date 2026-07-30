@@ -44,25 +44,6 @@ export interface IDocument {
   tag: string;
 }
 
-export interface IPlanMaterial {
-  id: string;
-  fileName: string;
-  originalName: string;
-  fileSize: number;
-  mimeType: string;
-  fileUrl: string;
-  storagePath: string;
-  description: string | null;
-  order: number;
-  // Plan references (one will be set)
-  consultationPlanId?: string | null;
-  subscriptionPlanId?: string | null;
-  webinarPlanId?: string | null;
-  classPlanId?: string | null;
-  uploadedAt: Date;
-  updatedAt?: Date;
-}
-
 export interface IActivity {
   id: string;
   type: string;

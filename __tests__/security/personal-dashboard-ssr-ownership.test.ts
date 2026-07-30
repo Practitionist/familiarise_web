@@ -36,7 +36,11 @@ const GUARDED_PAGES: Array<[string, "consultee" | "consultant", string]> = [
   [`${CE}/appointments/[appointmentId]/page.tsx`, "consultee", "consulteeId"],
   [`${CA}/home/page.tsx`, "consultant", "consultantId"],
   [`${CA}/appointments/page.tsx`, "consultant", "consultantId"],
-  [`${CA}/analytics/page.tsx`, "consultant", "consultantId"],
+  // Analytics stopped being its own route when it folded onto Earnings as a
+  // tab (ADR 19). The guard did not move with it — `earnings/page.tsx` became
+  // a server component specifically so it could keep the SSR prefetch that
+  // page owned, which means it has to hold the ownership check too.
+  [`${CA}/earnings/page.tsx`, "consultant", "consultantId"],
   [`${CA}/appointments/[appointmentId]/page.tsx`, "consultant", "consultantId"],
 ];
 
