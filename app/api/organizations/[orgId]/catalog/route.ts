@@ -72,14 +72,20 @@ export async function GET(
   });
   if (access.error) return access.error;
 
+  // Archived plans are hidden unless explicitly asked for, so the catalog reads
+  // as "what we currently sell" while the history stays reachable.
+  const url = new URL(req.url);
+  const includeArchived = url.searchParams.get("includeArchived") === "true";
+  const archiveFilter = includeArchived ? {} : { archivedAt: null };
+
   const [webinars, classes] = await Promise.all([
     prisma.webinarPlan.findMany({
-      where: { organizationId: orgId },
+      where: { organizationId: orgId, ...archiveFilter },
       orderBy: { createdAt: "desc" },
       include: { consultantProfile: { select: { id: true, userId: true } } },
     }),
     prisma.classPlan.findMany({
-      where: { organizationId: orgId },
+      where: { organizationId: orgId, ...archiveFilter },
       orderBy: { createdAt: "desc" },
       include: { consultantProfile: { select: { id: true, userId: true } } },
     }),
@@ -208,14 +214,20 @@ export async function POST(
 }
 
 /**
- * Remove plans from the catalog.
+ * Withdraw plans from the catalog, or put them back.
  *
- * NOTE: neither `WebinarPlan` nor `ClassPlan` has an `isActive` / `archivedAt`
- * column — the `AUDIT_ACTIONS.CATALOG` docstrings still describe the retired
- * `OrganizationPlan`, which did. So "deactivate" is not representable today and
- * this endpoint deletes instead, refusing once anything has been scheduled off
- * the plan. Soft-archiving a plan that already has bookings needs a schema
- * field, which belongs in the pre-launch freeze rather than here.
+ * ARCHIVES rather than deletes, always. The plan FK chain is `onDelete:
+ * Cascade` the whole way down — `WebinarPlan` → `Webinar` → `Appointment` →
+ * `Payment` — so removing a booked plan would physically destroy settled money
+ * records. A plan row is also the TERMS of every sale made against it, which
+ * past appointments, invoices and earnings still resolve by reading it.
+ *
+ * There is deliberately no hard-delete path even for a never-booked plan. One
+ * code path cannot trip the cascade; two invite a future edit that misses a
+ * reference (materials, collaborators) and turns a catalog button into a
+ * history shredder. An unused plan simply sits archived, which costs nothing.
+ *
+ * `?restore=true` reverses it.
  */
 export async function DELETE(
   req: NextRequest,
@@ -236,52 +248,36 @@ export async function DELETE(
     );
   }
   const { kind, planIds } = parsed.data;
+  const restore = new URL(req.url).searchParams.get("restore") === "true";
+  const archivedAt = restore ? null : new Date();
 
-  const removed = await prisma.$transaction(async (tx) => {
+  const count = await prisma.$transaction(async (tx) => {
     // Scoped by organizationId as well as id, so a stolen id from another
-    // tenant matches nothing rather than deleting their row.
+    // tenant matches nothing rather than touching their row.
     const scope = { id: { in: planIds }, organizationId: orgId };
 
-    const scheduled =
+    const { count: affected } =
       kind === "WEBINAR"
-        ? await tx.webinar.count({ where: { webinarPlanId: { in: planIds } } })
-        : await tx.class.count({ where: { classPlanId: { in: planIds } } });
+        ? await tx.webinarPlan.updateMany({ where: scope, data: { archivedAt } })
+        : await tx.classPlan.updateMany({ where: scope, data: { archivedAt } });
 
-    if (scheduled > 0) {
-      return { blocked: true as const, count: 0 };
-    }
-
-    const { count } =
-      kind === "WEBINAR"
-        ? await tx.webinarPlan.deleteMany({ where: scope })
-        : await tx.classPlan.deleteMany({ where: scope });
-
-    if (count > 0) {
+    if (affected > 0) {
       await tx.orgAuditLog.create({
         data: {
           organizationId: orgId,
           actorMembershipId: access.member.id,
           category: "CATALOG",
-          action: AUDIT_ACTIONS.CATALOG.CATALOG_PLAN_DEACTIVATED,
-          description: `${count} ${kind === "WEBINAR" ? "webinar" : "class"} plan(s) removed from the catalog`,
+          action: restore
+            ? AUDIT_ACTIONS.CATALOG.CATALOG_PLAN_RESTORED
+            : AUDIT_ACTIONS.CATALOG.CATALOG_PLAN_DEACTIVATED,
+          description: `${affected} ${kind === "WEBINAR" ? "webinar" : "class"} plan(s) ${restore ? "restored to" : "withdrawn from"} the catalog`,
           details: { kind, planIds },
         },
       });
     }
 
-    return { blocked: false as const, count };
+    return affected;
   });
 
-  if (removed.blocked) {
-    return NextResponse.json(
-      {
-        error: "PLAN_HAS_SESSIONS",
-        message:
-          "This plan already has scheduled sessions and cannot be removed. Sessions must be cancelled first.",
-      },
-      { status: 409 },
-    );
-  }
-
-  return NextResponse.json({ removed: removed.count });
+  return NextResponse.json(restore ? { restored: count } : { archived: count });
 }

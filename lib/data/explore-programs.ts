@@ -2,7 +2,7 @@ import { unstable_cache } from "next/cache";
 import prisma from "@/lib/prisma";
 import { toPlain } from "@/lib/data/serialize";
 import type { Prisma } from "@prisma/client";
-import { marketplaceVisibilityWhere } from "@/lib/api/plans/visibility";
+import { eventPlanDiscoverableWhere } from "@/lib/api/plans/visibility";
 import { generateProgramImageUrl } from "@/lib/explore/programs";
 import type {
   Program,
@@ -76,7 +76,7 @@ const getTrendingClassPlanIds = unstable_cache(
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
     const ranked = await prisma.classPlan.findMany({
-      where: { ...marketplaceVisibilityWhere(), ...liveConsultantWhere }, // #726 — no ORG_ONLY in curated feed
+      where: { ...eventPlanDiscoverableWhere(), ...liveConsultantWhere }, // #726 — no ORG_ONLY in curated feed
       select: {
         id: true,
         classes: {
@@ -120,7 +120,7 @@ const getTrendingWebinarPlanIds = unstable_cache(
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
     const ranked = await prisma.webinarPlan.findMany({
-      where: { ...marketplaceVisibilityWhere(), ...liveConsultantWhere }, // #726 — no ORG_ONLY in curated feed
+      where: { ...eventPlanDiscoverableWhere(), ...liveConsultantWhere }, // #726 — no ORG_ONLY in curated feed
       select: {
         id: true,
         webinars: {
@@ -184,7 +184,7 @@ export const getCuratedPrograms = unstable_cache(
         classPlans = await prisma.classPlan.findMany({
           where: {
             id: { in: sortedIds },
-            ...marketplaceVisibilityWhere(),
+            ...eventPlanDiscoverableWhere(),
             ...liveConsultantWhere,
           }, // #726
           include: {
@@ -202,7 +202,7 @@ export const getCuratedPrograms = unstable_cache(
         );
       } else {
         classPlans = await prisma.classPlan.findMany({
-          where: { ...marketplaceVisibilityWhere(), ...liveConsultantWhere }, // #726
+          where: { ...eventPlanDiscoverableWhere(), ...liveConsultantWhere }, // #726
           include: {
             consultantProfile: planConsultantInclude,
             topics: true,
@@ -238,7 +238,7 @@ export const getCuratedPrograms = unstable_cache(
         webinarPlans = await prisma.webinarPlan.findMany({
           where: {
             id: { in: sortedIds },
-            ...marketplaceVisibilityWhere(),
+            ...eventPlanDiscoverableWhere(),
             ...liveConsultantWhere,
           }, // #726
           include: {
@@ -253,7 +253,7 @@ export const getCuratedPrograms = unstable_cache(
         );
       } else {
         webinarPlans = await prisma.webinarPlan.findMany({
-          where: { ...marketplaceVisibilityWhere(), ...liveConsultantWhere }, // #726
+          where: { ...eventPlanDiscoverableWhere(), ...liveConsultantWhere }, // #726
           include: {
             consultantProfile: planConsultantInclude,
             topics: true,
@@ -306,7 +306,7 @@ export const getTopicsWithCount = unstable_cache(
               ? {
                   classPlans: {
                     where: {
-                      ...marketplaceVisibilityWhere(),
+                      ...eventPlanDiscoverableWhere(),
                       ...liveConsultantWhere,
                     },
                   },
@@ -316,7 +316,7 @@ export const getTopicsWithCount = unstable_cache(
               ? {
                   webinarPlans: {
                     where: {
-                      ...marketplaceVisibilityWhere(),
+                      ...eventPlanDiscoverableWhere(),
                       ...liveConsultantWhere,
                     },
                   },

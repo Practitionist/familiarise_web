@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Library, Plus, Trash2, Loader2 } from "lucide-react";
+import { Library, Plus, Archive, Undo2, Loader2 } from "lucide-react";
 
 import {
   DashboardHeader,
@@ -43,6 +43,7 @@ interface CatalogRow {
   visibility: "PUBLIC" | "ORG_ONLY" | "ORG_AND_PUBLIC";
   maxParticipants: number;
   consultantProfileId: string | null;
+  archivedAt: string | null;
 }
 
 interface CatalogResponse {
@@ -72,7 +73,11 @@ export function CatalogClient({
   const { data, isLoading, error } = useQuery<CatalogResponse>({
     queryKey,
     queryFn: async () => {
-      const res = await fetch(`/api/organizations/${orgId}/catalog`);
+      // One fetch drives both views; the client partitions on archivedAt so
+      // restoring does not need a second round trip.
+      const res = await fetch(
+        `/api/organizations/${orgId}/catalog?includeArchived=true`,
+      );
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error ?? "Failed to load the catalog");
@@ -107,26 +112,44 @@ export function CatalogClient({
       }),
   });
 
-  const removePlan = useMutation({
-    mutationFn: async ({ kind, planId }: { kind: Kind; planId: string }) => {
-      const res = await fetch(`/api/organizations/${orgId}/catalog`, {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ kind, planIds: [planId] }),
-      });
+  const setArchived = useMutation({
+    mutationFn: async ({
+      kind,
+      planId,
+      restore,
+    }: {
+      kind: Kind;
+      planId: string;
+      restore: boolean;
+    }) => {
+      const res = await fetch(
+        `/api/organizations/${orgId}/catalog${restore ? "?restore=true" : ""}`,
+        {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ kind, planIds: [planId] }),
+        },
+      );
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error(body.message ?? body.error ?? "Could not remove");
+        throw new Error(body.message ?? body.error ?? "Could not update");
       }
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (_data, vars) => {
       void queryClient.invalidateQueries({ queryKey });
-      toast({ title: "Removed from the catalog" });
+      toast({
+        title: vars.restore
+          ? "Back on sale"
+          : "Withdrawn from the catalog",
+        description: vars.restore
+          ? undefined
+          : "Existing bookings and their records are unaffected.",
+      });
     },
     onError: (e: Error) =>
       toast({
-        title: "Could not remove",
+        title: "Could not update",
         description: e.message,
         variant: "destructive",
       }),
@@ -208,20 +231,38 @@ export function CatalogClient({
         key: "actions",
         header: "",
         hideOnCard: true,
-        cell: (r) => (
-          <Button
-            variant="ghost"
-            size="sm"
-            aria-label={`Remove ${r.title}`}
-            disabled={removePlan.isPending}
-            onClick={() => removePlan.mutate({ kind, planId: r.id })}
-          >
-            <Trash2 className="h-4 w-4" />
-          </Button>
-        ),
+        cell: (r) => {
+          const archived = r.archivedAt !== null;
+          return (
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-label={`${archived ? "Restore" : "Withdraw"} ${r.title}`}
+              title={
+                archived
+                  ? "Put back on sale"
+                  : "Withdraw from sale. Existing bookings are unaffected."
+              }
+              disabled={setArchived.isPending}
+              onClick={() =>
+                setArchived.mutate({
+                  kind,
+                  planId: r.id,
+                  restore: archived,
+                })
+              }
+            >
+              {archived ? (
+                <Undo2 className="h-4 w-4" />
+              ) : (
+                <Archive className="h-4 w-4" />
+              )}
+            </Button>
+          );
+        },
       },
     ],
-    [removePlan],
+    [setArchived],
   );
 
   const renderList = (kind: Kind, rows: CatalogRow[]) => {
@@ -259,6 +300,17 @@ export function CatalogClient({
       />
     );
   };
+
+  // The fetch asks for everything; the split happens here so restoring a plan
+  // does not need a second round trip.
+  const live = (rows: CatalogRow[] | undefined) =>
+    (rows ?? []).filter((r) => r.archivedAt === null);
+  const archivedWebinars = (data?.webinars ?? []).filter(
+    (r) => r.archivedAt !== null,
+  );
+  const archivedClasses = (data?.classes ?? []).filter(
+    (r) => r.archivedAt !== null,
+  );
 
   // No experts, nothing to publish — an org plan needs somebody to deliver it,
   // so say that plainly rather than opening a form that will 422.
@@ -325,13 +377,35 @@ export function CatalogClient({
                 {
                   value: "webinars",
                   label: "Webinars",
-                  content: renderList("WEBINAR", data?.webinars ?? []),
+                  content: renderList("WEBINAR", live(data?.webinars)),
                 },
                 {
                   value: "classes",
                   label: "Classes",
-                  content: renderList("CLASS", data?.classes ?? []),
+                  content: renderList("CLASS", live(data?.classes)),
                 },
+                // Withdrawn plans keep their own view rather than a filter
+                // toggle: it answers a different question ("what did we stop
+                // selling") and keeps the two live tabs uncluttered. Hidden
+                // entirely until something has been withdrawn.
+                ...(archivedWebinars.length > 0
+                  ? [
+                      {
+                        value: "archived-webinars",
+                        label: `Archived webinars (${archivedWebinars.length})`,
+                        content: renderList("WEBINAR", archivedWebinars),
+                      },
+                    ]
+                  : []),
+                ...(archivedClasses.length > 0
+                  ? [
+                      {
+                        value: "archived-classes",
+                        label: `Archived classes (${archivedClasses.length})`,
+                        content: renderList("CLASS", archivedClasses),
+                      },
+                    ]
+                  : []),
               ]}
             />
           </>

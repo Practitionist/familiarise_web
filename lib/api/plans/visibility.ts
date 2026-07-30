@@ -44,3 +44,23 @@ export const MARKETPLACE_VISIBILITY: OrgPlanVisibility[] = [
 export function marketplaceVisibilityWhere() {
   return { visibility: { in: MARKETPLACE_VISIBILITY } } as const;
 }
+
+/**
+ * Discovery filter for the two ARCHIVABLE plan types (WebinarPlan, ClassPlan).
+ *
+ * `marketplaceVisibilityWhere()` cannot carry this: it is also spread into
+ * ConsultationPlan and SubscriptionPlan queries, and those models have no
+ * `archivedAt` column — Prisma would reject the filter. So the two gates live
+ * side by side here rather than one being inlined at eight call sites, for the
+ * same auditability reason the header gives.
+ *
+ * Archived means withdrawn from sale. The row is kept because it carries the
+ * terms of every booking made against it, and because the plan FK chain
+ * cascades to Appointment and Payment — see the catalog DELETE handler.
+ */
+export function eventPlanDiscoverableWhere() {
+  return {
+    visibility: { in: MARKETPLACE_VISIBILITY },
+    archivedAt: null,
+  } as const;
+}

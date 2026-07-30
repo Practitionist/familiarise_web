@@ -65,6 +65,8 @@ export interface PlanWhereClause {
   topics?: { some: { id: { in: string[] } } };
   consultantProfile?: { domainId: string };
   visibility?: { in: OrgPlanVisibility[] };
+  /** #catalog-archive — `null` keeps withdrawn plans out of public lists. */
+  archivedAt?: null;
 }
 
 /**
@@ -79,8 +81,14 @@ export function buildPlanWhereClause(
   // is applied unconditionally here because every caller of this helper
   // is a public surface; org-internal catalog endpoints have their own
   // where-builders.
+  // #catalog-archive — an archived plan is withdrawn from sale. It is kept
+  // rather than deleted because the row carries the terms of every booking made
+  // against it (and the FK chain cascades to Payment), so discovery has to
+  // filter it out explicitly. Same reasoning as the visibility gate above: every
+  // caller here is a public surface.
   const where: PlanWhereClause = {
     visibility: { in: MARKETPLACE_VISIBILITY },
+    archivedAt: null,
   };
 
   if (filters.consultantId) {
