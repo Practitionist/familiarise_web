@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Library, Plus, Archive, Undo2, Loader2 } from "lucide-react";
+import { Library, Plus } from "lucide-react";
 
 import {
   DashboardHeader,
@@ -12,10 +12,6 @@ import { EmptyState } from "@/components/dashboard/DataCard";
 import { UrlTabs } from "@/components/dashboard/UrlTabs";
 import { Button } from "@/components/ui/button";
 import {
-  ResponsiveTable,
-  type ResponsiveColumn,
-} from "@/components/ui/responsive-table";
-import {
   Select,
   SelectContent,
   SelectItem,
@@ -23,39 +19,16 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { formatCurrencyAmount } from "@/utils/formatting";
 import { EventPlannerForWebinar } from "@/components/planner/components/EventPlannerForWebinar";
 import { EventPlannerForClass } from "@/components/planner/components/EventPlannerForClass";
 import type { WebinarEvent, ClassEvent } from "@/types/planner-events";
-
-type Kind = "WEBINAR" | "CLASS";
+import { CatalogPanel } from "./CatalogPanel";
+import type { CatalogRow, CatalogResponse, Kind } from "./types";
 
 interface Expert {
   consultantProfileId: string;
   name: string;
 }
-
-/** Row shape as the API returns it — `price` is a paise string (BigInt). */
-interface CatalogRow {
-  id: string;
-  title: string;
-  price: string;
-  visibility: "PUBLIC" | "ORG_ONLY" | "ORG_AND_PUBLIC";
-  maxParticipants: number;
-  consultantProfileId: string | null;
-  archivedAt: string | null;
-}
-
-interface CatalogResponse {
-  webinars: CatalogRow[];
-  classes: CatalogRow[];
-}
-
-const VISIBILITY_LABEL: Record<CatalogRow["visibility"], string> = {
-  PUBLIC: "Public",
-  ORG_ONLY: "Members only",
-  ORG_AND_PUBLIC: "Public + members",
-};
 
 export function CatalogClient({
   orgId,
@@ -139,9 +112,7 @@ export function CatalogClient({
     onSuccess: (_data, vars) => {
       void queryClient.invalidateQueries({ queryKey });
       toast({
-        title: vars.restore
-          ? "Back on sale"
-          : "Withdrawn from the catalog",
+        title: vars.restore ? "Back on sale" : "Withdrawn from the catalog",
         description: vars.restore
           ? undefined
           : "Existing bookings and their records are unaffected.",
@@ -154,6 +125,20 @@ export function CatalogClient({
         variant: "destructive",
       }),
   });
+
+  // Stable per-kind callbacks so CatalogPanel's memoized columns are not
+  // invalidated on every parent render — which would undo the point of the
+  // split. `setArchived.mutate` is referentially stable across renders.
+  const archiveWebinar = useCallback(
+    (planId: string, restore: boolean) =>
+      setArchived.mutate({ kind: "WEBINAR", planId, restore }),
+    [setArchived],
+  );
+  const archiveClass = useCallback(
+    (planId: string, restore: boolean) =>
+      setArchived.mutate({ kind: "CLASS", planId, restore }),
+    [setArchived],
+  );
 
   // The shared planner forms hand back a full plan object; the catalog endpoint
   // wants the flat subset it owns. Mapping here rather than widening the API
@@ -203,103 +188,6 @@ export function CatalogClient({
     },
     [createPlan, expertId],
   );
-
-  const columns = useCallback(
-    (kind: Kind): ResponsiveColumn<CatalogRow>[] => [
-      {
-        key: "title",
-        header: "Offering",
-        primary: true,
-        cell: (r) => <span className="font-medium">{r.title}</span>,
-      },
-      {
-        key: "price",
-        header: "Price",
-        cell: (r) => formatCurrencyAmount(Number(r.price), "INR"),
-      },
-      {
-        key: "visibility",
-        header: "Visibility",
-        cell: (r) => VISIBILITY_LABEL[r.visibility],
-      },
-      {
-        key: "seats",
-        header: "Seats",
-        cell: (r) => r.maxParticipants,
-      },
-      {
-        key: "actions",
-        header: "",
-        hideOnCard: true,
-        cell: (r) => {
-          const archived = r.archivedAt !== null;
-          return (
-            <Button
-              variant="ghost"
-              size="sm"
-              aria-label={`${archived ? "Restore" : "Withdraw"} ${r.title}`}
-              title={
-                archived
-                  ? "Put back on sale"
-                  : "Withdraw from sale. Existing bookings are unaffected."
-              }
-              disabled={setArchived.isPending}
-              onClick={() =>
-                setArchived.mutate({
-                  kind,
-                  planId: r.id,
-                  restore: archived,
-                })
-              }
-            >
-              {archived ? (
-                <Undo2 className="h-4 w-4" />
-              ) : (
-                <Archive className="h-4 w-4" />
-              )}
-            </Button>
-          );
-        },
-      },
-    ],
-    [setArchived],
-  );
-
-  const renderList = (kind: Kind, rows: CatalogRow[]) => {
-    if (isLoading) {
-      return (
-        <div className="flex items-center justify-center py-12 text-muted-foreground">
-          <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-          Loading the catalog…
-        </div>
-      );
-    }
-    if (error) {
-      return (
-        <EmptyState
-          icon={Library}
-          title="Couldn't load the catalog"
-          description={error instanceof Error ? error.message : undefined}
-        />
-      );
-    }
-    if (rows.length === 0) {
-      return (
-        <EmptyState
-          icon={Library}
-          title={`No ${kind === "WEBINAR" ? "webinars" : "classes"} yet`}
-          description="Offerings you publish here are owned by the organization and delivered by one of its experts."
-        />
-      );
-    }
-    return (
-      <ResponsiveTable
-        columns={columns(kind)}
-        rows={rows}
-        getRowId={(r) => r.id}
-      />
-    );
-  };
 
   // The fetch asks for everything; the split happens here so restoring a plan
   // does not need a second round trip.
@@ -377,12 +265,30 @@ export function CatalogClient({
                 {
                   value: "webinars",
                   label: "Webinars",
-                  content: renderList("WEBINAR", live(data?.webinars)),
+                  content: (
+                    <CatalogPanel
+                      kind="WEBINAR"
+                      rows={live(data?.webinars)}
+                      isLoading={isLoading}
+                      error={error}
+                      onToggleArchive={archiveWebinar}
+                      isMutating={setArchived.isPending}
+                    />
+                  ),
                 },
                 {
                   value: "classes",
                   label: "Classes",
-                  content: renderList("CLASS", live(data?.classes)),
+                  content: (
+                    <CatalogPanel
+                      kind="CLASS"
+                      rows={live(data?.classes)}
+                      isLoading={isLoading}
+                      error={error}
+                      onToggleArchive={archiveClass}
+                      isMutating={setArchived.isPending}
+                    />
+                  ),
                 },
                 // Withdrawn plans keep their own view rather than a filter
                 // toggle: it answers a different question ("what did we stop
@@ -393,7 +299,16 @@ export function CatalogClient({
                       {
                         value: "archived-webinars",
                         label: `Archived webinars (${archivedWebinars.length})`,
-                        content: renderList("WEBINAR", archivedWebinars),
+                        content: (
+                          <CatalogPanel
+                            kind="WEBINAR"
+                            rows={archivedWebinars}
+                            isLoading={isLoading}
+                            error={error}
+                            onToggleArchive={archiveWebinar}
+                            isMutating={setArchived.isPending}
+                          />
+                        ),
                       },
                     ]
                   : []),
@@ -402,7 +317,16 @@ export function CatalogClient({
                       {
                         value: "archived-classes",
                         label: `Archived classes (${archivedClasses.length})`,
-                        content: renderList("CLASS", archivedClasses),
+                        content: (
+                          <CatalogPanel
+                            kind="CLASS"
+                            rows={archivedClasses}
+                            isLoading={isLoading}
+                            error={error}
+                            onToggleArchive={archiveClass}
+                            isMutating={setArchived.isPending}
+                          />
+                        ),
                       },
                     ]
                   : []),
