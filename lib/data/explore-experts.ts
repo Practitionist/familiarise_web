@@ -69,6 +69,12 @@ export const orgMembershipInclude = {
       organization: {
         canHost: true,
         status: "ACTIVE",
+        // The badge deep-links to /explore/enterprise/organisations/{slug},
+        // which only serves opted-in, non-deleted orgs — without these the card
+        // rendered a link straight to a 404. #781 §B soft-deletes orgs rather
+        // than removing them, so ACTIVE alone doesn't exclude them.
+        isPublic: true,
+        deletedAt: null,
       },
     },
     orderBy: { createdAt: "asc" },

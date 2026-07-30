@@ -13,6 +13,7 @@ import { UpcomingEventsSection } from "@/components/home/UpcomingEventsSection";
 import { TrustBadgesSection } from "@/components/home/TrustBadgesSection";
 import { HowItWorksSection } from "@/components/home/HowItWorksSection";
 import { BecomeExpertSection } from "@/components/home/BecomeExpertSection";
+import { EnterpriseSection } from "@/components/home/EnterpriseSection";
 import { FAQSection } from "@/components/home/FAQSection";
 import { SatisfiedTestimonial } from "@/app/explore/experts/components/SatisfiedTestimonial";
 import { getHomeExperts, getHomeReviews, getHomeImages } from "@/lib/data/home";
@@ -103,6 +104,10 @@ export default function Home() {
 
       {/* How It Works - Light with circles */}
       <HowItWorksSection />
+
+      {/* For teams & organisations - Dark. Sits next to the expert CTA so the
+          two "which side are you on?" paths are adjacent at the page's end. */}
+      <EnterpriseSection />
 
       {/* Become an Expert CTA - Light mesh gradient */}
       <BecomeExpertSection />

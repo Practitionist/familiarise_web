@@ -20,7 +20,13 @@
  *   - License:  green  (fully paid, no per-session billing)
  */
 
-import type { FundingSource, MemberRole, MemberStatus } from "@prisma/client";
+import type {
+  FundingSource,
+  MemberRole,
+  MemberStatus,
+  OrgDirectoryType,
+  OrgSizeBucket,
+} from "@prisma/client";
 
 // ───────────────────────────── Capability ─────────────────────────────
 
@@ -296,3 +302,58 @@ export function narrowSelfServiceRole(
   const parsed = SelfServiceMemberRoleSchema.safeParse(v);
   return parsed.success ? parsed.data : fallback;
 }
+
+// ───────────────────────── Public directory taxonomy ─────────────────────────
+
+/**
+ * What kind of organisation a visitor is looking at, for the public directory.
+ * Distinct from CapabilityKind above: "Hybrid" is billing vocabulary that means
+ * nothing to a marketplace visitor, whereas these are the categories the
+ * marketing copy has always promised.
+ *
+ * No badge-class map — directory type is a neutral taxonomy, so it renders
+ * monochrome (filled vs muted) like every other non-status categorical here.
+ */
+export const ORG_DIRECTORY_TYPE_LABEL: Record<OrgDirectoryType, string> = {
+  EXPERT_NETWORK: "Expert network",
+  CONSULTING_AGENCY: "Consulting agency",
+  LEARNING_INSTITUTION: "Learning institution",
+  CORPORATE_ACADEMY: "Corporate academy",
+  OTHER: "Organisation",
+};
+
+export const ORG_DIRECTORY_TYPE_DESCRIPTION: Record<OrgDirectoryType, string> =
+  {
+    EXPERT_NETWORK:
+      "Curates a panel of independent experts you can book directly.",
+    CONSULTING_AGENCY:
+      "A consulting firm offering its consultants through the platform.",
+    LEARNING_INSTITUTION:
+      "A university, school, or research institute running programs.",
+    CORPORATE_ACADEMY:
+      "A company's internal learning arm, open to external learners.",
+    OTHER: "An organisation on Familiarise.",
+  };
+
+/**
+ * Visitor-facing phrasing for the capability pair, for the public directory.
+ * Distinct from CAPABILITY_LABEL above, which is the dashboard's internal
+ * vocabulary ("Host" / "Hybrid") and means nothing to a marketplace visitor.
+ * `inert` renders nothing rather than the internal "Inactive".
+ */
+export const ORG_PUBLIC_CAPABILITY_LABEL: Record<
+  "host" | "sponsor" | "hybrid" | "inert",
+  string
+> = {
+  host: "Hosts experts",
+  sponsor: "Sponsors members",
+  hybrid: "Hosts & sponsors",
+  inert: "",
+};
+
+export const ORG_SIZE_BUCKET_LABEL: Record<OrgSizeBucket, string> = {
+  SMALL_1_50: "1–50 people",
+  MEDIUM_51_200: "51–200 people",
+  LARGE_201_1000: "201–1,000 people",
+  ENTERPRISE_1000_PLUS: "1,000+ people",
+};

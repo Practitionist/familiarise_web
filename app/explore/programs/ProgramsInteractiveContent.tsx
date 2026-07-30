@@ -5,12 +5,7 @@ import { motion } from "framer-motion";
 import { GraduationCap, Video, Users, Sparkles } from "lucide-react";
 import { useSession } from "@/lib/auth-client";
 import { useCurrency } from "@/hooks/useCurrency";
-import {
-  filterAndSortPrograms,
-  getUniqueLevels,
-  type Program,
-  type TopicWithCount,
-} from "@/lib/explore/programs";
+import { type Program, type TopicWithCount } from "@/lib/explore/programs";
 import {
   useCuratedPrograms,
   useInfiniteScroll,
@@ -38,6 +33,8 @@ interface ProgramsInteractiveContentProps {
   initialStats: ProgramStats | null;
   /** #664 — viewer's ACTIVE org memberships as { orgId: orgName }. */
   viewerOrgs?: Record<string, string>;
+  /** Every level in the catalog, read server-side — not just loaded rows. */
+  availableLevels?: string[];
 }
 
 const FALLBACK_STATS = [
@@ -68,6 +65,7 @@ export default function ProgramsInteractiveContent({
   initialTopics,
   initialStats,
   viewerOrgs = {},
+  availableLevels = [],
 }: ProgramsInteractiveContentProps) {
   const { data: session } = useSession();
   const userId = session?.user?.id;
@@ -79,7 +77,6 @@ export default function ProgramsInteractiveContent({
     handleTabChange,
     filters,
     updateFilters,
-    searchTerm,
     localSearchValue,
     onLocalSearchChange,
     selectedLevel,
@@ -142,7 +139,7 @@ export default function ProgramsInteractiveContent({
     filters,
     topics: topicsWithCount,
     selectedLevel,
-    searchTerm,
+    searchTerm: filters.search ?? "",
     formatPrice,
     updateFilters,
     setSelectedLevel,
@@ -170,12 +167,12 @@ export default function ProgramsInteractiveContent({
     [filters.topicIds, updateFilters],
   );
 
-  const filteredAndSortedPrograms = useMemo(
-    () => filterAndSortPrograms(programs, searchTerm, selectedLevel),
-    [programs, searchTerm, selectedLevel],
-  );
+  // `programs` is already fully filtered by the API — search and level used to
+  // be re-applied here over the loaded page only, which silently dropped
+  // matches that lived on later pages.
+  const filteredAndSortedPrograms = programs;
 
-  const uniqueLevels = useMemo(() => getUniqueLevels(programs), [programs]);
+  const uniqueLevels = availableLevels;
 
   return (
     <main className="min-h-screen bg-background">

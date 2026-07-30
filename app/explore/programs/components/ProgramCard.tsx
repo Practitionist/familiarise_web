@@ -21,6 +21,9 @@ interface ProgramCardProps {
   viewerOrgs?: Record<string, string>;
 }
 
+// Curation state is a neutral taxonomy, not a status — colour is reserved for
+// destructive/success/warning/info here, so these read monochrome (filled for
+// the editorial pick, muted for the derived ones) and survive dark mode.
 const badgeConfig: Record<
   ProgramBadge,
   { label: string; icon: React.ReactNode; className: string }
@@ -28,17 +31,17 @@ const badgeConfig: Record<
   featured: {
     label: "Familiarise Pick",
     icon: <Sparkles className="w-3 h-3" />,
-    className: "bg-amber-500 text-white",
+    className: "bg-primary text-primary-foreground",
   },
   trending: {
     label: "Trending",
     icon: <Flame className="w-3 h-3" />,
-    className: "bg-rose-500 text-white",
+    className: "bg-background/90 text-foreground border border-border",
   },
   new: {
     label: "New",
     icon: <Sparkles className="w-3 h-3" />,
-    className: "bg-emerald-500 text-white",
+    className: "bg-background/90 text-foreground border border-border",
   },
 };
 

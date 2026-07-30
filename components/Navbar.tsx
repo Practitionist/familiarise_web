@@ -17,6 +17,8 @@ import {
   Info,
   Mail,
   Presentation,
+  Layers,
+  Star,
 } from "lucide-react";
 import { signOut, useSession } from "@/lib/auth-client";
 // Import the logout helper from the SDK-free module (not @/providers/StreamProvider)
@@ -43,6 +45,7 @@ import {
   AccordionTrigger,
 } from "@/components/ui/accordion";
 import { useCurrency, SUPPORTED_CURRENCIES } from "@/hooks/useCurrency";
+import { hasDarkHero, isChromeHidden } from "@/lib/navigation/public-chrome";
 import { useAnnouncementBar } from "@/providers/AnnouncementBarProvider";
 import familiariseLogoTransparent from "@/public/avif/static/assets/logos/images/logos/Familiarise-logos_transparent.avif";
 import familiariseLogoWhite from "@/public/avif/static/assets/logos/images/logos/Familiarise-logos_white.avif";
@@ -56,8 +59,8 @@ interface NavDropdownItem {
   href: string;
   description: string;
   icon: React.ElementType;
+  /** Not yet available: renders a "Soon" pill and routes to /contactus. */
   disabled?: boolean;
-  comingSoon?: boolean;
 }
 
 interface NavCategoryChip {
@@ -65,30 +68,94 @@ interface NavCategoryChip {
   href: string;
 }
 
+/** A titled column inside a mega-menu panel. */
+interface NavColumn {
+  heading: string;
+  items: NavDropdownItem[];
+}
+
 interface NavDropdownGroup {
   label: string;
-  items: NavDropdownItem[];
+  /** Single-column panel (w-80) vs multi-column mega panel. */
+  variant: "list" | "mega";
+  columns: NavColumn[];
   categoryChips?: NavCategoryChip[];
 }
 
-const EXPLORE_ITEMS: NavDropdownItem[] = [
+// Catalog first: a marketplace's nav should open onto its inventory, the way
+// Toptal leads with "Hire Talent" and Maven with "Courses". "Use Cases" led
+// before, which put marketing ahead of the thing people came to browse.
+const EXPLORE_COLUMNS: NavColumn[] = [
   {
-    label: "Find Experts",
-    href: "/explore/experts",
-    description: "Browse verified consultants across domains",
-    icon: Search,
+    heading: "Experts",
+    items: [
+      {
+        label: "Find experts",
+        href: "/explore/experts",
+        description: "Browse verified consultants across domains",
+        icon: Search,
+      },
+      {
+        label: "Browse by domain",
+        href: "/explore/experts#domains",
+        description: "Technology, business, health, and more",
+        icon: Layers,
+      },
+      {
+        label: "Top rated",
+        // Anchor as well as sort — without it the sort applies but the user
+        // lands at the top of the page and never sees the sorted list.
+        href: "/explore/experts?sort=rating#all-experts",
+        description: "Highest-rated experts on Familiarise",
+        icon: Star,
+      },
+    ],
   },
   {
-    label: "Browse Programs",
-    href: "/explore/programs",
-    description: "Webinars, classes, and group sessions",
-    icon: Presentation,
+    heading: "Programs",
+    items: [
+      {
+        label: "Classes",
+        href: "/explore/programs?tab=class",
+        description: "Multi-session cohorts and courses",
+        icon: GraduationCap,
+      },
+      {
+        label: "Webinars",
+        href: "/explore/programs?tab=webinar",
+        description: "Single live sessions with an expert",
+        icon: Presentation,
+      },
+      {
+        label: "All programs",
+        href: "/explore/programs",
+        description: "Everything on offer right now",
+        icon: Layers,
+      },
+    ],
   },
   {
-    label: "Explore Organisations",
-    href: "/explore/enterprise/organisations",
-    description: "Discover agencies and expert networks",
-    icon: Building2,
+    heading: "Organisations",
+    items: [
+      {
+        label: "All organisations",
+        href: "/explore/enterprise/organisations",
+        description: "Expert networks, agencies, and institutions",
+        icon: Building2,
+      },
+      {
+        label: "Expert networks",
+        href: "/explore/enterprise/organisations?type=EXPERT_NETWORK",
+        description: "Curated panels you can book directly",
+        icon: Users,
+      },
+      {
+        label: "Learning institutions",
+        href: "/explore/enterprise/organisations?type=LEARNING_INSTITUTION",
+        description: "Universities and research institutes",
+        icon: GraduationCap,
+      },
+    ],
   },
 ];
 
@@ -104,133 +171,225 @@ const EXPLORE_CATEGORIES: NavCategoryChip[] = [
   },
 ];
 
-const USE_CASE_ITEMS: NavDropdownItem[] = [
+// "For Businesses" used to be a one-item dropdown whose only item was disabled
+// — a menu that could only ever go to /contactus. Folded in here as a column so
+// the B2B path is visible without spending a top-level slot on it.
+const SOLUTIONS_COLUMNS: NavColumn[] = [
   {
-    label: "For College Students",
-    href: "/use-cases/college-students",
-    description: "Get career guidance before you graduate",
-    icon: GraduationCap,
+    heading: "By goal",
+    items: [
+      {
+        label: "College students",
+        href: "/use-cases/college-students",
+        description: "Get career guidance before you graduate",
+        icon: GraduationCap,
+      },
+      {
+        label: "Early-career professionals",
+        href: "/use-cases/early-career",
+        description: "Accelerate your first 1–5 years",
+        icon: Briefcase,
+      },
+      {
+        label: "Career switchers",
+        href: "/use-cases/career-switchers",
+        description: "Navigate the service-to-product transition",
+        icon: ArrowRightLeft,
+      },
+      {
+        label: "Long-term mentorship",
+        href: "/use-cases/mentorship",
+        description: "Ongoing guidance from industry experts",
+        icon: UserCheck,
+      },
+    ],
   },
   {
-    label: "For Early-Career Professionals",
-    href: "/use-cases/early-career",
-    description: "Accelerate your first 1–5 years",
-    icon: Briefcase,
-  },
-  {
-    label: "For Career Switchers",
-    href: "/use-cases/career-switchers",
-    description: "Navigate the service-to-product transition",
-    icon: ArrowRightLeft,
-  },
-  {
-    label: "For Long-Term Mentorship",
-    href: "/use-cases/mentorship",
-    description: "Ongoing guidance from industry experts",
-    icon: UserCheck,
+    heading: "For teams",
+    items: [
+      {
+        label: "Team training",
+        href: "/contactus",
+        description: "Upskill a whole team with vetted experts",
+        icon: Building2,
+        disabled: true,
+      },
+      {
+        label: "Corporate mentorship",
+        href: "/contactus",
+        description: "Structured mentorship programs for staff",
+        icon: Users,
+        disabled: true,
+      },
+      {
+        label: "Talk to us",
+        href: "/contactus",
+        description: "Tell us what your organisation needs",
+        icon: Mail,
+      },
+    ],
   },
 ];
 
-const BUSINESS_ITEMS: NavDropdownItem[] = [
+// Community and Blog previously rendered a "Soon" pill while linking to live
+// pages — the pill told users not to bother clicking something that worked.
+const RESOURCE_COLUMNS: NavColumn[] = [
   {
-    label: "Team Training & Corporate Mentorship",
-    href: "/contactus",
-    description: "Coming soon — contact us to express interest",
-    icon: Building2,
-    disabled: true,
-  },
-];
-
-const RESOURCE_ITEMS: NavDropdownItem[] = [
-  {
-    label: "Community",
-    href: "/explore/community",
-    description: "Connect with peers and mentors",
-    icon: Users,
-    comingSoon: true,
-  },
-  {
-    label: "Blog",
-    href: "/blog",
-    description: "Insights, tips, and career advice",
-    icon: FileText,
-    comingSoon: true,
-  },
-  {
-    label: "How It Works",
-    href: "/#how-it-works",
-    description: "See how Familiarise works",
-    icon: HelpCircle,
-  },
-  {
-    label: "About",
-    href: "/about",
-    description: "Our mission and story",
-    icon: Info,
-  },
-  {
-    label: "Contact",
-    href: "/contactus",
-    description: "Get in touch with our team",
-    icon: Mail,
+    heading: "Resources",
+    items: [
+      {
+        label: "How it works",
+        href: "/#how-it-works",
+        description: "See how Familiarise works",
+        icon: HelpCircle,
+      },
+      {
+        label: "Community",
+        href: "/explore/community",
+        description: "Connect with peers and mentors",
+        icon: Users,
+      },
+      {
+        label: "Blog",
+        href: "/blog",
+        description: "Insights, tips, and career advice",
+        icon: FileText,
+      },
+      {
+        label: "About",
+        href: "/about",
+        description: "Our mission and story",
+        icon: Info,
+      },
+      {
+        label: "Contact",
+        href: "/contactus",
+        description: "Get in touch with our team",
+        icon: Mail,
+      },
+    ],
   },
 ];
 
 const NAV_GROUPS: NavDropdownGroup[] = [
-  { label: "Use Cases", items: USE_CASE_ITEMS },
-  { label: "Explore", items: EXPLORE_ITEMS, categoryChips: EXPLORE_CATEGORIES },
-  { label: "For Businesses", items: BUSINESS_ITEMS },
-  { label: "Resources", items: RESOURCE_ITEMS },
+  {
+    label: "Explore",
+    variant: "mega",
+    columns: EXPLORE_COLUMNS,
+    categoryChips: EXPLORE_CATEGORIES,
+  },
+  { label: "Solutions", variant: "mega", columns: SOLUTIONS_COLUMNS },
+  { label: "Resources", variant: "list", columns: RESOURCE_COLUMNS },
 ];
 
 // ─── Dropdown Panel (Desktop) ────────────────────────────────────────────────
 
+function DropdownLink({
+  item,
+  onClose,
+}: {
+  item: NavDropdownItem;
+  onClose: () => void;
+}) {
+  const Icon = item.icon;
+  return (
+    <Link
+      href={item.disabled ? "/contactus" : item.href}
+      onClick={onClose}
+      // Not a real `disabled` — these still navigate (to /contactus), so the
+      // "Soon" state has to reach assistive tech through the label rather than
+      // a visual pill alone.
+      aria-label={item.disabled ? `${item.label} — coming soon` : undefined}
+      className={`flex items-start gap-3 px-3 py-2.5 rounded-lg transition-colors ${
+        item.disabled ? "opacity-60" : "hover:bg-muted"
+      }`}
+    >
+      <div className="mt-0.5 w-8 h-8 rounded-lg bg-muted flex items-center justify-center shrink-0">
+        <Icon className="w-4 h-4 text-muted-foreground" />
+      </div>
+      <div className="min-w-0">
+        <div className="text-sm font-medium text-foreground flex items-center gap-2">
+          {item.label}
+          {item.disabled && (
+            <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+              Soon
+            </span>
+          )}
+        </div>
+        <p className="text-xs text-muted-foreground mt-0.5">
+          {item.description}
+        </p>
+      </div>
+    </Link>
+  );
+}
+
 function DesktopDropdownPanel({
   group,
   onClose,
+  panelId,
 }: {
   group: NavDropdownGroup;
   onClose: () => void;
+  panelId: string;
 }) {
+  const isMega = group.variant === "mega";
+  const isWide = group.columns.length > 2;
+  const panelWidth = isMega ? (isWide ? "w-[860px]" : "w-[620px]") : "w-80";
+  const panelGrid = isWide ? "grid-cols-3" : "grid-cols-2";
+
   return (
     <motion.div
+      id={panelId}
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: 8 }}
       transition={{ duration: 0.15 }}
-      className="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-80 bg-popover rounded-xl shadow-xl border border-border overflow-hidden z-[1100]"
+      // Mega panels centre on the VIEWPORT (fixed), list panels on their
+      // trigger (absolute) — an 860px panel hung off a narrow left-side trigger
+      // reads as badly misaligned.
+      //
+      // Centred with `inset-x-0 mx-auto`, never `left-1/2 -translate-x-1/2`:
+      // motion.div writes an inline `transform` for its y animation, which
+      // beats Tailwind's translate class, so the -50% shift was silently
+      // dropped and the panel sat half a viewport to the right. Margin centring
+      // can't be clobbered by a transform.
+      className={`inset-x-0 mx-auto bg-popover rounded-xl shadow-xl border border-border overflow-hidden z-[1100] ${
+        isMega
+          ? `fixed max-w-[calc(100vw-2rem)] ${panelWidth}`
+          : `absolute top-full mt-2 ${panelWidth}`
+      }`}
+      style={
+        isMega
+          ? {
+              top: `calc(var(--maintenance-banner-height, 0px) + var(--announcement-bar-height, 0px) + var(--navbar-height) + 0.5rem)`,
+            }
+          : undefined
+      }
     >
-      <div className="p-2">
-        {group.items.map((item) => {
-          const Icon = item.icon;
-          return (
-            <Link
-              key={item.href + item.label}
-              href={item.disabled ? "/contactus" : item.href}
-              onClick={onClose}
-              className={`flex items-start gap-3 px-3 py-2.5 rounded-lg transition-colors ${
-                item.disabled ? "opacity-60 cursor-default" : "hover:bg-muted"
-              }`}
-            >
-              <div className="mt-0.5 w-8 h-8 rounded-lg bg-muted flex items-center justify-center shrink-0">
-                <Icon className="w-4 h-4 text-muted-foreground" />
-              </div>
-              <div className="min-w-0">
-                <div className="text-sm font-medium text-foreground flex items-center gap-2">
-                  {item.label}
-                  {(item.disabled || item.comingSoon) && (
-                    <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
-                      Soon
-                    </span>
-                  )}
-                </div>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  {item.description}
-                </p>
-              </div>
-            </Link>
-          );
-        })}
+      <div
+        className={
+          isMega
+            ? `p-4 grid gap-2 ${panelGrid}`
+            : "p-2"
+        }
+      >
+        {group.columns.map((column) => (
+          <div key={column.heading} className="min-w-0">
+            {isMega && (
+              <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground px-3 pb-1.5">
+                {column.heading}
+              </p>
+            )}
+            {column.items.map((item) => (
+              <DropdownLink
+                key={item.href + item.label}
+                item={item}
+                onClose={onClose}
+              />
+            ))}
+          </div>
+        ))}
       </div>
 
       {/* Category chips */}
@@ -269,6 +428,8 @@ function DesktopNavItem({
   const [open, setOpen] = useState(false);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelId = `nav-panel-${group.label.toLowerCase().replace(/\s+/g, "-")}`;
 
   const handleEnter = useCallback(() => {
     if (timeoutRef.current) clearTimeout(timeoutRef.current);
@@ -285,6 +446,36 @@ function DesktopNavItem({
     };
   }, []);
 
+  // The panel previously closed on mouse-leave only: no Escape, no
+  // outside-click, no focus return — so a keyboard user could open it and had
+  // no way to dismiss it without tabbing through every link inside.
+  useEffect(() => {
+    if (!open) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setOpen(false);
+      triggerRef.current?.focus();
+    };
+
+    // Pointer-down outside and focus leaving the group are the same condition:
+    // the interaction moved somewhere this menu doesn't own.
+    const handleInteractionOutside = (event: Event) => {
+      if (!containerRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    document.addEventListener("pointerdown", handleInteractionOutside);
+    document.addEventListener("focusin", handleInteractionOutside);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("pointerdown", handleInteractionOutside);
+      document.removeEventListener("focusin", handleInteractionOutside);
+    };
+  }, [open]);
+
   return (
     <div
       ref={containerRef}
@@ -293,6 +484,7 @@ function DesktopNavItem({
       onMouseLeave={handleLeave}
     >
       <button
+        ref={triggerRef}
         className={`inline-flex items-center gap-1 px-3 py-2 text-sm font-medium rounded-lg transition-colors ${
           showDarkStyle
             ? "text-white hover:bg-white/10"
@@ -300,6 +492,8 @@ function DesktopNavItem({
         }`}
         onClick={() => setOpen((prev) => !prev)}
         aria-expanded={open}
+        aria-haspopup="true"
+        aria-controls={open ? panelId : undefined}
       >
         {group.label}
         <ChevronDown
@@ -308,7 +502,11 @@ function DesktopNavItem({
       </button>
       <AnimatePresence>
         {open && (
-          <DesktopDropdownPanel group={group} onClose={() => setOpen(false)} />
+          <DesktopDropdownPanel
+            group={group}
+            panelId={panelId}
+            onClose={() => setOpen(false)}
+          />
         )}
       </AnimatePresence>
     </div>
@@ -329,14 +527,9 @@ const Navbar = () => {
   const { currency, symbol, setCurrency } = useCurrency();
   const { isVisible: isAnnouncementVisible } = useAnnouncementBar();
 
-  const darkHeroPages = [
-    "/",
-    "/explore/experts",
-    "/explore/programs",
-    "/explore/community",
-    "/explore/enterprise/organisations",
-  ];
-  const hasDarkHero = darkHeroPages.includes(pathname);
+  // Route lists live in lib/navigation/public-chrome.ts — they were duplicated
+  // across Navbar/Footer/HeaderSpacer and had already drifted.
+  const darkHero = hasDarkHero(pathname);
 
   const toggleMenu = () => setIsOpen(!isOpen);
   const closeMenu = () => setIsOpen(false);
@@ -352,16 +545,7 @@ const Navbar = () => {
     closeMenu();
   };
 
-  const excludeNavbar =
-    pathname.startsWith("/api/") ||
-    pathname.startsWith("/auth/") ||
-    pathname.startsWith("/form/") ||
-    pathname.startsWith("/checkout/") ||
-    pathname === "/dashboard" ||
-    pathname.startsWith("/dashboard/") ||
-    pathname.startsWith("/meetings/");
-
-  if (excludeNavbar) return null;
+  if (isChromeHidden(pathname)) return null;
 
   const handleSignOut = async () => {
     try {
@@ -385,7 +569,7 @@ const Navbar = () => {
       : defaultUserImage;
   };
 
-  const showDarkStyle = hasDarkHero && !isScrolled;
+  const showDarkStyle = darkHero && !isScrolled;
 
   return (
     <>
@@ -512,25 +696,16 @@ const Navbar = () => {
                   </Button>
                 </div>
               ) : (
-                <>
-                  <Button
-                    variant="ghost"
-                    onClick={() => handleNavigation("/auth/signin")}
-                    className={`font-medium ${showDarkStyle ? "text-white hover:bg-white/10" : "text-foreground hover:bg-muted"}`}
-                  >
-                    Sign in
-                  </Button>
-                  <Button
-                    onClick={() => handleNavigation("/form/onboarding")}
-                    className={
-                      showDarkStyle
-                        ? "bg-white text-zinc-900 hover:bg-zinc-200"
-                        : "bg-primary text-primary-foreground hover:bg-primary/90"
-                    }
-                  >
-                    Become an Expert
-                  </Button>
-                </>
+                /* No marketing CTAs in the bar — discovery is reachable from
+                   the Explore menu, and the supply-side CTA lives in the
+                   landing hero. Sign in is the only action here. */
+                <Button
+                  variant="ghost"
+                  onClick={() => handleNavigation("/auth/signin")}
+                  className={`font-medium ${showDarkStyle ? "text-white hover:bg-white/10" : "text-foreground hover:bg-muted"}`}
+                >
+                  Sign in
+                </Button>
               )}
             </div>
 
@@ -621,29 +796,42 @@ const Navbar = () => {
                       </AccordionTrigger>
                       <AccordionContent className="px-2 pb-2">
                         <div className="space-y-1">
-                          {group.items.map((item) => (
-                            <Link
-                              key={item.href + item.label}
-                              href={item.disabled ? "/contactus" : item.href}
-                              onClick={closeMenu}
-                              className={`block px-4 py-2.5 rounded-lg transition-colors ${
-                                item.disabled
-                                  ? "opacity-50"
-                                  : "hover:bg-zinc-800"
-                              }`}
-                            >
-                              <span className="text-sm font-medium text-white flex items-center gap-2">
-                                {item.label}
-                                {(item.disabled || item.comingSoon) && (
-                                  <span className="text-[10px] uppercase tracking-wider text-zinc-500 bg-zinc-800 px-1.5 py-0.5 rounded">
-                                    Soon
+                          {group.columns.map((column) => (
+                            <div key={column.heading}>
+                              {/* Column headings only earn their space when
+                                  there's more than one column to separate. */}
+                              {group.columns.length > 1 && (
+                                <p className="text-[10px] font-medium uppercase tracking-wider text-zinc-500 px-4 pt-2 pb-1">
+                                  {column.heading}
+                                </p>
+                              )}
+                              {column.items.map((item) => (
+                                <Link
+                                  key={item.href + item.label}
+                                  href={
+                                    item.disabled ? "/contactus" : item.href
+                                  }
+                                  onClick={closeMenu}
+                                  className={`block px-4 py-2.5 rounded-lg transition-colors ${
+                                    item.disabled
+                                      ? "opacity-50"
+                                      : "hover:bg-zinc-800"
+                                  }`}
+                                >
+                                  <span className="text-sm font-medium text-white flex items-center gap-2">
+                                    {item.label}
+                                    {item.disabled && (
+                                      <span className="text-[10px] uppercase tracking-wider text-zinc-500 bg-zinc-800 px-1.5 py-0.5 rounded">
+                                        Soon
+                                      </span>
+                                    )}
                                   </span>
-                                )}
-                              </span>
-                              <span className="text-xs text-zinc-500 mt-0.5 block">
-                                {item.description}
-                              </span>
-                            </Link>
+                                  <span className="text-xs text-zinc-500 mt-0.5 block">
+                                    {item.description}
+                                  </span>
+                                </Link>
+                              ))}
+                            </div>
                           ))}
 
                           {/* Category chips on mobile */}
@@ -734,20 +922,13 @@ const Navbar = () => {
                     </Button>
                   </div>
                 ) : (
-                  <div className="flex flex-col gap-3">
-                    <Button
-                      onClick={() => handleNavigation("/form/onboarding")}
-                      className="w-full bg-white text-zinc-900 hover:bg-zinc-200"
-                    >
-                      Become an Expert
-                    </Button>
-                    <Button
-                      onClick={() => handleNavigation("/auth/signin")}
-                      className="w-full bg-transparent border border-zinc-700 text-white hover:bg-zinc-800"
-                    >
-                      Sign in
-                    </Button>
-                  </div>
+                  /* Mirrors the desktop bar: no marketing CTAs, sign in only. */
+                  <Button
+                    onClick={() => handleNavigation("/auth/signin")}
+                    className="w-full bg-white text-zinc-900 hover:bg-zinc-200"
+                  >
+                    Sign in
+                  </Button>
                 )}
               </div>
             </motion.div>

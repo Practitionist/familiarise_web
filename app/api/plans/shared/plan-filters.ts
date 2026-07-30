@@ -11,6 +11,7 @@ export interface PlanFilterParams {
   minPrice: number | undefined;
   maxPrice: number | undefined;
   search: string | null;
+  level: string | null;
   page: number;
   limit: number;
   skip: number;
@@ -42,6 +43,9 @@ export function parsePlanFilters(
     maxPrice:
       parsedMax !== undefined && !isNaN(parsedMax) ? parsedMax : undefined,
     search: searchParams.get("search"),
+    // "all" is the UI's no-op sentinel, not a stored level value.
+    level:
+      searchParams.get("level") === "all" ? null : searchParams.get("level"),
     page,
     limit,
     skip,
@@ -55,6 +59,7 @@ export function parsePlanFilters(
 export interface PlanWhereClause {
   consultantProfileId?: string;
   language?: string;
+  level?: string;
   price?: { gte?: number; lte?: number };
   title?: { contains: string; mode: "insensitive" };
   topics?: { some: { id: { in: string[] } } };
@@ -83,6 +88,11 @@ export function buildPlanWhereClause(
   }
   if (filters.language) {
     where.language = filters.language;
+  }
+  // Level used to be filtered client-side over the already-loaded infinite-scroll
+  // page, so a matching program on a later page simply never appeared.
+  if (filters.level) {
+    where.level = filters.level;
   }
   if (filters.minPrice !== undefined || filters.maxPrice !== undefined) {
     const price: { gte?: number; lte?: number } = {};

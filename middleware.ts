@@ -84,6 +84,7 @@ const ROUTE_PATTERNS = {
   PUBLIC_API_PREFIXES: [
     "/api/auth/", // BetterAuth core + SSO endpoints (including /api/auth/sso/domain-check)
     "/api/health/",
+    "/api/organizations/public", // Public: explore organisations directory (shadows the private /api/organizations/ parent)
     "/api/user/consultants", // Public: explore experts list and individual profiles
     "/api/user/reviews", // Public: consultant reviews
     "/api/plans/classes", // Public: browse and view class plans (sub-routes enforce their own auth)
@@ -100,8 +101,13 @@ const ROUTE_PATTERNS = {
  */
 const matchesAnyPrefix = (pathname: string, prefixes: string[]): boolean => {
   for (const prefix of prefixes) {
-    if (pathname.startsWith(prefix)) return true;
-    if (prefix.endsWith("/") && pathname === prefix.slice(0, -1)) return true;
+    // Match on SEGMENT boundaries. A bare startsWith let a prefix without a
+    // trailing slash leak across the boundary — "/api/organizations/public"
+    // would also match "/api/organizations/publicfoo", handing an unintended
+    // route the public exemption. Intended matches (exact path, or any deeper
+    // segment) are unchanged.
+    const base = prefix.endsWith("/") ? prefix.slice(0, -1) : prefix;
+    if (pathname === base || pathname.startsWith(`${base}/`)) return true;
   }
   return false;
 };

@@ -49,6 +49,8 @@ import {
   MsmeStatus,
   PoStatus,
   UserRole,
+  OrgDirectoryType,
+  OrgSizeBucket,
 } from "@prisma/client";
 import prisma from "../../lib/prisma";
 import { buildConsentArtifact } from "../../lib/compliance/dpdp";
@@ -86,6 +88,10 @@ async function createRootOrg(params: {
   industry?: string;
   website?: string;
   description?: string;
+  /** Opt in to the public /explore/enterprise/organisations directory. */
+  isPublic?: boolean;
+  directoryType?: OrgDirectoryType;
+  sizeBucket?: OrgSizeBucket;
 }) {
   // #768 lockdown — branding fields live on OrgBrandingProfile (1:1).
   // PAN at rest is encrypted; the plaintext column was dropped.
@@ -97,13 +103,19 @@ async function createRootOrg(params: {
       })()
     : {};
   const brandingFields =
-    params.industry || params.website || params.description
+    params.industry ||
+    params.website ||
+    params.description ||
+    params.directoryType ||
+    params.sizeBucket
       ? {
           brandingProfile: {
             create: {
               industry: params.industry ?? null,
               website: params.website ?? null,
               description: params.description ?? null,
+              directoryType: params.directoryType ?? null,
+              sizeBucket: params.sizeBucket ?? null,
             },
           },
         }
@@ -115,6 +127,7 @@ async function createRootOrg(params: {
       canSponsor: params.canSponsor,
       canHost: params.canHost,
       status: params.status ?? OrgStatus.ACTIVE,
+      isPublic: params.isPublic ?? false,
       // #771 D10 — tax identity on the OrganizationTaxInfo satellite.
       taxInfo: {
         create: {
@@ -418,6 +431,9 @@ async function seedLearnPro(owner: UserWithProfiles, agencyConsultants: UserWith
     industry: "Education Services",
     website: "https://learnpro.example",
     description: "Coaching agency aggregating independent experts.",
+    isPublic: true,
+    directoryType: OrgDirectoryType.CONSULTING_AGENCY,
+    sizeBucket: OrgSizeBucket.SMALL_1_50,
   });
 
   const rateCard = await prisma.rateCard.create({
@@ -526,6 +542,9 @@ async function seedIit(params: {
     industry: "Higher Education",
     website: "https://iitm.ac.in",
     description: "Public research university; hybrid buyer+provider.",
+    isPublic: true,
+    directoryType: OrgDirectoryType.LEARNING_INSTITUTION,
+    sizeBucket: OrgSizeBucket.ENTERPRISE_1000_PLUS,
   });
 
   // BillingAccount with WALLET funding (GLG-style)
