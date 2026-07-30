@@ -1,4 +1,4 @@
-import { IPlanMaterial } from "../../../types";
+import { IPlanMaterial } from "@/types/planner-events";
 
 export type PlanType = "consultation" | "subscription" | "webinar" | "class";
 

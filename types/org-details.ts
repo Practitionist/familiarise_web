@@ -51,7 +51,17 @@ export interface OrgDetailsResponse {
    * synthesized ADMIN stub, or a 403. A null membership would mean
    * the caller bypassed the access check — not representable here.
    */
-  membership: { role: MemberRole; status: MemberStatus };
+  membership: {
+    role: MemberRole;
+    status: MemberStatus;
+    /**
+     * Set when this member also delivers sessions. Distinct from
+     * `role === "EXPERT"` — an OWNER or MANAGER can hold a consultant profile
+     * too, and the delivery surfaces (Requests) key off the profile, not the
+     * role.
+     */
+    consultantProfileId: string | null;
+  };
 }
 
 /**

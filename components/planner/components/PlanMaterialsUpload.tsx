@@ -26,7 +26,7 @@ import {
 } from "lucide-react";
 import { formatFileSize } from "@/lib/documents/document-utils";
 import { MaterialsService, type PlanType } from "../services/materials-service";
-import { IPlanMaterial } from "../../../types";
+import { IPlanMaterial } from "@/types/planner-events";
 
 interface PlanMaterialsUploadProps {
   planType: PlanType;

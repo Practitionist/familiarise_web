@@ -61,6 +61,9 @@ The list below is the actual `page.tsx` set under
                                                   canHost only.
 /dashboard/organization/[orgId]/contracts      → contracts + linked programs;
                                                   term-edit drawer (locked vs editable)
+/dashboard/organization/[orgId]/catalog        → org-OWNED webinar + class
+                                                  plans; expert picker +
+                                                  visibility. canHost only.
 /dashboard/organization/[orgId]/programs       → programs + assignments;
                                                   config-lock-aware edit dialog
 /dashboard/organization/[orgId]/purchase-orders → PO list + 3-way match view
@@ -218,7 +221,7 @@ granted through the **permission matrix** in `lib/auth/org-permissions.ts`,
 which the sidebar, the page guards, and the API routes all consume — so the
 "Roles" column below names a matrix surface and lists exactly which roles it
 admits. Second, the boxes are *also* capability-gated — a `canHost=false`
-org hides the Experts tab + `/payouts` even from an OWNER, and a
+org hides the Experts tab, `/payouts` and `/catalog` even from an OWNER, and a
 `canSponsor=false` org hides `/programs`, `/contracts`, `/billing`, and
 `/purchase-orders`.
 
@@ -240,6 +243,7 @@ readable projection of it.
 | `/members?tab=experts` | — | ✅ | ✅ | `experts.read` (OWNER, MAINTAINER, MANAGER) | tab (if `canHost`) | Tab on Members. Hidden when `canHost = false`. |
 | `/members?tab=learners` | ✅ | — | ✅ | `learners.read` (OWNER, MAINTAINER, MANAGER) | tab (if `canSponsor`) | Tab on Members. Hidden when `canSponsor = false`. |
 | `/members?tab=invitations` | ✅ | ✅ | ✅ | `invitations.manage` (OWNER, MAINTAINER) | tab | Tab on Members. Send-invite button disabled pre-verification; uses `humanizeOrgError` for `ORG_NOT_VERIFIED`. |
+| `/catalog`     | —       | ✅   | ✅     | `catalog.manage` (OWNER, MAINTAINER, MANAGER) | yes (if `canHost`) | The offerings the org OWNS, distinct from the sponsorship entitlements on `/programs`. Webinar and Class only — `ConsultationPlan` and `SubscriptionPlan` require a `consultantProfileId`, so an org can never solely own one. The named deliverer is re-checked server-side against an ACTIVE EXPERT membership. |
 | `/programs`    | ✅      | —    | ✅     | `programs.manage` (OWNER, MAINTAINER) | yes (if `canSponsor`) | The learner-facing catalog GETs stay open to any active member by design. |
 | `/billing`     | ✅      | —    | ✅     | `billing.read` (OWNER, MAINTAINER, BILLING_ADMIN, MANAGER); mutations `billing.manage` (OWNER, BILLING_ADMIN) | yes (if `canSponsor`) | BillingAccount summary + wallet (`WalletTab`) + invoices — one unified surface. The former extra `fundingSource=WALLET` sidebar branch was removed as unreachable (a BillingAccount only exists when `canSponsor=true`). |
 | `/payouts`     | —       | ✅   | ✅     | `payouts.read`; mutations `payouts.manage` (OWNER, BILLING_ADMIN) | yes (if `canHost`) | Host-side only. |

@@ -12,7 +12,7 @@ import {
 } from "@/components/dashboard/PageScaffold";
 import { EmptyState } from "@/components/dashboard/DataCard";
 import { createConsultantQueries } from "@/lib/dashboard-queries";
-import { EventManagementDashboard } from "./components/EventManagementDashboard";
+import { EventManagementDashboard } from "@/components/planner/components/EventManagementDashboard";
 
 export default function PlannerPage() {
   const params = useParams();
