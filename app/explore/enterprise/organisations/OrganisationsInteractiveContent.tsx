@@ -84,17 +84,27 @@ export default function OrganisationsInteractiveContent({
       return res.json();
     },
     // The RSC already rendered the unfiltered first page; don't refetch it.
-    initialData: isDefaultView
-      ? {
-          data: initialItems,
-          meta: {
-            total: initialTotal,
-            page: 1,
-            limit: initialItems.length,
-            totalPages: 1,
-          },
-        }
-      : undefined,
+    //
+    // Seeded ONLY when the server actually returned rows. The RSC read is
+    // wrapped in fallbackOnTransientDbError, so a cold-connect timeout (#932)
+    // degrades to an EMPTY page rather than throwing — and seeding that as
+    // initialData marks it fresh for staleTime, so the client never refetches
+    // and the user is stuck on "No organisations match these filters"
+    // indefinitely, even though the API answers correctly on the next call.
+    // Falling through to a normal fetch costs one request in the genuinely
+    // empty case and repairs the degraded case.
+    initialData:
+      isDefaultView && initialItems.length > 0
+        ? {
+            data: initialItems,
+            meta: {
+              total: initialTotal,
+              page: 1,
+              limit: initialItems.length,
+              totalPages: 1,
+            },
+          }
+        : undefined,
     placeholderData: keepPreviousData,
     staleTime: 2 * 60 * 1000,
   });

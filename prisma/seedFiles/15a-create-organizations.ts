@@ -212,6 +212,15 @@ export async function createOrganizations(
   // dup. Adopts the canonical Wipro org as its OWNER membership.
   await seedTourOwner();
 
+  // ---------------------------------------------- DERIVED FLAG RECONCILE
+  // ConsultantProfile.isIndependent is derived ("true iff zero ACTIVE EXPERT
+  // memberships at canHost orgs") and is normally maintained by
+  // recomputeConsultantIsIndependent() on every membership mutation. This seed
+  // writes memberships straight through prisma.membership.create(), which
+  // bypasses that — leaving every hosted expert flagged independent and
+  // invisible on their org's public page. Reconcile once at the end.
+  await reconcileSeededIsIndependent();
+
   console.log("[15a] ✓ Enterprise seed complete");
 }
 
@@ -907,5 +916,37 @@ async function seedTourOwner(): Promise<void> {
 
   console.log(
     `[15a]   ✓ Tour owner seeded: ${TOUR_OWNER_EMAIL} (password: ${SEED_PASSWORD}) — OWNER of ${wipro.name}`,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Derived-flag reconcile
+// ---------------------------------------------------------------------------
+
+async function reconcileSeededIsIndependent(): Promise<void> {
+  const hosted = await prisma.membership.findMany({
+    where: {
+      role: MemberRole.EXPERT,
+      status: MemberStatus.ACTIVE,
+      organization: { canHost: true },
+      consultantProfileId: { not: null },
+    },
+    select: { consultantProfileId: true },
+    distinct: ["consultantProfileId"],
+  });
+
+  const ids = hosted
+    .map((m) => m.consultantProfileId)
+    .filter((id): id is string => Boolean(id));
+
+  if (ids.length === 0) return;
+
+  const { count } = await prisma.consultantProfile.updateMany({
+    where: { id: { in: ids }, isIndependent: true },
+    data: { isIndependent: false },
+  });
+
+  console.log(
+    `[15a]   ✓ isIndependent reconciled for ${count} hosted consultant(s)`,
   );
 }
