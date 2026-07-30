@@ -11,7 +11,11 @@
  */
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
-import { notifyAppointmentCancelled } from "@/lib/novu";
+import {
+  notifyAppointmentCancelled,
+} from "@/lib/novu";
+import { notificationScope } from "@/lib/novu/workflows";
+import { notificationHref } from "@/lib/novu/resolve-href";
 import { refundPayment } from "@/lib/payments/operations/refund";
 import { refundWholeEventPayments } from "@/lib/payments/operations/event-refunds";
 import {
@@ -280,6 +284,7 @@ interface NormalizedEngagement {
   appointments: Array<{
     id: string;
     appointmentType: string;
+    organizationId: string | null;
     // amount is number at runtime — the extended client converts BigInt on read
     payment: Array<{ id: string; amount: number; paymentStatus: string }>;
   }>;
@@ -309,6 +314,9 @@ async function cancelExclusiveEngagement(
     select: {
       id: true,
       appointmentType: true,
+      // ADR 23 — attribute the cancellation notification to the dashboard that
+      // owns the session rather than defaulting everyone to their personal one.
+      organizationId: true,
       payment: { select: { id: true, amount: true, paymentStatus: true } },
     },
   } as const;
@@ -404,13 +412,16 @@ async function cancelExclusiveEngagement(
     engagement.consulteeUser?.id,
   ].filter((id): id is string => !!id);
   if (userIds.length > 0) {
+    const engagementOrgId =
+      engagement.appointments[0]?.organizationId ?? null;
     void notifyAppointmentCancelled(userIds, {
+      ...notificationScope(engagementOrgId),
       appointmentType:
         engagement.appointments[0]?.appointmentType ?? kind.toUpperCase(),
       consultantName: engagement.consultantUser?.name || "Consultant",
       consulteeName: engagement.consulteeUser?.name || "Consultee",
       planTitle: engagement.planTitle || "N/A",
-      dashboardUrl: "/dashboard",
+      dashboardUrl: notificationHref(engagementOrgId, "appointments"),
       reason: "MODERATION",
       cancelledBy: "system",
     });
@@ -478,16 +489,23 @@ async function cancelGroupEvent(
       paymentStatus: "SUCCEEDED",
       amount: { gt: 0 },
     },
-    select: { userId: true },
+    select: {
+      userId: true,
+      // Every attendee of one event shares its org-ness, so the first row
+      // decides the scope for the whole batch.
+      appointment: { select: { organizationId: true } },
+    },
   });
   const attendeeIds = Array.from(new Set(attendees.map((p) => p.userId)));
   if (attendeeIds.length > 0) {
+    const eventOrgId = attendees[0]?.appointment?.organizationId ?? null;
     void notifyAppointmentCancelled(attendeeIds, {
+      ...notificationScope(eventOrgId),
       appointmentType: isWebinar ? "WEBINAR" : "CLASS",
       consultantName: "Consultant",
       consulteeName: "Attendee",
       planTitle: "N/A",
-      dashboardUrl: "/dashboard",
+      dashboardUrl: notificationHref(eventOrgId, "appointments"),
       reason: "MODERATION",
       cancelledBy: "system",
     });

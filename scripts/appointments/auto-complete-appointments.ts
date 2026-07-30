@@ -26,6 +26,7 @@ import {
   TrialSessionStatus,
 } from "@prisma/client";
 import { notifyAppointmentCompleted } from "../../lib/novu/service";
+import { notificationScope } from "../../lib/novu/workflows";
 import { getAppUrl } from "../../lib/url";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { REQUEST_ALLOWED_FROM } from "@/lib/booking/transitions";
@@ -293,6 +294,7 @@ async function completeConsultations(): Promise<{
       );
       if (userIds.length > 0) {
         void notifyAppointmentCompleted(userIds, {
+          ...notificationScope(consultation.appointment?.organizationId),
           appointmentType: "consultation",
           consultantName:
             consultation.consultationPlan?.consultantProfile?.user?.name ??
@@ -423,6 +425,7 @@ async function completeSubscriptions(): Promise<{
       );
       if (userIds.length > 0) {
         void notifyAppointmentCompleted(userIds, {
+          ...notificationScope(subscription.appointments[0]?.organizationId),
           appointmentType: "subscription",
           consultantName:
             subscription.subscriptionPlan?.consultantProfile?.user?.name ??

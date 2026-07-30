@@ -125,10 +125,51 @@ export const NOVU_WORKFLOWS = {
 } as const;
 
 // ============================================================================
+// Notification scope
+// ============================================================================
+
+/**
+ * Which dashboard owns the work a notification is about.
+ *
+ * ADR 19 splits the dashboards by the org-ness of the underlying session, plan
+ * or payment, but the notification layer never learned the split: one Novu
+ * subscriber per user, no org field on any payload, and an Inbox with no
+ * filter. A consultant who also delivers for an organization got one merged
+ * feed in which an org-session booking was byte-identical to a B2C one.
+ *
+ * Every payload for work that can happen in both contexts carries this. It is
+ * REQUIRED rather than optional on purpose — an omission should fail the build
+ * at the call site, not silently produce another unattributable notification.
+ *
+ * `scope` is derivable from `organizationId` and is stored anyway: Novu's Inbox
+ * filters tabs on payload equality, and "this field is null" is not expressible
+ * that way. Use {@link notificationScope} so the two can never disagree.
+ */
+export type NotificationScope = {
+  /** Null for B2C work. Copied from the triggering record's own column. */
+  organizationId: string | null;
+  scope: "personal" | "org";
+  /** Display name of the owning org. Absent for personal work. */
+  orgName?: string;
+};
+
+export function notificationScope(
+  organizationId: string | null | undefined,
+  orgName?: string | null,
+): NotificationScope {
+  const orgId = organizationId ?? null;
+  return {
+    organizationId: orgId,
+    scope: orgId ? "org" : "personal",
+    ...(orgId && orgName ? { orgName } : {}),
+  };
+}
+
+// ============================================================================
 // Payload Type Definitions
 // ============================================================================
 
-export type AppointmentPayload = {
+export type AppointmentPayload = NotificationScope & {
   appointmentId?: string;
   appointmentType: string;
   consultantName: string;
@@ -148,7 +189,7 @@ export type AppointmentRescheduledPayload = AppointmentPayload & {
   newDateTime?: string;
 };
 
-export type PaymentSuccessPayload = {
+export type PaymentSuccessPayload = NotificationScope & {
   amount: number;
   currency: string;
   consultantName: string;
@@ -219,7 +260,7 @@ export type SubscriptionPayload = {
   dashboardUrl: string;
 };
 
-export type BookingRequestPayload = {
+export type BookingRequestPayload = NotificationScope & {
   consulteeName: string;
   planTitle: string;
   appointmentType: string;
@@ -275,7 +316,7 @@ export type DisputePayload = {
   dashboardUrl: string;
 };
 
-export type RecordingPayload = {
+export type RecordingPayload = NotificationScope & {
   appointmentType: string;
   consultantName: string;
   consulteeName?: string;

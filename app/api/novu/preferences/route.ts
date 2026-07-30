@@ -37,6 +37,9 @@ export async function GET() {
         trialNotifications: true,
         subscriptionAlerts: true,
         marketingEmails: false,
+        orgBillingAlerts: true,
+        orgMembershipAlerts: true,
+        orgProgramAlerts: true,
         quietHoursEnabled: false,
         quietHoursStart: null,
         quietHoursEnd: null,
@@ -101,6 +104,10 @@ export async function PUT(req: NextRequest) {
       trialNotifications: updated.trialNotifications,
       subscriptionAlerts: updated.subscriptionAlerts,
       marketingEmails: updated.marketingEmails,
+      // ADR 23 — org categories
+      orgBillingAlerts: updated.orgBillingAlerts,
+      orgMembershipAlerts: updated.orgMembershipAlerts,
+      orgProgramAlerts: updated.orgProgramAlerts,
     });
 
     return NextResponse.json(updated);

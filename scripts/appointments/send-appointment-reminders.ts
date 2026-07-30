@@ -16,7 +16,8 @@
 import prisma from "../../lib/prisma";
 import redis from "../../lib/redis";
 import { notifyAppointmentReminder } from "../../lib/novu/service";
-import { getAppUrl } from "../../lib/url";
+import { notificationScope } from "../../lib/novu/workflows";
+import { notificationHref } from "../../lib/novu/resolve-href";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 
 // Reminder windows (in milliseconds)
@@ -208,17 +209,16 @@ async function sendRemindersForWindow(window: {
         // Redis unavailable — send anyway rather than skip silently
       }
 
-      const baseUrl = getAppUrl();
-
       await notifyAppointmentReminder(
         uniqueUserIds,
         {
+          ...notificationScope(apt.organizationId),
           appointmentType,
           consultantName,
           consulteeName,
           planTitle,
           dateTime: slot.startsAt.toISOString(),
-          dashboardUrl: `${baseUrl}/dashboard`,
+          dashboardUrl: notificationHref(apt.organizationId, "appointments"),
         },
         // 24h and 1h payloads are identical — key the Novu transactionId by
         // window so the second reminder isn't deduped away.
