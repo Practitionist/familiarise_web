@@ -1,7 +1,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { AppointmentStatus } from "@prisma/client";
+import { AppointmentStatus, TrialSessionStatus } from "@prisma/client";
 import {
   requireApiAuth,
   isPrivileged,
@@ -56,9 +56,13 @@ export async function GET(
       },
     } as const;
 
-    // Fetch all three data sources in parallel
-    const [pendingConsultations, pendingSubscriptions, pendingGatewayPayments] =
-      await Promise.all([
+    // Fetch all four data sources in parallel
+    const [
+      pendingConsultations,
+      pendingSubscriptions,
+      pendingGatewayPayments,
+      pendingTrials,
+    ] = await Promise.all([
         // Source 1: Consultations with APPROVED_PENDING_PAYMENT status
         prisma.consultation.findMany({
           where: {
@@ -141,6 +145,27 @@ export async function GET(
           },
           orderBy: { createdAt: "desc" },
         }),
+
+        // Source 4: Paid trials the consultant accepted but the learner hasn't
+        // paid for yet. Unlike the sources above these carry a real deadline
+        // (paymentDueAt) rather than an assumed 48h window.
+        prisma.trialSession.findMany({
+          where: {
+            consulteeProfileId: consulteeId,
+            status: TrialSessionStatus.AWAITING_PAYMENT,
+          },
+          include: {
+            subscriptionPlan: {
+              include: {
+                consultantProfile: {
+                  include: { user: { select: { name: true } } },
+                },
+              },
+            },
+            appointment: { select: { id: true } },
+          },
+          orderBy: { updatedAt: "desc" },
+        }),
       ]);
 
     // Transform approval-pending consultations
@@ -188,6 +213,30 @@ export async function GET(
           currency: subscription.subscriptionPlan?.priceCurrency || "INR",
           paymentUrl: subscription.pendingPaymentUrl || "",
           approvedAt: subscription.updatedAt.toISOString(),
+          expiresAt: expiresAt.toISOString(),
+          isExpiringSoon,
+          source: "approval_pending" as const,
+        };
+      }),
+      ...pendingTrials.map((trial) => {
+        // Real deadline, not the 48h assumption used above — a trial's slot may
+        // be sooner than that, in which case paymentDueAt is clamped to it.
+        const expiresAt = trial.paymentDueAt ?? trial.updatedAt;
+        const isExpiringSoon =
+          expiresAt.getTime() - Date.now() < 24 * 60 * 60 * 1000;
+
+        return {
+          id: trial.id,
+          appointmentId: trial.appointment?.id ?? null,
+          type: "trial" as const,
+          title: `${trial.subscriptionPlan?.title ?? "Trial"} — trial`,
+          consultantName:
+            trial.subscriptionPlan?.consultantProfile?.user?.name ||
+            "Consultant",
+          amount: Number(trial.subscriptionPlan?.trialPriceInPaise ?? 0),
+          currency: trial.subscriptionPlan?.priceCurrency || "INR",
+          paymentUrl: trial.pendingPaymentUrl || "",
+          approvedAt: trial.updatedAt.toISOString(),
           expiresAt: expiresAt.toISOString(),
           isExpiringSoon,
           source: "approval_pending" as const,

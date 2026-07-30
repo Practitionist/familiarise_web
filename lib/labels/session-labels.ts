@@ -136,6 +136,14 @@ export const TRIAL_STATUS_BADGE: Record<TrialSessionStatus, StatusBadgeStyle> =
       className: "bg-amber-100 text-amber-900 border-amber-200",
       dotClassName: "bg-amber-500",
     },
+    // Accepted by the consultant, waiting on the learner to pay. Amber like
+    // PENDING because both are "waiting", but the label names who we're
+    // waiting on — that distinction is the whole reason this status exists.
+    AWAITING_PAYMENT: {
+      label: "Awaiting payment",
+      className: "bg-amber-100 text-amber-900 border-amber-200",
+      dotClassName: "bg-amber-500",
+    },
     SCHEDULED: {
       label: "Scheduled",
       className: "bg-emerald-100 text-emerald-900 border-emerald-200",

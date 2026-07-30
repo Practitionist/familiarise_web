@@ -48,6 +48,10 @@ export const consultantListInclude = {
       callsPerWeek: true,
       emailSupport: true,
       totalSessions: true,
+      // Drive the card's Trial CTA from real data instead of showing it
+      // unconditionally — a plan with no trial had a button that dead-ended.
+      trialEnabled: true,
+      trialPriceInPaise: true,
     },
     take: 5,
   },
@@ -142,6 +146,9 @@ export function toConsultantCard(row: ConsultantCardRow): IConsultantCardData {
       callsPerWeek: p.callsPerWeek,
       emailSupport: p.emailSupport,
       totalSessions: p.totalSessions,
+      trialEnabled: p.trialEnabled,
+      // BigInt (paise) → Number, same as `price` above.
+      trialPriceInPaise: Number(p.trialPriceInPaise),
     })),
     organizationBadge: firstOrg
       ? {

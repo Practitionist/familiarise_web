@@ -176,6 +176,20 @@ export const ConsultantCard = memo(function ConsultantCard({
     },
     {},
   );
+  // Trial CTA is driven by real plan data. Previously it rendered
+  // unconditionally, so an expert offering no trial — or one whose trial is
+  // priced — showed a button that dead-ended. Cheapest trial across the
+  // consultant's plans is the honest headline price.
+  const trialPlans = sortedPlans.filter((plan) => plan.trialEnabled);
+  const trialOffer =
+    trialPlans.length > 0
+      ? {
+          priceInPaise: Math.min(
+            ...trialPlans.map((plan) => plan.trialPriceInPaise ?? 0),
+          ),
+        }
+      : null;
+
   const durationSeen: Record<number, number> = {};
   const tabLabels = sortedPlans.map((plan) => {
     const base = `${plan.durationInMonths} Mo`;
@@ -409,14 +423,22 @@ export const ConsultantCard = memo(function ConsultantCard({
                 <ArrowRight className="w-4 h-4 ml-2" />
               </Link>
             </Button>
-            <div className="grid grid-cols-2 gap-2">
-              <Button
-                asChild
-                variant="outline"
-                className="h-10 border-border hover:bg-muted text-muted-foreground rounded-xl text-sm font-medium"
-              >
-                <Link href={`${profileHref}?action=trial`}>Trial</Link>
-              </Button>
+            <div
+              className={`grid gap-2 ${trialOffer ? "grid-cols-2" : "grid-cols-1"}`}
+            >
+              {trialOffer && (
+                <Button
+                  asChild
+                  variant="outline"
+                  className="h-10 border-border hover:bg-muted text-muted-foreground rounded-xl text-sm font-medium"
+                >
+                  <Link href={`${profileHref}?action=trial`}>
+                    {trialOffer.priceInPaise > 0
+                      ? `Trial · ${formatPrice(trialOffer.priceInPaise)}`
+                      : "Free intro call"}
+                  </Link>
+                </Button>
+              )}
               <Button
                 asChild
                 variant="outline"
