@@ -48,7 +48,7 @@ const curriculumRow = (item: CurriculumInput, index: number) => ({
 
 /** Nested `create` for a brand-new plan. */
 export function faqCreateNested(faqs: FaqInput[] | undefined) {
-  return { create: (faqs ?? []).map(faqRow) };
+  return { create: (faqs ?? []).map((faq, i) => faqRow(faq, i)) };
 }
 
 /**
@@ -58,17 +58,17 @@ export function faqCreateNested(faqs: FaqInput[] | undefined) {
  */
 export function faqReplaceNested(faqs: FaqInput[] | undefined) {
   if (faqs === undefined) return undefined;
-  return { deleteMany: {}, create: faqs.map(faqRow) };
+  return { deleteMany: {}, create: faqs.map((faq, i) => faqRow(faq, i)) };
 }
 
 export function curriculumCreateNested(items: CurriculumInput[] | undefined) {
-  return { create: (items ?? []).map(curriculumRow) };
+  return { create: (items ?? []).map((item, i) => curriculumRow(item, i)) };
 }
 
 /** See {@link faqReplaceNested} for the undefined-means-untouched contract. */
 export function curriculumReplaceNested(items: CurriculumInput[] | undefined) {
   if (items === undefined) return undefined;
-  return { deleteMany: {}, create: items.map(curriculumRow) };
+  return { deleteMany: {}, create: items.map((item, i) => curriculumRow(item, i)) };
 }
 
 /** Standard include for reading a plan's buyer-facing content back out. */
