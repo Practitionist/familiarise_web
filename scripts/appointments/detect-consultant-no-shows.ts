@@ -268,6 +268,7 @@ function notifyNoShowParties(
 
   if (refundedPaise > 0 && paidPayment) {
     void notifyRefundProcessed(party.consulteeUserId, {
+      ...notificationScope(noShowOrgId),
       amount: refundedPaise,
       currency: paidPayment.currency,
       reason: "consultant no-show",

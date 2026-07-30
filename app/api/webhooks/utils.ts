@@ -16,6 +16,7 @@ import {
   notifyDisputeCreated,
   notifyDisputeResolved,
 } from "@/lib/novu";
+import { notificationScope } from "@/lib/novu/workflows";
 import {
   notifyOrgInvoicePaid,
   notifyOrgWalletTopupConfirmed,
@@ -958,6 +959,11 @@ export async function handleRefundCreated(
 
     // --- Novu notification (fire-and-forget) ---
     void notifyRefundProcessed(payment.userId, {
+      // Payment.organizationId is the org tag (#PaymentOrgTag), so a refund
+      // inherits the org-ness of the payment it reverses. dashboardUrl stays a
+      // router bounce deliberately: this goes to the PAYER, and an org billing
+      // page is not readable by a LEARNER whose booking was org-sponsored.
+      ...notificationScope(payment.organizationId),
       amount,
       currency,
       dashboardUrl: `${getAppUrl()}/dashboard`,

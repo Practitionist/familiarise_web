@@ -209,7 +209,7 @@ export type PaymentFailedPayload = {
   retryUrl?: string;
 };
 
-export type RefundPayload = {
+export type RefundPayload = NotificationScope & {
   amount: number;
   currency: string;
   reason?: string;

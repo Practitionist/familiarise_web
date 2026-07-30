@@ -27,7 +27,7 @@ import {
 } from "@prisma/client";
 import { notifyAppointmentCompleted } from "../../lib/novu/service";
 import { notificationScope } from "../../lib/novu/workflows";
-import { getAppUrl } from "../../lib/url";
+import { notificationHref } from "../../lib/novu/resolve-href";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { REQUEST_ALLOWED_FROM } from "@/lib/booking/transitions";
 
@@ -301,7 +301,10 @@ async function completeConsultations(): Promise<{
             "Consultant",
           consulteeName: consultation.requestedBy?.user?.name ?? "Consultee",
           planTitle: consultation.consultationPlan.title,
-          dashboardUrl: `${getAppUrl()}/dashboard`,
+          dashboardUrl: notificationHref(
+            consultation.appointment?.organizationId,
+            "appointments",
+          ),
         }).catch((error) =>
           console.error(
             `[auto-complete] Failed to send consultation completion notification:`,
@@ -432,7 +435,10 @@ async function completeSubscriptions(): Promise<{
             "Consultant",
           consulteeName: subscription.requestedBy?.user?.name ?? "Consultee",
           planTitle: subscription.subscriptionPlan.title,
-          dashboardUrl: `${getAppUrl()}/dashboard`,
+          dashboardUrl: notificationHref(
+            subscription.appointments[0]?.organizationId,
+            "appointments",
+          ),
         }).catch((error) =>
           console.error(
             `[auto-complete] Failed to send subscription completion notification:`,

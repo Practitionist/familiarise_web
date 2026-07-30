@@ -66,9 +66,23 @@ describe("ADR 20 — org-roster notifications carry no session content", () => {
 
   it("recording notifications go to participants, never a roster", () => {
     const src = read(RECORDING_HANDLERS);
-    // The recordingUrl is in this payload, so the recipient list has to be the
-    // attendee resolver. If this ever becomes an org roster the URL leaks.
-    expect(src).toContain("getEventAttendeeIds");
+
+    // Asserting that `getEventAttendeeIds` merely APPEARS is too weak — it would
+    // still pass if the notifier were handed a roster while the resolver sat
+    // unused elsewhere in the file. So bind the two: take the identifier
+    // actually passed as the recipient argument, and require THAT identifier to
+    // be the one assigned from the attendee resolver.
+    const call = /notifyRecordingAvailable\(\s*([A-Za-z_$][\w$]*)\s*,/.exec(src);
+    expect(call).not.toBeNull();
+    const recipientVar = call![1];
+
+    const assignedFromResolver = new RegExp(
+      `(?:const|let|var)\\s+${recipientVar}\\s*=\\s*await\\s+getEventAttendeeIds\\(`,
+    );
+    expect(src).toMatch(assignedFromResolver);
+
+    // And the roster resolvers must not be reachable from this file at all, so
+    // the recipient list cannot be rebuilt from one further down.
     expect(src).not.toContain("rosterForOrg");
     expect(src).not.toContain("VISIBILITY_ROLES");
     expect(src).not.toContain("OPERATOR_ROLES");

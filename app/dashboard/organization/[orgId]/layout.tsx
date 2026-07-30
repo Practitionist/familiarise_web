@@ -56,10 +56,14 @@ const MOBILE_TABS: {
     surface: "operations.read",
   },
   {
+    // No surface gate, matching the desktop entry (ADR 23). The Settings page
+    // floors at active membership and each tab carries its own gate, so an
+    // ordinary member reaches it for the Notifications tab and nothing else.
+    // Gating only the desktop sidebar would have left mobile LEARNER/EXPERT
+    // users with no route to their own notification preferences.
     label: "Settings",
     path: "settings",
     Icon: Settings,
-    surface: "settings.manage",
   },
 ];
 

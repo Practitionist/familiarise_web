@@ -21,12 +21,24 @@ export function NotificationInbox() {
     const raw = (session?.user as Record<string, unknown> | undefined)
       ?.organizationMemberships;
     if (!Array.isArray(raw)) return [] as OrgMembershipLite[];
-    return raw
-      .map((m: Record<string, unknown>) => ({
-        organizationId: String(m.organizationId ?? ""),
-        organizationName: String(m.organizationName ?? ""),
-      }))
-      .filter((m) => m.organizationId);
+    // Validate rather than coerce. `String(someObject)` yields
+    // "[object Object]", which would become a tab filter matching nothing and a
+    // label rendering that literal — a malformed entry should drop out, not
+    // produce a broken tab. (Also the SonarCloud finding on this block.)
+    return raw.flatMap((m): OrgMembershipLite[] => {
+      if (typeof m !== "object" || m === null) return [];
+      const { organizationId, organizationName } = m as Record<string, unknown>;
+      if (typeof organizationId !== "string" || organizationId === "") return [];
+      return [
+        {
+          organizationId,
+          organizationName:
+            typeof organizationName === "string" && organizationName !== ""
+              ? organizationName
+              : "Organization",
+        },
+      ];
+    });
   }, [session?.user]);
 
   /**
@@ -46,7 +58,7 @@ export function NotificationInbox() {
       { label: "All", filter: {} },
       { label: "Personal", filter: { data: { scope: "personal" } } },
       ...memberships.map((m) => ({
-        label: m.organizationName || "Organization",
+        label: m.organizationName,
         filter: { data: { organizationId: m.organizationId } },
       })),
     ];
