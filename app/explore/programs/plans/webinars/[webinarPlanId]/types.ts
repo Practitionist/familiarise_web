@@ -18,6 +18,7 @@ export type TWebinarPlanData = Omit<
         };
       };
       topics: true;
+      faqs: true;
       webinars: {
         include: {
           appointment: {

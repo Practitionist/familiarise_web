@@ -330,7 +330,7 @@ export function formatSlotsForAPI(slots: TimeSlot[]): string[] {
 export function calculateRequiredSlots(
   eventType: "consultation" | "subscription" | "webinar" | "class",
   durationInMonths?: number,
-  callsPerWeek?: number,
+  sessionsPerWeek?: number,
   durationInHours?: number,
   startDate?: Date,
   endDate?: Date,
@@ -338,7 +338,7 @@ export function calculateRequiredSlots(
 ): number {
   return SlotCalculationService.calculateRequiredSlots(eventType, {
     durationInMonths,
-    callsPerWeek,
+    sessionsPerWeek,
     durationInHours,
     sessionDurationInHours: durationInHours,
     schedulingPeriodStartsAt: startDate,

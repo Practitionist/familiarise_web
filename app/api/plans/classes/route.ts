@@ -191,7 +191,7 @@ export async function POST(request: NextRequest) {
       description,
       durationInMonths,
       price,
-      meetingsPerWeek,
+      sessionsPerWeek,
       sessionDurationInHours,
       emailSupport,
       maxParticipants,
@@ -234,7 +234,7 @@ export async function POST(request: NextRequest) {
     if (
       durationInMonths <= 0 ||
       price <= 0 ||
-      meetingsPerWeek < 0 ||
+      sessionsPerWeek < 0 ||
       (sessionDurationInHours && sessionDurationInHours <= 0) ||
       maxParticipants <= 0
     ) {
@@ -257,7 +257,7 @@ export async function POST(request: NextRequest) {
         description,
         durationInMonths,
         price,
-        meetingsPerWeek,
+        sessionsPerWeek,
         sessionDurationInHours: sessionDurationInHours || 1,
         emailSupport,
         maxParticipants,

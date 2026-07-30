@@ -1,5 +1,6 @@
 "use client";
 
+import { PlanLevel } from "@prisma/client";
 import * as Sentry from "@sentry/nextjs";
 import { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
@@ -50,6 +51,7 @@ import { useToast } from "@/hooks/use-toast";
 import { SubscriptionPlanSchema } from "@/schemas/plans";
 
 import { FormSection } from "./form-fields/FormSection";
+import { PositioningSections } from "./form-fields/PositioningSections";
 import { LearningOutcomesField } from "./form-fields/LearningOutcomesField";
 import { PriceField } from "./form-fields/PriceField";
 import { LanguageLevelFields } from "./form-fields/LanguageLevelFields";
@@ -139,6 +141,8 @@ export function EventPlannerForSubscription({
       contentUrl?: string | null;
       order: number;
       hoursAllotted: number;
+      sectionLabel?: string | null;
+      outcomes?: string[];
     }>
   >(initialData?.subscriptionPlan?.subscriptionContents ?? []);
 
@@ -151,16 +155,20 @@ export function EventPlannerForSubscription({
           durationInMonths: initialData.subscriptionPlan.durationInMonths,
           price: (initialData.subscriptionPlan.price ?? 0) / 100,
           priceCurrency: initialData.subscriptionPlan.priceCurrency ?? "INR",
-          callsPerWeek: initialData.subscriptionPlan.callsPerWeek,
+          sessionsPerWeek: initialData.subscriptionPlan.sessionsPerWeek,
           sessionDurationInHours:
             initialData.subscriptionPlan.sessionDurationInHours ?? 1,
           emailSupport: initialData.subscriptionPlan.emailSupport,
           language: initialData.subscriptionPlan.language ?? "English",
-          level: initialData.subscriptionPlan.level ?? "Beginner",
+          level: initialData.subscriptionPlan.level ?? PlanLevel.BEGINNER,
           prerequisites: initialData.subscriptionPlan.prerequisites ?? "",
           materialProvided: initialData.subscriptionPlan.materialProvided ?? "",
           learningOutcomes: initialData.subscriptionPlan.learningOutcomes ?? [],
           topics: initialData.subscriptionPlan.topics ?? [],
+          subtitle: initialData.subscriptionPlan.subtitle ?? "",
+          targetAudience: initialData.subscriptionPlan.targetAudience ?? [],
+          whatsIncluded: initialData.subscriptionPlan.whatsIncluded ?? [],
+          faqs: initialData.subscriptionPlan.faqs ?? [],
         }
       : {
           title: "",
@@ -168,15 +176,19 @@ export function EventPlannerForSubscription({
           durationInMonths: 1,
           price: 0,
           priceCurrency: "INR",
-          callsPerWeek: 1,
+          sessionsPerWeek: 1,
           sessionDurationInHours: 1,
           emailSupport: "GENERAL" as const,
           language: "English",
-          level: "Beginner",
+          level: PlanLevel.BEGINNER,
           prerequisites: "",
           materialProvided: "",
           learningOutcomes: [],
           topics: [],
+          subtitle: "",
+          targetAudience: [],
+          whatsIncluded: [],
+          faqs: [],
         },
     mode: "onBlur",
   });
@@ -189,16 +201,20 @@ export function EventPlannerForSubscription({
         durationInMonths: initialData.subscriptionPlan.durationInMonths,
         price: (initialData.subscriptionPlan.price ?? 0) / 100,
         priceCurrency: initialData.subscriptionPlan.priceCurrency ?? "INR",
-        callsPerWeek: initialData.subscriptionPlan.callsPerWeek,
+        sessionsPerWeek: initialData.subscriptionPlan.sessionsPerWeek,
         sessionDurationInHours:
           initialData.subscriptionPlan.sessionDurationInHours ?? 1,
         emailSupport: initialData.subscriptionPlan.emailSupport,
         language: initialData.subscriptionPlan.language ?? "English",
-        level: initialData.subscriptionPlan.level ?? "Beginner",
+        level: initialData.subscriptionPlan.level ?? PlanLevel.BEGINNER,
         prerequisites: initialData.subscriptionPlan.prerequisites ?? "",
         materialProvided: initialData.subscriptionPlan.materialProvided ?? "",
         learningOutcomes: initialData.subscriptionPlan.learningOutcomes ?? [],
         topics: initialData.subscriptionPlan.topics ?? [],
+        subtitle: initialData.subscriptionPlan.subtitle ?? "",
+        targetAudience: initialData.subscriptionPlan.targetAudience ?? [],
+        whatsIncluded: initialData.subscriptionPlan.whatsIncluded ?? [],
+        faqs: initialData.subscriptionPlan.faqs ?? [],
       });
       // Reset trial and subscription contents state
       setTrialEnabled(
@@ -287,14 +303,21 @@ export function EventPlannerForSubscription({
           durationInMonths: formData.durationInMonths,
           price: Math.round(formData.price * 100),
           priceCurrency: formData.priceCurrency ?? "INR",
-          callsPerWeek: formData.callsPerWeek,
+          sessionsPerWeek: formData.sessionsPerWeek,
           emailSupport: formData.emailSupport ?? "GENERAL",
           language: formData.language ?? "English",
-          level: formData.level ?? "Beginner",
+          level: formData.level ?? PlanLevel.BEGINNER,
           prerequisites: formData.prerequisites ?? undefined,
           materialProvided: formData.materialProvided ?? undefined,
           learningOutcomes: formData.learningOutcomes,
           topics: formData.topics ?? [],
+          subtitle: formData.subtitle || null,
+          targetAudience: formData.targetAudience ?? [],
+          whatsIncluded: formData.whatsIncluded ?? [],
+          faqs: (formData.faqs ?? []).map((faq, index) => ({
+            ...faq,
+            order: faq.order ?? index,
+          })),
           consultantProfileId: consultantId,
           consultantProfile: null,
           subscriptions: initialData?.subscriptionPlan?.subscriptions ?? [],
@@ -347,6 +370,9 @@ export function EventPlannerForSubscription({
       contentType: null,
       contentUrl: null,
       order: subscriptionContents.length + 1,
+      // Pre-fill the next week so the common case needs no typing.
+      sectionLabel: `Week ${subscriptionContents.length + 1}`,
+      outcomes: [],
       hoursAllotted: 1,
     };
     setSubscriptionContents([...subscriptionContents, newContent]);
@@ -365,7 +391,7 @@ export function EventPlannerForSubscription({
   const updateSubscriptionContent = (
     index: number,
     field: string,
-    value: string | number | null,
+    value: string | number | string[] | null,
   ) => {
     const newContents = [...subscriptionContents];
     newContents[index] = { ...newContents[index], [field]: value };
@@ -508,7 +534,7 @@ export function EventPlannerForSubscription({
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <FormField
                     control={form.control}
-                    name="callsPerWeek"
+                    name="sessionsPerWeek"
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel>Calls Per Week</FormLabel>
@@ -785,6 +811,11 @@ export function EventPlannerForSubscription({
                 />
               </FormSection>
 
+              <PositioningSections
+                control={form.control}
+                offeringNoun="mentorship program"
+              />
+
               {/* Session Roadmap Section */}
               <FormSection
                 title="Session Roadmap"
@@ -813,6 +844,26 @@ export function EventPlannerForSubscription({
                       </div>
 
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <FormLabel>Section label</FormLabel>
+                          <Input
+                            placeholder="e.g., Week 1"
+                            maxLength={40}
+                            value={content.sectionLabel ?? ""}
+                            onChange={(e) =>
+                              updateSubscriptionContent(
+                                index,
+                                "sectionLabel",
+                                e.target.value,
+                              )
+                            }
+                            className="mt-2"
+                          />
+                          <p className="text-xs text-muted-foreground mt-1.5">
+                            Sessions sharing a label group under one heading.
+                          </p>
+                        </div>
+
                         <div>
                           <FormLabel>
                             Title <span className="text-destructive">*</span>

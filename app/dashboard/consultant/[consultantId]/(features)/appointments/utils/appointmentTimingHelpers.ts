@@ -3,7 +3,7 @@ import { TAppointment } from "@/types/appointment";
 interface AppointmentTimingDetails {
   eventType: "consultation" | "subscription" | "webinar" | "class";
   eventId: string;
-  /** Generic sessions per week - maps to callsPerWeek for subscriptions, meetingsPerWeek for classes */
+  /** Sessions per week; 1 for the one-off event types. */
   sessionsPerWeek: number;
   durationInMonths: number;
   durationInHours: number;
@@ -31,13 +31,12 @@ function getAppointmentTimingDetails(
         canManageTimings: !!appointment.consultation?.id,
       };
     case "SUBSCRIPTION": {
-      // Subscriptions use callsPerWeek terminology
-      const callsPerWeek =
-        appointment.subscription?.subscriptionPlan?.callsPerWeek || 1;
+      const sessionsPerWeek =
+        appointment.subscription?.subscriptionPlan?.sessionsPerWeek || 1;
       return {
         eventType: "subscription",
         eventId: appointment.subscription?.id || "",
-        sessionsPerWeek: callsPerWeek,
+        sessionsPerWeek,
         durationInMonths:
           appointment.subscription?.subscriptionPlan?.durationInMonths || 1,
         durationInHours:
@@ -61,7 +60,7 @@ function getAppointmentTimingDetails(
     case "CLASS": {
       // Calculate session duration for classes
       const classPlan = appointment.class?.classPlan;
-      const meetingsPerWeek = classPlan?.meetingsPerWeek || 1;
+      const sessionsPerWeek = classPlan?.sessionsPerWeek || 1;
       const durationInMonths = classPlan?.durationInMonths || 1;
 
       // Use a reasonable default session duration
@@ -69,7 +68,7 @@ function getAppointmentTimingDetails(
       let sessionDurationInHours = 1.5; // Default for classes
 
       // For classes, we can estimate based on duration and frequency
-      if (durationInMonths > 1 && meetingsPerWeek > 1) {
+      if (durationInMonths > 1 && sessionsPerWeek > 1) {
         // For longer, more frequent classes, use slightly longer sessions
         sessionDurationInHours = 2.0;
       } else if (durationInMonths > 6) {
@@ -80,7 +79,7 @@ function getAppointmentTimingDetails(
       return {
         eventType: "class",
         eventId: appointment.class?.id || "",
-        sessionsPerWeek: meetingsPerWeek, // Classes use meetingsPerWeek terminology
+        sessionsPerWeek,
         durationInMonths,
         durationInHours: sessionDurationInHours,
         title: appointment.class?.classPlan?.title || "Class",

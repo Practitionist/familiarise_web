@@ -75,7 +75,7 @@ flowchart TD
 
     Verified --> Plans["Create service plans\n/dashboard/consultant/planner/services/"]
     Plans --> ConsultPlan["ConsultationPlan\ntitle, price, duration, topics"]
-    Plans --> SubPlan["SubscriptionPlan\ncallsPerWeek, durationInMonths\ntrial toggle + price"]
+    Plans --> SubPlan["SubscriptionPlan\nsessionsPerWeek, durationInMonths\ntrial toggle + price"]
     Plans --> WebinarPlan["WebinarPlan\nmaxParticipants, recording policy\ncertificate toggle"]
     Plans --> ClassPlan["ClassPlan\ncurriculum, number of sessions"]
 
@@ -209,7 +209,7 @@ flowchart TD
 
     subgraph SubscriptionMath["Subscription slot math"]
         countWeeks["countWeeks(start, end)\nSunday–Saturday counting"]
-        reqSlots["calculateRequiredSlots\ncallsPerWeek × weeks"]
+        reqSlots["calculateRequiredSlots\nsessionsPerWeek × weeks"]
         slotsPerCall["getSlotsPerCall(durationMins)"]
     end
 ```
@@ -276,7 +276,7 @@ flowchart TD
     DirectSub["Pays upfront e.g. ₹10,000\nChooses scheduling period"] --> PayConfirm["Webhook confirms payment"]
     PayConfirm --> AllocMode{Allocation mode?}
 
-    AllocMode -- Auto --> AutoAlloc["Consultant clicks auto-allocate\nRedis lock acquired\nSystem scores + picks best N slots\ncallsPerWeek × weeks in period"]
+    AllocMode -- Auto --> AutoAlloc["Consultant clicks auto-allocate\nRedis lock acquired\nSystem scores + picks best N slots\nsessionsPerWeek × weeks in period"]
     AllocMode -- Manual --> ManualAlloc["Consultant hand-picks slot IDs\nPATCH /api/events/subscriptions/{id}/allocate"]
     AllocMode -- Requested --> ReqSlots["Consultee proposed times at checkout\nConsultant approves\nuseRequestedSlots()"]
 

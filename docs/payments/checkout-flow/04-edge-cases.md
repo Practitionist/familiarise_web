@@ -762,13 +762,13 @@ sequenceDiagram
 ```typescript
 // Calculate total sessions
 const totalWeeks = Math.ceil(plan.durationInMonths * 4.33);
-const totalSessions = totalWeeks * plan.callsPerWeek;
+const totalSessions = totalWeeks * plan.sessionsPerWeek;
 
 // Create ALL appointments upfront
 const appointments = [];
 for (let i = 0; i < totalSessions; i++) {
   const sessionStart = new Date(firstSessionStart);
-  const weekOffset = Math.floor(i / plan.callsPerWeek);
+  const weekOffset = Math.floor(i / plan.sessionsPerWeek);
   sessionStart.setDate(sessionStart.getDate() + weekOffset * 7);
   const sessionEnd = new Date(sessionStart.getTime() + sessionDurationMs);
 
@@ -794,7 +794,7 @@ for (let i = 0; i < totalSessions; i++) {
 ```typescript
 // Example: 3-month subscription, 2 calls/week
 const durationInMonths = 3;
-const callsPerWeek = 2;
+const sessionsPerWeek = 2;
 
 // Step 1: Convert months to weeks (1 month ≈ 4.33 weeks)
 const totalWeeks = Math.ceil(3 * 4.33) = Math.ceil(12.99) = 13 weeks
@@ -818,12 +818,12 @@ const totalSessions = 13 * 2 = 26 sessions
 ```typescript
 // Calculate total sessions
 Array.from({
-  length: Math.ceil(durationInMonths * 4.33) * callsPerWeek,
+  length: Math.ceil(durationInMonths * 4.33) * sessionsPerWeek,
 }).map((_, index) => {
   // Create appointment for each session
   const sessionDate = new Date(schedulingPeriodStartsAt);
-  const weekOffset = Math.floor(index / callsPerWeek);
-  const dayOffset = (index % callsPerWeek) * daysBetweenCalls;
+  const weekOffset = Math.floor(index / sessionsPerWeek);
+  const dayOffset = (index % sessionsPerWeek) * daysBetweenCalls;
   sessionDate.setDate(sessionDate.getDate() + weekOffset * 7 + dayOffset);
 
   return {
@@ -846,10 +846,10 @@ Array.from({
 
 ```typescript
 // Issue: Sessions scheduled too close together
-// callsPerWeek = 7, only 1 day per week = 7 sessions in 1 day!
+// sessionsPerWeek = 7, only 1 day per week = 7 sessions in 1 day!
 
 // Solution: Add validation
-if (callsPerWeek > 7) {
+if (sessionsPerWeek > 7) {
   throw new Error("Cannot have more than 7 calls per week");
 }
 ```

@@ -3,6 +3,10 @@ import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { SubscriptionPlanSchema } from "@/schemas/plans";
+import {
+  curriculumCreateNested,
+  faqReplaceNested,
+} from "@/lib/api/plans/content";
 import { findOrCreateTopics, transformTopicsToStrings } from "@/lib/topics";
 import { SlotCalculationService } from "@/utils/slotAllocation/SlotCalculationService";
 import { getMinTrialPriceInPaise } from "@/lib/trials/pricing-config";
@@ -51,6 +55,7 @@ export async function GET(
           },
         },
         topics: true,
+        faqs: { orderBy: { order: "asc" } },
         subscriptionContents: {
           orderBy: { order: "asc" },
         },
@@ -136,12 +141,12 @@ export async function PUT(
     let totalHours: number | undefined;
 
     if (
-      validatedData.callsPerWeek !== undefined ||
+      validatedData.sessionsPerWeek !== undefined ||
       validatedData.durationInMonths !== undefined ||
       body.sessionDurationInHours !== undefined
     ) {
-      const callsPerWeek =
-        validatedData.callsPerWeek ?? existingPlan.callsPerWeek;
+      const sessionsPerWeek =
+        validatedData.sessionsPerWeek ?? existingPlan.sessionsPerWeek;
       const durationInMonths =
         validatedData.durationInMonths ?? existingPlan.durationInMonths;
       const sessionDurationInHours =
@@ -156,7 +161,7 @@ export async function PUT(
         metricStartDate,
         metricEndDate,
       );
-      totalSessions = callsPerWeek * estimatedWeeks;
+      totalSessions = sessionsPerWeek * estimatedWeeks;
       totalHours = totalSessions * sessionDurationInHours;
     }
 
@@ -200,6 +205,8 @@ export async function PUT(
           contentUrl?: string;
           order: number;
           hoursAllotted?: number;
+          sectionLabel?: string | null;
+          outcomes?: string[];
         }>
       | undefined;
 
@@ -224,7 +231,7 @@ export async function PUT(
               ? Math.round(validatedData.price)
               : undefined,
           priceCurrency: validatedData.priceCurrency,
-          callsPerWeek: validatedData.callsPerWeek,
+          sessionsPerWeek: validatedData.sessionsPerWeek,
           sessionDurationInHours: body.sessionDurationInHours,
           totalSessions,
           totalHours,
@@ -234,6 +241,10 @@ export async function PUT(
           prerequisites: validatedData.prerequisites,
           materialProvided: validatedData.materialProvided,
           learningOutcomes: validatedData.learningOutcomes,
+          subtitle: validatedData.subtitle,
+          targetAudience: validatedData.targetAudience,
+          whatsIncluded: validatedData.whatsIncluded,
+          faqs: faqReplaceNested(validatedData.faqs),
           trialEnabled: validatedData.trialEnabled,
           trialDurationMinutes: validatedData.trialDurationMinutes,
           trialPriceInPaise: validatedData.trialPriceInPaise,
@@ -241,14 +252,12 @@ export async function PUT(
           subscriptionContents:
             subscriptionContents !== undefined
               ? {
-                  create: subscriptionContents.map((content) => ({
-                    title: content.title,
-                    description: content.description,
-                    contentType: content.contentType,
-                    contentUrl: content.contentUrl,
-                    order: content.order,
-                    hoursAllotted: content.hoursAllotted ?? 1.0,
-                  })),
+                  create: curriculumCreateNested(
+                    subscriptionContents.map((c) => ({
+                      ...c,
+                      hoursAllotted: c.hoursAllotted ?? 1.0,
+                    })),
+                  ).create,
                 }
               : undefined,
         },
@@ -282,6 +291,7 @@ export async function PUT(
             },
           },
           topics: true,
+          faqs: { orderBy: { order: "asc" } },
           subscriptionContents: {
             orderBy: { order: "asc" },
           },

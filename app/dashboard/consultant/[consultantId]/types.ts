@@ -78,7 +78,7 @@ export interface UnscheduledClass {
   classPlan: {
     id: string;
     title: string;
-    meetingsPerWeek: number;
+    sessionsPerWeek: number;
     sessionDurationInHours: number;
     totalSessions: number;
     consultantProfile?: {

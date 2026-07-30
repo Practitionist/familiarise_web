@@ -625,7 +625,7 @@ export async function getMyCollaborations(consultantProfileId: string) {
             price: true,
             sessionDurationInHours: true,
             maxParticipants: true,
-            meetingsPerWeek: true,
+            sessionsPerWeek: true,
             durationInMonths: true,
             totalSessions: true,
             consultantProfile: {
@@ -763,7 +763,7 @@ export async function getHostedCollaborations(
         price: true,
         sessionDurationInHours: true,
         maxParticipants: true,
-        meetingsPerWeek: true,
+        sessionsPerWeek: true,
         durationInMonths: true,
         totalSessions: true,
         collaborators: {

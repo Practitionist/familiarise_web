@@ -3,7 +3,7 @@ title: Public pages and discovery
 band: 30-programs-and-lifecycle
 audience: sde1
 status: live
-last-reviewed: 2026-06-05
+last-reviewed: 2026-07-31
 ---
 
 # Public pages and discovery
@@ -52,6 +52,31 @@ they accept `ORG_ONLY` for the viewer's own org by design. Routing every public
 surface through one constant keeps the tenant-private-catalog-leak class (#726)
 auditable.
 
+Two changes landed with [ADR 24](../70-design-decisions/24-offering-content-model.md).
+The first is that `eventPlanDiscoverableWhere()` — visibility plus
+`archivedAt: null` — now applies to all four plan types rather than only the two
+that used to have the column, and it is the filter a public surface should
+reach for. The public org page was the one surface that filtered visibility but
+not the archive, so a withdrawn plan still rendered there and linked straight
+into checkout; it now composes the full filter like everything else.
+
+A third change closed a back door the list filters never covered: the four plan
+DETAIL pages are reached by primary key, not by listing, and filtered on
+nothing at all, so an `ORG_ONLY` plan was fully readable by anyone holding its
+id and an archived plan still rendered a page with a live booking button.
+`isPlanViewable()` now gates all four. Consultation and subscription detail
+pages were added at the same time, giving all four types parity.
+
+The second is that `ORG_ONLY` finally has a reader. Narrowing a plan to
+`ORG_ONLY` previously made it invisible to everyone, including the members it
+was authored for, because the marketplace filter correctly excluded it from
+`/explore/**` and no member-facing surface existed. The catalog panel on
+`/dashboard/organization/[orgId]/my-program` is that surface: an org-internal
+read that deliberately skips the visibility filter, gated entirely on
+`requireOrgAccess(orgId)` having confirmed membership. It is a panel on an
+existing destination rather than a new nav entry, per
+[ADR 19](../70-design-decisions/19-personal-vs-org-dashboard-split.md).
+
 ## The two discovery gates, drawn
 
 Discovery is two independent AND-gates: one decides whether the **org** appears
@@ -67,7 +92,7 @@ flowchart TD
   G1 -- yes --> LIST["listed + /[orgSlug] detail page<br/>(revalidate 60)"]
 
   PLAN["per-type org plan<br/>(Consultation/Subscription/Webinar/Class)"] --> G2{"visibility ∈<br/>MARKETPLACE_VISIBILITY?<br/>{PUBLIC, ORG_AND_PUBLIC}"}
-  G2 -- "ORG_ONLY" --> PHIDE["filtered out of /explore/**<br/>+ public plan-list APIs"]
+  G2 -- "ORG_ONLY" --> PHIDE["filtered out of /explore/**<br/>+ public plan-list APIs<br/>(still visible to members on my-program)"]
   G2 -- yes --> PSHOW["surfaced on marketplace<br/>+ rendered on org detail (≤6/type)"]
 
   LIST -.->|org page renders only| PSHOW

@@ -3,7 +3,7 @@ title: Route migration table
 band: 50-operations
 audience: sde2
 status: live
-last-reviewed: 2026-06-05
+last-reviewed: 2026-07-31
 ---
 
 # Route migration table
@@ -125,18 +125,20 @@ The SSO routes are largely stable; provider verification moved inline into Bette
 
 ## Plans + catalog
 
-The sponsored-catalog surface (`/catalog`, `/catalog/search`) is **not
-yet landed** — the `CATALOG_PLAN_CREATED` / `CATALOG_PLAN_DEACTIVATED`
-audit constants exist in `lib/enterprise/audit-actions.ts`, but no route
-file ships them yet. The pre-Arch-4 `/plans*` routes are already gone, so
-there is currently **no** org-plan CRUD surface in the tree.
+The org catalog surface landed in #1050, and #1053 replaced its delete
+path with an archive. An org's catalog is its own `WebinarPlan` and
+`ClassPlan` rows carrying `organizationId`; `ConsultationPlan` and
+`SubscriptionPlan` declare a required `consultantProfileId` and so can
+never be solely org-owned. The `CATALOG_PLAN_CREATED` /
+`CATALOG_PLAN_DEACTIVATED` audit constants in
+`lib/enterprise/audit-actions.ts` are emitted by the route.
 
 | Old | Now | Notes |
 |-----|-----|-------|
-| `GET /api/organizations/[orgId]/plans` | `GET /api/organizations/[orgId]/catalog` — **not yet landed** | The pre-Arch-4 collection + per-plan CRUD (`.../plans/[planId]`) were deleted in `2b9da181` (no 501 stub left behind). The `/catalog` successor returns when the plan refactor PR ships. |
-| `POST /api/organizations/[orgId]/plans` | `POST /api/organizations/[orgId]/catalog` — **not yet landed** | — |
-| `DELETE /api/organizations/[orgId]/plans` | `DELETE /api/organizations/[orgId]/catalog` — **not yet landed** | Bulk deactivate. |
-| `GET /api/organizations/[orgId]/plans/search` | `GET /api/organizations/[orgId]/catalog/search` — **not yet landed** | — |
+| `GET /api/organizations/[orgId]/plans` | `GET /api/organizations/[orgId]/catalog` | Landed in #1050. The pre-Arch-4 collection + per-plan CRUD (`.../plans/[planId]`) were deleted in `2b9da181` (no 501 stub left behind). Accepts `?includeArchived=true`. |
+| `POST /api/organizations/[orgId]/plans` | `POST /api/organizations/[orgId]/catalog` | Discriminated on `kind` (`WEBINAR` \| `CLASS`); also accepts the buyer-facing positioning fields (ADR 24). |
+| `DELETE /api/organizations/[orgId]/plans` | `DELETE /api/organizations/[orgId]/catalog` | **Archives** rather than deletes (#1053); `?restore=true` reverses it. The plan FK chain cascades to `Payment`, so a hard delete would destroy settled money rows. |
+| `GET /api/organizations/[orgId]/plans/search` | — | Not landed and not planned; the catalog list is small enough to filter client-side. |
 
 ## Consent, analytics, activity, audit
 

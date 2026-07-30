@@ -1,5 +1,6 @@
 "use client";
 
+import { PlanLevel } from "@prisma/client";
 import * as Sentry from "@sentry/nextjs";
 import { useState, useEffect, useMemo } from "react";
 import { useForm } from "react-hook-form";
@@ -50,6 +51,8 @@ import { useToast } from "@/hooks/use-toast";
 import { ClassPlanSchema } from "@/schemas/plans";
 
 import { FormSection } from "./form-fields/FormSection";
+import { PositioningSections } from "./form-fields/PositioningSections";
+import { StringListField } from "./form-fields/StringListField";
 import { LearningOutcomesField } from "./form-fields/LearningOutcomesField";
 import { PriceField } from "./form-fields/PriceField";
 import { LanguageLevelFields } from "./form-fields/LanguageLevelFields";
@@ -131,16 +134,20 @@ export function EventPlannerForClass({
             initialData.maxParticipants ??
             initialData.classPlan.maxParticipants,
           language: initialData.classPlan.language ?? "English",
-          level: initialData.classPlan.level ?? "Beginner",
+          level: initialData.classPlan.level ?? PlanLevel.BEGINNER,
           prerequisites: initialData.classPlan.prerequisites ?? "",
           materialProvided: initialData.classPlan.materialProvided ?? "",
           learningOutcomes: initialData.classPlan.learningOutcomes,
           topics: initialData.classPlan.topics ?? [],
+          subtitle: initialData.classPlan.subtitle ?? "",
+          targetAudience: initialData.classPlan.targetAudience ?? [],
+          whatsIncluded: initialData.classPlan.whatsIncluded ?? [],
+          faqs: initialData.classPlan.faqs ?? [],
           certificateProvided: initialData.classPlan.certificateProvided,
           recordingEnabled: initialData.classPlan.recordingEnabled ?? false,
           recordingStoragePolicy:
             initialData.classPlan.recordingStoragePolicy ?? "STREAM_ONLY",
-          meetingsPerWeek: initialData.classPlan.meetingsPerWeek,
+          sessionsPerWeek: initialData.classPlan.sessionsPerWeek,
           emailSupport: initialData.classPlan.emailSupport,
           consultantProfileId: initialData.classPlan.consultantProfileId,
           classContents: initialData.classPlan.classContents ?? [],
@@ -154,15 +161,19 @@ export function EventPlannerForClass({
           durationInMonths: 1,
           maxParticipants: 30,
           language: "English",
-          level: "Beginner",
+          level: PlanLevel.BEGINNER,
           prerequisites: "",
           materialProvided: "",
           learningOutcomes: [],
           topics: [],
+          subtitle: "",
+          targetAudience: [],
+          whatsIncluded: [],
+          faqs: [],
           certificateProvided: false,
           recordingEnabled: false,
           recordingStoragePolicy: "STREAM_ONLY" as const,
-          meetingsPerWeek: 2,
+          sessionsPerWeek: 2,
           emailSupport: "GENERAL" as const,
           classContents: [],
           planType: "class",
@@ -181,16 +192,20 @@ export function EventPlannerForClass({
         maxParticipants:
           initialData.maxParticipants ?? initialData.classPlan.maxParticipants,
         language: initialData.classPlan.language ?? "English",
-        level: initialData.classPlan.level ?? "Beginner",
+        level: initialData.classPlan.level ?? PlanLevel.BEGINNER,
         prerequisites: initialData.classPlan.prerequisites ?? "",
         materialProvided: initialData.classPlan.materialProvided ?? "",
         learningOutcomes: initialData.classPlan.learningOutcomes,
         topics: initialData.classPlan.topics ?? [],
+        subtitle: initialData.classPlan.subtitle ?? "",
+        targetAudience: initialData.classPlan.targetAudience ?? [],
+        whatsIncluded: initialData.classPlan.whatsIncluded ?? [],
+        faqs: initialData.classPlan.faqs ?? [],
         certificateProvided: initialData.classPlan.certificateProvided,
         recordingEnabled: initialData.classPlan.recordingEnabled ?? false,
         recordingStoragePolicy:
           initialData.classPlan.recordingStoragePolicy ?? "STREAM_ONLY",
-        meetingsPerWeek: initialData.classPlan.meetingsPerWeek,
+        sessionsPerWeek: initialData.classPlan.sessionsPerWeek,
         emailSupport: initialData.classPlan.emailSupport,
         consultantProfileId: initialData.classPlan.consultantProfileId,
         classContents: initialData.classPlan.classContents ?? [],
@@ -299,7 +314,7 @@ export function EventPlannerForClass({
           durationInMonths: formData.durationInMonths,
           maxParticipants: formData.maxParticipants,
           language: formData.language ?? "English",
-          level: formData.level ?? "Beginner",
+          level: formData.level ?? PlanLevel.BEGINNER,
           prerequisites: formData.prerequisites ?? null,
           materialProvided: formData.materialProvided ?? null,
           learningOutcomes: formData.learningOutcomes,
@@ -321,11 +336,11 @@ export function EventPlannerForClass({
             initialData?.classPlan?.recordingStoragePolicy ?? "STREAM_ONLY",
           sessionDurationInHours:
             initialData?.classPlan?.sessionDurationInHours ?? 1,
-          meetingsPerWeek: formData.meetingsPerWeek,
+          sessionsPerWeek: formData.sessionsPerWeek,
           totalSessions:
-            formData.meetingsPerWeek * formData.durationInMonths * 4,
+            formData.sessionsPerWeek * formData.durationInMonths * 4,
           totalHours:
-            formData.meetingsPerWeek *
+            formData.sessionsPerWeek *
             formData.durationInMonths *
             4 *
             (initialData?.classPlan?.sessionDurationInHours ?? 1),
@@ -340,8 +355,19 @@ export function EventPlannerForClass({
               classPlanId: content.classPlanId || "",
               contentType: content.contentType || null,
               contentUrl: content.contentUrl || null,
+              sectionLabel: content.sectionLabel || null,
+              outcomes: content.outcomes ?? [],
             }),
           ),
+          subtitle: formData.subtitle || null,
+          targetAudience: formData.targetAudience ?? [],
+          whatsIncluded: formData.whatsIncluded ?? [],
+          faqs: (formData.faqs ?? []).map((faq, index) => ({
+            ...faq,
+            id: faq.id || "",
+            order: faq.order ?? index,
+          })),
+          slug: initialData?.classPlan?.slug ?? null,
           imageUrl: initialData?.classPlan?.imageUrl ?? null,
           createdAt: initialData?.classPlan?.createdAt ?? now,
           updatedAt: now,
@@ -385,6 +411,10 @@ export function EventPlannerForClass({
       contentType: null,
       contentUrl: null,
       order: currentContents.length + 1,
+      // Pre-fill the next week so a consultant who just wants a weekly
+      // roadmap never has to type the label at all.
+      sectionLabel: `Week ${currentContents.length + 1}`,
+      outcomes: [],
       hoursAllotted: 1,
     };
     form.setValue("classContents", [...currentContents, newContent], {
@@ -508,6 +538,11 @@ export function EventPlannerForClass({
                   />
                 </FormSection>
 
+                <PositioningSections
+                  control={form.control}
+                  offeringNoun="class"
+                />
+
                 {/* Pricing & Duration Section */}
                 <FormSection
                   title="Pricing & Duration"
@@ -615,7 +650,7 @@ export function EventPlannerForClass({
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <FormField
                       control={form.control}
-                      name="meetingsPerWeek"
+                      name="sessionsPerWeek"
                       render={({ field }) => (
                         <FormItem>
                           <FormLabel>Meetings Per Week</FormLabel>
@@ -898,6 +933,29 @@ export function EventPlannerForClass({
                               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <FormField
                                   control={form.control}
+                                  name={`classContents.${index}.sectionLabel`}
+                                  render={({ field: contentField }) => (
+                                    <FormItem>
+                                      <FormLabel>Section label</FormLabel>
+                                      <FormControl>
+                                        <Input
+                                          placeholder="e.g., Week 1"
+                                          maxLength={40}
+                                          {...contentField}
+                                          value={contentField.value ?? ""}
+                                        />
+                                      </FormControl>
+                                      <FormDescription>
+                                        Sessions sharing a label group under one
+                                        heading.
+                                      </FormDescription>
+                                      <FormMessage />
+                                    </FormItem>
+                                  )}
+                                />
+
+                                <FormField
+                                  control={form.control}
                                   name={`classContents.${index}.title`}
                                   render={({ field: contentField }) => (
                                     <FormItem>
@@ -1009,6 +1067,17 @@ export function EventPlannerForClass({
                                       <FormMessage />
                                     </FormItem>
                                   )}
+                                />
+
+                                <StringListField
+                                  control={form.control}
+                                  name={`classContents.${index}.outcomes`}
+                                  label="Session takeaways"
+                                  placeholder="e.g., Ship a working component"
+                                  description="What they walk away with from this session."
+                                  itemNoun="takeaways"
+                                  maxItems={6}
+                                  className="md:col-span-2"
                                 />
                               </div>
                             </div>

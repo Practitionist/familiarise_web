@@ -165,7 +165,7 @@ export async function GET(request: NextRequest) {
             select: {
               id: true,
               title: true,
-              callsPerWeek: true,
+              sessionsPerWeek: true,
               durationInMonths: true,
               sessionDurationInHours: true,
               totalSessions: true,

@@ -76,7 +76,7 @@ export interface IConsultantCardData {
     price: number;
     priceCurrency: string;
     durationInMonths: number;
-    callsPerWeek: number | null;
+    sessionsPerWeek: number | null;
     emailSupport: string | null;
     totalSessions: number | null;
     /** Whether this plan offers a trial at all. */

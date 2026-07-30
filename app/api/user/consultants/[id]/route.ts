@@ -210,15 +210,17 @@ export async function GET(
         tags: true,
         slotsOfAvailabilityWeekly: true,
         slotsOfAvailabilityCustom: true,
-        consultationPlans: planVisibilityFilter
-          ? { where: planVisibilityFilter }
-          : true,
+        consultationPlans: {
+          ...(planVisibilityFilter && { where: planVisibilityFilter }),
+          include: { faqs: { orderBy: { order: "asc" } } },
+        },
         subscriptionPlans: {
           ...(planVisibilityFilter && { where: planVisibilityFilter }),
           include: {
             subscriptionContents: {
               orderBy: { order: "asc" },
             },
+            faqs: { orderBy: { order: "asc" } },
           },
         },
         webinarPlans: planVisibilityFilter

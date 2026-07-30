@@ -16,8 +16,7 @@ import { getClassPlanDefaults, type ClassPlanType } from "@/utils/classPlans";
 interface EventDetails {
   eventType: "consultation" | "subscription" | "webinar" | "class";
   eventId: string;
-  callsPerWeek?: number;
-  meetingsPerWeek?: number;
+  sessionsPerWeek?: number;
   durationInMonths: number;
   durationInHours: number;
   sessionDurationInHours?: number;
@@ -50,7 +49,7 @@ export function EventTimingsCalendar({
         return {
           eventType: "consultation",
           eventId: appointment.consultation?.id || "",
-          callsPerWeek: 1,
+          sessionsPerWeek: 1,
           durationInMonths: 1,
           durationInHours:
             appointment.consultation?.consultationPlan?.durationInHours || 1,
@@ -61,8 +60,8 @@ export function EventTimingsCalendar({
         return {
           eventType: "subscription",
           eventId: appointment.subscription?.id || "",
-          callsPerWeek:
-            appointment.subscription?.subscriptionPlan?.callsPerWeek || 1,
+          sessionsPerWeek:
+            appointment.subscription?.subscriptionPlan?.sessionsPerWeek || 1,
           durationInMonths:
             appointment.subscription?.subscriptionPlan?.durationInMonths || 1,
           durationInHours:
@@ -81,7 +80,7 @@ export function EventTimingsCalendar({
         return {
           eventType: "webinar",
           eventId: appointment.webinar?.id || "",
-          callsPerWeek: 1,
+          sessionsPerWeek: 1,
           durationInMonths: 1,
           durationInHours:
             appointment.webinar?.webinarPlan?.durationInHours || 1,
@@ -93,7 +92,7 @@ export function EventTimingsCalendar({
         return {
           eventType: "class",
           eventId: appointment.class?.id || "",
-          meetingsPerWeek: defaults.classesPerWeek,
+          sessionsPerWeek: defaults.classesPerWeek,
           durationInMonths: defaults.durationInMonths,
           durationInHours:
             classPlan?.sessionDurationInHours ??
@@ -107,7 +106,7 @@ export function EventTimingsCalendar({
         return {
           eventType: "consultation",
           eventId: "",
-          callsPerWeek: 1,
+          sessionsPerWeek: 1,
           durationInMonths: 1,
           durationInHours: 1,
           title: "Event",
@@ -142,7 +141,7 @@ export function EventTimingsCalendar({
       case "CONSULTATION":
         return "Select consecutive time slots for your consultation. All slots must be on the same day.";
       case "SUBSCRIPTION": {
-        const baseText = `Schedule ${eventDetails.callsPerWeek} call${eventDetails.callsPerWeek !== 1 ? "s" : ""} per week for ${eventDetails.durationInMonths} month${eventDetails.durationInMonths !== 1 ? "s" : ""}. Each call is ${eventDetails.sessionDurationInHours || 1} hour${(eventDetails.sessionDurationInHours || 1) > 1 ? "s" : ""}.`;
+        const baseText = `Schedule ${eventDetails.sessionsPerWeek} call${eventDetails.sessionsPerWeek !== 1 ? "s" : ""} per week for ${eventDetails.durationInMonths} month${eventDetails.durationInMonths !== 1 ? "s" : ""}. Each call is ${eventDetails.sessionDurationInHours || 1} hour${(eventDetails.sessionDurationInHours || 1) > 1 ? "s" : ""}.`;
         return appendProgressText(
           baseText,
           completedSessions,
@@ -155,8 +154,8 @@ export function EventTimingsCalendar({
         const sessionDuration = eventDetails.durationInHours || 1;
         const durationText =
           sessionDuration === 1 ? "1 hour" : `${sessionDuration} hours`;
-        const meetingsPerWeek = eventDetails.meetingsPerWeek || 1;
-        const classBaseText = `Schedule ${meetingsPerWeek} meeting${meetingsPerWeek !== 1 ? "s" : ""} per week. Each session is ${durationText}.`;
+        const sessionsPerWeek = eventDetails.sessionsPerWeek || 1;
+        const classBaseText = `Schedule ${sessionsPerWeek} meeting${sessionsPerWeek !== 1 ? "s" : ""} per week. Each session is ${durationText}.`;
         return appendProgressText(
           classBaseText,
           completedSessions,
@@ -184,7 +183,7 @@ export function EventTimingsCalendar({
                 Plan: {eventDetails.planType || "Custom"}
               </Badge>
               <span>
-                {eventDetails.meetingsPerWeek} meetings/week ·{" "}
+                {eventDetails.sessionsPerWeek} meetings/week ·{" "}
                 {eventDetails.durationInMonths} month
                 {eventDetails.durationInMonths !== 1 ? "s" : ""} ·{" "}
                 {eventDetails.durationInHours || 1}h/session
@@ -199,7 +198,7 @@ export function EventTimingsCalendar({
             Tip: Each class is{" "}
             {Math.ceil((eventDetails.durationInHours || 1) / 0.5)} consecutive
             30‑min slots. Complete an in‑progress class before starting another.
-            Max {eventDetails.meetingsPerWeek || 2} classes per day; weekly
+            Max {eventDetails.sessionsPerWeek || 2} classes per day; weekly
             limit applies.
           </div>
         )}
@@ -209,12 +208,7 @@ export function EventTimingsCalendar({
           eventType={eventDetails.eventType}
           eventId={eventDetails.eventId}
           durationInMonths={eventDetails.durationInMonths}
-          callsPerWeek={
-            // Map domain-specific terminology to generic calendar prop
-            eventDetails.eventType === "class"
-              ? eventDetails.meetingsPerWeek
-              : eventDetails.callsPerWeek
-          }
+          sessionsPerWeek={eventDetails.sessionsPerWeek}
           durationInHours={
             eventDetails.eventType === "webinar" ||
             eventDetails.eventType === "consultation"

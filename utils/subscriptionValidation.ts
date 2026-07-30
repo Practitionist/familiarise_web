@@ -97,7 +97,7 @@ export class SubscriptionValidationService {
       warnings: [],
       weeklyInfo: [],
       totalCallsScheduled: 0,
-      maxTotalCalls: subscriptionPlan.callsPerWeek * exactWeeks,
+      maxTotalCalls: subscriptionPlan.sessionsPerWeek * exactWeeks,
       subscriptionPeriod: {
         start: subscription.schedulingPeriodStartsAt,
         end: subscription.schedulingPeriodEndsAt,
@@ -139,7 +139,7 @@ export class SubscriptionValidationService {
     const weeklyInfo = this.generateWeeklyInfo(
       subscription.schedulingPeriodStartsAt,
       subscription.schedulingPeriodEndsAt,
-      subscriptionPlan.callsPerWeek,
+      subscriptionPlan.sessionsPerWeek,
       existingCallsByWeek,
       proposedCallsByWeek,
       schedulingTimezone,
@@ -372,7 +372,7 @@ export class SubscriptionValidationService {
   private generateWeeklyInfo(
     subscriptionStart: Date,
     subscriptionEnd: Date,
-    callsPerWeek: number,
+    sessionsPerWeek: number,
     existingCalls: Map<string, number>,
     proposedCalls: Map<string, number>,
     schedulingTimezone: string,
@@ -427,9 +427,9 @@ export class SubscriptionValidationService {
         weekEnd: new Date(weekEnd),
         existingCalls: effectiveExistingCalls,
         proposedCalls: proposedCallCount,
-        maxCalls: callsPerWeek,
-        canScheduleMore: !isPastWeek && totalCalls < callsPerWeek,
-        availableSlots: isPastWeek ? 0 : Math.max(0, callsPerWeek - totalCalls),
+        maxCalls: sessionsPerWeek,
+        canScheduleMore: !isPastWeek && totalCalls < sessionsPerWeek,
+        availableSlots: isPastWeek ? 0 : Math.max(0, sessionsPerWeek - totalCalls),
       });
 
       currentWeek = nextWeek;
@@ -542,14 +542,14 @@ export function getSubscriptionWeek(
  * Helper function to determine subscription type based on plan details
  */
 export function getSubscriptionType(
-  callsPerWeek: number,
+  sessionsPerWeek: number,
   durationInMonths: number,
 ): string {
-  if (callsPerWeek === 1 && durationInMonths === 1) {
+  if (sessionsPerWeek === 1 && durationInMonths === 1) {
     return "Basic";
-  } else if (callsPerWeek === 2 && durationInMonths === 2) {
+  } else if (sessionsPerWeek === 2 && durationInMonths === 2) {
     return "Extended";
-  } else if (callsPerWeek === 3 && durationInMonths === 6) {
+  } else if (sessionsPerWeek === 3 && durationInMonths === 6) {
     return "Comprehensive";
   }
   return "Custom";

@@ -188,7 +188,7 @@ export const pastEvent: EventWithType = {
     priceCurrency: "INR", // Added
     certificateProvided: false, // Added
     durationInMonths: 1, // Added
-    callsPerWeek: 1, // Added
+    sessionsPerWeek: 1, // Added
     videoMeetings: 1, // Added
     emailSupport: "GENERAL", // Added
     maxParticipants: 1, // Added

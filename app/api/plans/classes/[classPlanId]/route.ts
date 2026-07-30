@@ -63,7 +63,7 @@ export async function PUT(
       );
     }
 
-    if (body.meetingsPerWeek && body.meetingsPerWeek < 0) {
+    if (body.sessionsPerWeek && body.sessionsPerWeek < 0) {
       return NextResponse.json(
         { error: "Meetings per week must be a non-negative number" },
         { status: 400 },
@@ -102,7 +102,7 @@ export async function PUT(
         description: body.description,
         durationInMonths: body.durationInMonths,
         price: body.price,
-        meetingsPerWeek: body.meetingsPerWeek,
+        sessionsPerWeek: body.sessionsPerWeek,
         emailSupport: body.emailSupport as PlanEmailSupport,
         maxParticipants: body.maxParticipants,
         language: body.language,

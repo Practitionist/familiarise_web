@@ -47,7 +47,7 @@ export const getHomeExperts = unstable_cache(
             price: true,
             priceCurrency: true,
             durationInMonths: true,
-            callsPerWeek: true,
+            sessionsPerWeek: true,
             emailSupport: true,
             totalSessions: true,
             // Same shape as lib/data/explore-experts.ts — both feed

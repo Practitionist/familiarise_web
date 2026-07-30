@@ -1,5 +1,9 @@
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
+import {
+  faqCreateNested,
+  faqReplaceNested,
+} from "@/lib/api/plans/content";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { WebinarPlanSchema } from "@/schemas/plans";
@@ -110,6 +114,10 @@ export async function POST(request: NextRequest) {
       prerequisites,
       materialProvided,
       learningOutcomes,
+      subtitle,
+      targetAudience,
+      whatsIncluded,
+      faqs,
       priceCurrency,
       consultantProfileId,
       topics: topicNames,
@@ -212,6 +220,10 @@ export async function POST(request: NextRequest) {
             prerequisites,
             materialProvided,
             learningOutcomes,
+            subtitle,
+            targetAudience,
+            whatsIncluded,
+            faqs: faqCreateNested(faqs),
             certificateProvided: validatedData.certificateProvided,
             recordingEnabled: validatedData.recordingEnabled,
             consultantProfile: { connect: { id: consultantProfileId } },
@@ -223,6 +235,7 @@ export async function POST(request: NextRequest) {
           include: {
             consultantProfile: true,
             topics: true,
+            faqs: { orderBy: { order: "asc" } },
           },
         });
 
@@ -392,6 +405,10 @@ export async function PATCH(request: NextRequest) {
       prerequisites,
       materialProvided,
       learningOutcomes,
+      subtitle,
+      targetAudience,
+      whatsIncluded,
+      faqs,
       consultantProfileId,
       topics: topicNames,
       status,
@@ -610,6 +627,12 @@ export async function PATCH(request: NextRequest) {
           updateData.recordingEnabled = recordingEnabled;
         if (learningOutcomes !== undefined)
           updateData.learningOutcomes = learningOutcomes;
+        if (subtitle !== undefined) updateData.subtitle = subtitle;
+        if (targetAudience !== undefined)
+          updateData.targetAudience = targetAudience;
+        if (whatsIncluded !== undefined)
+          updateData.whatsIncluded = whatsIncluded;
+        if (faqs !== undefined) updateData.faqs = faqReplaceNested(faqs);
         if (consultantProfileId !== undefined)
           updateData.consultantProfile = {
             connect: { id: consultantProfileId },

@@ -233,12 +233,12 @@ const createSubscriptionAppointment = (
   const selectedPlan = faker.helpers.arrayElement(subscriptionPlans);
 
   // Calculate realistic number of slots based on SUBSCRIPTION INSTANCE duration (not plan duration)
-  const callsPerWeek = selectedPlan.callsPerWeek;
+  const sessionsPerWeek = selectedPlan.sessionsPerWeek;
   const subscriptionDurationMs = endDate.getTime() - startDate.getTime();
   const subscriptionWeeks = Math.ceil(
     subscriptionDurationMs / (7 * 24 * 60 * 60 * 1000),
   );
-  const maxTotalCalls = Math.min(callsPerWeek * subscriptionWeeks, numSlots);
+  const maxTotalCalls = Math.min(sessionsPerWeek * subscriptionWeeks, numSlots);
 
   // Get consultant's available days of week from their weekly slots
   const availableDaysSet = new Set(

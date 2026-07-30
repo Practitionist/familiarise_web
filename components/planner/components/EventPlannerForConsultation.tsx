@@ -1,5 +1,6 @@
 "use client";
 
+import { PlanLevel } from "@prisma/client";
 import * as Sentry from "@sentry/nextjs";
 import { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
@@ -36,6 +37,7 @@ import { useToast } from "@/hooks/use-toast";
 import { ConsultationPlanSchema } from "@/schemas/plans";
 
 import { FormSection } from "./form-fields/FormSection";
+import { PositioningSections } from "./form-fields/PositioningSections";
 import { LearningOutcomesField } from "./form-fields/LearningOutcomesField";
 import { PriceField } from "./form-fields/PriceField";
 import { LanguageLevelFields } from "./form-fields/LanguageLevelFields";
@@ -100,11 +102,15 @@ export function EventPlannerForConsultation({
           price: (initialData.consultationPlan.price ?? 0) / 100,
           priceCurrency: initialData.consultationPlan.priceCurrency ?? "INR",
           language: initialData.consultationPlan.language ?? "English",
-          level: initialData.consultationPlan.level ?? "Beginner",
+          level: initialData.consultationPlan.level ?? PlanLevel.BEGINNER,
           prerequisites: initialData.consultationPlan.prerequisites ?? "",
           materialProvided: initialData.consultationPlan.materialProvided ?? "",
           learningOutcomes: initialData.consultationPlan.learningOutcomes ?? [],
           topics: initialData.consultationPlan.topics ?? [],
+          subtitle: initialData.consultationPlan.subtitle ?? "",
+          targetAudience: initialData.consultationPlan.targetAudience ?? [],
+          whatsIncluded: initialData.consultationPlan.whatsIncluded ?? [],
+          faqs: initialData.consultationPlan.faqs ?? [],
         }
       : {
           title: "",
@@ -113,11 +119,15 @@ export function EventPlannerForConsultation({
           price: 0,
           priceCurrency: "INR",
           language: "English",
-          level: "Beginner",
+          level: PlanLevel.BEGINNER,
           prerequisites: "",
           materialProvided: "",
           learningOutcomes: [],
           topics: [],
+          subtitle: "",
+          targetAudience: [],
+          whatsIncluded: [],
+          faqs: [],
         },
     mode: "onBlur",
   });
@@ -131,11 +141,15 @@ export function EventPlannerForConsultation({
         price: (initialData.consultationPlan.price ?? 0) / 100,
         priceCurrency: initialData.consultationPlan.priceCurrency ?? "INR",
         language: initialData.consultationPlan.language ?? "English",
-        level: initialData.consultationPlan.level ?? "Beginner",
+        level: initialData.consultationPlan.level ?? PlanLevel.BEGINNER,
         prerequisites: initialData.consultationPlan.prerequisites ?? "",
         materialProvided: initialData.consultationPlan.materialProvided ?? "",
         learningOutcomes: initialData.consultationPlan.learningOutcomes ?? [],
         topics: initialData.consultationPlan.topics ?? [],
+        subtitle: initialData.consultationPlan.subtitle ?? "",
+        targetAudience: initialData.consultationPlan.targetAudience ?? [],
+        whatsIncluded: initialData.consultationPlan.whatsIncluded ?? [],
+        faqs: initialData.consultationPlan.faqs ?? [],
       });
     }
   }, [initialData, form]);
@@ -193,11 +207,18 @@ export function EventPlannerForConsultation({
           price: Math.round(formData.price * 100),
           priceCurrency: formData.priceCurrency ?? "INR",
           language: formData.language ?? "English",
-          level: formData.level ?? "Beginner",
+          level: formData.level ?? PlanLevel.BEGINNER,
           prerequisites: formData.prerequisites ?? undefined,
           materialProvided: formData.materialProvided ?? undefined,
           learningOutcomes: formData.learningOutcomes,
           topics: formData.topics ?? [],
+          subtitle: formData.subtitle || null,
+          targetAudience: formData.targetAudience ?? [],
+          whatsIncluded: formData.whatsIncluded ?? [],
+          faqs: (formData.faqs ?? []).map((faq, index) => ({
+            ...faq,
+            order: faq.order ?? index,
+          })),
           consultantProfileId: consultantId,
           consultantProfile: null,
           consultations: initialData?.consultationPlan?.consultations ?? [],
@@ -450,6 +471,11 @@ export function EventPlannerForConsultation({
                   )}
                 />
               </FormSection>
+
+              <PositioningSections
+                control={form.control}
+                offeringNoun="consultation"
+              />
 
               {/* Materials Section - Only show when editing an existing plan */}
               {initialData?.id && (

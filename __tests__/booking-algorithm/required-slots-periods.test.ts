@@ -3,7 +3,7 @@
  *
  * Pins countWeeks over 28/29/30/31-day scheduling periods (including a leap
  * February and a 31-day month spanning six Sunday weeks) and the full
- * calculateRequiredSlots matrix for every event type, callsPerWeek 1–7, and
+ * calculateRequiredSlots matrix for every event type, sessionsPerWeek 1–7, and
  * session durations 0.5–2h. Also pins the totalSessions-authoritative rule
  * and the throw for a subscription with no period.
  */
@@ -101,20 +101,20 @@ describe("calculateRequiredSlots per event type", () => {
     ).toBe(Math.ceil(duration / 0.5));
   });
 
-  it("subscription matrix: callsPerWeek 1–7 × duration 0.5–2h over an exact 4-week period", () => {
+  it("subscription matrix: sessionsPerWeek 1–7 × duration 0.5–2h over an exact 4-week period", () => {
     const schedulingPeriodStartsAt = new Date("2026-06-21T00:00:00.000Z"); // Sunday
     const schedulingPeriodEndsAt = new Date("2026-07-18T23:59:59.000Z"); // Saturday
-    for (let callsPerWeek = 1; callsPerWeek <= 7; callsPerWeek++) {
+    for (let sessionsPerWeek = 1; sessionsPerWeek <= 7; sessionsPerWeek++) {
       for (const sessionDurationInHours of durations) {
         const slotsPerCall = Math.ceil(sessionDurationInHours / 0.5);
         expect(
           SlotCalculationService.calculateRequiredSlots("subscription", {
             schedulingPeriodStartsAt,
             schedulingPeriodEndsAt,
-            callsPerWeek,
+            sessionsPerWeek,
             sessionDurationInHours,
           }),
-        ).toBe(4 * callsPerWeek * slotsPerCall);
+        ).toBe(4 * sessionsPerWeek * slotsPerCall);
       }
     }
   });
@@ -122,29 +122,29 @@ describe("calculateRequiredSlots per event type", () => {
   it("class matrix mirrors subscription math", () => {
     const schedulingPeriodStartsAt = new Date("2026-06-21T00:00:00.000Z");
     const schedulingPeriodEndsAt = new Date("2026-07-18T23:59:59.000Z");
-    for (let callsPerWeek = 1; callsPerWeek <= 7; callsPerWeek++) {
+    for (let sessionsPerWeek = 1; sessionsPerWeek <= 7; sessionsPerWeek++) {
       for (const sessionDurationInHours of durations) {
         const slotsPerSession = Math.ceil(sessionDurationInHours / 0.5);
         expect(
           SlotCalculationService.calculateRequiredSlots("class", {
             schedulingPeriodStartsAt,
             schedulingPeriodEndsAt,
-            callsPerWeek,
+            sessionsPerWeek,
             sessionDurationInHours,
           }),
-        ).toBe(4 * callsPerWeek * slotsPerSession);
+        ).toBe(4 * sessionsPerWeek * slotsPerSession);
       }
     }
   });
 
-  it("totalSessions from the plan overrides weeks × callsPerWeek (28-day period spanning 5 weeks)", () => {
+  it("totalSessions from the plan overrides weeks × sessionsPerWeek (28-day period spanning 5 weeks)", () => {
     // Rolling 28-day window that touches 5 Sunday weeks — the plan's 4
-    // sessions win over 5 × callsPerWeek.
+    // sessions win over 5 × sessionsPerWeek.
     expect(
       SlotCalculationService.calculateRequiredSlots("subscription", {
         schedulingPeriodStartsAt: new Date("2026-06-24T00:00:00.000Z"), // Wednesday
         schedulingPeriodEndsAt: new Date("2026-07-21T23:59:59.000Z"),
-        callsPerWeek: 1,
+        sessionsPerWeek: 1,
         sessionDurationInHours: 1,
         totalSessions: 4,
       }),
@@ -154,7 +154,7 @@ describe("calculateRequiredSlots per event type", () => {
   it("subscription without a scheduling period throws (no silent 4-weeks/month guess)", () => {
     expect(() =>
       SlotCalculationService.calculateRequiredSlots("subscription", {
-        callsPerWeek: 1,
+        sessionsPerWeek: 1,
         sessionDurationInHours: 1,
         durationInMonths: 1,
       }),
@@ -164,7 +164,7 @@ describe("calculateRequiredSlots per event type", () => {
   it("class without a scheduling period throws", () => {
     expect(() =>
       SlotCalculationService.calculateRequiredSlots("class", {
-        callsPerWeek: 1,
+        sessionsPerWeek: 1,
         sessionDurationInHours: 1,
       }),
     ).toThrow(/Start date and end date are required/);

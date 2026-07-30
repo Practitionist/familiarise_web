@@ -19,7 +19,7 @@ interface ConsultationPlanInfo {
 
 interface SubscriptionPlanInfo {
   title?: string;
-  callsPerWeek: number;
+  sessionsPerWeek: number;
   durationInMonths: number;
   sessionDurationInHours: number;
   totalSessions?: number;

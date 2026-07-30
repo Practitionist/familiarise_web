@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { ConsultationPlanSchema } from "@/schemas/plans";
 import { findOrCreateTopics, transformTopicsToStrings } from "@/lib/topics";
 import { marketplaceVisibilityWhere } from "@/lib/api/plans/visibility";
+import { faqCreateNested } from "@/lib/api/plans/content";
 import * as Sentry from "@sentry/nextjs";
 import { getSession } from "@/lib/auth-server";
 export async function GET(request: NextRequest) {
@@ -122,6 +123,10 @@ export async function POST(request: NextRequest) {
         prerequisites: validatedData.prerequisites,
         materialProvided: validatedData.materialProvided,
         learningOutcomes: validatedData.learningOutcomes,
+        subtitle: validatedData.subtitle,
+        targetAudience: validatedData.targetAudience,
+        whatsIncluded: validatedData.whatsIncluded,
+        faqs: faqCreateNested(validatedData.faqs),
         consultantProfile: { connect: { id: consultantProfileId } },
         topics:
           topicIds.length > 0
@@ -131,6 +136,7 @@ export async function POST(request: NextRequest) {
       include: {
         consultantProfile: true,
         topics: true,
+        faqs: { orderBy: { order: "asc" } },
       },
     });
 

@@ -28,6 +28,7 @@ export type TClassPlanDetailsData = Omit<
       };
       topics: true;
       classContents: true;
+      faqs: true;
     };
   }>,
   "classes" | "price"

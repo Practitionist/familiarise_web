@@ -19,6 +19,7 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { planLevelSchema, planPositioningShape } from "@/schemas/plans";
 
 const PlanKindSchema = z.enum(["WEBINAR", "CLASS"]);
 
@@ -40,9 +41,12 @@ const BaseCreateSchema = z.object({
   visibility: VisibilitySchema.default("ORG_AND_PUBLIC"),
   maxParticipants: z.number().int().positive().optional(),
   language: z.string().default("English"),
-  level: z.string().default("Beginner"),
+  level: planLevelSchema,
   certificateProvided: z.boolean().default(false),
   recordingEnabled: z.boolean().default(false),
+  // Buyer-facing positioning. Optional so the quick-create path stays short,
+  // but accepted here so an org plan is not stuck thinner than a personal one.
+  ...planPositioningShape,
 });
 
 // The two types diverge on their duration grid, which is why this is a
@@ -56,7 +60,7 @@ const CreateBodySchema = z.discriminatedUnion("kind", [
   BaseCreateSchema.extend({
     kind: z.literal("CLASS"),
     durationInMonths: z.number().int().positive().default(1),
-    meetingsPerWeek: z.number().int().positive().default(1),
+    sessionsPerWeek: z.number().int().positive().default(1),
     sessionDurationInHours: z.number().positive().default(1),
   }),
 ]);
@@ -148,6 +152,7 @@ export async function POST(
   const created = await prisma.$transaction(async (tx) => {
     const common = {
       title: body.title,
+      subtitle: body.subtitle ?? null,
       description: body.description,
       price: BigInt(body.pricePaise),
       priceCurrency: "INR" as const,
@@ -158,6 +163,15 @@ export async function POST(
       level: body.level,
       certificateProvided: body.certificateProvided,
       recordingEnabled: body.recordingEnabled,
+      targetAudience: body.targetAudience,
+      whatsIncluded: body.whatsIncluded,
+      faqs: {
+        create: body.faqs.map((faq, index) => ({
+          question: faq.question,
+          answer: faq.answer,
+          order: faq.order || index,
+        })),
+      },
     };
 
     const plan =
@@ -173,14 +187,14 @@ export async function POST(
             data: {
               ...common,
               durationInMonths: body.durationInMonths,
-              meetingsPerWeek: body.meetingsPerWeek,
+              sessionsPerWeek: body.sessionsPerWeek,
               sessionDurationInHours: body.sessionDurationInHours,
               // Kept consistent with the schema's own derivation note
-              // (meetingsPerWeek × durationInMonths × 4) so the stored
+              // (sessionsPerWeek × durationInMonths × 4) so the stored
               // totals never disagree with the grid that produced them.
-              totalSessions: body.meetingsPerWeek * body.durationInMonths * 4,
+              totalSessions: body.sessionsPerWeek * body.durationInMonths * 4,
               totalHours:
-                body.meetingsPerWeek *
+                body.sessionsPerWeek *
                 body.durationInMonths *
                 4 *
                 body.sessionDurationInHours,

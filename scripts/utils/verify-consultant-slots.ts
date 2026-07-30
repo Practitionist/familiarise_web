@@ -67,7 +67,7 @@ async function verifyConsultantSlots() {
     consultant.subscriptionPlans.forEach((plan) => {
       console.log(`\n📋 ${plan.title}`);
       console.log(`   Duration: ${plan.durationInMonths} months`);
-      console.log(`   Calls/week: ${plan.callsPerWeek}`);
+      console.log(`   Calls/week: ${plan.sessionsPerWeek}`);
       console.log(`   Session: ${plan.sessionDurationInHours} hour(s)`);
       console.log(`   Price: $${(plan.price / 100).toFixed(2)}`);
       console.log(`   Email Support: ${plan.emailSupport}`);

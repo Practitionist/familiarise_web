@@ -73,7 +73,7 @@ export interface Collaboration {
     price: number;
     sessionDurationInHours: number;
     maxParticipants: number;
-    meetingsPerWeek: number;
+    sessionsPerWeek: number;
     durationInMonths: number;
     totalSessions: number;
     classes: ClassEventSchedule[];
@@ -123,7 +123,7 @@ export interface HostedClassPlan {
   price: number;
   sessionDurationInHours: number;
   maxParticipants: number;
-  meetingsPerWeek: number;
+  sessionsPerWeek: number;
   durationInMonths: number;
   totalSessions: number;
   collaborators: CollaboratorInfo[];
@@ -161,7 +161,7 @@ export interface WebinarPlanSchedule {
 export interface ClassPlanSchedule {
   sessionDurationInHours: number;
   maxParticipants: number;
-  meetingsPerWeek: number;
+  sessionsPerWeek: number;
   totalSessions: number;
   classes: ClassEventSchedule[];
 }

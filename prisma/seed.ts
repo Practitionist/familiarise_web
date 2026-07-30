@@ -59,6 +59,7 @@ import { createCollaborators } from "./seedFiles/14b-create-collaborators";
 
 // Phase 15: Enterprise Organizations
 import { createOrganizations } from "./seedFiles/15a-create-organizations";
+import { createOrgCatalog } from "./seedFiles/15b-create-org-catalog";
 
 // Phase 16: Statutory lookups (#778 §D)
 import { createTdsRates } from "./seedFiles/16a-create-tds-rates";
@@ -190,6 +191,11 @@ async function seed() {
     // Phase 15: Enterprise Organizations
     console.log("\n[Phase 15] Creating enterprise organizations...");
     await createOrganizations(users);
+
+    // Must follow createOrganizations: the catalog attaches to canHost orgs
+    // and needs their ACTIVE EXPERT memberships to name a deliverer.
+    console.log("Creating org-owned catalog plans...");
+    await createOrgCatalog();
 
     // Phase 16: Statutory lookups
     console.log("\n[Phase 16] Seeding statutory TDS rates...");

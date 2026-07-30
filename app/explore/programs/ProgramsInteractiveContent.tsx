@@ -1,5 +1,6 @@
 "use client";
 
+import { PlanLevel } from "@prisma/client";
 import { useCallback, useMemo } from "react";
 import { motion } from "framer-motion";
 import { GraduationCap, Video, Users, Sparkles } from "lucide-react";
@@ -34,7 +35,7 @@ interface ProgramsInteractiveContentProps {
   /** #664 — viewer's ACTIVE org memberships as { orgId: orgName }. */
   viewerOrgs?: Record<string, string>;
   /** Every level in the catalog, read server-side — not just loaded rows. */
-  availableLevels?: string[];
+  availableLevels?: PlanLevel[];
 }
 
 const FALLBACK_STATS = [
