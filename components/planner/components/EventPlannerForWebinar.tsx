@@ -85,6 +85,7 @@ export function EventPlannerForWebinar({
   initialData,
   isSaving: externalIsSaving,
   consultantId,
+  organizationId = null,
 }: Readonly<WebinarPlannerProps>) {
   const [internalIsSaving, setInternalIsSaving] = useState(false);
   const [showConfirmation, setShowConfirmation] = useState(false);
@@ -303,10 +304,13 @@ export function EventPlannerForWebinar({
           topics: formData.topics,
           consultantProfileId: consultantId,
           consultantProfile: null,
-          organizationId: null,
-          // #726 — personal plans default to PUBLIC; org-owned plans
-          // surface a visibility toggle in their dedicated catalog UI.
-          visibility: initialData?.webinarPlan?.visibility ?? "PUBLIC",
+          organizationId,
+          // #726 — personal plans default to PUBLIC. Org-owned plans default to
+          // ORG_AND_PUBLIC per the enum's own doc comment, and the catalog form
+          // renders the toggle that narrows them to ORG_ONLY.
+          visibility:
+            initialData?.webinarPlan?.visibility ??
+            (organizationId ? "ORG_AND_PUBLIC" : "PUBLIC"),
           imageUrl: initialData?.webinarPlan?.imageUrl ?? null,
           createdAt: initialData?.webinarPlan?.createdAt ?? now,
           updatedAt: now,

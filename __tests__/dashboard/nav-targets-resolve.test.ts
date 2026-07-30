@@ -63,6 +63,7 @@ describe("org nav targets resolve", () => {
     "collaborations",
     "contracts",
     "purchase-orders",
+    "catalog",
     "programs",
     "billing",
     "payouts",

@@ -32,7 +32,7 @@ import {
   useSubscriptionPlans,
   useSubscriptionPlanMutations,
   usePlannerRefresh,
-} from "../../../hooks/usePlanner";
+} from "../hooks/usePlanner";
 import {
   LayoutTemplate,
   Radio,
@@ -327,9 +327,12 @@ export function EventManagementDashboard({
     fetchTrialCounts();
   }, [fetchTrialCounts, subscriptionPlans]);
 
-  // Redirect to Trials tab when clicking trial button
+  // Trials live on Appointments now (ADR 19 — a trial IS an appointment), so
+  // this deep-links to the tab rather than the retired standalone route.
   const handleTrialsClick = () => {
-    router.push(`/dashboard/consultant/${consultantId}/trials`);
+    router.push(
+      `/dashboard/consultant/${consultantId}/appointments?tab=trials`,
+    );
   };
 
   // Handle webinar saved event

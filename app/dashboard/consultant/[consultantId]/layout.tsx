@@ -11,11 +11,9 @@ import {
   CalendarRange,
   Inbox,
   Users,
-  Sparkles,
   Video,
   FileText,
   Wallet,
-  BarChart3,
   Gift,
   Settings,
   MessageSquareText,
@@ -56,9 +54,14 @@ import {
 import type { VerificationStatus } from "@/components/verification/VerificationStatusBadge";
 import { useVerificationStatus } from "./hooks/useVerificationStatus";
 
-// Grouped sidebar nav — same IA as before the shell swap (Services /
-// Content / Finance), now rendered by the shared CollapsibleSidebar.
-// Analytics is live (built as part of the redesign, was a hidden TODO).
+// Grouped sidebar nav (Services / Resources / Finance / Support), rendered by
+// the shared CollapsibleSidebar.
+//
+// Trials and Analytics used to be entries here and are now tabs on Appointments
+// and Earnings respectively — see the group comments below. This array is still
+// static and unfiltered, unlike the org sidebar's permission-driven one: every
+// surface on a personal dashboard belongs to the one person who owns it, so
+// there is nothing to filter on.
 const NAV_GROUPS: CollapsibleSidebarGroup[] = [
   {
     items: [
@@ -68,12 +71,15 @@ const NAV_GROUPS: CollapsibleSidebarGroup[] = [
     ],
   },
   {
+    // Trials is absent by ADR 19's rule that a nav entry must be a distinct
+    // destination: a trial IS an appointment, which is why the org sidebar
+    // already folded it onto Appointments. It lives at
+    // `appointments?tab=trials` now.
     label: "Services",
     items: [
       { name: "Event Planner", icon: CalendarRange, path: "planner" },
       { name: "Requests", icon: Inbox, path: "requests" },
       { name: "Collaborations", icon: Users, path: "collaborations" },
-      { name: "Trials", icon: Sparkles, path: "trials" },
     ],
   },
   {
@@ -87,10 +93,13 @@ const NAV_GROUPS: CollapsibleSidebarGroup[] = [
     ],
   },
   {
+    // Analytics is absent for the same reason as Trials: it read the very same
+    // /api/consultant/earnings endpoint as Earnings, only adding
+    // `?includeMonthly=1`. Two entries over one object is exactly what ADR 19
+    // forbids, so it is the Analytics tab of Earnings now.
     label: "Finance",
     items: [
       { name: "Earnings", icon: Wallet, path: "earnings" },
-      { name: "Analytics", icon: BarChart3, path: "analytics" },
       { name: "Referrals", icon: Gift, path: "referrals" },
     ],
   },
@@ -132,11 +141,9 @@ const PAGE_LABELS: Record<string, string> = {
   planner: "Event Planner",
   requests: "Requests",
   collaborations: "Collaborations",
-  trials: "Trials",
   recordings: "Recordings",
   documents: "Documents",
   earnings: "Earnings",
-  analytics: "Analytics",
   referrals: "Referrals",
   settings: "Settings",
   support: "Support requests",

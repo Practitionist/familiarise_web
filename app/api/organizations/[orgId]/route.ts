@@ -134,7 +134,14 @@ export async function GET(
 
   return NextResponse.json({
     organization: org,
-    membership: { role: access.member.role, status: access.member.status },
+    membership: {
+      role: access.member.role,
+      status: access.member.status,
+      // Drives the Requests nav gate: delivery surfaces belong to whoever
+      // holds a consultant profile, which is not the same set as MemberRole
+      // EXPERT (an OWNER can also deliver).
+      consultantProfileId: access.member.consultantProfileId,
+    },
   });
 }
 

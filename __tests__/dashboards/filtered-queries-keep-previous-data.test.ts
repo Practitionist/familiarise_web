@@ -33,7 +33,9 @@ const read = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8");
  * keepPreviousData exists for.
  */
 const FILTER_DRIVEN_QUERIES = [
-  "app/dashboard/consultant/[consultantId]/(features)/earnings/page.tsx",
+  // The filtered query moved into the Summary panel when Analytics folded onto
+  // this route as a tab (ADR 19); `page.tsx` is now a server wrapper.
+  "app/dashboard/consultant/[consultantId]/(features)/earnings/EarningsSummaryPanel.tsx",
   "app/dashboard/organization/[orgId]/payouts/PayoutsPageClient.tsx",
   "app/dashboard/admin/payouts/_sections/EarningsSection.tsx",
   "app/dashboard/organization/[orgId]/purchase-orders/page.tsx",
@@ -72,7 +74,7 @@ describe("filter-driven dashboard queries keep the previous page on screen", () 
     // keepPreviousData `data` is populated on a tab switch, so `!data` is false
     // and the page keeps its header, stat cards and tabs.
     const src = read(
-      "app/dashboard/consultant/[consultantId]/(features)/earnings/page.tsx",
+      "app/dashboard/consultant/[consultantId]/(features)/earnings/EarningsSummaryPanel.tsx",
     );
     expect(src).toContain("isPlaceholderData");
     expect(src).toMatch(/isLoading && !data/);
