@@ -223,3 +223,4 @@ export const WEBINAR_DESCRIPTIONS = [
 export function pick<T>(pool: T[], index: number): T {
   return pool[index % pool.length];
 }
+

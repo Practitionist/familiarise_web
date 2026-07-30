@@ -126,7 +126,9 @@ export async function createWebinarPlans(consultants: UserWithProfiles[]) {
         where: { consultantProfileId: consultant.consultantProfile.id },
       });
 
-      for (const plan of webinarPlans) {
+      // FAQs ride along with the topics pass rather than needing a second
+      // one: createMany cannot write either relation inline.
+      for (const [planIndex, plan] of webinarPlans.entries()) {
         await prisma.webinarPlan.update({
           where: { id: plan.id },
           data: {
@@ -134,6 +136,12 @@ export async function createWebinarPlans(consultants: UserWithProfiles[]) {
               connect: faker.helpers
                 .arrayElements(topics, { min: 1, max: 3 })
                 .map((topic) => ({ id: topic.id })),
+            },
+            faqs: {
+              create: pick(FAQ_POOL, i + planIndex).map((faq, order) => ({
+                ...faq,
+                order,
+              })),
             },
           },
         });

@@ -29,15 +29,26 @@ type CurriculumInput = {
   outcomes?: string[];
 };
 
+const faqRow = (faq: FaqInput, index: number) => ({
+  question: faq.question,
+  answer: faq.answer,
+  order: index,
+});
+
+const curriculumRow = (item: CurriculumInput, index: number) => ({
+  title: item.title,
+  description: item.description,
+  contentType: item.contentType ?? null,
+  contentUrl: item.contentUrl ?? null,
+  hoursAllotted: item.hoursAllotted,
+  sectionLabel: item.sectionLabel || null,
+  outcomes: item.outcomes ?? [],
+  order: index + 1,
+});
+
 /** Nested `create` for a brand-new plan. */
 export function faqCreateNested(faqs: FaqInput[] | undefined) {
-  return {
-    create: (faqs ?? []).map((faq, index) => ({
-      question: faq.question,
-      answer: faq.answer,
-      order: index,
-    })),
-  };
+  return { create: (faqs ?? []).map(faqRow) };
 }
 
 /**
@@ -47,47 +58,17 @@ export function faqCreateNested(faqs: FaqInput[] | undefined) {
  */
 export function faqReplaceNested(faqs: FaqInput[] | undefined) {
   if (faqs === undefined) return undefined;
-  return {
-    deleteMany: {},
-    create: faqs.map((faq, index) => ({
-      question: faq.question,
-      answer: faq.answer,
-      order: index,
-    })),
-  };
+  return { deleteMany: {}, create: faqs.map(faqRow) };
 }
 
 export function curriculumCreateNested(items: CurriculumInput[] | undefined) {
-  return {
-    create: (items ?? []).map((item, index) => ({
-      title: item.title,
-      description: item.description,
-      contentType: item.contentType ?? null,
-      contentUrl: item.contentUrl ?? null,
-      hoursAllotted: item.hoursAllotted,
-      sectionLabel: item.sectionLabel || null,
-      outcomes: item.outcomes ?? [],
-      order: index + 1,
-    })),
-  };
+  return { create: (items ?? []).map(curriculumRow) };
 }
 
 /** See {@link faqReplaceNested} for the undefined-means-untouched contract. */
 export function curriculumReplaceNested(items: CurriculumInput[] | undefined) {
   if (items === undefined) return undefined;
-  return {
-    deleteMany: {},
-    create: items.map((item, index) => ({
-      title: item.title,
-      description: item.description,
-      contentType: item.contentType ?? null,
-      contentUrl: item.contentUrl ?? null,
-      hoursAllotted: item.hoursAllotted,
-      sectionLabel: item.sectionLabel || null,
-      outcomes: item.outcomes ?? [],
-      order: index + 1,
-    })),
-  };
+  return { deleteMany: {}, create: items.map(curriculumRow) };
 }
 
 /** Standard include for reading a plan's buyer-facing content back out. */
