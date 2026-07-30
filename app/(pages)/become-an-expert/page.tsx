@@ -159,7 +159,7 @@ export default function BecomeAnExpertPage() {
                 className="w-full border-zinc-700 bg-transparent text-white hover:bg-zinc-800 hover:text-white sm:w-auto"
                 asChild
               >
-                <Link href="/explore/experts">See who's already here</Link>
+                <Link href="/explore/experts">See who&apos;s already here</Link>
               </Button>
             </div>
             <p className="mt-5 text-sm text-zinc-500">
