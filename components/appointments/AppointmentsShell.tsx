@@ -84,6 +84,24 @@ function initialTab(param: string | null): TabValue {
   }
 }
 
+/**
+ * A tab that is NOT a bucket of this shell's appointment VMs, appended after
+ * the five standard ones and rendering its own content.
+ *
+ * Exists so the consultant dashboard can host Trials here — ADR 19 folded
+ * trials onto Appointments on the org side because "a trial IS an appointment",
+ * and this is the personal half of that move. It is opt-in rather than a sixth
+ * entry in `TABS` because the consultee shares this shell and has no trials
+ * concept; passing nothing leaves that side byte-identical.
+ */
+export interface AppointmentsExtraTab {
+  value: string;
+  label: string;
+  content: ReactNode;
+  /** Rendered beside the label like the bucket counts. */
+  count?: number;
+}
+
 interface AppointmentsShellProps {
   vms: AppointmentVM[];
   adapter: AppointmentActionAdapter;
@@ -92,6 +110,7 @@ interface AppointmentsShellProps {
   notices?: ReactNode;
   /** Row id (VM id) to flash + scroll to (consultant ?highlight= deep-link). */
   highlightedId?: string | null;
+  extraTabs?: AppointmentsExtraTab[];
 }
 
 export function AppointmentsShell({
@@ -100,13 +119,18 @@ export function AppointmentsShell({
   orgFilterSlot,
   notices,
   highlightedId = null,
+  extraTabs = [],
 }: AppointmentsShellProps) {
   const searchParams = useSearchParams();
   const { data: session } = useSession();
 
-  const [tab, setTab] = useState<TabValue>(() =>
-    initialTab(searchParams?.get("tab") ?? null),
-  );
+  const [tab, setTab] = useState<TabValue | string>(() => {
+    const param = searchParams?.get("tab") ?? null;
+    // An extra tab's own value wins over the bucket fallback, so
+    // `?tab=trials` deep-links land on it instead of silently on Upcoming.
+    if (param && extraTabs.some((t) => t.value === param)) return param;
+    return initialTab(param);
+  });
   // Legacy consultee ?tab=calendar deep-links land on the calendar view.
   const [view, setView] = useState<"list" | "calendar">(() =>
     searchParams?.get("tab") === "calendar" ? "calendar" : "list",
@@ -179,6 +203,12 @@ export function AppointmentsShell({
   const countOf = (value: TabValue) =>
     value === "all" ? filtered.length : byBucket[value].length;
 
+  // An extra tab owns its whole panel: the filter bar and the calendar toggle
+  // both describe appointment VMs and do not apply to content this shell
+  // doesn't own. The hero stays — "what's next" is page-level context, and
+  // dropping it would shift the layout on every tab change.
+  const onExtraTab = extraTabs.some((t) => t.value === tab);
+
   // Hero reads the UNFILTERED list — it answers "what's next", not "what's
   // next among the current filters". A row only qualifies while its anchor
   // session hasn't ended (live sessions stay; an elapsed pending booking in
@@ -233,7 +263,7 @@ export function AppointmentsShell({
     <div className="space-y-5">
       <NextUpHero vm={heroVm} adapter={adapter} stats={stats} onOpen={openVm} />
 
-      <Tabs value={tab} onValueChange={(v) => setTab(v as TabValue)}>
+      <Tabs value={tab} onValueChange={setTab}>
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <TabsList className={cn("flex-wrap h-auto", view === "calendar" && "opacity-60")}>
             {TABS.map(({ value, label }) => (
@@ -244,10 +274,25 @@ export function AppointmentsShell({
                 </span>
               </TabsTrigger>
             ))}
+            {extraTabs.map(({ value, label, count }) => (
+              <TabsTrigger key={value} value={value} className="gap-1.5">
+                {label}
+                {count !== undefined && (
+                  <span className="text-[10px] tabular-nums text-muted-foreground">
+                    {count}
+                  </span>
+                )}
+              </TabsTrigger>
+            ))}
           </TabsList>
 
           {/* List / calendar view toggle */}
-          <div className="flex items-center rounded-lg border border-border bg-card p-0.5">
+          <div
+            className={cn(
+              "flex items-center rounded-lg border border-border bg-card p-0.5",
+              onExtraTab && "hidden",
+            )}
+          >
             {(
               [
                 { value: "list", label: "List", icon: List },
@@ -273,21 +318,29 @@ export function AppointmentsShell({
           </div>
         </div>
 
-        <div className="mt-4">
-          <AppointmentsFilterBar
-            typeFilter={typeFilter}
-            onTypeChange={setTypeFilter}
-            search={search}
-            onSearchChange={setSearch}
-            dateRange={dateRange}
-            onDateRangeChange={setDateRange}
-            orgFilterSlot={orgFilterSlot}
-          />
-        </div>
+        {!onExtraTab && (
+          <div className="mt-4">
+            <AppointmentsFilterBar
+              typeFilter={typeFilter}
+              onTypeChange={setTypeFilter}
+              search={search}
+              onSearchChange={setSearch}
+              dateRange={dateRange}
+              onDateRangeChange={setDateRange}
+              orgFilterSlot={orgFilterSlot}
+            />
+          </div>
+        )}
 
-        {notices && <div className="mt-4">{notices}</div>}
+        {notices && !onExtraTab && <div className="mt-4">{notices}</div>}
 
-        {view === "calendar" ? (
+        {extraTabs.map(({ value, content }) => (
+          <TabsContent key={value} value={value} className="mt-4">
+            {content}
+          </TabsContent>
+        ))}
+
+        {onExtraTab ? null : view === "calendar" ? (
           <div className="mt-4">
             <AppointmentCalendar vms={filtered} onSelect={openVm} />
           </div>

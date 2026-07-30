@@ -155,10 +155,14 @@ export const AUDIT_ACTIONS = {
     // Emitted from POST /api/organizations/[orgId]/catalog when an OWNER
     // adds an OrganizationPlan to the sponsored catalog.
     CATALOG_PLAN_CREATED: "CATALOG_PLAN_CREATED",
-    // Emitted from DELETE /api/organizations/[orgId]/catalog bulk
-    // deactivate (isActive=false). Kept as a single audit row per call,
-    // with the affected planIds surfaced via `details`.
+    // Emitted from DELETE /api/organizations/[orgId]/catalog, which ARCHIVES
+    // (sets `archivedAt`) rather than deleting — the plan FK chain cascades to
+    // Appointment and Payment, so a real delete would destroy settled money
+    // records. Kept as a single audit row per call, with the affected planIds
+    // surfaced via `details`.
     CATALOG_PLAN_DEACTIVATED: "CATALOG_PLAN_DEACTIVATED",
+    // The inverse: an archived plan put back on sale.
+    CATALOG_PLAN_RESTORED: "CATALOG_PLAN_RESTORED",
   },
   SYSTEM: {
     VERIFIED: "VERIFIED",

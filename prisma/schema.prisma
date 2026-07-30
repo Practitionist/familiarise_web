@@ -3173,6 +3173,16 @@ model WebinarPlan {
   // #726 — marketplace leak guard. See ConsultationPlan.visibility.
   visibility OrgPlanVisibility @default(PUBLIC)
 
+  // #catalog-archive — retiring a plan MUST NOT delete it. The FK chain is
+  // onDelete: Cascade the whole way down (WebinarPlan -> Webinar -> Appointment
+  // -> Payment), so removing a booked plan would physically destroy settled
+  // money records. A plan row is also the TERMS of every sale made against it,
+  // which past appointments, invoices and earnings still resolve. Archiving
+  // keeps the history intact and only withdraws the plan from booking and
+  // discovery. Null means live; set means withdrawn, and it is reversible.
+  archivedAt DateTime?
+
+
   webinars      Webinar[]
   materials     PlanMaterial[]
   collaborators Collaborator[]
@@ -3256,6 +3266,16 @@ model ClassPlan {
 
   // #726 — marketplace leak guard. See ConsultationPlan.visibility.
   visibility OrgPlanVisibility @default(PUBLIC)
+
+  // #catalog-archive — retiring a plan MUST NOT delete it. The FK chain is
+  // onDelete: Cascade the whole way down (WebinarPlan -> Webinar -> Appointment
+  // -> Payment), so removing a booked plan would physically destroy settled
+  // money records. A plan row is also the TERMS of every sale made against it,
+  // which past appointments, invoices and earnings still resolve. Archiving
+  // keeps the history intact and only withdraws the plan from booking and
+  // discovery. Null means live; set means withdrawn, and it is reversible.
+  archivedAt DateTime?
+
 
   classes       Class[]
   materials     PlanMaterial[]

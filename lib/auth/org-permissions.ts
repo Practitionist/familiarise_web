@@ -36,6 +36,10 @@ export type OrgSurface =
   // Commerce (sponsor-side; combine with canSponsor at the consumer)
   | "contracts.read"
   | "contracts.manage"
+  // Host-side: authoring the org's OWN bookable offerings. Distinct from
+  // programs.manage, which is the sponsor's entitlement CRUD — combine with
+  // canHost at the consumer.
+  | "catalog.manage"
   | "programs.manage"
   | "purchaseOrders.read"
   | "purchaseOrders.manage"
@@ -86,6 +90,12 @@ export const ORG_PERMISSIONS: Record<OrgSurface, ReadonlySet<MemberRole>> = {
   // decisions (spec: MAINTAINER floor); POs are day-to-day.
   "contracts.read": GOVERNANCE,
   "contracts.manage": roles("OWNER"),
+  // OPERATORS rather than GOVERNANCE: publishing an offering is day-to-day
+  // delivery work, not an org-structural decision like a contract or a
+  // sponsorship program, so MANAGER holds it. EXPERT deliberately does NOT —
+  // an org-owned plan commits the ORG's revenue and payout obligation, so it
+  // needs an operator in the loop. An EXPERT is named as the deliverer instead.
+  "catalog.manage": OPERATORS,
   "programs.manage": GOVERNANCE,
   "purchaseOrders.read": FINANCE_READERS,
   "purchaseOrders.manage": FINANCE_MUTATORS,

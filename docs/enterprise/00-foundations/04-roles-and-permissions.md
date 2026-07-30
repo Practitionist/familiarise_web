@@ -541,9 +541,14 @@ Both `/my-program` and `/compensation` are read-only in v1. A LEARNER
 cannot self-assign to a Program; an EXPERT cannot flip their own
 `payoutRecipient`. Mutations remain on operator pages. Membership also
 carries an `exclusiveEngagement` boolean (ADR 18) recording an
-org-declared exclusivity arrangement for internal consultants; it is an
-unenforced schema stub today and must not surface in any UI until an
-enforcement feature ships. The "Personal
+org-declared exclusivity arrangement for internal consultants. This was
+an unenforced schema stub when it landed, but it is no longer: as of
+2026-07-11 checkout rejects a booking of the consultant's independent
+plans when an `ACTIVE` membership carries the flag (#982), and the
+schema comment says the same. What remains unbuilt is the other half of
+exclusivity — filtering those plans out of marketplace listings — so the
+flag still must not surface in any UI that implies discovery is
+suppressed. The "Personal
 Dashboard" footer chip on the sidebar (`resolvePersonalDashboardHref`)
 stays so consumers can hop back to their personal surface without
 hunting for the URL.

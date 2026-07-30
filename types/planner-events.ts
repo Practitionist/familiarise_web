@@ -16,6 +16,32 @@ import {
 import { PlanEmailSupport } from "@prisma/client";
 import { ConsultationPlan, SubscriptionPlan } from "@/schemas/plans";
 
+/**
+ * Uploaded handout attached to a plan. Followed the planner components out of
+ * the consultant route folder for the reason in the header above — the only
+ * consumers are `components/planner/**`, and a shared component importing a
+ * type through `app/dashboard/consultant/[consultantId]/` would invert the
+ * dependency the same way.
+ */
+export interface IPlanMaterial {
+  id: string;
+  fileName: string;
+  originalName: string;
+  fileSize: number;
+  mimeType: string;
+  fileUrl: string;
+  storagePath: string;
+  description: string | null;
+  order: number;
+  // Plan references (one will be set)
+  consultationPlanId?: string | null;
+  subscriptionPlanId?: string | null;
+  webinarPlanId?: string | null;
+  classPlanId?: string | null;
+  uploadedAt: Date;
+  updatedAt?: Date;
+}
+
 // UI-focused event types with topics as string[] (transformed at service boundary)
 // Services convert Topic[] from Prisma to string[] before passing to components
 
@@ -161,8 +187,21 @@ export type FormData = {
 interface BasePlannerProps {
   isOpen: boolean;
   onClose: () => void;
+  /**
+   * The consultant profile that DELIVERS the session. On the personal planner
+   * this is the signed-in consultant; on the org catalog it is the EXPERT the
+   * operator picked, which is why it stays a plain id rather than being read
+   * from the session inside the form.
+   */
   consultantId: string;
   isSaving?: boolean;
+  /**
+   * Org that OWNS the plan. Absent or null means a personal B2C plan, which is
+   * the default and what the consultant planner passes. Only Webinar and Class
+   * accept a non-null value — `ConsultationPlan`/`SubscriptionPlan` require a
+   * `consultantProfileId` in the schema and so can never be solely org-owned.
+   */
+  organizationId?: string | null;
 }
 
 export interface WebinarPlannerProps extends BasePlannerProps {
