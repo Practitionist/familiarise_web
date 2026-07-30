@@ -103,7 +103,15 @@ const fetchOrgBySlug = cache(async (slug: string) => {
           status: "ACTIVE",
           consultantProfile: {
             verificationStatus: "VERIFIED",
-            isIndependent: false,
+            // NOT filtered on `isIndependent: false`. That column is derived —
+            // "true iff zero ACTIVE EXPERT memberships at canHost orgs" — and is
+            // only recomputed by recomputeConsultantIsIndependent() after a
+            // membership mutation. Anything that writes memberships directly
+            // (the seed, a backfill, a manual fix) leaves it stale, and a stale
+            // `true` hid every expert on this page even though the membership
+            // being selected here is itself the proof they aren't independent.
+            // The join is the source of truth; the flag is a cache of it.
+            deletedAt: null,
           },
         },
         select: {
@@ -392,7 +400,11 @@ export default async function OrgProfilePage({
                 >
                   Exclusive Experts
                 </h2>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {/* Single column at every width: two-up halved the card and
+                    truncated most headlines mid-word ("Executive Coa…"), which
+                    is the one line that tells you what the expert actually
+                    does. Full width lets them read. */}
+                <div className="grid grid-cols-1 gap-3">
                   {exclusiveExperts.map((expert) => (
                     <ExpertMiniCard key={expert.id} expert={expert} />
                   ))}

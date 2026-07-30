@@ -65,7 +65,15 @@ export function isCompletedLikeStatus(
 export function isPendingPaymentStatus(
   status: string | null | undefined,
 ): boolean {
-  return normalizeStatus(status) === "APPROVED_PENDING_PAYMENT";
+  const normalized = normalizeStatus(status);
+  // AWAITING_PAYMENT is the trial equivalent of APPROVED_PENDING_PAYMENT:
+  // accepted by the provider, slot held, money not yet collected. Both must
+  // bucket as PAY_NOW or the learner never sees the "Pay Now to Confirm"
+  // affordance on the booking itself.
+  return (
+    normalized === "APPROVED_PENDING_PAYMENT" ||
+    normalized === "AWAITING_PAYMENT"
+  );
 }
 
 export function isPendingStatus(status: string | null | undefined): boolean {

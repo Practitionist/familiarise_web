@@ -1,7 +1,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { AppointmentStatus } from "@prisma/client";
+import { AppointmentStatus, TrialSessionStatus } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
 
 /**
@@ -122,6 +122,26 @@ export async function GET() {
       },
     });
 
+    // Paid trials the consultant accepted but the learner hasn't paid for.
+    // Support needs these alongside consultations/subscriptions — the failure
+    // mode is identical (accepted, slot held, money not collected).
+    const pendingTrials = await prisma.trialSession.findMany({
+      where: { status: TrialSessionStatus.AWAITING_PAYMENT },
+      include: {
+        subscriptionPlan: {
+          include: {
+            consultantProfile: {
+              include: { user: { select: { name: true, email: true } } },
+            },
+          },
+        },
+        consulteeProfile: {
+          include: { user: { select: { name: true, email: true } } },
+        },
+      },
+      orderBy: { updatedAt: "desc" },
+    });
+
     // Transform data into a consistent format
     const approvalPayments = [
       ...pendingConsultations.map((consultation) => {
@@ -186,6 +206,35 @@ export async function GET() {
           isExpired,
           isExpiringSoon,
           status: subscription.status,
+        };
+      }),
+      ...pendingTrials.map((trial) => {
+        // Trials carry a real deadline instead of the 48h assumption above.
+        const expiresAt = trial.paymentDueAt ?? trial.updatedAt;
+        const timeUntilExpiry = expiresAt.getTime() - Date.now();
+        const isExpired = timeUntilExpiry < 0;
+        const isExpiringSoon =
+          !isExpired && timeUntilExpiry < 24 * 60 * 60 * 1000;
+
+        return {
+          id: trial.id,
+          type: "trial" as const,
+          title: `${trial.subscriptionPlan?.title ?? "Trial"} — trial`,
+          consultantName:
+            trial.subscriptionPlan?.consultantProfile?.user?.name ||
+            "Unknown Consultant",
+          consultantEmail:
+            trial.subscriptionPlan?.consultantProfile?.user?.email || "",
+          consulteeName: trial.consulteeProfile?.user?.name || "Unknown Consultee",
+          consulteeEmail: trial.consulteeProfile?.user?.email || "",
+          amount: Number(trial.subscriptionPlan?.trialPriceInPaise ?? 0),
+          currency: trial.subscriptionPlan?.priceCurrency || "INR",
+          paymentUrl: trial.pendingPaymentUrl || "",
+          approvedAt: trial.updatedAt.toISOString(),
+          expiresAt: expiresAt.toISOString(),
+          isExpired,
+          isExpiringSoon,
+          status: trial.status,
         };
       }),
     ].sort((a, b) => {

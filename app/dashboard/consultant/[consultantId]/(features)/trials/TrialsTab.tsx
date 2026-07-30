@@ -112,6 +112,9 @@ function maskEmail(email: string): string {
 // the consultant side (they did the declining — "Rejected" reads wrong).
 const statusBgColors: Record<string, string> = {
   PENDING: "bg-yellow-50 hover:bg-yellow-100 border-yellow-200",
+  // Same amber family as PENDING — both are "waiting", and the label says who
+  // we're waiting on.
+  AWAITING_PAYMENT: "bg-amber-50 hover:bg-amber-100 border-amber-200",
   SCHEDULED: "bg-purple-50 hover:bg-purple-100 border-purple-200",
   COMPLETED: "bg-green-50 hover:bg-green-100 border-green-200",
   CONVERTED: "bg-emerald-50 hover:bg-emerald-100 border-emerald-200",
@@ -121,6 +124,7 @@ const statusBgColors: Record<string, string> = {
 
 const statusTextColors: Record<string, string> = {
   PENDING: "text-yellow-700",
+  AWAITING_PAYMENT: "text-amber-700",
   SCHEDULED: "text-purple-700",
   COMPLETED: "text-green-700",
   CONVERTED: "text-emerald-700",
@@ -295,9 +299,18 @@ export function TrialsTab() {
         throw new Error(errorData.error || "Failed to schedule trial");
       }
 
+      // A paid trial is NOT scheduled by accepting — it moves to
+      // AWAITING_PAYMENT and the learner gets a pay-link. Saying "scheduled"
+      // would tell the consultant to expect someone who may never pay.
+      const result = await response.json().catch(() => null);
+      const awaitingPayment =
+        result?.data?.status === "AWAITING_PAYMENT";
+
       toast({
         title: "Success",
-        description: "Trial session approved and scheduled",
+        description: awaitingPayment
+          ? "Trial approved. The slot is held while the learner pays — it confirms once payment lands, and is released if they don't pay in time."
+          : "Trial session approved and scheduled",
       });
 
       setShowScheduleDialog(false);
@@ -465,6 +478,8 @@ export function TrialsTab() {
 
   const statusOrder = [
     "PENDING",
+    // Sits between PENDING and SCHEDULED — it's the step in between.
+    "AWAITING_PAYMENT",
     "SCHEDULED",
     "COMPLETED",
     "CONVERTED",
@@ -568,6 +583,7 @@ export function TrialsTab() {
           <SelectContent>
             <SelectItem value="all">All Statuses</SelectItem>
             <SelectItem value="PENDING">Pending</SelectItem>
+            <SelectItem value="AWAITING_PAYMENT">Awaiting payment</SelectItem>
             <SelectItem value="SCHEDULED">Scheduled</SelectItem>
             <SelectItem value="COMPLETED">Completed</SelectItem>
             <SelectItem value="CONVERTED">Converted</SelectItem>
