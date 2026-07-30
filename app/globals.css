@@ -1285,8 +1285,6 @@
   .animate-blob,
   .animate-float,
   .animate-float-delayed,
-  .animate-marquee,
-  .animate-marquee-reverse,
   .shimmer,
   .shimmer-dark,
   .count-up,
@@ -1294,6 +1292,18 @@
   .chrome-shine::after,
   .scan-line::after {
     animation: none !important;
+  }
+
+  /* Marquees carry CONTENT, not decoration. The track renders the list three
+     times inside an `overflow-hidden` section, so simply stopping the animation
+     clips everything past the first screenful with no way to reach it — worse
+     than the motion it avoids. Stop the travel and hand scrolling to the user
+     instead, so every item stays reachable. */
+  .animate-marquee,
+  .animate-marquee-reverse {
+    animation: none !important;
+    overflow-x: auto;
+    scrollbar-width: thin;
   }
 
   /* Entrance animations must settle VISIBLE — `animation: none` on a rule whose
