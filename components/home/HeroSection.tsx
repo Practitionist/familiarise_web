@@ -59,6 +59,9 @@ function AnimatedNumber({
 export function HeroSection() {
   return (
     <section className="relative min-h-[95vh] flex items-center bg-black overflow-hidden">
+      {/* Top of the dark full-bleed hero. The navbar observes this to decide
+          its light-on-dark treatment — see components/Navbar.tsx. */}
+      <div data-nav-sentinel aria-hidden="true" />
       {/* Animated gradient orbs */}
       <div className="absolute inset-0 overflow-hidden">
         <div className="absolute top-1/4 left-1/4 w-[600px] h-[600px] rounded-full bg-gradient-to-br from-zinc-800/50 to-transparent blur-[50px] animate-blob" />

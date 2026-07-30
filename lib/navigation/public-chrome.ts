@@ -25,9 +25,17 @@ export const NO_CHROME_PREFIXES = [
 ] as const;
 
 /**
- * Routes whose page begins with a full-bleed dark hero that the nav overlays.
- * On these the nav is transparent with white text until the user scrolls, and
- * the page supplies its own top padding — so no spacer.
+ * Routes whose page begins with a full-bleed dark hero that the nav overlays,
+ * and which therefore supply their own top padding — so no spacer.
+ *
+ * SPACING ONLY. The navbar no longer reads this to choose its colour: it
+ * observes a `[data-nav-sentinel]` element rendered at the top of the actual
+ * hero, so its treatment can never disagree with what is painted. This list
+ * survives because HeaderSpacer runs during SSR and must reserve layout before
+ * any observer exists — deriving it on the client would land as a visible jump.
+ *
+ * A route listed here MUST render a full-bleed hero in its `loading.tsx` too,
+ * or its skeleton starts underneath the fixed navbar.
  */
 export const TRANSPARENT_HERO_ROUTES = [
   "/",

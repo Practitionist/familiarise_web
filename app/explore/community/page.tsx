@@ -134,6 +134,9 @@ export default function CommunityPage() {
     <div className="w-full">
       {/* Hero */}
       <section className="bg-zinc-950 text-white py-20 md:py-28">
+        {/* Top of the dark full-bleed hero. The navbar observes this to decide
+          its light-on-dark treatment — see components/Navbar.tsx. */}
+        <div data-nav-sentinel aria-hidden="true" />
         <div className="container mx-auto px-4 md:px-6 text-center max-w-3xl">
           <Badge
             variant="outline"
@@ -246,8 +249,12 @@ export default function CommunityPage() {
                 className="flex items-center justify-between gap-3 p-5 rounded-2xl border border-border bg-muted"
               >
                 <div className="min-w-0">
-                  <h3 className="font-semibold text-foreground">{event.title}</h3>
-                  <p className="text-sm text-muted-foreground mt-0.5">{event.host}</p>
+                  <h3 className="font-semibold text-foreground">
+                    {event.title}
+                  </h3>
+                  <p className="text-sm text-muted-foreground mt-0.5">
+                    {event.host}
+                  </p>
                 </div>
                 <Badge
                   variant="outline"

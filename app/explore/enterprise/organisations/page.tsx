@@ -62,6 +62,9 @@ export default function ExploreOrganisationsPage() {
     <main className="min-h-screen bg-background">
       {/* Hero */}
       <section className="relative overflow-hidden bg-zinc-950 pt-32 pb-16">
+        {/* Top of the dark full-bleed hero. The navbar observes this to decide
+          its light-on-dark treatment — see components/Navbar.tsx. */}
+        <div data-nav-sentinel aria-hidden="true" />
         <div className="absolute inset-0">
           <div className="animate-blob absolute left-1/4 top-1/4 h-[500px] w-[500px] rounded-full bg-zinc-800/30 blur-[120px]" />
           <div className="animate-blob animation-delay-2000 absolute bottom-1/4 right-1/4 h-[400px] w-[400px] rounded-full bg-zinc-700/20 blur-[100px]" />

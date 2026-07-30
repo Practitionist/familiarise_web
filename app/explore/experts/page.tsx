@@ -38,6 +38,9 @@ function HeroSection({
 
   return (
     <section className="relative pt-32 pb-20 bg-zinc-950 overflow-hidden">
+      {/* Top of the dark full-bleed hero. The navbar observes this to decide
+          its light-on-dark treatment — see components/Navbar.tsx. */}
+      <div data-nav-sentinel aria-hidden="true" />
       <div className="absolute inset-0">
         <div className="absolute top-1/4 left-1/4 w-[600px] h-[600px] bg-zinc-800/30 rounded-full blur-[120px] animate-blob" />
         <div className="absolute bottom-1/4 right-1/4 w-[500px] h-[500px] bg-zinc-700/20 rounded-full blur-[100px] animate-blob animation-delay-2000" />

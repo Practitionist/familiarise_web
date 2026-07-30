@@ -45,7 +45,7 @@ import {
   AccordionTrigger,
 } from "@/components/ui/accordion";
 import { useCurrency, SUPPORTED_CURRENCIES } from "@/hooks/useCurrency";
-import { hasDarkHero, isChromeHidden } from "@/lib/navigation/public-chrome";
+import { isChromeHidden } from "@/lib/navigation/public-chrome";
 import { useAnnouncementBar } from "@/providers/AnnouncementBarProvider";
 import familiariseLogoTransparent from "@/public/avif/static/assets/logos/images/logos/Familiarise-logos_transparent.avif";
 import familiariseLogoWhite from "@/public/avif/static/assets/logos/images/logos/Familiarise-logos_white.avif";
@@ -367,13 +367,7 @@ function DesktopDropdownPanel({
           : undefined
       }
     >
-      <div
-        className={
-          isMega
-            ? `p-4 grid gap-2 ${panelGrid}`
-            : "p-2"
-        }
-      >
+      <div className={isMega ? `p-4 grid gap-2 ${panelGrid}` : "p-2"}>
         {group.columns.map((column) => (
           <div key={column.heading} className="min-w-0">
             {isMega && (
@@ -523,22 +517,49 @@ const Navbar = () => {
   // logged-in user doesn't flash the signed-out CTA on first paint.
   const { data: session, isPending } = useSession();
   const [isOpen, setIsOpen] = useState(false);
-  const [isScrolled, setIsScrolled] = useState(false);
+  // Whether a dark full-bleed hero is currently sitting under the bar. Driven
+  // by what is ACTUALLY rendered (see the effect below), not by a route list.
+  const [overDarkHero, setOverDarkHero] = useState(false);
   const { currency, symbol, setCurrency } = useCurrency();
   const { isVisible: isAnnouncementVisible } = useAnnouncementBar();
-
-  // Route lists live in lib/navigation/public-chrome.ts — they were duplicated
-  // across Navbar/Footer/HeaderSpacer and had already drifted.
-  const darkHero = hasDarkHero(pathname);
 
   const toggleMenu = () => setIsOpen(!isOpen);
   const closeMenu = () => setIsOpen(false);
 
+  /**
+   * Derive the light-on-dark treatment from the DOM instead of a route list.
+   *
+   * A page with a dark hero renders `<div data-nav-sentinel />` at the very top
+   * of it. While that sentinel is still under the bar, the bar is transparent
+   * with white text; once it scrolls past — or was never there — the bar is
+   * solid with foreground text.
+   *
+   * The route list this replaces (`TRANSPARENT_HERO_ROUTES`) could only ever
+   * describe the FINISHED page, so during a route's loading.tsx — a light
+   * skeleton with no hero — the bar still went white and became invisible on
+   * white. Detail pages and any new hero drifted for the same reason. Observing
+   * the sentinel makes disagreement impossible: no hero rendered, no sentinel,
+   * solid bar.
+   *
+   * `rootMargin` shifts the viewport's top edge down by the bar's height so the
+   * flip happens exactly as the hero's top passes underneath, replacing the old
+   * scrollY > 50 guess.
+   */
   useEffect(() => {
-    const checkScroll = () => setIsScrolled(window.scrollY > 50);
-    window.addEventListener("scroll", checkScroll);
-    return () => window.removeEventListener("scroll", checkScroll);
-  }, []);
+    const sentinel = document.querySelector("[data-nav-sentinel]");
+    if (!sentinel) {
+      setOverDarkHero(false);
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      ([entry]) => setOverDarkHero(entry.isIntersecting),
+      { rootMargin: "-72px 0px 0px 0px", threshold: 0 },
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+    // Re-run per navigation: the sentinel belongs to the page, not the bar.
+  }, [pathname]);
 
   const handleNavigation = (path: string) => {
     router.push(path);
@@ -569,7 +590,7 @@ const Navbar = () => {
       : defaultUserImage;
   };
 
-  const showDarkStyle = darkHero && !isScrolled;
+  const showDarkStyle = overDarkHero;
 
   return (
     <>
