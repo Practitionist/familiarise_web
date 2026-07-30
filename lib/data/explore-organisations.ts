@@ -26,9 +26,23 @@ import {
 // components can import them without pulling prisma into the browser bundle.
 export * from "@/lib/explore/organisation-types";
 
+/**
+ * Which memberships count as "an expert of this org".
+ *
+ * Must stay identical to the roster query on the org detail page — the card's
+ * "N experts" is a promise about what you'll see after clicking through, so a
+ * looser predicate here means the count over-reports and the page looks broken.
+ * Deliberately keyed on the membership + profile state, never on
+ * `ConsultantProfile.isIndependent`, which is a derived cache that goes stale
+ * whenever memberships are written without recomputing it.
+ */
 const EXPERT_MEMBERSHIP_WHERE = {
   role: "EXPERT",
   status: "ACTIVE",
+  consultantProfile: {
+    verificationStatus: "VERIFIED",
+    deletedAt: null,
+  },
 } as const;
 
 /**
