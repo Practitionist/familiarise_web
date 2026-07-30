@@ -4,9 +4,12 @@ on:
   schedule:
     # Run hourly. The payment window is 24h (clamped to the session start), so
     # hourly granularity is ample — the slot is never held more than an hour
-    # past its deadline. Offset from the other trial job to avoid a thundering
-    # herd on the same connection pool.
-    - cron: "52 * * * *"
+    # past its deadline.
+    #
+    # Minute 40 is one of the few start-minutes not already taken by a recurring
+    # job; simultaneous starts stampede the Supavisor pool (#932), which is what
+    # scripts/ci/check-workflow-hygiene.ts guards against.
+    - cron: "40 * * * *"
   workflow_dispatch: # Allow manual triggering
 
 jobs:
