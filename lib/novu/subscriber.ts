@@ -13,6 +13,15 @@ interface SubscriberData {
   phone?: string;
   avatar?: string;
   locale?: string;
+  /**
+   * ADR 23 — `OrgWorkspaceProfile.notificationRoutingMode` for operators who
+   * own a workspace. Written onto subscriber data so the Novu workflow
+   * conditions can honour it, which is the same mechanism the category flags
+   * below use. Before this it was written by the UI, displayed back, and read
+   * by nothing: an operator who chose EMAIL_ONLY still got bell notifications
+   * and was told the setting had saved.
+   */
+  routingMode?: "BELL_AND_EMAIL" | "BELL_ONLY" | "EMAIL_ONLY" | "NEITHER";
 }
 
 /**
@@ -37,6 +46,17 @@ export async function syncSubscriber(data: SubscriberData): Promise<void> {
       phone: data.phone || undefined,
       avatar: data.avatar || undefined,
       locale: data.locale || "en",
+      data: {
+        routingMode: data.routingMode ?? "BELL_AND_EMAIL",
+        routingBell:
+          data.routingMode === "BELL_AND_EMAIL" ||
+          data.routingMode === "BELL_ONLY" ||
+          data.routingMode === undefined,
+        routingEmail:
+          data.routingMode === "BELL_AND_EMAIL" ||
+          data.routingMode === "EMAIL_ONLY" ||
+          data.routingMode === undefined,
+      },
     });
     console.log(`[Novu] Subscriber synced: ${data.userId}`);
   } catch (error) {
@@ -69,6 +89,10 @@ export async function updateSubscriberPreferences(
     trialNotifications?: boolean;
     subscriptionAlerts?: boolean;
     marketingEmails?: boolean;
+    // Org category preferences (ADR 23)
+    orgBillingAlerts?: boolean;
+    orgMembershipAlerts?: boolean;
+    orgProgramAlerts?: boolean;
   },
 ): Promise<void> {
   if (!isNovuConfigured()) return;
@@ -90,6 +114,10 @@ export async function updateSubscriberPreferences(
           categoryTrials: preferences.trialNotifications ?? true,
           categorySubscriptions: preferences.subscriptionAlerts ?? true,
           categoryMarketing: preferences.marketingEmails ?? false,
+          // ADR 23 — the ORG_* workflow family was unmutable before these.
+          categoryOrgBilling: preferences.orgBillingAlerts ?? true,
+          categoryOrgMembership: preferences.orgMembershipAlerts ?? true,
+          categoryOrgProgram: preferences.orgProgramAlerts ?? true,
         },
       },
       userId,

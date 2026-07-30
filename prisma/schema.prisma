@@ -497,6 +497,15 @@ model NotificationPreference {
   subscriptionAlerts   Boolean @default(true)
   marketingEmails      Boolean @default(false)
 
+  // Org category preferences (ADR 23). The seven categories above are all
+  // B2C-shaped, so the entire ORG_* workflow family was unmutable — an org
+  // OWNER could not turn off invoice dunning. Split three ways rather than one
+  // "org" switch because the audiences differ: an operator wants billing but
+  // not every roster change, an EXPERT wants delivery but no invoices at all.
+  orgBillingAlerts    Boolean @default(true) // invoices, wallet, payouts, overages
+  orgMembershipAlerts Boolean @default(true) // invites, roster + role changes
+  orgProgramAlerts    Boolean @default(true) // caps, exhaustion, renewals
+
   // Quiet hours
   quietHoursEnabled  Boolean @default(false)
   quietHoursStart    String? // "22:00" format in user timezone

@@ -12,6 +12,8 @@ import crypto from "crypto";
 import * as Sentry from "@sentry/nextjs";
 
 import { notifyAppointmentCancelled } from "@/lib/novu/service";
+import { notificationScope } from "@/lib/novu/workflows";
+import { notificationHref } from "@/lib/novu/resolve-href";
 import { createRefund } from "@/lib/payments";
 import prisma from "@/lib/prisma";
 
@@ -23,6 +25,8 @@ type NotificationPayload = {
 function buildCancellationNotification(params: {
   appointmentId: string;
   appointmentType: string;
+  /** ADR 23 — routes the notification to the dashboard owning the session. */
+  organizationId: string | null;
   consultantUser: { id: string; name: string | null } | null | undefined;
   participantIds: string[];
   planTitle: string;
@@ -46,7 +50,8 @@ function buildCancellationNotification(params: {
       consulteeName: params.consulteeName || "Participants",
       planTitle: params.planTitle,
       dateTime: params.dateTime,
-      dashboardUrl: "/dashboard",
+      ...notificationScope(params.organizationId),
+      dashboardUrl: notificationHref(params.organizationId, "appointments"),
       reason: "Scheduled platform maintenance",
       cancelledBy: "system",
     },
@@ -227,6 +232,7 @@ export async function freezeAppointments(
 
           const notif = buildCancellationNotification({
             appointmentId: appointment.id,
+            organizationId: appointment.organizationId,
             appointmentType: "CONSULTATION",
             consultantUser:
               consultation.consultationPlan?.consultantProfile?.user,
@@ -258,6 +264,7 @@ export async function freezeAppointments(
 
           const notif = buildCancellationNotification({
             appointmentId: appointment.id,
+            organizationId: appointment.organizationId,
             appointmentType: "SUBSCRIPTION",
             consultantUser:
               subscription.subscriptionPlan?.consultantProfile?.user,
@@ -286,6 +293,7 @@ export async function freezeAppointments(
           );
           const notif = buildCancellationNotification({
             appointmentId: appointment.id,
+            organizationId: appointment.organizationId,
             appointmentType: "WEBINAR",
             consultantUser: webinar.webinarPlan?.consultantProfile?.user,
             participantIds: webinarParticipantIds,
@@ -310,6 +318,7 @@ export async function freezeAppointments(
           );
           const notif = buildCancellationNotification({
             appointmentId: appointment.id,
+            organizationId: appointment.organizationId,
             appointmentType: "CLASS",
             consultantUser: classEvent.classPlan?.consultantProfile?.user,
             participantIds: classParticipantIds,
@@ -329,6 +338,7 @@ export async function freezeAppointments(
 
           const notif = buildCancellationNotification({
             appointmentId: appointment.id,
+            organizationId: appointment.organizationId,
             appointmentType: "TRIAL",
             consultantUser: trial.consultantProfile?.user,
             participantIds: trial.consulteeProfile?.user?.id

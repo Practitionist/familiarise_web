@@ -57,10 +57,14 @@ const MOBILE_TABS: {
     surface: "operations.read",
   },
   {
+    // No surface gate, matching the desktop entry (ADR 23). The Settings page
+    // floors at active membership and each tab carries its own gate, so an
+    // ordinary member reaches it for the Notifications tab and nothing else.
+    // Gating only the desktop sidebar would have left mobile LEARNER/EXPERT
+    // users with no route to their own notification preferences.
     label: "Settings",
     path: "settings",
     Icon: Settings,
-    surface: "settings.manage",
   },
 ];
 
@@ -73,6 +77,7 @@ import { DashboardContextBar } from "@/components/dashboard/DashboardContextBar"
 import { LinkPendingIcon } from "@/components/ui/NavLink";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { useSession } from "@/lib/auth-client";
+import { useNovuSubscriberSync } from "@/hooks/useNovuSubscriberSync";
 import { signOutEverywhere } from "@/lib/auth/sign-out";
 import { hasOrgPermission, type OrgSurface } from "@/lib/auth/org-permissions";
 import {
@@ -167,6 +172,12 @@ export default function OrgLayout({
   const pathname = usePathname();
   const router = useRouter();
   const { data: session, isPending: isSessionLoading } = useSession();
+
+  // ADR 23 — the personal dashboards did this and the org tree did not, so a
+  // user onboarded straight into an org by invite was never POSTed to
+  // /api/novu/subscriber. Their Novu record stayed bare and any template
+  // interpolating subscriber.firstName / email degraded.
+  useNovuSubscriberSync();
 
   const {
     data: org,
@@ -449,7 +460,12 @@ export default function OrgLayout({
         name: "Settings",
         icon: Settings,
         path: "settings",
-        show: can("settings.manage") || can("integrations.read"),
+        // Ungated as of ADR 23. The PAGE has always floored at active
+        // membership — each tab carries its own gate and UrlTabs renders
+        // nothing when none apply — but the nav entry demanded an operator
+        // grant, so a LEARNER or EXPERT could reach Settings only by typing the
+        // URL. That gap became user-visible once the member-level Notifications
+        // tab landed there. Non-operators now see Settings with that one tab.
       },
     ];
 

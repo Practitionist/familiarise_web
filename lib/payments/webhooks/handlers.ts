@@ -34,6 +34,8 @@ import {
   notifyPaymentFailed,
   notifyAppointmentBooked,
 } from "@/lib/novu";
+import { notificationScope } from "@/lib/novu/workflows";
+import { notificationHref } from "@/lib/novu/resolve-href";
 import {
   processQualifyingAction,
   processConsultantBookingReferral,
@@ -774,6 +776,10 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
     const appointmentForNotif = await prisma.appointment.findUnique({
       where: { id: appointmentId },
       select: {
+        // ADR 23 — the notification inherits the org-ness of the record that
+        // triggered it, so both payloads below can be attributed and routed.
+        organizationId: true,
+        organization: { select: { name: true } },
         consultation: {
           select: {
             consultationPlan: {
@@ -820,10 +826,19 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
       ? metadata.appointmentType
       : metadata.appointmentType || "Appointment";
 
-    const dashboardUrl = `${getAppUrl()}/dashboard`;
+    const orgId = appointmentForNotif?.organizationId ?? null;
+    const scope = notificationScope(
+      orgId,
+      appointmentForNotif?.organization?.name,
+    );
+    // Org-hosted → the org route, which is right for every recipient of the
+    // batched trigger below. B2C → the bare /dashboard router bounce, because
+    // consultant and consultee land in different personal trees.
+    const dashboardUrl = notificationHref(orgId, "appointments");
 
     // Notify consultee of successful payment
     void notifyPaymentSuccess(userId, {
+      ...scope,
       amount,
       currency,
       consultantName: consultantNameForNotif,
@@ -839,6 +854,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
     }
 
     void notifyAppointmentBooked(notifUserIds, {
+      ...scope,
       appointmentId,
       appointmentType: metadata.appointmentType,
       consultantName: consultantNameForNotif,

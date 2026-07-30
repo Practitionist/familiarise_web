@@ -38,6 +38,7 @@ import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { isActiveRoute } from "@/components/dashboard/route-active";
 import { LinkPendingIcon } from "@/components/ui/NavLink";
 import { OrganizationSwitcher } from "@/components/dashboard/OrganizationSwitcher";
+import { useNovuSubscriberSync } from "@/hooks/useNovuSubscriberSync";
 import { NotificationInbox } from "@/components/notifications/NotificationInbox";
 import { signOutEverywhere } from "@/lib/auth/sign-out";
 
@@ -85,6 +86,11 @@ export function OrgWorkspaceShell({
   userImage: string | null;
   children: React.ReactNode;
 }) {
+  // ADR 23 — see the org layout. This tree also carries a bell but never
+  // synced the subscriber behind it, and it is where the routing-mode
+  // preference is set, so the sync has to run here for that to take effect.
+  useNovuSubscriberSync();
+
   // usePathname() returns the URL-encoded path, while orgWorkspaceId (from
   // route params) is decoded — decode so basePath.slice + isActiveRoute compare
   // like-for-like even for ids that need encoding. `?? ""` guards a null path;

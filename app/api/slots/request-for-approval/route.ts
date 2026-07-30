@@ -4,7 +4,11 @@ import { AppointmentStatus } from "@prisma/client";
 import { lockSlotBooking, unlockSlotBooking } from "@/utils/appointmentlock";
 import { SlotLockError } from "@/utils/errors/SlotLockError";
 import { SlotValidationService } from "@/utils/slotAllocation/SlotValidationService";
-import { notifyNewBookingRequest } from "@/lib/novu";
+import {
+  notifyNewBookingRequest,
+} from "@/lib/novu";
+import { notificationScope } from "@/lib/novu/workflows";
+import { scopedHref } from "@/lib/novu/resolve-href";
 import { RequestForApprovalSchema } from "@/schemas/slots";
 import { requestApprovalLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { ensureConsulteeProfile } from "@/lib/profiles/ensure-consultee-profile";
@@ -230,15 +234,29 @@ export async function POST(req: NextRequest) {
         }),
       );
 
-      // Fire-and-forget: notify consultant of new booking request
+      // Fire-and-forget: notify consultant of new booking request.
+      //
+      // ADR 23 — the link used to hardcode the personal Requests page even for
+      // an org-hosted plan, where the request is not listed: the personal scope
+      // pins organizationId: null. Single recipient with a known side, so this
+      // resolves to a precise route rather than the /dashboard bounce.
+      const requestOrgId = consultation.appointment?.organizationId ?? null;
       void notifyNewBookingRequest(
         consultation.consultationPlan.consultantProfile.user.id,
         {
+          ...notificationScope(requestOrgId),
           consulteeName: consultation.requestedBy.user.name || "A consultee",
           planTitle: consultation.consultationPlan.title,
           appointmentType: "CONSULTATION",
           requestedDateTime: startTime.toISOString(),
-          dashboardUrl: `/dashboard/consultant/${consultation.consultationPlan.consultantProfile.id}/requests`,
+          dashboardUrl: scopedHref({
+            organizationId: requestOrgId,
+            surface: "requests",
+            personal: {
+              kind: "consultant",
+              profileId: consultation.consultationPlan.consultantProfile.id,
+            },
+          }),
         },
       );
 

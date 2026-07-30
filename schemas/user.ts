@@ -339,6 +339,12 @@ export const NotificationPreferenceSchema = z.object({
   subscriptionAlerts: z.boolean().default(true),
   marketingEmails: z.boolean().default(false),
 
+  // Org category preferences (ADR 23) — the categories above are all
+  // B2C-shaped, which left the ORG_* workflow family unmutable.
+  orgBillingAlerts: z.boolean().default(true),
+  orgMembershipAlerts: z.boolean().default(true),
+  orgProgramAlerts: z.boolean().default(true),
+
   // Quiet hours
   quietHoursEnabled: z.boolean().default(false),
   quietHoursStart: z.string().nullable().default(null),

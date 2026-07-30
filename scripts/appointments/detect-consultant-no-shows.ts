@@ -29,7 +29,8 @@ import {
   notifyAppointmentCancelled,
   notifyRefundProcessed,
 } from "../../lib/novu/service";
-import { getAppUrl } from "../../lib/url";
+import { notificationScope } from "../../lib/novu/workflows";
+import { notificationHref } from "../../lib/novu/resolve-href";
 import { refundPayment } from "@/lib/payments/operations/refund";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { CANCELLABLE_FROM } from "@/lib/booking/transitions";
@@ -247,11 +248,13 @@ function notifyNoShowParties(
     "Consultant";
   const consulteeName = consultation.requestedBy?.user?.name ?? "Consultee";
   const planTitle = consultation.consultationPlan?.title ?? "Consultation";
-  const dashboardUrl = `${getAppUrl()}/dashboard`;
+  const noShowOrgId = consultation.appointment?.organizationId ?? null;
+  const dashboardUrl = notificationHref(noShowOrgId, "appointments");
 
   void notifyAppointmentCancelled(
     [party.consultantUserId, party.consulteeUserId],
     {
+      ...notificationScope(noShowOrgId),
       appointmentId: party.appointmentId,
       appointmentType: "consultation",
       consultantName,
@@ -265,6 +268,7 @@ function notifyNoShowParties(
 
   if (refundedPaise > 0 && paidPayment) {
     void notifyRefundProcessed(party.consulteeUserId, {
+      ...notificationScope(noShowOrgId),
       amount: refundedPaise,
       currency: paidPayment.currency,
       reason: "consultant no-show",
