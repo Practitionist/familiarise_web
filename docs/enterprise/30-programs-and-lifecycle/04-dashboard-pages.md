@@ -63,7 +63,8 @@ The list below is the actual `page.tsx` set under
                                                   term-edit drawer (locked vs editable)
 /dashboard/organization/[orgId]/catalog        → org-OWNED webinar + class
                                                   plans; expert picker +
-                                                  visibility. canHost only.
+                                                  visibility; archive/restore
+                                                  (never deletes). canHost only.
 /dashboard/organization/[orgId]/programs       → programs + assignments;
                                                   config-lock-aware edit dialog
 /dashboard/organization/[orgId]/purchase-orders → PO list + 3-way match view

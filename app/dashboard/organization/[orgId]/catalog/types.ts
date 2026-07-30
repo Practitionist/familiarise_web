@@ -10,6 +10,7 @@ export interface CatalogRow {
   visibility: "PUBLIC" | "ORG_ONLY" | "ORG_AND_PUBLIC";
   maxParticipants: number;
   consultantProfileId: string | null;
+  archivedAt: string | null;
 }
 
 export interface CatalogResponse {

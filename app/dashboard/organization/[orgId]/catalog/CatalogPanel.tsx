@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import { Library, Trash2, Loader2 } from "lucide-react";
+import { Library, Archive, Undo2, Loader2 } from "lucide-react";
 
 import { EmptyState } from "@/components/dashboard/DataCard";
 import { Button } from "@/components/ui/button";
@@ -41,15 +41,15 @@ export function CatalogPanel({
   rows,
   isLoading,
   error,
-  onRemove,
-  isRemoving,
+  onToggleArchive,
+  isMutating,
 }: Readonly<{
   kind: Kind;
   rows: CatalogRow[];
   isLoading: boolean;
   error: unknown;
-  onRemove: (planId: string) => void;
-  isRemoving: boolean;
+  onToggleArchive: (planId: string, restore: boolean) => void;
+  isMutating: boolean;
 }>) {
   // Memoized so the array and its cell closures survive re-renders that do not
   // change the handler — previously reallocated on every call, twice per render.
@@ -80,20 +80,32 @@ export function CatalogPanel({
         key: "actions",
         header: "",
         hideOnCard: true,
-        cell: (r) => (
-          <Button
-            variant="ghost"
-            size="sm"
-            aria-label={`Remove ${r.title}`}
-            disabled={isRemoving}
-            onClick={() => onRemove(r.id)}
-          >
-            <Trash2 className="h-4 w-4" />
-          </Button>
-        ),
+        cell: (r) => {
+          const archived = r.archivedAt !== null;
+          return (
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-label={`${archived ? "Restore" : "Withdraw"} ${r.title}`}
+              title={
+                archived
+                  ? "Put back on sale"
+                  : "Withdraw from sale. Existing bookings are unaffected."
+              }
+              disabled={isMutating}
+              onClick={() => onToggleArchive(r.id, archived)}
+            >
+              {archived ? (
+                <Undo2 className="h-4 w-4" />
+              ) : (
+                <Archive className="h-4 w-4" />
+              )}
+            </Button>
+          );
+        },
       },
     ],
-    [onRemove, isRemoving],
+    [onToggleArchive, isMutating],
   );
 
   if (isLoading) {

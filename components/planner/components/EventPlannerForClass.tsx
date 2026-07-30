@@ -307,6 +307,8 @@ export function EventPlannerForClass({
           consultantProfileId: consultantId,
           consultantProfile: null,
           organizationId,
+          // A plan is created live; archiving is a later, explicit act.
+          archivedAt: null,
           // #726 — personal plans default to PUBLIC. Org-owned plans default to
           // ORG_AND_PUBLIC per the enum's own doc comment, and the catalog form
           // renders the toggle that narrows them to ORG_ONLY.

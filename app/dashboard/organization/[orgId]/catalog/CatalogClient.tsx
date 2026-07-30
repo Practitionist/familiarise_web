@@ -23,7 +23,7 @@ import { EventPlannerForWebinar } from "@/components/planner/components/EventPla
 import { EventPlannerForClass } from "@/components/planner/components/EventPlannerForClass";
 import type { WebinarEvent, ClassEvent } from "@/types/planner-events";
 import { CatalogPanel } from "./CatalogPanel";
-import type { CatalogResponse, Kind } from "./types";
+import type { CatalogRow, CatalogResponse, Kind } from "./types";
 
 interface Expert {
   consultantProfileId: string;
@@ -46,7 +46,11 @@ export function CatalogClient({
   const { data, isLoading, error } = useQuery<CatalogResponse>({
     queryKey,
     queryFn: async () => {
-      const res = await fetch(`/api/organizations/${orgId}/catalog`);
+      // One fetch drives both views; the client partitions on archivedAt so
+      // restoring does not need a second round trip.
+      const res = await fetch(
+        `/api/organizations/${orgId}/catalog?includeArchived=true`,
+      );
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error ?? "Failed to load the catalog");
@@ -81,26 +85,42 @@ export function CatalogClient({
       }),
   });
 
-  const removePlan = useMutation({
-    mutationFn: async ({ kind, planId }: { kind: Kind; planId: string }) => {
-      const res = await fetch(`/api/organizations/${orgId}/catalog`, {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ kind, planIds: [planId] }),
-      });
+  const setArchived = useMutation({
+    mutationFn: async ({
+      kind,
+      planId,
+      restore,
+    }: {
+      kind: Kind;
+      planId: string;
+      restore: boolean;
+    }) => {
+      const res = await fetch(
+        `/api/organizations/${orgId}/catalog${restore ? "?restore=true" : ""}`,
+        {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ kind, planIds: [planId] }),
+        },
+      );
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error(body.message ?? body.error ?? "Could not remove");
+        throw new Error(body.message ?? body.error ?? "Could not update");
       }
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (_data, vars) => {
       void queryClient.invalidateQueries({ queryKey });
-      toast({ title: "Removed from the catalog" });
+      toast({
+        title: vars.restore ? "Back on sale" : "Withdrawn from the catalog",
+        description: vars.restore
+          ? undefined
+          : "Existing bookings and their records are unaffected.",
+      });
     },
     onError: (e: Error) =>
       toast({
-        title: "Could not remove",
+        title: "Could not update",
         description: e.message,
         variant: "destructive",
       }),
@@ -108,14 +128,16 @@ export function CatalogClient({
 
   // Stable per-kind callbacks so CatalogPanel's memoized columns are not
   // invalidated on every parent render — which would undo the point of the
-  // split. `removePlan.mutate` is referentially stable across renders.
-  const removeWebinar = useCallback(
-    (planId: string) => removePlan.mutate({ kind: "WEBINAR", planId }),
-    [removePlan],
+  // split. `setArchived.mutate` is referentially stable across renders.
+  const archiveWebinar = useCallback(
+    (planId: string, restore: boolean) =>
+      setArchived.mutate({ kind: "WEBINAR", planId, restore }),
+    [setArchived],
   );
-  const removeClass = useCallback(
-    (planId: string) => removePlan.mutate({ kind: "CLASS", planId }),
-    [removePlan],
+  const archiveClass = useCallback(
+    (planId: string, restore: boolean) =>
+      setArchived.mutate({ kind: "CLASS", planId, restore }),
+    [setArchived],
   );
 
   // The shared planner forms hand back a full plan object; the catalog endpoint
@@ -165,6 +187,17 @@ export function CatalogClient({
       });
     },
     [createPlan, expertId],
+  );
+
+  // The fetch asks for everything; the split happens here so restoring a plan
+  // does not need a second round trip.
+  const live = (rows: CatalogRow[] | undefined) =>
+    (rows ?? []).filter((r) => r.archivedAt === null);
+  const archivedWebinars = (data?.webinars ?? []).filter(
+    (r) => r.archivedAt !== null,
+  );
+  const archivedClasses = (data?.classes ?? []).filter(
+    (r) => r.archivedAt !== null,
   );
 
   // No experts, nothing to publish — an org plan needs somebody to deliver it,
@@ -235,11 +268,11 @@ export function CatalogClient({
                   content: (
                     <CatalogPanel
                       kind="WEBINAR"
-                      rows={data?.webinars ?? []}
+                      rows={live(data?.webinars)}
                       isLoading={isLoading}
                       error={error}
-                      onRemove={removeWebinar}
-                      isRemoving={removePlan.isPending}
+                      onToggleArchive={archiveWebinar}
+                      isMutating={setArchived.isPending}
                     />
                   ),
                 },
@@ -249,14 +282,54 @@ export function CatalogClient({
                   content: (
                     <CatalogPanel
                       kind="CLASS"
-                      rows={data?.classes ?? []}
+                      rows={live(data?.classes)}
                       isLoading={isLoading}
                       error={error}
-                      onRemove={removeClass}
-                      isRemoving={removePlan.isPending}
+                      onToggleArchive={archiveClass}
+                      isMutating={setArchived.isPending}
                     />
                   ),
                 },
+                // Withdrawn plans keep their own view rather than a filter
+                // toggle: it answers a different question ("what did we stop
+                // selling") and keeps the two live tabs uncluttered. Hidden
+                // entirely until something has been withdrawn.
+                ...(archivedWebinars.length > 0
+                  ? [
+                      {
+                        value: "archived-webinars",
+                        label: `Archived webinars (${archivedWebinars.length})`,
+                        content: (
+                          <CatalogPanel
+                            kind="WEBINAR"
+                            rows={archivedWebinars}
+                            isLoading={isLoading}
+                            error={error}
+                            onToggleArchive={archiveWebinar}
+                            isMutating={setArchived.isPending}
+                          />
+                        ),
+                      },
+                    ]
+                  : []),
+                ...(archivedClasses.length > 0
+                  ? [
+                      {
+                        value: "archived-classes",
+                        label: `Archived classes (${archivedClasses.length})`,
+                        content: (
+                          <CatalogPanel
+                            kind="CLASS"
+                            rows={archivedClasses}
+                            isLoading={isLoading}
+                            error={error}
+                            onToggleArchive={archiveClass}
+                            isMutating={setArchived.isPending}
+                          />
+                        ),
+                      },
+                    ]
+                  : []),
               ]}
             />
           </>
