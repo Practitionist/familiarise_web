@@ -47,14 +47,26 @@ export function useConsultantEventActions({
     }
   };
 
-  const handleReschedule = async (slotIds?: string[]) => {
+  /**
+   * Release sessions, optionally naming the times to replace them with.
+   *
+   * A consultant proposal never auto-confirms — publishing availability is
+   * standing consent to be booked inside it, but merely being free is not
+   * consent to be moved — so these times are always an offer to the consultee.
+   * Resolves true only when the release landed, which is what lets the
+   * reschedule page navigate on success and stay put on failure.
+   */
+  const handleReschedule = async (
+    slotIds?: string[],
+    proposedSlots?: { startsAt: string; endsAt: string }[],
+  ): Promise<boolean> => {
     if (!appointmentId) {
       toast({
         title: "Error",
         description: "Appointment ID is missing",
         variant: "destructive",
       });
-      return;
+      return false;
     }
 
     setIsLoading(true);
@@ -64,13 +76,16 @@ export function useConsultantEventActions({
           ? `/api/appointments/${appointmentId}/reschedule?type=SUBSCRIPTION`
           : `/api/appointments/${appointmentId}/reschedule`;
 
+      const payload: Record<string, unknown> = {};
+      if (slotIds && slotIds.length > 0) payload.slotIds = slotIds;
+      if (proposedSlots?.length) payload.proposedSlots = proposedSlots;
+
       const response = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body:
-          slotIds && slotIds.length > 0
-            ? JSON.stringify({ slotIds })
-            : undefined,
+        body: Object.keys(payload).length
+          ? JSON.stringify(payload)
+          : undefined,
       });
 
       const data = await response.json();
@@ -81,15 +96,24 @@ export function useConsultantEventActions({
       const sessionsAffected =
         data.sessionsAffected ?? data.slotsAffected ?? slotIds?.length ?? 1;
 
-      toast({
-        title: "Ready to reschedule",
-        description:
-          sessionsAffected === 1
-            ? "Select a new time for this session."
-            : `Select new times for ${sessionsAffected} sessions.`,
-      });
+      toast(
+        proposedSlots?.length
+          ? {
+              title: "Times proposed",
+              description:
+                "The consultee has been asked to accept the new time.",
+            }
+          : {
+              title: "Ready to reschedule",
+              description:
+                sessionsAffected === 1
+                  ? "Select a new time for this session."
+                  : `Select new times for ${sessionsAffected} sessions.`,
+            },
+      );
 
       invalidateBookingData();
+      return true;
     } catch (error) {
       Sentry.captureException(
         error instanceof Error ? error : new Error(String(error)),
@@ -103,6 +127,7 @@ export function useConsultantEventActions({
             : "Failed to request reschedule",
         variant: "destructive",
       });
+      return false;
     } finally {
       setIsLoading(false);
     }

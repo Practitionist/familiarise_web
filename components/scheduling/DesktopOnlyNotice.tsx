@@ -1,19 +1,41 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import { Monitor } from "lucide-react";
 
 /**
  * Gate for surfaces that genuinely need a wide viewport — the slot heatmap is
  * seven day-columns of 30-minute rows, which does not survive a phone.
  *
- * CSS-only on purpose. Detecting the viewport in JS would either render the
- * wrong branch on the server and correct it after hydration (a visible flash,
- * and a hydration mismatch), or force the whole page to be client-only. Two
- * siblings and a Tailwind breakpoint have neither problem: the browser picks
- * before first paint and there is nothing to reconcile.
+ * Two gates, deliberately, because they answer different questions.
+ *
+ * CSS decides what is VISIBLE. Detecting the viewport in JS to pick the branch
+ * would either render the wrong one on the server and correct it after
+ * hydration (a visible flash, and a mismatch), or force the whole page to be
+ * client-only. Two siblings and a Tailwind breakpoint have neither problem.
+ *
+ * JS decides what is MOUNTED, which CSS cannot: `hidden` still mounts its
+ * subtree, so the calendar ran its availability fetch on phones for a grid
+ * nobody could see. `isDesktop` starts false so the server and the first
+ * client render agree; the children mount one effect later, and the calendar
+ * has a loading state for exactly that gap.
  */
 export function DesktopOnlyNotice({
   children,
   className,
 }: Readonly<{ children: React.ReactNode; className?: string }>) {
+  const [isDesktop, setIsDesktop] = useState(false);
+
+  useEffect(() => {
+    // Tailwind's `lg`. Kept in sync by hand: a media query string cannot read
+    // the theme, and the alternative is measuring on every resize.
+    const query = window.matchMedia("(min-width: 1024px)");
+    const sync = () => setIsDesktop(query.matches);
+    sync();
+    query.addEventListener("change", sync);
+    return () => query.removeEventListener("change", sync);
+  }, []);
+
   return (
     <>
       <div className="lg:hidden flex flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-border px-6 py-16 text-center">
@@ -27,7 +49,11 @@ export function DesktopOnlyNotice({
         </p>
       </div>
 
-      <div className={`hidden lg:block ${className ?? ""}`}>{children}</div>
+      {/* Flex, not block: the calendar sizes itself with `flex-1`, which needs
+          a flex parent to fill. */}
+      <div className={`hidden lg:flex lg:flex-col ${className ?? ""}`}>
+        {isDesktop ? children : null}
+      </div>
     </>
   );
 }

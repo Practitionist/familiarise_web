@@ -29,17 +29,11 @@ import type {
   SlotLike,
 } from "@/lib/appointments/view-model";
 import { useEventActions } from "@/components/appointments/consultee/useEventActions";
-import { RescheduleSessionsModal } from "@/components/appointments/consultee/RescheduleSessionsModal";
-import { useSession } from "@/lib/auth-client";
 import { CancelConfirmationDialog } from "@/components/appointments/consultee/CancelConfirmationDialog";
 import { ReportIssueDialog } from "@/components/appointments/consultee/ReportIssueDialog";
 import { DocumentUpload } from "@/components/appointments/DocumentUpload";
 
-type DialogKind =
-  | "cancel"
-  | "reschedule-multi"
-  | "report"
-  | "documents";
+type DialogKind = "cancel" | "report" | "documents";
 
 const KIND_TO_TYPE: Record<
   AppointmentVM["kind"],
@@ -70,10 +64,6 @@ export function useConsulteeAppointmentsAdapter(): AppointmentActionAdapter {
   const client = useStreamVideoClient();
   const params = useParams<{ consulteeId: string }>();
   const consulteeId = params?.consulteeId;
-  // The viewer's USER id (not the consultee-profile id in the route) — the
-  // availability grid keys occupancy off slot participation, and the route's
-  // `isSelf` gate compares against session.user.id.
-  const { data: session } = useSession();
 
   // ONE set of dialogs, keyed off the row that opened them.
   const [activeVm, setActiveVm] = useState<AppointmentVM | null>(null);
@@ -189,6 +179,9 @@ export function useConsulteeAppointmentsAdapter(): AppointmentActionAdapter {
 
     if (
       vm.appointmentId &&
+      // The reschedule page lives under this route's consultee; off that route
+      // there is no id to send them to.
+      consulteeId &&
       !inactive &&
       !tentative &&
       isApprovedStatus(vm.status) &&
@@ -201,12 +194,12 @@ export function useConsulteeAppointmentsAdapter(): AppointmentActionAdapter {
       items.push({
         key: "reschedule",
         label: "Reschedule",
+        // A page, not a dialog: choosing a time is a full-width task, and a
+        // URL means a half-finished choice survives a refresh.
         onClick: () =>
-          // One surface for every reschedule. The modal skips its
-          // session-picker step when there is only one session, so a
-          // consultation opens straight on "pick a new time" — a second dialog
-          // for the same action is how the four planner dialogs started.
-          openDialog(vm, "reschedule-multi"),
+          router.push(
+            `/dashboard/consultee/${consulteeId}/appointments/${vm.appointmentId}/reschedule`,
+          ),
       });
     }
     if (vm.appointmentId && !inactive) {
@@ -277,24 +270,6 @@ export function useConsulteeAppointmentsAdapter(): AppointmentActionAdapter {
           appointmentType={typeLabel}
           isLoading={actions.isLoading}
           isPendingPayment={isPendingPayment}
-        />
-
-        <RescheduleSessionsModal
-          open={dialog === "reschedule-multi"}
-          onOpenChange={(open) => !open && closeDialog()}
-          typeLabel={typeLabel}
-          rawSlots={activeVm.raw.rawSlots ?? []}
-          isLoading={actions.isLoading}
-          consultantProfileId={activeVm.consultantProfileId}
-          consulteeUserId={session?.user?.id}
-          sessionDurationInHours={
-            activeVm.raw.appointment?.subscription?.subscriptionPlan
-              ?.sessionDurationInHours ?? undefined
-          }
-          onConfirm={({ slotIds, proposedSlots }) => {
-            closeDialog();
-            void actions.handleReschedule(slotIds, proposedSlots);
-          }}
         />
 
         {activeVm.appointmentId && dialog === "report" && (

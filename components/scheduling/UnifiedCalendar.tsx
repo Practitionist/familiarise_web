@@ -539,7 +539,7 @@ export function UnifiedCalendar({
   // re-renders.
   //
   // The callback is held in a ref and kept out of the dependency array on
-  // purpose. RescheduleSessionsModal passes an inline arrow, so depending on
+  // purpose. SlotPicker passes an inline arrow, so depending on
   // it meant a new identity every render: effect fires, parent setState,
   // re-render, new identity, fire again, forever — React error #185. Nothing
   // caught it because "select" is the consultee picker's mode and the picker

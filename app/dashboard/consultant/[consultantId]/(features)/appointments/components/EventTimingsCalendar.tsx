@@ -9,9 +9,19 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useParams } from "next/navigation";
-import { SafeUnifiedCalendar } from "@/components/scheduling/SafeUnifiedCalendar";
+import { SlotPicker } from "@/components/scheduling/SlotPicker";
+import { manageTimingsPolicy } from "@/components/scheduling/slot-picker-policy";
 import type { UnscheduledAppointment } from "../utils/unscheduledAppointments";
 import { getClassPlanDefaults, type ClassPlanType } from "@/utils/classPlans";
+
+/**
+ * The consultant setting the times of their own event instance — the fourth
+ * caller of the shared slot-picker surface, and the one that already handled
+ * all four offering types and clamped to the scheduling period, so it is what
+ * `SlotPicker` was generalised FROM. It stays a dialog (nothing here is
+ * per-appointment enough to deserve a URL) and everything below the header is
+ * now the shared component under the MANAGE_TIMINGS policy.
+ */
 
 interface EventDetails {
   eventType: "consultation" | "subscription" | "webinar" | "class";
@@ -23,6 +33,27 @@ interface EventDetails {
   totalSessions?: number;
   title: string;
   planType?: ClassPlanType;
+}
+
+/** Only the recurring types carry a scheduling period to clamp to. */
+function getSchedulingPeriod(appointment: UnscheduledAppointment): {
+  start?: Date;
+  end?: Date;
+} {
+  const event =
+    appointment.appointmentType === "SUBSCRIPTION"
+      ? appointment.subscription
+      : appointment.appointmentType === "CLASS"
+        ? appointment.class
+        : null;
+  return {
+    start: event?.schedulingPeriodStartsAt
+      ? new Date(event.schedulingPeriodStartsAt)
+      : undefined,
+    end: event?.schedulingPeriodEndsAt
+      ? new Date(event.schedulingPeriodEndsAt)
+      : undefined,
+  };
 }
 
 interface EventTimingsCalendarProps {
@@ -115,14 +146,7 @@ export function EventTimingsCalendar({
   };
 
   const eventDetails = getEventDetails(appointment);
-
-  // Removed debug validation logging - production code uses validation directly in calendar
-
-  // Removed debug logging - production code validates dates server-side
-
-  const handleAllocationComplete = () => {
-    onClose();
-  };
+  const schedulingPeriod = getSchedulingPeriod(appointment);
 
   const appendProgressText = (
     baseText: string,
@@ -203,53 +227,34 @@ export function EventTimingsCalendar({
           </div>
         )}
 
-        <SafeUnifiedCalendar
-          consultantId={consultantId}
-          eventType={eventDetails.eventType}
-          eventId={eventDetails.eventId}
-          durationInMonths={eventDetails.durationInMonths}
-          sessionsPerWeek={eventDetails.sessionsPerWeek}
-          durationInHours={
-            eventDetails.eventType === "webinar" ||
-            eventDetails.eventType === "consultation"
-              ? eventDetails.durationInHours
-              : undefined
-          }
-          sessionDurationInHours={
-            eventDetails.eventType === "subscription" ||
-            eventDetails.eventType === "class"
-              ? eventDetails.durationInHours
-              : undefined
-          }
-          totalSessions={eventDetails.totalSessions}
-          mode="allocate"
-          onAllocationComplete={handleAllocationComplete}
-          onClose={onClose}
-          showAllocationButtons={true}
+        <SlotPicker
           className="min-h-0 flex-1"
-          // UI guard rails: restrict selection window based on validation period
-          allowedStart={
-            appointment.appointmentType === "SUBSCRIPTION"
-              ? appointment.subscription?.schedulingPeriodStartsAt
-                ? new Date(appointment.subscription.schedulingPeriodStartsAt)
-                : undefined
-              : appointment.appointmentType === "CLASS"
-                ? appointment.class?.schedulingPeriodStartsAt
-                  ? new Date(appointment.class.schedulingPeriodStartsAt)
-                  : undefined
-                : undefined
-          }
-          allowedEnd={
-            appointment.appointmentType === "SUBSCRIPTION"
-              ? appointment.subscription?.schedulingPeriodEndsAt
-                ? new Date(appointment.subscription.schedulingPeriodEndsAt)
-                : undefined
-              : appointment.appointmentType === "CLASS"
-                ? appointment.class?.schedulingPeriodEndsAt
-                  ? new Date(appointment.class.schedulingPeriodEndsAt)
-                  : undefined
-                : undefined
-          }
+          policy={manageTimingsPolicy({ onSubmit: onClose })}
+          onCancel={onClose}
+          subject={{
+            consultantProfileId: consultantId,
+            eventType: eventDetails.eventType,
+            eventId: eventDetails.eventId,
+            durationInMonths: eventDetails.durationInMonths,
+            sessionsPerWeek: eventDetails.sessionsPerWeek,
+            // One duration field, two meanings: a consultation or webinar has
+            // a single session of this length, a subscription or class has
+            // many of it.
+            durationInHours:
+              eventDetails.eventType === "webinar" ||
+              eventDetails.eventType === "consultation"
+                ? eventDetails.durationInHours
+                : undefined,
+            sessionDurationInHours:
+              eventDetails.eventType === "subscription" ||
+              eventDetails.eventType === "class"
+                ? eventDetails.durationInHours
+                : undefined,
+            totalSessions: eventDetails.totalSessions,
+            // Guard rails: keep selection inside the plan's scheduling period.
+            allowedStart: schedulingPeriod.start,
+            allowedEnd: schedulingPeriod.end,
+          }}
         />
       </DialogContent>
     </Dialog>

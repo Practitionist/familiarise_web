@@ -9,13 +9,6 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import {
-  ResponsiveModal,
-  ResponsiveModalContent,
-  ResponsiveModalDescription,
-  ResponsiveModalHeader,
-  ResponsiveModalTitle,
-} from "@/components/ui/responsive-modal";
-import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
@@ -27,12 +20,10 @@ import {
   CheckCircle2,
   RefreshCw,
 } from "lucide-react";
-import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { RequestedSlotsDialog } from "./components/RequestedSlotsDialog";
 import { PaymentRequiredBadge } from "./components/PaymentRequiredBadge";
-import { SafeUnifiedCalendar } from "@/components/scheduling/SafeUnifiedCalendar";
 import {
   ConsultationApiResponse,
   RequestedBy,
@@ -399,18 +390,18 @@ export function RequestSlotAllocationTab({
   orgScope = "personal",
 }: RequestSlotAllocationTabProps) {
   const params = useParams();
-  // Only the consultant tree has this param, and the dedicated allocate page
-  // lives inside that tree behind a personal-profile check — so an org admin
-  // viewing someone else's requests must not be offered a link that 403s.
+  const router = useRouter();
   const routeConsultantId = params.consultantId as string | undefined;
+  // The allocate page lives in the consultant tree behind a personal-profile
+  // check, and this id passes it on both mount points: the consultant route
+  // supplies its own, and the org route supplies the VIEWER's own consultant
+  // profile (allocation is a delivery act — only the deliverer allocates).
   const consultantId = consultantProfileId ?? (routeConsultantId as string);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [requests, setRequests] = useState<Request[]>([]);
   /** When the rows on screen were last successfully read. */
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  const [selectedRequest, setSelectedRequest] = useState<Request | null>(null);
-  const [dialogOpen, setDialogOpen] = useState(false);
   const [requestedSlotsDialogOpen, setRequestedSlotsDialogOpen] =
     useState(false);
   const [selectedRequestForDialog, setSelectedRequestForDialog] =
@@ -649,8 +640,6 @@ export function RequestSlotAllocationTab({
   const handleConflict = useCallback(
     (requestId?: string) => {
       toast(allocatedElsewhere());
-      setDialogOpen(false);
-      setSelectedRequest(null);
       setRequestedSlotsDialogOpen(false);
       setSelectedRequestForDialog(null);
       if (requestId) {
@@ -771,25 +760,6 @@ export function RequestSlotAllocationTab({
         variant: "destructive",
       });
     }
-  };
-
-  // Handle allocation complete from UnifiedCalendar
-  const handleAllocationComplete = async () => {
-    toast({
-      title: "Schedule confirmed",
-      description: "All session times have been scheduled.",
-      variant: "default",
-    });
-
-    // Close dialog and reset state
-    setDialogOpen(false);
-    setSelectedRequest(null);
-
-    // Remove request from list
-    setRequests((prev) => prev.filter((r) => r.id !== selectedRequest?.id));
-
-    // Notify parent
-    onUpdate();
   };
 
   // No heading here: both mount points already render a "Requests" page header,
@@ -954,13 +924,17 @@ export function RequestSlotAllocationTab({
               </p>
             ) : (
               <>
+                {/* A page, not a dialog: placing N sessions across a
+                    scheduling period under per-day and per-week caps needs
+                    the width, and a URL the notification can link to. */}
                 <Button
                   size="sm"
                   className="w-full"
-                  onClick={() => {
-                    setSelectedRequest(request);
-                    setDialogOpen(true);
-                  }}
+                  onClick={() =>
+                    router.push(
+                      `/dashboard/consultant/${consultantId}/requests/${request.id}/allocate?type=${request.type.toLowerCase()}`,
+                    )
+                  }
                 >
                   Allocate Slots
                 </Button>
@@ -985,23 +959,6 @@ export function RequestSlotAllocationTab({
                     </Button>
                   )}
               </>
-            )}
-            {/* Preview of the full-width allocation surface that replaces this
-                dialog next. Read-only, so it sits beside the real actions
-                rather than competing with them. */}
-            {routeConsultantId && (
-              <Button
-                asChild
-                variant="ghost"
-                size="sm"
-                className="w-full text-muted-foreground"
-              >
-                <Link
-                  href={`/dashboard/consultant/${routeConsultantId}/requests/${request.id}/allocate?type=${request.type.toLowerCase()}`}
-                >
-                  Open as page
-                </Link>
-              </Button>
             )}
             {/* Quiet by design: declining is the rarer branch, and nothing is
                 destroyed until the request is actually rejected. */}
@@ -1074,105 +1031,6 @@ export function RequestSlotAllocationTab({
             breakpoint="lg"
           />
         )}
-
-        {/* Single Allocation Dialog - moved outside map loop to prevent multiple dialogs */}
-        <ResponsiveModal open={dialogOpen} onOpenChange={setDialogOpen}>
-          <ResponsiveModalContent className="max-w-[95vw] w-full lg:max-w-[1400px] max-h-[90dvh] overflow-hidden flex flex-col">
-            <ResponsiveModalHeader className="shrink-0">
-              <ResponsiveModalTitle>Allocate Slots</ResponsiveModalTitle>
-              <ResponsiveModalDescription asChild>
-                {selectedRequest && (
-                  <div className="space-y-1 text-sm text-muted-foreground">
-                    <p>
-                      Choose {selectedRequest.requiredSlots} slots for{" "}
-                      {selectedRequest.type.toLowerCase()}
-                    </p>
-                    {selectedRequest.type === "SUBSCRIPTION" &&
-                      selectedRequest.sessionDurationInHours && (
-                        <p className="text-xs">
-                          Each call is{" "}
-                          {selectedRequest.sessionDurationInHours === 1
-                            ? "1 hour"
-                            : `${selectedRequest.sessionDurationInHours} hours`}{" "}
-                          (
-                          {Math.ceil(
-                            selectedRequest.sessionDurationInHours / 0.5,
-                          )}{" "}
-                          consecutive slots per call)
-                        </p>
-                      )}
-                    {selectedRequest.type === "CONSULTATION" &&
-                      selectedRequest.durationInHours && (
-                        <p className="text-xs">
-                          Consultation is{" "}
-                          {selectedRequest.durationInHours === 1
-                            ? "1 hour"
-                            : `${selectedRequest.durationInHours} hours`}{" "}
-                          ({Math.ceil(selectedRequest.durationInHours / 0.5)}{" "}
-                          consecutive slots)
-                        </p>
-                      )}
-                    {selectedRequest.startDate && selectedRequest.endDate && (
-                      <p className="text-xs text-muted-foreground">
-                        Scheduling period:{" "}
-                        {selectedRequest.startDate.toLocaleDateString()} -{" "}
-                        {selectedRequest.endDate.toLocaleDateString()}
-                      </p>
-                    )}
-                  </div>
-                )}
-              </ResponsiveModalDescription>
-            </ResponsiveModalHeader>
-            {selectedRequest && (
-              <SafeUnifiedCalendar
-                className="min-h-0 flex-1"
-                consultantId={consultantId}
-                eventType={
-                  selectedRequest.type.toLowerCase() as
-                    | "consultation"
-                    | "subscription"
-                }
-                eventId={selectedRequest.id}
-                consulteeUserId={selectedRequest.requestedBy?.user?.id}
-                mode="allocate"
-                onAllocationComplete={handleAllocationComplete}
-                onAllocationConflict={() => handleConflict(selectedRequest.id)}
-                initialAllocation={
-                  (selectedRequest.tentativeSlotCount ?? 0) === 0
-                }
-                showAllocationButtons={true}
-                durationInMonths={
-                  selectedRequest.type === "SUBSCRIPTION"
-                    ? selectedRequest.durationInMonths
-                    : undefined
-                }
-                durationInHours={
-                  selectedRequest.type === "CONSULTATION"
-                    ? selectedRequest.durationInHours
-                    : undefined
-                }
-                sessionsPerWeek={
-                  selectedRequest.type === "SUBSCRIPTION"
-                    ? selectedRequest.sessionsPerWeek
-                    : undefined
-                }
-                sessionDurationInHours={
-                  selectedRequest.type === "SUBSCRIPTION"
-                    ? selectedRequest.sessionDurationInHours
-                    : undefined
-                }
-                allowedStart={selectedRequest.startDate}
-                allowedEnd={selectedRequest.endDate}
-                schedulingTimezone={selectedRequest.schedulingTimezone}
-                totalSessions={
-                  selectedRequest.type === "SUBSCRIPTION"
-                    ? selectedRequest.totalSessions
-                    : undefined
-                }
-              />
-            )}
-          </ResponsiveModalContent>
-        </ResponsiveModal>
 
         <RequestedSlotsDialog
           open={requestedSlotsDialogOpen}

@@ -2,7 +2,6 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { CalendarClock, Loader2 } from "lucide-react";
 import type {
   AppointmentActionAdapter,
   OverflowItem,
@@ -38,29 +37,14 @@ import {
 import { EventTimingsCalendar } from "./components/EventTimingsCalendar";
 import { useConsultantEventActions } from "./components/useConsultantEventActions";
 import { CancelConfirmationDialog } from "@/components/appointments/consultee/CancelConfirmationDialog";
-import { RescheduleSessionsModal } from "@/components/appointments/consultee/RescheduleSessionsModal";
 import { ConsultantResponseUpload } from "../documents/ConsultantResponseUpload";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 
 interface TimingsTarget {
   appointment: TAppointment | UnscheduledAppointment;
   groupProgress: { completedSessions: number; totalSessions: number } | null;
 }
 
-type DialogKind =
-  | "cancel"
-  | "reschedule-single"
-  | "reschedule-multi"
-  | "documents";
+type DialogKind = "cancel" | "documents";
 
 const TYPE_LABEL: Record<AppointmentVM["kind"], string> = {
   CONSULTATION: "Consultation",
@@ -285,8 +269,13 @@ export function useConsultantAppointmentsAdapter(
       items.push({
         key: "reschedule",
         label: "Reschedule",
+        // The consultant's OWN reschedule route. This surface used to mount
+        // the consultee's dialog, which has no equivalent page a consultant
+        // may open: that route's consultee ownership check would 403 them.
         onClick: () =>
-          openDialog(vm, vm.group ? "reschedule-multi" : "reschedule-single"),
+          router.push(
+            `/dashboard/consultant/${consultantId}/appointments/${vm.appointmentId}/reschedule`,
+          ),
       });
     }
 
@@ -355,69 +344,6 @@ export function useConsultantAppointmentsAdapter(
             appointmentType={typeLabel}
             isLoading={actions.isLoading}
           />
-
-          <RescheduleSessionsModal
-            open={dialog === "reschedule-multi"}
-            onOpenChange={(open) => !open && closeDialog()}
-            typeLabel={typeLabel}
-            rawSlots={rawSlots}
-            isLoading={actions.isLoading}
-            // No proposal step here: a consultant-initiated proposal never
-            // auto-confirms, and this surface already carries the full
-            // allocation calendar for picking replacement times directly.
-            onConfirm={({ slotIds }) => {
-              closeDialog();
-              void actions.handleReschedule(slotIds);
-            }}
-          />
-
-          <AlertDialog
-            open={dialog === "reschedule-single"}
-            onOpenChange={(open) => !open && closeDialog()}
-          >
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle className="flex items-center gap-2">
-                  <CalendarClock className="h-5 w-5 text-muted-foreground" />
-                  Reschedule {typeLabel}?
-                </AlertDialogTitle>
-                <AlertDialogDescription asChild>
-                  <div className="space-y-2">
-                    <p>
-                      Are you sure you want to reschedule{" "}
-                      <strong>&quot;{activeVm.title}&quot;</strong> with{" "}
-                      <strong>{activeVm.counterpart.name}</strong>?
-                    </p>
-                    <p className="text-muted-foreground">
-                      The current time slot will be released and the{" "}
-                      {typeLabel.toLowerCase()} status will revert to{" "}
-                      <strong>Pending</strong> until a new time is allocated.
-                    </p>
-                  </div>
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel disabled={actions.isLoading}>
-                  Keep Current Time
-                </AlertDialogCancel>
-                <AlertDialogAction
-                  onClick={() => {
-                    closeDialog();
-                    void actions.handleReschedule();
-                  }}
-                  disabled={actions.isLoading}
-                  className="bg-primary text-primary-foreground hover:bg-primary/90"
-                >
-                  {actions.isLoading ? (
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  ) : (
-                    <CalendarClock className="mr-2 h-4 w-4" />
-                  )}
-                  Reschedule
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
 
           {activeVm.appointmentId && dialog === "documents" && (
             <ConsultantResponseUpload
