@@ -417,11 +417,19 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
         failedAt: new Date(),
       },
     });
-    throw new RefundGatewayError(
+    const declineErr = new RefundGatewayError(
       `Gateway declined refund for payment ${input.paymentId}`,
       "GATEWAY_REFUND_DECLINED",
       reserved.id,
     );
+    // Declined outcomes reach here as data (gateway.status), never a thrown
+    // rejection, so unlike the catch above this had no Sentry trace at all.
+    reportSentryError(declineErr, {
+      subsystem: "payments",
+      tags: { feature: "refund" },
+      extra: { paymentId: input.paymentId, refundRowId: reserved.id },
+    });
+    throw declineErr;
   }
 
   await prisma.refund.update({

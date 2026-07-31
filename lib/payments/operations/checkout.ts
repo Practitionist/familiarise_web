@@ -3095,7 +3095,16 @@ export async function handleCheckout(
       error instanceof Error &&
       (error.message.includes("currently checking out") ||
         error.message.includes("currently being booked"));
-    reportSentryError(error, { subsystem: "payments", expected: isLockContention });
+    // Tag-only: the explicit lock-expiry throw above ("...already in
+    // progress...") is the same modelled race, but is NOT folded into
+    // isLockContention — that variable also picks the rethrow message below,
+    // and this message already classifies correctly downstream (LOCK_CONTENTION
+    // via payment-error-classification.ts), so changing it would misroute it
+    // to AVAILABILITY instead.
+    const isModeledLockRace =
+      isLockContention ||
+      (error instanceof Error && error.message.includes("already in progress"));
+    reportSentryError(error, { subsystem: "payments", expected: isModeledLockRace });
     // Enhanced error handling with lock-specific errors
     if (isLockContention) {
       throw new Error(
