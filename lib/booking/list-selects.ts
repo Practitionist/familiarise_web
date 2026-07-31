@@ -34,6 +34,10 @@ export const APPOINTMENT_LIST_SELECT = {
         startsAt: true,
         endsAt: true,
         isTentative: true,
+        // A RESCHEDULED slot still carries its ORIGINAL startsAt, so the
+        // requests table must be able to tell those rows apart from a fresh
+        // request's tentative ones before offering "Use Requested Times".
+        completionStatus: true,
       },
       orderBy: { startsAt: "asc" },
     },

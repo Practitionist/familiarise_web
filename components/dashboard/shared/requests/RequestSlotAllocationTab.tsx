@@ -76,6 +76,9 @@ interface Request {
   // Reschedule info
   tentativeSlotCount?: number;
   totalSlotCount?: number;
+  /** Slots released by a reschedule. Their startsAt is still the ORIGINAL time,
+   * so "Use Requested Times" would re-confirm what the consultee asked to move. */
+  rescheduledSlotCount?: number;
 }
 
 // interface SlotInterval { ... } // Removed - Now imported
@@ -212,6 +215,9 @@ export function RequestSlotAllocationTab({
           ...consultationsResult.data.map((consultation) => {
             const slots = consultation.appointment?.slotsOfAppointment || [];
             const tentativeCount = slots.filter((s) => s.isTentative).length;
+            const rescheduledCount = slots.filter(
+              (s) => s.completionStatus === "RESCHEDULED",
+            ).length;
             const totalCount = slots.length;
 
             return {
@@ -233,6 +239,7 @@ export function RequestSlotAllocationTab({
                 consultation.consultationPlan?.durationInHours || 1,
               bookingSource: consultation.bookingSource,
               tentativeSlotCount: tentativeCount,
+              rescheduledSlotCount: rescheduledCount,
               totalSlotCount: totalCount,
             };
           }),
@@ -257,6 +264,9 @@ export function RequestSlotAllocationTab({
                 (appt) => appt.slotsOfAppointment || [],
               ) || [];
             const tentativeCount = allSlots.filter((s) => s.isTentative).length;
+            const rescheduledCount = allSlots.filter(
+              (s) => s.completionStatus === "RESCHEDULED",
+            ).length;
             const totalCount = allSlots.length;
 
             return {
@@ -330,6 +340,7 @@ export function RequestSlotAllocationTab({
               schedulingTimezone: subscription.schedulingTimezone,
               bookingSource: subscription.bookingSource,
               tentativeSlotCount: tentativeCount,
+              rescheduledSlotCount: rescheduledCount,
               totalSlotCount: totalCount,
             };
           }),
@@ -743,10 +754,14 @@ export function RequestSlotAllocationTab({
               </p>
             ) : (
               <>
-                {/* Hide "Use Requested Times" for directly booked consultations (Bug #8 fix) */}
+                {/* Hidden for directly booked consultations (Bug #8 fix), and
+                    for anything awaiting reschedule: those slots still carry
+                    the ORIGINAL startsAt, so "using" them would re-confirm the
+                    times the consultee just asked to move. */}
                 {request.requestedTimes &&
                   request.requestedTimes.length > 0 &&
-                  request.bookingSource === "REQUEST_SUBMITTED" && (
+                  request.bookingSource === "REQUEST_SUBMITTED" &&
+                  (request.rescheduledSlotCount ?? 0) === 0 && (
                     <Button
                       variant="secondary"
                       size="sm"
@@ -877,6 +892,7 @@ export function RequestSlotAllocationTab({
                     | "subscription"
                 }
                 eventId={selectedRequest.id}
+                consulteeUserId={selectedRequest.requestedBy?.user?.id}
                 mode="allocate"
                 onAllocationComplete={handleAllocationComplete}
                 onAllocationConflict={() => handleConflict(selectedRequest.id)}

@@ -321,6 +321,10 @@ export interface UnifiedCalendarProps {
   durationInHours?: number; // For consultations/webinars
   sessionsPerWeek?: number;
   sessionDurationInHours?: number; // For subscriptions/classes - individual session duration
+  /** The consultee this event belongs to. Passed to the availability fetch so
+   * the grid hides times where THEY are already booked with another
+   * consultant — allocation rejects those, so showing them green is a lie. */
+  consulteeUserId?: string;
   mode: "view" | "select" | "allocate";
   onSlotsSelected?: (slots: TimeSlot[]) => void;
   onAllocationComplete?: (result: AllocationResponse) => void;
@@ -352,6 +356,7 @@ export function UnifiedCalendar({
   eventId,
   durationInMonths,
   sessionsPerWeek,
+  consulteeUserId,
   mode = "view",
   onSlotsSelected,
   onAllocationComplete,
@@ -402,6 +407,7 @@ export function UnifiedCalendar({
     allowedStart,
     allowedEnd,
     sessionDurationInHours,
+    consulteeUserId,
   });
 
   // Wrap onAllocationComplete to refetch data before calling parent callback

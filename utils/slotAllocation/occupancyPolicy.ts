@@ -111,3 +111,44 @@ export function buildOccupiedAppointmentFilter(
 
   return filters;
 }
+
+/**
+ * Everything that occupies one consultant's calendar.
+ *
+ * A consultant is busy for an active appointment when EITHER they are connected
+ * to one of its slots (they are attending it, in any role) OR it is delivered
+ * under one of their own plans. Both arms are needed:
+ *
+ *   - Slot participation alone misses group events, whose slot rows connect
+ *     registrants rather than the host.
+ *   - Plan ownership alone misses every appointment where the consultant is
+ *     themselves the consultee — booked with a DIFFERENT consultant, so no plan
+ *     of theirs is involved.
+ *
+ * The availability grid used to ask only the second question while the
+ * allocator asked only the first, so a consultant who was a consultee elsewhere
+ * saw a green cell that every allocation mode then rejected as booked. Both
+ * sides now call this.
+ */
+export function buildConsultantOccupancyWhere(
+  consultantProfileId: string | undefined,
+  consultantUserId: string,
+): Prisma.AppointmentWhereInput {
+  const reachesConsultant: Prisma.AppointmentWhereInput[] = [
+    {
+      slotsOfAppointment: {
+        some: { user: { some: { id: consultantUserId } } },
+      },
+    },
+  ];
+
+  if (consultantProfileId) {
+    reachesConsultant.push({
+      OR: buildOccupiedAppointmentFilter(consultantProfileId),
+    });
+  }
+
+  return {
+    AND: [{ OR: buildOccupiedAppointmentFilter() }, { OR: reachesConsultant }],
+  };
+}

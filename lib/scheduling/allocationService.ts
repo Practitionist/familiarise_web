@@ -429,6 +429,13 @@ export class AllocationService {
      * unchanged.
      */
     includeAppointmentDetails?: boolean,
+    /**
+     * Whose calendar is being booked. The allocator counts this user's bookings
+     * with ANY consultant as occupied, so without it the grid paints cells green
+     * that allocation then rejects. The route re-checks that the caller may read
+     * this user's calendar.
+     */
+    consulteeUserId?: string,
   ) {
     if (!consultantId) {
       throw new Error("Consultant ID is required");
@@ -453,6 +460,9 @@ export class AllocationService {
       });
       if (includeAppointmentDetails) {
         params.set("includeAppointmentDetails", "true");
+      }
+      if (consulteeUserId) {
+        params.set("consulteeUserId", consulteeUserId);
       }
       const response = await fetch(
         `/api/slots/availability-with-allocation/${consultantId}?${params}`,
