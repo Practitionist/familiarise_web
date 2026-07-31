@@ -647,13 +647,13 @@ export function EventPlannerForClass({
                     )}
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <FormField
                       control={form.control}
                       name="sessionsPerWeek"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Meetings Per Week</FormLabel>
+                          <FormLabel>Sessions Per Week</FormLabel>
                           <FormControl>
                             <Input
                               type="number"
@@ -668,6 +668,34 @@ export function EventPlannerForClass({
                           </FormControl>
                           <FormDescription>
                             Number of sessions per week
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <FormField
+                      control={form.control}
+                      name="sessionDurationInHours"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Session Duration (hours)</FormLabel>
+                          <FormControl>
+                            <Input
+                              type="number"
+                              min="0.5"
+                              step="0.5"
+                              placeholder="1"
+                              {...field}
+                              onChange={(e) =>
+                                field.onChange(
+                                  Number.parseFloat(e.target.value) || 0,
+                                )
+                              }
+                            />
+                          </FormControl>
+                          <FormDescription>
+                            How long each session runs
                           </FormDescription>
                           <FormMessage />
                         </FormItem>
