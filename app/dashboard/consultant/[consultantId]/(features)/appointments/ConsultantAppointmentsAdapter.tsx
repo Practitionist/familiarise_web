@@ -362,7 +362,10 @@ export function useConsultantAppointmentsAdapter(
             typeLabel={typeLabel}
             rawSlots={rawSlots}
             isLoading={actions.isLoading}
-            onConfirm={(slotIds) => {
+            // No proposal step here: a consultant-initiated proposal never
+            // auto-confirms, and this surface already carries the full
+            // allocation calendar for picking replacement times directly.
+            onConfirm={({ slotIds }) => {
               closeDialog();
               void actions.handleReschedule(slotIds);
             }}

@@ -1,3 +1,5 @@
+import type { RescheduleRequestStatus } from "@prisma/client";
+
 /**
  * Shared Prisma SELECT fragments for the booking list endpoints (#997
  * Phase 0). The narrow selects replaced the old include trees, which joined
@@ -48,6 +50,30 @@ export const APPOINTMENT_LIST_SELECT = {
         amount: true,
         currency: true,
       },
+    },
+    // The live reschedule proposal, if the consultee named times they want.
+    // Without this the consultant sees a request back in their queue with no
+    // idea what was actually asked for, which is the state every reschedule
+    // used to arrive in.
+    rescheduleRequests: {
+      // Typed rather than inferred: the file's `as const` would otherwise make
+      // this a readonly tuple, which Prisma's Exact<> rejects.
+      where: {
+        status: { in: ["PENDING_REVIEW", "COUNTERED"] as RescheduleRequestStatus[] },
+      },
+      select: {
+        id: true,
+        status: true,
+        reason: true,
+        round: true,
+        expiresAt: true,
+        initiatorRole: true,
+        proposedSlots: {
+          orderBy: { startsAt: "asc" },
+          select: { startsAt: true, endsAt: true },
+        },
+      },
+      take: 1,
     },
   },
 } as const;

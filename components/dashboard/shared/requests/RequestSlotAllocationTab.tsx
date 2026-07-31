@@ -21,7 +21,12 @@ import {
 } from "@/components/ui/responsive-table";
 import { toast } from "@/components/ui/use-toast";
 import { AppointmentsType, AppointmentStatus } from "@prisma/client";
-import { AlertTriangle, CheckCircle2, RefreshCw } from "lucide-react";
+import {
+  AlertTriangle,
+  CalendarClock,
+  CheckCircle2,
+  RefreshCw,
+} from "lucide-react";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { RequestedSlotsDialog } from "./components/RequestedSlotsDialog";
@@ -30,6 +35,7 @@ import { SafeUnifiedCalendar } from "@/components/scheduling/SafeUnifiedCalendar
 import {
   ConsultationApiResponse,
   RequestedBy,
+  RescheduleProposalInfo,
   SubscriptionApiResponse,
 } from "./types";
 import { countSundayWeeksInclusive } from "@/lib/scheduling/calendarUtils";
@@ -79,6 +85,8 @@ interface Request {
   /** Slots released by a reschedule. Their startsAt is still the ORIGINAL time,
    * so "Use Requested Times" would re-confirm what the consultee asked to move. */
   rescheduledSlotCount?: number;
+  /** The times the consultee asked for, when they named any. */
+  proposal?: RescheduleProposalInfo;
 }
 
 // interface SlotInterval { ... } // Removed - Now imported
@@ -105,6 +113,19 @@ interface RequestSlotAllocationTabProps {
    * narrows to that organization.
    */
   orgScope?: "personal" | (string & {});
+}
+
+/**
+ * The live reschedule proposal on an appointment, if the consultee named times.
+ *
+ * The list select already narrows to open statuses and takes one, so this is
+ * just "the first, if any" — but it keeps the two mapping branches honest about
+ * the fact that only one proposal can be live per appointment.
+ */
+function proposalOf(
+  appointment: { rescheduleRequests?: RescheduleProposalInfo[] } | undefined,
+): RescheduleProposalInfo | undefined {
+  return appointment?.rescheduleRequests?.[0];
 }
 
 // Helper function to fetch and process data
@@ -160,8 +181,7 @@ export function RequestSlotAllocationTab({
   orgScope = "personal",
 }: RequestSlotAllocationTabProps) {
   const params = useParams();
-  const consultantId =
-    consultantProfileId ?? (params.consultantId as string);
+  const consultantId = consultantProfileId ?? (params.consultantId as string);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [requests, setRequests] = useState<Request[]>([]);
@@ -240,6 +260,7 @@ export function RequestSlotAllocationTab({
               bookingSource: consultation.bookingSource,
               tentativeSlotCount: tentativeCount,
               rescheduledSlotCount: rescheduledCount,
+              proposal: proposalOf(consultation.appointment),
               totalSlotCount: totalCount,
             };
           }),
@@ -341,6 +362,9 @@ export function RequestSlotAllocationTab({
               bookingSource: subscription.bookingSource,
               tentativeSlotCount: tentativeCount,
               rescheduledSlotCount: rescheduledCount,
+              proposal: subscription.appointments
+                ?.map(proposalOf)
+                .find(Boolean),
               totalSlotCount: totalCount,
             };
           }),
@@ -351,7 +375,10 @@ export function RequestSlotAllocationTab({
       setRequests(processedRequests);
     } catch (err) {
       // This catch block now primarily handles errors during data *processing*
-      Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "client" } });
+      Sentry.captureException(
+        err instanceof Error ? err : new Error(String(err)),
+        { tags: { subsystem: "client" } },
+      );
       console.error("Error processing fetched data:", err);
       setError(
         err instanceof Error
@@ -425,11 +452,7 @@ export function RequestSlotAllocationTab({
 
       const attempt = resolveAttemptKey(
         attemptKeyRef.current,
-        computeAttemptFingerprint(
-          "requested",
-          selectedRequestForDialog.id,
-          [],
-        ),
+        computeAttemptFingerprint("requested", selectedRequestForDialog.id, []),
       );
       attemptKeyRef.current = attempt;
 
@@ -481,7 +504,10 @@ export function RequestSlotAllocationTab({
       // Notify parent
       onUpdate();
     } catch (error) {
-      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client", feature: "slot-allocation" } });
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "client", feature: "slot-allocation" } },
+      );
       toast(
         allocationFailed(
           error instanceof Error ? error.message : "Failed to allocate slots",
@@ -493,11 +519,14 @@ export function RequestSlotAllocationTab({
   const handleDecline = async (request: Request) => {
     if (request.type !== AppointmentsType.CONSULTATION) return;
     try {
-      const response = await fetch(`/api/bookings/consultations/${request.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "REJECTED" }),
-      });
+      const response = await fetch(
+        `/api/bookings/consultations/${request.id}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: "REJECTED" }),
+        },
+      );
       const data = await response.json();
       if (!response.ok) {
         throw new Error(data.error || "Failed to decline request");
@@ -510,7 +539,10 @@ export function RequestSlotAllocationTab({
       setRequests((prev) => prev.filter((r) => r.id !== request.id));
       onUpdate();
     } catch (error) {
-      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "client" } },
+      );
       toast({
         title: "Error",
         description:
@@ -606,6 +638,46 @@ export function RequestSlotAllocationTab({
       header: "Requested Times",
       cell: (request) => (
         <>
+          {/* The times the consultee actually asked for. Before proposals a
+              reschedule arrived with no stated preference at all, so the only
+              honest thing this column could show was the ORIGINAL times. */}
+          {request.proposal && request.proposal.proposedSlots.length > 0 && (
+            <div className="mb-2 rounded-md border border-primary/30 bg-primary/5 px-2 py-1.5">
+              <div className="flex items-center gap-1.5 text-xs font-medium">
+                <CalendarClock className="h-3 w-3" />
+                {request.proposal.initiatorRole === "CONSULTEE"
+                  ? "Consultee asked for"
+                  : "You proposed"}
+                {request.proposal.round > 1 ? " (counter-offer)" : ""}
+              </div>
+              <ul className="mt-1 space-y-0.5">
+                {request.proposal.proposedSlots.map((slot) => (
+                  <li key={slot.startsAt} className="text-xs">
+                    {new Date(slot.startsAt).toLocaleString(undefined, {
+                      dateStyle: "medium",
+                      timeStyle: "short",
+                    })}
+                  </li>
+                ))}
+              </ul>
+              {request.proposal.reason && (
+                <p className="mt-1 text-xs italic text-muted-foreground">
+                  &ldquo;{request.proposal.reason}&rdquo;
+                </p>
+              )}
+              <p className="mt-1 text-xs text-muted-foreground">
+                Expires{" "}
+                {new Date(request.proposal.expiresAt).toLocaleString(
+                  undefined,
+                  {
+                    dateStyle: "medium",
+                    timeStyle: "short",
+                  },
+                )}
+              </p>
+            </div>
+          )}
+
           {/* Reschedule indicator */}
           {request.tentativeSlotCount !== undefined &&
             request.tentativeSlotCount > 0 &&

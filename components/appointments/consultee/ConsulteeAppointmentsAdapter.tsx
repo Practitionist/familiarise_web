@@ -39,6 +39,7 @@ import type {
 } from "@/lib/appointments/view-model";
 import { useEventActions } from "@/components/appointments/consultee/useEventActions";
 import { RescheduleSessionsModal } from "@/components/appointments/consultee/RescheduleSessionsModal";
+import { consultantProfileIdOf } from "@/lib/appointments/view-model";
 import { CancelConfirmationDialog } from "@/components/appointments/consultee/CancelConfirmationDialog";
 import { ReportIssueDialog } from "@/components/appointments/consultee/ReportIssueDialog";
 import { DocumentUpload } from "@/components/appointments/DocumentUpload";
@@ -274,9 +275,14 @@ export function useConsulteeAppointmentsAdapter(): AppointmentActionAdapter {
           typeLabel={typeLabel}
           rawSlots={activeVm.raw.rawSlots ?? []}
           isLoading={actions.isLoading}
-          onConfirm={(slotIds) => {
+          consultantProfileId={consultantProfileIdOf(activeVm.raw.appointment)}
+          sessionDurationInHours={
+            activeVm.raw.appointment?.subscription?.subscriptionPlan
+              ?.sessionDurationInHours ?? undefined
+          }
+          onConfirm={({ slotIds, proposedSlots }) => {
             closeDialog();
-            void actions.handleReschedule(slotIds);
+            void actions.handleReschedule(slotIds, proposedSlots);
           }}
         />
 

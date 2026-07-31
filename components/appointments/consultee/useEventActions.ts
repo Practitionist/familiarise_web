@@ -74,7 +74,10 @@ export function useEventActions({
     }
   };
 
-  const handleReschedule = async (slotIds?: string[]) => {
+  const handleReschedule = async (
+    slotIds?: string[],
+    proposedSlots?: { startsAt: string; endsAt: string }[],
+  ) => {
     if (!appointmentId) {
       toast({
         title: "Error",
@@ -93,13 +96,16 @@ export function useEventActions({
           ? `/api/appointments/${appointmentId}/reschedule?type=SUBSCRIPTION`
           : `/api/appointments/${appointmentId}/reschedule`;
 
+      const payload: Record<string, unknown> = {};
+      if (slotIds && slotIds.length > 0) payload.slotIds = slotIds;
+      if (proposedSlots?.length) payload.proposedSlots = proposedSlots;
+
       const response = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body:
-          slotIds && slotIds.length > 0
-            ? JSON.stringify({ slotIds })
-            : undefined,
+        body: Object.keys(payload).length
+          ? JSON.stringify(payload)
+          : undefined,
       });
 
       const data = await response.json();
@@ -113,13 +119,30 @@ export function useEventActions({
       const sessionsAffected =
         data.sessionsAffected ?? data.slotsAffected ?? slotIds?.length ?? 1;
 
-      toast({
-        title: "Ready to reschedule",
-        description:
-          sessionsAffected === 1
-            ? `Select a new time for your session.`
-            : `Select new times for your ${sessionsAffected} sessions.`,
-      });
+      // Three genuinely different outcomes, and they must not read alike:
+      // the time is already yours, the consultant has been asked, or nothing
+      // was proposed and they will pick.
+      if (data.autoConfirmed) {
+        toast({
+          title: "New time confirmed",
+          description:
+            "Your session has been moved. Nothing further is needed.",
+        });
+      } else if (proposedSlots?.length) {
+        toast({
+          title: "Request sent",
+          description:
+            "That time isn't free, so we've asked your consultant to confirm it.",
+        });
+      } else {
+        toast({
+          title: "Ready to reschedule",
+          description:
+            sessionsAffected === 1
+              ? `Your consultant will pick a new time for your session.`
+              : `Your consultant will pick new times for your ${sessionsAffected} sessions.`,
+        });
+      }
 
       invalidateBookingData();
     } catch (error) {

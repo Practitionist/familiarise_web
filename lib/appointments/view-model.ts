@@ -127,3 +127,28 @@ export function sortSessions(sessions: SessionVM[]): SessionVM[] {
     (a, b) => a.startsAt.getTime() - b.startsAt.getTime(),
   );
 }
+
+/**
+ * The consultant delivering this appointment, when the payload carries a plan.
+ *
+ * The reschedule proposal UI needs it to render that consultant's availability,
+ * so the consultee picks a real bookable time rather than guessing and hoping.
+ * Group events return null: they are organizer-rescheduled only, so no proposal
+ * surface is offered for them.
+ */
+export function consultantProfileIdOf(
+  appointment:
+    | {
+        consultation?: { consultationPlan?: { consultantProfileId: string | null } | null } | null;
+        subscription?: { subscriptionPlan?: { consultantProfileId: string | null } | null } | null;
+      }
+    | null
+    | undefined,
+): string | null {
+  if (!appointment) return null;
+  return (
+    appointment.consultation?.consultationPlan?.consultantProfileId ??
+    appointment.subscription?.subscriptionPlan?.consultantProfileId ??
+    null
+  );
+}

@@ -34,9 +34,21 @@ interface AppointmentSlot {
   completionStatus?: SlotCompletionStatus;
 }
 
+/** A live reschedule proposal: the times the consultee actually wants. */
+export interface RescheduleProposalInfo {
+  id: string;
+  status: string;
+  reason?: string | null;
+  round: number;
+  expiresAt: string;
+  initiatorRole: string;
+  proposedSlots: { startsAt: string; endsAt: string }[];
+}
+
 interface AppointmentInfo {
   id: string;
   slotsOfAppointment?: AppointmentSlot[];
+  rescheduleRequests?: RescheduleProposalInfo[];
 }
 
 export interface ConsultationApiResponse {
