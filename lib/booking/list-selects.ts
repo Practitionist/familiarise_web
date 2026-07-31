@@ -70,7 +70,11 @@ export const APPOINTMENT_LIST_SELECT = {
         initiatorRole: true,
         proposedSlots: {
           orderBy: { startsAt: "asc" },
-          select: { startsAt: true, endsAt: true },
+          // `round` is selected so the consultant sees the CURRENT offer only.
+          // A countered request carries both the consultee's round-1 times and
+          // the consultant's round-2 counter; rendering them together under one
+          // heading would read as a single, contradictory list of times.
+          select: { startsAt: true, endsAt: true, round: true },
         },
       },
       take: 1,

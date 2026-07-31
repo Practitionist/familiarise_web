@@ -116,6 +116,17 @@ interface RequestSlotAllocationTabProps {
 }
 
 /**
+ * The times currently on offer.
+ *
+ * A countered request carries the consultee's round-1 times AND the
+ * consultant's round-2 counter. Showing both under one heading would read as a
+ * single, contradictory list — only the latest round is an open offer.
+ */
+function currentRoundSlots(proposal: RescheduleProposalInfo) {
+  return proposal.proposedSlots.filter((slot) => slot.round === proposal.round);
+}
+
+/**
  * The live reschedule proposal on an appointment, if the consultee named times.
  *
  * The list select already narrows to open statuses and takes one, so this is
@@ -641,7 +652,7 @@ export function RequestSlotAllocationTab({
           {/* The times the consultee actually asked for. Before proposals a
               reschedule arrived with no stated preference at all, so the only
               honest thing this column could show was the ORIGINAL times. */}
-          {request.proposal && request.proposal.proposedSlots.length > 0 && (
+          {request.proposal && currentRoundSlots(request.proposal).length > 0 && (
             <div className="mb-2 rounded-md border border-primary/30 bg-primary/5 px-2 py-1.5">
               <div className="flex items-center gap-1.5 text-xs font-medium">
                 <CalendarClock className="h-3 w-3" />
@@ -651,7 +662,7 @@ export function RequestSlotAllocationTab({
                 {request.proposal.round > 1 ? " (counter-offer)" : ""}
               </div>
               <ul className="mt-1 space-y-0.5">
-                {request.proposal.proposedSlots.map((slot) => (
+                {currentRoundSlots(request.proposal).map((slot) => (
                   <li key={slot.startsAt} className="text-xs">
                     {new Date(slot.startsAt).toLocaleString(undefined, {
                       dateStyle: "medium",

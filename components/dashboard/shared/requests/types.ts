@@ -42,7 +42,7 @@ export interface RescheduleProposalInfo {
   round: number;
   expiresAt: string;
   initiatorRole: string;
-  proposedSlots: { startsAt: string; endsAt: string }[];
+  proposedSlots: { startsAt: string; endsAt: string; round: number }[];
 }
 
 interface AppointmentInfo {
