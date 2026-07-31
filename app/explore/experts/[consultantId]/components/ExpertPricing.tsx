@@ -173,7 +173,7 @@ export function ExpertPricing({
           features: [
             `${plan.totalHours} total hours`,
             `${plan.totalSessions} sessions`,
-            `${plan.sessionsPerWeek} call${plan.sessionsPerWeek > 1 ? "s" : ""} per week`,
+            `${plan.sessionsPerWeek} session${plan.sessionsPerWeek > 1 ? "s" : ""} per week`,
             `${plan.sessionDurationInHours}h per session`,
             `${plan.emailSupport} email support`,
           ],

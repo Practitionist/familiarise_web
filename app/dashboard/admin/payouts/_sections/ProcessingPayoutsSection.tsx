@@ -36,7 +36,10 @@ export default function ProcessingPayoutsSection() {
     queryKey: ["admin-payouts-processing"],
     queryFn: fetchProcessingPayouts,
     staleTime: 30 * 1000,
-    refetchInterval: 60 * 1000, // Refresh every minute
+    // Focus, not a timer — and explicit, because the global default disables
+    // focus AND mount refetching. Payout state is money-facing, so silently
+    // freezing it at first load is the one outcome to avoid.
+    refetchOnWindowFocus: true,
   });
 
   const columns: ResponsiveColumn<Payout>[] = [

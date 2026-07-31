@@ -141,7 +141,7 @@ export function EventTimingsCalendar({
       case "CONSULTATION":
         return "Select consecutive time slots for your consultation. All slots must be on the same day.";
       case "SUBSCRIPTION": {
-        const baseText = `Schedule ${eventDetails.sessionsPerWeek} call${eventDetails.sessionsPerWeek !== 1 ? "s" : ""} per week for ${eventDetails.durationInMonths} month${eventDetails.durationInMonths !== 1 ? "s" : ""}. Each call is ${eventDetails.sessionDurationInHours || 1} hour${(eventDetails.sessionDurationInHours || 1) > 1 ? "s" : ""}.`;
+        const baseText = `Schedule ${eventDetails.sessionsPerWeek} session${eventDetails.sessionsPerWeek !== 1 ? "s" : ""} per week for ${eventDetails.durationInMonths} month${eventDetails.durationInMonths !== 1 ? "s" : ""}. Each session is ${eventDetails.sessionDurationInHours || 1} hour${(eventDetails.sessionDurationInHours || 1) > 1 ? "s" : ""}.`;
         return appendProgressText(
           baseText,
           completedSessions,
@@ -155,7 +155,7 @@ export function EventTimingsCalendar({
         const durationText =
           sessionDuration === 1 ? "1 hour" : `${sessionDuration} hours`;
         const sessionsPerWeek = eventDetails.sessionsPerWeek || 1;
-        const classBaseText = `Schedule ${sessionsPerWeek} meeting${sessionsPerWeek !== 1 ? "s" : ""} per week. Each session is ${durationText}.`;
+        const classBaseText = `Schedule ${sessionsPerWeek} session${sessionsPerWeek !== 1 ? "s" : ""} per week. Each session is ${durationText}.`;
         return appendProgressText(
           classBaseText,
           completedSessions,

@@ -556,8 +556,13 @@ export default function SubscriptionCheckoutPage({
               <div>{planData?.data?.durationInMonths || 1} months</div>
             </div>
             <div className="flex items-center justify-between">
-              <div className="text-muted-foreground">Calls per Week</div>
-              <div>{planData?.data?.sessionsPerWeek || 1} calls</div>
+              <div className="text-muted-foreground">Sessions per Week</div>
+              <div>
+                {planData?.data?.sessionsPerWeek || 1}{" "}
+                {(planData?.data?.sessionsPerWeek || 1) === 1
+                  ? "session"
+                  : "sessions"}
+              </div>
             </div>
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Session Duration</div>
@@ -747,7 +752,7 @@ export default function SubscriptionCheckoutPage({
                           (planData?.data?.sessionDurationInHours || 1)}{" "}
                       hours)
                     </li>
-                    <li>{planData?.data?.sessionsPerWeek || 1} calls per week</li>
+                    <li>{planData?.data?.sessionsPerWeek || 1} sessions per week</li>
                     <li>
                       {planData?.data?.sessionDurationInHours || 1} hour
                       sessions

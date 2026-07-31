@@ -96,6 +96,16 @@ const getAppointmentDate = (
   return { startDate, endDate, isPastAppointment };
 };
 
+// DRAFT is authored-but-not-live, so it cannot describe an instance that
+// already has a booked appointment hanging off it. Drafts are seeded separately
+// (6b), with no appointment at all — which is what makes them drafts.
+const LIVE_WEBINAR_STATUSES = Object.values(WebinarStatus).filter(
+  (status) => status !== WebinarStatus.DRAFT,
+);
+const LIVE_CLASS_STATUSES = Object.values(ClassStatus).filter(
+  (status) => status !== ClassStatus.DRAFT,
+);
+
 const getNumSlots = (appointmentType: AppointmentsType): number => {
   switch (appointmentType) {
     case AppointmentsType.CONSULTATION:
@@ -433,7 +443,7 @@ const createWebinarAppointment = async (
         },
         status: isPastAppointment
           ? WebinarStatus.COMPLETED
-          : faker.helpers.arrayElement(Object.values(WebinarStatus)),
+          : faker.helpers.arrayElement(LIVE_WEBINAR_STATUSES),
         feedbackSummary: isPastAppointment ? faker.lorem.paragraph() : null,
       },
     },
@@ -505,7 +515,7 @@ const createClassAppointment = async (
         schedulingTimezone: "UTC",
         status: isPastAppointment
           ? ClassStatus.COMPLETED
-          : faker.helpers.arrayElement(Object.values(ClassStatus)),
+          : faker.helpers.arrayElement(LIVE_CLASS_STATUSES),
         recordingUrls: Array.from(
           { length: faker.number.int({ min: 0, max: 3 }) }, // Reduced from 5 to 3
           () => faker.internet.url(),

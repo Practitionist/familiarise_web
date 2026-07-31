@@ -17,6 +17,7 @@ import type {
   ClassStatus,
   Prisma,
   AppointmentStatus,
+  RescheduleRequestStatus,
   SlotCompletionStatus,
   WebinarStatus,
 } from "@prisma/client";
@@ -108,6 +109,13 @@ export async function transitionSubscriptionRequest(
 // exact complement of the old `notIn: [CANCELLED, COMPLETED]` guards —
 // explicit allowed-from is robust against future enum additions (#837).
 export const EVENT_ALLOWED_FROM: Record<WebinarStatus, WebinarStatus[]> = {
+  // Nothing returns to DRAFT: publishing is one-way. Unpublishing is what
+  // archivedAt is for, so an offering that has ever been buyable keeps a stable
+  // public identity.
+  DRAFT: [],
+  // Deliberately NOT reachable from DRAFT. This set is what reschedule
+  // re-stamps, and a reschedule must never be able to publish an unpublished
+  // offering as a side effect. Publishing has its own edge below.
   SCHEDULED: ["SCHEDULED", "IN_PROGRESS"],
   IN_PROGRESS: ["SCHEDULED"],
   COMPLETED: ["SCHEDULED", "IN_PROGRESS"],
@@ -116,6 +124,11 @@ export const EVENT_ALLOWED_FROM: Record<WebinarStatus, WebinarStatus[]> = {
 // Type-level proof the two enums stay in lockstep.
 export const CLASS_EVENT_ALLOWED_FROM: Record<ClassStatus, ClassStatus[]> =
   EVENT_ALLOWED_FROM;
+
+// Publishing is the only way out of DRAFT, and it is one-way: withdrawing a
+// published offering is `archivedAt`, not a trip back to DRAFT, so anything
+// that was ever buyable keeps a stable public identity.
+export const EVENT_PUBLISHABLE_FROM: WebinarStatus[] = ["DRAFT"];
 
 export async function transitionWebinarEvent(
   tx: Pick<Tx, "webinar">,
@@ -165,3 +178,68 @@ export const SLOT_RESCHEDULABLE_FROM: SlotCompletionStatus[] = [
   "SCHEDULED",
   "RESCHEDULED",
 ];
+
+//////////////////////////////////////////////// Reschedule proposals ////////////////////////////////////////////////
+
+// A proposal is a two-party negotiation with exactly one counter-round, so the
+// legal graph is small and every edge is terminal-or-countered. AUTO_ACCEPTED
+// has no allowed-from: it is only ever written at creation, when a consultee's
+// times land in the consultant's published availability and both calendars are
+// free, so there is no state to move out of.
+export const RESCHEDULE_ALLOWED_FROM: Record<
+  RescheduleRequestStatus,
+  RescheduleRequestStatus[]
+> = {
+  AUTO_ACCEPTED: [],
+  PENDING_REVIEW: ["COUNTERED"],
+  COUNTERED: ["PENDING_REVIEW"],
+  ACCEPTED: ["PENDING_REVIEW", "COUNTERED"],
+  DECLINED: ["PENDING_REVIEW", "COUNTERED"],
+  EXPIRED: ["PENDING_REVIEW", "COUNTERED"],
+};
+
+/** The states in which a proposal is still awaiting an answer. */
+export const RESCHEDULE_OPEN_STATUSES: RescheduleRequestStatus[] = [
+  "PENDING_REVIEW",
+  "COUNTERED",
+];
+
+/** Terminal states — the request is answered and holds no claim on its slots. */
+export const RESCHEDULE_TERMINAL_STATUSES: RescheduleRequestStatus[] = [
+  "AUTO_ACCEPTED",
+  "ACCEPTED",
+  "DECLINED",
+  "EXPIRED",
+];
+
+export async function transitionRescheduleRequest(
+  tx: Pick<Tx, "rescheduleRequest">,
+  args: {
+    where: { id: string };
+    to: RescheduleRequestStatus;
+    data?: Omit<Prisma.RescheduleRequestUncheckedUpdateManyInput, "status">;
+    /** Narrow or widen the from-set for flow-specific edges. */
+    fromIn?: RescheduleRequestStatus[];
+  },
+): Promise<void> {
+  // Reaching a terminal state also releases openForAppointmentId, so the
+  // nullable-unique stops reserving the appointment and a fresh reschedule can
+  // open. Callers must not have to remember this.
+  const releasesLock = RESCHEDULE_TERMINAL_STATUSES.includes(args.to);
+  const res = await tx.rescheduleRequest.updateMany({
+    where: {
+      ...args.where,
+      status: { in: args.fromIn ?? RESCHEDULE_ALLOWED_FROM[args.to] },
+    },
+    data: {
+      status: args.to,
+      ...(releasesLock
+        ? { openForAppointmentId: null, resolvedAt: new Date() }
+        : {}),
+      ...args.data,
+    },
+  });
+  if (res.count === 0) {
+    throw new IllegalTransitionError("RescheduleRequest", args.to);
+  }
+}

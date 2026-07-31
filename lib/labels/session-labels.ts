@@ -180,6 +180,11 @@ export const trialStatusBadge = (
 // (same doctrine as EVENT_ALLOWED_FROM in lib/booking/transitions.ts).
 
 export const EVENT_STATUS_BADGE: Record<WebinarStatus, StatusBadgeStyle> = {
+  DRAFT: {
+    label: "Draft",
+    className: "bg-amber-100 text-amber-900 border-amber-200",
+    dotClassName: "bg-amber-500",
+  },
   SCHEDULED: {
     label: "Scheduled",
     className: "bg-emerald-100 text-emerald-900 border-emerald-200",

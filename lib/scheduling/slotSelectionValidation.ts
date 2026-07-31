@@ -553,12 +553,12 @@ export function validateSubscriptionSlots(
     const partialSlots = weekData.totalSlots % slotsPerCall;
 
     if (partialSlots > 0) {
-      incompleteCallWarning = `The ${formatWeekKey(wk)} has an incomplete call. Need ${slotsPerCall - partialSlots} more consecutive slots.`;
+      incompleteCallWarning = `The ${formatWeekKey(wk)} has an incomplete session. Need ${slotsPerCall - partialSlots} more consecutive slots.`;
     }
 
     if (completeCalls > sessionsPerWeek) {
       weeklyCallsValid = false;
-      weeklyCallsError = `The ${formatWeekKey(wk)} has ${completeCalls} complete calls. Maximum ${sessionsPerWeek} calls per week allowed.`;
+      weeklyCallsError = `The ${formatWeekKey(wk)} has ${completeCalls} complete session(s). Maximum ${sessionsPerWeek} per week allowed.`;
     }
   });
 
@@ -569,7 +569,7 @@ export function validateSubscriptionSlots(
 
   if (maxTotalCalls && totalConfirmedCalls > maxTotalCalls) {
     totalCallsValid = false;
-    totalCallsError = `Maximum ${maxTotalCalls} calls allowed for this subscription. Currently have ${totalConfirmedCalls} confirmed calls.`;
+    totalCallsError = `Maximum ${maxTotalCalls} sessions allowed for this subscription. Currently have ${totalConfirmedCalls} confirmed.`;
   }
 
   return {
@@ -734,21 +734,21 @@ function validateSubscriptionSelection(
   if (!result.dailyCallsValid) {
     result.isValid = false;
     result.errors.push(
-      subscriptionValidation.dailyCallsError || "Daily call limit exceeded",
+      subscriptionValidation.dailyCallsError || "Daily session limit exceeded",
     );
   }
 
   if (!result.totalCallsValid) {
     result.isValid = false;
     result.errors.push(
-      subscriptionValidation.totalCallsError || "Total call limit exceeded",
+      subscriptionValidation.totalCallsError || "Total session limit exceeded",
     );
   }
 
   if (!result.weeklyDistributionValid) {
     result.isValid = false;
     result.errors.push(
-      subscriptionValidation.weeklyCallsError || "Weekly call limit exceeded",
+      subscriptionValidation.weeklyCallsError || "Weekly session limit exceeded",
     );
   }
 

@@ -1,3 +1,5 @@
+import type { RescheduleRequestStatus } from "@prisma/client";
+
 /**
  * Shared Prisma SELECT fragments for the booking list endpoints (#997
  * Phase 0). The narrow selects replaced the old include trees, which joined
@@ -48,6 +50,39 @@ export const APPOINTMENT_LIST_SELECT = {
         amount: true,
         currency: true,
       },
+    },
+    // The live reschedule proposal, if the consultee named times they want.
+    // Without this the consultant sees a request back in their queue with no
+    // idea what was actually asked for, which is the state every reschedule
+    // used to arrive in.
+    rescheduleRequests: {
+      // Typed rather than inferred: the file's `as const` would otherwise make
+      // this a readonly tuple, which Prisma's Exact<> rejects.
+      where: {
+        status: { in: ["PENDING_REVIEW", "COUNTERED"] as RescheduleRequestStatus[] },
+      },
+      select: {
+        id: true,
+        status: true,
+        reason: true,
+        round: true,
+        expiresAt: true,
+        initiatorRole: true,
+        proposedSlots: {
+          orderBy: { startsAt: "asc" },
+          // `round` is selected so the consultant sees the CURRENT offer only.
+          // A countered request carries both the consultee's round-1 times and
+          // the consultant's round-2 counter; rendering them together under one
+          // heading would read as a single, contradictory list of times.
+          select: { startsAt: true, endsAt: true, round: true },
+        },
+      },
+      // take:1 without an order is whichever row Postgres hands back first.
+      // At most one reschedule is open per appointment today (the nullable
+      // @unique), so this is currently unambiguous — but the ordering is what
+      // keeps it correct if that ever stops being true, and costs nothing.
+      orderBy: { createdAt: "desc" },
+      take: 1,
     },
   },
 } as const;

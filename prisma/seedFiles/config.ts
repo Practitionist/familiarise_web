@@ -42,6 +42,18 @@ export interface VolumeConfig {
     webinar: number;
     class: number;
   };
+  // Phase 6b: authored-but-not-live group sessions (WebinarStatus/ClassStatus
+  // DRAFT). Deliberately small — a draft is a work-in-progress, not a state a
+  // catalog accumulates.
+  draftSessions: { webinar: number; class: number };
+  // Phase 6c: reschedule proposals. `resolved` rows land on appointments that
+  // already carry an open one, which is what exercises the nullable-unique
+  // openForAppointmentId without colliding.
+  rescheduleProposals: {
+    openConsultation: number;
+    counteredSubscription: number;
+    resolved: number;
+  };
   // Phase 7: Engagement
   waitlistSubscribers: number;
   reviewsPercentage: number; // % of consultants that get reviews
@@ -101,6 +113,12 @@ const VOLUMES: Record<SeedMode, VolumeConfig> = {
       webinar: 75,
       class: 75,
     },
+    draftSessions: { webinar: 3, class: 2 },
+    rescheduleProposals: {
+      openConsultation: 4,
+      counteredSubscription: 2,
+      resolved: 3,
+    },
     waitlistSubscribers: 50,
     reviewsPercentage: 60,
     discountCodes: 5,
@@ -149,6 +167,12 @@ const VOLUMES: Record<SeedMode, VolumeConfig> = {
       webinar: 200,
       class: 200,
     },
+    draftSessions: { webinar: 6, class: 4 },
+    rescheduleProposals: {
+      openConsultation: 12,
+      counteredSubscription: 5,
+      resolved: 8,
+    },
     waitlistSubscribers: 150,
     reviewsPercentage: 75,
     discountCodes: 15,
@@ -196,6 +220,12 @@ const VOLUMES: Record<SeedMode, VolumeConfig> = {
       subscription: 1000,
       webinar: 500,
       class: 500,
+    },
+    draftSessions: { webinar: 12, class: 8 },
+    rescheduleProposals: {
+      openConsultation: 30,
+      counteredSubscription: 12,
+      resolved: 20,
     },
     waitlistSubscribers: 400,
     reviewsPercentage: 85,
@@ -304,6 +334,13 @@ export function printConfigSummary(): void {
   console.log(`    - Subscription: ${volumes.appointments.subscription}`);
   console.log(`    - Webinar: ${volumes.appointments.webinar}`);
   console.log(`    - Class: ${volumes.appointments.class}`);
+  console.log(
+    `    - Drafts: ${volumes.draftSessions.webinar} webinar, ${volumes.draftSessions.class} class`,
+  );
+  const proposals = volumes.rescheduleProposals;
+  console.log(
+    `  Reschedule proposals: ${proposals.openConsultation} open, ${proposals.counteredSubscription} countered, ${proposals.resolved} resolved`,
+  );
   console.log(`  Payments: ${volumes.payments}`);
   console.log(`  Topics: ${volumes.topics}`);
   const orgs = volumes.organizations;

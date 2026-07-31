@@ -3,6 +3,13 @@ import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth-server";
 import { isPrivileged } from "@/lib/auth-helpers";
+import type { RescheduleInitiatorRole } from "@prisma/client";
+import { RescheduleProposalSchema } from "@/schemas/appointments";
+import {
+  computeProposalExpiry,
+  proposalCountMatches,
+  supportsProposals,
+} from "@/lib/booking/reschedule-proposals";
 import {
   ReschedulePolicyError,
   RescheduleAuthorizationError,
@@ -13,6 +20,7 @@ import { notifyAppointmentRescheduled } from "@/lib/novu/service";
 import { notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
 import { logActivity } from "@/lib/activity/log-activity";
+import { tryAutoConfirmProposal } from "@/lib/booking/reschedule-auto-confirm";
 import { hasActiveDisputeForAppointment } from "@/lib/payments/dispute-guard";
 import {
   CLASS_EVENT_ALLOWED_FROM,
@@ -20,8 +28,23 @@ import {
   RESCHEDULABLE_FROM,
   SLOT_RESCHEDULABLE_FROM,
 } from "@/lib/booking/transitions";
+import { IllegalTransitionError } from "@/lib/enterprise/transitions";
+import { isUniqueViolation } from "@/lib/db/pg-errors";
 
 const MINIMUM_HOURS_BEFORE_RESCHEDULE = 24;
+
+/**
+ * Which side is asking. Null for a privileged ADMIN/STAFF bypass, which is
+ * neither party and therefore never auto-confirms on someone else's behalf.
+ */
+function roleOf(
+  isConsultee: boolean,
+  isConsultant: boolean,
+): RescheduleInitiatorRole | null {
+  if (isConsultee) return "CONSULTEE";
+  if (isConsultant) return "CONSULTANT";
+  return null;
+}
 
 /**
  * POST /api/appointments/[appointmentId]/reschedule
@@ -74,6 +97,10 @@ export async function POST(
 
     // Parse request body for optional slotIds (used for individual/multiple session reschedule)
     let slotIds: string[] | undefined;
+    // Concrete replacement times. Optional: "release these, any time works" is
+    // still a valid request and remains the whole contract for group events.
+    let proposedSlots: { startsAt: Date; endsAt: Date }[] | undefined;
+    let reason: string | undefined;
     try {
       const body = await request.json();
       // Support both single slotId (legacy) and slotIds array
@@ -83,8 +110,26 @@ export async function POST(
         // Legacy support: convert single slotId to array
         slotIds = [body.slotId];
       }
+      const parsedProposal = RescheduleProposalSchema.safeParse(body);
+      if (!parsedProposal.success) {
+        return NextResponse.json(
+          {
+            error: "Invalid proposed times",
+            code: "INVALID_PROPOSAL",
+            details: parsedProposal.error.flatten(),
+          },
+          { status: 400 },
+        );
+      }
+      if (parsedProposal.data.proposedSlots?.length) {
+        proposedSlots = parsedProposal.data.proposedSlots.map((s) => ({
+          startsAt: new Date(s.startsAt),
+          endsAt: new Date(s.endsAt),
+        }));
+      }
+      reason = parsedProposal.data.reason;
     } catch {
-      // No body or invalid JSON - that's fine, slotIds is optional
+      // No body or invalid JSON - that's fine, every field here is optional
     }
 
     // Start transaction
@@ -139,20 +184,32 @@ export async function POST(
         const consulteeProfileId = session.user.consulteeProfileId;
 
         let isParticipant = false;
+        // Which side is asking. Load-bearing rather than descriptive: only a
+        // CONSULTEE proposal may auto-confirm, because publishing availability
+        // is standing consent to be booked inside it while merely being free is
+        // not consent to be moved. Null for a privileged bypass, which never
+        // auto-confirms on someone else's behalf.
+        let initiatorRole: RescheduleInitiatorRole | null = null;
 
         // Check the single event-type relation (mutually exclusive via if-else)
         if (appointment.consultation) {
           const consultationConsultantId =
             appointment.consultation.consultationPlan?.consultantProfileId;
-          isParticipant =
-            consultantProfileId === consultationConsultantId ||
+          const isConsultant =
+            consultantProfileId === consultationConsultantId;
+          const isConsultee =
             consulteeProfileId === appointment.consultation.requestedById;
+          isParticipant = isConsultant || isConsultee;
+          initiatorRole = roleOf(isConsultee, isConsultant);
         } else if (appointment.subscription) {
           const subscriptionConsultantId =
             appointment.subscription.subscriptionPlan?.consultantProfileId;
-          isParticipant =
-            consultantProfileId === subscriptionConsultantId ||
+          const isConsultant =
+            consultantProfileId === subscriptionConsultantId;
+          const isConsultee =
             consulteeProfileId === appointment.subscription.requestedById;
+          isParticipant = isConsultant || isConsultee;
+          initiatorRole = roleOf(isConsultee, isConsultant);
         } else if (appointment.webinar) {
           // Only the consultant (organizer) can reschedule group events,
           // since rescheduling changes the time for all participants.
@@ -396,6 +453,67 @@ export async function POST(
           );
         }
 
+        // Attach the proposed replacement times, if any were given. Without
+        // this a reschedule reaches the consultant carrying LESS information
+        // than the original booking did — which slots to drop, and nothing
+        // about when the consultee actually wants them.
+        let rescheduleRequestId: string | null = null;
+        if (
+          proposedSlots?.length &&
+          initiatorRole &&
+          supportsProposals(derivedType)
+        ) {
+          if (
+            !proposalCountMatches(slotsToReschedule.length, proposedSlots.length)
+          ) {
+            throw Object.assign(
+              new Error(
+                `Proposed ${proposedSlots.length} time(s) for ${slotsToReschedule.length} released slot(s). ` +
+                  `A reschedule replaces slots one for one; changing the count would change what was paid for.`,
+              ),
+              { httpStatus: 400, code: "PROPOSAL_COUNT_MISMATCH" },
+            );
+          }
+
+          const expiresAt = computeProposalExpiry(
+            slotsToReschedule.map((s) => new Date(s.startsAt)),
+          );
+          if (!expiresAt) {
+            // The 24-hour policy gate above should already have rejected this,
+            // so reaching here means the two rules have drifted apart.
+            throw Object.assign(
+              new Error(
+                "This session is too close to propose a new time for.",
+              ),
+              { httpStatus: 400, code: "PROPOSAL_WINDOW_CLOSED" },
+            );
+          }
+
+          const created = await tx.rescheduleRequest.create({
+            data: {
+              appointmentId,
+              initiatorRole,
+              initiatedById: session.user.id,
+              reason,
+              releasedSlotIds: slotsToReschedule.map((s) => s.id),
+              expiresAt,
+              // Reserves the appointment: the nullable @unique makes a second
+              // live reschedule a DB-level conflict rather than a race.
+              openForAppointmentId: appointmentId,
+              organizationId: appointment.organizationId ?? null,
+              proposedSlots: {
+                create: proposedSlots.map((s) => ({
+                  startsAt: s.startsAt,
+                  endsAt: s.endsAt,
+                  proposedById: session.user.id,
+                })),
+              },
+            },
+            select: { id: true },
+          });
+          rescheduleRequestId = created.id;
+        }
+
         // #448 — count SESSIONS, not raw slots: one Appointment is one session
         // (a 1-hour session is 2 × 30-min slots), so a single 1h-session
         // reschedule must report 1 session, not "2 sessions"/multiple_sessions.
@@ -446,12 +564,60 @@ export async function POST(
             webinarId: appointment.webinar?.id,
             classId: appointment.class?.id,
           },
+          rescheduleRequestId,
         };
       },
       {
         timeout: 60000, // 60 second timeout for complex transactions
       },
     );
+
+    // A consultee's proposal that lands in published availability and finds both
+    // calendars free needs no approval, so take it now. Deliberately AFTER the
+    // transaction: validating inside it would pin a pooled connection through
+    // the whole availability check, which is the shape #908 documents as having
+    // 500'd with "Unable to start a transaction in the given time".
+    //
+    // Failure here is an ordinary outcome, not an error — the proposal simply
+    // stays PENDING_REVIEW for the consultant to answer.
+    let autoConfirmed = false;
+    if (result.rescheduleRequestId) {
+      // Only the two 1:1 kinds carry proposals; a group event never opens one.
+      const proposal = result.logContext.consultationId
+        ? { type: "consultation" as const, id: result.logContext.consultationId }
+        : null;
+      const proposalTarget =
+        proposal ??
+        (result.logContext.subscriptionId
+          ? {
+              type: "subscription" as const,
+              id: result.logContext.subscriptionId,
+            }
+          : null);
+
+      if (proposalTarget) {
+        try {
+          const outcome = await tryAutoConfirmProposal(
+            result.rescheduleRequestId,
+            proposalTarget.type,
+            proposalTarget.id,
+          );
+          autoConfirmed = outcome.confirmed;
+        } catch (err) {
+          // A lost CAS race on the final AUTO_ACCEPTED write (proposal answered
+          // or expired concurrently) is an ordinary outcome, not an error —
+          // reschedule-auto-confirm.ts already reports anything else itself.
+          if (!(err instanceof IllegalTransitionError)) {
+            Sentry.captureException(
+              err instanceof Error ? err : new Error(String(err)),
+              {
+                tags: { subsystem: "bookings", op: "reschedule-auto-confirm" },
+              },
+            );
+          }
+        }
+      }
+    }
 
     // B14 — reschedule now leaves an activity-log entry (cancel always did).
     if (result.logContext.cpId) {
@@ -608,8 +774,40 @@ export async function POST(
       console.error("[reschedule] Failed to send notification:", error);
     }
 
-    return NextResponse.json(result);
+    // The three outcomes read very differently to a user — you're moved, we've
+    // asked, or nothing was proposed — so they must not collapse into one line.
+    const resultMessage = () => {
+      if (autoConfirmed) return "Your new time is confirmed.";
+      if (result.rescheduleRequestId) {
+        return "Your requested time has been sent to the consultant.";
+      }
+      return result.message;
+    };
+
+    return NextResponse.json({
+      ...result,
+      autoConfirmed,
+      // The two outcomes read very differently to a user — "you're moved" versus
+      // "we've asked" — so the client must be able to tell them apart rather
+      // than inferring it from the proposal's presence.
+      message: resultMessage(),
+    });
   } catch (error) {
+    // openForAppointmentId is a nullable @unique, so a second reschedule while
+    // one is still open is MEANT to fail here — that is the DB-level guarantee
+    // of at most one live proposal per appointment. Without this branch the
+    // expected outcome surfaced as a 500 "Failed to request reschedule" and
+    // was reported to Sentry as an unexpected error.
+    if (isUniqueViolation(error)) {
+      return NextResponse.json(
+        {
+          error: "A reschedule request is already open for this booking.",
+          code: "RESCHEDULE_ALREADY_OPEN",
+        },
+        { status: 409 },
+      );
+    }
+
     // B2 — the CAS guard's structured 409 (NOT_RESCHEDULABLE).
     if (error instanceof Error && "httpStatus" in error) {
       const status =

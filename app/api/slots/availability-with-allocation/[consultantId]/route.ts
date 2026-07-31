@@ -89,11 +89,25 @@ export async function GET(
     // ownership check, so their response is byte-identical to before.
     const includeAppointmentDetailsRequested =
       searchParams.get("includeAppointmentDetails") === "true";
+    const requestedConsulteeUserId = searchParams.get("consulteeUserId");
+
+    // Both gates below need the caller's identity, and this route is re-hit on
+    // every week-slide — so resolve it ONCE rather than awaiting getSession in
+    // each gate. Still skipped entirely on the public path, where neither
+    // parameter is present and the route stays anonymous.
+    const session =
+      includeAppointmentDetailsRequested || requestedConsulteeUserId
+        ? await getSession(true)
+        : null;
+    const isOwningConsultant =
+      session?.user?.consultantProfileId === consultantId;
+
     let includeAppointmentDetails = false;
     if (includeAppointmentDetailsRequested) {
-      const session = await getSession(true);
-      const isOwner = session?.user?.consultantProfileId === consultantId;
-      if (!session?.user?.id || (!isOwner && !isPrivileged(session.user.role))) {
+      if (
+        !session?.user?.id ||
+        (!isOwningConsultant && !isPrivileged(session.user.role))
+      ) {
         return NextResponse.json(
           { error: "Forbidden: appointment details require consultant ownership" },
           { status: 403 },
@@ -110,13 +124,10 @@ export async function GET(
     // Gated because this route is otherwise PUBLIC: an ungated parameter would
     // be a busy/free oracle for any user id. You may ask about yourself, or the
     // consultant (and staff) may ask about a consultee booking with them.
-    const requestedConsulteeUserId = searchParams.get("consulteeUserId");
     let consulteeUserId: string | null = null;
     if (requestedConsulteeUserId) {
-      const session = await getSession(true);
       const isSelf = session?.user?.id === requestedConsulteeUserId;
-      const isOwner = session?.user?.consultantProfileId === consultantId;
-      if (!isSelf && !isOwner && !isPrivileged(session?.user?.role)) {
+      if (!isSelf && !isOwningConsultant && !isPrivileged(session?.user?.role)) {
         return NextResponse.json(
           { error: "Forbidden: cannot read another user's calendar" },
           { status: 403 },
@@ -238,30 +249,61 @@ export async function GET(
     let overlapMetaIndex: Map<number, OverlapAppointmentMeta[]> = new Map();
     let detailAppointments: AppointmentForOverlapMeta[] = [];
     const occupancyNow = new Date();
+
+    // The consultee's own bookings — with ANY consultant — folded in below so
+    // the grid and the allocator agree on what is free for BOTH parties.
+    //
+    // Deliberately a SECOND query rather than a third arm of the consultant's
+    // OR: the detail branch attaches plan titles and participant names, and a
+    // consultee's booking with a *different* consultant must read as busy and
+    // nothing more (ADR 20). Merged, those rows would inherit that metadata.
+    // A PrismaPromise does not execute until awaited, so it is handed to the
+    // Promise.all below to run alongside the consultant query rather than
+    // after it — separate query, same round-trip.
+    const consulteeOccupancy = consulteeUserId
+      ? prisma.appointment.findMany({
+          where: {
+            AND: [
+              { OR: buildOccupiedAppointmentFilter() },
+              {
+                slotsOfAppointment: {
+                  some: { user: { some: { id: consulteeUserId } } },
+                },
+              },
+              slotsInWindow,
+            ],
+          },
+          include: { slotsOfAppointment: true, ...LIVE_OCCUPANCY_SELECT },
+        })
+      : Promise.resolve([]);
+
     if (includeAppointmentDetails) {
-      const fetched = await prisma.appointment.findMany({
-        where: occupiedAppointmentWhere,
-        include: {
-          slotsOfAppointment: true,
-          consultation: {
-            select: {
-              status: true,
-              consultationPlan: { select: { title: true } },
-              requestedBy: { select: { user: { select: { name: true } } } },
+      const [fetched] = await Promise.all([
+        prisma.appointment.findMany({
+          where: occupiedAppointmentWhere,
+          include: {
+            slotsOfAppointment: true,
+            consultation: {
+              select: {
+                status: true,
+                consultationPlan: { select: { title: true } },
+                requestedBy: { select: { user: { select: { name: true } } } },
+              },
             },
-          },
-          subscription: {
-            select: {
-              status: true,
-              subscriptionPlan: { select: { title: true } },
-              requestedBy: { select: { user: { select: { name: true } } } },
+            subscription: {
+              select: {
+                status: true,
+                subscriptionPlan: { select: { title: true } },
+                requestedBy: { select: { user: { select: { name: true } } } },
+              },
             },
+            webinar: { select: { webinarPlan: { select: { title: true } } } },
+            class: { select: { classPlan: { select: { title: true } } } },
+            payment: { select: { expiresAt: true } },
           },
-          webinar: { select: { webinarPlan: { select: { title: true } } } },
-          class: { select: { classPlan: { select: { title: true } } } },
-          payment: { select: { expiresAt: true } },
-        },
-      });
+        }),
+        consulteeOccupancy,
+      ]);
       detailAppointments = fetched.filter((appt) =>
         isOccupiedByLiveAppointment(appt, occupancyNow),
       );
@@ -270,34 +312,23 @@ export async function GET(
       );
       overlapMetaIndex = buildOverlapMetaIndex(detailAppointments);
     } else {
-      const appointments = await prisma.appointment.findMany({
-        where: occupiedAppointmentWhere,
-        include: { slotsOfAppointment: true, ...LIVE_OCCUPANCY_SELECT },
-      });
+      const [appointments] = await Promise.all([
+        prisma.appointment.findMany({
+          where: occupiedAppointmentWhere,
+          include: { slotsOfAppointment: true, ...LIVE_OCCUPANCY_SELECT },
+        }),
+        consulteeOccupancy,
+      ]);
       rawSlotsOfAppointment = appointments
         .filter((appt) => isOccupiedByLiveAppointment(appt, occupancyNow))
         .flatMap((appt) => appt.slotsOfAppointment);
     }
 
-    // Fold in the consultee's own bookings — with ANY consultant — so the grid
-    // and the allocator agree on what is free for BOTH parties. No overlap
-    // metadata is attached: the consultant may see that the time is taken, not
-    // what it is taken by (ADR 20).
+    // No overlap metadata is attached to these: the consultant may see that the
+    // time is taken, not what it is taken by (ADR 20). Already resolved by the
+    // Promise.all above — this await does not add a round-trip.
     if (consulteeUserId) {
-      const consulteeAppointments = await prisma.appointment.findMany({
-        where: {
-          AND: [
-            { OR: buildOccupiedAppointmentFilter() },
-            {
-              slotsOfAppointment: {
-                some: { user: { some: { id: consulteeUserId } } },
-              },
-            },
-            slotsInWindow,
-          ],
-        },
-        include: { slotsOfAppointment: true, ...LIVE_OCCUPANCY_SELECT },
-      });
+      const consulteeAppointments = await consulteeOccupancy;
 
       const seen = new Set(rawSlotsOfAppointment.map((s) => s.id));
       for (const appt of consulteeAppointments) {

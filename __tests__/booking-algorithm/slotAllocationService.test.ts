@@ -1305,7 +1305,9 @@ describe("fetchEventData - config extraction", () => {
         schedulingPeriodEndsAt: expect.any(Date),
       }),
       expect.any(Array), // appointmentIdsToExclude
-      "consultee-1", // #676 AE-1 — consulteeUserId threaded for the conflict scan
+      // #676 AE-1 — consulteeUserId threaded for the conflict scan, now inside
+      // the options object that brought validate() back under the param limit.
+      { consulteeUserId: "consultee-1" },
     );
   });
 
@@ -1326,7 +1328,10 @@ describe("fetchEventData - config extraction", () => {
       expect.objectContaining({ userId: "consultant-1" }),
       expect.objectContaining({ durationInHours: 1 }),
       expect.any(Array), // appointmentIdsToExclude
-      undefined, // #676 AE-1 — group event, no single consultee
+      // consulteeUserId moved into the options object when validate() came back
+      // under the parameter limit. Still undefined here: #676 AE-1 — a group
+      // event has no single consultee.
+      { consulteeUserId: undefined },
     );
   });
 
@@ -1371,7 +1376,10 @@ describe("fetchEventData - config extraction", () => {
         sessionDurationInHours: 1.5,
       }),
       expect.any(Array), // appointmentIdsToExclude
-      undefined, // #676 AE-1 — group event, no single consultee
+      // consulteeUserId moved into the options object when validate() came back
+      // under the parameter limit. Still undefined here: #676 AE-1 — a group
+      // event has no single consultee.
+      { consulteeUserId: undefined },
     );
   });
 });
@@ -1468,6 +1476,88 @@ describe("updateEventStatus", () => {
     expect(updateCall.data.status).toBe("SCHEDULED");
     expect(updateCall.data.schedulingPeriodStartsAt).toBeDefined();
     expect(updateCall.data.schedulingPeriodEndsAt).toBeDefined();
+  });
+
+  // #1060 — allocating a DRAFT used to 409 and roll back the whole allocation:
+  // the transition targeted SCHEDULED against EVENT_ALLOWED_FROM.SCHEDULED,
+  // which deliberately excludes DRAFT so a reschedule cannot publish an
+  // unpublished offering. A draft matched zero rows, so "Set schedule" — the
+  // one affordance that gives a draft its first session — always failed.
+  //
+  // The two properties pull in opposite directions, so both are pinned:
+  // allocation must TOLERATE a draft, and must not PUBLISH one.
+  describe.each([
+    ["webinar", "webinar-1"],
+    ["class", "class-1"],
+  ] as const)("allocating a DRAFT %s", (eventType, eventId) => {
+    /** Guarded updateMany matches nothing (a DRAFT row); the re-read says why. */
+    function arrangeDraft() {
+      const model = mockTx[eventType as "webinar" | "class"];
+      model.updateMany.mockResolvedValue({ count: 0 });
+      model.findUnique.mockResolvedValue(
+        eventType === "webinar"
+          ? makeWebinarEvent({ status: "DRAFT" })
+          : makeClassEvent({ status: "DRAFT" }),
+      );
+      return model;
+    }
+
+    it("succeeds — a draft can be given its first session", async () => {
+      arrangeDraft();
+
+      const result = await SlotAllocationService.allocate({
+        eventType,
+        eventId,
+        mode: "manual",
+        slots: ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"],
+      });
+
+      expect(result.success).toBe(true);
+    });
+
+    it("does not publish it — every status write is guarded against DRAFT", async () => {
+      const model = arrangeDraft();
+
+      await SlotAllocationService.allocate({
+        eventType,
+        eventId,
+        mode: "manual",
+        slots: ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"],
+      });
+
+      // Publishing is a separate, deliberate act; allocation only adds
+      // sessions. Any write that sets SCHEDULED must carry a WHERE a DRAFT row
+      // cannot satisfy, so it matched nothing.
+      const publishing = model.updateMany.mock.calls.filter(
+        ([args]: [{ data?: { status?: string } }]) =>
+          args.data?.status === "SCHEDULED",
+      );
+      expect(publishing.length).toBeGreaterThan(0);
+      for (const [args] of publishing) {
+        expect(args.where.status.in).not.toContain("DRAFT");
+      }
+    });
+
+    it("still refuses to resurrect a CANCELLED event", async () => {
+      // Tolerating DRAFT must not reopen the resurrection hole the guard was
+      // added to close (#836) — the re-read is what distinguishes them.
+      const model = mockTx[eventType as "webinar" | "class"];
+      model.updateMany.mockResolvedValue({ count: 0 });
+      model.findUnique.mockResolvedValue(
+        eventType === "webinar"
+          ? makeWebinarEvent({ status: "CANCELLED" })
+          : makeClassEvent({ status: "CANCELLED" }),
+      );
+
+      const result = await SlotAllocationService.allocate({
+        eventType,
+        eventId,
+        mode: "manual",
+        slots: ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"],
+      });
+
+      expect(result.success).toBe(false);
+    });
   });
 });
 

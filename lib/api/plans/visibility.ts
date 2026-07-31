@@ -86,14 +86,35 @@ export async function isPlanViewable(
     visibility: OrgPlanVisibility;
     organizationId: string | null;
     archivedAt?: Date | null;
+    /**
+     * The plan's authoring consultant. Present only where the caller loaded it;
+     * absent keeps the previous behaviour exactly.
+     */
+    consultantProfileId?: string | null;
   } | null,
   viewerUserId: string | null | undefined,
   findActiveMembership: (args: {
     userId: string;
     organizationId: string;
   }) => Promise<boolean>,
+  /**
+   * The viewer's own consultant profile, when they have one.
+   *
+   * This is the owner-preview arm: an author may open their own unpublished or
+   * archived offering at its REAL detail URL, so "preview" is the actual page
+   * rather than a second renderer that can drift from it. It deliberately does
+   * NOT widen anything for anyone else — a non-owner still gets a 404.
+   */
+  viewerConsultantProfileId?: string | null,
 ): Promise<boolean> {
   if (!plan) return false;
+
+  const isOwner =
+    !!viewerConsultantProfileId &&
+    !!plan.consultantProfileId &&
+    plan.consultantProfileId === viewerConsultantProfileId;
+  if (isOwner) return true;
+
   if (plan.archivedAt) return false;
   if (MARKETPLACE_VISIBILITY.includes(plan.visibility)) return true;
   if (!plan.organizationId || !viewerUserId) return false;

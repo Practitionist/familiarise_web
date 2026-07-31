@@ -211,6 +211,8 @@ function mapSingle(
   const { title, counterpart, status } = eventFacts(appointment);
   return {
     id: `appointment-${appointment.id}`,
+    // Always the viewing consultant: this is their own list.
+    consultantProfileId: consultantId,
     appointmentId: appointment.id,
     kind: appointment.appointmentType as AppointmentVM["kind"],
     title,
@@ -250,6 +252,8 @@ function mapGroup(
       : `class-${first.classId}`;
   return {
     id: groupId,
+    // Always the viewing consultant: this is their own list.
+    consultantProfileId: consultantId,
     appointmentId: target?.id ?? first.id,
     kind: first.appointmentType as AppointmentVM["kind"],
     title,
@@ -272,7 +276,11 @@ function mapGroup(
   };
 }
 
-function mapTrial(t: ConsultantTrialLike, now: Date): AppointmentVM {
+function mapTrial(
+  t: ConsultantTrialLike,
+  consultantId: string,
+  now: Date,
+): AppointmentVM {
   const sessions = sortSessions(
     (t.appointment?.slotsOfAppointment ?? []).map((slot) =>
       toSessionVM({
@@ -285,6 +293,8 @@ function mapTrial(t: ConsultantTrialLike, now: Date): AppointmentVM {
   const status = normalizeStatus(t.status);
   return {
     id: `trial-${t.id}`,
+    // Always the viewing consultant: this is their own list.
+    consultantProfileId: consultantId,
     appointmentId: t.appointment?.id ?? null,
     kind: "TRIAL",
     title: t.subscriptionPlan.title,
@@ -305,12 +315,15 @@ function mapTrial(t: ConsultantTrialLike, now: Date): AppointmentVM {
 
 function mapUnscheduledClass(
   c: UnscheduledClassLike,
+  consultantId: string,
   now: Date,
 ): AppointmentVM {
   const status = normalizeStatus(c.status);
   const plan = c.classPlan;
   return {
     id: `unscheduled-class-${c.id}`,
+    // Always the viewing consultant: this is their own list.
+    consultantProfileId: consultantId,
     appointmentId: null,
     kind: "CLASS",
     title: plan.title,
@@ -331,11 +344,14 @@ function mapUnscheduledClass(
 
 function mapUnscheduledWebinar(
   w: UnscheduledWebinarLike,
+  consultantId: string,
   now: Date,
 ): AppointmentVM {
   const status = normalizeStatus(w.status);
   return {
     id: `unscheduled-webinar-${w.id}`,
+    // Always the viewing consultant: this is their own list.
+    consultantProfileId: consultantId,
     appointmentId: null,
     kind: "WEBINAR",
     title: w.webinarPlan.title,
@@ -392,8 +408,12 @@ export function mapConsultantAppointments(
     }
   }
 
-  vms.push(...scheduledTrials.map((t) => mapTrial(t, now)));
-  vms.push(...unscheduledClasses.map((c) => mapUnscheduledClass(c, now)));
-  vms.push(...unscheduledWebinars.map((w) => mapUnscheduledWebinar(w, now)));
+  vms.push(...scheduledTrials.map((t) => mapTrial(t, consultantId, now)));
+  vms.push(
+    ...unscheduledClasses.map((c) => mapUnscheduledClass(c, consultantId, now)),
+  );
+  vms.push(
+    ...unscheduledWebinars.map((w) => mapUnscheduledWebinar(w, consultantId, now)),
+  );
   return vms;
 }

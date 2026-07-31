@@ -52,6 +52,18 @@ export const allocationRequestSchema = z
       })
       .optional(),
 
+    // Consultant's explicit acceptance of times outside their own published
+    // availability. The dialog has always offered this ("Override and
+    // Allocate"), but the field was absent from this schema and therefore
+    // stripped, so the button reliably 400'd with OUTSIDE_AVAILABILITY. The
+    // route only honours it for the consultant or a privileged caller — a
+    // consultee cannot wave away the consultant's schedule.
+    override: z
+      .boolean({
+        invalid_type_error: "'override' must be a boolean",
+      })
+      .optional(),
+
     slots: z
       .array(
         z.string().datetime({

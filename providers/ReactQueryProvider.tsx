@@ -19,10 +19,14 @@ function makeQueryClient() {
         retry: 2,
         // Cache-first navigation (perf RCA): the old global `true` refired
         // every mounted query on each window focus — returning to the tab
-        // felt like a full reload. Surfaces that genuinely need freshness
-        // keep it explicitly: the admin approval/home pages poll via
-        // refetchInterval, and PendingPaymentsWidget polls with its own
-        // interval — both independent of focus events.
+        // felt like a full reload.
+        //
+        // Surfaces that genuinely need freshness now opt back in per-query
+        // with refetchOnWindowFocus:true — the admin home / approval-payments
+        // / processing-payouts screens and PendingPaymentsWidget. They used to
+        // run background refetchIntervals instead, which refreshed for nobody
+        // whenever a tab sat open. Note BOTH flags below are off, so a query
+        // that opts into neither never refreshes after its first load.
         refetchOnWindowFocus: false,
         refetchOnMount: false,
         refetchOnReconnect: "always",

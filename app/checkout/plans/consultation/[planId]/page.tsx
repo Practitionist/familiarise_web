@@ -291,7 +291,7 @@ export default function ConsultationCheckoutPage({
         // Use pre-validated search params (validated once via useMemo)
         if (!validatedSearchParams) {
           throw new Error(
-            "Please select a time slot from the consultant's availability page before proceeding to checkout.",
+            "Pick a time on the expert's profile — under the plan you want — before checking out.",
           );
         }
 
@@ -404,7 +404,7 @@ export default function ConsultationCheckoutPage({
         // Use pre-validated search params
         if (!validatedSearchParams) {
           throw new Error(
-            "Please select a time slot from the consultant's availability page before proceeding to checkout.",
+            "Pick a time on the expert's profile — under the plan you want — before checking out.",
           );
         }
 

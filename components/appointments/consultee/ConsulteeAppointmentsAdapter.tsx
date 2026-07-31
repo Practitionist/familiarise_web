@@ -4,17 +4,8 @@ import { useState } from "react";
 import * as Sentry from "@sentry/nextjs";
 import { useParams, useRouter } from "next/navigation";
 import { useStreamVideoClient } from "@stream-io/video-react-sdk";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import { CalendarClock, Loader2 } from "lucide-react";
+
+
 import { useToast } from "@/hooks/use-toast";
 import { getOrCreateAppointmentMeeting } from "@/lib/meeting";
 import type { SlotOfAppointment } from "@prisma/client";
@@ -39,13 +30,13 @@ import type {
 } from "@/lib/appointments/view-model";
 import { useEventActions } from "@/components/appointments/consultee/useEventActions";
 import { RescheduleSessionsModal } from "@/components/appointments/consultee/RescheduleSessionsModal";
+import { useSession } from "@/lib/auth-client";
 import { CancelConfirmationDialog } from "@/components/appointments/consultee/CancelConfirmationDialog";
 import { ReportIssueDialog } from "@/components/appointments/consultee/ReportIssueDialog";
 import { DocumentUpload } from "@/components/appointments/DocumentUpload";
 
 type DialogKind =
   | "cancel"
-  | "reschedule-single"
   | "reschedule-multi"
   | "report"
   | "documents";
@@ -79,6 +70,10 @@ export function useConsulteeAppointmentsAdapter(): AppointmentActionAdapter {
   const client = useStreamVideoClient();
   const params = useParams<{ consulteeId: string }>();
   const consulteeId = params?.consulteeId;
+  // The viewer's USER id (not the consultee-profile id in the route) — the
+  // availability grid keys occupancy off slot participation, and the route's
+  // `isSelf` gate compares against session.user.id.
+  const { data: session } = useSession();
 
   // ONE set of dialogs, keyed off the row that opened them.
   const [activeVm, setActiveVm] = useState<AppointmentVM | null>(null);
@@ -182,20 +177,36 @@ export function useConsulteeAppointmentsAdapter(): AppointmentActionAdapter {
   const overflowItems = (vm: AppointmentVM): OverflowItem[] => {
     const items: OverflowItem[] = [];
     const inactive = isInactiveStatus(vm.status);
-    const firstRaw = vm.raw.rawSlots?.[0];
+    const slots = vm.raw.rawSlots ?? [];
+    const firstRaw = slots[0];
     const tentative = firstRaw?.isTentative ?? false;
+    // A released slot awaiting a new time IS the open reschedule: at most one
+    // may be live per appointment (the nullable-unique openForAppointmentId),
+    // so offering the action again only earns a 409.
+    const rescheduleInFlight = slots.some(
+      (slot) => slot.completionStatus === "RESCHEDULED",
+    );
 
     if (
       vm.appointmentId &&
       !inactive &&
       !tentative &&
-      isApprovedStatus(vm.status)
+      isApprovedStatus(vm.status) &&
+      // An APPROVED booking with nothing allocated yet ("Not scheduled · 0/0")
+      // has no time to move. The proposal window is derived from the earliest
+      // released session, so this would fail with PROPOSAL_WINDOW_CLOSED.
+      slots.length > 0 &&
+      !rescheduleInFlight
     ) {
       items.push({
         key: "reschedule",
         label: "Reschedule",
         onClick: () =>
-          openDialog(vm, vm.group ? "reschedule-multi" : "reschedule-single"),
+          // One surface for every reschedule. The modal skips its
+          // session-picker step when there is only one session, so a
+          // consultation opens straight on "pick a new time" — a second dialog
+          // for the same action is how the four planner dialogs started.
+          openDialog(vm, "reschedule-multi"),
       });
     }
     if (vm.appointmentId && !inactive) {
@@ -274,60 +285,17 @@ export function useConsulteeAppointmentsAdapter(): AppointmentActionAdapter {
           typeLabel={typeLabel}
           rawSlots={activeVm.raw.rawSlots ?? []}
           isLoading={actions.isLoading}
-          onConfirm={(slotIds) => {
+          consultantProfileId={activeVm.consultantProfileId}
+          consulteeUserId={session?.user?.id}
+          sessionDurationInHours={
+            activeVm.raw.appointment?.subscription?.subscriptionPlan
+              ?.sessionDurationInHours ?? undefined
+          }
+          onConfirm={({ slotIds, proposedSlots }) => {
             closeDialog();
-            void actions.handleReschedule(slotIds);
+            void actions.handleReschedule(slotIds, proposedSlots);
           }}
         />
-
-        {/* Single-session reschedule confirmation (consultations/webinars/trials). */}
-        <AlertDialog
-          open={dialog === "reschedule-single"}
-          onOpenChange={(open) => !open && closeDialog()}
-        >
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle className="flex items-center gap-2">
-                <CalendarClock className="h-5 w-5 text-muted-foreground" />
-                Reschedule {typeLabel}?
-              </AlertDialogTitle>
-              <AlertDialogDescription asChild>
-                <div className="space-y-2">
-                  <p>
-                    Are you sure you want to reschedule{" "}
-                    <strong>&quot;{activeVm.title}&quot;</strong> with{" "}
-                    <strong>{activeVm.counterpart.name}</strong>?
-                  </p>
-                  <p className="text-muted-foreground">
-                    Your current time slot will be released and the{" "}
-                    {typeLabel.toLowerCase()} status will revert to{" "}
-                    <strong>Pending</strong> until a new time is allocated.
-                  </p>
-                </div>
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel disabled={actions.isLoading}>
-                Keep Current Time
-              </AlertDialogCancel>
-              <AlertDialogAction
-                onClick={() => {
-                  closeDialog();
-                  void actions.handleReschedule();
-                }}
-                disabled={actions.isLoading}
-                className="bg-primary text-primary-foreground hover:bg-primary/90"
-              >
-                {actions.isLoading ? (
-                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                ) : (
-                  <CalendarClock className="h-4 w-4 mr-2" />
-                )}
-                Reschedule
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
 
         {activeVm.appointmentId && dialog === "report" && (
           <ReportIssueDialog

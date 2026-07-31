@@ -240,6 +240,13 @@ function makeMockTx() {
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
     slotOfAppointment: { updateMany: jest.fn(), deleteMany: jest.fn() },
+    // Cancel closes any live reschedule proposal so the appointment's
+    // openForAppointmentId reservation is released and the expiry cron cannot
+    // act on a cancelled booking. Reschedule creates one when times are proposed.
+    rescheduleRequest: {
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      create: jest.fn().mockResolvedValue({ id: "reschedule-request-1" }),
+    },
   };
 }
 
@@ -924,7 +931,13 @@ describe("Cancel Route Handler - POST", () => {
       // audit trail); only live SCHEDULED slots flip, history is never
       // re-stamped.
       expect(mockTx.slotOfAppointment.updateMany).toHaveBeenCalledWith({
-        where: { appointmentId: "apt-1", completionStatus: "SCHEDULED" },
+        // RESCHEDULED counts too: a slot released by a pending reschedule is
+        // not SCHEDULED, and skipping it left non-terminal rows on a booking
+        // that no longer exists.
+        where: {
+          appointmentId: "apt-1",
+          completionStatus: { in: ["SCHEDULED", "RESCHEDULED"] },
+        },
         data: { completionStatus: "CANCELLED" },
       });
 

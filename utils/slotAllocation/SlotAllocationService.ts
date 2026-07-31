@@ -49,10 +49,10 @@ import {
 import { isExclusionViolation, isUniqueViolation } from "@/lib/db/pg-errors";
 import {
   ALLOCATION_APPROVABLE_FROM,
+  EVENT_ALLOWED_FROM,
+  CLASS_EVENT_ALLOWED_FROM,
   transitionConsultationRequest,
   transitionSubscriptionRequest,
-  transitionWebinarEvent,
-  transitionClassEvent,
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import {
@@ -129,6 +129,7 @@ export class SlotAllocationService {
             request.eventId,
             request.initialAllocation,
             request.idempotencyKey,
+            request.override,
           );
 
         default:
@@ -634,7 +635,7 @@ export class SlotAllocationService {
         consultant,
         config,
         appointmentIdsToExclude,
-        consulteeUserId, // #676 AE-1 — also check the consultee's calendar
+        { consulteeUserId }, // #676 AE-1 — also check the consultee's calendar
       );
 
       if (!validation.isValid) {
@@ -1022,7 +1023,7 @@ export class SlotAllocationService {
         consultant,
         config,
         appointmentIdsToExclude,
-        consulteeUserId, // #676 AE-1 — also check the consultee's calendar
+        { consulteeUserId }, // #676 AE-1 — also check the consultee's calendar
       );
 
       if (!validation.isValid) {
@@ -1157,6 +1158,8 @@ export class SlotAllocationService {
     // here, because approving stored times is only valid for an unallocated event.
     _initialAllocation: boolean | undefined,
     idempotencyKey?: string,
+    /** Consultant accepting times outside their own published availability. */
+    overrideAvailabilityWindow?: boolean,
   ): Promise<AllocationResult> {
     // #837 — a retry whose first response was lost must replay the approved
     // batch, not trip the initial-allocation guard with a 409.
@@ -1301,7 +1304,7 @@ export class SlotAllocationService {
             consultant,
             config,
             existingAppointmentIds,
-            consulteeUserId, // #676 AE-1 — also check the consultee's calendar
+            { consulteeUserId, overrideAvailabilityWindow },
           );
 
           if (!validation.isValid) {
@@ -1481,11 +1484,15 @@ export class SlotAllocationService {
     slotsPerCall: number,
     consultant: ConsultantAllocationData,
     bookedSlots: Set<string>,
-    now: Date,
-    startDate: Date,
-    endDate: Date,
-    schedulingTimezone?: string,
+    /** The clock and the window the placement has to fall inside. */
+    bounds: {
+      now: Date;
+      startDate: Date;
+      endDate: Date;
+      schedulingTimezone?: string;
+    },
   ): Date[] | null {
+    const { now, startDate, endDate, schedulingTimezone } = bounds;
     const rowDayKey = SlotCalculationService.dayKey(
       rowStart,
       schedulingTimezone,
@@ -1834,10 +1841,12 @@ export class SlotAllocationService {
           slotsPerCall,
           consultant,
           bookedSlots,
-          now,
-          startDate,
-          endDate,
-          config.schedulingTimezone,
+          {
+            now,
+            startDate,
+            endDate,
+            schedulingTimezone: config.schedulingTimezone,
+          },
         );
 
         if (!sessionSlots) return false;
@@ -2669,40 +2678,81 @@ export class SlotAllocationService {
         });
         break;
 
-      case "webinar":
+      case "webinar": {
         // Webinar model does NOT have startDate/endDate fields
         // Start date is stored in the Appointment's slots.
-        // Guarded transition — an unguarded update let allocation racing a
-        // cancel resurrect a CANCELLED (or re-open a COMPLETED) webinar.
-        await transitionWebinarEvent(tx, {
-          where: { id: eventId },
-          to: "SCHEDULED",
+        //
+        // Allocation gives an event its sessions; it does NOT publish one. A
+        // DRAFT therefore keeps its status here and merely receives its slots:
+        // "add a session, then publish" is the editor's flow, and publishing is
+        // one-way (EVENT_PUBLISHABLE_FROM). Re-allocating a live event still
+        // re-stamps SCHEDULED, and CANCELLED/COMPLETED are still refused —
+        // that resurrection hazard is why the guard exists at all.
+        //
+        // This used to transition to SCHEDULED against a map that deliberately
+        // excludes DRAFT, so it matched zero rows and 409'd the entire
+        // allocation: the one affordance that gives a draft its first session
+        // always failed (#1060).
+        const restamped = await tx.webinar.updateMany({
+          where: { id: eventId, status: { in: EVENT_ALLOWED_FROM.SCHEDULED } },
+          data: { status: "SCHEDULED" },
         });
+        if (restamped.count === 0) {
+          const current = await tx.webinar.findUnique({
+            where: { id: eventId },
+            select: { status: true },
+          });
+          if (current?.status !== "DRAFT") {
+            throw new IllegalTransitionError("Webinar", "SCHEDULED");
+          }
+        }
         break;
+      }
 
-      case "class":
+      case "class": {
         // Class model HAS schedulingPeriod fields
         // FIX: Only set schedulingPeriod if not already configured — same guard as SUBSCRIPTION.
         // Overwriting an explicitly-set period on re-allocation shifts the window, allowing
         // slots outside the original range to pass the scheduling-period validation check.
-        // Guarded transition — same resurrection hazard as WEBINAR above.
-        await transitionClassEvent(tx, {
-          where: { id: eventId },
-          to: "SCHEDULED",
-          data: {
-            ...(!config.schedulingPeriodStartsAt ||
-            !config.schedulingPeriodEndsAt
-              ? {
-                  schedulingPeriodStartsAt: firstSlot,
-                  schedulingPeriodEndsAt: addMonths(
-                    firstSlot,
-                    config.durationInMonths || 2,
-                  ),
-                }
-              : {}),
+        const periodData =
+          !config.schedulingPeriodStartsAt || !config.schedulingPeriodEndsAt
+            ? {
+                schedulingPeriodStartsAt: firstSlot,
+                schedulingPeriodEndsAt: addMonths(
+                  firstSlot,
+                  config.durationInMonths || 2,
+                ),
+              }
+            : {};
+
+        // Same DRAFT-keeps-its-status rule as WEBINAR above, and the same
+        // resurrection guard.
+        const restamped = await tx.class.updateMany({
+          where: {
+            id: eventId,
+            status: { in: CLASS_EVENT_ALLOWED_FROM.SCHEDULED },
           },
+          data: { status: "SCHEDULED", ...periodData },
         });
+        if (restamped.count === 0) {
+          const current = await tx.class.findUnique({
+            where: { id: eventId },
+            select: { status: true },
+          });
+          if (current?.status !== "DRAFT") {
+            throw new IllegalTransitionError("Class", "SCHEDULED");
+          }
+          // A draft keeps DRAFT but still needs its scheduling period, or the
+          // slots it just received sit outside a window that is never set.
+          if (Object.keys(periodData).length > 0) {
+            await tx.class.updateMany({
+              where: { id: eventId, status: "DRAFT" },
+              data: periodData,
+            });
+          }
+        }
         break;
+      }
     }
   }
 

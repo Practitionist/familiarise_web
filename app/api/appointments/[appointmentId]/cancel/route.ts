@@ -29,6 +29,8 @@ import {
   CANCELLABLE_FROM,
   CLASS_EVENT_ALLOWED_FROM,
   EVENT_ALLOWED_FROM,
+  RESCHEDULE_OPEN_STATUSES,
+  SLOT_RESCHEDULABLE_FROM,
 } from "@/lib/booking/transitions";
 export async function POST(
   request: NextRequest,
@@ -284,11 +286,17 @@ export async function POST(
         // Soft-cancel: mark slots as CANCELLED instead of deleting.
         // CRITICAL: Do NOT delete appointments — Payment records have onDelete: Cascade
         // and deleting appointments would permanently destroy payment/refund/dispute audit trail.
+        //
+        // RESCHEDULED counts too. A slot released by a pending reschedule is not
+        // SCHEDULED, so filtering on SCHEDULED alone left those rows in a
+        // non-terminal state on a booking that no longer exists — and proposals
+        // hang off exactly those rows.
+        const cancellableSlotStatuses = SLOT_RESCHEDULABLE_FROM;
         if (appointment.subscription) {
           await tx.slotOfAppointment.updateMany({
             where: {
               appointment: { subscriptionId: appointment.subscription.id },
-              completionStatus: "SCHEDULED",
+              completionStatus: { in: cancellableSlotStatuses },
             },
             data: { completionStatus: "CANCELLED" },
           });
@@ -296,17 +304,35 @@ export async function POST(
           await tx.slotOfAppointment.updateMany({
             where: {
               appointment: { classId: appointment.class.id },
-              completionStatus: "SCHEDULED",
+              completionStatus: { in: cancellableSlotStatuses },
             },
             data: { completionStatus: "CANCELLED" },
           });
         } else {
           // Consultation/webinar/trial — single appointment
           await tx.slotOfAppointment.updateMany({
-            where: { appointmentId, completionStatus: "SCHEDULED" },
+            where: {
+              appointmentId,
+              completionStatus: { in: cancellableSlotStatuses },
+            },
             data: { completionStatus: "CANCELLED" },
           });
         }
+
+        // Close any live reschedule proposal on this booking. Leaving one open
+        // would keep openForAppointmentId reserved forever and let the expiry
+        // cron act on a cancelled booking.
+        await tx.rescheduleRequest.updateMany({
+          where: {
+            appointmentId,
+            status: { in: RESCHEDULE_OPEN_STATUSES },
+          },
+          data: {
+            status: "DECLINED",
+            openForAppointmentId: null,
+            resolvedAt: new Date(),
+          },
+        });
 
         return {
           success: true,

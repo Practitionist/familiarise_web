@@ -61,7 +61,12 @@ export default function AdminHomePageClient() {
     queryKey: ["admin-stats"],
     queryFn: fetchAdminStats,
     staleTime: 1 * 60 * 1000,
-    refetchInterval: 2 * 60 * 1000,
+    // Focus rather than a timer: an admin dashboard left open on a second
+    // screen refetched forever for nobody. The global default is
+    // refetchOnWindowFocus:false, so freshness has to be asked for here — and
+    // without it this query would never refresh at all, since refetchOnMount
+    // is off too.
+    refetchOnWindowFocus: true,
   });
 
   // Surface a real error rather than rendering zeros/"₹0", which an admin

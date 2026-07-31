@@ -32,7 +32,7 @@ import {
   Zap,
   RotateCcw,
 } from "lucide-react";
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
   TimeSlot,
   AppointmentDetail,
@@ -63,6 +63,21 @@ import { useToast } from "@/hooks/use-toast";
 function getSlotsPerCall(sessionDurationInHours?: number): number {
   return Math.ceil((sessionDurationInHours || 1) / 0.5); // 30-min increments
 }
+
+/** Minutes as a phrase a buyer would use — never a slot count (ADR B1). */
+function formatDurationLabel(minutes: number): string {
+  if (minutes % 60 !== 0) return `${minutes} min`;
+  const hours = minutes / 60;
+  return `${hours} hour${hours === 1 ? "" : "s"}`;
+}
+
+// The time gutter must be a FIXED first column, not 1/8 of the row. As an
+// equal-8 grid the gutter kept its w-14 while its CELL shrank with the
+// container, so in a narrow modal the label overflowed onto Sunday and
+// rendered as "19:30Available". minmax(0,1fr) also stops long cell text
+// blowing the day columns out.
+const GRID_COLS =
+  "grid grid-cols-[3.5rem_repeat(7,minmax(0,1fr))] md:grid-cols-[5rem_repeat(7,minmax(0,1fr))]";
 
 /** Returns true if a UTC date is outside the [allowedStart, allowedEnd] bounds. */
 function isOutsideAllowedRange(
@@ -408,6 +423,12 @@ export function UnifiedCalendar({
     allowedEnd,
     sessionDurationInHours,
     consulteeUserId,
+    // Follows `mode` rather than being its own prop: "allocate" is the
+    // consultant's own surface, the only one that renders the overlap
+    // tooltips, and the only one the route authorizes for them. A consultee
+    // picker is always "select", so it cannot forget to opt out and 403 its
+    // entire calendar over a tooltip it never draws.
+    includeAppointmentDetails: mode === "allocate",
   });
 
   // Wrap onAllocationComplete to refetch data before calling parent callback
@@ -514,12 +535,30 @@ export function UnifiedCalendar({
     }
   }, [preSelectedSlots, selectedSlots, setSelectedSlots]);
 
-  // Call onSlotsSelected when selection changes
+  // Call onSlotsSelected when the SELECTION changes — not when the parent
+  // re-renders.
+  //
+  // The callback is held in a ref and kept out of the dependency array on
+  // purpose. RescheduleSessionsModal passes an inline arrow, so depending on
+  // it meant a new identity every render: effect fires, parent setState,
+  // re-render, new identity, fire again, forever — React error #185. Nothing
+  // caught it because "select" is the consultee picker's mode and the picker
+  // never mounted while consultantProfileId was resolving to null.
+  //
+  // A ref rather than asking callers to useCallback: a component that
+  // infinite-loops when handed an inline arrow is a trap, and the sibling
+  // preSelectedSlots effect above already had to defend against the same
+  // class of bug by comparing contents.
+  const onSlotsSelectedRef = useRef(onSlotsSelected);
   useEffect(() => {
-    if (mode === "select" && onSlotsSelected) {
-      onSlotsSelected(selectedSlots);
+    onSlotsSelectedRef.current = onSlotsSelected;
+  });
+
+  useEffect(() => {
+    if (mode === "select") {
+      onSlotsSelectedRef.current?.(selectedSlots);
     }
-  }, [selectedSlots, mode, onSlotsSelected]);
+  }, [selectedSlots, mode]);
 
   // Set warning banner if duration configuration is missing
   useEffect(() => {
@@ -910,10 +949,14 @@ export function UnifiedCalendar({
       } else if (status.isAvailable) {
         // Available slot - check if past for fading
         if (status.isInPast) {
-          // Past available slot - faded, clickable (shows toast)
+          // A past slot is NOT available, whatever the consultant published.
+          // It used to render green and say "Available", differing from a real
+          // opening only by opacity — so a picker opened on the current week
+          // offered times that had already happened. Still clickable, because
+          // the toast explains why; it just no longer claims to be bookable.
           cellClassName +=
-            " bg-green-300 text-green-950 opacity-50 cursor-pointer hover:bg-green-400 border-green-400";
-          buttonText = isOutsideAllowedRange ? "Outside Period" : "Available";
+            " bg-slate-100 text-slate-400 border-slate-200 cursor-pointer hover:bg-slate-200";
+          buttonText = isOutsideAllowedRange ? "Outside Period" : "Past";
         } else {
           // Future available slot - unfaded, clickable
           cellClassName +=
@@ -1235,8 +1278,10 @@ export function UnifiedCalendar({
       {view === "week" ? (
         <div className="flex flex-col flex-1 min-h-0 max-h-[min(500px,calc(90dvh_-_16rem))]">
           {/* Week header */}
-          <div className="shrink-0 grid grid-cols-8 gap-0.5 md:gap-1 bg-background z-20 pb-1">
-            <div className="w-14 md:w-20"></div>
+          <div
+            className={`shrink-0 ${GRID_COLS} gap-0.5 md:gap-1 bg-background z-20 pb-1`}
+          >
+            <div></div>
             {weekDates.map((date, index) => {
               const isToday = isSameDay(date, new Date());
               const isInPeriod = isDateInSchedulingPeriod(
@@ -1271,10 +1316,10 @@ export function UnifiedCalendar({
             {INTERVALS.map((interval) => (
               <div
                 key={`interval-row-${interval.hour}-${interval.minute}`}
-                className="grid grid-cols-8 gap-0.5 md:gap-1"
+                className={`${GRID_COLS} gap-0.5 md:gap-1`}
               >
-                <div className="w-14 md:w-20">
-                  <div className="h-8 text-right pr-2 pt-0.5 text-[10px] md:text-sm flex items-start justify-end">
+                <div className="min-w-0">
+                  <div className="h-8 text-right pr-1 md:pr-2 pt-0.5 text-[10px] md:text-sm flex items-start justify-end whitespace-nowrap tabular-nums">
                     {new Date(
                       1970,
                       0,
@@ -1357,7 +1402,17 @@ export function UnifiedCalendar({
                   duration,
                 );
 
-                return `${selectedSlots.length} selected out of ${requiredSlotsForThisEvent} required slots`;
+                // Never "N slots": the 30-minute atom (ADR B1) is our
+                // bookkeeping unit, not something a buyer should have to
+                // translate. A one-hour consultation is ONE session, and
+                // "2 required slots" reads as two appointments.
+                const totalMinutes = requiredSlotsForThisEvent * 30;
+                const chosenMinutes = selectedSlots.length * 30;
+                if (chosenMinutes === 0)
+                  return `Select a ${formatDurationLabel(totalMinutes)} time`;
+                if (chosenMinutes >= totalMinutes)
+                  return `${formatDurationLabel(totalMinutes)} selected`;
+                return `${formatDurationLabel(chosenMinutes)} of ${formatDurationLabel(totalMinutes)} selected`;
               } catch (error) {
                 Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
                 console.error("Error calculating footer stats:", error);

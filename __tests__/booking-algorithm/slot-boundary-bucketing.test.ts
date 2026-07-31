@@ -167,7 +167,7 @@ describe("client/server bucketing parity at day boundaries", () => {
       limits(2, 4),
     );
     expect(result.weeklyCallsValid).toBe(false);
-    expect(result.weeklyCallsError).toContain("Maximum 1 calls per week");
+    expect(result.weeklyCallsError).toContain("Maximum 1 per week");
   });
 
   it("client groupSlotsByDay and SlotCalculationService.groupSlotsByDay agree on boundary slots", () => {

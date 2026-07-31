@@ -34,9 +34,21 @@ interface AppointmentSlot {
   completionStatus?: SlotCompletionStatus;
 }
 
+/** A live reschedule proposal: the times the consultee actually wants. */
+export interface RescheduleProposalInfo {
+  id: string;
+  status: string;
+  reason?: string | null;
+  round: number;
+  expiresAt: string;
+  initiatorRole: string;
+  proposedSlots: { startsAt: string; endsAt: string; round: number }[];
+}
+
 interface AppointmentInfo {
   id: string;
   slotsOfAppointment?: AppointmentSlot[];
+  rescheduleRequests?: RescheduleProposalInfo[];
 }
 
 export interface ConsultationApiResponse {
@@ -47,6 +59,8 @@ export interface ConsultationApiResponse {
   appointment?: AppointmentInfo;
   status: AppointmentStatus;
   bookingSource?: "DIRECT_CHECKOUT" | "REQUEST_SUBMITTED"; // Booking source enum
+  /** What the consultee said when booking. */
+  requestNotes?: string | null;
 }
 
 export interface SubscriptionApiResponse {
@@ -62,4 +76,6 @@ export interface SubscriptionApiResponse {
   schedulingPeriodEndsAt?: string;
   /** Defines the limit day/week buckets (ADR B9); column default Asia/Kolkata. */
   schedulingTimezone?: string;
+  /** What the consultee said when booking. */
+  requestNotes?: string | null;
 }

@@ -18,15 +18,22 @@ export async function canViewPlanDetail(
   } | null,
 ): Promise<boolean> {
   const session = await getSession().catch(() => null);
-  return isPlanViewable(plan, session?.user?.id ?? null, async (args) => {
-    const membership = await prisma.membership.findFirst({
-      where: {
-        userId: args.userId,
-        organizationId: args.organizationId,
-        status: "ACTIVE",
-      },
-      select: { id: true },
-    });
-    return membership !== null;
-  });
+  return isPlanViewable(
+    plan,
+    session?.user?.id ?? null,
+    async (args) => {
+      const membership = await prisma.membership.findFirst({
+        where: {
+          userId: args.userId,
+          organizationId: args.organizationId,
+          status: "ACTIVE",
+        },
+        select: { id: true },
+      });
+      return membership !== null;
+    },
+    // Owner preview: an author sees their own DRAFT / archived offering at the
+    // real detail URL. Nobody else's access changes.
+    session?.user?.consultantProfileId ?? null,
+  );
 }

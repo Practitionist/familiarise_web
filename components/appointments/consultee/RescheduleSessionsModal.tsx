@@ -21,8 +21,11 @@ import {
   Loader2,
 } from "lucide-react";
 import { format } from "date-fns";
+import Link from "next/link";
+import { useParams } from "next/navigation";
 import { cn } from "@/utils/tailwind";
 import { toDate, type SlotLike } from "@/lib/appointments/view-model";
+import { SafeUnifiedCalendar } from "@/components/scheduling/SafeUnifiedCalendar";
 
 /**
  * Multi-session reschedule dialog (one / multiple / entire program with the
@@ -38,8 +41,26 @@ interface RescheduleSessionsModalProps {
   /** Future/ongoing slots of the program (useEventActions rawSlots shape). */
   rawSlots: SlotLike[];
   isLoading: boolean;
-  /** Called with the selected slot ids, or undefined for the entire program. */
-  onConfirm: (slotIds?: string[]) => void;
+  /**
+   * The consultant delivering this program. When present the dialog offers a
+   * second step where the consultee picks the times they actually want; without
+   * it the dialog degrades to release-only, which is the old behaviour.
+   */
+  consultantProfileId?: string | null;
+  /** The viewer's own user id. The picker greys out times they are ALREADY
+   *  booked at with any consultant — allocation rejects those, so painting
+   *  them green would only fail at submit. */
+  consulteeUserId?: string;
+  /** Session length in hours, so the picker asks for the right block size. */
+  sessionDurationInHours?: number;
+  /**
+   * Called with the selected slot ids (undefined = the entire program) and,
+   * optionally, the times the consultee would like instead.
+   */
+  onConfirm: (args: {
+    slotIds?: string[];
+    proposedSlots?: { startsAt: string; endsAt: string }[];
+  }) => void;
 }
 
 function formatSlotDate(date: Date | string): string {
@@ -50,26 +71,157 @@ function formatSlotTime(date: Date | string): string {
   return format(toDate(date), "h:mm a");
 }
 
+type SessionWithProps = {
+  slots: SlotLike[];
+  isWithin24Hours: boolean;
+  startTime: Date;
+  endTime: Date;
+};
+
+/**
+ * The which-sessions picker.
+ *
+ * Extracted because the modal now carries a second step, and holding both the
+ * step machinery and this list in one function put it past the complexity
+ * budget — the list is self-contained, so it moves rather than the step logic
+ * being contorted around it.
+ */
+function SessionSelector({
+  rescheduleType,
+  sessions,
+  selectedSlotIds,
+  selectedSessionCount,
+  onToggle,
+}: Readonly<{
+  rescheduleType: "individual" | "multiple";
+  sessions: SessionWithProps[];
+  selectedSlotIds: string[];
+  selectedSessionCount: number;
+  onToggle: React.Dispatch<React.SetStateAction<string[]>>;
+}>) {
+  return (
+    <div className="mt-4 space-y-2">
+      <Label className="text-sm font-medium text-foreground">
+        {rescheduleType === "individual"
+          ? "Select the session to reschedule:"
+          : "Select sessions to reschedule:"}
+      </Label>
+      <div className="max-h-48 overflow-y-auto space-y-2 rounded-lg border border-border p-2">
+        {sessions.map((session, sessionIndex) => {
+          const sessionSlotIds = session.slots.map((s) => s.id);
+          const isSelected = sessionSlotIds.every((id) =>
+            selectedSlotIds.includes(id),
+          );
+
+          const handleSessionClick = () => {
+            if (session.isWithin24Hours) return;
+            if (rescheduleType === "individual") {
+              onToggle(sessionSlotIds);
+            } else if (isSelected) {
+              onToggle((prev) =>
+                prev.filter((id) => !sessionSlotIds.includes(id)),
+              );
+            } else {
+              onToggle((prev) =>
+                Array.from(new Set([...prev, ...sessionSlotIds])),
+              );
+            }
+          };
+
+          return (
+            <button
+              key={`session-${sessionIndex}`}
+              type="button"
+              onClick={handleSessionClick}
+              disabled={session.isWithin24Hours}
+              className={cn(
+                "w-full flex items-center justify-between p-2.5 rounded-md text-left transition-colors",
+                isSelected
+                  ? "bg-primary text-primary-foreground"
+                  : session.isWithin24Hours
+                    ? "bg-muted text-muted-foreground/70 cursor-not-allowed"
+                    : "bg-muted hover:bg-muted/80 text-foreground",
+              )}
+            >
+              <div className="flex items-center gap-2">
+                {rescheduleType === "multiple" && (
+                  <div
+                    className={cn(
+                      "w-4 h-4 rounded border flex items-center justify-center",
+                      isSelected
+                        ? "bg-primary-foreground border-primary-foreground"
+                        : session.isWithin24Hours
+                          ? "border-border"
+                          : "border-muted-foreground",
+                    )}
+                  >
+                    {isSelected && <Check className="h-3 w-3 text-primary" />}
+                  </div>
+                )}
+                <div>
+                  <div className="text-sm font-medium">
+                    {formatSlotDate(session.startTime)}
+                  </div>
+                  <div
+                    className={cn(
+                      "text-xs",
+                      isSelected
+                        ? "text-primary-foreground/70"
+                        : "text-muted-foreground",
+                    )}
+                  >
+                    {formatSlotTime(session.startTime)} -{" "}
+                    {formatSlotTime(session.endTime)}
+                  </div>
+                </div>
+              </div>
+              {session.isWithin24Hours && (
+                <span className="text-xs bg-orange-100 text-orange-600 dark:bg-orange-900/30 dark:text-orange-300 px-2 py-0.5 rounded">
+                  Within 24h
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+      {rescheduleType === "multiple" && selectedSlotIds.length > 0 && (
+        <p className="text-sm text-muted-foreground font-medium">
+          {selectedSessionCount} session
+          {selectedSessionCount > 1 ? "s" : ""} selected
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function RescheduleSessionsModal({
   open,
   onOpenChange,
   typeLabel,
   rawSlots,
   isLoading,
+  consultantProfileId,
+  consulteeUserId,
+  sessionDurationInHours,
   onConfirm,
 }: Readonly<RescheduleSessionsModalProps>) {
+  // Two steps: which sessions to move, then (optionally) when to move them to.
+  const [step, setStep] = React.useState<"sessions" | "times">("sessions");
+  const [proposedSlots, setProposedSlots] = React.useState<
+    { startsAt: string; endsAt: string }[]
+  >([]);
   const [rescheduleType, setRescheduleType] = React.useState<
     "individual" | "multiple" | "entire"
   >("entire");
   const [selectedSlotIds, setSelectedSlotIds] = React.useState<string[]>([]);
 
-  // Reset selection whenever the dialog (re)opens for a program.
-  React.useEffect(() => {
-    if (open) {
-      setRescheduleType("entire");
-      setSelectedSlotIds([]);
-    }
-  }, [open]);
+  // The dedicated reschedule page is per-appointment and lives in the consultee
+  // tree; the consultant adapter mounts this same modal and has neither id, so
+  // both being present is also the check that we are on the right surface.
+  const routeParams = useParams();
+  const routeConsulteeId = routeParams.consulteeId as string | undefined;
+  const pageAppointmentId = rawSlots.find((slot) => slot.appointmentId)
+    ?.appointmentId;
 
   // Group slots by appointmentId — one session can span multiple slots.
   const groupedSessions = React.useMemo(() => {
@@ -108,15 +260,66 @@ export function RescheduleSessionsModal({
     ).length;
   }, [groupedSessions, selectedSlotIds]);
 
-  const handleConfirm = () => {
-    if (
-      (rescheduleType === "individual" || rescheduleType === "multiple") &&
-      selectedSlotIds.length > 0
-    ) {
-      onConfirm(selectedSlotIds);
-    } else {
-      onConfirm();
+  /** "individual" and "multiple" both pick specific sessions; "entire" does not. */
+  const picksSpecificSessions =
+    rescheduleType === "individual" || rescheduleType === "multiple";
+
+  /** Nothing to submit: a picking mode is active but no session is ticked. */
+  const selectionIncomplete =
+    picksSpecificSessions && selectedSlotIds.length === 0;
+
+  const releasedSlotIds =
+    picksSpecificSessions && selectedSlotIds.length > 0
+      ? selectedSlotIds
+      : undefined;
+
+  /** How many sessions the consultee is moving, so the picker asks for that many. */
+  const sessionsBeingMoved =
+    releasedSlotIds === undefined
+      ? groupedSessions.length
+      : Math.max(selectedSessionCount, 1);
+
+  const canProposeTimes = !!consultantProfileId;
+
+  /**
+   * A one-session booking has nothing to choose between, so the "which
+   * sessions" step is noise: there is only ever one answer. Skipping it is what
+   * lets this modal serve consultations too, replacing the separate
+   * confirm-only dialog they used to get — which offered no way to propose a
+   * time at all.
+   */
+  const isSingleSession = groupedSessions.length <= 1;
+
+
+  // Reset whenever the dialog (re)opens, and start on the step that actually
+  // has a question to answer: a one-session booking has nothing to choose
+  // between, so it opens straight on "when would you like it instead".
+  React.useEffect(() => {
+    if (open) {
+      setRescheduleType("entire");
+      setSelectedSlotIds([]);
+      setStep(isSingleSession && canProposeTimes ? "times" : "sessions");
+      setProposedSlots([]);
     }
+  }, [open, isSingleSession, canProposeTimes]);
+
+  /**
+   * Releasing without naming a time is still valid — it hands the consultant a
+   * request with no stated preference, which is what every reschedule used to
+   * do — so the secondary button says so rather than reading like a cancel.
+   */
+  const submitLabel = (() => {
+    if (step === "times") return "Request this time";
+    if (canProposeTimes) return "Any time works";
+    return "Confirm Reschedule";
+  })();
+
+  const submit = (withTimes: boolean) => {
+    onConfirm({
+      slotIds: releasedSlotIds,
+      proposedSlots:
+        withTimes && proposedSlots.length ? proposedSlots : undefined,
+    });
   };
 
   return (
@@ -125,226 +328,250 @@ export function RescheduleSessionsModal({
         <ResponsiveModalHeader>
           <ResponsiveModalTitle className="flex items-center gap-2">
             <Clock className="h-5 w-5 text-muted-foreground" />
-            Reschedule Options
+            {isSingleSession ? "Reschedule Session" : "Reschedule Options"}
           </ResponsiveModalTitle>
           <ResponsiveModalDescription>
-            Choose how you&apos;d like to reschedule your{" "}
-            {typeLabel.toLowerCase()} sessions.
+            {isSingleSession
+              ? `Pick a new time for your ${typeLabel.toLowerCase()}.`
+              : `Choose how you'd like to reschedule your ${typeLabel.toLowerCase()} sessions.`}
           </ResponsiveModalDescription>
         </ResponsiveModalHeader>
 
         <div className="py-4 space-y-4">
-          <RadioGroup
-            value={rescheduleType}
-            onValueChange={(value) => {
-              setRescheduleType(value as "individual" | "multiple" | "entire");
-              if (value === "entire") {
-                setSelectedSlotIds([]);
-              } else if (value === "individual") {
-                // Auto-select the session containing the first selected slot
-                const firstSelectedId = selectedSlotIds[0];
-                const sessionWithFirst = groupedSessions.find((session) =>
-                  session.slots.some((s) => s.id === firstSelectedId),
-                );
-                const first = sessionWithFirst
-                  ? sessionWithFirst.slots.map((s) => s.id)
-                  : groupedSessions.length > 0
-                    ? groupedSessions[0].slots.map((s) => s.id)
-                    : [];
-                setSelectedSlotIds(first);
-              }
-            }}
-            className="space-y-3"
-          >
-            <div
-              className={cn(
-                "flex items-start space-x-3 p-3 rounded-lg border transition-colors",
-                rescheduleType === "individual"
-                  ? "border-primary bg-muted"
-                  : "border-border hover:border-foreground/30",
-              )}
-            >
-              <RadioGroupItem
-                value="individual"
-                id="individual"
-                className="mt-1"
-              />
-              <Label htmlFor="individual" className="flex-1 cursor-pointer">
-                <div className="flex items-center gap-2 font-medium text-foreground">
-                  <CalendarClock className="h-4 w-4" />
-                  Reschedule One Session
-                </div>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Only the selected session will be rescheduled.
-                </p>
-              </Label>
-            </div>
-
-            <div
-              className={cn(
-                "flex items-start space-x-3 p-3 rounded-lg border transition-colors",
-                rescheduleType === "multiple"
-                  ? "border-primary bg-muted"
-                  : "border-border hover:border-foreground/30",
-              )}
-            >
-              <RadioGroupItem value="multiple" id="multiple" className="mt-1" />
-              <Label htmlFor="multiple" className="flex-1 cursor-pointer">
-                <div className="flex items-center gap-2 font-medium text-foreground">
-                  <CheckSquare className="h-4 w-4" />
-                  Reschedule Multiple Sessions
-                </div>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Select specific sessions to reschedule.
-                </p>
-              </Label>
-            </div>
-
-            <div
-              className={cn(
-                "flex items-start space-x-3 p-3 rounded-lg border transition-colors",
-                rescheduleType === "entire"
-                  ? "border-primary bg-muted"
-                  : "border-border hover:border-foreground/30",
-              )}
-            >
-              <RadioGroupItem value="entire" id="entire" className="mt-1" />
-              <Label htmlFor="entire" className="flex-1 cursor-pointer">
-                <div className="flex items-center gap-2 font-medium text-foreground">
-                  <CalendarRange className="h-4 w-4" />
-                  Reschedule Entire {typeLabel}
-                </div>
-                <p className="text-xs text-muted-foreground mt-1">
-                  All {groupedSessions.length} sessions will be released.
-                </p>
-              </Label>
-            </div>
-          </RadioGroup>
-
-          {/* Session Selector */}
-          {(rescheduleType === "individual" ||
-            rescheduleType === "multiple") && (
-            <div className="mt-4 space-y-2">
-              <Label className="text-sm font-medium text-foreground">
-                {rescheduleType === "individual"
-                  ? "Select the session to reschedule:"
-                  : "Select sessions to reschedule:"}
-              </Label>
-              <div className="max-h-48 overflow-y-auto space-y-2 rounded-lg border border-border p-2">
-                {sessionsWithDynamicProps.map((session, sessionIndex) => {
-                  const sessionSlotIds = session.slots.map((s) => s.id);
-                  const isSelected = sessionSlotIds.every((id) =>
-                    selectedSlotIds.includes(id),
+          {step === "sessions" && (
+            <>
+              {/* Every session-selection control hangs off this ONE check.
+                  Gating the step but not its chrome is how a one-session
+                  consultation ended up being asked to "Reschedule Multiple
+                  Sessions" and warned that "All 1 sessions will be released". */}
+              {!isSingleSession && (
+                <>
+              <RadioGroup
+                value={rescheduleType}
+                onValueChange={(value) => {
+                  setRescheduleType(
+                    value as "individual" | "multiple" | "entire",
                   );
+                  if (value === "entire") {
+                    setSelectedSlotIds([]);
+                  } else if (value === "individual") {
+                    // Auto-select the session containing the first selected slot
+                    const firstSelectedId = selectedSlotIds[0];
+                    const sessionWithFirst = groupedSessions.find((session) =>
+                      session.slots.some((s) => s.id === firstSelectedId),
+                    );
+                    const first = sessionWithFirst
+                      ? sessionWithFirst.slots.map((s) => s.id)
+                      : groupedSessions.length > 0
+                        ? groupedSessions[0].slots.map((s) => s.id)
+                        : [];
+                    setSelectedSlotIds(first);
+                  }
+                }}
+                className="space-y-3"
+              >
+                <div
+                  className={cn(
+                    "flex items-start space-x-3 p-3 rounded-lg border transition-colors",
+                    rescheduleType === "individual"
+                      ? "border-primary bg-muted"
+                      : "border-border hover:border-foreground/30",
+                  )}
+                >
+                  <RadioGroupItem
+                    value="individual"
+                    id="individual"
+                    className="mt-1"
+                  />
+                  <Label htmlFor="individual" className="flex-1 cursor-pointer">
+                    <div className="flex items-center gap-2 font-medium text-foreground">
+                      <CalendarClock className="h-4 w-4" />
+                      Reschedule One Session
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Only the selected session will be rescheduled.
+                    </p>
+                  </Label>
+                </div>
 
-                  const handleSessionClick = () => {
-                    if (session.isWithin24Hours) return;
-                    if (rescheduleType === "individual") {
-                      setSelectedSlotIds(sessionSlotIds);
-                    } else if (isSelected) {
-                      setSelectedSlotIds((prev) =>
-                        prev.filter((id) => !sessionSlotIds.includes(id)),
-                      );
-                    } else {
-                      setSelectedSlotIds((prev) =>
-                        Array.from(new Set([...prev, ...sessionSlotIds])),
-                      );
-                    }
-                  };
+                <div
+                  className={cn(
+                    "flex items-start space-x-3 p-3 rounded-lg border transition-colors",
+                    rescheduleType === "multiple"
+                      ? "border-primary bg-muted"
+                      : "border-border hover:border-foreground/30",
+                  )}
+                >
+                  <RadioGroupItem
+                    value="multiple"
+                    id="multiple"
+                    className="mt-1"
+                  />
+                  <Label htmlFor="multiple" className="flex-1 cursor-pointer">
+                    <div className="flex items-center gap-2 font-medium text-foreground">
+                      <CheckSquare className="h-4 w-4" />
+                      Reschedule Multiple Sessions
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Select specific sessions to reschedule.
+                    </p>
+                  </Label>
+                </div>
 
-                  return (
-                    <button
-                      key={`session-${sessionIndex}`}
-                      type="button"
-                      onClick={handleSessionClick}
-                      disabled={session.isWithin24Hours}
-                      className={cn(
-                        "w-full flex items-center justify-between p-2.5 rounded-md text-left transition-colors",
-                        isSelected
-                          ? "bg-primary text-primary-foreground"
-                          : session.isWithin24Hours
-                            ? "bg-muted text-muted-foreground/70 cursor-not-allowed"
-                            : "bg-muted hover:bg-muted/80 text-foreground",
-                      )}
-                    >
-                      <div className="flex items-center gap-2">
-                        {rescheduleType === "multiple" && (
-                          <div
-                            className={cn(
-                              "w-4 h-4 rounded border flex items-center justify-center",
-                              isSelected
-                                ? "bg-primary-foreground border-primary-foreground"
-                                : session.isWithin24Hours
-                                  ? "border-border"
-                                  : "border-muted-foreground",
-                            )}
-                          >
-                            {isSelected && (
-                              <Check className="h-3 w-3 text-primary" />
-                            )}
-                          </div>
-                        )}
-                        <div>
-                          <div className="text-sm font-medium">
-                            {formatSlotDate(session.startTime)}
-                          </div>
-                          <div
-                            className={cn(
-                              "text-xs",
-                              isSelected
-                                ? "text-primary-foreground/70"
-                                : "text-muted-foreground",
-                            )}
-                          >
-                            {formatSlotTime(session.startTime)} -{" "}
-                            {formatSlotTime(session.endTime)}
-                          </div>
-                        </div>
-                      </div>
-                      {session.isWithin24Hours && (
-                        <span className="text-xs bg-orange-100 text-orange-600 dark:bg-orange-900/30 dark:text-orange-300 px-2 py-0.5 rounded">
-                          Within 24h
-                        </span>
-                      )}
-                    </button>
-                  );
-                })}
+                <div
+                  className={cn(
+                    "flex items-start space-x-3 p-3 rounded-lg border transition-colors",
+                    rescheduleType === "entire"
+                      ? "border-primary bg-muted"
+                      : "border-border hover:border-foreground/30",
+                  )}
+                >
+                  <RadioGroupItem value="entire" id="entire" className="mt-1" />
+                  <Label htmlFor="entire" className="flex-1 cursor-pointer">
+                    <div className="flex items-center gap-2 font-medium text-foreground">
+                      <CalendarRange className="h-4 w-4" />
+                      Reschedule Entire {typeLabel}
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      All {groupedSessions.length} sessions will be released.
+                    </p>
+                  </Label>
+                </div>
+              </RadioGroup>
+
+              {picksSpecificSessions && (
+                <SessionSelector
+                  rescheduleType={rescheduleType}
+                  sessions={sessionsWithDynamicProps}
+                  selectedSlotIds={selectedSlotIds}
+                  selectedSessionCount={selectedSessionCount}
+                  onToggle={setSelectedSlotIds}
+                />
+              )}
+                </>
+              )}
+
+              <div className="bg-amber-50 border border-amber-200 dark:bg-amber-900/20 dark:border-amber-900/40 rounded-lg p-3">
+                <p className="text-xs text-amber-800 dark:text-amber-300">
+                  <strong>Note:</strong> Sessions cannot be rescheduled within
+                  24 hours of the start time. No refunds are provided for
+                  rescheduling.
+                </p>
               </div>
-              {rescheduleType === "multiple" && selectedSlotIds.length > 0 && (
-                <p className="text-sm text-muted-foreground font-medium">
-                  {selectedSessionCount} session
-                  {selectedSessionCount > 1 ? "s" : ""} selected
+            </>
+          )}
+
+          {step === "times" && consultantProfileId && (
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                Pick{" "}
+                {sessionsBeingMoved === 1
+                  ? "a time"
+                  : `${sessionsBeingMoved} times`}{" "}
+                that suit you. Green means the consultant is free — choosing one
+                of those confirms straight away. Anything else is sent to them
+                to approve.
+              </p>
+
+              <SafeUnifiedCalendar
+                consultantId={consultantProfileId}
+                consulteeUserId={consulteeUserId}
+                eventType="consultation"
+                mode="select"
+                sessionDurationInHours={sessionDurationInHours}
+                onSlotsSelected={(slots) =>
+                  setProposedSlots(
+                    slots.map((slot) => ({
+                      startsAt: slot.startTime.toISOString(),
+                      endsAt: slot.endTime.toISOString(),
+                    })),
+                  )
+                }
+              />
+
+              {proposedSlots.length > 0 && (
+                <p className="text-sm">
+                  {proposedSlots.length} slot
+                  {proposedSlots.length === 1 ? "" : "s"} selected.
                 </p>
               )}
             </div>
           )}
-
-          <div className="bg-amber-50 border border-amber-200 dark:bg-amber-900/20 dark:border-amber-900/40 rounded-lg p-3">
-            <p className="text-xs text-amber-800 dark:text-amber-300">
-              <strong>Note:</strong> Sessions cannot be rescheduled within 24
-              hours of the start time. No refunds are provided for
-              rescheduling.
-            </p>
-          </div>
         </div>
 
         <ResponsiveModalFooter className="gap-2 sm:gap-0">
+          {/* Preview of the full-width picker this modal moves to next; the
+              modal stays authoritative until it does. */}
+          {routeConsulteeId && pageAppointmentId && (
+            <Button
+              asChild
+              variant="ghost"
+              size="sm"
+              className="sm:mr-auto text-muted-foreground"
+            >
+              <Link
+                href={`/dashboard/consultee/${routeConsulteeId}/appointments/${pageAppointmentId}/reschedule`}
+              >
+                Open as page
+              </Link>
+            </Button>
+          )}
+
           <Button
             variant="outline"
-            onClick={() => onOpenChange(false)}
+            onClick={() =>
+              // A single-session booking never had a sessions step to go back
+              // to, so "Back" there would strand the user on a dead button.
+              step === "times" && !isSingleSession
+                ? setStep("sessions")
+                : onOpenChange(false)
+            }
             disabled={isLoading}
           >
-            Cancel
+            {step === "times" && !isSingleSession ? "Back" : "Cancel"}
           </Button>
+
+          {step === "sessions" && canProposeTimes && !isSingleSession && (
+            <Button
+              onClick={() => setStep("times")}
+              disabled={isLoading || selectionIncomplete}
+              className="bg-primary text-primary-foreground hover:bg-primary/90"
+            >
+              Pick a new time
+            </Button>
+          )}
+
+          {/* Naming a time is an OPTION, never a requirement. A one-session
+              booking opens straight on the picker and has no sessions step to
+              go back to, so without this its only submit is "Request this
+              time" — disabled until a time is picked. That removed the
+              release-only path the old confirm-only dialog always offered, and
+              releasing without a preference is still perfectly valid: it hands
+              the consultant a request to allocate, which is what every
+              reschedule did before proposals existed. */}
+          {step === "times" && isSingleSession && (
+            <Button
+              variant="outline"
+              onClick={() => submit(false)}
+              disabled={isLoading}
+            >
+              Any time works
+            </Button>
+          )}
+
           <Button
-            onClick={handleConfirm}
+            variant={step === "times" ? "default" : "outline"}
+            onClick={() => submit(step === "times")}
             disabled={
               isLoading ||
-              ((rescheduleType === "individual" ||
-                rescheduleType === "multiple") &&
-                selectedSlotIds.length === 0)
+              selectionIncomplete ||
+              (step === "times" && proposedSlots.length === 0)
             }
-            className="bg-primary text-primary-foreground hover:bg-primary/90"
+            className={
+              step === "times"
+                ? "bg-primary text-primary-foreground hover:bg-primary/90"
+                : undefined
+            }
           >
             {isLoading ? (
               <>
@@ -352,7 +579,7 @@ export function RescheduleSessionsModal({
                 Processing...
               </>
             ) : (
-              "Confirm Reschedule"
+              submitLabel
             )}
           </Button>
         </ResponsiveModalFooter>

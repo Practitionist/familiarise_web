@@ -126,7 +126,8 @@ const SubscriptionPlanCard = ({
             <div className="flex items-center gap-2 text-sm">
               <CheckCircle2 className="w-4 h-4 text-emerald-500" />
               <span className="text-muted-foreground">
-                {plan.sessionsPerWeek} {plan.sessionsPerWeek === 1 ? "call" : "calls"}
+                {plan.sessionsPerWeek}{" "}
+                {plan.sessionsPerWeek === 1 ? "session" : "sessions"}
                 /week
               </span>
             </div>

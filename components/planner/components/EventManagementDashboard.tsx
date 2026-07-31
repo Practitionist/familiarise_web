@@ -6,22 +6,17 @@ import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { useRouter } from "next/navigation";
 import { EventCarousel } from "./EventCarousel";
-import { EventPlanner } from "./EventPlanner";
 // #248 bundle discipline: never statically import the Stream SDK or
 // @/lib/meeting (which imports it) — the client singleton is read at
 // click time and the meeting helper is lazy-imported on demand.
 import { waitForGlobalVideoClient } from "@/lib/stream/disconnect";
 import type { MeetingAppointment, MeetingSlot } from "@/lib/meeting";
 import {
-  WebinarEvent,
-  ClassEvent,
   PlannerWebinarEvent,
   PlannerClassEvent,
   ConsultationPlanEvent,
   SubscriptionPlanEvent,
-  Event,
 } from "@/types/planner-events";
-import { PlannerService } from "../services/planner";
 import type { ConsultationPlan, SubscriptionPlan } from "@/schemas/plans";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -31,7 +26,6 @@ import {
   useConsultationPlanMutations,
   useSubscriptionPlans,
   useSubscriptionPlanMutations,
-  usePlannerRefresh,
 } from "../hooks/usePlanner";
 import {
   LayoutTemplate,
@@ -68,14 +62,6 @@ export function EventManagementDashboard({
 }: Readonly<Props>) {
   const webinars = data.webinars;
   const classes = data.classes;
-  const [isWebinarDialogOpen, setIsWebinarDialogOpen] = useState(false);
-  const [isClassDialogOpen, setIsClassDialogOpen] = useState(false);
-  const [isConsultationDialogOpen, setIsConsultationDialogOpen] =
-    useState(false);
-  const [isSubscriptionDialogOpen, setIsSubscriptionDialogOpen] =
-    useState(false);
-  const [editingEvent, setEditingEvent] = useState<Event | null>(null);
-  const [_isSaving, setIsSaving] = useState(false);
   const { toast } = useToast();
 
   // React Query hooks for consultation and subscription plans
@@ -87,17 +73,12 @@ export function EventManagementDashboard({
   // React Query mutations
   const { deleteWebinar } = useWebinarMutations(consultantId);
   const { deleteClass } = useClassMutations(consultantId);
-  const {
-    createConsultationPlan,
-    updateConsultationPlan,
-    deleteConsultationPlan,
-  } = useConsultationPlanMutations(consultantId);
-  const {
-    createSubscriptionPlan,
-    updateSubscriptionPlan,
-    deleteSubscriptionPlan,
-  } = useSubscriptionPlanMutations(consultantId);
-  const { refreshPlanner } = usePlannerRefresh(consultantId);
+  // Create/update moved to the offering editor, which owns its own save; the
+  // planner only deletes now.
+  const { deleteConsultationPlan } =
+    useConsultationPlanMutations(consultantId);
+  const { deleteSubscriptionPlan } =
+    useSubscriptionPlanMutations(consultantId);
   const router = useRouter();
   const [joiningEventId, setJoiningEventId] = useState<string | null>(null);
 
@@ -336,77 +317,20 @@ export function EventManagementDashboard({
   };
 
   // Handle webinar saved event
-  const handleWebinarSaved = async (
-    data: Partial<WebinarEvent>,
-    scheduledAt?: string | Date,
-  ) => {
-    try {
-      setIsSaving(true);
-      console.log("EventManagementDashboard - Saving webinar:", {
-        data,
-        scheduledAt,
-      });
-
-      const savedWebinar = await PlannerService.saveWebinar(
-        data,
-        scheduledAt,
-        consultantId,
-      );
-      console.log("Webinar saved successfully:", savedWebinar);
-
-      // Refresh planner data with React Query
-      refreshPlanner();
-      setIsWebinarDialogOpen(false);
-      setEditingEvent(null);
-    } catch (error) {
-      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
-      console.error("Error saving/refreshing webinar:", error);
-      // Re-throw the error so it can be handled by the form
-      throw error;
-    } finally {
-      setIsSaving(false);
-    }
-  };
 
   // Handle class saved event
-  const handleClassSaved = async (
-    data: Partial<ClassEvent>,
-    startDate?: string,
-  ) => {
-    try {
-      setIsSaving(true);
-      console.log("EventManagementDashboard - Saving class:", data);
-      console.log("EventManagementDashboard - Class startDate:", startDate);
 
-      // First save the class with startDate
-      const savedClass = await PlannerService.saveClass(
-        data,
-        consultantId,
-        startDate,
-      );
-      console.log("Class saved successfully:", savedClass);
-
-      // Refresh planner data with React Query
-      refreshPlanner();
-      setIsClassDialogOpen(false);
-      setEditingEvent(null);
-    } catch (error) {
-      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
-      console.error("Error saving/refreshing class:", error);
-      throw error; // Propagate error to form handler
-    } finally {
-      setIsSaving(false);
-    }
-  };
+  // Editing routes to the offering editor rather than reopening a dialog, so
+  // an offering has one authoring surface and a URL you can return to.
+  const editHref = (type: string, id: string) =>
+    `/dashboard/consultant/${consultantId}/offerings/${type}/${id}/edit`;
 
   const handleEditWebinar = (webinar: PlannerWebinarEvent) => {
-    setEditingEvent(webinar);
-    setIsWebinarDialogOpen(true);
+    router.push(editHref("webinar", webinar.id));
   };
 
   const handleEditClass = (classEvent: PlannerClassEvent) => {
-    setEditingEvent(classEvent);
-    setIsClassDialogOpen(true);
+    router.push(editHref("class", classEvent.id));
   };
 
   // Handle webinar delete event using React Query
@@ -422,88 +346,19 @@ export function EventManagementDashboard({
   };
 
   // Handle consultation plan saved event
-  const handleConsultationPlanSaved = async (
-    data: Partial<ConsultationPlanEvent>,
-  ): Promise<void> => {
-    try {
-      setIsSaving(true);
-      console.log("EventManagementDashboard - Saving consultation plan:", data);
-
-      // Transform topics to string[] for API compatibility
-      const planData = {
-        ...data.consultationPlan,
-        topics: data.consultationPlan?.topics ?? [],
-      };
-
-      if (data.consultationPlan?.id) {
-        // Update existing plan - use mutateAsync to return a Promise
-        await updateConsultationPlan.mutateAsync({
-          id: data.consultationPlan.id,
-          ...planData,
-        });
-      } else {
-        // Create new plan - use mutateAsync to return a Promise
-        await createConsultationPlan.mutateAsync(planData);
-      }
-
-      // Dialog closing is handled by the form component after awaiting this Promise
-      setEditingEvent(null);
-    } catch (error) {
-      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
-      console.error("Error saving consultation plan:", error);
-      throw error;
-    } finally {
-      setIsSaving(false);
-    }
-  };
 
   // Handle subscription plan saved event
-  const handleSubscriptionPlanSaved = async (
-    data: Partial<SubscriptionPlanEvent>,
-  ): Promise<void> => {
-    try {
-      setIsSaving(true);
-      console.log("EventManagementDashboard - Saving subscription plan:", data);
-
-      // Transform topics to string[] for API compatibility
-      const planData = {
-        ...data.subscriptionPlan,
-        topics: data.subscriptionPlan?.topics ?? [],
-      };
-
-      if (data.subscriptionPlan?.id) {
-        // Update existing plan - use mutateAsync to return a Promise
-        await updateSubscriptionPlan.mutateAsync({
-          id: data.subscriptionPlan.id,
-          ...planData,
-        });
-      } else {
-        // Create new plan - use mutateAsync to return a Promise
-        await createSubscriptionPlan.mutateAsync(planData);
-      }
-
-      // Dialog closing is handled by the form component after awaiting this Promise
-      setEditingEvent(null);
-    } catch (error) {
-      console.error("Error saving subscription plan:", error);
-      throw error;
-    } finally {
-      setIsSaving(false);
-    }
-  };
 
   const handleEditConsultationPlan = (
     consultationPlan: ConsultationPlanEvent,
   ) => {
-    setEditingEvent(consultationPlan);
-    setIsConsultationDialogOpen(true);
+    router.push(editHref("consultation", consultationPlan.id ?? ""));
   };
 
   const handleEditSubscriptionPlan = (
     subscriptionPlan: SubscriptionPlanEvent,
   ) => {
-    setEditingEvent(subscriptionPlan);
-    setIsSubscriptionDialogOpen(true);
+    router.push(editHref("subscription", subscriptionPlan.id ?? ""));
   };
 
   // Handle consultation plan delete event using React Query
@@ -589,7 +444,11 @@ export function EventManagementDashboard({
                 </div>
               </div>
               <Button
-                onClick={() => setIsConsultationDialogOpen(true)}
+                onClick={() =>
+                  router.push(
+                    `/dashboard/consultant/${consultantId}/offerings/consultation/new`,
+                  )
+                }
                 variant="outline"
                 className="w-full gap-2 border-zinc-200 bg-white font-medium text-zinc-900 hover:bg-zinc-50 sm:w-auto"
               >
@@ -642,7 +501,11 @@ export function EventManagementDashboard({
                 </div>
               </div>
               <Button
-                onClick={() => setIsSubscriptionDialogOpen(true)}
+                onClick={() =>
+                  router.push(
+                    `/dashboard/consultant/${consultantId}/offerings/subscription/new`,
+                  )
+                }
                 variant="outline"
                 className="w-full gap-2 border-zinc-200 bg-white font-medium text-zinc-900 hover:bg-zinc-50 sm:w-auto"
               >
@@ -714,7 +577,11 @@ export function EventManagementDashboard({
                 </div>
               </div>
               <Button
-                onClick={() => setIsWebinarDialogOpen(true)}
+                onClick={() =>
+                  router.push(
+                    `/dashboard/consultant/${consultantId}/offerings/webinar/new`,
+                  )
+                }
                 variant="outline"
                 className="w-full gap-2 border-zinc-200 bg-white font-medium text-zinc-900 hover:bg-zinc-50 sm:w-auto"
               >
@@ -751,7 +618,11 @@ export function EventManagementDashboard({
                 </div>
               </div>
               <Button
-                onClick={() => setIsClassDialogOpen(true)}
+                onClick={() =>
+                  router.push(
+                    `/dashboard/consultant/${consultantId}/offerings/class/new`,
+                  )
+                }
                 variant="outline"
                 className="w-full gap-2 border-zinc-200 bg-white font-medium text-zinc-900 hover:bg-zinc-50 sm:w-auto"
               >
@@ -773,53 +644,6 @@ export function EventManagementDashboard({
         </motion.section>
       </div>
 
-      <EventPlanner
-        isOpen={isWebinarDialogOpen}
-        onClose={() => {
-          setIsWebinarDialogOpen(false);
-          setEditingEvent(null);
-        }}
-        onSaved={handleWebinarSaved}
-        eventType="webinar"
-        initialData={editingEvent as WebinarEvent}
-        consultantId={consultantId}
-      />
-
-      <EventPlanner
-        isOpen={isClassDialogOpen}
-        onClose={() => {
-          setIsClassDialogOpen(false);
-          setEditingEvent(null);
-        }}
-        onSaved={handleClassSaved}
-        eventType="class"
-        initialData={editingEvent as ClassEvent}
-        consultantId={consultantId}
-      />
-
-      <EventPlanner
-        isOpen={isConsultationDialogOpen}
-        onClose={() => {
-          setIsConsultationDialogOpen(false);
-          setEditingEvent(null);
-        }}
-        onSaved={handleConsultationPlanSaved}
-        eventType="consultation"
-        initialData={editingEvent as ConsultationPlanEvent}
-        consultantId={consultantId}
-      />
-
-      <EventPlanner
-        isOpen={isSubscriptionDialogOpen}
-        onClose={() => {
-          setIsSubscriptionDialogOpen(false);
-          setEditingEvent(null);
-        }}
-        onSaved={handleSubscriptionPlanSaved}
-        eventType="subscription"
-        initialData={editingEvent as SubscriptionPlanEvent}
-        consultantId={consultantId}
-      />
     </div>
   );
 }

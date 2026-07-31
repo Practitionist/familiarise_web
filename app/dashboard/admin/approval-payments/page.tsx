@@ -45,7 +45,10 @@ export default function ApprovalPaymentsPage() {
     queryKey: ["admin-approval-payments", refreshKey],
     queryFn: fetchApprovalPayments,
     staleTime: 30 * 1000, // 30 seconds
-    refetchInterval: 60 * 1000, // Auto-refresh every minute
+    // See AdminHomePageClient: focus, not a timer. Explicit because the global
+    // default disables BOTH focus and mount refetching, so dropping the
+    // interval without this would freeze the list at first load.
+    refetchOnWindowFocus: true,
   });
 
   const handleRefresh = () => {
