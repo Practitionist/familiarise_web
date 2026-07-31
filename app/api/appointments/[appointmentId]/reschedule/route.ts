@@ -3,6 +3,13 @@ import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth-server";
 import { isPrivileged } from "@/lib/auth-helpers";
+import type { RescheduleInitiatorRole } from "@prisma/client";
+import { RescheduleProposalSchema } from "@/schemas/appointments";
+import {
+  computeProposalExpiry,
+  proposalCountMatches,
+  supportsProposals,
+} from "@/lib/booking/reschedule-proposals";
 import {
   ReschedulePolicyError,
   RescheduleAuthorizationError,
@@ -74,6 +81,10 @@ export async function POST(
 
     // Parse request body for optional slotIds (used for individual/multiple session reschedule)
     let slotIds: string[] | undefined;
+    // Concrete replacement times. Optional: "release these, any time works" is
+    // still a valid request and remains the whole contract for group events.
+    let proposedSlots: { startsAt: Date; endsAt: Date }[] | undefined;
+    let reason: string | undefined;
     try {
       const body = await request.json();
       // Support both single slotId (legacy) and slotIds array
@@ -83,8 +94,26 @@ export async function POST(
         // Legacy support: convert single slotId to array
         slotIds = [body.slotId];
       }
+      const parsedProposal = RescheduleProposalSchema.safeParse(body);
+      if (!parsedProposal.success) {
+        return NextResponse.json(
+          {
+            error: "Invalid proposed times",
+            code: "INVALID_PROPOSAL",
+            details: parsedProposal.error.flatten(),
+          },
+          { status: 400 },
+        );
+      }
+      if (parsedProposal.data.proposedSlots?.length) {
+        proposedSlots = parsedProposal.data.proposedSlots.map((s) => ({
+          startsAt: new Date(s.startsAt),
+          endsAt: new Date(s.endsAt),
+        }));
+      }
+      reason = parsedProposal.data.reason;
     } catch {
-      // No body or invalid JSON - that's fine, slotIds is optional
+      // No body or invalid JSON - that's fine, every field here is optional
     }
 
     // Start transaction
@@ -139,20 +168,40 @@ export async function POST(
         const consulteeProfileId = session.user.consulteeProfileId;
 
         let isParticipant = false;
+        // Which side is asking. Load-bearing rather than descriptive: only a
+        // CONSULTEE proposal may auto-confirm, because publishing availability
+        // is standing consent to be booked inside it while merely being free is
+        // not consent to be moved. Null for a privileged bypass, which never
+        // auto-confirms on someone else's behalf.
+        let initiatorRole: RescheduleInitiatorRole | null = null;
 
         // Check the single event-type relation (mutually exclusive via if-else)
         if (appointment.consultation) {
           const consultationConsultantId =
             appointment.consultation.consultationPlan?.consultantProfileId;
-          isParticipant =
-            consultantProfileId === consultationConsultantId ||
+          const isConsultant =
+            consultantProfileId === consultationConsultantId;
+          const isConsultee =
             consulteeProfileId === appointment.consultation.requestedById;
+          isParticipant = isConsultant || isConsultee;
+          initiatorRole = isConsultee
+            ? "CONSULTEE"
+            : isConsultant
+              ? "CONSULTANT"
+              : null;
         } else if (appointment.subscription) {
           const subscriptionConsultantId =
             appointment.subscription.subscriptionPlan?.consultantProfileId;
-          isParticipant =
-            consultantProfileId === subscriptionConsultantId ||
+          const isConsultant =
+            consultantProfileId === subscriptionConsultantId;
+          const isConsultee =
             consulteeProfileId === appointment.subscription.requestedById;
+          isParticipant = isConsultant || isConsultee;
+          initiatorRole = isConsultee
+            ? "CONSULTEE"
+            : isConsultant
+              ? "CONSULTANT"
+              : null;
         } else if (appointment.webinar) {
           // Only the consultant (organizer) can reschedule group events,
           // since rescheduling changes the time for all participants.
@@ -394,6 +443,67 @@ export async function POST(
             ),
             { httpStatus: 409, code: "NOT_RESCHEDULABLE" },
           );
+        }
+
+        // Attach the proposed replacement times, if any were given. Without
+        // this a reschedule reaches the consultant carrying LESS information
+        // than the original booking did — which slots to drop, and nothing
+        // about when the consultee actually wants them.
+        let rescheduleRequestId: string | null = null;
+        if (
+          proposedSlots?.length &&
+          initiatorRole &&
+          supportsProposals(derivedType ?? "")
+        ) {
+          if (
+            !proposalCountMatches(slotsToReschedule.length, proposedSlots.length)
+          ) {
+            throw Object.assign(
+              new Error(
+                `Proposed ${proposedSlots.length} time(s) for ${slotsToReschedule.length} released slot(s). ` +
+                  `A reschedule replaces slots one for one; changing the count would change what was paid for.`,
+              ),
+              { httpStatus: 400, code: "PROPOSAL_COUNT_MISMATCH" },
+            );
+          }
+
+          const expiresAt = computeProposalExpiry(
+            slotsToReschedule.map((s) => new Date(s.startsAt)),
+          );
+          if (!expiresAt) {
+            // The 24-hour policy gate above should already have rejected this,
+            // so reaching here means the two rules have drifted apart.
+            throw Object.assign(
+              new Error(
+                "This session is too close to propose a new time for.",
+              ),
+              { httpStatus: 400, code: "PROPOSAL_WINDOW_CLOSED" },
+            );
+          }
+
+          const created = await tx.rescheduleRequest.create({
+            data: {
+              appointmentId,
+              initiatorRole,
+              initiatedById: session.user.id,
+              reason,
+              releasedSlotIds: slotsToReschedule.map((s) => s.id),
+              expiresAt,
+              // Reserves the appointment: the nullable @unique makes a second
+              // live reschedule a DB-level conflict rather than a race.
+              openForAppointmentId: appointmentId,
+              organizationId: appointment.organizationId ?? null,
+              proposedSlots: {
+                create: proposedSlots.map((s) => ({
+                  startsAt: s.startsAt,
+                  endsAt: s.endsAt,
+                  proposedById: session.user.id,
+                })),
+              },
+            },
+            select: { id: true },
+          });
+          rescheduleRequestId = created.id;
         }
 
         // #448 — count SESSIONS, not raw slots: one Appointment is one session
