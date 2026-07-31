@@ -43,6 +43,10 @@ export interface UseCalendarDataOptions {
    * fetch so the server can bucket `weeklyConfirmedCallCounts` the same way
    * the interactive weekly-limit guard needs it. Ignored for other event types. */
   sessionDurationInHours?: number;
+  /** The user whose calendar is being booked. Allocation counts their bookings
+   * with ANY consultant as occupied, so passing it keeps the grid from showing
+   * cells that allocation will reject. */
+  consulteeUserId?: string;
 }
 
 export interface TimeSlot {
@@ -207,6 +211,7 @@ export function useCalendarData(
     mode,
     allowedEnd,
     sessionDurationInHours,
+    consulteeUserId,
   } = options;
   const { toast } = useToast();
 
@@ -296,6 +301,7 @@ export function useCalendarData(
         endDate,
         undefined,
         true,
+        consulteeUserId,
       );
 
       // Defensive: Validate data structure before using
@@ -345,7 +351,7 @@ export function useCalendarData(
         description: errorMessage,
       });
     }
-  }, [consultantId, toast, view, currentDate, mode, allowedEnd]);
+  }, [consultantId, toast, view, currentDate, mode, allowedEnd, consulteeUserId]);
 
   const fetchEventSlots = useCallback(async (): Promise<void> => {
     // Fetch event slots for ALL event types (subscription, consultation, webinar, class)

@@ -237,20 +237,41 @@ The consultant has two buttons for handling any pending request:
 
 | Button                  | Action                                              | When to use                                       |
 | ----------------------- | --------------------------------------------------- | ------------------------------------------------- |
-| **Use Requested Times** | Accept the times the consultee proposed             | Consultee submitted preferred times and they work |
-| **Allocate Slots**      | Run the auto-allocation algorithm to find new times | Need the system to find optimal times             |
+| **Use Requested Times** | Accept the times the consultee proposed on a FIRST request | Consultee submitted preferred times and they work |
+| **Allocate Slots**      | Run the auto-allocation algorithm to find new times | Need the system to find optimal times, and the only option after a reschedule |
 
 #### Option A: "Use Requested Times" (useRequestedSlots)
 
-This path is used when the consultee has already proposed specific times. The flow:
+This path is used when the consultee has already proposed specific times on
+their original request. It is **not** available once a reschedule has been
+requested. A reschedule releases slots by flipping `isTentative` and
+`completionStatus` on the existing rows; it never writes a new `startsAt`.
+Those rows therefore still hold the very times the consultee is trying to move
+away from, and `fetchEventData` derives `requestedSlots` from them, so reusing
+them would silently re-confirm the original booking. The service rejects that
+case and the button is hidden whenever any slot is `RESCHEDULED`.
 
-1. Fetch the event data including all requested slots.
-2. Verify appointments actually exist (prevents approving empty requests).
-3. Verify the slot count matches (requested slots = appointment slots).
-4. Run validation on the requested slots (availability, conflicts, etc.).
-5. Update the event status to `APPROVED`.
-6. Clear all `isTentative` flags (`isTentative: false` on all slots).
-7. Return success with the existing appointments.
+The flow:
+
+1. Take the consultant allocation lock, then the consultee booking lock, in that
+   order. This path used to hold no lock at all, which let an approval run
+   alongside an auto or manual allocation of the same event. The consultee lock
+   matters separately: the overlap exclusion constraint is keyed by consultant,
+   so it cannot see the same person being booked with two different consultants
+   at once.
+2. Inside the transaction, apply the initial-allocation guard under an advisory
+   lock. It is always armed here, because approving stored times is only ever
+   valid for an event that has not been allocated yet. A retry carrying the same
+   idempotency key replays the winner's batch; a different key gets a 409.
+3. Fetch the event data including all requested slots.
+4. Verify appointments actually exist (prevents approving empty requests).
+5. Reject if any slot is `RESCHEDULED` — the stored times are stale by definition.
+6. Verify the slot count matches (requested slots = appointment slots).
+7. Run validation on the requested slots (availability, conflicts, etc.).
+8. Update the event status to `APPROVED`.
+9. Clear all `isTentative` flags (`isTentative: false` on all slots).
+10. Stamp the idempotency key on the first appointment.
+11. Return success with the existing appointments.
 
 #### Option B: "Allocate Slots" (autoAllocate)
 

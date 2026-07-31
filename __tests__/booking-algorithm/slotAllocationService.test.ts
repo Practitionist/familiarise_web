@@ -124,7 +124,13 @@ function makeMockTx() {
       update: jest.fn(),
       updateMany: jest.fn(),
       deleteMany: jest.fn(),
+      // ADR B10 — the multi-tab guard is now derived server-side from "this
+      // event has no confirmed slots" rather than from a client flag that was
+      // never true, so it runs on the ordinary allocation paths too.
+      count: jest.fn().mockResolvedValue(0),
     },
+    // pg_advisory_xact_lock inside guardInitialAllocationInTx.
+    $queryRaw: jest.fn().mockResolvedValue([]),
   };
 }
 
@@ -635,6 +641,43 @@ describe("Requested slot allocation", () => {
     expect(result.success).toBe(false);
     expect(result.error).toContain("No appointments found");
     expect(result.error).toContain("resubmit their request");
+  });
+
+  it("should refuse to reuse requested times once a slot is awaiting reschedule", async () => {
+    // A reschedule flips isTentative/completionStatus but leaves startsAt at the
+    // ORIGINAL time, and fetchEventData reads requestedSlots from those rows —
+    // so accepting here would re-confirm the time the consultee asked to move.
+    mockTx.consultation.findUnique.mockResolvedValue(
+      makeConsultationEvent({
+        appointment: {
+          slotsOfAppointment: [
+            { startsAt: new Date("2025-01-06T10:00:00Z") },
+            { startsAt: new Date("2025-01-06T10:30:00Z") },
+          ],
+        },
+      }),
+    );
+    mockTx.appointment.findMany.mockResolvedValue([
+      {
+        id: "apt-1",
+        slotsOfAppointment: [
+          { id: "s1", completionStatus: "RESCHEDULED" },
+          { id: "s2", completionStatus: "RESCHEDULED" },
+        ],
+      },
+    ]);
+
+    const result = await SlotAllocationService.allocate({
+      eventType: "consultation",
+      eventId: "consult-1",
+      mode: "requested",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("Cannot reuse requested times");
+    expect(result.error).toContain("2 slot(s) are awaiting reschedule");
+    // The status write must not have happened.
+    expect(mockTx.slotOfAppointment.updateMany).not.toHaveBeenCalled();
   });
 
   it("should return error when appointment slot count mismatches requested", async () => {

@@ -1,4 +1,4 @@
-import { AppointmentStatus } from "@prisma/client";
+import { AppointmentStatus, SlotCompletionStatus } from "@prisma/client";
 
 // --- API Response Type Definitions ---
 interface UserInfo {
@@ -30,6 +30,8 @@ interface AppointmentSlot {
   startsAt: string;
   endsAt: string;
   isTentative?: boolean; // Indicates if slot needs rescheduling
+  /** RESCHEDULED means startsAt is the time being moved AWAY from, not a request. */
+  completionStatus?: SlotCompletionStatus;
 }
 
 interface AppointmentInfo {
