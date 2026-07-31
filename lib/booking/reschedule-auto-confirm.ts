@@ -17,11 +17,13 @@
  * outcome, not an error.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import type { EventType } from "@/utils/slotAllocation/types";
 import { SlotAllocationService } from "@/utils/slotAllocation/SlotAllocationService";
 import { transitionRescheduleRequest } from "@/lib/booking/transitions";
 import { mayAutoConfirm } from "@/lib/booking/reschedule-proposals";
+import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 
 export type AutoConfirmOutcome =
   | { confirmed: true }
@@ -88,21 +90,36 @@ export async function tryAutoConfirmProposal(
     proposed: request.proposedSlots[i],
   }));
 
-  await prisma.$transaction(async (tx) => {
-    for (const { slot, proposed } of pairs) {
-      await tx.slotOfAppointment.update({
-        where: { id: slot.id },
-        data: {
-          startsAt: proposed.startsAt,
-          endsAt: proposed.endsAt,
-          // Back to SCHEDULED so the requested-mode guard (which refuses to
-          // reuse times that are still awaiting reschedule) does not block the
-          // very times we just wrote. Still tentative — allocation confirms.
-          completionStatus: "SCHEDULED",
+  try {
+    await prisma.$transaction(async (tx) => {
+      for (const { slot, proposed } of pairs) {
+        await tx.slotOfAppointment.update({
+          where: { id: slot.id },
+          data: {
+            startsAt: proposed.startsAt,
+            endsAt: proposed.endsAt,
+            // Back to SCHEDULED so the requested-mode guard (which refuses to
+            // reuse times that are still awaiting reschedule) does not block the
+            // very times we just wrote. Still tentative — allocation confirms.
+            completionStatus: "SCHEDULED",
+          },
+        });
+      }
+    });
+  } catch (err) {
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      {
+        tags: { subsystem: "bookings", op: "reschedule-auto-confirm" },
+        extra: {
+          phase: "stamp",
+          rescheduleRequestId,
+          releasedSlotIds: request.releasedSlotIds,
         },
-      });
-    }
-  });
+      },
+    );
+    throw err;
+  }
 
   const result = await SlotAllocationService.allocate({
     eventType,
@@ -112,33 +129,70 @@ export async function tryAutoConfirmProposal(
 
   if (!result.success) {
     // Put the booking back the way the consultee left it and let the consultant
-    // decide. Nothing was confirmed, so there is no half-applied state.
-    await prisma.$transaction(async (tx) => {
-      for (const { slot } of pairs) {
-        await tx.slotOfAppointment.update({
-          where: { id: slot.id },
-          data: {
-            startsAt: slot.startsAt,
-            endsAt: slot.endsAt,
-            isTentative: slot.isTentative,
-            completionStatus: slot.completionStatus,
+    // decide. Nothing was confirmed, so there is no half-applied state — unless
+    // this restore itself fails, in which case the slots are stuck holding the
+    // rejected proposed times with no pending allocation to justify them. That
+    // is a corrupted booking with no other trace, so it always reports.
+    try {
+      await prisma.$transaction(async (tx) => {
+        for (const { slot } of pairs) {
+          await tx.slotOfAppointment.update({
+            where: { id: slot.id },
+            data: {
+              startsAt: slot.startsAt,
+              endsAt: slot.endsAt,
+              isTentative: slot.isTentative,
+              completionStatus: slot.completionStatus,
+            },
+          });
+        }
+      });
+    } catch (err) {
+      Sentry.captureException(
+        err instanceof Error ? err : new Error(String(err)),
+        {
+          tags: { subsystem: "bookings", op: "reschedule-auto-confirm" },
+          level: "fatal",
+          extra: {
+            phase: "restore",
+            rescheduleRequestId,
+            releasedSlotIds: request.releasedSlotIds,
+            originalSlotIds: pairs.map((p) => p.slot.id),
           },
-        });
-      }
-    });
+        },
+      );
+      throw err;
+    }
     return { confirmed: false, reason: result.errorCode ?? "VALIDATION_FAILED" };
   }
 
-  await prisma.$transaction(async (tx) => {
-    await transitionRescheduleRequest(tx, {
-      where: { id: request.id },
-      to: "AUTO_ACCEPTED",
-      // AUTO_ACCEPTED has no allowed-from in the map: it is normally only ever
-      // written at creation. This is that write, arriving one step late because
-      // validation had to run outside the creating transaction.
-      fromIn: ["PENDING_REVIEW"],
+  try {
+    await prisma.$transaction(async (tx) => {
+      await transitionRescheduleRequest(tx, {
+        where: { id: request.id },
+        to: "AUTO_ACCEPTED",
+        // AUTO_ACCEPTED has no allowed-from in the map: it is normally only ever
+        // written at creation. This is that write, arriving one step late because
+        // validation had to run outside the creating transaction.
+        fromIn: ["PENDING_REVIEW"],
+      });
     });
-  });
+  } catch (err) {
+    // A lost race (the proposal was answered or expired concurrently) is the
+    // ordinary outcome this CAS guard models by throwing — not an error.
+    // Anything else means the reallocation above already succeeded but the
+    // proposal's own bookkeeping never caught up, which is worth knowing.
+    if (!(err instanceof IllegalTransitionError)) {
+      Sentry.captureException(
+        err instanceof Error ? err : new Error(String(err)),
+        {
+          tags: { subsystem: "bookings", op: "reschedule-auto-confirm" },
+          extra: { phase: "finalize", rescheduleRequestId, eventType, eventId },
+        },
+      );
+    }
+    throw err;
+  }
 
   return { confirmed: true };
 }

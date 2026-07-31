@@ -28,6 +28,7 @@ import {
   RESCHEDULABLE_FROM,
   SLOT_RESCHEDULABLE_FROM,
 } from "@/lib/booking/transitions";
+import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 
 const MINIMUM_HOURS_BEFORE_RESCHEDULE = 24;
 
@@ -602,10 +603,17 @@ export async function POST(
           );
           autoConfirmed = outcome.confirmed;
         } catch (err) {
-          Sentry.captureException(
-            err instanceof Error ? err : new Error(String(err)),
-            { tags: { subsystem: "bookings", op: "reschedule-auto-confirm" } },
-          );
+          // A lost CAS race on the final AUTO_ACCEPTED write (proposal answered
+          // or expired concurrently) is an ordinary outcome, not an error —
+          // reschedule-auto-confirm.ts already reports anything else itself.
+          if (!(err instanceof IllegalTransitionError)) {
+            Sentry.captureException(
+              err instanceof Error ? err : new Error(String(err)),
+              {
+                tags: { subsystem: "bookings", op: "reschedule-auto-confirm" },
+              },
+            );
+          }
         }
       }
     }

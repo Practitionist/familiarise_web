@@ -14,6 +14,7 @@
  * be solely org-owned. See docs/enterprise/30-programs-and-lifecycle/05-public-pages-and-discovery.md.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
@@ -149,99 +150,107 @@ export async function POST(
     );
   }
 
-  const created = await prisma.$transaction(async (tx) => {
-    const common = {
-      title: body.title,
-      subtitle: body.subtitle ?? null,
-      description: body.description,
-      price: BigInt(body.pricePaise),
-      priceCurrency: "INR" as const,
-      consultantProfileId: body.consultantProfileId,
-      organizationId: orgId,
-      visibility: body.visibility,
-      language: body.language,
-      level: body.level,
-      certificateProvided: body.certificateProvided,
-      recordingEnabled: body.recordingEnabled,
-      targetAudience: body.targetAudience,
-      whatsIncluded: body.whatsIncluded,
-      faqs: {
-        create: body.faqs.map((faq, index) => ({
-          question: faq.question,
-          answer: faq.answer,
-          order: faq.order || index,
-        })),
-      },
-    };
-
-    const plan =
-      body.kind === "WEBINAR"
-        ? await tx.webinarPlan.create({
-            data: {
-              ...common,
-              durationInHours: body.durationInHours,
-              maxParticipants: body.maxParticipants ?? 100,
-            },
-          })
-        : await tx.classPlan.create({
-            data: {
-              ...common,
-              durationInMonths: body.durationInMonths,
-              sessionsPerWeek: body.sessionsPerWeek,
-              sessionDurationInHours: body.sessionDurationInHours,
-              // Kept consistent with the schema's own derivation note
-              // (sessionsPerWeek × durationInMonths × 4) so the stored
-              // totals never disagree with the grid that produced them.
-              totalSessions: body.sessionsPerWeek * body.durationInMonths * 4,
-              totalHours:
-                body.sessionsPerWeek *
-                body.durationInMonths *
-                4 *
-                body.sessionDurationInHours,
-              maxParticipants: body.maxParticipants ?? 30,
-            },
-          });
-
-    // Create the sellable INSTANCE too, not just the plan.
-    //
-    // This route used to author a WebinarPlan/ClassPlan and stop, so an
-    // org-authored offering had no Webinar/Class row, no appointment and no
-    // slots — it appeared in the catalog and there was nothing to join. It
-    // lands in DRAFT because no session has been scheduled yet, which is the
-    // honest state and keeps it off the marketplace until someone sets a time.
-    if (body.kind === "WEBINAR") {
-      await tx.webinar.create({
-        data: { status: "DRAFT", webinarPlan: { connect: { id: plan.id } } },
-      });
-    } else {
-      await tx.class.create({
-        data: { status: "DRAFT", classPlan: { connect: { id: plan.id } } },
-      });
-    }
-
-    await tx.orgAuditLog.create({
-      data: {
+  try {
+    const created = await prisma.$transaction(async (tx) => {
+      const common = {
+        title: body.title,
+        subtitle: body.subtitle ?? null,
+        description: body.description,
+        price: BigInt(body.pricePaise),
+        priceCurrency: "INR" as const,
+        consultantProfileId: body.consultantProfileId,
         organizationId: orgId,
-        actorMembershipId: access.member.id,
-        category: "CATALOG",
-        action: AUDIT_ACTIONS.CATALOG.CATALOG_PLAN_CREATED,
-        description: `${body.kind === "WEBINAR" ? "Webinar" : "Class"} plan "${plan.title}" added to the catalog`,
-        details: {
-          planId: plan.id,
-          kind: body.kind,
-          visibility: body.visibility,
-          consultantProfileId: body.consultantProfileId,
+        visibility: body.visibility,
+        language: body.language,
+        level: body.level,
+        certificateProvided: body.certificateProvided,
+        recordingEnabled: body.recordingEnabled,
+        targetAudience: body.targetAudience,
+        whatsIncluded: body.whatsIncluded,
+        faqs: {
+          create: body.faqs.map((faq, index) => ({
+            question: faq.question,
+            answer: faq.answer,
+            order: faq.order || index,
+          })),
         },
-      },
+      };
+
+      const plan =
+        body.kind === "WEBINAR"
+          ? await tx.webinarPlan.create({
+              data: {
+                ...common,
+                durationInHours: body.durationInHours,
+                maxParticipants: body.maxParticipants ?? 100,
+              },
+            })
+          : await tx.classPlan.create({
+              data: {
+                ...common,
+                durationInMonths: body.durationInMonths,
+                sessionsPerWeek: body.sessionsPerWeek,
+                sessionDurationInHours: body.sessionDurationInHours,
+                // Kept consistent with the schema's own derivation note
+                // (sessionsPerWeek × durationInMonths × 4) so the stored
+                // totals never disagree with the grid that produced them.
+                totalSessions: body.sessionsPerWeek * body.durationInMonths * 4,
+                totalHours:
+                  body.sessionsPerWeek *
+                  body.durationInMonths *
+                  4 *
+                  body.sessionDurationInHours,
+                maxParticipants: body.maxParticipants ?? 30,
+              },
+            });
+
+      // Create the sellable INSTANCE too, not just the plan.
+      //
+      // This route used to author a WebinarPlan/ClassPlan and stop, so an
+      // org-authored offering had no Webinar/Class row, no appointment and no
+      // slots — it appeared in the catalog and there was nothing to join. It
+      // lands in DRAFT because no session has been scheduled yet, which is the
+      // honest state and keeps it off the marketplace until someone sets a time.
+      if (body.kind === "WEBINAR") {
+        await tx.webinar.create({
+          data: { status: "DRAFT", webinarPlan: { connect: { id: plan.id } } },
+        });
+      } else {
+        await tx.class.create({
+          data: { status: "DRAFT", classPlan: { connect: { id: plan.id } } },
+        });
+      }
+
+      await tx.orgAuditLog.create({
+        data: {
+          organizationId: orgId,
+          actorMembershipId: access.member.id,
+          category: "CATALOG",
+          action: AUDIT_ACTIONS.CATALOG.CATALOG_PLAN_CREATED,
+          description: `${body.kind === "WEBINAR" ? "Webinar" : "Class"} plan "${plan.title}" added to the catalog`,
+          details: {
+            planId: plan.id,
+            kind: body.kind,
+            visibility: body.visibility,
+            consultantProfileId: body.consultantProfileId,
+          },
+        },
+      });
+
+      return plan;
     });
 
-    return plan;
-  });
-
-  return NextResponse.json(
-    { plan: { ...created, price: created.price.toString() } },
-    { status: 201 },
-  );
+    return NextResponse.json(
+      { plan: { ...created, price: created.price.toString() } },
+      { status: 201 },
+    );
+  } catch (err) {
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "enterprise" }, extra: { orgId, kind: body.kind } },
+    );
+    throw err;
+  }
 }
 
 /**
@@ -282,36 +291,44 @@ export async function DELETE(
   const restore = new URL(req.url).searchParams.get("restore") === "true";
   const archivedAt = restore ? null : new Date();
 
-  const count = await prisma.$transaction(async (tx) => {
-    // Scoped by organizationId as well as id, so a stolen id from another
-    // tenant matches nothing rather than touching their row.
-    const scope = { id: { in: planIds }, organizationId: orgId };
+  try {
+    const count = await prisma.$transaction(async (tx) => {
+      // Scoped by organizationId as well as id, so a stolen id from another
+      // tenant matches nothing rather than touching their row.
+      const scope = { id: { in: planIds }, organizationId: orgId };
 
-    const { count: affected } =
-      kind === "WEBINAR"
-        ? await tx.webinarPlan.updateMany({
-            where: scope,
-            data: { archivedAt },
-          })
-        : await tx.classPlan.updateMany({ where: scope, data: { archivedAt } });
+      const { count: affected } =
+        kind === "WEBINAR"
+          ? await tx.webinarPlan.updateMany({
+              where: scope,
+              data: { archivedAt },
+            })
+          : await tx.classPlan.updateMany({ where: scope, data: { archivedAt } });
 
-    if (affected > 0) {
-      await tx.orgAuditLog.create({
-        data: {
-          organizationId: orgId,
-          actorMembershipId: access.member.id,
-          category: "CATALOG",
-          action: restore
-            ? AUDIT_ACTIONS.CATALOG.CATALOG_PLAN_RESTORED
-            : AUDIT_ACTIONS.CATALOG.CATALOG_PLAN_DEACTIVATED,
-          description: `${affected} ${kind === "WEBINAR" ? "webinar" : "class"} plan(s) ${restore ? "restored to" : "withdrawn from"} the catalog`,
-          details: { kind, planIds },
-        },
-      });
-    }
+      if (affected > 0) {
+        await tx.orgAuditLog.create({
+          data: {
+            organizationId: orgId,
+            actorMembershipId: access.member.id,
+            category: "CATALOG",
+            action: restore
+              ? AUDIT_ACTIONS.CATALOG.CATALOG_PLAN_RESTORED
+              : AUDIT_ACTIONS.CATALOG.CATALOG_PLAN_DEACTIVATED,
+            description: `${affected} ${kind === "WEBINAR" ? "webinar" : "class"} plan(s) ${restore ? "restored to" : "withdrawn from"} the catalog`,
+            details: { kind, planIds },
+          },
+        });
+      }
 
-    return affected;
-  });
+      return affected;
+    });
 
-  return NextResponse.json(restore ? { restored: count } : { archived: count });
+    return NextResponse.json(restore ? { restored: count } : { archived: count });
+  } catch (err) {
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "enterprise" }, extra: { orgId, kind, planIds } },
+    );
+    throw err;
+  }
 }

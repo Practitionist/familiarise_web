@@ -21,6 +21,7 @@
  * Schedule: hourly
  */
 
+import * as Sentry from "@sentry/nextjs";
 import prisma from "../../lib/prisma";
 import { RESCHEDULE_OPEN_STATUSES } from "../../lib/booking/transitions";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
@@ -76,6 +77,13 @@ async function expireRescheduleProposalsUnlocked(): Promise<RescheduleProposalEx
     const message = error instanceof Error ? error.message : String(error);
     errors.push(message);
     console.error("❌ Reschedule proposal expiry failed:", message);
+    // Neither caller (GH Actions wrapper, cleanup API route) sees a throw from
+    // this function — the failure is folded into the result object instead —
+    // so this is the only place left to report it.
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(message),
+      { tags: { subsystem: "jobs", job: "expire-reschedule-proposals" } },
+    );
   }
 
   return {
