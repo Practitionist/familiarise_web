@@ -461,7 +461,7 @@ export async function POST(
         if (
           proposedSlots?.length &&
           initiatorRole &&
-          supportsProposals(derivedType ?? "")
+          supportsProposals(derivedType)
         ) {
           if (
             !proposalCountMatches(slotsToReschedule.length, proposedSlots.length)

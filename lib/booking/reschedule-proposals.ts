@@ -17,7 +17,10 @@
  * database; the route owns the writes.
  */
 
-import type { RescheduleInitiatorRole } from "@prisma/client";
+import type {
+  AppointmentsType,
+  RescheduleInitiatorRole,
+} from "@prisma/client";
 
 /** Ceiling on how long an unanswered proposal may sit. */
 export const PROPOSAL_MAX_LIFETIME_HOURS = 72;
@@ -81,7 +84,12 @@ export function mayAutoConfirm(initiatorRole: RescheduleInitiatorRole): boolean 
  * has N attendees — so they keep the existing consultant/organizer-only
  * whole-event reschedule and never open a proposal.
  */
-export function supportsProposals(appointmentType: string): boolean {
+export function supportsProposals(
+  // The enum rather than `string`, so a mistyped literal is a compile error
+  // instead of a silent `false`. Nullable because the caller derives the type
+  // from the row and may not find one.
+  appointmentType: AppointmentsType | null | undefined,
+): boolean {
   return appointmentType === "CONSULTATION" || appointmentType === "SUBSCRIPTION";
 }
 
