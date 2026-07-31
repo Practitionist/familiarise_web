@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 
 import { PanelHeader } from "@/components/dashboard/PageScaffold";
 import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
+import { ALLOCATION_APPROVABLE_FROM } from "@/lib/booking/transitions";
 import { readAllocationRequest } from "@/lib/data/allocation-request";
 
 import { AllocateClient } from "./AllocateClient";
@@ -69,6 +70,16 @@ export default async function AllocateSlotsPage({
   // Binds the request to the URL's consultant; the guard above binds that
   // consultant to the session.
   if (request.consultantProfileId !== consultantId) notFound();
+  // This URL outlives the work: it is linkable from a notification, survives a
+  // refresh, and goBack() pushes, so the back button returns here once the
+  // allocation is done. Without this a consultant reopens a live grid for a
+  // request that is already cancelled, rejected or fully placed.
+  //
+  // ALLOCATION_APPROVABLE_FROM, not `=== PENDING`: a partial reschedule is
+  // allocated from this same page, and a subscription is deliberately NOT
+  // flipped back to PENDING when one of its sessions is released (#448), so it
+  // arrives here still APPROVED.
+  if (!ALLOCATION_APPROVABLE_FROM.includes(request.status)) notFound();
 
   const backHref = `/dashboard/consultant/${consultantId}/requests`;
 

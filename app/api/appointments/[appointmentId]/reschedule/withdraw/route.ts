@@ -36,23 +36,20 @@ export async function POST(
       select: { id: true, initiatedById: true },
     });
 
-    if (!open) {
+    // Authorization is identity, not role: whoever opened it may take it back,
+    // whichever side of the booking they are on.
+    //
+    // "No open request" and "someone else's open request" answer with the SAME
+    // 404, deliberately. This route never checks that the caller can see the
+    // appointment at all, so distinguishing them would let any signed-in user
+    // walk appointment ids and learn which bookings have a live reschedule and
+    // whose it is. A 403 here is a membership oracle for other people's
+    // bookings; the initiator is the only caller with a legitimate reason to
+    // tell the two apart, and they are not the one being told.
+    if (!open || open.initiatedById !== session.user.id) {
       return NextResponse.json(
         { error: "No open reschedule request for this booking." },
         { status: 404 },
-      );
-    }
-
-    // Authorization is identity, not role: whoever opened it may take it back,
-    // whichever side of the booking they are on.
-    if (open.initiatedById !== session.user.id) {
-      return NextResponse.json(
-        {
-          error:
-            "Only the person who requested this reschedule can withdraw it.",
-          code: "NOT_INITIATOR",
-        },
-        { status: 403 },
       );
     }
 
@@ -63,10 +60,15 @@ export async function POST(
 
     if (!result.withdrawn) {
       // PROPOSAL_NOT_OPEN means the other party answered while this request was
-      // in flight — a 409, not a failure of the caller's input.
+      // in flight — a 409, not a failure of the caller's input. NOT_INITIATOR
+      // cannot reach here (the guard above already 404s), but the service is
+      // callable from elsewhere, so it keeps its own answer.
       return NextResponse.json(
-        { error: "This reschedule can no longer be withdrawn.", code: result.reason },
-        { status: result.reason === "NOT_INITIATOR" ? 403 : 409 },
+        {
+          error: "This reschedule can no longer be withdrawn.",
+          code: result.reason,
+        },
+        { status: result.reason === "NOT_INITIATOR" ? 404 : 409 },
       );
     }
 

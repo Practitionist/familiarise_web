@@ -2,8 +2,10 @@ import prisma from "@/lib/prisma";
 import { reportSentryError } from "@/lib/observability/report";
 import {
   RESCHEDULE_OPEN_STATUSES,
+  transitionConsultationRequest,
   transitionRescheduleRequest,
 } from "@/lib/booking/transitions";
+import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 
 /**
  * The initiator takes their own reschedule back, and the booking returns to
@@ -58,6 +60,7 @@ export async function withdrawRescheduleRequest(args: {
     return { withdrawn: false, reason: "PROPOSAL_NOT_OPEN" };
   }
 
+  let restored = 0;
   try {
     await prisma.$transaction(async (tx) => {
       // The CAS is the guard: if the other party answered while we were
@@ -70,13 +73,14 @@ export async function withdrawRescheduleRequest(args: {
       });
 
       // Reverses exactly what the reschedule did to these rows.
-      await tx.slotOfAppointment.updateMany({
+      const result = await tx.slotOfAppointment.updateMany({
         where: {
           id: { in: request.releasedSlotIds },
           completionStatus: "RESCHEDULED",
         },
         data: { isTentative: false, completionStatus: "SCHEDULED" },
       });
+      restored = result.count;
 
       // A consultation reschedule sends the booking back to PENDING so it
       // re-enters the consultant's queue; withdrawing has to undo that or the
@@ -84,20 +88,54 @@ export async function withdrawRescheduleRequest(args: {
       // someone's inbox. A subscription is deliberately NOT flipped on
       // reschedule (#448 — it has no per-session status), so there is nothing
       // to put back there.
+      //
+      // fromIn narrows to PENDING rather than the map's default: this edge is
+      // only ever undoing the reschedule's own flip, so an APPROVED booking
+      // reaching here means the state moved under us and should throw, not be
+      // re-stamped.
       if (request.appointment?.consultationId) {
-        await tx.consultation.updateMany({
-          where: { id: request.appointment.consultationId, status: "PENDING" },
-          data: { status: "APPROVED" },
+        await transitionConsultationRequest(tx, {
+          where: { id: request.appointment.consultationId },
+          to: "APPROVED",
+          fromIn: ["PENDING"],
         });
       }
     });
   } catch (err) {
+    // A lost CAS is a MODELLED outcome, not a fault: the other party accepted
+    // or declined while this withdrawal was in flight. Reporting it as an error
+    // would page on ordinary two-party contention, and the route would answer
+    // 500 instead of the 409 this actually is.
+    if (err instanceof IllegalTransitionError) {
+      return { withdrawn: false, reason: "PROPOSAL_NOT_OPEN" };
+    }
     reportSentryError(err, {
       subsystem: "bookings",
       op: "reschedule-withdraw",
       extra: { rescheduleRequestId, releasedSlotIds: request.releasedSlotIds },
     });
     throw err;
+  }
+
+  // The updateMany filters on RESCHEDULED, so a row whose status drifted stays
+  // released while the request is already WITHDRAWN — a half-restored booking
+  // that otherwise reports success and shows nothing anywhere. The withdrawal
+  // itself is committed and correct, so this reports rather than throws.
+  if (restored !== request.releasedSlotIds.length) {
+    reportSentryError(
+      new Error(
+        `Withdrawal restored ${restored} of ${request.releasedSlotIds.length} released slots.`,
+      ),
+      {
+        subsystem: "bookings",
+        op: "reschedule-withdraw-partial",
+        extra: {
+          rescheduleRequestId,
+          releasedSlotIds: request.releasedSlotIds,
+          restored,
+        },
+      },
+    );
   }
 
   return { withdrawn: true };
