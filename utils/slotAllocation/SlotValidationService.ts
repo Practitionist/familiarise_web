@@ -5,6 +5,7 @@
  * Single source of truth for validation rules - eliminates duplication across routes.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import prisma, { type PrismaLike } from "@/lib/prisma";
 import { AppointmentStatus, ScheduleType } from "@prisma/client";
 import {
@@ -665,6 +666,20 @@ export class SlotValidationService {
         "Consultation duration",
       );
     } catch (error) {
+      // A misconfigured duration failing validation is a modelled answer
+      // (bad plan config), not a fault — reported at info for visibility.
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        {
+          tags: {
+            subsystem: "scheduling",
+            op: "slot-validation",
+            expected: "true",
+          },
+          extra: { phase: "consultation-duration" },
+          level: "info",
+        },
+      );
       return {
         isValid: false,
         errors: [
@@ -834,6 +849,20 @@ export class SlotValidationService {
     try {
       SlotCalculationService.validateDuration(duration, "Webinar duration");
     } catch (error) {
+      // Same reasoning as validateConsultation's duration guard: a modelled
+      // config-validation answer, reported at info.
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        {
+          tags: {
+            subsystem: "scheduling",
+            op: "slot-validation",
+            expected: "true",
+          },
+          extra: { phase: "webinar-duration" },
+          level: "info",
+        },
+      );
       return {
         isValid: false,
         errors: [
@@ -920,6 +949,19 @@ export class SlotValidationService {
         "Session duration",
       );
     } catch (error) {
+      // Same reasoning as the consultation/webinar duration guards.
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        {
+          tags: {
+            subsystem: "scheduling",
+            op: "slot-validation",
+            expected: "true",
+          },
+          extra: { phase: "class-session-duration" },
+          level: "info",
+        },
+      );
       return {
         isValid: false,
         errors: [

@@ -5,6 +5,7 @@
  * Handles auto, manual, and requested slot allocation.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import prisma, {
   type Tx,
   type PrismaLike,
@@ -142,6 +143,30 @@ export class SlotAllocationService {
       }
     } catch (error) {
       const { errorCode, httpStatus } = this.classifyError(error);
+      // Full-coverage policy: every error reaching here is reported, modelled
+      // outcome or not, so volume/pattern of ordinary answers (slot taken,
+      // limit reached, lost CAS race) is visible in Sentry too — but at
+      // info + expected:true so a dashboard scan can't mistake "no slots
+      // available" for a database failure. Real faults keep the default
+      // error level with no expected tag.
+      const modeled = this.isModeledOutcome(error);
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        {
+          tags: {
+            subsystem: "scheduling",
+            op: "slot-allocation",
+            ...(modeled ? { expected: "true" } : {}),
+          },
+          extra: {
+            mode: request.mode,
+            eventType: request.eventType,
+            eventId: request.eventId,
+            errorCode,
+          },
+          ...(modeled ? { level: "info" as const } : {}),
+        },
+      );
       return {
         success: false,
         error: error instanceof Error ? error.message : "Allocation failed",
@@ -149,6 +174,29 @@ export class SlotAllocationService {
         httpStatus,
       };
     }
+  }
+
+  /**
+   * Whether `error` is one of the modelled business outcomes this engine
+   * throws for ordinary reasons (validation, not-found, lock/CAS contention,
+   * an org cap reached) rather than an actual fault. Both branches are
+   * reported to Sentry (full-coverage policy); this only decides the
+   * level/tag so a modelled answer never reads as a fault on the dashboard.
+   * Deliberately narrower than classifyError()'s message-sniffing fallback,
+   * which exists only to pick an HTTP status for legacy untyped throws and
+   * would otherwise also mark real bugs "expected" if the message happens to
+   * contain "not found".
+   */
+  private static isModeledOutcome(error: unknown): boolean {
+    return (
+      error instanceof AllocationValidationError ||
+      error instanceof AllocationNotFoundError ||
+      error instanceof AllocationConflictError ||
+      error instanceof IllegalTransitionError ||
+      error instanceof ProgramAssignmentLimitError ||
+      isUniqueViolation(error) ||
+      isExclusionViolation(error)
+    );
   }
 
   /**
@@ -1346,10 +1394,36 @@ export class SlotAllocationService {
               });
             } catch (err) {
               if (isUniqueViolation(err)) {
+                // A same-key retry losing this race is the ordinary replay
+                // case (#837) — reported at info so its frequency is visible
+                // without reading as a fault.
+                Sentry.captureException(
+                  err instanceof Error ? err : new Error(String(err)),
+                  {
+                    tags: {
+                      subsystem: "scheduling",
+                      op: "slot-allocation",
+                      expected: "true",
+                    },
+                    extra: { phase: "requested-stamp", idempotencyKey },
+                    level: "info",
+                  },
+                );
                 throw new AllocationConflictError(
                   "This allocation was already submitted; the original result applies.",
                 );
               }
+              Sentry.captureException(
+                err instanceof Error ? err : new Error(String(err)),
+                {
+                  tags: {
+                    subsystem: "scheduling",
+                    op: "slot-allocation",
+                    expected: "false",
+                  },
+                  extra: { phase: "requested-stamp", idempotencyKey },
+                },
+              );
               throw err;
             }
           }
@@ -2169,10 +2243,35 @@ export class SlotAllocationService {
       );
     } catch (error) {
       if (isExclusionViolation(error) || isUniqueViolation(error)) {
+        // A concurrent booking winning the #440 overlap guard is the ordinary
+        // "someone else got there first" race, not a fault.
+        Sentry.captureException(
+          error instanceof Error ? error : new Error(String(error)),
+          {
+            tags: {
+              subsystem: "scheduling",
+              op: "slot-allocation",
+              expected: "true",
+            },
+            extra: { phase: "create-appointments", eventType, eventId },
+            level: "info",
+          },
+        );
         throw new AllocationConflictError(
           "This time slot was just booked by someone else. Please pick another time.",
         );
       }
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        {
+          tags: {
+            subsystem: "scheduling",
+            op: "slot-allocation",
+            expected: "false",
+          },
+          extra: { phase: "create-appointments", eventType, eventId },
+        },
+      );
       throw error;
     }
 
@@ -2340,9 +2439,31 @@ export class SlotAllocationService {
         // Cap exceeded with BLOCK behavior — surface upward so the
         // transaction rolls back the newly-created appointments. The
         // SlotAllocationService.allocate() error mapper translates this
-        // to the appropriate HTTP status for the route handler.
+        // to the appropriate HTTP status for the route handler. An
+        // organization's overage cap being hit is an ANSWER, not a fault —
+        // reported at info so its rate is visible without paging anyone.
+        Sentry.captureException(err, {
+          tags: {
+            subsystem: "scheduling",
+            op: "slot-allocation",
+            expected: "true",
+          },
+          extra: { phase: "subscription-cap", subscriptionId, consulteeUserId },
+          level: "info",
+        });
         throw err;
       }
+      Sentry.captureException(
+        err instanceof Error ? err : new Error(String(err)),
+        {
+          tags: {
+            subsystem: "scheduling",
+            op: "slot-allocation",
+            expected: "false",
+          },
+          extra: { phase: "subscription-cap", subscriptionId, consulteeUserId },
+        },
+      );
       throw err;
     }
   }

@@ -110,7 +110,11 @@ export async function tryAutoConfirmProposal(
     Sentry.captureException(
       err instanceof Error ? err : new Error(String(err)),
       {
-        tags: { subsystem: "bookings", op: "reschedule-auto-confirm" },
+        tags: {
+          subsystem: "bookings",
+          op: "reschedule-auto-confirm",
+          expected: "false",
+        },
         extra: {
           phase: "stamp",
           rescheduleRequestId,
@@ -151,7 +155,11 @@ export async function tryAutoConfirmProposal(
       Sentry.captureException(
         err instanceof Error ? err : new Error(String(err)),
         {
-          tags: { subsystem: "bookings", op: "reschedule-auto-confirm" },
+          tags: {
+            subsystem: "bookings",
+            op: "reschedule-auto-confirm",
+            expected: "false",
+          },
           level: "fatal",
           extra: {
             phase: "restore",
@@ -163,7 +171,10 @@ export async function tryAutoConfirmProposal(
       );
       throw err;
     }
-    return { confirmed: false, reason: result.errorCode ?? "VALIDATION_FAILED" };
+    return {
+      confirmed: false,
+      reason: result.errorCode ?? "VALIDATION_FAILED",
+    };
   }
 
   try {
@@ -179,18 +190,24 @@ export async function tryAutoConfirmProposal(
     });
   } catch (err) {
     // A lost race (the proposal was answered or expired concurrently) is the
-    // ordinary outcome this CAS guard models by throwing — not an error.
-    // Anything else means the reallocation above already succeeded but the
-    // proposal's own bookkeeping never caught up, which is worth knowing.
-    if (!(err instanceof IllegalTransitionError)) {
-      Sentry.captureException(
-        err instanceof Error ? err : new Error(String(err)),
-        {
-          tags: { subsystem: "bookings", op: "reschedule-auto-confirm" },
-          extra: { phase: "finalize", rescheduleRequestId, eventType, eventId },
+    // ordinary outcome this CAS guard models by throwing — not an error, but
+    // still reported at info/expected so its rate is visible (full-coverage
+    // policy). Anything else means the reallocation above already succeeded
+    // but the proposal's own bookkeeping never caught up, which is worth
+    // knowing at the default fault level.
+    const isLostRace = err instanceof IllegalTransitionError;
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      {
+        tags: {
+          subsystem: "bookings",
+          op: "reschedule-auto-confirm",
+          ...(isLostRace ? { expected: "true" } : {}),
         },
-      );
-    }
+        extra: { phase: "finalize", rescheduleRequestId, eventType, eventId },
+        ...(isLostRace ? { level: "info" as const } : {}),
+      },
+    );
     throw err;
   }
 

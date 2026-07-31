@@ -139,7 +139,13 @@ export class AllocationService {
       console.error(`Allocation request failed (${url}):`, error);
       Sentry.captureException(
         error instanceof Error ? error : new Error(String(error)),
-        { tags: { subsystem: "client", feature: "slot-allocation" } },
+        {
+          tags: {
+            subsystem: "client",
+            feature: "slot-allocation",
+            expected: "false",
+          },
+        },
       );
       return {
         success: false,
@@ -183,6 +189,16 @@ export class AllocationService {
       };
     } catch (error) {
       console.error("Error validating consultation slots:", error);
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        {
+          tags: {
+            subsystem: "scheduling",
+            op: "slot-allocation",
+            expected: "false",
+          },
+        },
+      );
       return {
         success: false,
         error:
@@ -225,6 +241,16 @@ export class AllocationService {
       };
     } catch (error) {
       console.error("Error validating subscription slots:", error);
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        {
+          tags: {
+            subsystem: "scheduling",
+            op: "slot-allocation",
+            expected: "false",
+          },
+        },
+      );
       return {
         success: false,
         error:
@@ -284,13 +310,16 @@ export class AllocationService {
     slots: string[],
   ): Promise<ValidationResponse> {
     try {
-      const response = await fetch(`/api/bookings/classes/${classId}/validate`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
+      const response = await fetch(
+        `/api/bookings/classes/${classId}/validate`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ slots }),
         },
-        body: JSON.stringify({ slots }),
-      });
+      );
 
       const data = await response.json();
 
@@ -307,6 +336,16 @@ export class AllocationService {
       };
     } catch (error) {
       console.error("Error validating class slots:", error);
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        {
+          tags: {
+            subsystem: "scheduling",
+            op: "slot-allocation",
+            expected: "false",
+          },
+        },
+      );
       return {
         success: false,
         error:
@@ -349,6 +388,16 @@ export class AllocationService {
       };
     } catch (error) {
       console.error("Error validating webinar slots:", error);
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        {
+          tags: {
+            subsystem: "scheduling",
+            op: "slot-allocation",
+            expected: "false",
+          },
+        },
+      );
       return {
         success: false,
         error:
@@ -396,13 +445,36 @@ export class AllocationService {
       const response = await fetch(`/api/user/consultants/${consultantId}`);
 
       if (!response.ok) {
-        throw new Error("Failed to fetch consultant data");
+        // Carry the status onto the thrown Error (message/instanceof
+        // unchanged) so the catch below can tell a 4xx business answer
+        // (consultant not found/forbidden) from a real 5xx/network fault.
+        throw Object.assign(new Error("Failed to fetch consultant data"), {
+          httpStatus: response.status,
+        });
       }
 
       const { data } = await response.json();
       return data;
     } catch (error) {
       console.error("Error fetching consultant data:", error);
+      const httpStatus =
+        error && typeof error === "object" && "httpStatus" in error
+          ? (error as { httpStatus?: number }).httpStatus
+          : undefined;
+      const expected =
+        typeof httpStatus === "number" && httpStatus >= 400 && httpStatus < 500;
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        {
+          tags: {
+            subsystem: "client",
+            op: "slot-allocation",
+            ...(expected ? { expected: "true" } : {}),
+          },
+          extra: { consultantId, httpStatus },
+          ...(expected ? { level: "info" as const } : {}),
+        },
+      );
       throw error;
     }
   }
@@ -469,15 +541,21 @@ export class AllocationService {
       );
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(
-          errorData.error || "Failed to fetch availability slots",
+        // See fetchConsultantData: httpStatus lets the catch distinguish a
+        // 4xx business answer from a real fault without changing the thrown
+        // Error's message/shape.
+        throw Object.assign(
+          new Error(errorData.error || "Failed to fetch availability slots"),
+          { httpStatus: response.status },
         );
       }
       const result = await response.json();
       const { data: slotsByDate } = result;
 
       // Flatten the grouped-by-date slots into a single array
-      const allSlots: RawAvailabilityApiSlot[] = (Object.values(slotsByDate) as RawAvailabilityApiSlot[][]).flat();
+      const allSlots: RawAvailabilityApiSlot[] = (
+        Object.values(slotsByDate) as RawAvailabilityApiSlot[][]
+      ).flat();
 
       return {
         weekly: allSlots.filter((s) => s.type === "WEEKLY"),
@@ -485,6 +563,24 @@ export class AllocationService {
       };
     } catch (error) {
       console.error("Error fetching availability slots:", error);
+      const httpStatus =
+        error && typeof error === "object" && "httpStatus" in error
+          ? (error as { httpStatus?: number }).httpStatus
+          : undefined;
+      const expected =
+        typeof httpStatus === "number" && httpStatus >= 400 && httpStatus < 500;
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        {
+          tags: {
+            subsystem: "client",
+            op: "slot-allocation",
+            ...(expected ? { expected: "true" } : {}),
+          },
+          extra: { consultantId, httpStatus },
+          ...(expected ? { level: "info" as const } : {}),
+        },
+      );
       throw error;
     }
   }
@@ -528,7 +624,12 @@ export class AllocationService {
       const response = await fetch(`/api/slots/appointments?${params}`);
 
       if (!response.ok) {
-        throw new Error("Failed to fetch event slots");
+        // See fetchConsultantData: httpStatus lets the catch distinguish a
+        // 4xx business answer from a real fault without changing the thrown
+        // Error's message/shape.
+        throw Object.assign(new Error("Failed to fetch event slots"), {
+          httpStatus: response.status,
+        });
       }
 
       const { data, weeklyConfirmedCallCounts } = await response.json();
@@ -540,6 +641,24 @@ export class AllocationService {
       };
     } catch (error) {
       console.error("Error fetching event slots:", error);
+      const httpStatus =
+        error && typeof error === "object" && "httpStatus" in error
+          ? (error as { httpStatus?: number }).httpStatus
+          : undefined;
+      const expected =
+        typeof httpStatus === "number" && httpStatus >= 400 && httpStatus < 500;
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        {
+          tags: {
+            subsystem: "client",
+            op: "slot-allocation",
+            ...(expected ? { expected: "true" } : {}),
+          },
+          extra: { eventType, eventId, httpStatus },
+          ...(expected ? { level: "info" as const } : {}),
+        },
+      );
       throw error;
     }
   }
