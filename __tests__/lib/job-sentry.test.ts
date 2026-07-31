@@ -16,10 +16,31 @@ jest.mock("../../sentry.shared.config", () => ({
 
 const flush = jest.fn(async (_timeoutMs?: number) => true);
 const captureException = jest.fn();
+const loggerInfo = jest.fn();
 jest.mock("@sentry/nextjs", () => ({
   __esModule: true,
   flush: (timeoutMs?: number) => flush(timeoutMs),
   captureException: (...args: unknown[]) => captureException(...args),
+  logger: { info: (...args: unknown[]) => loggerInfo(...args) },
+}));
+
+// Declared outside the factory so every isolated module registry sees the SAME
+// class object — `instanceof` in the runner would not match a fresh one.
+class mockCronLockHeldError extends Error {
+  constructor(readonly jobName: string) {
+    super(`${jobName} is already running — skipped (cron lock held)`);
+    this.name = "CronLockHeldError";
+  }
+}
+jest.mock("../../lib/cron/with-cron-lock", () => ({
+  __esModule: true,
+  CronLockHeldError: mockCronLockHeldError,
+}));
+
+const appendFileSync = jest.fn();
+jest.mock("node:fs", () => ({
+  __esModule: true,
+  default: { appendFileSync: (...args: unknown[]) => appendFileSync(...args) },
 }));
 
 type JobSentryModule = typeof import("../../lib/observability/job-sentry");
@@ -35,24 +56,34 @@ function loadModule(): JobSentryModule {
 }
 
 describe("job Sentry runner", () => {
+  const ORIGINAL_ENV = process.env;
   let originalExitCode: typeof process.exitCode;
   let consoleError: jest.SpyInstance;
   let consoleWarn: jest.SpyInstance;
+  let consoleLog: jest.SpyInstance;
 
   beforeEach(() => {
     jest.clearAllMocks();
     flush.mockImplementation(async () => true);
     originalExitCode = process.exitCode;
     process.exitCode = undefined;
+    // Jest itself runs inside GitHub Actions, where these are set for real —
+    // the step-annotation path must not key off the harness's own environment.
+    process.env = { ...ORIGINAL_ENV };
+    delete process.env.GITHUB_ACTIONS;
+    delete process.env.GITHUB_OUTPUT;
     // The runner logs every failure it captures; these suites throw on purpose.
     consoleError = jest.spyOn(console, "error").mockImplementation(() => {});
     consoleWarn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    consoleLog = jest.spyOn(console, "log").mockImplementation(() => {});
   });
 
   afterEach(() => {
     process.exitCode = originalExitCode;
+    process.env = ORIGINAL_ENV;
     consoleError.mockRestore();
     consoleWarn.mockRestore();
+    consoleLog.mockRestore();
   });
 
   describe("flushes on every exit path", () => {
@@ -142,6 +173,98 @@ describe("job Sentry runner", () => {
       const [captured] = captureException.mock.calls[0] as [Error];
       expect(captured).toBeInstanceOf(Error);
       expect(captured.message).toBe("just a string");
+    });
+  });
+
+  describe("a held cron lock is a skip, not a failure", () => {
+    // #476 — another replica is already running the job. Every job used to
+    // decide this for itself; centralising it is what removed 58 copies of
+    // the same catch block.
+    it("does not set a non-zero exit code", async () => {
+      const { runJobWithSentry } = loadModule();
+
+      await runJobWithSentry("locked-job", async () => {
+        throw new mockCronLockHeldError("locked-job");
+      });
+
+      expect(process.exitCode).toBeUndefined();
+    });
+
+    it("is not captured to Sentry as an error", async () => {
+      const { runJobWithSentry } = loadModule();
+
+      await runJobWithSentry("locked-job", async () => {
+        throw new mockCronLockHeldError("locked-job");
+      });
+
+      expect(captureException).not.toHaveBeenCalled();
+      expect(loggerInfo).toHaveBeenCalledWith(
+        "job:locked-job skipped — cron lock held",
+      );
+    });
+
+    it("still flushes, because the skipped run may already have logged", async () => {
+      const { runJobWithSentry } = loadModule();
+
+      await runJobWithSentry("locked-job", async () => {
+        throw new mockCronLockHeldError("locked-job");
+      });
+
+      expect(flush).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not mark the workflow step failed", async () => {
+      process.env.GITHUB_ACTIONS = "true";
+      process.env.GITHUB_OUTPUT = "/tmp/does-not-matter";
+      const { runJobWithSentry } = loadModule();
+
+      await runJobWithSentry("locked-job", async () => {
+        throw new mockCronLockHeldError("locked-job");
+      });
+
+      expect(appendFileSync).not.toHaveBeenCalled();
+    });
+
+    it("still fails on a lock error that is NOT a held lock", async () => {
+      // CronLockUnavailableError (fail-closed, Redis down) must keep paging.
+      const { runJobWithSentry } = loadModule();
+
+      await runJobWithSentry("unlockable-job", async () => {
+        throw new Error("fail-closed job requires a real Redis lock");
+      });
+
+      expect(captureException).toHaveBeenCalledTimes(1);
+      expect(process.exitCode).toBe(1);
+    });
+  });
+
+  describe("GitHub Actions step outcome", () => {
+    it("writes success=false and an ::error:: annotation when a job fails", async () => {
+      process.env.GITHUB_ACTIONS = "true";
+      process.env.GITHUB_OUTPUT = "/tmp/step-output";
+      const { runJobWithSentry } = loadModule();
+
+      await runJobWithSentry("annotated-job", async () => {
+        throw new Error("boom");
+      });
+
+      expect(appendFileSync).toHaveBeenCalledWith(
+        "/tmp/step-output",
+        "success=false\n",
+      );
+      expect(consoleLog).toHaveBeenCalledWith(
+        "::error::annotated-job failed: boom",
+      );
+    });
+
+    it("writes nothing outside GitHub Actions", async () => {
+      const { runJobWithSentry } = loadModule();
+
+      await runJobWithSentry("local-job", async () => {
+        throw new Error("boom");
+      });
+
+      expect(appendFileSync).not.toHaveBeenCalled();
     });
   });
 

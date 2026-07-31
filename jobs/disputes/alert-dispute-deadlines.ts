@@ -14,7 +14,6 @@ import {
 } from "../../scripts/disputes/alert-dispute-deadlines";
 import fs from "fs";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
-import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
 import * as Sentry from "@sentry/nextjs";
 import { runJob } from "../../lib/observability/job-sentry";
 
@@ -82,16 +81,6 @@ async function main(): Promise<void> {
       console.log("\n🚨 Exiting with error status due to critical disputes");
       process.exitCode = 1;
     }
-  } catch (error) {
-    // #476 — lock held = another run is live; skip cleanly (exit 0).
-    if (error instanceof CronLockHeldError) {
-      Sentry.logger.info("job:alert-dispute-deadlines lock held, skipping");
-      console.log(`⏭️  ${error.message}`);
-      return;
-    }
-    Sentry.captureException(error, { tags: { subsystem: "jobs", job: "alert-dispute-deadlines" } });
-    console.error("❌ Fatal error in dispute deadline alert:", error);
-    process.exitCode = 1;
   } finally {
     await disconnectDatabase();
   }

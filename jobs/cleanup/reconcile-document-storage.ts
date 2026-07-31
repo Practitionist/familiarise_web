@@ -14,7 +14,6 @@ import {
 } from "../../scripts/cleanup/reconcile-document-storage";
 import fs from "fs";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
-import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
 import * as Sentry from "@sentry/nextjs";
 import { runJob } from "../../lib/observability/job-sentry";
 
@@ -90,16 +89,6 @@ async function main(): Promise<void> {
       orphanedFilesDeleted: result.orphanedFilesDeleted,
       missingFilesFound: result.missingFilesFound,
     });
-  } catch (error) {
-    // #476 — lock held = another run is live; skip cleanly (exit 0).
-    if (error instanceof CronLockHeldError) {
-      Sentry.logger.info("job:reconcile-document-storage skipped — lock held");
-      console.log(`⏭️  ${error.message}`);
-      return;
-    }
-    Sentry.captureException(error, { tags: { subsystem: "jobs", job: "reconcile-document-storage" } });
-    console.error("❌ Fatal error in document storage reconciliation:", error);
-    process.exitCode = 1;
   } finally {
     await disconnectDatabase();
   }

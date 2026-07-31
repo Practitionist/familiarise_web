@@ -19,9 +19,11 @@
  * `process.exitCode` and return instead.
  */
 
+import fs from "node:fs";
 import * as Sentry from "@sentry/nextjs";
 import { initSentry } from "@/sentry.shared.config";
 import { reportSentryError } from "@/lib/observability/report";
+import { CronLockHeldError } from "@/lib/cron/with-cron-lock";
 
 /**
  * Drain budget. Generous relative to the 2s the ledger job used for its single
@@ -56,12 +58,31 @@ export async function flushJobSentry(
 }
 
 /**
+ * The `success=false` step output and `::error::` annotation each job used to
+ * write by hand on its failure path. Nothing here varies per job except the
+ * name, which is why it lives up here now.
+ */
+function markStepFailed(jobName: string, err: unknown): void {
+  if (!process.env.GITHUB_ACTIONS) return;
+  const outputFile = process.env.GITHUB_OUTPUT;
+  if (outputFile) fs.appendFileSync(outputFile, "success=false\n");
+  console.log(
+    `::error::${jobName} failed: ${err instanceof Error ? err.message : String(err)}`,
+  );
+}
+
+/**
  * Run a job body with Sentry initialised around it and flushed after it — on
  * success, on an early `return`, and on a throw.
  *
  * An escaping error is captured and turns the exit code non-zero rather than
  * being rethrown: an unhandled rejection would kill the process before the
  * flush it just queued an event for could finish.
+ *
+ * A job body therefore does not need its own catch. Let the error out and it
+ * gets the capture, the job tag, the step annotation and the exit code for
+ * free; catch it only when there is something genuinely job-specific to do,
+ * and rethrow afterwards.
  */
 export async function runJobWithSentry(
   jobName: string,
@@ -71,8 +92,18 @@ export async function runJobWithSentry(
   try {
     await body();
   } catch (err) {
+    // #476 — a held lock means another replica is already running this job.
+    // Skipping is the correct outcome for every one of them, so this is not a
+    // failure: nothing is captured, nothing pages, the exit code stays 0.
+    // CronLockUnavailableError is a different thing and still falls through.
+    if (err instanceof CronLockHeldError) {
+      Sentry.logger.info(`job:${jobName} skipped — cron lock held`);
+      console.log(`⏭️  ${err.message}`);
+      return;
+    }
     reportSentryError(err, { subsystem: "jobs", tags: { job: jobName } });
     console.error(`[${jobName}] Fatal:`, err);
+    markStepFailed(jobName, err);
     process.exitCode = 1;
   } finally {
     await flushJobSentry();

@@ -31,7 +31,7 @@ import { ENABLE_DUNNING_SUSPEND } from "@/lib/feature-flags";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { notifyOrgInvoiceOverdue } from "@/lib/novu/org-workflows";
 import { getAppUrl } from "@/lib/url";
-import { withCronLock, CronLockHeldError } from "@/lib/cron/with-cron-lock";
+import { withCronLock } from "@/lib/cron/with-cron-lock";
 import * as Sentry from "@sentry/nextjs";
 import { runJob } from "@/lib/observability/job-sentry";
 
@@ -301,20 +301,5 @@ async function main() {
 }
 
 if (require.main === module) {
-  runJob("dunning", async () => {
-    try {
-      await main();
-    } catch (err) {
-      // #476 — lock held = another run is live; skip cleanly (exit 0).
-      if (err instanceof CronLockHeldError) {
-        Sentry.logger.info("job:dunning lock already held — skipping");
-        console.log(`⏭️  ${err.message}`);
-        return;
-      }
-      // Anything else escapes to runJob, which captures it and flushes. (#1066)
-      throw err;
-    } finally {
-      await prisma.$disconnect();
-    }
-  });
+  runJob("dunning", () => main().finally(() => prisma.$disconnect()));
 }

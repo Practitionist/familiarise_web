@@ -92,21 +92,6 @@ async function main(): Promise<void> {
       failedDeletions: result.totalFailedDeletions,
     });
     console.log("\n🎉 Job completed successfully");
-  } catch (error) {
-    Sentry.captureException(error, { tags: { subsystem: "jobs", job: "stream-sync" } });
-    const errorMessage =
-      error instanceof Error ? error.message : "Unknown error";
-    console.error("💥 Job failed:", errorMessage);
-
-    if (process.env.GITHUB_ACTIONS) {
-      const outputFile = process.env.GITHUB_OUTPUT;
-      if (outputFile) {
-        fs.appendFileSync(outputFile, "success=false\n");
-      }
-      console.log(`::error::Stream sync job failed: ${errorMessage}`);
-    }
-
-    process.exitCode = 1;
   } finally {
     await disconnectDatabase();
   }

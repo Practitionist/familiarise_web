@@ -25,7 +25,7 @@ import { runJob } from "@/lib/observability/job-sentry";
 import prisma from "@/lib/prisma";
 import { notifyOrgWalletLow } from "@/lib/novu/org-workflows";
 import { getAppUrl } from "@/lib/url";
-import { withCronLock, CronLockHeldError } from "@/lib/cron/with-cron-lock";
+import { withCronLock } from "@/lib/cron/with-cron-lock";
 
 const COOLDOWN_MS = 24 * 60 * 60 * 1000;
 
@@ -112,20 +112,5 @@ async function main() {
 }
 
 if (require.main === module) {
-  runJob("wallet-low-balance", async () => {
-    try {
-      await main();
-    } catch (err) {
-      // #476 — lock held = another run is live; skip cleanly (exit 0).
-      if (err instanceof CronLockHeldError) {
-        Sentry.logger.info("job:wallet-low-balance lock held, skipping");
-        console.log(`⏭️  ${err.message}`);
-        return;
-      }
-      // Anything else escapes to runJob, which captures it and flushes. (#1066)
-      throw err;
-    } finally {
-      await prisma.$disconnect();
-    }
-  });
+  runJob("wallet-low-balance", () => main().finally(() => prisma.$disconnect()));
 }

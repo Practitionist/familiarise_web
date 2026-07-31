@@ -10,7 +10,6 @@ import {
 } from "../../scripts/cleanup/sweep-orphaned-topup-captures";
 import fs from "fs";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
-import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
 import * as Sentry from "@sentry/nextjs";
 import { runJob } from "../../lib/observability/job-sentry";
 
@@ -58,18 +57,6 @@ async function main(): Promise<void> {
       recredited: result.recredited,
       stillFailing: result.stillFailing,
     });
-  } catch (error) {
-    // #476 — lock held = another run is live; skipping is the correct
-    // outcome (exit 0, no page). CronLockUnavailableError falls through
-    // to exit 1 so the workflow's notify step pages.
-    if (error instanceof CronLockHeldError) {
-      Sentry.logger.info("job:sweep-orphaned-topup-captures lock held, skipping");
-      console.log(`⏭️  ${error.message}`);
-      return;
-    }
-    Sentry.captureException(error, { tags: { subsystem: "jobs", job: "sweep-orphaned-topup-captures" } });
-    console.error("❌ Fatal error in captured-top-up sweep:", error);
-    process.exitCode = 1;
   } finally {
     await disconnectDatabase();
   }

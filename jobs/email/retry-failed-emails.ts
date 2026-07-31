@@ -233,21 +233,17 @@ if (require.main === module) {
       });
       if (result.errors.length > 0) process.exitCode = 1;
     } catch (err) {
-      // #476 — lock held = another run is live; skip cleanly (exit 0).
-      if (err instanceof CronLockHeldError) {
-        Sentry.logger.info("job:retry-failed-emails lock held, skipping");
-        console.log(`⏭️  ${err.message}`);
-        return;
+      // A crashed retry sweep means transactional emails stay stuck — surface
+      // it to the telemetry sink too. Everything generic (capture, job tag,
+      // step annotation, exit code, lock-held skip) is runJob's. (#1066)
+      if (!(err instanceof CronLockHeldError)) {
+        await recordSystemError({
+          category: "EMAIL",
+          summary: "Transactional email retry job crashed",
+          err,
+        });
       }
-      console.error("Fatal error in email retry job:", err);
-      // A crashed retry sweep means transactional emails stay stuck — surface it.
-      await recordSystemError({
-        category: "EMAIL",
-        summary: "Transactional email retry job crashed",
-        err,
-      });
-      Sentry.captureException(err, { tags: { subsystem: "jobs", job: "retry-failed-emails" } });
-      process.exitCode = 1;
+      throw err;
     } finally {
       await prisma.$disconnect();
     }

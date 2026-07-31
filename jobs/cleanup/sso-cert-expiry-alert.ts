@@ -15,7 +15,6 @@ import {
   type SsoCertExpiryAlertResult,
 } from "../../scripts/cleanup/sso-cert-expiry-alert";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
-import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
 import * as Sentry from "@sentry/nextjs";
 import { runJob } from "../../lib/observability/job-sentry";
 
@@ -70,16 +69,6 @@ async function main(): Promise<void> {
     if (!result.success) {
       process.exitCode = 1;
     }
-  } catch (error) {
-    // #476 — lock held = another run is live; skip cleanly (exit 0).
-    if (error instanceof CronLockHeldError) {
-      Sentry.logger.info("job:sso-cert-expiry-alert skipped — lock held");
-      console.log(`⏭️  ${error.message}`);
-      return;
-    }
-    Sentry.captureException(error, { tags: { subsystem: "jobs", job: "sso-cert-expiry-alert" } });
-    console.error("❌ Fatal error in SSO cert expiry alert:", error);
-    process.exitCode = 1;
   } finally {
     await disconnectDatabase();
   }

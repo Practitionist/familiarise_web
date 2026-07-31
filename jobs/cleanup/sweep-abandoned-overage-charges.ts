@@ -10,7 +10,6 @@ import {
 } from "../../scripts/cleanup/sweep-abandoned-overage-charges";
 import fs from "fs";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
-import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
 import * as Sentry from "@sentry/nextjs";
 import { runJob } from "../../lib/observability/job-sentry";
 
@@ -40,18 +39,6 @@ async function main(): Promise<void> {
     console.log(`   Failed (ceiling freed): ${result.failed}`);
     outputToGitHubActions(result);
     Sentry.logger.info("job:sweep-abandoned-overage-charges finished", { scanned: result.scanned, failed: result.failed });
-  } catch (error) {
-    // #476 — lock held = another run is live; skipping is the correct outcome
-    // (exit 0, no page). CronLockUnavailableError on this fail-closed job
-    // falls through to exit 1 so the workflow's notify step pages.
-    if (error instanceof CronLockHeldError) {
-      Sentry.logger.info("job:sweep-abandoned-overage-charges lock held — skipping");
-      console.log(`⏭️  ${error.message}`);
-      return;
-    }
-    Sentry.captureException(error, { tags: { subsystem: "jobs", job: "sweep-abandoned-overage-charges" } });
-    console.error("❌ Fatal error in abandoned overage-charge sweep:", error);
-    process.exitCode = 1;
   } finally {
     await disconnectDatabase();
   }

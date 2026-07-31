@@ -39,7 +39,7 @@ import { runJob } from "@/lib/observability/job-sentry";
 import prisma from "@/lib/prisma";
 import { Resend } from "resend";
 import { getAppUrl } from "@/lib/url";
-import { withCronLock, CronLockHeldError } from "@/lib/cron/with-cron-lock";
+import { withCronLock } from "@/lib/cron/with-cron-lock";
 
 const REPORTING_DEADLINE_HOURS = 72;
 const WARN_HOURS_BEFORE_DEADLINE = 12; // surface breaches when ≤12h remain
@@ -180,15 +180,6 @@ if (require.main === module) {
       console.log(
         `[DataBreach] cron done — atRisk=${r.atRisk} overdue=${r.overdue} emailSent=${r.emailSent}`,
       );
-    } catch (err) {
-      // #476 — lock held = another run is live; skip cleanly (exit 0).
-      if (err instanceof CronLockHeldError) {
-        Sentry.logger.info("job:databreach-deadline-alerts skipped — lock held");
-        console.log(`⏭️  ${err.message}`);
-        return;
-      }
-      // Anything else escapes to runJob, which captures it and flushes. (#1066)
-      throw err;
     } finally {
       await prisma.$disconnect();
     }

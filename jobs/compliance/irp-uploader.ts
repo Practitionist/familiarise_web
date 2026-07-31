@@ -32,7 +32,7 @@ import "dotenv/config";
 import prisma from "@/lib/prisma";
 import { generateIrn } from "@/lib/compliance/irp";
 import { buildIrpPayload } from "@/lib/compliance/irp-payload";
-import { withCronLock, CronLockHeldError } from "@/lib/cron/with-cron-lock";
+import { withCronLock } from "@/lib/cron/with-cron-lock";
 import * as Sentry from "@sentry/nextjs";
 import { runJob } from "@/lib/observability/job-sentry";
 
@@ -231,19 +231,6 @@ async function runIrpUploaderUnlocked(): Promise<{
 // jobs/contracts/expire-contracts.ts.
 if (require.main === module) {
   runJob("irp-uploader", async () => {
-    try {
-      await runIrpUploader();
-    } catch (err) {
-      // #476 — lock held = another run is live; skip cleanly (exit 0).
-      if (err instanceof CronLockHeldError) {
-        Sentry.logger.info("job:irp-uploader lock held — skipping");
-        console.log(`⏭️  ${err.message}`);
-        return;
-      }
-      // Anything else escapes to runJob, which captures it and flushes. (#1066)
-      throw err;
-    } finally {
-      await prisma.$disconnect();
-    }
+    await runIrpUploader().finally(() => prisma.$disconnect());
   });
 }

@@ -38,7 +38,7 @@ import {
 } from "@/lib/novu/org-workflows";
 import { getAppUrl } from "@/lib/url";
 import { Currency, OrgInvoiceStatus, Prisma } from "@prisma/client";
-import { withCronLock, CronLockHeldError, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
+import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 import * as Sentry from "@sentry/nextjs";
 import { runJob } from "@/lib/observability/job-sentry";
 
@@ -347,20 +347,5 @@ async function main() {
 }
 
 if (require.main === module) {
-  runJob("generate-subscription-invoices", async () => {
-    try {
-      await main();
-    } catch (err) {
-      // #476 — lock held = another run is live; skip cleanly (exit 0).
-      if (err instanceof CronLockHeldError) {
-        Sentry.logger.info("job:generate-subscription-invoices lock held, skipping");
-        console.log(`⏭️  ${err.message}`);
-        return;
-      }
-      // Anything else escapes to runJob, which captures it and flushes. (#1066)
-      throw err;
-    } finally {
-      await prisma.$disconnect();
-    }
-  });
+  runJob("generate-subscription-invoices", () => main().finally(() => prisma.$disconnect()));
 }

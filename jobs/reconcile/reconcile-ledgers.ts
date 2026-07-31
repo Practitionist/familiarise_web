@@ -147,23 +147,17 @@ async function main(): Promise<void> {
       return;
     }
   } catch (error) {
-    // #476 — lock held = another run is live; skip cleanly (exit 0).
-    if (error instanceof CronLockHeldError) {
-      Sentry.logger.info("job:reconcile-ledgers skipped — lock held by another run");
-      console.log(`⏭️  ${error.message}`);
-      return;
+    // #776 §K — a crashed auditor means we're flying blind on money integrity,
+    // so it goes to the telemetry sink as well. Everything generic (capture,
+    // job tag, step annotation, exit code, lock-held skip) is runJob's. (#1066)
+    if (!(error instanceof CronLockHeldError)) {
+      await recordSystemError({
+        category: "RECONCILE",
+        summary: "Ledger reconciliation crashed",
+        err: error,
+      });
     }
-    console.error("❌ Fatal error in ledger reconciliation:", error);
-    Sentry.captureException(error, {
-      tags: { subsystem: "jobs", job: "reconcile-ledgers" },
-    });
-    // #776 §K — a crashed auditor means we're flying blind on money integrity.
-    await recordSystemError({
-      category: "RECONCILE",
-      summary: "Ledger reconciliation crashed",
-      err: error,
-    });
-    process.exitCode = 1;
+    throw error;
   } finally {
     await prisma.$disconnect();
   }

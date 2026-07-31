@@ -25,7 +25,7 @@
 
 import prisma from "@/lib/prisma";
 import { abortIfMaintenance } from "@/lib/maintenance-cron";
-import { withCronLock, CronLockHeldError } from "@/lib/cron/with-cron-lock";
+import { withCronLock } from "@/lib/cron/with-cron-lock";
 import * as Sentry from "@sentry/nextjs";
 import { runJob } from "@/lib/observability/job-sentry";
 
@@ -108,20 +108,5 @@ async function main() {
 }
 
 if (require.main === module) {
-  runJob("consent-retention-sweeper", async () => {
-    try {
-      await main();
-    } catch (err) {
-      // #476 — lock held = another run is live; skip cleanly (exit 0).
-      if (err instanceof CronLockHeldError) {
-        Sentry.logger.info("job:consent-retention-sweeper lock held — skipping");
-        console.log(`⏭️  ${err.message}`);
-        return;
-      }
-      // Anything else escapes to runJob, which captures it and flushes. (#1066)
-      throw err;
-    } finally {
-      await prisma.$disconnect();
-    }
-  });
+  runJob("consent-retention-sweeper", () => main().finally(() => prisma.$disconnect()));
 }

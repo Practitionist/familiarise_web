@@ -28,7 +28,7 @@ import { runJob } from "@/lib/observability/job-sentry";
 import prisma from "@/lib/prisma";
 import { Resend } from "resend";
 import { getAppUrl } from "@/lib/url";
-import { withCronLock, CronLockHeldError } from "@/lib/cron/with-cron-lock";
+import { withCronLock } from "@/lib/cron/with-cron-lock";
 
 const ALERT_WINDOW_DAYS = 5;
 const MAX_ROWS_IN_EMAIL = 20;
@@ -191,15 +191,6 @@ if (require.main === module) {
       console.log(
         `[MSME] cron done — alerted=${r.alerted} atRisk=${r.atRisk} emailSent=${r.emailSent}`,
       );
-    } catch (err) {
-      // #476 — lock held = another run is live; skip cleanly (exit 0).
-      if (err instanceof CronLockHeldError) {
-        console.log(`⏭️  ${err.message}`);
-        Sentry.logger.info("job:msme-payment-alerts skipped — lock held");
-        return;
-      }
-      // Anything else escapes to runJob, which captures it and flushes. (#1066)
-      throw err;
     } finally {
       await prisma.$disconnect();
     }

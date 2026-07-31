@@ -20,7 +20,6 @@ import {
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
 import prisma from "../../lib/prisma";
 import { recordSystemEvent } from "../../lib/enterprise/system-events";
-import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
 import * as Sentry from "@sentry/nextjs";
 import { runJob } from "../../lib/observability/job-sentry";
 
@@ -78,16 +77,6 @@ if (require.main === module) {
       await checkQueueBacklog();
       Sentry.logger.info("job:dispatch-outbound-webhooks finished", { scanned: result.scanned, succeeded: result.succeeded, retried: result.retried, failed: result.failed });
       if (!result.success) process.exitCode = 1;
-    } catch (err) {
-      // #476 — lock held = another run is live; skip cleanly (exit 0).
-      if (err instanceof CronLockHeldError) {
-        Sentry.logger.info("job:dispatch-outbound-webhooks skipped — lock held by another run");
-        console.log(`⏭️  ${err.message}`);
-        return;
-      }
-      Sentry.captureException(err, { tags: { subsystem: "jobs", job: "dispatch-outbound-webhooks" } });
-      console.error("Fatal error:", err);
-      process.exitCode = 1;
     } finally {
       await disconnectDatabase();
     }

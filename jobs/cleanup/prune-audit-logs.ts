@@ -13,7 +13,6 @@ import {
   type AuditPruneResult,
 } from "../../scripts/cleanup/prune-audit-logs";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
-import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
 import * as Sentry from "@sentry/nextjs";
 import { runJob } from "../../lib/observability/job-sentry";
 
@@ -47,16 +46,6 @@ if (require.main === module) {
         return;
       }
       Sentry.logger.info("job:prune-audit-logs finished", { scanned: result.scanned, deleted7y: result.deleted7y, deleted2y: result.deleted2y });
-    } catch (err) {
-      // #476 — lock held = another run is live; skip cleanly (exit 0).
-      if (err instanceof CronLockHeldError) {
-        Sentry.logger.info("job:prune-audit-logs lock held, skipping");
-        console.log(`⏭️  ${err.message}`);
-        return;
-      }
-      Sentry.captureException(err, { tags: { subsystem: "jobs", job: "prune-audit-logs" } });
-      console.error("Fatal error:", err);
-      process.exitCode = 1;
     } finally {
       await disconnectDatabase();
     }

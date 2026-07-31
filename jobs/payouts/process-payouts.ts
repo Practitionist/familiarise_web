@@ -155,21 +155,6 @@ async function main(): Promise<void> {
       console.error("❌ Payout processing job completed with errors");
       process.exitCode = 1;
     }
-  } catch (error) {
-    Sentry.captureException(error, { tags: { subsystem: "jobs", job: "process-payouts" } });
-    const errorMessage =
-      error instanceof Error ? error.message : "Unknown error";
-    console.error("💥 Payout processing job failed:", errorMessage);
-
-    if (process.env.GITHUB_ACTIONS) {
-      const outputFile = process.env.GITHUB_OUTPUT;
-      if (outputFile) {
-        fs.appendFileSync(outputFile, "success=false\n");
-      }
-      console.log(`::error::Payout processing job failed: ${errorMessage}`);
-    }
-
-    process.exitCode = 1;
   } finally {
     await prisma.$disconnect();
   }
