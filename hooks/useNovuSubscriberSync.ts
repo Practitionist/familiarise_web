@@ -17,14 +17,28 @@ export function useNovuSubscriberSync() {
       try {
         const res = await fetch("/api/novu/subscriber", { method: "POST" });
         if (!res.ok) {
-          throw new Error("Failed to sync Novu subscriber");
+          // Carry the status so the catch can tell a 4xx business answer from
+          // a real 5xx/network fault instead of tagging every failure expected.
+          throw Object.assign(new Error("Failed to sync Novu subscriber"), {
+            httpStatus: res.status,
+          });
         }
         return await res.json();
       } catch (error) {
+        const httpStatus =
+          error && typeof error === "object" && "httpStatus" in error
+            ? (error as { httpStatus?: number }).httpStatus
+            : undefined;
+        const expected =
+          typeof httpStatus === "number" && httpStatus >= 400 && httpStatus < 500;
         // React Query retries this (retry: 1); a failed sync just delays
-        // the subscriber row, nothing user-visible breaks. Captured for
-        // retry-volume visibility only.
-        reportSentryError(error, { subsystem: "novu", expected: true });
+        // the subscriber row, nothing user-visible breaks. A 5xx/network
+        // fault is still worth alerting on even though retry papers over it.
+        reportSentryError(error, {
+          subsystem: "novu",
+          expected,
+          extra: { httpStatus },
+        });
         throw error;
       }
     },

@@ -55,24 +55,41 @@ export function usePrefetchDashboard({
           queries.map((query) => queryClient.prefetchQuery(query)),
         );
 
-        // Log failures in development
-        if (process.env.NODE_ENV === "development") {
-          results.forEach((result, index) => {
-            if (result.status === "rejected") {
+        // allSettled swallows rejections — the outer try/catch below never
+        // sees these, so they must be captured here or they vanish entirely.
+        results.forEach((result, index) => {
+          if (result.status === "rejected") {
+            if (process.env.NODE_ENV === "development") {
               console.warn(
                 `Prefetch failed for query:`,
                 queries[index].queryKey,
                 result.reason,
               );
             }
-          });
-        }
+            reportSentryError(result.reason, {
+              subsystem: "client",
+              expected: true,
+              extra: { queryKey: queries[index].queryKey },
+            });
+          }
+        });
       };
 
+      // executePrefetch itself shouldn't throw (allSettled never rejects),
+      // but the delayed branch is fire-and-forget, so guard against an
+      // unhandled rejection if that assumption is ever wrong.
+      const runPrefetch = () =>
+        executePrefetch().catch((error) => {
+          reportSentryError(error, {
+            subsystem: "client",
+            op: "safe-prefetch-unexpected",
+          });
+        });
+
       if (delay > 0) {
-        setTimeout(executePrefetch, delay);
+        setTimeout(runPrefetch, delay);
       } else {
-        executePrefetch();
+        runPrefetch();
       }
     },
     [queryClient],
