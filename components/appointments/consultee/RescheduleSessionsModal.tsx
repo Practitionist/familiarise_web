@@ -255,9 +255,16 @@ export function RescheduleSessionsModal({
     ).length;
   }, [groupedSessions, selectedSlotIds]);
 
+  /** "individual" and "multiple" both pick specific sessions; "entire" does not. */
+  const picksSpecificSessions =
+    rescheduleType === "individual" || rescheduleType === "multiple";
+
+  /** Nothing to submit: a picking mode is active but no session is ticked. */
+  const selectionIncomplete =
+    picksSpecificSessions && selectedSlotIds.length === 0;
+
   const releasedSlotIds =
-    (rescheduleType === "individual" || rescheduleType === "multiple") &&
-    selectedSlotIds.length > 0
+    picksSpecificSessions && selectedSlotIds.length > 0
       ? selectedSlotIds
       : undefined;
 
@@ -268,6 +275,7 @@ export function RescheduleSessionsModal({
       : Math.max(selectedSessionCount, 1);
 
   const canProposeTimes = !!consultantProfileId;
+
 
   /**
    * Releasing without naming a time is still valid — it hands the consultant a
@@ -398,8 +406,7 @@ export function RescheduleSessionsModal({
                 </div>
               </RadioGroup>
 
-              {(rescheduleType === "individual" ||
-                rescheduleType === "multiple") && (
+              {picksSpecificSessions && (
                 <SessionSelector
                   rescheduleType={rescheduleType}
                   sessions={sessionsWithDynamicProps}
@@ -470,12 +477,7 @@ export function RescheduleSessionsModal({
           {step === "sessions" && canProposeTimes && (
             <Button
               onClick={() => setStep("times")}
-              disabled={
-                isLoading ||
-                ((rescheduleType === "individual" ||
-                  rescheduleType === "multiple") &&
-                  selectedSlotIds.length === 0)
-              }
+              disabled={isLoading || selectionIncomplete}
               className="bg-primary text-primary-foreground hover:bg-primary/90"
             >
               Pick a new time
@@ -487,9 +489,7 @@ export function RescheduleSessionsModal({
             onClick={() => submit(step === "times")}
             disabled={
               isLoading ||
-              ((rescheduleType === "individual" ||
-                rescheduleType === "multiple") &&
-                selectedSlotIds.length === 0) ||
+              selectionIncomplete ||
               (step === "times" && proposedSlots.length === 0)
             }
             className={
