@@ -269,10 +269,10 @@ export function useCalendarData(
       setConsultantDetails(data);
     } catch (error) {
       console.error("Error fetching consultant details:", error);
-      reportSentryError(error, {
-        subsystem: "client",
-        tags: { feature: "scheduling-calendar" },
-      });
+      // Not captured here — AllocationService.fetchConsultantData already
+      // reports this exact error (with httpStatus-based expected
+      // classification) before rethrowing; a second capture here would only
+      // add a worse, always-unexpected duplicate.
       const errorMessage =
         error instanceof Error
           ? error.message
@@ -355,10 +355,8 @@ export function useCalendarData(
       setRawAvailabilitySlots(validatedData);
     } catch (error) {
       console.error("Error fetching availability slots:", error);
-      reportSentryError(error, {
-        subsystem: "client",
-        tags: { feature: "scheduling-calendar" },
-      });
+      // Not captured here — AllocationService.fetchAvailabilitySlots already
+      // reports this exact error (see fetchConsultantDetails above).
       const errorMessage =
         error instanceof Error ? error.message : "Failed to fetch availability";
       setError(errorMessage);
@@ -477,11 +475,8 @@ export function useCalendarData(
       console.error("Error fetching event slots:", error);
       // Silent degrade to empty (no toast/setError, unlike the two siblings
       // above) — the calendar just shows no "This Event" slots, which reads
-      // as "nothing booked yet" rather than "the fetch broke".
-      reportSentryError(error, {
-        subsystem: "client",
-        tags: { feature: "scheduling-calendar" },
-      });
+      // as "nothing booked yet" rather than "the fetch broke". Not captured
+      // here either — AllocationService.fetchEventSlots already reports it.
       setEventSlots([]);
       setEventTentativeSlots([]);
       setWeeklyConfirmedCallCounts({});

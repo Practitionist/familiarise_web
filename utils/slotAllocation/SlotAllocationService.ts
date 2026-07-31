@@ -1396,25 +1396,17 @@ export class SlotAllocationService {
                 data: { allocationIdempotencyKey: idempotencyKey },
               });
             } catch (err) {
+              // Not captured here — useRequestedSlots only ever runs inside
+              // allocate()'s try, whose catch reports every error reaching it
+              // (including this one, same instance) with the correct modeled
+              // classification. A second capture here would be a pure dupe.
               if (isUniqueViolation(err)) {
                 // A same-key retry losing this race is the ordinary replay
-                // case (#837) — reported at info so its frequency is visible
-                // without reading as a fault.
-                reportSentryError(err, {
-                  subsystem: "scheduling",
-                  op: "slot-allocation",
-                  expected: true,
-                  extra: { phase: "requested-stamp", idempotencyKey },
-                });
+                // case (#837).
                 throw new AllocationConflictError(
                   "This allocation was already submitted; the original result applies.",
                 );
               }
-              reportSentryError(err, {
-                subsystem: "scheduling",
-                op: "slot-allocation",
-                extra: { phase: "requested-stamp", idempotencyKey },
-              });
               throw err;
             }
           }
@@ -2233,24 +2225,17 @@ export class SlotAllocationService {
         }),
       );
     } catch (error) {
+      // Not captured here — createAppointments only runs inside
+      // autoAllocate/manualAllocate, both under allocate()'s try, whose catch
+      // reports every error reaching it (this one included). A second
+      // capture here would be a pure dupe of the same instance.
       if (isExclusionViolation(error) || isUniqueViolation(error)) {
         // A concurrent booking winning the #440 overlap guard is the ordinary
         // "someone else got there first" race, not a fault.
-        reportSentryError(error, {
-          subsystem: "scheduling",
-          op: "slot-allocation",
-          expected: true,
-          extra: { phase: "create-appointments", eventType, eventId },
-        });
         throw new AllocationConflictError(
           "This time slot was just booked by someone else. Please pick another time.",
         );
       }
-      reportSentryError(error, {
-        subsystem: "scheduling",
-        op: "slot-allocation",
-        extra: { phase: "create-appointments", eventType, eventId },
-      });
       throw error;
     }
 
@@ -2400,42 +2385,23 @@ export class SlotAllocationService {
       }
     }
 
-    try {
-      await recordBookingUtilization(tx, {
-        programAssignmentId: assignment.id,
-        paymentId: orgPayment.id,
-        engagementsConsumed: idsToDebit.length,
-        priceAtBookingPaise,
-        // PR-1e (G3): pass the appointment ids so re-allocation
-        // (delete+recreate of the same slot) can't double-debit. The
-        // helper computes the set diff against
-        // BookingUtilization.appointmentIds and increments only by the
-        // genuinely-new ids.
-        appointmentIds: idsToDebit,
-      });
-    } catch (err) {
-      if (err instanceof ProgramAssignmentLimitError) {
-        // Cap exceeded with BLOCK behavior — surface upward so the
-        // transaction rolls back the newly-created appointments. The
-        // SlotAllocationService.allocate() error mapper translates this
-        // to the appropriate HTTP status for the route handler. An
-        // organization's overage cap being hit is an ANSWER, not a fault —
-        // reported at info so its rate is visible without paging anyone.
-        reportSentryError(err, {
-          subsystem: "scheduling",
-          op: "slot-allocation",
-          expected: true,
-          extra: { phase: "subscription-cap", subscriptionId, consulteeUserId },
-        });
-        throw err;
-      }
-      reportSentryError(err, {
-        subsystem: "scheduling",
-        op: "slot-allocation",
-        extra: { phase: "subscription-cap", subscriptionId, consulteeUserId },
-      });
-      throw err;
-    }
+    // Not captured here — this only runs from createAppointments, itself only
+    // reachable via allocate()'s try, whose catch reports every error
+    // reaching it (a ProgramAssignmentLimitError cap-exceeded included,
+    // correctly classified as one of its modelled outcomes). A capture here
+    // too would be a dupe, so this no longer needs its own try/catch.
+    await recordBookingUtilization(tx, {
+      programAssignmentId: assignment.id,
+      paymentId: orgPayment.id,
+      engagementsConsumed: idsToDebit.length,
+      priceAtBookingPaise,
+      // PR-1e (G3): pass the appointment ids so re-allocation
+      // (delete+recreate of the same slot) can't double-debit. The
+      // helper computes the set diff against
+      // BookingUtilization.appointmentIds and increments only by the
+      // genuinely-new ids.
+      appointmentIds: idsToDebit,
+    });
   }
 
   /**
