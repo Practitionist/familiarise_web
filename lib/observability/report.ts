@@ -20,7 +20,7 @@ export interface ReportOpts {
   contexts?: Record<string, Record<string, unknown>>;
 }
 
-function captureContext(opts: ReportOpts) {
+function buildSentryCaptureContext(opts: ReportOpts) {
   const expected = opts.expected ?? false;
   // expected:true defaults to "info"; expected:false leaves level unset so
   // Sentry's own default ("error") applies. An explicit opts.level always wins.
@@ -39,14 +39,14 @@ function captureContext(opts: ReportOpts) {
 }
 
 /** Report a caught fault or modelled outcome. Normalises non-Error throws. */
-export function reportError(error: unknown, opts: ReportOpts): void {
+export function reportSentryError(error: unknown, opts: ReportOpts): void {
   Sentry.captureException(
     error instanceof Error ? error : new Error(String(error)),
-    captureContext(opts),
+    buildSentryCaptureContext(opts),
   );
 }
 
-/** Sibling of `reportError` for sites with no exception object to attach — idempotency short-circuits, race-losses, malformed-input rejections. */
-export function reportMessage(message: string, opts: ReportOpts): void {
-  Sentry.captureMessage(message, captureContext(opts));
+/** Sibling of `reportSentryError` for sites with no exception object to attach — idempotency short-circuits, race-losses, malformed-input rejections. */
+export function reportSentryMessage(message: string, opts: ReportOpts): void {
+  Sentry.captureMessage(message, buildSentryCaptureContext(opts));
 }

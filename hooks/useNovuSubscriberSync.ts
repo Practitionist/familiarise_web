@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { reportError } from "@/lib/observability/report";
+import { reportSentryError } from "@/lib/observability/report";
 import { useSession } from "@/lib/auth-client";
 
 /**
@@ -24,7 +24,7 @@ export function useNovuSubscriberSync() {
         // React Query retries this (retry: 1); a failed sync just delays
         // the subscriber row, nothing user-visible breaks. Captured for
         // retry-volume visibility only.
-        reportError(error, { subsystem: "novu", expected: true });
+        reportSentryError(error, { subsystem: "novu", expected: true });
         throw error;
       }
     },

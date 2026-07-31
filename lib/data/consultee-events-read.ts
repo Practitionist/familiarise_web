@@ -14,7 +14,7 @@
  * and is callable from a Server Component.
  */
 
-import { reportError } from "@/lib/observability/report";
+import { reportSentryError } from "@/lib/observability/report";
 import prisma from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
 import type { Scope } from "@/lib/api/scope/parse";
@@ -49,7 +49,7 @@ export async function readConsulteeEvents(
     // captured for visibility only (stale link / deleted profile), not a
     // fault in this read.
     const notFoundErr = new ConsulteeProfileNotFoundError(consulteeId);
-    reportError(notFoundErr, { subsystem: "consultees", expected: true });
+    reportSentryError(notFoundErr, { subsystem: "consultees", expected: true });
     throw notFoundErr;
   }
 

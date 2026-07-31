@@ -94,6 +94,7 @@ export type AllocationErrorCode =
   | "INVALID_MODE" // unknown allocation mode — 400
   | "LOCK_CONTENTION" // Redis lock busy — 409
   | "ILLEGAL_TRANSITION" // event left the approvable state mid-allocation (#836) — 409
+  | "PROGRAM_CAP_EXHAUSTED" // org's per-cycle overage ceiling vetoed it — 402
   | "UNKNOWN_ERROR"; // infra / unexpected — 500
 
 /**

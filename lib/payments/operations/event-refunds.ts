@@ -1,4 +1,4 @@
-import { reportError } from "@/lib/observability/report";
+import { reportSentryError } from "@/lib/observability/report";
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
@@ -82,7 +82,7 @@ export async function refundWholeEventPayments(
       summary.childRefundIds.push(r.refundId);
     } catch (err) {
       summary.failures.push({ paymentId: p.id, error: errMsg(err) });
-      reportError(err, {
+      reportSentryError(err, {
         subsystem: "payments",
         tags: { feature: "whole-event-refund" },
         extra: { paymentId: p.id, eventId, kind },
@@ -127,7 +127,7 @@ export async function refundWholeEventPayments(
       for (const p of internal) {
         summary.failures.push({ paymentId: p.id, error: errMsg(err) });
       }
-      reportError(err, {
+      reportSentryError(err, {
         subsystem: "payments",
         tags: { feature: "whole-event-refund" },
         extra: { eventId, kind, internalCount: internal.length },

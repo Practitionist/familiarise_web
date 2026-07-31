@@ -16,7 +16,7 @@
  * OrganizationEarnings.status MUST call this guard first.
  */
 
-import { reportError } from "@/lib/observability/report";
+import { reportSentryError } from "@/lib/observability/report";
 import { EarningStatus } from "@prisma/client";
 
 export class IllegalEarningStatusTransitionError extends Error {
@@ -41,13 +41,13 @@ export function assertEarningStatusTransitionLegal(
     const err = new IllegalEarningStatusTransitionError(from, to, earningsId);
     // Modelled invariant guard (a lost race or a caller bug) — reported for
     // visibility, control flow unchanged.
-    reportError(err, { subsystem: "payments", expected: true, level: "warning" });
+    reportSentryError(err, { subsystem: "payments", expected: true, level: "warning" });
     throw err;
   }
   // REFUNDED is terminal — once refunded, no further status mutations.
   if (from === EarningStatus.REFUNDED) {
     const err = new IllegalEarningStatusTransitionError(from, to, earningsId);
-    reportError(err, { subsystem: "payments", expected: true, level: "warning" });
+    reportSentryError(err, { subsystem: "payments", expected: true, level: "warning" });
     throw err;
   }
 }

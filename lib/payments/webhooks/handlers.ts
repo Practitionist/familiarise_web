@@ -4,7 +4,7 @@
  * Can be used by both webhook API routes and direct checkout flows
  */
 
-import { reportError, reportMessage } from "@/lib/observability/report";
+import { reportSentryError, reportSentryMessage } from "@/lib/observability/report";
 import prisma, { type Tx } from "@/lib/prisma";
 import {
   AppointmentsType,
@@ -195,7 +195,7 @@ export async function handlePaymentSuccess(
           const err = new Error(
             `Payment record not found for intent: ${paymentIntentId}`,
           );
-          reportError(err, { subsystem: "payments" });
+          reportSentryError(err, { subsystem: "payments" });
           throw err;
         }
 
@@ -203,7 +203,7 @@ export async function handlePaymentSuccess(
           console.log(`Payment ${paymentIntentId} has already been processed.`);
           // Idempotency short-circuit — a redelivered webhook. The system
           // working as designed.
-          reportMessage("Payment webhook idempotency short-circuit", {
+          reportSentryMessage("Payment webhook idempotency short-circuit", {
             subsystem: "payments",
             expected: true,
             extra: { paymentIntentId },
@@ -221,7 +221,7 @@ export async function handlePaymentSuccess(
           gatewayAmountPaise !== undefined &&
           gatewayAmountPaise !== payment.amount
         ) {
-          reportError(
+          reportSentryError(
             new Error(
               `Capture amount mismatch for ${paymentIntentId}: gateway=${gatewayAmountPaise} expected=${payment.amount}`,
             ),
@@ -284,7 +284,7 @@ export async function handlePaymentSuccess(
                 ? validationError.message
                 : String(validationError);
 
-          reportError(validationError, {
+          reportSentryError(validationError, {
             subsystem: "payments",
             level: "fatal",
             contexts: {
@@ -481,7 +481,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
         },
       });
     } catch (refundError) {
-      reportError(refundError, {
+      reportSentryError(refundError, {
         subsystem: "payments",
         contexts: {
           payment: {
@@ -511,7 +511,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
         initiatedByUserId: null,
       });
     } catch (refundError) {
-      reportError(refundError, { subsystem: "payments" });
+      reportSentryError(refundError, { subsystem: "payments" });
       console.error(
         "Failed to auto-refund capture-after-cancellation (Phase 2):",
         refundError,
@@ -544,7 +544,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
         ),
       );
     } catch (refundError) {
-      reportError(refundError, {
+      reportSentryError(refundError, {
         subsystem: "payments",
         contexts: {
           booking: {
@@ -581,7 +581,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
       );
     }
   } catch (emailError) {
-    reportError(emailError, { subsystem: "payments", level: "warning" });
+    reportSentryError(emailError, { subsystem: "payments", level: "warning" });
     console.error(
       "Failed to send payment success email (Phase 2):",
       emailError,
@@ -713,7 +713,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
   try {
     await processQualifyingAction(userId, "first_paid_booking");
   } catch (referralError) {
-    reportError(referralError, { subsystem: "payments", level: "warning" });
+    reportSentryError(referralError, { subsystem: "payments", level: "warning" });
     console.error(
       `⚠️ Failed to process referral qualifying action for user ${userId}:`,
       referralError,
@@ -727,7 +727,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
   try {
     await processConsultantBookingReferral({ id: paymentId }, userId);
   } catch (consultantReferralError) {
-    reportError(consultantReferralError, {
+    reportSentryError(consultantReferralError, {
       subsystem: "payments",
       level: "warning",
     });
@@ -840,7 +840,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
       dashboardUrl,
     });
   } catch (novuError) {
-    reportError(novuError, { subsystem: "payments", level: "warning" });
+    reportSentryError(novuError, { subsystem: "payments", level: "warning" });
     console.error(
       `⚠️ Failed to send Novu notifications for payment ${paymentId}:`,
       novuError,
@@ -974,7 +974,7 @@ export async function handlePaymentFailure(paymentIntentId: string) {
       console.warn(
         `Payment record not found for failed intent: ${paymentIntentId}`,
       );
-      reportMessage("Payment failure webhook: payment not found", {
+      reportSentryMessage("Payment failure webhook: payment not found", {
         subsystem: "payments",
         level: "warning",
         extra: { paymentIntentId },
@@ -987,7 +987,7 @@ export async function handlePaymentFailure(paymentIntentId: string) {
       console.log(
         `Payment ${paymentIntentId} has already been marked as failed.`,
       );
-      reportMessage("Payment failure webhook idempotency short-circuit", {
+      reportSentryMessage("Payment failure webhook idempotency short-circuit", {
         subsystem: "payments",
         expected: true,
         extra: { paymentIntentId },
@@ -1001,7 +1001,7 @@ export async function handlePaymentFailure(paymentIntentId: string) {
       console.warn(
         `Payment ${paymentIntentId} already SUCCEEDED. Ignoring late failure webhook.`,
       );
-      reportMessage("Payment failure webhook arrived after SUCCEEDED — ignored", {
+      reportSentryMessage("Payment failure webhook arrived after SUCCEEDED — ignored", {
         subsystem: "payments",
         expected: true,
         level: "warning",
@@ -1016,7 +1016,7 @@ export async function handlePaymentFailure(paymentIntentId: string) {
       console.log(
         `Payment ${paymentIntentId} already EXPIRED. Ignoring late failure webhook.`,
       );
-      reportMessage("Payment failure webhook arrived after EXPIRED — ignored", {
+      reportSentryMessage("Payment failure webhook arrived after EXPIRED — ignored", {
         subsystem: "payments",
         expected: true,
         extra: { paymentIntentId },
@@ -1057,7 +1057,7 @@ export async function handlePaymentFailure(paymentIntentId: string) {
         retryUrl: `${getAppUrl()}/dashboard`,
       });
     } catch (novuError) {
-      reportError(novuError, { subsystem: "payments", level: "warning" });
+      reportSentryError(novuError, { subsystem: "payments", level: "warning" });
       console.error(
         `⚠️ Failed to send Novu payment failed notification for payment ${payment.id}:`,
         novuError,
@@ -1512,7 +1512,7 @@ export async function confirmExistingAppointment(
         // Modelled outcome — the #827 first-confirmed-wins guard working as
         // designed (lost race). Phase 2 auto-refunds the loser; still
         // reported at "warning" (not "info") since it needs that follow-up.
-        reportError(new Error("CONFIRMATION_BLOCKED_DOUBLE_BOOKING"), {
+        reportSentryError(new Error("CONFIRMATION_BLOCKED_DOUBLE_BOOKING"), {
           subsystem: "payments",
           expected: true,
           level: "warning",
@@ -1765,7 +1765,7 @@ async function sendPaymentSuccessNotification(
     });
 
     if (!appointment) {
-      reportError(
+      reportSentryError(
         new Error(
           `Cannot send payment success email: appointment ${appointmentId} not found`,
         ),
@@ -1820,7 +1820,7 @@ async function sendPaymentSuccessNotification(
       `📧 Payment success email sent to ${payment.user.email} for ${appointmentType}`,
     );
   } catch (error) {
-    reportError(error, { subsystem: "payments", level: "warning" });
+    reportSentryError(error, { subsystem: "payments", level: "warning" });
     // Don't throw - email failures shouldn't block payment processing
     console.error("Failed to send payment success email:", error);
   }
@@ -1861,7 +1861,7 @@ async function sendPaymentFailureNotification(
     });
 
     if (!appointment) {
-      reportError(
+      reportSentryError(
         new Error(
           `Cannot send payment failure email: appointment not found for payment ${payment.id}`,
         ),
@@ -1911,7 +1911,7 @@ async function sendPaymentFailureNotification(
       `📧 Payment failure email sent to ${payment.user.email} for ${appointmentType}`,
     );
   } catch (error) {
-    reportError(error, { subsystem: "payments", level: "warning" });
+    reportSentryError(error, { subsystem: "payments", level: "warning" });
     // Don't throw - email failures shouldn't block payment processing
     console.error("Failed to send payment failure email:", error);
   }

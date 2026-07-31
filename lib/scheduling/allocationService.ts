@@ -1,4 +1,4 @@
-import { reportError } from "@/lib/observability/report";
+import { reportSentryError } from "@/lib/observability/report";
 import { TimeSlot } from "./calendarUtils";
 import type { SlotConflictResult } from "@/utils/slotAllocation/types";
 
@@ -137,7 +137,7 @@ export class AllocationService {
       };
     } catch (error) {
       console.error(`Allocation request failed (${url}):`, error);
-      reportError(error, {
+      reportSentryError(error, {
         subsystem: "client",
         tags: { feature: "slot-allocation" },
       });
@@ -183,7 +183,7 @@ export class AllocationService {
       };
     } catch (error) {
       console.error("Error validating consultation slots:", error);
-      reportError(error, { subsystem: "scheduling", op: "slot-allocation" });
+      reportSentryError(error, { subsystem: "scheduling", op: "slot-allocation" });
       return {
         success: false,
         error:
@@ -226,7 +226,7 @@ export class AllocationService {
       };
     } catch (error) {
       console.error("Error validating subscription slots:", error);
-      reportError(error, { subsystem: "scheduling", op: "slot-allocation" });
+      reportSentryError(error, { subsystem: "scheduling", op: "slot-allocation" });
       return {
         success: false,
         error:
@@ -312,7 +312,7 @@ export class AllocationService {
       };
     } catch (error) {
       console.error("Error validating class slots:", error);
-      reportError(error, { subsystem: "scheduling", op: "slot-allocation" });
+      reportSentryError(error, { subsystem: "scheduling", op: "slot-allocation" });
       return {
         success: false,
         error:
@@ -355,7 +355,7 @@ export class AllocationService {
       };
     } catch (error) {
       console.error("Error validating webinar slots:", error);
-      reportError(error, { subsystem: "scheduling", op: "slot-allocation" });
+      reportSentryError(error, { subsystem: "scheduling", op: "slot-allocation" });
       return {
         success: false,
         error:
@@ -421,7 +421,7 @@ export class AllocationService {
           : undefined;
       const expected =
         typeof httpStatus === "number" && httpStatus >= 400 && httpStatus < 500;
-      reportError(error, {
+      reportSentryError(error, {
         subsystem: "client",
         op: "slot-allocation",
         expected,
@@ -521,7 +521,7 @@ export class AllocationService {
           : undefined;
       const expected =
         typeof httpStatus === "number" && httpStatus >= 400 && httpStatus < 500;
-      reportError(error, {
+      reportSentryError(error, {
         subsystem: "client",
         op: "slot-allocation",
         expected,
@@ -593,7 +593,7 @@ export class AllocationService {
           : undefined;
       const expected =
         typeof httpStatus === "number" && httpStatus >= 400 && httpStatus < 500;
-      reportError(error, {
+      reportSentryError(error, {
         subsystem: "client",
         op: "slot-allocation",
         expected,

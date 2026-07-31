@@ -17,7 +17,7 @@
  * outcome, not an error.
  */
 
-import { reportError } from "@/lib/observability/report";
+import { reportSentryError } from "@/lib/observability/report";
 import prisma from "@/lib/prisma";
 import type { EventType } from "@/utils/slotAllocation/types";
 import { SlotAllocationService } from "@/utils/slotAllocation/SlotAllocationService";
@@ -107,7 +107,7 @@ export async function tryAutoConfirmProposal(
       }
     });
   } catch (err) {
-    reportError(err, {
+    reportSentryError(err, {
       subsystem: "bookings",
       op: "reschedule-auto-confirm",
       extra: {
@@ -146,7 +146,7 @@ export async function tryAutoConfirmProposal(
         }
       });
     } catch (err) {
-      reportError(err, {
+      reportSentryError(err, {
         subsystem: "bookings",
         op: "reschedule-auto-confirm",
         level: "fatal",
@@ -184,7 +184,7 @@ export async function tryAutoConfirmProposal(
     // but the proposal's own bookkeeping never caught up, which is worth
     // knowing at the default fault level.
     const isLostRace = err instanceof IllegalTransitionError;
-    reportError(err, {
+    reportSentryError(err, {
       subsystem: "bookings",
       op: "reschedule-auto-confirm",
       expected: isLostRace,

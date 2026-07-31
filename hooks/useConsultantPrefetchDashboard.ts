@@ -2,7 +2,7 @@
 
 import { useQueryClient, type FetchQueryOptions } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef } from "react";
-import { reportError } from "@/lib/observability/report";
+import { reportSentryError } from "@/lib/observability/report";
 
 import {
   createConsultantQueries,
@@ -110,7 +110,7 @@ export function usePrefetchDashboard({
       console.warn("Consultant data prefetching failed:", error);
       // Best-effort dashboard prefetch — the real useQuery on the actual
       // tab still fetches on demand. Reported for volume visibility only.
-      reportError(error, { subsystem: "client", expected: true });
+      reportSentryError(error, { subsystem: "client", expected: true });
     }
   }, [consultantId, safePrefetch]);
 
@@ -132,7 +132,7 @@ export function usePrefetchDashboard({
     } catch (error) {
       console.warn("Consultee data prefetching failed:", error);
       // Best-effort dashboard prefetch — see the consultant twin above.
-      reportError(error, { subsystem: "client", expected: true });
+      reportSentryError(error, { subsystem: "client", expected: true });
     }
   }, [consulteeId, safePrefetch]);
 

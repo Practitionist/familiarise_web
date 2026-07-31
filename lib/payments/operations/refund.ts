@@ -37,7 +37,7 @@
  * the paise.
  */
 
-import { reportError, reportMessage } from "@/lib/observability/report";
+import { reportSentryError, reportSentryMessage } from "@/lib/observability/report";
 import prisma, { type Tx } from "@/lib/prisma";
 import {
   EarningStatus,
@@ -110,7 +110,7 @@ export class RefundValidationError extends Error {
  * every call site still throws the same error object right after this.
  */
 function reportModelledRefundOutcome(err: RefundValidationError): void {
-  reportError(err, {
+  reportSentryError(err, {
     subsystem: "payments",
     tags: { feature: "refund" },
     expected: true,
@@ -376,7 +376,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
       idempotencyKey: reserved.id,
     });
   } catch (err) {
-    reportError(err, {
+    reportSentryError(err, {
       subsystem: "payments",
       tags: { feature: "refund" },
       extra: { paymentId: input.paymentId, refundRowId: reserved.id },
@@ -543,7 +543,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
         (err.code !== "ALREADY_FULLY_REFUNDED" &&
           err.code !== "PAYMENT_NOT_SUCCEEDED")
       ) {
-        reportError(err, {
+        reportSentryError(err, {
           subsystem: "payments",
           tags: { feature: "overage-credit-back" },
           extra: { parentPaymentId: input.paymentId, sidePaymentId },
@@ -614,7 +614,7 @@ export async function applyRefundCascade(
     // Idempotency short-circuit — the system working as designed (a
     // redelivered webhook or a racing cron lost the claim). Reported for
     // volume/pattern visibility only.
-    reportMessage("Refund cascade idempotency short-circuit", {
+    reportSentryMessage("Refund cascade idempotency short-circuit", {
       subsystem: "payments",
       tags: { feature: "refund" },
       expected: true,
@@ -1297,7 +1297,7 @@ export async function applyRefundCascade(
     console.error(
       `[ledger] refund reversal posting FAILED for payment ${payment.id} — rolling back the cascade: ${err instanceof Error ? err.message : String(err)}`,
     );
-    reportError(err, {
+    reportSentryError(err, {
       subsystem: "payments",
       contexts: {
         refund: { paymentId: payment.id, refundId: input.refundId },

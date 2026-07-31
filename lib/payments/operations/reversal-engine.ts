@@ -1,4 +1,4 @@
-import { reportError, reportMessage } from "@/lib/observability/report";
+import { reportSentryError, reportSentryMessage } from "@/lib/observability/report";
 import type { Tx } from "@/lib/prisma";
 /**
  * Unified reversal engine (#776 §C / ARCH #4).
@@ -273,7 +273,7 @@ async function reversePayoutClawback(
     select: { id: true, clawbackInitiatedAt: true },
   });
   if (!payout) {
-    reportMessage("reversePayoutClawback: target OrganizationPayout not found", {
+    reportSentryMessage("reversePayoutClawback: target OrganizationPayout not found", {
       subsystem: "payments",
       level: "warning",
       extra: { orgPayoutId, refundId: input.refundId },
@@ -325,7 +325,7 @@ async function reversePayoutClawback(
       ],
     });
   } catch (err) {
-    reportError(err, { subsystem: "payments", level: "fatal" });
+    reportSentryError(err, { subsystem: "payments", level: "fatal" });
     console.error(
       `[ledger] payout clawback posting FAILED for payout ${orgPayoutId} (reconcile will flag): ${err instanceof Error ? err.message : String(err)}`,
     );

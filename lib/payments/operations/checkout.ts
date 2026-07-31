@@ -3,7 +3,7 @@
  * Handles the complete checkout flow for all appointment types
  */
 
-import { reportError } from "@/lib/observability/report";
+import { reportSentryError } from "@/lib/observability/report";
 import prisma, { type Tx } from "@/lib/prisma";
 import { CheckoutInput, checkoutSchema } from "@/schemas/checkout";
 import { calculateSubscriptionEndDate } from "@/utils/dateUtils";
@@ -194,7 +194,7 @@ export class PaymentIntentManager {
       return paymentResponse;
     } catch (error) {
       console.error("Payment intent creation failed:", error);
-      reportError(error, { subsystem: "payments" });
+      reportSentryError(error, { subsystem: "payments" });
       throw new Error(
         "Failed to create payment intent. Please try again later.",
       );
@@ -213,7 +213,7 @@ export class PaymentIntentManager {
       this.activeIntents.delete(intentId);
     } catch (error) {
       console.error(`Failed to cancel payment intent ${intentId}:`, error);
-      reportError(error, { subsystem: "payments", level: "warning" });
+      reportSentryError(error, { subsystem: "payments", level: "warning" });
       // Don't throw - cleanup should be best-effort
     }
   }
@@ -2235,7 +2235,7 @@ export async function handleCheckout(
         });
       } catch (paymentError) {
         console.error("Payment intent creation failed:", paymentError);
-        reportError(paymentError, { subsystem: "payments" });
+        reportSentryError(paymentError, { subsystem: "payments" });
         throw new Error(
           "Failed to create payment intent. Please try again later.",
         );
@@ -2523,7 +2523,7 @@ export async function handleCheckout(
                       "[notifyOrgProgramExhausted] failed:",
                       notifyErr,
                     );
-                    reportError(notifyErr, {
+                    reportSentryError(notifyErr, {
                       subsystem: "payments",
                       level: "warning",
                     });
@@ -2631,7 +2631,7 @@ export async function handleCheckout(
                       "[notifyOrgProgramCapNear] failed:",
                       notifyErr,
                     );
-                    reportError(notifyErr, {
+                    reportSentryError(notifyErr, {
                       subsystem: "payments",
                       level: "warning",
                     });
@@ -2847,7 +2847,7 @@ export async function handleCheckout(
             `⚠️ Failed to process referral qualifying action for user ${userId}:`,
             referralError,
           );
-          reportError(referralError, { subsystem: "payments", level: "warning" });
+          reportSentryError(referralError, { subsystem: "payments", level: "warning" });
         }
 
         // Create consultant earnings (mock payments bypass webhooks, so earnings must be created here)
@@ -2987,7 +2987,7 @@ export async function handleCheckout(
             `⚠️ Failed to process consultant referral qualifying action:`,
             consultantRefError,
           );
-          reportError(consultantRefError, {
+          reportSentryError(consultantRefError, {
             subsystem: "payments",
             level: "warning",
           });
@@ -3025,13 +3025,22 @@ export async function handleCheckout(
         "insufficient credits",
         "session cap", // ProgramAssignmentLimitError-derived message, above
       ];
+      // Typed errors and stable codes first — a substring is a last resort,
+      // not the mechanism. recordOverageAtCheckout stamps
+      // code: "PROGRAM_CAP_EXHAUSTED" on its 402, which this used to miss
+      // entirely and report as a fault.
+      const dbErrorCode = (dbError as { code?: unknown } | null)?.code;
       const isModelledOutcome =
         dbError instanceof WalletFrozenError ||
+        dbError instanceof ProgramAssignmentLimitError ||
+        dbErrorCode === "PROGRAM_CAP_EXHAUSTED" ||
         (dbError instanceof Error &&
           modelledOutcomePatterns.some((msg) =>
-            dbError.message.toLowerCase().includes(msg),
+            // Word-bounded: bare `includes` let "full" match "successful" and
+            // "ended" match "unintended", tagging real faults as routine.
+            new RegExp(`\\b${msg}\\b`, "i").test(dbError.message),
           ));
-      reportError(dbError, { subsystem: "payments", expected: isModelledOutcome });
+      reportSentryError(dbError, { subsystem: "payments", expected: isModelledOutcome });
 
       // CRITICAL: Cancel payment intent since DB operation failed
       // (Skip cleanup for zero-amount payments — they have no real gateway intent)
@@ -3086,7 +3095,7 @@ export async function handleCheckout(
       error instanceof Error &&
       (error.message.includes("currently checking out") ||
         error.message.includes("currently being booked"));
-    reportError(error, { subsystem: "payments", expected: isLockContention });
+    reportSentryError(error, { subsystem: "payments", expected: isLockContention });
     // Enhanced error handling with lock-specific errors
     if (isLockContention) {
       throw new Error(

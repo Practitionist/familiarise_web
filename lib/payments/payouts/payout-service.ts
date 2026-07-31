@@ -3,7 +3,7 @@
  * Provider-agnostic payout orchestration with admin approval workflow
  */
 
-import { reportError, reportMessage } from "@/lib/observability/report";
+import { reportSentryError, reportSentryMessage } from "@/lib/observability/report";
 import prisma from "@/lib/prisma";
 import {
   PayoutStatus,
@@ -605,7 +605,7 @@ async function processSinglePayout(payout: {
       );
       // Lost CAS race — a concurrent runner already claimed this payout. The
       // system working as designed.
-      reportMessage("Payout CAS claim lost to a concurrent runner", {
+      reportSentryMessage("Payout CAS claim lost to a concurrent runner", {
         subsystem: "payments",
         expected: true,
         extra: { payoutId: payout.id },
@@ -778,7 +778,7 @@ async function processSinglePayout(payout: {
           `[payout-service] CRITICAL: gateway accepted ${providerPayoutId} but DB persist failed twice for payout ${payout.id}; manual reconcile required`,
           persistErr,
         );
-        reportError(persistErr, {
+        reportSentryError(persistErr, {
           subsystem: "payments",
           level: "fatal",
           contexts: { payout: { payoutId: payout.id, providerPayoutId } },
@@ -787,7 +787,7 @@ async function processSinglePayout(payout: {
       console.error(
         `⚠️ Payout ${payout.id}: gateway accepted ${providerPayoutId} but DB write failed — quarantined PROCESSING (NOT failed) to avoid double-pay`,
       );
-      reportError(
+      reportSentryError(
         new Error(`gateway-accepted-db-write-failed: payout ${payout.id}`),
         {
           subsystem: "payments",
@@ -1009,7 +1009,7 @@ export async function handlePayoutWebhook(
       );
       // Idempotency short-circuit — a redelivered/duplicate gateway webhook.
       // The system working as designed.
-      reportMessage("Payout webhook idempotency short-circuit", {
+      reportSentryMessage("Payout webhook idempotency short-circuit", {
         subsystem: "payments",
         expected: true,
         extra: { payoutId: payout.id, status },
@@ -1146,7 +1146,7 @@ export async function handlePayoutWebhook(
         dashboardUrl: `${getAppUrl()}/dashboard`,
       }).catch((error) => {
         console.error("[payouts] Failed to send payout notification:", error);
-        reportError(error, { subsystem: "payments", level: "warning" });
+        reportSentryError(error, { subsystem: "payments", level: "warning" });
       });
     }
   }
@@ -1182,7 +1182,7 @@ export async function markConsultantPayoutReversed(
       console.warn(
         `[payouts] markConsultantPayoutReversed: payout not found for provider ID ${providerPayoutId}`,
       );
-      reportMessage(
+      reportSentryMessage(
         "markConsultantPayoutReversed: payout not found for provider ID",
         { subsystem: "payments", level: "warning", extra: { providerPayoutId } },
       );
@@ -1200,7 +1200,7 @@ export async function markConsultantPayoutReversed(
     if (claim.count === 0) {
       // Modelled no-op — caller falls through to the pre-settlement FAILED
       // path when the payout wasn't COMPLETED.
-      reportMessage("markConsultantPayoutReversed: no-op (not COMPLETED)", {
+      reportSentryMessage("markConsultantPayoutReversed: no-op (not COMPLETED)", {
         subsystem: "payments",
         expected: true,
         extra: { payoutId: payout.id },

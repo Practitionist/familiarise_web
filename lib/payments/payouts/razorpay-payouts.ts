@@ -6,7 +6,7 @@
  */
 
 import * as Sentry from "@sentry/nextjs";
-import { reportError, reportMessage } from "@/lib/observability/report";
+import { reportSentryError, reportSentryMessage } from "@/lib/observability/report";
 import crypto from "crypto";
 
 // ============================================
@@ -322,7 +322,7 @@ export class RazorpayPayoutsService {
       // Genuinely unexpected (network/shape/auth) — the fail-open null return
       // is a deliberate caller-side decision (assertPayoutBalance), not a
       // claim that this failure is routine.
-      reportError(error, {
+      reportSentryError(error, {
         subsystem: "payments",
         tags: { provider: "razorpay" },
       });
@@ -434,7 +434,7 @@ export class RazorpayPayoutsService {
       // captured at warning/expected so it never reads as a platform fault.
       // Candidate for a Sentry inbound rate-limit on this event if volume
       // ever needs bounding.
-      reportMessage("RazorpayX webhook signature length mismatch", {
+      reportSentryMessage("RazorpayX webhook signature length mismatch", {
         subsystem: "payments",
         tags: { provider: "razorpay" },
         expected: true,
@@ -449,7 +449,7 @@ export class RazorpayPayoutsService {
     );
     if (!valid) {
       // Same rate-limit candidacy note as above.
-      reportMessage("RazorpayX webhook signature mismatch", {
+      reportSentryMessage("RazorpayX webhook signature mismatch", {
         subsystem: "payments",
         tags: { provider: "razorpay" },
         expected: true,
@@ -558,7 +558,7 @@ export function isRazorpayPayoutsConfigured(): boolean {
   } catch (error) {
     // Constructor throws only on missing credentials — a modelled
     // "not configured yet" outcome (e.g. local/dev env), not a fault.
-    reportError(error, {
+    reportSentryError(error, {
       subsystem: "payments",
       tags: { provider: "razorpay" },
       expected: true,

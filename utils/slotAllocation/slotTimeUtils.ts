@@ -11,7 +11,7 @@
  * the new Int-based representation.
  */
 
-import { reportError } from "@/lib/observability/report";
+import { reportSentryError } from "@/lib/observability/report";
 import { DayOfWeek, Prisma } from "@prisma/client";
 import {
   isNextDayOfWeek,
@@ -337,7 +337,7 @@ export function getTimezoneOffsetMinutes(
     // caller in the codebase invokes this once per request (timezone
     // resolution), never per slot candidate in a scan loop, so this can't
     // fan out into per-candidate volume.
-    reportError(error, {
+    reportSentryError(error, {
       subsystem: "scheduling",
       op: "slot-validation",
       expected: true,

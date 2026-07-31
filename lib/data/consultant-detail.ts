@@ -1,5 +1,5 @@
 import { cache } from "react";
-import { reportError } from "@/lib/observability/report";
+import { reportSentryError } from "@/lib/observability/report";
 import prisma from "@/lib/prisma";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
 
@@ -105,7 +105,7 @@ export const getConsultantDetail = cache(async (consultantId: string) => {
     // A throw here means the row picked up something non-JSON-safe (a
     // serialization regression, not a missing/empty result) — the public
     // detail page would otherwise 500 with no trace of why.
-    reportError(error, { subsystem: "consultant" });
+    reportSentryError(error, { subsystem: "consultant" });
     throw error;
   }
 });

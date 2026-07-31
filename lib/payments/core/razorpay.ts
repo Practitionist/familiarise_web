@@ -1,5 +1,5 @@
 import * as Sentry from "@sentry/nextjs";
-import { reportError } from "@/lib/observability/report";
+import { reportSentryError } from "@/lib/observability/report";
 import Razorpay from "razorpay";
 import {
   PaymentIntentParams,
@@ -89,7 +89,7 @@ export async function createRazorpayOrder({
     };
   } catch (error) {
     console.error("Razorpay order creation failed:", error);
-    reportError(error, {
+    reportSentryError(error, {
       subsystem: "payments",
       tags: { provider: "razorpay" },
       contexts: { payment: { amount, currency } },
@@ -125,7 +125,7 @@ export async function cancelRazorpayOrder(orderId: string): Promise<void> {
     console.log(
       `✅ Razorpay order fetch failed (likely safe to ignore): ${orderId}`,
     );
-    reportError(error, {
+    reportSentryError(error, {
       subsystem: "payments",
       tags: { provider: "razorpay" },
       expected: true,
@@ -311,7 +311,7 @@ export async function createRazorpayRefund({
     // doesn't conflate "Razorpay is down" with "this order has no payment".
     const isModelledValidation =
       error instanceof RefundError && error.code !== "UNKNOWN_ERROR";
-    reportError(error, {
+    reportSentryError(error, {
       subsystem: "payments",
       tags: { provider: "razorpay" },
       expected: isModelledValidation,
@@ -348,7 +348,7 @@ export async function getRazorpayRefund(
     };
   } catch (error) {
     console.error("Razorpay refund retrieval failed:", error);
-    reportError(error, {
+    reportSentryError(error, {
       subsystem: "payments",
       tags: { provider: "razorpay" },
     });
@@ -400,7 +400,7 @@ export async function listRazorpayRefunds(
     }));
   } catch (error) {
     console.error("Razorpay refunds list failed:", error);
-    reportError(error, {
+    reportSentryError(error, {
       subsystem: "payments",
       tags: { provider: "razorpay" },
     });

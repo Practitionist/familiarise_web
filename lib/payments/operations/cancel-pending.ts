@@ -1,4 +1,4 @@
-import { reportError, reportMessage } from "@/lib/observability/report";
+import { reportSentryError, reportSentryMessage } from "@/lib/observability/report";
 import prisma from "@/lib/prisma";
 import type { Tx } from "@/lib/prisma";
 import { Prisma, type PaymentGateway } from "@prisma/client";
@@ -125,7 +125,7 @@ export async function cancelPendingCheckout(args: {
         if (!payment || payment.userId !== args.userId) {
           // Authorization-denial-shaped outcome (or a genuinely missing
           // payment) — modelled, reported for visibility only.
-          reportMessage("cancelPendingCheckout: not found / not owned by caller", {
+          reportSentryMessage("cancelPendingCheckout: not found / not owned by caller", {
             subsystem: "payments",
             expected: true,
             extra: { paymentId: args.paymentId },
@@ -149,7 +149,7 @@ export async function cancelPendingCheckout(args: {
         if (claimed.count === 0) {
           // Lost CAS race — the webhook/cron/a parallel cancel already won.
           // The system working as designed.
-          reportMessage("cancelPendingCheckout: lost CAS race (already terminal)", {
+          reportSentryMessage("cancelPendingCheckout: lost CAS race (already terminal)", {
             subsystem: "payments",
             expected: true,
             extra: { paymentId: args.paymentId },
@@ -220,7 +220,7 @@ export async function cancelPendingCheckout(args: {
         gatewayCancel.gateway,
       );
     } catch (error) {
-      reportError(error, { subsystem: "payments" });
+      reportSentryError(error, { subsystem: "payments" });
       console.warn(
         JSON.stringify({
           event: "cancel_pending_gateway_cancel_failed",

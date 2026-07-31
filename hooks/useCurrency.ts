@@ -2,7 +2,7 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useSyncExternalStore } from "react";
-import { reportError } from "@/lib/observability/report";
+import { reportSentryError } from "@/lib/observability/report";
 import { CURRENCY_LOCALE_MAP } from "@/utils/formatting";
 
 const STORAGE_KEY = "preferred-currency";
@@ -84,7 +84,7 @@ export function useCurrency() {
         // React Query retries this (retry: 2) and formatPrice already has an
         // honest INR fallback while rate is null — captured for visibility
         // into retry volume, not because the degrade itself needs fixing.
-        reportError(error, { subsystem: "client", expected: true });
+        reportSentryError(error, { subsystem: "client", expected: true });
         throw error;
       }
     },
@@ -138,7 +138,7 @@ export function useCurrency() {
       } catch (error) {
         // Only throws on a malformed currency code (e.g. a bad value from
         // /api/currency) \u2014 a real data bug, not the "still loading" case.
-        reportError(error, {
+        reportSentryError(error, {
           subsystem: "client",
           extra: { displayCurrency },
         });

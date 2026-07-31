@@ -49,7 +49,7 @@
  *     re-derive these for any rows still on stub defaults.
  */
 
-import { reportError } from "@/lib/observability/report";
+import { reportSentryError } from "@/lib/observability/report";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import type { PaymentGateway, PayoutStatus } from "@prisma/client";
@@ -486,7 +486,7 @@ export async function createOrgPayoutBatch(
       if (existing) {
         // Lost race — a sibling worker already created this payout under the
         // same idempotency key. Modelled outcome, not a fault.
-        reportError(err, { subsystem: "payments", expected: true });
+        reportSentryError(err, { subsystem: "payments", expected: true });
         return {
           payoutId: existing.id,
           amountPaise: existing.amountPaise,
@@ -497,7 +497,7 @@ export async function createOrgPayoutBatch(
         };
       }
     }
-    reportError(err, { subsystem: "payments" });
+    reportSentryError(err, { subsystem: "payments" });
     throw err;
   } finally {
     await releaseLock(lockKey, token);
@@ -636,7 +636,7 @@ export async function processOrgPayout(
         const cls = classifyGatewaySubmissionError(err);
         if (cls === "PERMANENT_4XX") {
           // Gateway declined the submission — an answer, not a fault.
-          reportError(err, { subsystem: "payments", expected: true });
+          reportSentryError(err, { subsystem: "payments", expected: true });
           await markPayoutFailedFromSubmission(
             payoutId,
             err instanceof Error ? err.message : String(err),
@@ -652,7 +652,7 @@ export async function processOrgPayout(
         }
         // Transient — leave row in PROCESSING and re-throw so the cron
         // retries with the same idempotency key.
-        reportError(err, { subsystem: "payments" });
+        reportSentryError(err, { subsystem: "payments" });
         throw err;
       }
     });
@@ -851,7 +851,7 @@ export async function processPendingOrgPayouts(): Promise<OrgProcessingResult> {
         result.advanced++;
       }
     } catch (err) {
-      reportError(err, { subsystem: "payments" });
+      reportSentryError(err, { subsystem: "payments" });
       const message = err instanceof Error ? err.message : String(err);
       result.errors.push(`OrgPayout ${p.id}: ${message}`);
     }
@@ -1237,7 +1237,7 @@ export async function markOrgPayoutReversed(
         kind: "REVERSED",
         dashboardUrl: `${getAppUrl()}/dashboard/organization/${completedResult.notify.organizationId}/payouts`,
       }).catch((e) => {
-        reportError(e, { subsystem: "payments" });
+        reportSentryError(e, { subsystem: "payments" });
         console.error("[org-payout] REVERSED notify failed:", e);
       });
     }

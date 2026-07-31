@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { reportError } from "@/lib/observability/report";
+import { reportSentryError } from "@/lib/observability/report";
 import { useToast } from "@/components/ui/use-toast";
 import { TConsultantProfile } from "@/types/consultant";
 import { TConsulteeProfile } from "@/types/consultee";
@@ -71,7 +71,7 @@ export const useUserData = (userId: string) => {
         setError(error);
         // 401 is expected after sign-out (session cleared before component unmounts)
         if (err !== null && err !== undefined && typeof err === "object" && "status" in err && (err as { status: number }).status === 401) return;
-        reportError(error, { subsystem: "client" });
+        reportSentryError(error, { subsystem: "client" });
         console.error("Error fetching user details:", err);
         toast({
           title: "Error fetching user details",

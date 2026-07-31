@@ -5,7 +5,7 @@
  * Handles auto, manual, and requested slot allocation.
  */
 
-import { reportError } from "@/lib/observability/report";
+import { reportSentryError } from "@/lib/observability/report";
 import prisma, {
   type Tx,
   type PrismaLike,
@@ -150,7 +150,7 @@ export class SlotAllocationService {
       // available" for a database failure. Real faults keep the default
       // error level with no expected tag.
       const modeled = this.isModeledOutcome(error);
-      reportError(error, {
+      reportSentryError(error, {
         subsystem: "scheduling",
         op: "slot-allocation",
         expected: modeled,
@@ -215,6 +215,15 @@ export class SlotAllocationService {
     // was allocating; the whole allocation tx rolled back.
     if (error instanceof IllegalTransitionError) {
       return { errorCode: "ILLEGAL_TRANSITION", httpStatus: error.httpStatus };
+    }
+
+    // The org's per-cycle overage ceiling refusing an assignment is a decision,
+    // not a fault. It was already reported to Sentry as an expected outcome
+    // while falling through to UNKNOWN_ERROR/500 here — so the dashboard called
+    // it routine and the caller got a server error. 402 matches what
+    // recordOverageAtCheckout returns for the very same ceiling.
+    if (error instanceof ProgramAssignmentLimitError) {
+      return { errorCode: "PROGRAM_CAP_EXHAUSTED", httpStatus: 402 };
     }
 
     // Structured DB-conflict detection (no message sniffing): unique (P2002 /
@@ -1391,7 +1400,7 @@ export class SlotAllocationService {
                 // A same-key retry losing this race is the ordinary replay
                 // case (#837) — reported at info so its frequency is visible
                 // without reading as a fault.
-                reportError(err, {
+                reportSentryError(err, {
                   subsystem: "scheduling",
                   op: "slot-allocation",
                   expected: true,
@@ -1401,7 +1410,7 @@ export class SlotAllocationService {
                   "This allocation was already submitted; the original result applies.",
                 );
               }
-              reportError(err, {
+              reportSentryError(err, {
                 subsystem: "scheduling",
                 op: "slot-allocation",
                 extra: { phase: "requested-stamp", idempotencyKey },
@@ -2227,7 +2236,7 @@ export class SlotAllocationService {
       if (isExclusionViolation(error) || isUniqueViolation(error)) {
         // A concurrent booking winning the #440 overlap guard is the ordinary
         // "someone else got there first" race, not a fault.
-        reportError(error, {
+        reportSentryError(error, {
           subsystem: "scheduling",
           op: "slot-allocation",
           expected: true,
@@ -2237,7 +2246,7 @@ export class SlotAllocationService {
           "This time slot was just booked by someone else. Please pick another time.",
         );
       }
-      reportError(error, {
+      reportSentryError(error, {
         subsystem: "scheduling",
         op: "slot-allocation",
         extra: { phase: "create-appointments", eventType, eventId },
@@ -2412,7 +2421,7 @@ export class SlotAllocationService {
         // to the appropriate HTTP status for the route handler. An
         // organization's overage cap being hit is an ANSWER, not a fault —
         // reported at info so its rate is visible without paging anyone.
-        reportError(err, {
+        reportSentryError(err, {
           subsystem: "scheduling",
           op: "slot-allocation",
           expected: true,
@@ -2420,7 +2429,7 @@ export class SlotAllocationService {
         });
         throw err;
       }
-      reportError(err, {
+      reportSentryError(err, {
         subsystem: "scheduling",
         op: "slot-allocation",
         extra: { phase: "subscription-cap", subscriptionId, consulteeUserId },

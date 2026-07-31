@@ -1,4 +1,4 @@
-import { reportError, reportMessage } from "@/lib/observability/report";
+import { reportSentryError, reportSentryMessage } from "@/lib/observability/report";
 import type { PrismaLike } from "@/lib/prisma";
 /**
  * #771 D1/D5 — double-entry posting helper (Batch 2 foundation).
@@ -114,7 +114,7 @@ export async function postLedgerTxn(
     const err = new Error(
       `postLedgerTxn "${input.idempotencyKey}": no postings`,
     );
-    reportError(err, { subsystem: "payments" });
+    reportSentryError(err, { subsystem: "payments" });
     throw err;
   }
   let debit = 0;
@@ -124,7 +124,7 @@ export async function postLedgerTxn(
       const err = new Error(
         `postLedgerTxn "${input.idempotencyKey}": each posting must be a positive integer paise (got ${p.amountPaise})`,
       );
-      reportError(err, { subsystem: "payments" });
+      reportSentryError(err, { subsystem: "payments" });
       throw err;
     }
     if (p.direction === "DEBIT") debit += p.amountPaise;
@@ -132,7 +132,7 @@ export async function postLedgerTxn(
   }
   if (debit !== credit) {
     const err = new LedgerImbalanceError(input.idempotencyKey, debit, credit);
-    reportError(err, { subsystem: "payments" });
+    reportSentryError(err, { subsystem: "payments" });
     throw err;
   }
 
@@ -146,7 +146,7 @@ export async function postLedgerTxn(
   if (existing) {
     // Idempotency short-circuit — a retried/replayed caller hit an
     // already-posted key. The system working as designed.
-    reportMessage("Ledger posting idempotency short-circuit", {
+    reportSentryMessage("Ledger posting idempotency short-circuit", {
       subsystem: "payments",
       expected: true,
       extra: { idempotencyKey: input.idempotencyKey, kind: input.kind },
@@ -217,7 +217,7 @@ export async function postLedgerTxn(
         if (winner) {
           // Lost-race rescue succeeded — a concurrent poster with the same
           // key committed first. Modelled outcome, not a fault.
-          reportMessage("Ledger posting P2002 race rescued", {
+          reportSentryMessage("Ledger posting P2002 race rescued", {
             subsystem: "payments",
             expected: true,
             extra: { idempotencyKey: input.idempotencyKey, kind: input.kind },
@@ -229,7 +229,7 @@ export async function postLedgerTxn(
         // This inner failure is itself expected inside a tx (Postgres already
         // aborted it, so ANY further read throws 25P02) — captured for
         // pattern visibility only, not as a new fault.
-        reportError(rescueErr, {
+        reportSentryError(rescueErr, {
           subsystem: "payments",
           expected: true,
           extra: { idempotencyKey: input.idempotencyKey },
@@ -240,7 +240,7 @@ export async function postLedgerTxn(
     // captured here so callers that don't wrap postLedgerTxn in their own
     // try/catch (some do, redundantly capturing the same error again) still
     // get visibility.
-    reportError(err, {
+    reportSentryError(err, {
       subsystem: "payments",
       extra: { idempotencyKey: input.idempotencyKey, kind: input.kind },
     });

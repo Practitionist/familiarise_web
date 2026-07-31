@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { reportError } from "@/lib/observability/report";
+import { reportSentryError } from "@/lib/observability/report";
 import { useToast } from "@/components/ui/use-toast";
 import {
   TConsultation,
@@ -170,7 +170,7 @@ function useEventsInternal(mode: TEventQueryMode): IEventsResult {
         setError(normalizedErr);
         // Falls through to an empty-list render otherwise — indistinguishable
         // from "this consultee genuinely has no bookings" without this.
-        reportError(normalizedErr, { subsystem: "client" });
+        reportSentryError(normalizedErr, { subsystem: "client" });
         toast({
           title: "Error fetching events",
           description: message,
