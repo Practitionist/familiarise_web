@@ -11,7 +11,10 @@ import { EventCarousel } from "./EventCarousel";
 // click time and the meeting helper is lazy-imported on demand.
 import { waitForGlobalVideoClient } from "@/lib/stream/disconnect";
 import type { MeetingAppointment, MeetingSlot } from "@/lib/meeting";
-import { getJoinableSession } from "@/lib/appointments/slots";
+import {
+  getCurrentOrNextSession,
+  getJoinableSession,
+} from "@/lib/appointments/slots";
 import {
   PlannerWebinarEvent,
   PlannerClassEvent,
@@ -132,10 +135,13 @@ export function EventManagementDashboard({
 
     // #1061 — the session's anchor row, not whichever row happens to be first
     // in the payload, so a late Join lands in the room already in progress.
+    // Both fallbacks are run-derived: `slotsOfAppointment` arrives unsorted,
+    // so `[0]` could hand an arbitrary row's startsAt to the Stream call.
     const slots = webinar.appointment?.slotsOfAppointment ?? [];
-    const slot =
-      getJoinableSession(slots, { joinWindowMs: PLANNER_JOIN_WINDOW_MS })
-        ?.anchor ?? slots[0];
+    const slot = (
+      getJoinableSession(slots, { joinWindowMs: PLANNER_JOIN_WINDOW_MS }) ??
+      getCurrentOrNextSession(slots)
+    )?.anchor;
     if (!slot || !webinar.appointment) {
       toast({
         title: "Error",

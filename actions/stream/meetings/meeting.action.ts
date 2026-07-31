@@ -4,6 +4,7 @@ import * as Sentry from "@sentry/nextjs";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
+import { findSessionRun } from "@/lib/appointments/slots";
 import { getMaintenanceState } from "@/lib/maintenance";
 /**
  * Minimal slot interface for database meeting session operations.
@@ -23,13 +24,18 @@ import { streamLogger } from "@/lib/stream-logger";
 const slotIdSchema = z.string().min(1, "Slot ID is required");
 const streamCallIdSchema = z.string().min(1, "Stream Call ID is required");
 
-/** Only what the anchor walk and `MeetingSlot` need — see #1061. */
+/**
+ * Only what `findSessionRun` and `MeetingSlot` need — see #1061.
+ * `completionStatus` is selected because the grouping helper, not this file,
+ * decides which rows are dead.
+ */
 const anchorSlotSelect = {
   id: true,
   startsAt: true,
   endsAt: true,
   isTentative: true,
   appointmentId: true,
+  completionStatus: true,
 } as const;
 
 export type AnchorSlot = {
@@ -38,6 +44,7 @@ export type AnchorSlot = {
   endsAt: Date;
   isTentative: boolean;
   appointmentId: string;
+  completionStatus: string;
 };
 
 const slotSchema = z.object({
@@ -58,6 +65,13 @@ const slotSchema = z.object({
  * builds a `MeetingAppointment` carrying a single slot, so the client cannot
  * see the run it belongs to.
  *
+ * What counts as one session is defined in exactly one place —
+ * `groupSlotsIntoRuns` in lib/appointments/slots — and this reads it rather
+ * than restating it. The clients compute their join window from the same
+ * helper over the same rows, and two drifting definitions of "one session"
+ * would put the server's room key and the client's window back out of step,
+ * which is the defect this whole change removes.
+ *
  * @param slotId Any row of the session.
  * @returns The anchor row, or null when it cannot be resolved (caller falls
  *   back to the row it was given, preserving today's behaviour).
@@ -74,32 +88,19 @@ export async function resolveSessionAnchorSlot(
     });
     if (!slot) return null;
 
-    // Served by @@index([appointmentId]).
+    // Served by @@index([appointmentId]). Only the soft-delete tombstone is
+    // filtered here — it is a storage concern the grouping helper has no
+    // business knowing about; every session rule is left to the helper.
     const siblings = await prisma.slotOfAppointment.findMany({
-      where: {
-        appointmentId: slot.appointmentId,
-        deletedAt: null,
-        completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
-      },
+      where: { appointmentId: slot.appointmentId, deletedAt: null },
       orderBy: { startsAt: "asc" },
       select: anchorSlotSelect,
     });
 
-    // The row we were handed is itself dead or soft-deleted — it anchors only
-    // itself, which keeps a stale Join click on its existing room.
-    let index = siblings.findIndex((s) => s.id === slot.id);
-    if (index < 0) return slot;
-
-    while (
-      index > 0 &&
-      siblings[index - 1].endsAt.getTime() ===
-        siblings[index].startsAt.getTime() &&
-      siblings[index - 1].isTentative === siblings[index].isTentative
-    ) {
-      index -= 1;
-    }
-
-    return siblings[index];
+    // No run means the row we were handed is itself cancelled, rescheduled or
+    // soft-deleted, so it anchors only itself — which keeps a stale Join click
+    // on the room it already has.
+    return findSessionRun(siblings, slot.id)?.anchor ?? slot;
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),

@@ -86,28 +86,29 @@ function slotRow(
 let rows: SlotRow[] = [];
 let sessions: Array<{ id: string; streamCallId: string; slotId: string }> = [];
 let streamCallsCreated: string[] = [];
+let callPayloads: Array<{
+  data?: { starts_at?: string; custom?: Record<string, unknown> };
+}> = [];
 
 function seed(slotRows: SlotRow[]) {
   rows = slotRows;
   sessions = [];
   streamCallsCreated = [];
+  callPayloads = [];
 
   db.slotOfAppointment.findUnique.mockImplementation(
     async ({ where }: { where: { id: string } }) =>
       rows.find((r) => r.id === where.id) ?? null,
   );
   db.slotOfAppointment.findMany.mockImplementation(
-    async ({
-      where,
-    }: {
-      where: { appointmentId: string; completionStatus: { notIn: string[] } };
-    }) =>
+    // Cancelled/rescheduled rows are deliberately NOT filtered here: the query
+    // only excludes the soft-delete tombstone and leaves every session rule to
+    // groupSlotsIntoRuns, so this fake must hand those rows over too.
+    async ({ where }: { where: { appointmentId: string; deletedAt: null } }) =>
       rows
         .filter(
           (r) =>
-            r.appointmentId === where.appointmentId &&
-            r.deletedAt === null &&
-            !where.completionStatus.notIn.includes(r.completionStatus),
+            r.appointmentId === where.appointmentId && r.deletedAt === null,
         )
         .sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime()),
   );
@@ -136,10 +137,15 @@ function seed(slotRows: SlotRow[]) {
   );
 }
 
+interface CallData {
+  data?: { starts_at?: string; custom?: Record<string, unknown> };
+}
+
 const client = {
   call: (_type: string, id: string) => ({
-    getOrCreate: async () => {
+    getOrCreate: async (payload: CallData) => {
       streamCallsCreated.push(id);
+      callPayloads.push(payload);
       return {};
     },
   }),
@@ -182,6 +188,19 @@ describe("room identity for a session longer than 30 minutes", () => {
     expect(streamCallsCreated).toEqual(["slot-A"]);
     expect(sessions).toHaveLength(1);
     expect(sessions[0].slotId).toBe("A");
+  });
+
+  it("stamps the anchor into the call's metadata and start time", async () => {
+    const [a, b] = [rowA(), rowB()];
+    seed([a, b]);
+
+    // Joined from row B, so an unanchored stamp would read "B" / 10:30.
+    await join(b);
+
+    expect(callPayloads).toHaveLength(1);
+    expect(callPayloads[0].data?.custom?.slotId).toBe("A");
+    expect(callPayloads[0].data?.custom?.appointmentId).toBe("appt-1");
+    expect(callPayloads[0].data?.starts_at).toBe(a.startsAt.toISOString());
   });
 
   it("anchors to row A even when row B is the first to be joined", async () => {

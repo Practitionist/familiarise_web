@@ -15,7 +15,10 @@ import type {
   TConsulteeClass,
 } from "@/types/consultee-events";
 import type { MeetingAppointment, MeetingSlot } from "@/lib/meeting";
-import { getCurrentOrNextSession } from "@/lib/appointments/slots";
+import {
+  getCurrentOrNextSession,
+  type SessionRun,
+} from "@/lib/appointments/slots";
 
 /**
  * Unified event type for display in the dashboard
@@ -44,6 +47,10 @@ export interface ProcessedEvent {
   // Data needed for joining meetings
   joinableAppointment?: MeetingAppointment;
   joinableSlot?: MeetingSlot;
+  // #1061 — the whole run `joinableSlot` anchors, so the card can ask
+  // getSessionJoinState for a real state (including `ended`) instead of
+  // re-deriving a time window from one row.
+  joinableSession?: SessionRun<ProcessedSlot> | null;
   // Registration state for webinars/classes. There is no queue any more —
   // either the consultee holds a seat or the row is a plain event card.
   bookingStatus?: BookingStatus;
@@ -56,13 +63,30 @@ export interface ProcessedEvent {
 }
 
 /**
+ * A slot row as this tab carries it: `MeetingSlot` (what the join helper
+ * needs) plus the two fields the session helpers read. Dropping them made
+ * `groupSlotsIntoRuns` treat cancelled rows as live and left the card unable
+ * to see that the host had ended the call — both silently, because they are
+ * optional on `SessionSlotLike` (#1061).
+ */
+export type ProcessedSlot = MeetingSlot & {
+  completionStatus?: string | null;
+  meetingSession?: { id: string; endedAt: Date | string | null } | null;
+};
+
+/**
  * Internal type for tracking slots with their raw data
  */
 interface SlotWithContext {
   startsAt: Date;
   endsAt: Date;
-  rawSlot: MeetingSlot;
+  rawSlot: ProcessedSlot;
   appointmentId: string;
+}
+
+/** A picked session: the run, plus its anchor row in list-item shape. */
+interface SessionPick extends SlotWithContext {
+  run: SessionRun<ProcessedSlot> | null;
 }
 
 /**
@@ -75,7 +99,7 @@ interface SlotWithContext {
  * from the consultant. `startsAt`/`endsAt` now describe the run, and
  * `rawSlot` is the run's anchor — the row the video room is keyed to.
  */
-function findNextSlot(slots: SlotWithContext[]): SlotWithContext | null {
+function findNextSlot(slots: SlotWithContext[]): SessionPick | null {
   if (slots.length === 0) return null;
 
   const now = new Date();
@@ -91,15 +115,15 @@ function findNextSlot(slots: SlotWithContext[]): SlotWithContext | null {
     ? slots.find((s) => s.rawSlot.id === run.anchor.id)
     : undefined;
   if (run && anchor) {
-    return { ...anchor, startsAt: run.startsAt, endsAt: run.endsAt };
+    return { ...anchor, startsAt: run.startsAt, endsAt: run.endsAt, run };
   }
 
   // Every row was cancelled/rescheduled: keep the old shape so the card still
   // renders (with Join inert) instead of vanishing from Home.
-  return (
+  const fallback =
     sortedSlots.find((s) => s.startsAt > now) ??
-    sortedSlots[sortedSlots.length - 1]
-  );
+    sortedSlots[sortedSlots.length - 1];
+  return { ...fallback, run: null };
 }
 
 /** Slot rows in the shape `findNextSlot` groups on. */
@@ -110,6 +134,8 @@ function toSlotContexts(
     endsAt: Date | string | null;
     isTentative: boolean;
     appointmentId: string | null;
+    completionStatus?: string | null;
+    meetingSession?: { id: string; endedAt: Date | string | null } | null;
   }>,
   appointmentId: string,
 ): SlotWithContext[] {
@@ -122,6 +148,11 @@ function toSlotContexts(
       endsAt: slot.endsAt,
       isTentative: slot.isTentative,
       appointmentId: slot.appointmentId,
+      // Both are already selected by the events read
+      // (lib/data/consultee-events-read.ts): the slot include is unfiltered,
+      // and `meetingSession: { id, endedAt }` is explicit on all four types.
+      completionStatus: slot.completionStatus ?? null,
+      meetingSession: slot.meetingSession ?? null,
     },
     appointmentId,
   }));
@@ -186,6 +217,7 @@ function processConsultation(
     appointmentId,
     joinableAppointment,
     joinableSlot,
+    joinableSession: session.run,
     organizationId: consultation.appointment?.organizationId ?? null,
   };
 }
@@ -257,6 +289,7 @@ function processSubscription(
     appointmentId: nextSlot.appointmentId,
     joinableAppointment,
     joinableSlot: nextSlot.rawSlot,
+    joinableSession: nextSlot.run,
     organizationId: nextAppointment?.organizationId ?? null,
   };
 }
@@ -333,6 +366,7 @@ function processWebinar(webinar: TConsulteeWebinar): ProcessedEvent | null {
     appointmentId,
     joinableAppointment,
     joinableSlot: nextSlot.rawSlot,
+    joinableSession: nextSlot.run,
     bookingStatus,
     collaborators,
     organizationId: webinar.appointment?.organizationId ?? null,
@@ -414,6 +448,7 @@ function processClass(classEvent: TConsulteeClass): ProcessedEvent | null {
     appointmentId: nextSlot.appointmentId,
     joinableAppointment,
     joinableSlot: nextSlot.rawSlot,
+    joinableSession: nextSlot.run,
     bookingStatus,
     collaborators,
     organizationId: nextAppointment?.organizationId ?? null,

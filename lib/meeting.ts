@@ -90,6 +90,15 @@ export const getOrCreateAppointmentMeeting = async (
     // each dashboard surface hands us a different one. Key the room to the
     // run's first row so both sides, at any point in the hour, resolve the
     // same call. Server-side because the planner passes a lone slot.
+    //
+    // The `?? slot` fallback is NOT safe, and is chosen anyway: if the anchor
+    // lookup fails for one of two people clicking Join at the same moment,
+    // that person mints `slot-<their row>` and leaves a stray MeetingSession
+    // on a non-anchor row — exactly the split this change exists to remove.
+    // It is still better than the alternative, because the failure is a
+    // transient DB error and refusing to join would take the whole meeting
+    // down for both sides rather than degrading to today's behaviour for one.
+    // Pinned by __tests__/stream/session-room-identity.test.ts.
     const anchorSlot: MeetingSlot =
       (await resolveSessionAnchorSlot(slot.id)) ?? slot;
 

@@ -112,6 +112,46 @@ describe("session grouping", () => {
     expect(runs.map((r) => r.anchor.id)).toEqual(["A", "B"]);
   });
 
+  it("falls back to a one-hour bound for a row with no endsAt", () => {
+    // `MeetingSlot` declares endsAt as Date | string | null, so the join
+    // surfaces really can hand us this shape.
+    const runs = groupSlotsIntoRuns([
+      { ...row("A", "10:00", "10:30"), endsAt: null },
+    ]);
+
+    expect(runs).toHaveLength(1);
+    expect(runs[0].endsAt).toEqual(at("11:00"));
+    expect(
+      getSessionJoinState(runs[0], {
+        joinWindowMs: CONSULTEE_JOIN_WINDOW_MS,
+        now: at("10:45"),
+      }),
+    ).toBe("joinable");
+    expect(
+      getSessionJoinState(runs[0], {
+        joinWindowMs: CONSULTEE_JOIN_WINDOW_MS,
+        now: at("11:01"),
+      }),
+    ).toBe("ended");
+  });
+
+  it("uses that same fallback when deciding contiguity", () => {
+    // A 10:00 row with no endsAt is assumed to run to 11:00, so an 11:00 row
+    // continues it and a 10:30 one does not.
+    const continues = groupSlotsIntoRuns([
+      { ...row("A", "10:00", "10:30"), endsAt: null },
+      row("B", "11:00", "11:30"),
+    ]);
+    const separate = groupSlotsIntoRuns([
+      { ...row("A", "10:00", "10:30"), endsAt: null },
+      row("B", "10:30", "11:00"),
+    ]);
+
+    expect(continues).toHaveLength(1);
+    expect(continues[0].endsAt).toEqual(at("11:30"));
+    expect(separate.map((r) => r.anchor.id)).toEqual(["A", "B"]);
+  });
+
   it("never groups rows from different appointments together", () => {
     const runs = groupSlotsIntoRuns([
       row("A", "10:00", "10:30"),

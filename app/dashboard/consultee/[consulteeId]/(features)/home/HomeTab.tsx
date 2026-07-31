@@ -49,7 +49,7 @@ import {
   isInactiveStatus,
   isApprovedStatus,
 } from "@/lib/appointments/status-guards";
-import { DEFAULT_MEETING_DURATION_MS } from "../appointments/types";
+import { getSessionJoinState } from "@/lib/appointments/slots";
 
 // Webinars/classes carry WebinarStatus/ClassStatus; consultations and
 // subscriptions carry AppointmentStatus. One resolver so both card
@@ -137,20 +137,15 @@ function UpcomingSessionCard({
   const isTentative = event.joinableSlot?.isTentative ?? true;
   const canShowJoin = !isTentative && isApproved && !isInactive;
 
-  // Time-window gate (matching JoinButton.tsx:getJoinState). #1061 — measured
-  // over the whole session (event.startsAt/endsAt now span the run of slot
-  // rows), not over `joinableSlot`, which is only the run's anchor row and
-  // would close the window half an hour into a one-hour booking.
-  const isWithinJoinWindow = (() => {
-    if (!event.joinableSlot) return false;
-    const now = Date.now();
-    const start = event.startsAt.getTime();
-    const end = event.endsAt
-      ? event.endsAt.getTime()
-      : start + DEFAULT_MEETING_DURATION_MS;
-    const joinWindow = start - JOIN_WINDOW_BEFORE_START_MS;
-    return now >= joinWindow && now <= end;
-  })();
+  // #1061 — the same predicate the Appointments tabs and the planner use,
+  // over the whole run of slot rows rather than one of them. The hand-rolled
+  // time comparison this replaces could not see `ended`, so a session the host
+  // had already closed still offered Join for the rest of the booked hour.
+  const isWithinJoinWindow =
+    !!event.joinableSession &&
+    getSessionJoinState(event.joinableSession, {
+      joinWindowMs: JOIN_WINDOW_BEFORE_START_MS,
+    }) === "joinable";
 
   // Type badges - outline/border style only, no background colors
   const typeLabels: Record<string, string> = {
