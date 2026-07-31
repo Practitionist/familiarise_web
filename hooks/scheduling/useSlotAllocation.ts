@@ -146,9 +146,6 @@ export interface UseEventSlotAllocationOptions {
   /** Enable caching of availability data */
   enableCaching?: boolean;
 
-  /** Auto-refetch interval in milliseconds */
-  refetchInterval?: number;
-
   /** Success callback with allocation result */
   onSuccess?: (result: AllocationResult) => void;
 
