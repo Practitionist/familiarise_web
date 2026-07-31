@@ -54,7 +54,10 @@ export function OfferingEditorContainer({
   const router = useRouter();
   const adapter = OFFERING_ADAPTERS[type];
   const manifest = OFFERING_MANIFESTS[type];
-  const [isSaving, setIsSaving] = React.useState(false);
+  // Per-action, so only the pressed button spins.
+  const [savingAction, setSavingAction] = React.useState<
+    "draft" | "publish" | null
+  >(null);
 
   const existingPlan = initialEvent ? adapter.planOf(initialEvent) : undefined;
 
@@ -82,18 +85,27 @@ export function OfferingEditorContainer({
   const watchedScheduledAt = form.watch("scheduledAt" as never);
   const watchedStartDate = form.watch("schedulingStartDate" as never);
 
+  // The field list and the reason come out of the same branch: the draft path
+  // skips exactly the fields publishing is waiting on, and nothing else.
+  let publishOnlyFields: readonly string[] = [];
   let publishBlockedReason: string | null = null;
-  if (type === "webinar" && !watchedScheduledAt) {
-    publishBlockedReason = "Add a session time before publishing.";
-  } else if (type === "class" && !watchedStartDate) {
-    publishBlockedReason = "Add a start date before publishing.";
+  if (type === "webinar") {
+    publishOnlyFields = ["scheduledAt"];
+    if (!watchedScheduledAt) {
+      publishBlockedReason = "Add a session time before publishing.";
+    }
+  } else if (type === "class") {
+    publishOnlyFields = ["schedulingStartDate"];
+    if (!watchedStartDate) {
+      publishBlockedReason = "Add a start date before publishing.";
+    }
   }
 
   const persist = async (
     values: Record<string, unknown>,
     { publish }: { publish: boolean },
   ) => {
-    setIsSaving(true);
+    setSavingAction(publish ? "publish" : "draft");
     try {
       const payload = {
         ...values,
@@ -129,7 +141,7 @@ export function OfferingEditorContainer({
         variant: "destructive",
       });
     } finally {
-      setIsSaving(false);
+      setSavingAction(null);
     }
   };
 
@@ -140,8 +152,9 @@ export function OfferingEditorContainer({
       planId={planId}
       planImageType={adapter.imageType}
       status={planId ? "PUBLISHED" : null}
-      isSaving={isSaving}
+      savingAction={savingAction}
       publishBlockedReason={publishBlockedReason}
+      publishOnlyFields={publishOnlyFields}
       slots={{
         // Shared by all four, so it is wired here rather than four times.
         faq: <FaqEditor control={form.control} name="faqs" />,

@@ -42,7 +42,16 @@ export function ContentItemsEditor<T extends FieldValues = FieldValues>({
     name: name as never,
   });
 
-  const addItem = () =>
+  const addItem = () => {
+    // Derived from the highest order in use, not the array length: `remove`
+    // does not renumber the survivors, so after a removal the length collides
+    // with an order already taken.
+    const nextOrder =
+      fields.reduce(
+        (max, f) => Math.max(max, (f as { order?: number }).order ?? -1),
+        -1,
+      ) + 1;
+
     append({
       title: "",
       description: "",
@@ -53,8 +62,9 @@ export function ContentItemsEditor<T extends FieldValues = FieldValues>({
       contentUrl: "",
       // Persisted ordering, so reordering later is a data change rather than a
       // reliance on array position surviving a round-trip.
-      order: fields.length,
+      order: nextOrder,
     } as never);
+  };
 
   return (
     <div className="space-y-4">

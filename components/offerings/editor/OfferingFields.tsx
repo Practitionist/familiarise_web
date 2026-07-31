@@ -53,6 +53,18 @@ const SPAN_CLASS: Record<NonNullable<FieldSpec["span"]>, string> = {
  * Lives outside the component because it was a ninety-line switch inlined in
  * JSX, which both the analyser and a reader mistake for a nested component.
  */
+/** `YYYY-MM-DDTHH:mm` in the VIEWER's timezone, which is what the control reads back. */
+function toLocalDateTimeValue(value: unknown): string {
+  if (!value) return "";
+  const date = new Date(value as string | number | Date);
+  if (Number.isNaN(date.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return (
+    `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}` +
+    `T${pad(date.getHours())}:${pad(date.getMinutes())}`
+  );
+}
+
 function renderControl<T extends FieldValues = FieldValues>(
   spec: FieldSpec,
   field: ControllerRenderProps<T, never>,
@@ -93,9 +105,13 @@ function renderControl<T extends FieldValues = FieldValues>(
         <Input
           type="datetime-local"
           {...field}
-          value={
-            field.value ? new Date(field.value).toISOString().slice(0, 16) : ""
-          }
+          // datetime-local speaks LOCAL time in and out, so the value must be
+          // formatted from local components. toISOString() renders UTC into a
+          // local-time control: an IST author saw 04:30 for a 10:00 session
+          // and, because onChange reads that same box back as local, merely
+          // opening the form and saving shifted the stored instant by the
+          // offset — every time, with no edit (#1060).
+          value={toLocalDateTimeValue(field.value)}
           onChange={(e) =>
             field.onChange(e.target.value ? new Date(e.target.value) : null)
           }

@@ -39,13 +39,24 @@ export interface OfferingEditorProps<T extends FieldValues = FieldValues> {
   planImageType?: TPlanImageType;
   /** Null while creating. DRAFT offerings are not buyable and not discoverable. */
   status?: "DRAFT" | "PUBLISHED" | null;
-  isSaving?: boolean;
+  /**
+   * Which action is in flight. Per-action rather than one `isSaving`, so the
+   * button the user pressed is the only one that reacts — a spinner on Publish
+   * after pressing Save draft is a lie about what is happening.
+   */
+  savingAction?: "draft" | "publish" | null;
   /**
    * Why publishing is blocked, if it is — e.g. a webinar with no session. The
    * reason is shown next to the disabled button, because a disabled control
    * with no explanation is the thing people file bugs about.
    */
   publishBlockedReason?: string | null;
+  /**
+   * Fields only publishing requires. The draft path ignores validation errors
+   * confined to these: an offering that cannot be saved until it is publishable
+   * is not a draft.
+   */
+  publishOnlyFields?: readonly string[];
   onSaveDraft: (values: T) => void | Promise<void>;
   onPublish: (values: T) => void | Promise<void>;
   onCancel?: () => void;
@@ -58,8 +69,9 @@ export function OfferingEditor<T extends FieldValues = FieldValues>({
   planId,
   planImageType,
   status = null,
-  isSaving = false,
+  savingAction = null,
   publishBlockedReason = null,
+  publishOnlyFields,
   onSaveDraft,
   onPublish,
   onCancel,
@@ -68,12 +80,26 @@ export function OfferingEditor<T extends FieldValues = FieldValues>({
     manifest.sections[0]?.id,
   );
 
+  const isSaving = savingAction !== null;
+
   const scrollTo = (id: string) => {
     setActiveSection(id);
     document
       .getElementById(`offering-section-${id}`)
       ?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
+
+  // Publishing validates in full; a draft only has to clear the errors that are
+  // not publish-only, so partial work can still be parked.
+  const submitDraft = form.handleSubmit(
+    (values) => onSaveDraft(values),
+    (errors) => {
+      const blocking = Object.keys(errors).filter(
+        (name) => !publishOnlyFields?.includes(name),
+      );
+      if (blocking.length === 0) void onSaveDraft(form.getValues());
+    },
+  );
 
   return (
     <Form {...form}>
@@ -164,9 +190,11 @@ export function OfferingEditor<T extends FieldValues = FieldValues>({
               type="button"
               variant="outline"
               disabled={isSaving}
-              onClick={form.handleSubmit(onSaveDraft)}
+              onClick={submitDraft}
             >
-              {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {savingAction === "draft" && (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              )}
               Save draft
             </Button>
             <Button
@@ -174,7 +202,9 @@ export function OfferingEditor<T extends FieldValues = FieldValues>({
               disabled={isSaving || !!publishBlockedReason}
               onClick={form.handleSubmit(onPublish)}
             >
-              {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {savingAction === "publish" && (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              )}
               {status === "PUBLISHED" ? "Save changes" : "Publish"}
             </Button>
           </div>
