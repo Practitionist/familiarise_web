@@ -5,6 +5,7 @@
  * Single source of truth for validation rules - eliminates duplication across routes.
  */
 
+import { reportSentryError } from "@/lib/observability/report";
 import prisma, { type PrismaLike } from "@/lib/prisma";
 import { AppointmentStatus, ScheduleType } from "@prisma/client";
 import {
@@ -119,22 +120,43 @@ export class SlotValidationService {
     consultant: ConsultantAllocationData,
     config: EventConfig,
     excludeAppointmentIds?: string[],
-    // #676 AE-1 — when set, the consultee's calendar is checked too, so a
-    // consultee can't be double-booked across event types at the same instant.
-    consulteeUserId?: string,
+    /**
+     * Who and what this validation is for, beyond the slots themselves. An
+     * object rather than more positional parameters: the signature was at the
+     * limit, and a bare trailing boolean at the ninth position reads as nothing
+     * at the call site.
+     */
+    options?: {
+      /**
+       * #676 AE-1 — when set, the consultee's calendar is checked too, so a
+       * consultee can't be double-booked across event types at the same instant.
+       */
+      consulteeUserId?: string;
+      /**
+       * The consultant explicitly accepting times outside their own published
+       * availability. Skips ONLY the availability-window check — conflicts,
+       * caps, scheduling period and future-time all still apply, because those
+       * protect other people's bookings rather than the consultant's
+       * preference. Callers must have established that the requester is the
+       * consultant or a privileged user before setting this.
+       */
+      overrideAvailabilityWindow?: boolean;
+    },
   ): Promise<ValidationResult> {
     // Universal validations (apply to all event types)
     const futureCheck = this.validateSlotsInFuture(slots);
     if (!futureCheck.isValid) return futureCheck;
 
-    const scheduleCheck = this.validateMatchesSchedule(slots, consultant);
-    if (!scheduleCheck.isValid) return scheduleCheck;
+    if (!options?.overrideAvailabilityWindow) {
+      const scheduleCheck = this.validateMatchesSchedule(slots, consultant);
+      if (!scheduleCheck.isValid) return scheduleCheck;
+    }
 
     const conflictCheck = await this.validateNoConflicts(
       slots,
       consultant.userId,
       excludeAppointmentIds,
-      consulteeUserId,
+      options?.consulteeUserId,
     );
     if (!conflictCheck.isValid) return conflictCheck;
 
@@ -644,6 +666,14 @@ export class SlotValidationService {
         "Consultation duration",
       );
     } catch (error) {
+      // A misconfigured duration failing validation is a modelled answer
+      // (bad plan config), not a fault — reported at info for visibility.
+      reportSentryError(error, {
+        subsystem: "scheduling",
+        op: "slot-validation",
+        expected: true,
+        extra: { phase: "consultation-duration" },
+      });
       return {
         isValid: false,
         errors: [
@@ -813,6 +843,14 @@ export class SlotValidationService {
     try {
       SlotCalculationService.validateDuration(duration, "Webinar duration");
     } catch (error) {
+      // Same reasoning as validateConsultation's duration guard: a modelled
+      // config-validation answer, reported at info.
+      reportSentryError(error, {
+        subsystem: "scheduling",
+        op: "slot-validation",
+        expected: true,
+        extra: { phase: "webinar-duration" },
+      });
       return {
         isValid: false,
         errors: [
@@ -872,7 +910,7 @@ export class SlotValidationService {
     const warnings: string[] = [];
 
     // Validate configuration
-    if (!config.callsPerWeek) {
+    if (!config.sessionsPerWeek) {
       return {
         isValid: false,
         errors: [
@@ -899,6 +937,13 @@ export class SlotValidationService {
         "Session duration",
       );
     } catch (error) {
+      // Same reasoning as the consultation/webinar duration guards.
+      reportSentryError(error, {
+        subsystem: "scheduling",
+        op: "slot-validation",
+        expected: true,
+        extra: { phase: "class-session-duration" },
+      });
       return {
         isValid: false,
         errors: [
@@ -994,9 +1039,9 @@ export class SlotValidationService {
       const proposedSessions = Math.floor(weekSlots.length / slotsPerSession);
       const sessionsThisWeek =
         proposedSessions + (existingSessionsPerWeek.get(weekKey) || 0);
-      if (sessionsThisWeek > config.callsPerWeek!) {
+      if (sessionsThisWeek > config.sessionsPerWeek!) {
         errors.push(
-          `[WEEKLY_LIMIT] Week of ${weekKey} has ${sessionsThisWeek} sessions but max is ${config.callsPerWeek}`,
+          `[WEEKLY_LIMIT] Week of ${weekKey} has ${sessionsThisWeek} sessions but max is ${config.sessionsPerWeek}`,
         );
       }
     });

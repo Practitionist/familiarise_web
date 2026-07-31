@@ -98,9 +98,9 @@ The seeder runs in numbered phases. Booking-relevant phases:
 | ----- | --------------------------------- | ------------------------------------------------------------------------------------ |
 | 1     | `1a-create-users`                 | Consultant and consultee user accounts with profiles                                 |
 | 4a    | `4a-create-consultation-plans`    | Consultation plans with duration and pricing                                         |
-| 4b    | `4b-create-subscription-plans`    | Subscription plans with `callsPerWeek`, `sessionDurationInHours`, `durationInMonths` |
+| 4b    | `4b-create-subscription-plans`    | Subscription plans with `sessionsPerWeek`, `sessionDurationInHours`, `durationInMonths` |
 | 4c    | `4c-create-webinar-plans`         | Webinar plans with duration                                                          |
-| 4d    | `4d-create-class-plans`           | Class plans with `meetingsPerWeek` and class contents                                |
+| 4d    | `4d-create-class-plans`           | Class plans with `sessionsPerWeek` and class contents                                |
 | 5a    | `5a-create-slots-of-availability` | Weekly and custom availability slots for consultants                                 |
 | 6a    | `6a-create-appointments`          | Appointments with slot records across all event types                                |
 | 8b    | `8b-create-payments`              | Payment records linked to appointments                                               |
@@ -146,7 +146,7 @@ Prisma Studio lets you browse all tables, filter by fields like `isTentative`, `
 1. **Create subscription**: Checkout a subscription plan. This creates a subscription with `status: "PENDING"` and a placeholder appointment.
 2. **Auto allocation**: Call `SlotAllocationService.allocate({ eventType: "subscription", eventId, mode: "auto" })`. The service finds consecutive slots across weeks within the scheduling period and creates one appointment per session.
 3. **Manual allocation**: Call with `mode: "manual"` and provide explicit `slots` array (ISO strings). Slots must be in multiples of `slotsPerCall` (e.g., 2 for 1-hour sessions).
-4. **Verify**: Check that `callsPerWeek` is not exceeded per Sunday-Saturday week. Use `SubscriptionValidationService.validateSubscriptionSlots` to validate before allocating.
+4. **Verify**: Check that `sessionsPerWeek` is not exceeded per Sunday-Saturday week. Use `SubscriptionValidationService.validateSubscriptionSlots` to validate before allocating.
 
 ### c. Enroll in a Webinar and Test Capacity
 

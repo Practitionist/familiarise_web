@@ -1,5 +1,10 @@
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
+import {
+  curriculumCreateNested,
+  faqCreateNested,
+  faqReplaceNested,
+} from "@/lib/api/plans/content";
 import { ClassPlanSchema, ClassContentSchema } from "@/schemas/plans";
 import { ClassStatus, Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
@@ -126,11 +131,15 @@ export async function POST(request: NextRequest) {
       prerequisites,
       materialProvided,
       learningOutcomes,
+      subtitle,
+      targetAudience,
+      whatsIncluded,
+      faqs,
       consultantProfileId,
       topics: topicNames,
       certificateProvided,
       recordingEnabled,
-      meetingsPerWeek,
+      sessionsPerWeek,
       emailSupport,
       classContents,
       status,
@@ -160,7 +169,7 @@ export async function POST(request: NextRequest) {
 
     // Compute derived metrics using validated session duration from the plan
     const sessionDurationInHours = validatedData.sessionDurationInHours ?? 1.0;
-    const totalSessions = meetingsPerWeek * durationInMonths * 4;
+    const totalSessions = sessionsPerWeek * durationInMonths * 4;
     const totalHours = totalSessions * sessionDurationInHours;
 
     // Calculate end date only if startDate is provided and valid
@@ -198,9 +207,13 @@ export async function POST(request: NextRequest) {
             prerequisites,
             materialProvided,
             learningOutcomes,
+            subtitle,
+            targetAudience,
+            whatsIncluded,
+            faqs: faqCreateNested(faqs),
             certificateProvided,
             recordingEnabled,
-            meetingsPerWeek,
+            sessionsPerWeek,
             sessionDurationInHours,
             totalSessions,
             totalHours,
@@ -209,22 +222,13 @@ export async function POST(request: NextRequest) {
             topics: topicIds // Use validated topics here
               ? { connect: topicIds.map((id: string) => ({ id })) }
               : undefined,
-            classContents: {
-              create: classContents.map((content, index) => ({
-                // No 'any' needed
-                title: content.title,
-                description: content.description,
-                contentType: content.contentType ?? null, // Use nullish coalescing
-                contentUrl: content.contentUrl ?? null, // Use nullish coalescing
-                order: content.order ?? index, // Default to index if order is undefined
-                hoursAllotted: content.hoursAllotted,
-              })),
-            },
+            classContents: curriculumCreateNested(classContents),
           },
           include: {
             consultantProfile: true,
             topics: true,
             classContents: true,
+            faqs: { orderBy: { order: "asc" } },
           },
         });
 
@@ -240,19 +244,19 @@ export async function POST(request: NextRequest) {
               // Only create appointments if startDate is defined
               create: start
                 ? Array.from({
-                    // Use totalSessions (meetingsPerWeek * durationInMonths * 4)
+                    // Use totalSessions (sessionsPerWeek * durationInMonths * 4)
                     // to stay in sync with ClassPlan.totalSessions
                     length: totalSessions,
                   }).map((_, index) => {
                     const appointmentDate = new Date(start!);
                     // Spread meetings evenly within each week:
                     // weekOffset positions the week, dayWithinWeek spaces meetings apart
-                    // e.g. meetingsPerWeek=2 -> days 0,3 (Mon,Thu)
-                    // e.g. meetingsPerWeek=3 -> days 0,2,4 (Mon,Wed,Fri)
-                    const weekOffset = Math.floor(index / meetingsPerWeek) * 7;
+                    // e.g. sessionsPerWeek=2 -> days 0,3 (Mon,Thu)
+                    // e.g. sessionsPerWeek=3 -> days 0,2,4 (Mon,Wed,Fri)
+                    const weekOffset = Math.floor(index / sessionsPerWeek) * 7;
                     const dayWithinWeek =
-                      (index % meetingsPerWeek) *
-                      Math.floor(7 / meetingsPerWeek);
+                      (index % sessionsPerWeek) *
+                      Math.floor(7 / sessionsPerWeek);
                     appointmentDate.setDate(
                       appointmentDate.getDate() + weekOffset + dayWithinWeek,
                     );
@@ -387,7 +391,7 @@ export async function PATCH(request: NextRequest) {
       price,
       priceCurrency,
       certificateProvided,
-      meetingsPerWeek,
+      sessionsPerWeek,
       emailSupport,
       maxParticipants,
       language,
@@ -395,6 +399,10 @@ export async function PATCH(request: NextRequest) {
       prerequisites,
       materialProvided,
       learningOutcomes,
+      subtitle,
+      targetAudience,
+      whatsIncluded,
+      faqs,
       consultantProfileId,
       topics: topicNames,
       classContents,
@@ -534,17 +542,7 @@ export async function PATCH(request: NextRequest) {
           });
           // Prepare new class contents for creation
           classContentsUpdateData = {
-            classContents: {
-              create: classContents.map((content) => ({
-                // Use validated content
-                title: content.title,
-                description: content.description,
-                contentType: content.contentType ?? null,
-                contentUrl: content.contentUrl ?? null,
-                order: content.order,
-                hoursAllotted: content.hoursAllotted,
-              })),
-            },
+            classContents: curriculumCreateNested(classContents),
           };
           console.log(
             `Updating class contents for plan ${id}. Creating ${classContents.length} new entries.`,
@@ -566,8 +564,8 @@ export async function PATCH(request: NextRequest) {
           updateData.certificateProvided = certificateProvided;
         if (recordingEnabled !== undefined)
           updateData.recordingEnabled = recordingEnabled;
-        if (meetingsPerWeek !== undefined)
-          updateData.meetingsPerWeek = meetingsPerWeek;
+        if (sessionsPerWeek !== undefined)
+          updateData.sessionsPerWeek = sessionsPerWeek;
         if (emailSupport !== undefined) updateData.emailSupport = emailSupport;
 
         // Allow updating sessionDurationInHours
@@ -576,12 +574,12 @@ export async function PATCH(request: NextRequest) {
 
         // Recompute derived metrics if base fields are being updated
         if (
-          meetingsPerWeek !== undefined ||
+          sessionsPerWeek !== undefined ||
           durationInMonths !== undefined ||
           patchSessionDuration !== undefined
         ) {
           const finalMeetingsPerWeek =
-            meetingsPerWeek ?? existingPlan.meetingsPerWeek;
+            sessionsPerWeek ?? existingPlan.sessionsPerWeek;
           const finalDurationInMonths =
             durationInMonths ?? existingPlan.durationInMonths;
           const finalSessionDurationInHours =
@@ -604,6 +602,12 @@ export async function PATCH(request: NextRequest) {
           updateData.materialProvided = materialProvided; // handles null too
         if (learningOutcomes !== undefined)
           updateData.learningOutcomes = learningOutcomes;
+        if (subtitle !== undefined) updateData.subtitle = subtitle;
+        if (targetAudience !== undefined)
+          updateData.targetAudience = targetAudience;
+        if (whatsIncluded !== undefined)
+          updateData.whatsIncluded = whatsIncluded;
+        if (faqs !== undefined) updateData.faqs = faqReplaceNested(faqs);
         if (consultantProfileId !== undefined)
           updateData.consultantProfile = {
             connect: { id: consultantProfileId },

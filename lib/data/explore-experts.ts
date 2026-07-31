@@ -45,7 +45,7 @@ export const consultantListInclude = {
       price: true,
       priceCurrency: true,
       durationInMonths: true,
-      callsPerWeek: true,
+      sessionsPerWeek: true,
       emailSupport: true,
       totalSessions: true,
       // Drive the card's Trial CTA from real data instead of showing it
@@ -143,7 +143,7 @@ export function toConsultantCard(row: ConsultantCardRow): IConsultantCardData {
       price: Number(p.price),
       priceCurrency: p.priceCurrency,
       durationInMonths: p.durationInMonths,
-      callsPerWeek: p.callsPerWeek,
+      sessionsPerWeek: p.sessionsPerWeek,
       emailSupport: p.emailSupport,
       totalSessions: p.totalSessions,
       trialEnabled: p.trialEnabled,

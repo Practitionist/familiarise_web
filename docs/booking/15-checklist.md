@@ -68,7 +68,7 @@
 - [ ] Consecutive block detection works for multi-slot sessions (30min x N)
 - [ ] Week counting uses `SlotCalculationService.countWeeks()` (single source of truth)
 - [ ] `slotsPerCall` computed correctly from `sessionDurationInHours`
-- [ ] Subscription: max `callsPerWeek` per week, distributed across scheduling period
+- [ ] Subscription: max `sessionsPerWeek` per week, distributed across scheduling period
 - [ ] Class: respects scheduling period boundaries, max sessions/day
 - [ ] Webinar: finds single consecutive block within search window
 - [ ] Consultation: same-day consecutive block

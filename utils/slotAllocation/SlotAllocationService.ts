@@ -5,6 +5,7 @@
  * Handles auto, manual, and requested slot allocation.
  */
 
+import { reportSentryError } from "@/lib/observability/report";
 import prisma, {
   type Tx,
   type PrismaLike,
@@ -17,9 +18,10 @@ import {
   Prisma,
   AppointmentStatus,
   ScheduleType,
+  SlotCompletionStatus,
   SlotOfAppointment,
 } from "@prisma/client";
-import { addWeeks, addMonths } from "date-fns";
+import { addMonths } from "date-fns";
 import {
   AllocationErrorCode,
   AllocationRequest,
@@ -34,7 +36,10 @@ import {
   SlotValidationService,
   isOccupiedByLiveAppointment,
 } from "./SlotValidationService";
-import { buildOccupiedAppointmentFilter } from "./occupancyPolicy";
+import {
+  buildConsultantOccupancyWhere,
+  buildOccupiedAppointmentFilter,
+} from "./occupancyPolicy";
 import {
   lockAutoAllocate,
   unlockAutoAllocate,
@@ -45,10 +50,10 @@ import {
 import { isExclusionViolation, isUniqueViolation } from "@/lib/db/pg-errors";
 import {
   ALLOCATION_APPROVABLE_FROM,
+  EVENT_ALLOWED_FROM,
+  CLASS_EVENT_ALLOWED_FROM,
   transitionConsultationRequest,
   transitionSubscriptionRequest,
-  transitionWebinarEvent,
-  transitionClassEvent,
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import {
@@ -70,6 +75,18 @@ import { resolveCancellationPolicySnapshot } from "@/lib/payments/operations/can
 type AppointmentWithSlots = Appointment & {
   slotsOfAppointment: SlotOfAppointment[];
 };
+
+const SLOT_DURATION_MS = 30 * 60 * 1000;
+
+/**
+ * Ceiling on the 30-minute starts walked from one availability row.
+ *
+ * The walk stops at the first candidate outside availability, but adjacent rows
+ * make `isWithinAvailability` keep answering true past this row's own end, so a
+ * consultant with contiguous cover would otherwise walk the whole week. 48 steps
+ * is a day of cover, which bounds the scan without truncating any real row.
+ */
+const MAX_CANDIDATE_STARTS_PER_ROW = 48;
 
 /**
  * Main service for slot allocation operations
@@ -113,6 +130,7 @@ export class SlotAllocationService {
             request.eventId,
             request.initialAllocation,
             request.idempotencyKey,
+            request.override,
           );
 
         default:
@@ -125,6 +143,24 @@ export class SlotAllocationService {
       }
     } catch (error) {
       const { errorCode, httpStatus } = this.classifyError(error);
+      // Full-coverage policy: every error reaching here is reported, modelled
+      // outcome or not, so volume/pattern of ordinary answers (slot taken,
+      // limit reached, lost CAS race) is visible in Sentry too — but at
+      // info + expected:true so a dashboard scan can't mistake "no slots
+      // available" for a database failure. Real faults keep the default
+      // error level with no expected tag.
+      const modeled = this.isModeledOutcome(error);
+      reportSentryError(error, {
+        subsystem: "scheduling",
+        op: "slot-allocation",
+        expected: modeled,
+        extra: {
+          mode: request.mode,
+          eventType: request.eventType,
+          eventId: request.eventId,
+          errorCode,
+        },
+      });
       return {
         success: false,
         error: error instanceof Error ? error.message : "Allocation failed",
@@ -132,6 +168,29 @@ export class SlotAllocationService {
         httpStatus,
       };
     }
+  }
+
+  /**
+   * Whether `error` is one of the modelled business outcomes this engine
+   * throws for ordinary reasons (validation, not-found, lock/CAS contention,
+   * an org cap reached) rather than an actual fault. Both branches are
+   * reported to Sentry (full-coverage policy); this only decides the
+   * level/tag so a modelled answer never reads as a fault on the dashboard.
+   * Deliberately narrower than classifyError()'s message-sniffing fallback,
+   * which exists only to pick an HTTP status for legacy untyped throws and
+   * would otherwise also mark real bugs "expected" if the message happens to
+   * contain "not found".
+   */
+  private static isModeledOutcome(error: unknown): boolean {
+    return (
+      error instanceof AllocationValidationError ||
+      error instanceof AllocationNotFoundError ||
+      error instanceof AllocationConflictError ||
+      error instanceof IllegalTransitionError ||
+      error instanceof ProgramAssignmentLimitError ||
+      isUniqueViolation(error) ||
+      isExclusionViolation(error)
+    );
   }
 
   /**
@@ -156,6 +215,15 @@ export class SlotAllocationService {
     // was allocating; the whole allocation tx rolled back.
     if (error instanceof IllegalTransitionError) {
       return { errorCode: "ILLEGAL_TRANSITION", httpStatus: error.httpStatus };
+    }
+
+    // The org's per-cycle overage ceiling refusing an assignment is a decision,
+    // not a fault. It was already reported to Sentry as an expected outcome
+    // while falling through to UNKNOWN_ERROR/500 here — so the dashboard called
+    // it routine and the caller got a server error. 402 matches what
+    // recordOverageAtCheckout returns for the very same ceiling.
+    if (error instanceof ProgramAssignmentLimitError) {
+      return { errorCode: "PROGRAM_CAP_EXHAUSTED", httpStatus: 402 };
     }
 
     // Structured DB-conflict detection (no message sniffing): unique (P2002 /
@@ -249,14 +317,18 @@ export class SlotAllocationService {
       case "consultation": {
         const event = await prisma.consultation.findUnique({
           where: { id: eventId },
-          select: { requestedBy: { select: { user: { select: { id: true } } } } },
+          select: {
+            requestedBy: { select: { user: { select: { id: true } } } },
+          },
         });
         return event?.requestedBy?.user?.id ?? null;
       }
       case "subscription": {
         const event = await prisma.subscription.findUnique({
           where: { id: eventId },
-          select: { requestedBy: { select: { user: { select: { id: true } } } } },
+          select: {
+            requestedBy: { select: { user: { select: { id: true } } } },
+          },
         });
         return event?.requestedBy?.user?.id ?? null;
       }
@@ -483,6 +555,17 @@ export class SlotAllocationService {
       );
       const isReschedule = tentativeSlotCount > 0;
 
+      // ADR B10, derived rather than trusted. The client set initialAllocation
+      // only when tentativeSlotCount === 0, but EVERY pending request already
+      // carries tentative slots (request-for-approval and unpaid checkout both
+      // create them that way), so the flag was never true for a consultation
+      // and the multi-tab guard never ran. Having no CONFIRMED slot is the real
+      // "not allocated yet" condition. This matters most across modes: auto
+      // takes a consultant-wide lock and manual a day-sharded one (#860), so
+      // two tabs are only serialized by the in-txn advisory lock this gates.
+      const isFreshAllocation =
+        initialAllocation === true || existingNonTentativeSlotCount === 0;
+
       // Detect in-progress reallocation: past confirmed slots exist for recurring events
       const now = new Date();
       const pastConfirmedSlotCount = isReschedule
@@ -522,7 +605,8 @@ export class SlotAllocationService {
         // For in-progress: only block if future slots alone meet the future requirement
         if (
           isInProgressReallocation &&
-          futureNonTentativeSlotCount >= requiredForGuard - pastConfirmedSlotCount
+          futureNonTentativeSlotCount >=
+            requiredForGuard - pastConfirmedSlotCount
         ) {
           throw new AllocationConflictError(
             `Event's future slots are already fully allocated (${futureNonTentativeSlotCount} future slot(s), ${pastConfirmedSlotCount} past).`,
@@ -579,7 +663,7 @@ export class SlotAllocationService {
 
       // Find available slots (read-only; runs out-of-txn under the locks)
       // Pass appointmentIdsToExclude so their slots are excluded from bookedSlots
-      // Pass existingAppointments so callsPerWeek is scoped to this event only
+      // Pass existingAppointments so sessionsPerWeek is scoped to this event only
       const selectedSlots = await this.findAvailableSlots(
         prisma,
         consultant,
@@ -590,6 +674,7 @@ export class SlotAllocationService {
         appointmentIdsToExclude,
         existingAppointments,
         consulteeUserId, // #898 — pick slots free for the consultee too
+        consultantProfileId,
       );
 
       // Validate (read-only; runs out-of-txn under the locks)
@@ -601,7 +686,7 @@ export class SlotAllocationService {
         consultant,
         config,
         appointmentIdsToExclude,
-        consulteeUserId, // #676 AE-1 — also check the consultee's calendar
+        { consulteeUserId }, // #676 AE-1 — also check the consultee's calendar
       );
 
       if (!validation.isValid) {
@@ -638,7 +723,7 @@ export class SlotAllocationService {
           // In-txn re-check of the multi-tab guard, serialized per event via
           // an advisory xact lock; a same-key double submit replays instead
           // of 409ing (see guardInitialAllocationInTx).
-          if (initialAllocation) {
+          if (isFreshAllocation) {
             const lockedReplay =
               await SlotAllocationService.guardInitialAllocationInTx(
                 tx,
@@ -883,6 +968,25 @@ export class SlotAllocationService {
       );
       const isReschedule = tentativeSlotCount > 0;
 
+      const existingNonTentativeSlotCount = existingAppointments.reduce(
+        (count, appointment) =>
+          count +
+          appointment.slotsOfAppointment.filter((slot) => !slot.isTentative)
+            .length,
+        0,
+      );
+
+      // ADR B10, derived rather than trusted. The client set initialAllocation
+      // only when tentativeSlotCount === 0, but EVERY pending request already
+      // carries tentative slots (request-for-approval and unpaid checkout both
+      // create them that way), so the flag was never true for a consultation
+      // and the multi-tab guard never ran. Having no CONFIRMED slot is the real
+      // "not allocated yet" condition. This matters most across modes: auto
+      // takes a consultant-wide lock and manual a day-sharded one (#860), so
+      // two tabs are only serialized by the in-txn advisory lock this gates.
+      const isFreshAllocation =
+        initialAllocation === true || existingNonTentativeSlotCount === 0;
+
       // Detect in-progress reallocation: past confirmed slots exist for recurring events
       const now = new Date();
       const pastConfirmedSlotCount = isReschedule
@@ -970,7 +1074,7 @@ export class SlotAllocationService {
         consultant,
         config,
         appointmentIdsToExclude,
-        consulteeUserId, // #676 AE-1 — also check the consultee's calendar
+        { consulteeUserId }, // #676 AE-1 — also check the consultee's calendar
       );
 
       if (!validation.isValid) {
@@ -1000,7 +1104,7 @@ export class SlotAllocationService {
           // In-txn re-check of the multi-tab guard, serialized per event via
           // an advisory xact lock; a same-key double submit replays instead
           // of 409ing (see guardInitialAllocationInTx).
-          if (initialAllocation) {
+          if (isFreshAllocation) {
             const lockedReplay =
               await SlotAllocationService.guardInitialAllocationInTx(
                 tx,
@@ -1052,7 +1156,13 @@ export class SlotAllocationService {
           }
 
           // Update event status
-          await this.updateEventStatus(tx, eventType, eventId, slots[0], config);
+          await this.updateEventStatus(
+            tx,
+            eventType,
+            eventId,
+            slots[0],
+            config,
+          );
 
           return {
             success: true,
@@ -1095,8 +1205,12 @@ export class SlotAllocationService {
   private static async useRequestedSlots(
     eventType: EventType,
     eventId: string,
-    initialAllocation?: boolean,
+    // The caller's initialAllocation hint is ignored: the guard is always armed
+    // here, because approving stored times is only valid for an unallocated event.
+    _initialAllocation: boolean | undefined,
     idempotencyKey?: string,
+    /** Consultant accepting times outside their own published availability. */
+    overrideAvailabilityWindow?: boolean,
   ): Promise<AllocationResult> {
     // #837 — a retry whose first response was lost must replay the approved
     // batch, not trip the initial-allocation guard with a 409.
@@ -1107,141 +1221,213 @@ export class SlotAllocationService {
     );
     if (replay) return replay;
 
-    return await prisma.$transaction(
-      async (tx) => {
-        // Multi-tab guard: another tab already confirmed slots for this
-        // event → typed 409 instead of re-approving over it. Advisory-locked
-        // in-txn so it can't race the manual/auto write transactions; a
-        // same-key retry that lost the pre-txn race replays the winner.
-        if (initialAllocation) {
-          const lockedReplay =
-            await SlotAllocationService.guardInitialAllocationInTx(
-              tx,
-              eventType,
-              eventId,
-              idempotencyKey,
+    // This path used to enter the transaction with no Redis lock at all, so an
+    // approval could run concurrently with an auto/manual allocation of the same
+    // event and rely entirely on the GiST exclusion constraint to notice.
+    const consultantProfileId = await this.getConsultantProfileId(
+      eventType,
+      eventId,
+    );
+    if (!consultantProfileId) {
+      // Same shape the auto/manual paths report, so a missing event reads the
+      // same however it was reached.
+      throw new AllocationNotFoundError(`${eventType} not found`);
+    }
+    const lock = await lockAutoAllocate(consultantProfileId);
+    if (!lock) {
+      throw new AllocationConflictError(
+        "Another allocation is in progress for this consultant. Please try again.",
+      );
+    }
+
+    // #898 follow-up — serialize on the consultee too. The GiST overlap guard
+    // is consultant-keyed, so it cannot see a cross-consultant double-booking,
+    // and this path confirms the consultee's slots. Without it an approval here
+    // and an auto/manual allocation for the same consultee under a DIFFERENT
+    // consultant both pass their conflict validation under Read Committed and
+    // both commit. Lock order matches the other two paths: consultant → consultee.
+    let consulteeLock: ApprovalLock | null = null;
+
+    try {
+      const consulteeLockUserId = await this.getConsulteeUserId(
+        eventType,
+        eventId,
+      );
+      if (consulteeLockUserId) {
+        consulteeLock = await lockConsulteeBooking(consulteeLockUserId);
+      }
+
+      return await prisma.$transaction(
+        async (tx) => {
+          // Multi-tab guard: another tab already confirmed slots for this
+          // event → typed 409 instead of re-approving over it. Advisory-locked
+          // in-txn so it can't race the manual/auto write transactions; a
+          // same-key retry that lost the pre-txn race replays the winner.
+          // Always armed here: approving stored times is only ever valid for an
+          // event that has not been allocated yet.
+          {
+            const lockedReplay =
+              await SlotAllocationService.guardInitialAllocationInTx(
+                tx,
+                eventType,
+                eventId,
+                idempotencyKey,
+              );
+            if (lockedReplay) return lockedReplay;
+          }
+
+          // Fetch event with requested slots
+          const eventData = await this.fetchEventData(tx, eventType, eventId);
+          if (!eventData) {
+            throw new AllocationNotFoundError(`${eventType} not found`);
+          }
+
+          const { consultant, config, requestedSlots, consulteeUserId } =
+            eventData;
+
+          if (!requestedSlots || requestedSlots.length === 0) {
+            throw new AllocationValidationError("No requested slots found");
+          }
+
+          // CRITICAL FIX: Verify appointments actually exist before approving
+          // This prevents approving requests with no actual bookings
+          const relationField = this.getEventRelationField(eventType);
+          const existingAppointments: AppointmentWithSlots[] =
+            await tx.appointment.findMany({
+              where: {
+                [`${relationField}Id`]: eventId,
+              } as Prisma.AppointmentWhereInput,
+              include: { slotsOfAppointment: true },
+            });
+
+          if (existingAppointments.length === 0) {
+            throw new AllocationValidationError(
+              "Cannot approve requested slots: No appointments found. " +
+                "The consultee may not have created appointments yet, or they were deleted. " +
+                "Please ask the consultee to resubmit their request.",
             );
-          if (lockedReplay) return lockedReplay;
-        }
+          }
 
-        // Fetch event with requested slots
-        const eventData = await this.fetchEventData(tx, eventType, eventId);
-        if (!eventData) {
-          throw new AllocationNotFoundError(`${eventType} not found`);
-        }
+          // A rescheduled slot's startsAt is still the ORIGINAL time — the
+          // reschedule route only flips isTentative/completionStatus, it never
+          // writes a new one. fetchEventData derives requestedSlots from those
+          // same rows, so "use the requested times" here would silently re-confirm
+          // exactly the times the consultee asked to move. Refuse; the consultant
+          // must allocate (auto or manual) instead.
+          const rescheduledSlots = existingAppointments.flatMap((appointment) =>
+            appointment.slotsOfAppointment.filter(
+              (slot) =>
+                slot.completionStatus === SlotCompletionStatus.RESCHEDULED,
+            ),
+          );
 
-        const { consultant, config, requestedSlots, consulteeUserId } =
-          eventData;
+          if (rescheduledSlots.length > 0) {
+            throw new AllocationValidationError(
+              `Cannot reuse requested times: ${rescheduledSlots.length} slot(s) are awaiting reschedule, ` +
+                `so the stored times are the ones being moved away from. ` +
+                `Allocate new times instead.`,
+            );
+          }
 
-        if (!requestedSlots || requestedSlots.length === 0) {
-          throw new AllocationValidationError("No requested slots found");
-        }
+          // Verify appointment slots match requested slots
+          const existingSlotCount = existingAppointments.reduce(
+            (sum, appointment) => sum + appointment.slotsOfAppointment.length,
+            0,
+          );
 
-        // CRITICAL FIX: Verify appointments actually exist before approving
-        // This prevents approving requests with no actual bookings
-        const relationField = this.getEventRelationField(eventType);
-        const existingAppointments: AppointmentWithSlots[] =
-          await tx.appointment.findMany({
+          if (existingSlotCount !== requestedSlots.length) {
+            throw new AllocationValidationError(
+              `Appointment mismatch: Found ${existingSlotCount} slots in appointments ` +
+                `but ${requestedSlots.length} requested slots. ` +
+                `The appointments may have been modified. Please review and try again.`,
+            );
+          }
+
+          // Validate requested slots still meet all requirements.
+          // Pass existing appointment IDs so the event's own tentative slots
+          // are not flagged as conflicts during self-validation.
+          const validator = new SlotValidationService(tx);
+          const existingAppointmentIds = existingAppointments.map((a) => a.id);
+          const validation = await validator.validate(
+            eventType,
+            eventId,
+            requestedSlots,
+            consultant,
+            config,
+            existingAppointmentIds,
+            { consulteeUserId, overrideAvailabilityWindow },
+          );
+
+          if (!validation.isValid) {
+            throw new AllocationValidationError(
+              `Validation failed: ${validation.errors.join("; ")}`,
+            );
+          }
+
+          // Update event status to approved (appointments already exist and verified)
+          await this.updateEventStatus(
+            tx,
+            eventType,
+            eventId,
+            requestedSlots[0],
+            config,
+          );
+
+          // CRITICAL FIX: Clear isTentative flag on all slots after approval
+          // This ensures slots are no longer marked as pending reschedule
+          const appointmentIds = existingAppointments.map(
+            (appointment) => appointment.id,
+          );
+          await tx.slotOfAppointment.updateMany({
             where: {
-              [`${relationField}Id`]: eventId,
-            } as Prisma.AppointmentWhereInput,
-            include: { slotsOfAppointment: true },
+              appointmentId: { in: appointmentIds },
+            },
+            data: { isTentative: false },
           });
 
-        if (existingAppointments.length === 0) {
-          throw new AllocationValidationError(
-            "Cannot approve requested slots: No appointments found. " +
-              "The consultee may not have created appointments yet, or they were deleted. " +
-              "Please ask the consultee to resubmit their request.",
-          );
-        }
-
-        // Verify appointment slots match requested slots
-        const existingSlotCount = existingAppointments.reduce(
-          (sum, appointment) => sum + appointment.slotsOfAppointment.length,
-          0,
-        );
-
-        if (existingSlotCount !== requestedSlots.length) {
-          throw new AllocationValidationError(
-            `Appointment mismatch: Found ${existingSlotCount} slots in appointments ` +
-              `but ${requestedSlots.length} requested slots. ` +
-              `The appointments may have been modified. Please review and try again.`,
-          );
-        }
-
-        // Validate requested slots still meet all requirements.
-        // Pass existing appointment IDs so the event's own tentative slots
-        // are not flagged as conflicts during self-validation.
-        const validator = new SlotValidationService(tx);
-        const existingAppointmentIds = existingAppointments.map((a) => a.id);
-        const validation = await validator.validate(
-          eventType,
-          eventId,
-          requestedSlots,
-          consultant,
-          config,
-          existingAppointmentIds,
-          consulteeUserId, // #676 AE-1 — also check the consultee's calendar
-        );
-
-        if (!validation.isValid) {
-          throw new AllocationValidationError(
-            `Validation failed: ${validation.errors.join("; ")}`,
-          );
-        }
-
-        // Update event status to approved (appointments already exist and verified)
-        await this.updateEventStatus(
-          tx,
-          eventType,
-          eventId,
-          requestedSlots[0],
-          config,
-        );
-
-        // CRITICAL FIX: Clear isTentative flag on all slots after approval
-        // This ensures slots are no longer marked as pending reschedule
-        const appointmentIds = existingAppointments.map(
-          (appointment) => appointment.id,
-        );
-        await tx.slotOfAppointment.updateMany({
-          where: {
-            appointmentId: { in: appointmentIds },
-          },
-          data: { isTentative: false },
-        });
-
-        // #837 — stamp the batch's key on the FIRST appointment so a retry
-        // replays this approval instead of re-running it (mirrors
-        // createAppointments). The @unique index turns a concurrent
-        // duplicate submit into a typed 409.
-        if (idempotencyKey) {
-          try {
-            await tx.appointment.update({
-              where: { id: appointmentIds[0] },
-              data: { allocationIdempotencyKey: idempotencyKey },
-            });
-          } catch (err) {
-            if (isUniqueViolation(err)) {
-              throw new AllocationConflictError(
-                "This allocation was already submitted; the original result applies.",
-              );
+          // #837 — stamp the batch's key on the FIRST appointment so a retry
+          // replays this approval instead of re-running it (mirrors
+          // createAppointments). The @unique index turns a concurrent
+          // duplicate submit into a typed 409.
+          if (idempotencyKey) {
+            try {
+              await tx.appointment.update({
+                where: { id: appointmentIds[0] },
+                data: { allocationIdempotencyKey: idempotencyKey },
+              });
+            } catch (err) {
+              // Not captured here — useRequestedSlots only ever runs inside
+              // allocate()'s try, whose catch reports every error reaching it
+              // (including this one, same instance) with the correct modeled
+              // classification. A second capture here would be a pure dupe.
+              if (isUniqueViolation(err)) {
+                // A same-key retry losing this race is the ordinary replay
+                // case (#837).
+                throw new AllocationConflictError(
+                  "This allocation was already submitted; the original result applies.",
+                );
+              }
+              throw err;
             }
-            throw err;
           }
-        }
 
-        return {
-          success: true,
-          appointments: existingAppointments,
-          warnings: validation.warnings,
-        };
-      },
-      {
-        timeout: 120000, // 120 seconds (2 min) - handles large allocations (200+ slots)
-      },
-    );
+          return {
+            success: true,
+            appointments: existingAppointments,
+            warnings: validation.warnings,
+          };
+        },
+        {
+          // Shared with the auto/manual paths rather than a local literal, so
+          // all three allocation transactions age out the same way.
+          maxWait: ALLOCATION_TX_MAX_WAIT_MS,
+          timeout: ALLOCATION_TX_TIMEOUT_MS,
+        },
+      );
+    } finally {
+      if (consulteeLock) await unlockConsulteeBooking(consulteeLock);
+      await unlockAutoAllocate(lock);
+    }
   }
 
   /**
@@ -1291,6 +1477,120 @@ export class SlotAllocationService {
   }
 
   /**
+   * Every 30-minute start inside one availability row that could host a call.
+   *
+   * The search used to test only the row's own start instant: a booked 09:00
+   * forfeited the entire 09:00-17:00 window and the loop advanced to the next
+   * row, so auto-allocate yielded at most one placement per row per week even
+   * with seven hours free. Walking the row restores the other fifteen starts.
+   */
+  private static candidateStartsInRow(
+    rowStart: Date,
+    consultant: ConsultantAllocationData,
+  ): Date[] {
+    const starts: Date[] = [];
+
+    for (let step = 0; step < MAX_CANDIDATE_STARTS_PER_ROW; step++) {
+      const candidate = new Date(rowStart.getTime() + step * SLOT_DURATION_MS);
+      if (!this.isWithinAvailability(candidate, consultant)) break;
+      starts.push(candidate);
+    }
+
+    return starts;
+  }
+
+  /**
+   * Build one call's worth of back-to-back slots from `start`, or null if the
+   * run is interrupted by a booking, the edge of availability, or the past.
+   */
+  private static buildConsecutiveBlock(
+    start: Date,
+    slotsPerCall: number,
+    consultant: ConsultantAllocationData,
+    bookedSlots: Set<string>,
+    now: Date,
+  ): Date[] | null {
+    const block: Date[] = [];
+    let currentTime = new Date(start);
+
+    for (let i = 0; i < slotsPerCall; i++) {
+      if (
+        bookedSlots.has(currentTime.toISOString()) ||
+        !this.isWithinAvailability(currentTime, consultant) ||
+        currentTime < now
+      ) {
+        return null;
+      }
+      block.push(new Date(currentTime));
+      currentTime = new Date(currentTime.getTime() + SLOT_DURATION_MS);
+    }
+
+    return block;
+  }
+
+  /**
+   * First placeable call inside one row on a recurring event's day, or null.
+   *
+   * Candidates are held to the row's own scheduling-timezone day so that
+   * walking an overnight row cannot spill a session into the next day and
+   * breach the per-day cap the validator enforces (ADR B9 buckets by the
+   * event's timezone, not the server's).
+   */
+  private static firstFittingBlockInRow(
+    rowStart: Date,
+    slotsPerCall: number,
+    consultant: ConsultantAllocationData,
+    bookedSlots: Set<string>,
+    /** The clock and the window the placement has to fall inside. */
+    bounds: {
+      now: Date;
+      startDate: Date;
+      endDate: Date;
+      schedulingTimezone?: string;
+    },
+  ): Date[] | null {
+    const { now, startDate, endDate, schedulingTimezone } = bounds;
+    const rowDayKey = SlotCalculationService.dayKey(
+      rowStart,
+      schedulingTimezone,
+    );
+
+    for (const candidateStart of this.candidateStartsInRow(
+      rowStart,
+      consultant,
+    )) {
+      // The whole session must fit, not just its first slot: the validator
+      // rejects any slot whose end passes endDate, so testing the start alone
+      // would emit a block the validator then throws out.
+      const candidateEnd = new Date(
+        candidateStart.getTime() + slotsPerCall * SLOT_DURATION_MS,
+      );
+
+      if (
+        candidateStart < now ||
+        candidateStart < startDate ||
+        candidateEnd > endDate ||
+        SlotCalculationService.dayKey(candidateStart, schedulingTimezone) !==
+          rowDayKey
+      ) {
+        continue;
+      }
+
+      const block = this.buildConsecutiveBlock(
+        candidateStart,
+        slotsPerCall,
+        consultant,
+        bookedSlots,
+        now,
+      );
+
+      if (block) return block;
+    }
+
+    return null;
+  }
+
+  /**
    * Find available consecutive slots for auto-allocation
    */
   private static async findAvailableSlots(
@@ -1309,22 +1609,16 @@ export class SlotAllocationService {
     // mutually-free slots instead of consultant-free ones that then fail the
     // consultee-conflict validation.
     consulteeUserId?: string,
+    // Lets the occupancy predicate include appointments delivered under this
+    // consultant's own plans, matching what the availability grid counts.
+    consultantProfileId?: string,
   ): Promise<Date[]> {
     // Get all existing booked slots for this consultant
     // FIX Bug #15: Use centralized occupancy policy for consistent conflict detection
+    // Shared with the availability grid so the two cannot disagree about who
+    // is busy — see buildConsultantOccupancyWhere.
     const appointmentFilter: Prisma.AppointmentWhereInput[] = [
-      {
-        OR: buildOccupiedAppointmentFilter(),
-      },
-      {
-        slotsOfAppointment: {
-          some: {
-            user: {
-              some: { id: consultant.userId },
-            },
-          },
-        },
-      },
+      buildConsultantOccupancyWhere(consultantProfileId, consultant.userId),
     ];
 
     // Exclude tentative appointments during reschedule — they'll be deleted,
@@ -1460,69 +1754,51 @@ export class SlotAllocationService {
               slot.utcOffsetMinutes,
             );
 
-            const candidateStart = new Date(baseStart);
+            const rowStart = new Date(baseStart);
             if (week > 0) {
-              candidateStart.setUTCDate(candidateStart.getUTCDate() + week * 7);
+              rowStart.setUTCDate(rowStart.getUTCDate() + week * 7);
             }
 
-            if (
-              candidateStart < now ||
-              bookedSlots.has(candidateStart.toISOString())
-            ) {
-              continue;
-            }
+            for (const candidateStart of this.candidateStartsInRow(
+              rowStart,
+              consultant,
+            )) {
+              if (candidateStart < now) continue;
 
-            // Try to build consecutive block
-            const consecutiveBlock: Date[] = [];
-            let currentTime = new Date(candidateStart);
+              const consecutiveBlock = this.buildConsecutiveBlock(
+                candidateStart,
+                slotsPerCall,
+                consultant,
+                bookedSlots,
+                now,
+              );
 
-            for (let i = 0; i < slotsPerCall; i++) {
-              const currentTimeStr = currentTime.toISOString();
-
-              if (
-                bookedSlots.has(currentTimeStr) ||
-                !this.isWithinAvailability(currentTime, consultant) ||
-                currentTime < now
-              ) {
-                break;
+              if (consecutiveBlock) {
+                return consecutiveBlock;
               }
-              consecutiveBlock.push(new Date(currentTime));
-              currentTime = new Date(currentTime.getTime() + 30 * 60 * 1000);
-            }
-
-            if (consecutiveBlock.length === slotsPerCall) {
-              return consecutiveBlock;
             }
           }
         }
       } else {
         // CUSTOM schedule: iterate pre-sorted slots
         for (const slot of sortedCustom) {
-          const slotStart = new Date(slot.startsAt);
+          for (const candidateStart of this.candidateStartsInRow(
+            new Date(slot.startsAt),
+            consultant,
+          )) {
+            if (candidateStart < now) continue;
 
-          if (slotStart < now || bookedSlots.has(slotStart.toISOString())) {
-            continue;
-          }
+            const consecutiveBlock = this.buildConsecutiveBlock(
+              candidateStart,
+              slotsPerCall,
+              consultant,
+              bookedSlots,
+              now,
+            );
 
-          const consecutiveBlock: Date[] = [];
-          let currentTime = new Date(slotStart);
-
-          for (let i = 0; i < slotsPerCall; i++) {
-            const currentTimeStr = currentTime.toISOString();
-
-            if (
-              bookedSlots.has(currentTimeStr) ||
-              !this.isWithinAvailability(currentTime, consultant) ||
-              currentTime < now
-            ) {
-              break;
+            if (consecutiveBlock) {
+              return consecutiveBlock;
             }
-            consecutiveBlock.push(new Date(currentTime));
-            currentTime = new Date(currentTime.getTime() + 30 * 60 * 1000);
-          }
-
-          if (consecutiveBlock.length === slotsPerCall) {
-            return consecutiveBlock;
           }
         }
       }
@@ -1537,7 +1813,7 @@ export class SlotAllocationService {
     const endDate =
       config.schedulingPeriodEndsAt ||
       addMonths(startDate, config.durationInMonths || 1);
-    const callsPerWeek = config.callsPerWeek || 1;
+    const sessionsPerWeek = config.sessionsPerWeek || 1;
 
     // Build a map of existing confirmed calls per week.
     // During partial reschedule, weeks with confirmed appointments already
@@ -1545,7 +1821,12 @@ export class SlotAllocationService {
     // IMPORTANT: Only count THIS event's own appointments (not consultations or
     // other event types), and exclude the tentative ones being replaced.
     const excludeSet = new Set(excludeAppointmentIds);
-    const existingCallsPerWeek = new Map<string, number>();
+    const existingSessionsPerWeek = new Map<string, number>();
+    // Days already spoken for by surviving sessions. Seeded for the same reason
+    // as the week map: validatePerDaySessionCap counts existing appointments, so
+    // a partial reschedule that only looked at this run's placements could put a
+    // replacement on a day that already has one and be rejected downstream.
+    const seededDayKeys = new Set<string>();
     for (const apt of eventOwnAppointments) {
       if (excludeSet.has(apt.id)) continue; // skip tentative (being replaced)
       if (apt.slotsOfAppointment.length === 0) continue;
@@ -1557,120 +1838,114 @@ export class SlotAllocationService {
         new Date(firstSlot.startsAt),
         config.schedulingTimezone,
       );
-      existingCallsPerWeek.set(
+      existingSessionsPerWeek.set(
         weekKey,
-        (existingCallsPerWeek.get(weekKey) || 0) + 1,
+        (existingSessionsPerWeek.get(weekKey) || 0) + 1,
+      );
+      seededDayKeys.add(
+        SlotCalculationService.dayKey(
+          new Date(firstSlot.startsAt),
+          config.schedulingTimezone,
+        ),
       );
     }
 
-    let currentWeek = SlotCalculationService.startOfWeekSundayInTz(
-      startDate,
-      config.schedulingTimezone,
+    // The cursor advances in UTC days because matchWeeklySlotToDay resolves the
+    // row's UTC day-of-week from targetDay.getUTCDay(). Anchoring the cursor to
+    // a timezone week instead made those two disagree: Sunday 00:00 IST is
+    // Saturday 18:30 UTC, so getUTCDay() answered SATURDAY and every placement
+    // was credited to the week before the one being iterated — the allocator
+    // then emitted output its own validate() rejected with [WEEKLY_LIMIT].
+    //
+    // Caps are counted in the event's scheduling timezone (ADR B9), keyed off
+    // the placed slot rather than the cursor, so the two bucketings cannot drift.
+    const sessionsPlacedPerWeek = new Map(existingSessionsPerWeek);
+    const usedDayKeys = new Set(seededDayKeys);
+
+    const cursor = new Date(
+      Date.UTC(
+        startDate.getUTCFullYear(),
+        startDate.getUTCMonth(),
+        startDate.getUTCDate(),
+      ),
     );
-    const totalWeeks = SlotCalculationService.countWeeks(startDate, endDate);
 
     for (
-      let week = 0;
-      week < totalWeeks && selectedSlots.length < totalSlotsNeeded;
-      week++
+      ;
+      cursor <= endDate && selectedSlots.length < totalSlotsNeeded;
+      cursor.setUTCDate(cursor.getUTCDate() + 1)
     ) {
-      // Initialize with existing confirmed calls (important during partial reschedule)
-      const weekKey = SlotCalculationService.weekKey(
-        currentWeek,
-        config.schedulingTimezone,
-      );
-      let callsThisWeek = existingCallsPerWeek.get(weekKey) || 0;
+      const currentDay = new Date(cursor);
 
-      for (let day = 0; day < 7 && callsThisWeek < callsPerWeek; day++) {
-        const currentDay = new Date(currentWeek);
-        currentDay.setUTCDate(currentDay.getUTCDate() + day);
+      // Place at most one call on this day, honouring the timezone-bucketed
+      // per-day and per-week caps the validator will re-check.
+      const tryPlace = (rowStart: Date): boolean => {
+        const rowDayKey = SlotCalculationService.dayKey(
+          rowStart,
+          config.schedulingTimezone,
+        );
+        const rowWeekKey = SlotCalculationService.weekKey(
+          rowStart,
+          config.schedulingTimezone,
+        );
 
-        // Find first available slot on this day
-        if (consultant.scheduleType === ScheduleType.WEEKLY) {
-          for (const slot of sortedWeekly) {
-            const slotTime = this.matchWeeklySlotToDay(
-              slot.startDay,
-              slot.startTimeUtc,
-              currentDay,
-              slot.utcOffsetMinutes,
-            );
+        if (usedDayKeys.has(rowDayKey)) return false;
+        if ((sessionsPlacedPerWeek.get(rowWeekKey) ?? 0) >= sessionsPerWeek)
+          return false;
 
-            if (
-              !slotTime ||
-              slotTime < now ||
-              slotTime < startDate ||
-              slotTime > endDate
-            ) {
-              continue;
-            }
+        const sessionSlots = this.firstFittingBlockInRow(
+          rowStart,
+          slotsPerCall,
+          consultant,
+          bookedSlots,
+          {
+            now,
+            startDate,
+            endDate,
+            schedulingTimezone: config.schedulingTimezone,
+          },
+        );
 
-            // Try to build consecutive block for this call
-            const callSlots: Date[] = [];
-            let currentTime = new Date(slotTime);
+        if (!sessionSlots) return false;
 
-            for (let i = 0; i < slotsPerCall; i++) {
-              const currentTimeStr = currentTime.toISOString();
-              if (
-                bookedSlots.has(currentTimeStr) ||
-                !this.isWithinAvailability(currentTime, consultant) ||
-                currentTime < now
-              ) {
-                break;
-              }
-              callSlots.push(new Date(currentTime));
-              currentTime = new Date(currentTime.getTime() + 30 * 60 * 1000);
-            }
+        selectedSlots.push(...sessionSlots);
+        sessionSlots.forEach((s) => bookedSlots.add(s.toISOString()));
 
-            if (callSlots.length === slotsPerCall) {
-              selectedSlots.push(...callSlots);
-              callSlots.forEach((s) => bookedSlots.add(s.toISOString()));
-              callsThisWeek++;
-              break;
-            }
-          }
-        } else {
-          for (const slot of sortedCustom) {
-            const slotTime = this.matchCustomSlotToDay(
-              slot.startsAt,
-              currentDay,
-            );
+        // Re-key on the slot actually placed rather than on the row it came
+        // from, so the counters record where the session really landed.
+        const placedDayKey = SlotCalculationService.dayKey(
+          sessionSlots[0],
+          config.schedulingTimezone,
+        );
+        const placedWeekKey = SlotCalculationService.weekKey(
+          sessionSlots[0],
+          config.schedulingTimezone,
+        );
+        usedDayKeys.add(placedDayKey);
+        sessionsPlacedPerWeek.set(
+          placedWeekKey,
+          (sessionsPlacedPerWeek.get(placedWeekKey) ?? 0) + 1,
+        );
 
-            if (
-              !slotTime ||
-              slotTime < now ||
-              slotTime < startDate ||
-              slotTime > endDate
-            ) {
-              continue;
-            }
+        return true;
+      };
 
-            const callSlots: Date[] = [];
-            let currentTime = new Date(slotTime);
-
-            for (let i = 0; i < slotsPerCall; i++) {
-              const currentTimeStr = currentTime.toISOString();
-              if (
-                bookedSlots.has(currentTimeStr) ||
-                !this.isWithinAvailability(currentTime, consultant) ||
-                currentTime < now
-              ) {
-                break;
-              }
-              callSlots.push(new Date(currentTime));
-              currentTime = new Date(currentTime.getTime() + 30 * 60 * 1000);
-            }
-
-            if (callSlots.length === slotsPerCall) {
-              selectedSlots.push(...callSlots);
-              callSlots.forEach((s) => bookedSlots.add(s.toISOString()));
-              callsThisWeek++;
-              break;
-            }
-          }
+      if (consultant.scheduleType === ScheduleType.WEEKLY) {
+        for (const slot of sortedWeekly) {
+          const rowStart = this.matchWeeklySlotToDay(
+            slot.startDay,
+            slot.startTimeUtc,
+            currentDay,
+            slot.utcOffsetMinutes,
+          );
+          if (rowStart && tryPlace(rowStart)) break;
+        }
+      } else {
+        for (const slot of sortedCustom) {
+          const rowStart = this.matchCustomSlotToDay(slot.startsAt, currentDay);
+          if (rowStart && tryPlace(rowStart)) break;
         }
       }
-
-      currentWeek = addWeeks(currentWeek, 1);
     }
 
     if (selectedSlots.length < totalSlotsNeeded) {
@@ -1887,13 +2162,13 @@ export class SlotAllocationService {
     let appointments: any[];
     try {
       appointments = await Promise.all(
-        calls.map((callSlots, callIndex) => {
+        calls.map((sessionSlots, callIndex) => {
           // #837 — key belongs on the first appointment of the batch only.
           const idempotencyData =
             idempotencyKey && callIndex === 0
               ? { allocationIdempotencyKey: idempotencyKey }
               : {};
-          const slotsToCreate = callSlots.map((slotStart) => {
+          const slotsToCreate = sessionSlots.map((slotStart) => {
             const endTime = new Date(slotStart.getTime() + 30 * 60 * 1000);
             return {
               startsAt: slotStart,
@@ -1950,7 +2225,13 @@ export class SlotAllocationService {
         }),
       );
     } catch (error) {
+      // Not captured here — createAppointments only runs inside
+      // autoAllocate/manualAllocate, both under allocate()'s try, whose catch
+      // reports every error reaching it (this one included). A second
+      // capture here would be a pure dupe of the same instance.
       if (isExclusionViolation(error) || isUniqueViolation(error)) {
+        // A concurrent booking winning the #440 overlap guard is the ordinary
+        // "someone else got there first" race, not a fault.
         throw new AllocationConflictError(
           "This time slot was just booked by someone else. Please pick another time.",
         );
@@ -2087,7 +2368,8 @@ export class SlotAllocationService {
       const trackedLive = existingUtil.appointmentIds.filter((id) =>
         liveIds.has(id),
       );
-      const staleCount = existingUtil.appointmentIds.length - trackedLive.length;
+      const staleCount =
+        existingUtil.appointmentIds.length - trackedLive.length;
       if (staleCount > 0) {
         const alreadyTracked = new Set(trackedLive);
         const incomingNew = newAppointmentIds.filter(
@@ -2103,29 +2385,23 @@ export class SlotAllocationService {
       }
     }
 
-    try {
-      await recordBookingUtilization(tx, {
-        programAssignmentId: assignment.id,
-        paymentId: orgPayment.id,
-        engagementsConsumed: idsToDebit.length,
-        priceAtBookingPaise,
-        // PR-1e (G3): pass the appointment ids so re-allocation
-        // (delete+recreate of the same slot) can't double-debit. The
-        // helper computes the set diff against
-        // BookingUtilization.appointmentIds and increments only by the
-        // genuinely-new ids.
-        appointmentIds: idsToDebit,
-      });
-    } catch (err) {
-      if (err instanceof ProgramAssignmentLimitError) {
-        // Cap exceeded with BLOCK behavior — surface upward so the
-        // transaction rolls back the newly-created appointments. The
-        // SlotAllocationService.allocate() error mapper translates this
-        // to the appropriate HTTP status for the route handler.
-        throw err;
-      }
-      throw err;
-    }
+    // Not captured here — this only runs from createAppointments, itself only
+    // reachable via allocate()'s try, whose catch reports every error
+    // reaching it (a ProgramAssignmentLimitError cap-exceeded included,
+    // correctly classified as one of its modelled outcomes). A capture here
+    // too would be a dupe, so this no longer needs its own try/catch.
+    await recordBookingUtilization(tx, {
+      programAssignmentId: assignment.id,
+      paymentId: orgPayment.id,
+      engagementsConsumed: idsToDebit.length,
+      priceAtBookingPaise,
+      // PR-1e (G3): pass the appointment ids so re-allocation
+      // (delete+recreate of the same slot) can't double-debit. The
+      // helper computes the set diff against
+      // BookingUtilization.appointmentIds and increments only by the
+      // genuinely-new ids.
+      appointmentIds: idsToDebit,
+    });
   }
 
   /**
@@ -2459,40 +2735,81 @@ export class SlotAllocationService {
         });
         break;
 
-      case "webinar":
+      case "webinar": {
         // Webinar model does NOT have startDate/endDate fields
         // Start date is stored in the Appointment's slots.
-        // Guarded transition — an unguarded update let allocation racing a
-        // cancel resurrect a CANCELLED (or re-open a COMPLETED) webinar.
-        await transitionWebinarEvent(tx, {
-          where: { id: eventId },
-          to: "SCHEDULED",
+        //
+        // Allocation gives an event its sessions; it does NOT publish one. A
+        // DRAFT therefore keeps its status here and merely receives its slots:
+        // "add a session, then publish" is the editor's flow, and publishing is
+        // one-way (EVENT_PUBLISHABLE_FROM). Re-allocating a live event still
+        // re-stamps SCHEDULED, and CANCELLED/COMPLETED are still refused —
+        // that resurrection hazard is why the guard exists at all.
+        //
+        // This used to transition to SCHEDULED against a map that deliberately
+        // excludes DRAFT, so it matched zero rows and 409'd the entire
+        // allocation: the one affordance that gives a draft its first session
+        // always failed (#1060).
+        const restamped = await tx.webinar.updateMany({
+          where: { id: eventId, status: { in: EVENT_ALLOWED_FROM.SCHEDULED } },
+          data: { status: "SCHEDULED" },
         });
+        if (restamped.count === 0) {
+          const current = await tx.webinar.findUnique({
+            where: { id: eventId },
+            select: { status: true },
+          });
+          if (current?.status !== "DRAFT") {
+            throw new IllegalTransitionError("Webinar", "SCHEDULED");
+          }
+        }
         break;
+      }
 
-      case "class":
+      case "class": {
         // Class model HAS schedulingPeriod fields
         // FIX: Only set schedulingPeriod if not already configured — same guard as SUBSCRIPTION.
         // Overwriting an explicitly-set period on re-allocation shifts the window, allowing
         // slots outside the original range to pass the scheduling-period validation check.
-        // Guarded transition — same resurrection hazard as WEBINAR above.
-        await transitionClassEvent(tx, {
-          where: { id: eventId },
-          to: "SCHEDULED",
-          data: {
-            ...(!config.schedulingPeriodStartsAt ||
-            !config.schedulingPeriodEndsAt
-              ? {
-                  schedulingPeriodStartsAt: firstSlot,
-                  schedulingPeriodEndsAt: addMonths(
-                    firstSlot,
-                    config.durationInMonths || 2,
-                  ),
-                }
-              : {}),
+        const periodData =
+          !config.schedulingPeriodStartsAt || !config.schedulingPeriodEndsAt
+            ? {
+                schedulingPeriodStartsAt: firstSlot,
+                schedulingPeriodEndsAt: addMonths(
+                  firstSlot,
+                  config.durationInMonths || 2,
+                ),
+              }
+            : {};
+
+        // Same DRAFT-keeps-its-status rule as WEBINAR above, and the same
+        // resurrection guard.
+        const restamped = await tx.class.updateMany({
+          where: {
+            id: eventId,
+            status: { in: CLASS_EVENT_ALLOWED_FROM.SCHEDULED },
           },
+          data: { status: "SCHEDULED", ...periodData },
         });
+        if (restamped.count === 0) {
+          const current = await tx.class.findUnique({
+            where: { id: eventId },
+            select: { status: true },
+          });
+          if (current?.status !== "DRAFT") {
+            throw new IllegalTransitionError("Class", "SCHEDULED");
+          }
+          // A draft keeps DRAFT but still needs its scheduling period, or the
+          // slots it just received sit outside a window that is never set.
+          if (Object.keys(periodData).length > 0) {
+            await tx.class.updateMany({
+              where: { id: eventId, status: "DRAFT" },
+              data: periodData,
+            });
+          }
+        }
         break;
+      }
     }
   }
 
@@ -2586,7 +2903,7 @@ export class SlotAllocationService {
         consultantProfile = event.subscriptionPlan?.consultantProfile;
         config = {
           durationInMonths: event.subscriptionPlan?.durationInMonths,
-          callsPerWeek: event.subscriptionPlan?.callsPerWeek,
+          sessionsPerWeek: event.subscriptionPlan?.sessionsPerWeek,
           sessionDurationInHours:
             event.subscriptionPlan?.sessionDurationInHours,
           totalSessions: event.subscriptionPlan?.totalSessions,
@@ -2653,7 +2970,7 @@ export class SlotAllocationService {
 
         config = {
           durationInMonths: event.classPlan?.durationInMonths,
-          callsPerWeek: event.classPlan?.meetingsPerWeek,
+          sessionsPerWeek: event.classPlan?.sessionsPerWeek,
           sessionDurationInHours: sessionDuration,
           totalSessions: event.classPlan?.totalSessions,
           schedulingPeriodStartsAt: event.schedulingPeriodStartsAt ?? undefined,

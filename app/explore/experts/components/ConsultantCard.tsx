@@ -69,7 +69,7 @@ const BadgeRow = ({
 interface SubscriptionPlanCardData {
   price: number;
   durationInMonths: number;
-  callsPerWeek: number | null;
+  sessionsPerWeek: number | null;
   emailSupport: string | null;
   totalSessions: number | null;
 }
@@ -120,13 +120,14 @@ const SubscriptionPlanCard = ({
         </div>
       </div>
       <div className="space-y-2.5">
-        {plan.callsPerWeek !== null &&
-          plan.callsPerWeek !== undefined &&
-          plan.callsPerWeek > 0 && (
+        {plan.sessionsPerWeek !== null &&
+          plan.sessionsPerWeek !== undefined &&
+          plan.sessionsPerWeek > 0 && (
             <div className="flex items-center gap-2 text-sm">
               <CheckCircle2 className="w-4 h-4 text-emerald-500" />
               <span className="text-muted-foreground">
-                {plan.callsPerWeek} {plan.callsPerWeek === 1 ? "call" : "calls"}
+                {plan.sessionsPerWeek}{" "}
+                {plan.sessionsPerWeek === 1 ? "session" : "sessions"}
                 /week
               </span>
             </div>

@@ -100,7 +100,7 @@ export class SubscriptionService {
         description: plan.description,
         durationInMonths: plan.durationInMonths,
         sessionDurationInHours: plan.sessionDurationInHours,
-        callsPerWeek: plan.callsPerWeek,
+        sessionsPerWeek: plan.sessionsPerWeek,
         price: plan.price,
         priceCurrency: plan.priceCurrency,
         emailSupport: plan.emailSupport,
@@ -114,6 +114,14 @@ export class SubscriptionService {
         trialDurationMinutes: plan.trialDurationMinutes ?? 30,
         trialPriceInPaise: plan.trialPriceInPaise ?? 0,
         subscriptionContents: plan.subscriptionContents ?? [],
+        // ADR 24 positioning content. The endpoint has always validated and
+        // persisted these (see the nested faqs create); the service simply never
+        // sent them, so authoring through the planner produced a plan with no
+        // subtitle, audience, inclusions or FAQ no matter what was typed.
+        subtitle: plan.subtitle ?? null,
+        targetAudience: plan.targetAudience ?? [],
+        whatsIncluded: plan.whatsIncluded ?? [],
+        faqs: plan.faqs ?? [],
         consultantProfileId: consultantId,
         ...(isUpdate && plan.id ? { id: plan.id } : {}),
       };

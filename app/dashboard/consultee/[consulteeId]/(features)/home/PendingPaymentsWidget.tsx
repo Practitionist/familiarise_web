@@ -71,13 +71,12 @@ export function PendingPaymentsWidget({
   const [cancellingId, setCancellingId] = useState<string | null>(null);
   const [cancelNotice, setCancelNotice] = useState<string | null>(null);
 
-  // React Query owns the polling (perf RCA): the old manual setInterval
-  // restarted from zero on every tab switch (the widget remounts with the
-  // page) and kept firing with the window unfocused. refetchInterval is
-  // deduped across remounts via the shared cache and pauses while the
-  // window is unfocused (refetchIntervalInBackground defaults to false).
-  // Payment status is the one surface that wants focus freshness, so the
-  // global refetchOnWindowFocus=false is overridden here.
+  // Refreshes on focus only — no timer.
+  //
+  // This was a manual setInterval, then a React Query refetchInterval, and is
+  // now neither: someone waiting on a payment returns to the tab, and that is
+  // when the refetch should fire. The global refetchOnWindowFocus is false, so
+  // this query opts back in explicitly.
   const {
     data: pendingPayments = [],
     isLoading: loading,
@@ -94,7 +93,8 @@ export function PendingPaymentsWidget({
       const data = await response.json();
       return data.pendingPayments || [];
     },
-    refetchInterval: 120000,
+    // No interval: focus alone covers this. Someone waiting on a payment
+    // comes back to the tab, which is exactly when the refetch fires.
     refetchOnWindowFocus: true,
     staleTime: 30 * 1000,
   });

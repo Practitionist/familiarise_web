@@ -1,6 +1,10 @@
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import { SubscriptionPlanSchema } from "@/schemas/plans";
+import {
+  curriculumCreateNested,
+  faqCreateNested,
+} from "@/lib/api/plans/content";
 import { findOrCreateTopics, transformTopicsToStrings } from "@/lib/topics";
 import { SlotCalculationService } from "@/utils/slotAllocation/SlotCalculationService";
 import { marketplaceVisibilityWhere } from "@/lib/api/plans/visibility";
@@ -129,7 +133,7 @@ export async function POST(request: NextRequest) {
       metricStartDate,
       metricEndDate,
     );
-    const totalSessions = (validatedData.callsPerWeek || 1) * estimatedWeeks;
+    const totalSessions = (validatedData.sessionsPerWeek || 1) * estimatedWeeks;
     const totalHours = totalSessions * sessionDurationInHours;
 
     // Trial fields — Zod-validated; free by default until paid-trial
@@ -157,6 +161,8 @@ export async function POST(request: NextRequest) {
           contentUrl?: string;
           order: number;
           hoursAllotted?: number;
+          sectionLabel?: string | null;
+          outcomes?: string[];
         }>
       | undefined;
 
@@ -167,7 +173,7 @@ export async function POST(request: NextRequest) {
         durationInMonths: validatedData.durationInMonths,
         price: Math.round(validatedData.price),
         priceCurrency: validatedData.priceCurrency,
-        callsPerWeek: validatedData.callsPerWeek,
+        sessionsPerWeek: validatedData.sessionsPerWeek,
         sessionDurationInHours,
         totalSessions,
         totalHours,
@@ -177,6 +183,10 @@ export async function POST(request: NextRequest) {
         prerequisites: validatedData.prerequisites,
         materialProvided: validatedData.materialProvided,
         learningOutcomes: validatedData.learningOutcomes,
+        subtitle: validatedData.subtitle,
+        targetAudience: validatedData.targetAudience,
+        whatsIncluded: validatedData.whatsIncluded,
+        faqs: faqCreateNested(validatedData.faqs),
         trialEnabled,
         trialDurationMinutes,
         trialPriceInPaise,
@@ -187,21 +197,18 @@ export async function POST(request: NextRequest) {
             : undefined,
         subscriptionContents:
           subscriptionContents && subscriptionContents.length > 0
-            ? {
-                create: subscriptionContents.map((content) => ({
-                  title: content.title,
-                  description: content.description,
-                  contentType: content.contentType,
-                  contentUrl: content.contentUrl,
-                  order: content.order,
-                  hoursAllotted: content.hoursAllotted ?? 1.0,
+            ? curriculumCreateNested(
+                subscriptionContents.map((c) => ({
+                  ...c,
+                  hoursAllotted: c.hoursAllotted ?? 1.0,
                 })),
-              }
+              )
             : undefined,
       },
       include: {
         consultantProfile: true,
         topics: true,
+        faqs: { orderBy: { order: "asc" } },
         subscriptionContents: {
           orderBy: { order: "asc" },
         },

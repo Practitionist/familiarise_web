@@ -119,7 +119,7 @@ describe("client/server bucketing parity at day boundaries", () => {
     ) as TimeSlot[];
     const result = validateSubscriptionSlots(
       slots,
-      { callsPerWeek: 1, sessionDurationInHours: 1 },
+      { sessionsPerWeek: 1, sessionDurationInHours: 1 },
       limits(2, 4),
     );
     expect(result.dailyCallsValid).toBe(true);
@@ -141,7 +141,7 @@ describe("client/server bucketing parity at day boundaries", () => {
   });
 
   it("weekly limit counts a Sunday-01:00-IST session in the NEW IST week", () => {
-    // callsPerWeek = 1. Session A: Wed Jul 15 10:00Z. Session B starts
+    // sessionsPerWeek = 1. Session A: Wed Jul 15 10:00Z. Session B starts
     // Sat Jul 18 19:30Z = Sunday 01:00 IST — a NEW IST week, so both fit.
     const slots = [
       ...makeConsecutiveTimeSlots("2026-07-15T10:00:00.000Z", 2),
@@ -149,7 +149,7 @@ describe("client/server bucketing parity at day boundaries", () => {
     ] as TimeSlot[];
     const result = validateSubscriptionSlots(
       slots,
-      { callsPerWeek: 1, sessionDurationInHours: 1 },
+      { sessionsPerWeek: 1, sessionDurationInHours: 1 },
       limits(2, 4),
     );
     expect(result.weeklyCallsValid).toBe(true);
@@ -163,11 +163,11 @@ describe("client/server bucketing parity at day boundaries", () => {
     ] as TimeSlot[];
     const result = validateSubscriptionSlots(
       slots,
-      { callsPerWeek: 1, sessionDurationInHours: 1 },
+      { sessionsPerWeek: 1, sessionDurationInHours: 1 },
       limits(2, 4),
     );
     expect(result.weeklyCallsValid).toBe(false);
-    expect(result.weeklyCallsError).toContain("Maximum 1 calls per week");
+    expect(result.weeklyCallsError).toContain("Maximum 1 per week");
   });
 
   it("client groupSlotsByDay and SlotCalculationService.groupSlotsByDay agree on boundary slots", () => {

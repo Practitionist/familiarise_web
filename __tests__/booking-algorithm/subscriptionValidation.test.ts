@@ -46,7 +46,7 @@ function createService(
 describe("Bug A Fix: Week key format consistency", () => {
   it("should use matching key formats for proposed slots and weekly info lookup", async () => {
     const { service } = createService({
-      subscriptionPlan: makeSubscriptionPlan({ callsPerWeek: 1 }),
+      subscriptionPlan: makeSubscriptionPlan({ sessionsPerWeek: 1 }),
     });
 
     // Propose 2 consecutive slots (1 call) in week of Jan 5
@@ -69,7 +69,7 @@ describe("Bug A Fix: Week key format consistency", () => {
   it("should enforce proposed slot weekly limits (was broken before fix)", async () => {
     const { service } = createService({
       subscriptionPlan: makeSubscriptionPlan({
-        callsPerWeek: 1,
+        sessionsPerWeek: 1,
         sessionDurationInHours: 1,
       }),
     });
@@ -105,7 +105,7 @@ describe("Bug B Fix: Appointment counting (1 appointment = 1 call)", () => {
     const { service } = createService(
       {
         subscriptionPlan: makeSubscriptionPlan({
-          callsPerWeek: 2,
+          sessionsPerWeek: 2,
           sessionDurationInHours: 1,
         }),
       },
@@ -141,7 +141,7 @@ describe("Bug B Fix: Appointment counting (1 appointment = 1 call)", () => {
     const { service } = createService(
       {
         subscriptionPlan: makeSubscriptionPlan({
-          callsPerWeek: 2,
+          sessionsPerWeek: 2,
           sessionDurationInHours: 1,
         }),
       },
@@ -161,7 +161,7 @@ describe("Bug B Fix: Appointment counting (1 appointment = 1 call)", () => {
     const { service } = createService(
       {
         subscriptionPlan: makeSubscriptionPlan({
-          callsPerWeek: 2,
+          sessionsPerWeek: 2,
           sessionDurationInHours: 0.5,
         }),
       },
@@ -185,7 +185,7 @@ describe("Bug B Fix: Appointment counting (1 appointment = 1 call)", () => {
     const { service } = createService(
       {
         subscriptionPlan: makeSubscriptionPlan({
-          callsPerWeek: 2,
+          sessionsPerWeek: 2,
           sessionDurationInHours: 1,
         }),
       },
@@ -221,7 +221,7 @@ describe("Bug C Fix: Weekly limit validation actually catches violations", () =>
     const { service } = createService(
       {
         subscriptionPlan: makeSubscriptionPlan({
-          callsPerWeek: 1,
+          sessionsPerWeek: 1,
           sessionDurationInHours: 1,
         }),
       },
@@ -255,7 +255,7 @@ describe("Bug C Fix: Weekly limit validation actually catches violations", () =>
     const { service } = createService(
       {
         subscriptionPlan: makeSubscriptionPlan({
-          callsPerWeek: 1,
+          sessionsPerWeek: 1,
           sessionDurationInHours: 1,
         }),
       },
@@ -277,7 +277,7 @@ describe("Bug C Fix: Weekly limit validation actually catches violations", () =>
     const { service } = createService(
       {
         subscriptionPlan: makeSubscriptionPlan({
-          callsPerWeek: 2,
+          sessionsPerWeek: 2,
           sessionDurationInHours: 1,
         }),
       },
@@ -320,7 +320,7 @@ describe("Subscription period validation", () => {
   it("should accept slots within subscription period", async () => {
     const { service } = createService({
       subscriptionPlan: makeSubscriptionPlan({
-        callsPerWeek: 2,
+        sessionsPerWeek: 2,
         sessionDurationInHours: 1,
       }),
     });
@@ -343,11 +343,11 @@ describe("Subscription period validation", () => {
 // ─── Total Call Limit ───────────────────────────────────────────────────────
 
 describe("Total call limit validation", () => {
-  it("should set maxTotalCalls based on weeks × callsPerWeek", async () => {
+  it("should set maxTotalCalls based on weeks × sessionsPerWeek", async () => {
     const { service } = createService({
       schedulingPeriodStartsAt: new Date("2025-01-06T00:00:00.000Z"), // Mon
       schedulingPeriodEndsAt: new Date("2025-01-31T23:59:59.000Z"), // Fri
-      subscriptionPlan: makeSubscriptionPlan({ callsPerWeek: 2 }),
+      subscriptionPlan: makeSubscriptionPlan({ sessionsPerWeek: 2 }),
     });
 
     const result = await service.validateSubscriptionSlots("sub-1", []);
@@ -380,7 +380,7 @@ describe("excludeAppointmentIds", () => {
     const { service, mockPrisma } = createService(
       {
         subscriptionPlan: makeSubscriptionPlan({
-          callsPerWeek: 1,
+          sessionsPerWeek: 1,
           sessionDurationInHours: 0.5,
         }),
       },
@@ -406,7 +406,7 @@ describe("Weekly info generation", () => {
     const { service } = createService({
       schedulingPeriodStartsAt: new Date("2025-01-06T00:00:00.000Z"),
       schedulingPeriodEndsAt: new Date("2025-01-31T23:59:59.000Z"),
-      subscriptionPlan: makeSubscriptionPlan({ callsPerWeek: 2 }),
+      subscriptionPlan: makeSubscriptionPlan({ sessionsPerWeek: 2 }),
     });
 
     const result = await service.validateSubscriptionSlots("sub-1", []);
@@ -420,7 +420,7 @@ describe("Weekly info generation", () => {
     const { service } = createService({
       schedulingPeriodStartsAt: new Date("2025-01-07T00:00:00.000Z"), // Tue
       schedulingPeriodEndsAt: new Date("2025-01-10T23:59:59.000Z"), // Fri
-      subscriptionPlan: makeSubscriptionPlan({ callsPerWeek: 1 }),
+      subscriptionPlan: makeSubscriptionPlan({ sessionsPerWeek: 1 }),
     });
 
     const result = await service.validateSubscriptionSlots("sub-1", []);
@@ -442,7 +442,7 @@ describe("Weekly info generation", () => {
     const { service } = createService({
       schedulingPeriodStartsAt: new Date("2025-01-06T00:00:00.000Z"),
       schedulingPeriodEndsAt: new Date("2025-02-02T23:59:59.000Z"),
-      subscriptionPlan: makeSubscriptionPlan({ callsPerWeek: 1 }),
+      subscriptionPlan: makeSubscriptionPlan({ sessionsPerWeek: 1 }),
     });
 
     const result = await service.validateSubscriptionSlots("sub-1", []);
@@ -462,7 +462,7 @@ describe("Incomplete proposed calls", () => {
   it("should not count incomplete slot group as a proposed call", async () => {
     const { service } = createService({
       subscriptionPlan: makeSubscriptionPlan({
-        callsPerWeek: 2,
+        sessionsPerWeek: 2,
         sessionDurationInHours: 1, // requires 2 consecutive slots
       }),
     });
@@ -479,7 +479,7 @@ describe("Incomplete proposed calls", () => {
   it("should not count non-consecutive slots as a proposed call", async () => {
     const { service } = createService({
       subscriptionPlan: makeSubscriptionPlan({
-        callsPerWeek: 2,
+        sessionsPerWeek: 2,
         sessionDurationInHours: 1,
       }),
     });
@@ -512,7 +512,7 @@ describe("getAvailableWeeksForSubscription", () => {
     const { service } = createService(
       {
         subscriptionPlan: makeSubscriptionPlan({
-          callsPerWeek: 1,
+          sessionsPerWeek: 1,
           sessionDurationInHours: 1,
         }),
       },
@@ -542,7 +542,7 @@ describe("canScheduleInWeek", () => {
 
     const { service } = createService({
       subscriptionPlan: makeSubscriptionPlan({
-        callsPerWeek: 2,
+        sessionsPerWeek: 2,
         sessionDurationInHours: 1,
       }),
     });
@@ -570,7 +570,7 @@ describe("canScheduleInWeek", () => {
     const { service } = createService(
       {
         subscriptionPlan: makeSubscriptionPlan({
-          callsPerWeek: 1,
+          sessionsPerWeek: 1,
           sessionDurationInHours: 1,
         }),
       },
@@ -653,7 +653,7 @@ describe("Slot consecutiveness tolerance", () => {
   it("should accept slots with sub-second precision difference", async () => {
     const { service } = createService({
       subscriptionPlan: makeSubscriptionPlan({
-        callsPerWeek: 2,
+        sessionsPerWeek: 2,
         sessionDurationInHours: 1,
       }),
     });
@@ -681,7 +681,7 @@ describe("Valid complete submission", () => {
       schedulingPeriodStartsAt: new Date("2025-01-06T00:00:00.000Z"),
       schedulingPeriodEndsAt: new Date("2025-02-02T23:59:59.000Z"),
       subscriptionPlan: makeSubscriptionPlan({
-        callsPerWeek: 1,
+        sessionsPerWeek: 1,
         sessionDurationInHours: 1,
       }),
     });

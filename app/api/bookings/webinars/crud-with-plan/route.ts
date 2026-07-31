@@ -1,5 +1,9 @@
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
+import {
+  faqCreateNested,
+  faqReplaceNested,
+} from "@/lib/api/plans/content";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { WebinarPlanSchema } from "@/schemas/plans";
@@ -110,6 +114,10 @@ export async function POST(request: NextRequest) {
       prerequisites,
       materialProvided,
       learningOutcomes,
+      subtitle,
+      targetAudience,
+      whatsIncluded,
+      faqs,
       priceCurrency,
       consultantProfileId,
       topics: topicNames,
@@ -167,20 +175,30 @@ export async function POST(request: NextRequest) {
           durationInHours,
         });
       } else {
-        // Handle case where refine might somehow miss an invalid date string
-        // Or if null was somehow passed despite schema (shouldn't happen)
-        console.warn(
-          "Invalid date format received for scheduledAt despite validation:",
-          scheduledAt,
+        // Was a silent skip: startTime stayed undefined, the nested appointment
+        // create was replaced with `undefined`, and the result was a published
+        // webinar with no session and nothing to join. A time that does not
+        // parse is bad input, not a reason to ship a broken offering.
+        return NextResponse.json(
+          {
+            error:
+              "The scheduled time could not be read. Please pick the date and time again.",
+            code: "INVALID_SCHEDULED_AT",
+          },
+          { status: 400 },
         );
-        // startTime and endTime remain undefined
       }
     } else {
       console.log(
-        "No scheduledAt provided. Webinar will be created without an initial appointment.",
+        "No scheduledAt provided. Webinar will be created as a DRAFT with no session yet.",
       );
-      // startTime and endTime remain undefined
+      // startTime and endTime remain undefined — the webinar is created in
+      // DRAFT and cannot be published until a session exists.
     }
+
+    // A webinar with no session is authored, not live. DRAFT keeps it off the
+    // marketplace and out of the detail pages for everyone but its owner.
+    const initialStatus = startTime ? "SCHEDULED" : "DRAFT";
 
     // Create webinar plan, instance, and appointment in a transaction
     const result = await prisma.$transaction(
@@ -212,6 +230,10 @@ export async function POST(request: NextRequest) {
             prerequisites,
             materialProvided,
             learningOutcomes,
+            subtitle,
+            targetAudience,
+            whatsIncluded,
+            faqs: faqCreateNested(faqs),
             certificateProvided: validatedData.certificateProvided,
             recordingEnabled: validatedData.recordingEnabled,
             consultantProfile: { connect: { id: consultantProfileId } },
@@ -223,6 +245,7 @@ export async function POST(request: NextRequest) {
           include: {
             consultantProfile: true,
             topics: true,
+            faqs: { orderBy: { order: "asc" } },
           },
         });
 
@@ -237,7 +260,9 @@ export async function POST(request: NextRequest) {
 
         const webinar = await tx.webinar.create({
           data: {
-            status, // Use validated status
+            // A session-less webinar is authored, not live — see initialStatus.
+            // The client cannot promote it past DRAFT by sending a status.
+            status: initialStatus === "DRAFT" ? "DRAFT" : status,
             webinarPlan: { connect: { id: webinarPlan.id } },
             // Create the appointment at the same time
             // Ensure startTime and endTime are valid before creating appointment
@@ -392,6 +417,10 @@ export async function PATCH(request: NextRequest) {
       prerequisites,
       materialProvided,
       learningOutcomes,
+      subtitle,
+      targetAudience,
+      whatsIncluded,
+      faqs,
       consultantProfileId,
       topics: topicNames,
       status,
@@ -610,6 +639,12 @@ export async function PATCH(request: NextRequest) {
           updateData.recordingEnabled = recordingEnabled;
         if (learningOutcomes !== undefined)
           updateData.learningOutcomes = learningOutcomes;
+        if (subtitle !== undefined) updateData.subtitle = subtitle;
+        if (targetAudience !== undefined)
+          updateData.targetAudience = targetAudience;
+        if (whatsIncluded !== undefined)
+          updateData.whatsIncluded = whatsIncluded;
+        if (faqs !== undefined) updateData.faqs = faqReplaceNested(faqs);
         if (consultantProfileId !== undefined)
           updateData.consultantProfile = {
             connect: { id: consultantProfileId },

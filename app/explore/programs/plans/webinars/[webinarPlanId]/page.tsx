@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import { canViewPlanDetail } from "@/lib/data/plan-viewable";
 import { getWebinarPlanDetail } from "@/lib/data/plan-details";
 import { WebinarDetails } from "./components/WebinarDetails";
 
@@ -14,6 +15,13 @@ export default async function WebinarDetailsPage({
   const webinarData = await getWebinarPlanDetail(webinarPlanId);
 
   if (!webinarData) {
+    notFound();
+  }
+
+  // #726 — a detail page is reachable by id, so it needs the same
+  // gate the list surfaces get: ORG_ONLY stays inside the owning org, and an
+  // archived plan is not a live page.
+  if (!(await canViewPlanDetail(webinarData))) {
     notFound();
   }
 

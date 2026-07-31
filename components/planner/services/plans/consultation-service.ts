@@ -107,6 +107,14 @@ export class ConsultationService {
         materialProvided: plan.materialProvided,
         learningOutcomes: plan.learningOutcomes,
         topics: plan.topics ?? [],
+        // ADR 24 positioning content. The endpoint has always validated and
+        // persisted these (see the nested faqs create); the service simply never
+        // sent them, so authoring through the planner produced a plan with no
+        // subtitle, audience, inclusions or FAQ no matter what was typed.
+        subtitle: plan.subtitle ?? null,
+        targetAudience: plan.targetAudience ?? [],
+        whatsIncluded: plan.whatsIncluded ?? [],
+        faqs: plan.faqs ?? [],
         consultantProfileId: consultantId,
         ...(isUpdate && plan.id ? { id: plan.id } : {}),
       };

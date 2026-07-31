@@ -149,7 +149,7 @@ describe("manual allocation: transaction race window", () => {
           slotsOfAvailabilityCustom: [],
         },
         durationInMonths: 1,
-        callsPerWeek: 1,
+        sessionsPerWeek: 1,
         sessionDurationInHours: 1,
         totalSessions: 1,
       },

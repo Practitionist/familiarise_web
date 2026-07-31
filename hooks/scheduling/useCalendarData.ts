@@ -1,4 +1,5 @@
 import { useState, useCallback, useMemo, useEffect } from "react";
+import { reportSentryError } from "@/lib/observability/report";
 import {
   startOfWeek,
   endOfWeek,
@@ -43,6 +44,17 @@ export interface UseCalendarDataOptions {
    * fetch so the server can bucket `weeklyConfirmedCallCounts` the same way
    * the interactive weekly-limit guard needs it. Ignored for other event types. */
   sessionDurationInHours?: number;
+  /** The user whose calendar is being booked. Allocation counts their bookings
+   * with ANY consultant as occupied, so passing it keeps the grid from showing
+   * cells that allocation will reject. */
+  consulteeUserId?: string;
+  /**
+   * Request the per-interval tooltip metadata (title/participant of an
+   * overlapping appointment). Defaults FALSE — the route 403s the request for
+   * anyone who is not the owning consultant, so a surface that asks for it
+   * speculatively loses its whole calendar rather than losing a tooltip.
+   */
+  includeAppointmentDetails?: boolean;
 }
 
 export interface TimeSlot {
@@ -207,6 +219,8 @@ export function useCalendarData(
     mode,
     allowedEnd,
     sessionDurationInHours,
+    consulteeUserId,
+    includeAppointmentDetails = false,
   } = options;
   const { toast } = useToast();
 
@@ -255,6 +269,10 @@ export function useCalendarData(
       setConsultantDetails(data);
     } catch (error) {
       console.error("Error fetching consultant details:", error);
+      // Not captured here — AllocationService.fetchConsultantData already
+      // reports this exact error (with httpStatus-based expected
+      // classification) before rethrowing; a second capture here would only
+      // add a worse, always-unexpected duplicate.
       const errorMessage =
         error instanceof Error
           ? error.message
@@ -286,16 +304,17 @@ export function useCalendarData(
             ? endOfWeek(currentDate)
             : endOfMonth(currentDate);
 
-      // #997 Phase 2 — this hook only ever backs the consultant's OWN
-      // Allocate-Slots calendar (never the public consultee/trials one), so
-      // always request the server-computed tooltip/orphan-slot detail. The
-      // route re-verifies ownership server-side regardless of this flag.
+      // #997 Phase 2 — the server-computed tooltip/orphan-slot detail. The
+      // route re-verifies ownership regardless of this flag, and 403s rather
+      // than downgrading, so only a surface that KNOWS it is the owning
+      // consultant may ask for it.
       const data = await AllocationService.fetchAvailabilitySlots(
         consultantId,
         startDate,
         endDate,
         undefined,
-        true,
+        includeAppointmentDetails,
+        consulteeUserId,
       );
 
       // Defensive: Validate data structure before using
@@ -336,6 +355,8 @@ export function useCalendarData(
       setRawAvailabilitySlots(validatedData);
     } catch (error) {
       console.error("Error fetching availability slots:", error);
+      // Not captured here — AllocationService.fetchAvailabilitySlots already
+      // reports this exact error (see fetchConsultantDetails above).
       const errorMessage =
         error instanceof Error ? error.message : "Failed to fetch availability";
       setError(errorMessage);
@@ -345,7 +366,16 @@ export function useCalendarData(
         description: errorMessage,
       });
     }
-  }, [consultantId, toast, view, currentDate, mode, allowedEnd]);
+  }, [
+    consultantId,
+    toast,
+    view,
+    currentDate,
+    mode,
+    allowedEnd,
+    consulteeUserId,
+    includeAppointmentDetails,
+  ]);
 
   const fetchEventSlots = useCallback(async (): Promise<void> => {
     // Fetch event slots for ALL event types (subscription, consultation, webinar, class)
@@ -443,6 +473,10 @@ export function useCalendarData(
       }
     } catch (error) {
       console.error("Error fetching event slots:", error);
+      // Silent degrade to empty (no toast/setError, unlike the two siblings
+      // above) — the calendar just shows no "This Event" slots, which reads
+      // as "nothing booked yet" rather than "the fetch broke". Not captured
+      // here either — AllocationService.fetchEventSlots already reports it.
       setEventSlots([]);
       setEventTentativeSlots([]);
       setWeeklyConfirmedCallCounts({});
@@ -616,6 +650,13 @@ export function useCalendarData(
       ]);
     } catch (error) {
       console.error("Error fetching calendar data:", error);
+      // Believed unreachable: the three awaited fetchers each self-catch and
+      // never reject, so Promise.all here shouldn't throw. Capturing anyway
+      // (not tagged expected) — if this ever fires, that invariant broke.
+      reportSentryError(error, {
+        subsystem: "client",
+        tags: { feature: "scheduling-calendar" },
+      });
       const errorMessage =
         error instanceof Error
           ? error.message
@@ -634,6 +675,11 @@ export function useCalendarData(
       Promise.all([fetchConsultantDetails(), fetchEventSlots()]).catch(
         (error) => {
           console.error("Error fetching date-independent data:", error);
+          // Believed unreachable — see fetchAllData's identical comment.
+          reportSentryError(error, {
+            subsystem: "client",
+            tags: { feature: "scheduling-calendar" },
+          });
           setError(
             error instanceof Error
               ? error.message
@@ -659,6 +705,11 @@ export function useCalendarData(
       fetchAvailabilitySlots()
         .catch((error) => {
           console.error("Error fetching date-dependent data:", error);
+          // Believed unreachable — see fetchAllData's identical comment.
+          reportSentryError(error, {
+            subsystem: "client",
+            tags: { feature: "scheduling-calendar" },
+          });
           setError(
             error instanceof Error
               ? error.message

@@ -6,6 +6,7 @@
  */
 
 import * as Sentry from "@sentry/nextjs";
+import { reportSentryError, reportSentryMessage } from "@/lib/observability/report";
 import crypto from "crypto";
 
 // ============================================
@@ -317,7 +318,14 @@ export class RazorpayPayoutsService {
       if (typeof res.balance === "number") return res.balance;
       const first = res.balances?.[0]?.balance;
       return typeof first === "number" ? first : null;
-    } catch {
+    } catch (error) {
+      // Genuinely unexpected (network/shape/auth) — the fail-open null return
+      // is a deliberate caller-side decision (assertPayoutBalance), not a
+      // claim that this failure is routine.
+      reportSentryError(error, {
+        subsystem: "payments",
+        tags: { provider: "razorpay" },
+      });
       return null;
     }
   }
@@ -422,13 +430,33 @@ export class RazorpayPayoutsService {
     // header could turn signature rejection into an unhandled exception.
     // Compare lengths first, exactly as app/api/webhooks/utils.ts does.
     if (signature.length !== expectedSignature.length) {
+      // Internet-facing and hostile traffic can drive this arbitrarily high —
+      // captured at warning/expected so it never reads as a platform fault.
+      // Candidate for a Sentry inbound rate-limit on this event if volume
+      // ever needs bounding.
+      reportSentryMessage("RazorpayX webhook signature length mismatch", {
+        subsystem: "payments",
+        tags: { provider: "razorpay" },
+        expected: true,
+        level: "warning",
+      });
       return false;
     }
 
-    return crypto.timingSafeEqual(
+    const valid = crypto.timingSafeEqual(
       Buffer.from(signature),
       Buffer.from(expectedSignature),
     );
+    if (!valid) {
+      // Same rate-limit candidacy note as above.
+      reportSentryMessage("RazorpayX webhook signature mismatch", {
+        subsystem: "payments",
+        tags: { provider: "razorpay" },
+        expected: true,
+        level: "warning",
+      });
+    }
+    return valid;
   }
 
   /**
@@ -527,7 +555,14 @@ export function isRazorpayPayoutsConfigured(): boolean {
   try {
     const service = getRazorpayPayoutsService();
     return service.isConfigured();
-  } catch {
+  } catch (error) {
+    // Constructor throws only on missing credentials — a modelled
+    // "not configured yet" outcome (e.g. local/dev env), not a fault.
+    reportSentryError(error, {
+      subsystem: "payments",
+      tags: { provider: "razorpay" },
+      expected: true,
+    });
     return false;
   }
 }

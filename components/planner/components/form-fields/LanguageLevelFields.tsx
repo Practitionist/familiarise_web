@@ -16,19 +16,13 @@ import {
 import { FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import iso6391 from "iso-639-1";
 import { cn } from "@/utils/tailwind";
-
-const DEFAULT_LEVEL_OPTIONS = [
-  "Beginner",
-  "Intermediate",
-  "Advanced",
-  "Expert",
-];
+import { PlanLevel } from "@prisma/client";
+import { PLAN_LEVEL_ORDER, planLevelLabel } from "@/lib/labels/plan-labels";
 
 interface LanguageLevelFieldsProps<T extends FieldValues = FieldValues> {
   control: Control<T>;
   languageName?: string;
   levelName?: string;
-  levelOptions?: string[];
   className?: string;
   gridCols?: 1 | 2;
 }
@@ -37,7 +31,6 @@ export function LanguageLevelFields<T extends FieldValues = FieldValues>({
   control,
   languageName = "language",
   levelName = "level",
-  levelOptions = DEFAULT_LEVEL_OPTIONS,
   className,
   gridCols = 2,
 }: Readonly<LanguageLevelFieldsProps<T>>) {
@@ -56,7 +49,7 @@ export function LanguageLevelFields<T extends FieldValues = FieldValues>({
   } = useController({
     name: levelName as FieldPath<T>,
     control,
-    defaultValue: "Beginner" as T[string],
+    defaultValue: PlanLevel.BEGINNER as T[string],
   });
 
   const languageNames = iso6391.getAllNames();
@@ -98,9 +91,9 @@ export function LanguageLevelFields<T extends FieldValues = FieldValues>({
             <SelectValue placeholder="Select level" />
           </SelectTrigger>
           <SelectContent>
-            {levelOptions.map((level) => (
+            {PLAN_LEVEL_ORDER.map((level) => (
               <SelectItem key={level} value={level}>
-                {level}
+                {planLevelLabel(level)}
               </SelectItem>
             ))}
           </SelectContent>

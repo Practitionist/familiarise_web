@@ -511,7 +511,7 @@ describe("validate: per-day session cap (#898)", () => {
       "class-1",
       futureSlots(4, "2025-06-02T09:00:00Z"), // 09:00–10:00 + 10:00–11:00, Monday
       weeklyConsultant,
-      { callsPerWeek: 3, sessionDurationInHours: 1 },
+      { sessionsPerWeek: 3, sessionDurationInHours: 1 },
     );
     expect(result.errors.some((e) => e.includes("DAILY_LIMIT"))).toBe(false);
   });
@@ -522,7 +522,7 @@ describe("validate: per-day session cap (#898)", () => {
       "class-1",
       futureSlots(6, "2025-06-02T09:00:00Z"), // three 1h sessions, all Monday
       weeklyConsultant,
-      { callsPerWeek: 3, sessionDurationInHours: 1 },
+      { sessionsPerWeek: 3, sessionDurationInHours: 1 },
     );
     expect(result.isValid).toBe(false);
     expect(result.errors.some((e) => e.includes("DAILY_LIMIT"))).toBe(true);
@@ -552,7 +552,7 @@ describe("validate: per-day session cap (#898)", () => {
       "class-1",
       futureSlots(2, "2025-06-02T14:00:00Z"), // one more session, same Monday
       weeklyConsultant,
-      { callsPerWeek: 5, sessionDurationInHours: 1 },
+      { sessionsPerWeek: 5, sessionDurationInHours: 1 },
     );
     expect(result.isValid).toBe(false);
     expect(result.errors.some((e) => e.includes("DAILY_LIMIT"))).toBe(true);
@@ -624,7 +624,7 @@ describe("validate: webinar event", () => {
 // ─── validate: class ────────────────────────────────────────────────────────
 
 describe("validate: class event", () => {
-  it("should reject when callsPerWeek is missing", async () => {
+  it("should reject when sessionsPerWeek is missing", async () => {
     const result = await service.validate(
       "class",
       "event-1",
@@ -642,7 +642,7 @@ describe("validate: class event", () => {
       "event-1",
       futureSlots(2, "2025-06-02T10:00:00Z"),
       weeklyConsultant,
-      { callsPerWeek: 2 },
+      { sessionsPerWeek: 2 },
     );
     expect(result.isValid).toBe(false);
     expect(result.errors[0]).toContain("Session duration is required");
@@ -655,7 +655,7 @@ describe("validate: class event", () => {
       "event-1",
       futureSlots(2, "2025-06-02T10:00:00Z"),
       weeklyConsultant,
-      { callsPerWeek: 2, sessionDurationInHours: 1 },
+      { sessionsPerWeek: 2, sessionDurationInHours: 1 },
     );
     expect(result.isValid).toBe(true);
   });
@@ -666,7 +666,7 @@ describe("validate: class event", () => {
       "event-1",
       futureSlots(3, "2025-06-02T10:00:00Z"),
       weeklyConsultant,
-      { callsPerWeek: 2, sessionDurationInHours: 1 },
+      { sessionsPerWeek: 2, sessionDurationInHours: 1 },
     );
     expect(result.isValid).toBe(false);
     expect(result.errors.some((e) => e.includes("incomplete session"))).toBe(
@@ -681,7 +681,7 @@ describe("validate: class event", () => {
       "event-1",
       futureSlots(6, "2025-06-02T10:00:00Z"),
       weeklyConsultant,
-      { callsPerWeek: 2, sessionDurationInHours: 1 },
+      { sessionsPerWeek: 2, sessionDurationInHours: 1 },
     );
     expect(result.isValid).toBe(false);
     expect(result.errors.some((e) => e.includes("max is 2"))).toBe(true);
@@ -717,7 +717,7 @@ describe("validate: class event", () => {
       "event-1",
       slots,
       crossMidnightConsultant,
-      { callsPerWeek: 2, sessionDurationInHours: 1 },
+      { sessionsPerWeek: 2, sessionDurationInHours: 1 },
     );
     expect(result.isValid).toBe(true);
   });
@@ -734,7 +734,7 @@ describe("validate: class event", () => {
       "event-1",
       slots,
       weeklyConsultant,
-      { callsPerWeek: 2, sessionDurationInHours: 1 },
+      { sessionsPerWeek: 2, sessionDurationInHours: 1 },
     );
     expect(result.isValid).toBe(false);
     expect(result.errors.some((e) => e.includes("consecutive"))).toBe(true);
@@ -761,14 +761,14 @@ describe("validate: class event", () => {
         },
       ]);
 
-      // meetingsPerWeek = 2; reschedule proposes 2 NEW sessions in the same week.
+      // sessionsPerWeek = 2; reschedule proposes 2 NEW sessions in the same week.
       // 2 proposed + 1 confirmed = 3 > 2 → must fail (matches the allocator).
       const result = await service.validate(
         "class",
         "class-rv5",
         [...session1, ...session2],
         weeklyConsultant,
-        { callsPerWeek: 2, sessionDurationInHours: 1 },
+        { sessionsPerWeek: 2, sessionDurationInHours: 1 },
       );
 
       expect(result.isValid).toBe(false);
@@ -795,7 +795,7 @@ describe("validate: class event", () => {
         "class-rv5",
         [...session1, ...session2],
         weeklyConsultant,
-        { callsPerWeek: 2, sessionDurationInHours: 1 },
+        { sessionsPerWeek: 2, sessionDurationInHours: 1 },
       );
 
       expect(result.isValid).toBe(true);
@@ -861,7 +861,7 @@ describe("validate: subscription slot count modulo", () => {
       schedulingPeriodStartsAt: new Date("2025-06-01T00:00:00Z"),
       schedulingPeriodEndsAt: new Date("2025-06-30T23:59:59Z"),
       subscriptionPlan: {
-        callsPerWeek: 5,
+        sessionsPerWeek: 5,
         durationInHours: 1,
       },
     });
@@ -887,7 +887,7 @@ describe("validate: subscription slot count modulo", () => {
       schedulingPeriodStartsAt: new Date("2025-06-01T00:00:00Z"),
       schedulingPeriodEndsAt: new Date("2025-06-30T23:59:59Z"),
       subscriptionPlan: {
-        callsPerWeek: 5,
+        sessionsPerWeek: 5,
         durationInHours: 0.5,
       },
     });
@@ -918,7 +918,7 @@ describe("#676 AE-1: validate threads consulteeUserId into the conflict scan", (
       weeklyConsultant,
       { durationInHours: 1 },
       undefined,
-      "consultee-ae1",
+      { consulteeUserId: "consultee-ae1" },
     );
     // The single batched conflict query must scan the consultee's calendar too.
     expect(

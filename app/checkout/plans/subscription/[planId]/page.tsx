@@ -556,8 +556,13 @@ export default function SubscriptionCheckoutPage({
               <div>{planData?.data?.durationInMonths || 1} months</div>
             </div>
             <div className="flex items-center justify-between">
-              <div className="text-muted-foreground">Calls per Week</div>
-              <div>{planData?.data?.callsPerWeek || 1} calls</div>
+              <div className="text-muted-foreground">Sessions per Week</div>
+              <div>
+                {planData?.data?.sessionsPerWeek || 1}{" "}
+                {(planData?.data?.sessionsPerWeek || 1) === 1
+                  ? "session"
+                  : "sessions"}
+              </div>
             </div>
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Session Duration</div>
@@ -567,7 +572,7 @@ export default function SubscriptionCheckoutPage({
               <div className="text-muted-foreground">Total Sessions</div>
               <div>
                 {planData?.data?.totalSessions ||
-                  (planData?.data?.callsPerWeek || 1) *
+                  (planData?.data?.sessionsPerWeek || 1) *
                     (planData?.data?.durationInMonths || 1) *
                     4}{" "}
                 sessions
@@ -577,7 +582,7 @@ export default function SubscriptionCheckoutPage({
               <div className="text-muted-foreground">Total Hours</div>
               <div>
                 {planData?.data?.totalHours ||
-                  (planData?.data?.callsPerWeek || 1) *
+                  (planData?.data?.sessionsPerWeek || 1) *
                     (planData?.data?.durationInMonths || 1) *
                     4 *
                     (planData?.data?.sessionDurationInHours || 1)}{" "}
@@ -736,18 +741,18 @@ export default function SubscriptionCheckoutPage({
                   <ul className="list-disc">
                     <li>
                       {planData?.data?.totalSessions ||
-                        (planData?.data?.callsPerWeek || 1) *
+                        (planData?.data?.sessionsPerWeek || 1) *
                           (planData?.data?.durationInMonths || 1) *
                           4}{" "}
                       total sessions (
                       {planData?.data?.totalHours ||
-                        (planData?.data?.callsPerWeek || 1) *
+                        (planData?.data?.sessionsPerWeek || 1) *
                           (planData?.data?.durationInMonths || 1) *
                           4 *
                           (planData?.data?.sessionDurationInHours || 1)}{" "}
                       hours)
                     </li>
-                    <li>{planData?.data?.callsPerWeek || 1} calls per week</li>
+                    <li>{planData?.data?.sessionsPerWeek || 1} sessions per week</li>
                     <li>
                       {planData?.data?.sessionDurationInHours || 1} hour
                       sessions

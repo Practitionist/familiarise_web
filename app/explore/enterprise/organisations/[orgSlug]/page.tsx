@@ -15,12 +15,26 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import prisma from "@/lib/prisma";
 import { fallbackOnTransientDbError } from "@/lib/data/fail-open";
+import { eventPlanDiscoverableWhere } from "@/lib/api/plans/visibility";
+
 import {
   ORG_DIRECTORY_TYPE_LABEL,
   ORG_SIZE_BUCKET_LABEL,
 } from "@/lib/labels/org-labels";
 import { cache } from "react";
 import type { Metadata } from "next";
+
+// One select for all four plan relations so the org card shape cannot drift
+// per type. `subtitle` is the line the card renders under the title.
+const PUBLIC_PLAN_CARD_SELECT = {
+  id: true,
+  title: true,
+  subtitle: true,
+  description: true,
+  price: true,
+  priceCurrency: true,
+} as const;
+
 
 // Stream behind the static layout's instant skeleton; don't prerender at build (#932).
 // (Replaces the prior `revalidate = 60`, inert while the layout forced dynamic.)
@@ -53,48 +67,29 @@ const fetchOrgBySlug = cache(async (slug: string) => {
       // #778 elegance — the org "catalog" is its org-owned per-type plans
       // (organizationId set on the plan) that are publicly visible. The standalone
       // OrganizationPlan model was collapsed into these (one bookable shape).
+      //
+      // #catalog-archive — this page previously filtered `visibility` but not
+      // `archivedAt`, so a withdrawn plan still rendered here and linked
+      // straight into checkout. It was the one public surface bypassing
+      // eventPlanDiscoverableWhere(); all four now carry the archive gate.
       consultationPlans: {
-        where: { visibility: { in: ["PUBLIC", "ORG_AND_PUBLIC"] } },
-        select: {
-          id: true,
-          title: true,
-          description: true,
-          price: true,
-          priceCurrency: true,
-        },
+        where: eventPlanDiscoverableWhere(),
+        select: PUBLIC_PLAN_CARD_SELECT,
         take: 6,
       },
       subscriptionPlans: {
-        where: { visibility: { in: ["PUBLIC", "ORG_AND_PUBLIC"] } },
-        select: {
-          id: true,
-          title: true,
-          description: true,
-          price: true,
-          priceCurrency: true,
-        },
+        where: eventPlanDiscoverableWhere(),
+        select: PUBLIC_PLAN_CARD_SELECT,
         take: 6,
       },
       webinarPlans: {
-        where: { visibility: { in: ["PUBLIC", "ORG_AND_PUBLIC"] } },
-        select: {
-          id: true,
-          title: true,
-          description: true,
-          price: true,
-          priceCurrency: true,
-        },
+        where: eventPlanDiscoverableWhere(),
+        select: PUBLIC_PLAN_CARD_SELECT,
         take: 6,
       },
       classPlans: {
-        where: { visibility: { in: ["PUBLIC", "ORG_AND_PUBLIC"] } },
-        select: {
-          id: true,
-          title: true,
-          description: true,
-          price: true,
-          priceCurrency: true,
-        },
+        where: eventPlanDiscoverableWhere(),
+        select: PUBLIC_PLAN_CARD_SELECT,
         take: 6,
       },
       memberships: {
@@ -165,16 +160,18 @@ const fetchOrgBySlug = cache(async (slug: string) => {
 
 type OrgData = NonNullable<Awaited<ReturnType<typeof fetchOrgBySlug>>>;
 
-// #777 §E — plan family → checkout route segment (lowercase). Booking a plan
-// from the public org page deep-links into the shared checkout flow.
-const CHECKOUT_FAMILY: Record<
+// Plan family → its public detail page. This used to be a map to checkout
+// segments, so an org buyer weighing a multi-month programme for their team
+// went straight to payment with nothing to read. All four types now have a
+// detail page, so the card links there and checkout is reached from it.
+const PLAN_DETAIL_PATH: Record<
   OrgData["organizationPlans"][number]["planType"],
   string
 > = {
-  CONSULTATION: "consultation",
-  SUBSCRIPTION: "subscription",
-  WEBINAR: "webinar",
-  CLASS: "class",
+  CONSULTATION: "consultations",
+  SUBSCRIPTION: "subscriptions",
+  WEBINAR: "webinars",
+  CLASS: "classes",
 };
 
 export async function generateMetadata({
@@ -433,15 +430,17 @@ export default async function OrgProfilePage({
                   {org.organizationPlans.map((plan) => (
                     <Link
                       key={plan.id}
-                      href={`/checkout/plans/${CHECKOUT_FAMILY[plan.planType]}/${plan.id}`}
+                      href={`/explore/programs/plans/${PLAN_DETAIL_PATH[plan.planType]}/${plan.id}`}
                       className="block p-3 rounded-xl bg-muted border border-border hover:border-border hover:bg-card hover:shadow-sm transition-all group"
                     >
                       <p className="text-sm font-semibold text-foreground mb-0.5">
                         {plan.title}
                       </p>
-                      {plan.description && (
+                      {/* Prefer the authored one-liner; fall back to the
+                          long description, which reads badly when clamped. */}
+                      {(plan.subtitle || plan.description) && (
                         <p className="text-xs text-muted-foreground line-clamp-2">
-                          {plan.description}
+                          {plan.subtitle || plan.description}
                         </p>
                       )}
                       <div className="flex items-center justify-between mt-2">

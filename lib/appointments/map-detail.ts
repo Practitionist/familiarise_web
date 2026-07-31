@@ -49,6 +49,7 @@ function eventOf(appointment: TDetailAppointment): {
   title: string;
   status: string;
   consultant: PersonVM;
+  consultantProfileId: string | null;
   consultee: PersonVM | null;
   pendingPaymentUrl: string | null;
   collaborators: AppointmentVM["collaborators"];
@@ -67,6 +68,8 @@ function eventOf(appointment: TDetailAppointment): {
         trial.subscriptionPlan?.consultantProfile?.user,
         "Unknown Consultant",
       ),
+      consultantProfileId:
+        trial.subscriptionPlan?.consultantProfile?.id ?? null,
       consultee: person(trial.consulteeProfile?.user, "Unknown User"),
       pendingPaymentUrl: null,
       collaborators: [],
@@ -80,6 +83,8 @@ function eventOf(appointment: TDetailAppointment): {
         consultation.consultationPlan?.consultantProfile?.user,
         "Unknown Consultant",
       ),
+      consultantProfileId:
+        consultation.consultationPlan?.consultantProfile?.id ?? null,
       consultee: person(consultation.requestedBy?.user, "Unknown User"),
       pendingPaymentUrl: consultation.pendingPaymentUrl ?? null,
       collaborators: [],
@@ -93,6 +98,8 @@ function eventOf(appointment: TDetailAppointment): {
         subscription.subscriptionPlan?.consultantProfile?.user,
         "Unknown Consultant",
       ),
+      consultantProfileId:
+        subscription.subscriptionPlan?.consultantProfile?.id ?? null,
       consultee: person(subscription.requestedBy?.user, "Unknown User"),
       pendingPaymentUrl: subscription.pendingPaymentUrl ?? null,
       collaborators: [],
@@ -103,6 +110,7 @@ function eventOf(appointment: TDetailAppointment): {
     title: plan?.title ?? (webinar ? "Webinar" : "Class"),
     status: normalizeStatus((webinar?.status ?? cls?.status)?.toString()),
     consultant: person(plan?.consultantProfile?.user, "Unknown Consultant"),
+    consultantProfileId: plan?.consultantProfile?.id ?? null,
     consultee: null,
     pendingPaymentUrl: null,
     collaborators: (plan?.collaborators ?? []).map((c) => ({
@@ -163,6 +171,7 @@ export function mapAppointmentDetail(
     kind: appointment.appointmentType as AppointmentVM["kind"],
     title: facts.title,
     counterpart,
+    consultantProfileId: facts.consultantProfileId,
     status: facts.status,
     ...deriveBucket({ status: facts.status, sessions, now }),
     nextAt: getAnchorTime(sessions, now),

@@ -571,7 +571,7 @@ export default function ClassCheckoutPage({
             </div>
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Sessions per Week</div>
-              <div>{planDetails?.meetingsPerWeek || 2}</div>
+              <div>{planDetails?.sessionsPerWeek || 2}</div>
             </div>
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Max Participants</div>
@@ -723,18 +723,18 @@ export default function ClassCheckoutPage({
                   <ul className="list-disc">
                     <li>
                       {planDetails?.totalSessions ||
-                        (planDetails?.meetingsPerWeek || 2) *
+                        (planDetails?.sessionsPerWeek || 2) *
                           (planDetails?.durationInMonths || 1) *
                           4}{" "}
                       total sessions (
                       {planDetails?.totalHours ||
-                        (planDetails?.meetingsPerWeek || 2) *
+                        (planDetails?.sessionsPerWeek || 2) *
                           (planDetails?.durationInMonths || 1) *
                           4}{" "}
                       hours)
                     </li>
                     <li>
-                      {planDetails?.meetingsPerWeek || 2} sessions per week
+                      {planDetails?.sessionsPerWeek || 2} sessions per week
                     </li>
                     <li>Course materials</li>
                     <li>Certificate of completion</li>

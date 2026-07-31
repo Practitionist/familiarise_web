@@ -3,6 +3,7 @@ import {
   getTopicsWithCount,
 } from "@/lib/data/explore-programs";
 import { emptyOnTransientDbError } from "@/lib/data/fail-open";
+import { sortPlanLevels } from "@/lib/labels/plan-labels";
 import { unstable_cache } from "next/cache";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
@@ -104,23 +105,19 @@ const getCachedProgramLevels = unstable_cache(
   async () => {
     const [classLevels, webinarLevels] = await Promise.all([
       prisma.classPlan.findMany({
-        where: { level: { not: null } },
         select: { level: true },
         distinct: ["level"],
       }),
       prisma.webinarPlan.findMany({
-        where: { level: { not: null } },
         select: { level: true },
         distinct: ["level"],
       }),
     ]);
-    return [
-      ...new Set(
-        [...classLevels, ...webinarLevels]
-          .map((row) => row.level)
-          .filter((level): level is string => Boolean(level)),
-      ),
-    ].sort((a, b) => a.localeCompare(b));
+    // Still read from the DB rather than listing the enum: the facet should
+    // only offer levels that some plan actually has.
+    return sortPlanLevels([
+      ...new Set([...classLevels, ...webinarLevels].map((row) => row.level)),
+    ]);
   },
   ["program-levels"],
   { revalidate: 3600, tags: ["programs"] },

@@ -22,7 +22,7 @@ export type ClientEventType =
 /** The subset of hook options the validators need (structurally compatible
  * with UseEventSlotAllocationOptions). */
 export interface SlotValidationOptions {
-  callsPerWeek?: number;
+  sessionsPerWeek?: number;
   maxHoursPerDay?: number;
   maxSessionsPerDay?: number;
   maxCallsPerDay?: number;
@@ -142,7 +142,7 @@ export function getSlotLimits(
   const requiredSlots = calculateRequiredSlots(
     eventType,
     options.durationInMonths,
-    options.callsPerWeek,
+    options.sessionsPerWeek,
     duration,
     options.startDate,
     options.endDate,
@@ -334,7 +334,7 @@ export function validateClassSessionDistributionByCount(
  */
 export function validateWeeklySessionsDistribution(
   slots: TimeSlot[],
-  callsPerWeek: number,
+  sessionsPerWeek: number,
   slotsPerSession: number,
   timeZone?: string,
 ): boolean {
@@ -353,7 +353,7 @@ export function validateWeeklySessionsDistribution(
     for (const [, daySlots] of Array.from(byDay)) {
       weekSessions += countSessionsForDay(daySlots, slotsPerSession).sessions;
     }
-    if (weekSessions > callsPerWeek) return false;
+    if (weekSessions > sessionsPerWeek) return false;
   }
   return true;
 }
@@ -383,7 +383,7 @@ export function validateDailyHours(
  */
 export function validateWeeklyDistribution(
   slots: TimeSlot[],
-  callsPerWeek: number,
+  sessionsPerWeek: number,
   slotsPerSession?: number,
   timeZone?: string,
 ): boolean {
@@ -394,10 +394,10 @@ export function validateWeeklyDistribution(
     weeklySlots.set(wk, (weeklySlots.get(wk) || 0) + 1);
   });
 
-  // Convert slot count to call count before comparing against callsPerWeek
+  // Convert slot count to call count before comparing against sessionsPerWeek
   const slotMultiplier = slotsPerSession || 1;
   return Array.from(weeklySlots.values()).every(
-    (slotCount) => Math.floor(slotCount / slotMultiplier) <= callsPerWeek,
+    (slotCount) => Math.floor(slotCount / slotMultiplier) <= sessionsPerWeek,
   );
 }
 
@@ -500,7 +500,7 @@ export function validateSubscriptionSlots(
   }
 
   const { slotsPerSession: slotsPerCall } = limits;
-  const callsPerWeek = options.callsPerWeek || 1;
+  const sessionsPerWeek = options.sessionsPerWeek || 1;
   const maxTotalCalls = limits.maxSlots;
   const timeZone = options.schedulingTimezone;
 
@@ -553,12 +553,12 @@ export function validateSubscriptionSlots(
     const partialSlots = weekData.totalSlots % slotsPerCall;
 
     if (partialSlots > 0) {
-      incompleteCallWarning = `The ${formatWeekKey(wk)} has an incomplete call. Need ${slotsPerCall - partialSlots} more consecutive slots.`;
+      incompleteCallWarning = `The ${formatWeekKey(wk)} has an incomplete session. Need ${slotsPerCall - partialSlots} more consecutive slots.`;
     }
 
-    if (completeCalls > callsPerWeek) {
+    if (completeCalls > sessionsPerWeek) {
       weeklyCallsValid = false;
-      weeklyCallsError = `The ${formatWeekKey(wk)} has ${completeCalls} complete calls. Maximum ${callsPerWeek} calls per week allowed.`;
+      weeklyCallsError = `The ${formatWeekKey(wk)} has ${completeCalls} complete session(s). Maximum ${sessionsPerWeek} per week allowed.`;
     }
   });
 
@@ -569,7 +569,7 @@ export function validateSubscriptionSlots(
 
   if (maxTotalCalls && totalConfirmedCalls > maxTotalCalls) {
     totalCallsValid = false;
-    totalCallsError = `Maximum ${maxTotalCalls} calls allowed for this subscription. Currently have ${totalConfirmedCalls} confirmed calls.`;
+    totalCallsError = `Maximum ${maxTotalCalls} sessions allowed for this subscription. Currently have ${totalConfirmedCalls} confirmed.`;
   }
 
   return {
@@ -683,7 +683,7 @@ function validateClassSelection(
 
   const weeklyOk = validateWeeklySessionsDistribution(
     slots,
-    options.callsPerWeek || 1,
+    options.sessionsPerWeek || 1,
     slotsPerSession,
     timeZone,
   );
@@ -711,7 +711,7 @@ function validateClassSelection(
   if (!weeklyOk) {
     result.isValid = false;
     result.errors.push(
-      `Maximum ${options.callsPerWeek || 1} classes per week exceeded`,
+      `Maximum ${options.sessionsPerWeek || 1} classes per week exceeded`,
     );
   }
 }
@@ -734,21 +734,21 @@ function validateSubscriptionSelection(
   if (!result.dailyCallsValid) {
     result.isValid = false;
     result.errors.push(
-      subscriptionValidation.dailyCallsError || "Daily call limit exceeded",
+      subscriptionValidation.dailyCallsError || "Daily session limit exceeded",
     );
   }
 
   if (!result.totalCallsValid) {
     result.isValid = false;
     result.errors.push(
-      subscriptionValidation.totalCallsError || "Total call limit exceeded",
+      subscriptionValidation.totalCallsError || "Total session limit exceeded",
     );
   }
 
   if (!result.weeklyDistributionValid) {
     result.isValid = false;
     result.errors.push(
-      subscriptionValidation.weeklyCallsError || "Weekly call limit exceeded",
+      subscriptionValidation.weeklyCallsError || "Weekly session limit exceeded",
     );
   }
 
@@ -795,12 +795,12 @@ function warnOnWeeklyDistribution(
   result: ValidationResult,
   timeZone?: string,
 ): void {
-  if (!options.callsPerWeek || slots.length === 0) return;
+  if (!options.sessionsPerWeek || slots.length === 0) return;
 
   if (eventType === "subscription") {
     result.weeklyDistributionValid = validateWeeklyDistribution(
       slots,
-      options.callsPerWeek,
+      options.sessionsPerWeek,
       limits.slotsPerSession,
       timeZone,
     );
@@ -812,7 +812,7 @@ function warnOnWeeklyDistribution(
   } else if (eventType === "class") {
     const ok = validateWeeklySessionsDistribution(
       slots,
-      options.callsPerWeek,
+      options.sessionsPerWeek,
       limits.slotsPerSession,
       timeZone,
     );

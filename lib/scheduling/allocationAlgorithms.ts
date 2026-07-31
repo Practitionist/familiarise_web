@@ -37,12 +37,12 @@ export interface AllocationOptions {
   eventType: "consultation" | "subscription" | "webinar" | "class";
   eventId: string;
   durationInMonths?: number;
-  callsPerWeek?: number;
+  sessionsPerWeek?: number;
   sessionDurationInHours?: number;
   durationInHours?: number; // FIXED: Add durationInHours for consultations and webinars
   startDate?: Date; // Required for subscriptions and classes
   endDate?: Date; // Required for subscriptions and classes
-  totalSessions?: number; // Authoritative session count from plan (overrides weeks × callsPerWeek)
+  totalSessions?: number; // Authoritative session count from plan (overrides weeks × sessionsPerWeek)
   requestedSlots?: TimeSlot[];
   pastConfirmedSlotCount?: number; // For in-progress recurring events
   // Per-day session cap, mirroring the manual interactive guard so auto-allocate
@@ -105,7 +105,7 @@ export class AllocationAlgorithms {
       const rawRequired = calculateRequiredSlots(
         options.eventType,
         options.durationInMonths,
-        options.callsPerWeek,
+        options.sessionsPerWeek,
         options.durationInHours || options.sessionDurationInHours,
         options.startDate,
         options.endDate,
@@ -162,7 +162,7 @@ export class AllocationAlgorithms {
         options.eventType === "subscription" ||
         options.eventType === "class"
       ) {
-        if (!options.callsPerWeek) {
+        if (!options.sessionsPerWeek) {
           return {
             success: false,
             selectedSlots: [],
@@ -173,11 +173,11 @@ export class AllocationAlgorithms {
 
         // Calculate slotsPerWeek based on actual session duration
         // slotsPerSession = sessionDurationInHours / 0.5 (since each slot is 30 min)
-        // slotsPerWeek = callsPerWeek * slotsPerSession
+        // slotsPerWeek = sessionsPerWeek * slotsPerSession
         const slotsPerSession = Math.ceil(
           (options.sessionDurationInHours || 1) / 0.5,
         );
-        const slotsPerWeek = options.callsPerWeek * slotsPerSession;
+        const slotsPerWeek = options.sessionsPerWeek * slotsPerSession;
 
         const distributionValidation = validateSlotDistribution(
           selectedSlots,
@@ -282,7 +282,7 @@ export class AllocationAlgorithms {
       const rawRequired = calculateRequiredSlots(
         options.eventType,
         options.durationInMonths,
-        options.callsPerWeek,
+        options.sessionsPerWeek,
         options.durationInHours || options.sessionDurationInHours,
         options.startDate,
         options.endDate,
@@ -339,7 +339,7 @@ export class AllocationAlgorithms {
           selectedSlots = this.allocateRecurringSlots(
             filteredSlots,
             requiredSlots,
-            options.callsPerWeek || 1,
+            options.sessionsPerWeek || 1,
             preferences,
             options,
           );
@@ -437,7 +437,7 @@ export class AllocationAlgorithms {
       const rawRequired = calculateRequiredSlots(
         options.eventType,
         options.durationInMonths,
-        options.callsPerWeek,
+        options.sessionsPerWeek,
         options.durationInHours || options.sessionDurationInHours,
         options.startDate,
         options.endDate,
@@ -665,13 +665,13 @@ export class AllocationAlgorithms {
 
   /**
    * Allocate slots for recurring events (subscriptions/classes).
-   * Distributes calls across weeks, respecting callsPerWeek limits.
+   * Distributes calls across weeks, respecting sessionsPerWeek limits.
    * Returns an array of 30-minute TimeSlot objects.
    */
   private static allocateRecurringSlots(
     availableSlots: TimeSlot[],
     totalSlots: number,
-    callsPerWeek: number,
+    sessionsPerWeek: number,
     preferences: AutoAllocationPreferences,
     options: AllocationOptions,
   ): TimeSlot[] {
@@ -734,7 +734,7 @@ export class AllocationAlgorithms {
 
       const weekSlots = slotsByWeek.get(weekKey)!;
       const callsNeededThisWeek = Math.min(
-        callsPerWeek,
+        sessionsPerWeek,
         totalCallsNeeded - selectedCalls.length,
       );
 

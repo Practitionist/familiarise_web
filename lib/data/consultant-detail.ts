@@ -1,4 +1,5 @@
 import { cache } from "react";
+import { reportSentryError } from "@/lib/observability/report";
 import prisma from "@/lib/prisma";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
 
@@ -98,7 +99,15 @@ export const getConsultantDetail = cache(async (consultantId: string) => {
   // symbols, methods) and yields true plain objects. Dates become ISO
   // strings — downstream client components already format them via
   // formatInTimeZone / date-fns, so this is safe here.
-  return JSON.parse(JSON.stringify(consultant)) as typeof consultant;
+  try {
+    return JSON.parse(JSON.stringify(consultant)) as typeof consultant;
+  } catch (error) {
+    // A throw here means the row picked up something non-JSON-safe (a
+    // serialization regression, not a missing/empty result) — the public
+    // detail page would otherwise 500 with no trace of why.
+    reportSentryError(error, { subsystem: "consultant" });
+    throw error;
+  }
 });
 
 export const getConsultantReviews = cache(

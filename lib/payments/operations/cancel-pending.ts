@@ -1,4 +1,4 @@
-import * as Sentry from "@sentry/nextjs";
+import { reportSentryError, reportSentryMessage } from "@/lib/observability/report";
 import prisma from "@/lib/prisma";
 import type { Tx } from "@/lib/prisma";
 import { Prisma, type PaymentGateway } from "@prisma/client";
@@ -123,6 +123,13 @@ export async function cancelPendingCheckout(args: {
         });
         // Foreign payments 404 like missing ones — don't leak existence.
         if (!payment || payment.userId !== args.userId) {
+          // Authorization-denial-shaped outcome (or a genuinely missing
+          // payment) — modelled, reported for visibility only.
+          reportSentryMessage("cancelPendingCheckout: not found / not owned by caller", {
+            subsystem: "payments",
+            expected: true,
+            extra: { paymentId: args.paymentId },
+          });
           return {
             outcome: { ok: false, code: "NOT_FOUND" },
             gatewayCancel: null,
@@ -140,6 +147,13 @@ export async function cancelPendingCheckout(args: {
           data: { paymentStatus: "EXPIRED" },
         });
         if (claimed.count === 0) {
+          // Lost CAS race — the webhook/cron/a parallel cancel already won.
+          // The system working as designed.
+          reportSentryMessage("cancelPendingCheckout: lost CAS race (already terminal)", {
+            subsystem: "payments",
+            expected: true,
+            extra: { paymentId: args.paymentId },
+          });
           return {
             outcome: { ok: false, code: "NOT_PENDING" },
             gatewayCancel: null,
@@ -206,10 +220,7 @@ export async function cancelPendingCheckout(args: {
         gatewayCancel.gateway,
       );
     } catch (error) {
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        { tags: { subsystem: "payments" } },
-      );
+      reportSentryError(error, { subsystem: "payments" });
       console.warn(
         JSON.stringify({
           event: "cancel_pending_gateway_cancel_failed",

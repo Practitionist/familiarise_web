@@ -200,7 +200,7 @@ export class ClassService {
       price: plan?.price ?? 0,
       priceCurrency: plan?.priceCurrency,
       durationInMonths: plan?.durationInMonths ?? 1,
-      meetingsPerWeek: plan?.meetingsPerWeek ?? 1,
+      sessionsPerWeek: plan?.sessionsPerWeek ?? 1,
       maxParticipants: plan?.maxParticipants ?? 1,
       certificateProvided: plan?.certificateProvided,
       recordingEnabled: plan?.recordingEnabled,

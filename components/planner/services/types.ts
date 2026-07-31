@@ -37,7 +37,7 @@ export interface CreateClassPayload {
   price: number;
   priceCurrency?: string;
   durationInMonths: number;
-  meetingsPerWeek: number;
+  sessionsPerWeek: number;
   maxParticipants: number;
   certificateProvided?: boolean;
   recordingEnabled?: boolean;

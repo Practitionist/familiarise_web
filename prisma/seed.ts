@@ -26,6 +26,8 @@ import { createSlotsOfAvailability } from "./seedFiles/5a-create-slots-of-availa
 
 // Phase 6: Appointments
 import { createAppointments } from "./seedFiles/6a-create-appointments";
+import { createDraftSessions } from "./seedFiles/6b-create-draft-sessions";
+import { createRescheduleProposals } from "./seedFiles/6c-create-reschedule-proposals";
 
 // Phase 7: Engagement
 import { createWaitlistSubscribers } from "./seedFiles/7a-create-waitlist-subscribers";
@@ -59,6 +61,7 @@ import { createCollaborators } from "./seedFiles/14b-create-collaborators";
 
 // Phase 15: Enterprise Organizations
 import { createOrganizations } from "./seedFiles/15a-create-organizations";
+import { createOrgCatalog } from "./seedFiles/15b-create-org-catalog";
 
 // Phase 16: Statutory lookups (#778 §D)
 import { createTdsRates } from "./seedFiles/16a-create-tds-rates";
@@ -128,6 +131,16 @@ async function seed() {
     console.log("\n[Phase 6] Creating appointments (this may take a while)...");
     await createAppointments(consultees);
 
+    // Drafts are instances with no appointment at all, so they follow the
+    // booked ones rather than sharing their path.
+    console.log("Creating draft webinars and classes...");
+    await createDraftSessions();
+
+    // Must follow createAppointments: a proposal releases slots that only
+    // exist once the bookings do.
+    console.log("Creating reschedule proposals...");
+    await createRescheduleProposals();
+
     // Phase 7: Engagement data
     console.log("\n[Phase 7] Creating engagement data...");
     console.log("Creating waitlist subscribers...");
@@ -190,6 +203,11 @@ async function seed() {
     // Phase 15: Enterprise Organizations
     console.log("\n[Phase 15] Creating enterprise organizations...");
     await createOrganizations(users);
+
+    // Must follow createOrganizations: the catalog attaches to canHost orgs
+    // and needs their ACTIVE EXPERT memberships to name a deliverer.
+    console.log("Creating org-owned catalog plans...");
+    await createOrgCatalog();
 
     // Phase 16: Statutory lookups
     console.log("\n[Phase 16] Seeding statutory TDS rates...");

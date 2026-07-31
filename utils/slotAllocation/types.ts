@@ -46,6 +46,12 @@ export interface AllocationRequest {
   // Redis lock keys (#860), so a cross-mode race from two tabs otherwise ends
   // in the manual path silently deleting the winner's allocation.
   initialAllocation?: boolean;
+  /**
+   * Consultant's explicit acceptance of times outside their own published
+   * availability. Routes must only set this for the consultant or a privileged
+   * caller — a consultee cannot wave away the consultant's schedule.
+   */
+  override?: boolean;
 }
 
 /**
@@ -88,6 +94,7 @@ export type AllocationErrorCode =
   | "INVALID_MODE" // unknown allocation mode — 400
   | "LOCK_CONTENTION" // Redis lock busy — 409
   | "ILLEGAL_TRANSITION" // event left the approvable state mid-allocation (#836) — 409
+  | "PROGRAM_CAP_EXHAUSTED" // org's per-cycle overage ceiling vetoed it — 402
   | "UNKNOWN_ERROR"; // infra / unexpected — 500
 
 /**
@@ -155,7 +162,7 @@ export interface EventConfig {
   durationInMonths?: number;
   durationInHours?: number; // For consultations/webinars (total duration)
   sessionDurationInHours?: number; // For subscriptions/classes (per session)
-  callsPerWeek?: number; // For subscriptions/classes
+  sessionsPerWeek?: number; // For subscriptions/classes
   totalSessions?: number; // Authoritative session count from subscription plan
   schedulingPeriodStartsAt?: Date; // For subscriptions/classes
   schedulingPeriodEndsAt?: Date; // For subscriptions/classes

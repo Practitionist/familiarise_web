@@ -1,4 +1,4 @@
-import { AppointmentStatus } from "@prisma/client";
+import { AppointmentStatus, SlotCompletionStatus } from "@prisma/client";
 
 // --- API Response Type Definitions ---
 interface UserInfo {
@@ -19,7 +19,7 @@ interface ConsultationPlanInfo {
 
 interface SubscriptionPlanInfo {
   title?: string;
-  callsPerWeek: number;
+  sessionsPerWeek: number;
   durationInMonths: number;
   sessionDurationInHours: number;
   totalSessions?: number;
@@ -30,11 +30,25 @@ interface AppointmentSlot {
   startsAt: string;
   endsAt: string;
   isTentative?: boolean; // Indicates if slot needs rescheduling
+  /** RESCHEDULED means startsAt is the time being moved AWAY from, not a request. */
+  completionStatus?: SlotCompletionStatus;
+}
+
+/** A live reschedule proposal: the times the consultee actually wants. */
+export interface RescheduleProposalInfo {
+  id: string;
+  status: string;
+  reason?: string | null;
+  round: number;
+  expiresAt: string;
+  initiatorRole: string;
+  proposedSlots: { startsAt: string; endsAt: string; round: number }[];
 }
 
 interface AppointmentInfo {
   id: string;
   slotsOfAppointment?: AppointmentSlot[];
+  rescheduleRequests?: RescheduleProposalInfo[];
 }
 
 export interface ConsultationApiResponse {
@@ -45,6 +59,8 @@ export interface ConsultationApiResponse {
   appointment?: AppointmentInfo;
   status: AppointmentStatus;
   bookingSource?: "DIRECT_CHECKOUT" | "REQUEST_SUBMITTED"; // Booking source enum
+  /** What the consultee said when booking. */
+  requestNotes?: string | null;
 }
 
 export interface SubscriptionApiResponse {
@@ -60,4 +76,6 @@ export interface SubscriptionApiResponse {
   schedulingPeriodEndsAt?: string;
   /** Defines the limit day/week buckets (ADR B9); column default Asia/Kolkata. */
   schedulingTimezone?: string;
+  /** What the consultee said when booking. */
+  requestNotes?: string | null;
 }

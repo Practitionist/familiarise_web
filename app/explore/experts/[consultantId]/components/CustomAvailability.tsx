@@ -8,6 +8,7 @@ import {
 import { roundTime, timeToMinutes } from "../utils/time";
 import { mergeConsecutiveSlotsForDisplay } from "../utils/mergeSlots";
 import type { ProcessedSlot } from "../types";
+import { SLOT_STATUS_TOKENS } from "@/lib/scheduling/slot-status-tokens";
 
 interface DayWithSlots {
   date: Date;
@@ -137,12 +138,12 @@ export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
                               border shadow-lg backdrop-blur-sm relative overflow-hidden
                               ${
                                 isFullyBooked
-                                  ? "bg-gradient-to-br from-gray-300 to-gray-400 text-gray-600 border-gray-300 shadow-gray-400/20"
+                                  ? SLOT_STATUS_TOKENS.fullyBooked.className
                                   : isPartiallyBooked
-                                    ? "bg-gradient-to-br from-amber-200 to-amber-300 border-amber-400 text-amber-900 shadow-amber-400/25"
+                                    ? SLOT_STATUS_TOKENS.partiallyBooked.className
                                     : slot.isAllocated
-                                      ? "bg-gradient-to-br from-orange-200 to-orange-300 border-orange-400 text-orange-900 shadow-orange-400/20"
-                                      : "bg-gradient-to-br from-emerald-100 to-emerald-200 text-emerald-800 border-emerald-300 shadow-emerald-400/20"
+                                      ? SLOT_STATUS_TOKENS.rescheduling.className
+                                      : SLOT_STATUS_TOKENS.available.className
                               }
                             `}
                           >

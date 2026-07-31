@@ -257,11 +257,11 @@ Validates URL path parameter `{id}`. Accepts UUID (`xxxxxxxx-xxxx-xxxx-xxxx-xxxx
 | `EventType`                | `"consultation" \| "subscription" \| "webinar" \| "class"`                                         |
 | `AllocationMode`           | `"auto" \| "manual" \| "requested"`                                                                |
 | `AllocationRequest`        | `{eventType, eventId, mode, slots?}`                                                               |
-| `AllocationConstraints`    | `{schedulingPeriod, slotsRequired, sessionDuration, callsPerWeek, ...}`                            |
+| `AllocationConstraints`    | `{schedulingPeriod, slotsRequired, sessionDuration, sessionsPerWeek, ...}`                            |
 | `ValidationResult`         | `{isValid, errors: string[], warnings: string[]}`                                                  |
 | `SlotConflictResult`       | `{conflicts[], outsideAvailability[], validSlots[]}`                                               |
 | `AllocationResult`         | `{success, appointments?, error?, warnings?}`                                                      |
 | `TimeSlot`                 | `{startTime, endTime, isAvailable, isBooked}`                                                      |
 | `ProgressInfo`             | `{scheduled, required, remaining, sessionDuration, displayText}`                                   |
 | `ConsultantAllocationData` | `{userId, scheduleType, slotsOfAvailabilityWeekly[], slotsOfAvailabilityCustom[]}`                 |
-| `EventConfig`              | `{durationInMonths?, durationInHours?, sessionDurationInHours?, callsPerWeek?, schedulingPeriod?}` |
+| `EventConfig`              | `{durationInMonths?, durationInHours?, sessionDurationInHours?, sessionsPerWeek?, schedulingPeriod?}` |

@@ -46,13 +46,14 @@ export function marketplaceVisibilityWhere() {
 }
 
 /**
- * Discovery filter for the two ARCHIVABLE plan types (WebinarPlan, ClassPlan).
+ * Full discovery filter: publicly visible AND not withdrawn from sale.
  *
- * `marketplaceVisibilityWhere()` cannot carry this: it is also spread into
- * ConsultationPlan and SubscriptionPlan queries, and those models have no
- * `archivedAt` column — Prisma would reject the filter. So the two gates live
- * side by side here rather than one being inlined at eight call sites, for the
- * same auditability reason the header gives.
+ * This used to apply only to WebinarPlan and ClassPlan, because they were the
+ * only models with an `archivedAt` column and Prisma rejects a filter naming a
+ * column the model lacks. ConsultationPlan and SubscriptionPlan now carry it
+ * too, so this is the correct filter for all four and
+ * `marketplaceVisibilityWhere()` is the narrower one — use it only where
+ * archived rows are deliberately in scope.
  *
  * Archived means withdrawn from sale. The row is kept because it carries the
  * terms of every booking made against it, and because the plan FK chain
@@ -63,4 +64,62 @@ export function eventPlanDiscoverableWhere() {
     visibility: { in: MARKETPLACE_VISIBILITY },
     archivedAt: null,
   } as const;
+}
+
+/**
+ * Gate for a PLAN DETAIL PAGE, which is reached by id rather than by listing.
+ *
+ * The list surfaces all compose `marketplaceVisibilityWhere()`, but the four
+ * detail pages fetched by primary key and filtered on nothing — so an
+ * `ORG_ONLY` plan was fully readable by anyone holding its id, and an archived
+ * one still rendered a working page. That is the #726 leak class arriving
+ * through the back door, and it predated the two new detail routes.
+ *
+ * A plan is viewable when it is not archived AND either it is publicly visible
+ * or the viewer is an ACTIVE member of the org that owns it. Membership is the
+ * only thing that can widen it — being the authoring consultant is deliberately
+ * NOT enough, because the consultant already reads their own plans through the
+ * planner, which is org-internal by design.
+ */
+export async function isPlanViewable(
+  plan: {
+    visibility: OrgPlanVisibility;
+    organizationId: string | null;
+    archivedAt?: Date | null;
+    /**
+     * The plan's authoring consultant. Present only where the caller loaded it;
+     * absent keeps the previous behaviour exactly.
+     */
+    consultantProfileId?: string | null;
+  } | null,
+  viewerUserId: string | null | undefined,
+  findActiveMembership: (args: {
+    userId: string;
+    organizationId: string;
+  }) => Promise<boolean>,
+  /**
+   * The viewer's own consultant profile, when they have one.
+   *
+   * This is the owner-preview arm: an author may open their own unpublished or
+   * archived offering at its REAL detail URL, so "preview" is the actual page
+   * rather than a second renderer that can drift from it. It deliberately does
+   * NOT widen anything for anyone else — a non-owner still gets a 404.
+   */
+  viewerConsultantProfileId?: string | null,
+): Promise<boolean> {
+  if (!plan) return false;
+
+  const isOwner =
+    !!viewerConsultantProfileId &&
+    !!plan.consultantProfileId &&
+    plan.consultantProfileId === viewerConsultantProfileId;
+  if (isOwner) return true;
+
+  if (plan.archivedAt) return false;
+  if (MARKETPLACE_VISIBILITY.includes(plan.visibility)) return true;
+  if (!plan.organizationId || !viewerUserId) return false;
+  return findActiveMembership({
+    userId: viewerUserId,
+    organizationId: plan.organizationId,
+  });
 }

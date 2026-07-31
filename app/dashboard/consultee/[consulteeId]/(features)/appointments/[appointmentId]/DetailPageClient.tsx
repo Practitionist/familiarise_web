@@ -26,9 +26,7 @@ export default function DetailPageClient({
           <DocumentUpload
             appointmentId={appointmentId}
             appointmentTitle={vm.title}
-            appointmentType={
-              vm.kind.charAt(0) + vm.kind.slice(1).toLowerCase()
-            }
+            appointmentType={vm.kind.charAt(0) + vm.kind.slice(1).toLowerCase()}
           />
         ) : (
           <p className="text-xs text-muted-foreground">

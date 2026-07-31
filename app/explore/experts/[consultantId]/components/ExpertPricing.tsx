@@ -106,28 +106,34 @@ export function ExpertPricing({
           plan.durationInHours,
         );
 
-        let features: string[] = [];
-        switch (plan.durationInHours) {
-          case 1:
-            features = ["Document verification", "1 on 1 call"];
-            break;
-          case 2:
-            features = [
-              "Document verification",
-              "1 on 1 call",
-              "Extended chat facility",
-            ];
-            break;
-          case 4:
-            features = [
-              "Document verification",
-              "1 on 1 call",
-              "Extended chat facility",
-              "Priority support",
-            ];
-            break;
-          default:
-            features = [`${plan.durationInHours} hour consultation`];
+        // The consultant's own inclusions win. The duration switch below is a
+        // placeholder from before `whatsIncluded` existed: it asserted
+        // "Document verification" and "Priority support" for every plan of a
+        // given length, whether or not that consultant offered either.
+        let features: string[] = plan.whatsIncluded ?? [];
+        if (features.length === 0) {
+          switch (plan.durationInHours) {
+            case 1:
+              features = ["Document verification", "1 on 1 call"];
+              break;
+            case 2:
+              features = [
+                "Document verification",
+                "1 on 1 call",
+                "Extended chat facility",
+              ];
+              break;
+            case 4:
+              features = [
+                "Document verification",
+                "1 on 1 call",
+                "Extended chat facility",
+                "Priority support",
+              ];
+              break;
+            default:
+              features = [`${plan.durationInHours} hour consultation`];
+          }
         }
 
         return {
@@ -137,7 +143,9 @@ export function ExpertPricing({
           // (e.g. "Career Strategy Session" vs "[ATEST] Career Strategy
           // Session") stay distinguishable in the panel.
           description:
-            plan.title || `${plan.durationInHours} hour consultation`,
+            plan.subtitle ||
+            plan.title ||
+            `${plan.durationInHours} hour consultation`,
           price: plan.price,
           priceCurrency: plan.priceCurrency || "INR",
           duration: `${plan.durationInHours} hour${plan.durationInHours > 1 ? "s" : ""}`,
@@ -160,12 +168,12 @@ export function ExpertPricing({
           durationInMonths: plan.durationInMonths,
           totalHours: plan.totalHours,
           totalSessions: plan.totalSessions,
-          callsPerWeek: plan.callsPerWeek,
+          sessionsPerWeek: plan.sessionsPerWeek,
           sessionDurationInHours: plan.sessionDurationInHours,
           features: [
             `${plan.totalHours} total hours`,
             `${plan.totalSessions} sessions`,
-            `${plan.callsPerWeek} call${plan.callsPerWeek > 1 ? "s" : ""} per week`,
+            `${plan.sessionsPerWeek} session${plan.sessionsPerWeek > 1 ? "s" : ""} per week`,
             `${plan.sessionDurationInHours}h per session`,
             `${plan.emailSupport} email support`,
           ],

@@ -5,6 +5,7 @@
  * API Documentation: https://docs.stripe.com/connect
  */
 
+import { reportSentryError } from "@/lib/observability/report";
 import Stripe from "stripe";
 
 // ============================================
@@ -534,7 +535,14 @@ export function isStripeConnectConfigured(): boolean {
   try {
     const service = getStripeConnectService();
     return service.isConfigured();
-  } catch {
+  } catch (error) {
+    // Constructor throws only on a missing secret key — a modelled
+    // "not configured yet" outcome (e.g. local/dev env), not a fault.
+    reportSentryError(error, {
+      subsystem: "payments",
+      tags: { provider: "stripe" },
+      expected: true,
+    });
     return false;
   }
 }

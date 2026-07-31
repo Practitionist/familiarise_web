@@ -41,7 +41,9 @@ export interface AppointmentActionAdapter {
   primaryAction(vm: AppointmentVM): PrimaryAction;
   /** Extra actions behind the row's ⋯ menu (reschedule/cancel/report/…). */
   overflowItems(vm: AppointmentVM): OverflowItem[];
-  /** Adapter-owned dialogs, mounted ONCE inside the shell (keyed off the
-   *  adapter's active row, not one instance per row). */
+  /** Adapter-owned dialogs, keyed off the adapter's active row rather than one
+   *  instance per row. Mounted by whichever component renders the actions that
+   *  open them — AppointmentsShell for the list, AppointmentDetailClient for
+   *  the detail page. Callers of those do NOT mount it themselves. */
   renderDialogs(): ReactNode;
 }
