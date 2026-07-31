@@ -41,7 +41,9 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Generate Prisma client
-        run: npx prisma generate
+        # --no-install: prisma IS a project dependency, so there is nothing to
+        # fetch and npx must not be allowed to.
+        run: npx --no-install prisma generate
 
       - name: Expire reschedule proposals
         # tsx is not a project dependency, so --yes with a pinned version is
