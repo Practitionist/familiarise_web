@@ -2,6 +2,7 @@
 
 import { useQueryClient, type FetchQueryOptions } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef } from "react";
+import { reportSentryError } from "@/lib/observability/report";
 
 import {
   createConsultantQueries,
@@ -54,24 +55,41 @@ export function usePrefetchDashboard({
           queries.map((query) => queryClient.prefetchQuery(query)),
         );
 
-        // Log failures in development
-        if (process.env.NODE_ENV === "development") {
-          results.forEach((result, index) => {
-            if (result.status === "rejected") {
+        // allSettled swallows rejections — the outer try/catch below never
+        // sees these, so they must be captured here or they vanish entirely.
+        results.forEach((result, index) => {
+          if (result.status === "rejected") {
+            if (process.env.NODE_ENV === "development") {
               console.warn(
                 `Prefetch failed for query:`,
                 queries[index].queryKey,
                 result.reason,
               );
             }
-          });
-        }
+            reportSentryError(result.reason, {
+              subsystem: "client",
+              expected: true,
+              extra: { queryKey: queries[index].queryKey },
+            });
+          }
+        });
       };
 
+      // executePrefetch itself shouldn't throw (allSettled never rejects),
+      // but the delayed branch is fire-and-forget, so guard against an
+      // unhandled rejection if that assumption is ever wrong.
+      const runPrefetch = () =>
+        executePrefetch().catch((error) => {
+          reportSentryError(error, {
+            subsystem: "client",
+            op: "safe-prefetch-unexpected",
+          });
+        });
+
       if (delay > 0) {
-        setTimeout(executePrefetch, delay);
+        setTimeout(runPrefetch, delay);
       } else {
-        executePrefetch();
+        runPrefetch();
       }
     },
     [queryClient],
@@ -107,6 +125,9 @@ export function usePrefetchDashboard({
       safePrefetch([queries.planner], "medium");
     } catch (error) {
       console.warn("Consultant data prefetching failed:", error);
+      // Best-effort dashboard prefetch — the real useQuery on the actual
+      // tab still fetches on demand. Reported for volume visibility only.
+      reportSentryError(error, { subsystem: "client", expected: true });
     }
   }, [consultantId, safePrefetch]);
 
@@ -127,6 +148,8 @@ export function usePrefetchDashboard({
       );
     } catch (error) {
       console.warn("Consultee data prefetching failed:", error);
+      // Best-effort dashboard prefetch — see the consultant twin above.
+      reportSentryError(error, { subsystem: "client", expected: true });
     }
   }, [consulteeId, safePrefetch]);
 
@@ -205,8 +228,9 @@ export function usePrefetchDashboard({
 
   // Cleanup function to clear prefetch tracking on unmount
   useEffect(() => {
+    const trackedSet = prefetchedRef.current;
     return () => {
-      prefetchedRef.current.clear();
+      trackedSet.clear();
     };
   }, []);
 

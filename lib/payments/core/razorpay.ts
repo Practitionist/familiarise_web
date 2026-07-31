@@ -1,4 +1,5 @@
 import * as Sentry from "@sentry/nextjs";
+import { reportSentryError } from "@/lib/observability/report";
 import Razorpay from "razorpay";
 import {
   PaymentIntentParams,
@@ -8,7 +9,6 @@ import {
   PaymentError,
   RefundError,
 } from "./types";
-import { RefundStatus } from "@prisma/client";
 import { mapGatewayRefundStatus } from "@/lib/payments/refund-status";
 
 // ============================================================================
@@ -89,8 +89,9 @@ export async function createRazorpayOrder({
     };
   } catch (error) {
     console.error("Razorpay order creation failed:", error);
-    Sentry.captureException(error, {
-      tags: { subsystem: "payments", provider: "razorpay" },
+    reportSentryError(error, {
+      subsystem: "payments",
+      tags: { provider: "razorpay" },
       contexts: { payment: { amount, currency } },
     });
     throw handleRazorpayError(error);
@@ -118,11 +119,17 @@ export async function cancelRazorpayOrder(orderId: string): Promise<void> {
     console.warn(
       `⚠️ Cannot cancel Razorpay order with existing payments: ${orderId}`,
     );
-  } catch {
-    // If we can't fetch payments, assume it's safe to ignore
+  } catch (error) {
+    // If we can't fetch payments, assume it's safe to ignore — best-effort
+    // cancel, and a stray order with no payment costs nothing.
     console.log(
       `✅ Razorpay order fetch failed (likely safe to ignore): ${orderId}`,
     );
+    reportSentryError(error, {
+      subsystem: "payments",
+      tags: { provider: "razorpay" },
+      expected: true,
+    });
   }
 }
 
@@ -299,8 +306,15 @@ export async function createRazorpayRefund({
     };
   } catch (error) {
     console.error("Razorpay refund creation failed:", error);
-    Sentry.captureException(error, {
-      tags: { subsystem: "payments", provider: "razorpay" },
+    // NO_PAYMENT_FOUND/etc are our own pre-gateway validation (thrown above in
+    // this same try), not a gateway fault — tag by origin so the dashboard
+    // doesn't conflate "Razorpay is down" with "this order has no payment".
+    const isModelledValidation =
+      error instanceof RefundError && error.code !== "UNKNOWN_ERROR";
+    reportSentryError(error, {
+      subsystem: "payments",
+      tags: { provider: "razorpay" },
+      expected: isModelledValidation,
     });
     throw handleRazorpayRefundError(error);
   }
@@ -334,12 +348,10 @@ export async function getRazorpayRefund(
     };
   } catch (error) {
     console.error("Razorpay refund retrieval failed:", error);
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      {
-        tags: { subsystem: "payments", provider: "razorpay" },
-      },
-    );
+    reportSentryError(error, {
+      subsystem: "payments",
+      tags: { provider: "razorpay" },
+    });
     throw handleRazorpayRefundError(error);
   }
 }
@@ -388,12 +400,10 @@ export async function listRazorpayRefunds(
     }));
   } catch (error) {
     console.error("Razorpay refunds list failed:", error);
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      {
-        tags: { subsystem: "payments", provider: "razorpay" },
-      },
-    );
+    reportSentryError(error, {
+      subsystem: "payments",
+      tags: { provider: "razorpay" },
+    });
     throw handleRazorpayRefundError(error);
   }
 }

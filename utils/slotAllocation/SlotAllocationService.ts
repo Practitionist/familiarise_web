@@ -5,6 +5,7 @@
  * Handles auto, manual, and requested slot allocation.
  */
 
+import { reportSentryError } from "@/lib/observability/report";
 import prisma, {
   type Tx,
   type PrismaLike,
@@ -142,6 +143,24 @@ export class SlotAllocationService {
       }
     } catch (error) {
       const { errorCode, httpStatus } = this.classifyError(error);
+      // Full-coverage policy: every error reaching here is reported, modelled
+      // outcome or not, so volume/pattern of ordinary answers (slot taken,
+      // limit reached, lost CAS race) is visible in Sentry too — but at
+      // info + expected:true so a dashboard scan can't mistake "no slots
+      // available" for a database failure. Real faults keep the default
+      // error level with no expected tag.
+      const modeled = this.isModeledOutcome(error);
+      reportSentryError(error, {
+        subsystem: "scheduling",
+        op: "slot-allocation",
+        expected: modeled,
+        extra: {
+          mode: request.mode,
+          eventType: request.eventType,
+          eventId: request.eventId,
+          errorCode,
+        },
+      });
       return {
         success: false,
         error: error instanceof Error ? error.message : "Allocation failed",
@@ -149,6 +168,29 @@ export class SlotAllocationService {
         httpStatus,
       };
     }
+  }
+
+  /**
+   * Whether `error` is one of the modelled business outcomes this engine
+   * throws for ordinary reasons (validation, not-found, lock/CAS contention,
+   * an org cap reached) rather than an actual fault. Both branches are
+   * reported to Sentry (full-coverage policy); this only decides the
+   * level/tag so a modelled answer never reads as a fault on the dashboard.
+   * Deliberately narrower than classifyError()'s message-sniffing fallback,
+   * which exists only to pick an HTTP status for legacy untyped throws and
+   * would otherwise also mark real bugs "expected" if the message happens to
+   * contain "not found".
+   */
+  private static isModeledOutcome(error: unknown): boolean {
+    return (
+      error instanceof AllocationValidationError ||
+      error instanceof AllocationNotFoundError ||
+      error instanceof AllocationConflictError ||
+      error instanceof IllegalTransitionError ||
+      error instanceof ProgramAssignmentLimitError ||
+      isUniqueViolation(error) ||
+      isExclusionViolation(error)
+    );
   }
 
   /**
@@ -173,6 +215,15 @@ export class SlotAllocationService {
     // was allocating; the whole allocation tx rolled back.
     if (error instanceof IllegalTransitionError) {
       return { errorCode: "ILLEGAL_TRANSITION", httpStatus: error.httpStatus };
+    }
+
+    // The org's per-cycle overage ceiling refusing an assignment is a decision,
+    // not a fault. It was already reported to Sentry as an expected outcome
+    // while falling through to UNKNOWN_ERROR/500 here — so the dashboard called
+    // it routine and the caller got a server error. 402 matches what
+    // recordOverageAtCheckout returns for the very same ceiling.
+    if (error instanceof ProgramAssignmentLimitError) {
+      return { errorCode: "PROGRAM_CAP_EXHAUSTED", httpStatus: 402 };
     }
 
     // Structured DB-conflict detection (no message sniffing): unique (P2002 /
@@ -1345,7 +1396,13 @@ export class SlotAllocationService {
                 data: { allocationIdempotencyKey: idempotencyKey },
               });
             } catch (err) {
+              // Not captured here — useRequestedSlots only ever runs inside
+              // allocate()'s try, whose catch reports every error reaching it
+              // (including this one, same instance) with the correct modeled
+              // classification. A second capture here would be a pure dupe.
               if (isUniqueViolation(err)) {
+                // A same-key retry losing this race is the ordinary replay
+                // case (#837).
                 throw new AllocationConflictError(
                   "This allocation was already submitted; the original result applies.",
                 );
@@ -2168,7 +2225,13 @@ export class SlotAllocationService {
         }),
       );
     } catch (error) {
+      // Not captured here — createAppointments only runs inside
+      // autoAllocate/manualAllocate, both under allocate()'s try, whose catch
+      // reports every error reaching it (this one included). A second
+      // capture here would be a pure dupe of the same instance.
       if (isExclusionViolation(error) || isUniqueViolation(error)) {
+        // A concurrent booking winning the #440 overlap guard is the ordinary
+        // "someone else got there first" race, not a fault.
         throw new AllocationConflictError(
           "This time slot was just booked by someone else. Please pick another time.",
         );
@@ -2322,29 +2385,23 @@ export class SlotAllocationService {
       }
     }
 
-    try {
-      await recordBookingUtilization(tx, {
-        programAssignmentId: assignment.id,
-        paymentId: orgPayment.id,
-        engagementsConsumed: idsToDebit.length,
-        priceAtBookingPaise,
-        // PR-1e (G3): pass the appointment ids so re-allocation
-        // (delete+recreate of the same slot) can't double-debit. The
-        // helper computes the set diff against
-        // BookingUtilization.appointmentIds and increments only by the
-        // genuinely-new ids.
-        appointmentIds: idsToDebit,
-      });
-    } catch (err) {
-      if (err instanceof ProgramAssignmentLimitError) {
-        // Cap exceeded with BLOCK behavior — surface upward so the
-        // transaction rolls back the newly-created appointments. The
-        // SlotAllocationService.allocate() error mapper translates this
-        // to the appropriate HTTP status for the route handler.
-        throw err;
-      }
-      throw err;
-    }
+    // Not captured here — this only runs from createAppointments, itself only
+    // reachable via allocate()'s try, whose catch reports every error
+    // reaching it (a ProgramAssignmentLimitError cap-exceeded included,
+    // correctly classified as one of its modelled outcomes). A capture here
+    // too would be a dupe, so this no longer needs its own try/catch.
+    await recordBookingUtilization(tx, {
+      programAssignmentId: assignment.id,
+      paymentId: orgPayment.id,
+      engagementsConsumed: idsToDebit.length,
+      priceAtBookingPaise,
+      // PR-1e (G3): pass the appointment ids so re-allocation
+      // (delete+recreate of the same slot) can't double-debit. The
+      // helper computes the set diff against
+      // BookingUtilization.appointmentIds and increments only by the
+      // genuinely-new ids.
+      appointmentIds: idsToDebit,
+    });
   }
 
   /**

@@ -3,7 +3,7 @@
  * Handles the complete checkout flow for all appointment types
  */
 
-import * as Sentry from "@sentry/nextjs";
+import { reportSentryError } from "@/lib/observability/report";
 import prisma, { type Tx } from "@/lib/prisma";
 import { CheckoutInput, checkoutSchema } from "@/schemas/checkout";
 import { calculateSubscriptionEndDate } from "@/utils/dateUtils";
@@ -194,12 +194,7 @@ export class PaymentIntentManager {
       return paymentResponse;
     } catch (error) {
       console.error("Payment intent creation failed:", error);
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        {
-          tags: { subsystem: "payments" },
-        },
-      );
+      reportSentryError(error, { subsystem: "payments" });
       throw new Error(
         "Failed to create payment intent. Please try again later.",
       );
@@ -218,13 +213,7 @@ export class PaymentIntentManager {
       this.activeIntents.delete(intentId);
     } catch (error) {
       console.error(`Failed to cancel payment intent ${intentId}:`, error);
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        {
-          tags: { subsystem: "payments" },
-          level: "warning",
-        },
-      );
+      reportSentryError(error, { subsystem: "payments", level: "warning" });
       // Don't throw - cleanup should be best-effort
     }
   }
@@ -2246,14 +2235,7 @@ export async function handleCheckout(
         });
       } catch (paymentError) {
         console.error("Payment intent creation failed:", paymentError);
-        Sentry.captureException(
-          paymentError instanceof Error
-            ? paymentError
-            : new Error(String(paymentError)),
-          {
-            tags: { subsystem: "payments" },
-          },
-        );
+        reportSentryError(paymentError, { subsystem: "payments" });
         throw new Error(
           "Failed to create payment intent. Please try again later.",
         );
@@ -2541,15 +2523,10 @@ export async function handleCheckout(
                       "[notifyOrgProgramExhausted] failed:",
                       notifyErr,
                     );
-                    Sentry.captureException(
-                      notifyErr instanceof Error
-                        ? notifyErr
-                        : new Error(String(notifyErr)),
-                      {
-                        tags: { subsystem: "payments" },
-                        level: "warning",
-                      },
-                    );
+                    reportSentryError(notifyErr, {
+                      subsystem: "payments",
+                      level: "warning",
+                    });
                   });
 
                 throw new Error(
@@ -2654,15 +2631,10 @@ export async function handleCheckout(
                       "[notifyOrgProgramCapNear] failed:",
                       notifyErr,
                     );
-                    Sentry.captureException(
-                      notifyErr instanceof Error
-                        ? notifyErr
-                        : new Error(String(notifyErr)),
-                      {
-                        tags: { subsystem: "payments" },
-                        level: "warning",
-                      },
-                    );
+                    reportSentryError(notifyErr, {
+                      subsystem: "payments",
+                      level: "warning",
+                    });
                   });
               }
             }
@@ -2875,15 +2847,7 @@ export async function handleCheckout(
             `⚠️ Failed to process referral qualifying action for user ${userId}:`,
             referralError,
           );
-          Sentry.captureException(
-            referralError instanceof Error
-              ? referralError
-              : new Error(String(referralError)),
-            {
-              tags: { subsystem: "payments" },
-              level: "warning",
-            },
-          );
+          reportSentryError(referralError, { subsystem: "payments", level: "warning" });
         }
 
         // Create consultant earnings (mock payments bypass webhooks, so earnings must be created here)
@@ -3023,15 +2987,10 @@ export async function handleCheckout(
             `⚠️ Failed to process consultant referral qualifying action:`,
             consultantRefError,
           );
-          Sentry.captureException(
-            consultantRefError instanceof Error
-              ? consultantRefError
-              : new Error(String(consultantRefError)),
-            {
-              tags: { subsystem: "payments" },
-              level: "warning",
-            },
-          );
+          reportSentryError(consultantRefError, {
+            subsystem: "payments",
+            level: "warning",
+          });
         }
       }
 
@@ -3050,12 +3009,38 @@ export async function handleCheckout(
       };
     } catch (dbError) {
       console.error("Failed to create payment record:", dbError);
-      Sentry.captureException(
-        dbError instanceof Error ? dbError : new Error(String(dbError)),
-        {
-          tags: { subsystem: "payments" },
-        },
-      );
+      // Classification for Sentry tagging ONLY — deliberately NOT the same
+      // list `preservedMessages` below uses for the rethrow decision, so
+      // adding a tagging-only pattern here can never change which message
+      // reaches the caller.
+      const modelledOutcomePatterns = [
+        "already registered",
+        "already enrolled",
+        "full",
+        "cancelled",
+        "ended",
+        "not been scheduled",
+        "already have a pending or active subscription",
+        "overlapping dates",
+        "insufficient credits",
+        "session cap", // ProgramAssignmentLimitError-derived message, above
+      ];
+      // Typed errors and stable codes first — a substring is a last resort,
+      // not the mechanism. recordOverageAtCheckout stamps
+      // code: "PROGRAM_CAP_EXHAUSTED" on its 402, which this used to miss
+      // entirely and report as a fault.
+      const dbErrorCode = (dbError as { code?: unknown } | null)?.code;
+      const isModelledOutcome =
+        dbError instanceof WalletFrozenError ||
+        dbError instanceof ProgramAssignmentLimitError ||
+        dbErrorCode === "PROGRAM_CAP_EXHAUSTED" ||
+        (dbError instanceof Error &&
+          modelledOutcomePatterns.some((msg) =>
+            // Word-bounded: bare `includes` let "full" match "successful" and
+            // "ended" match "unintended", tagging real faults as routine.
+            new RegExp(`\\b${msg}\\b`, "i").test(dbError.message),
+          ));
+      reportSentryError(dbError, { subsystem: "payments", expected: isModelledOutcome });
 
       // CRITICAL: Cancel payment intent since DB operation failed
       // (Skip cleanup for zero-amount payments — they have no real gateway intent)
@@ -3100,16 +3085,31 @@ export async function handleCheckout(
       );
     }
   } catch (error) {
+    // Outermost boundary — also catches validation errors from
+    // calculateAmountAndValidate/acquireCheckoutLock/revalidateInsideLock
+    // (steps 1-3, above the STEP-5 try/catch that already reports) which
+    // otherwise reach here uncaptured. Lock contention is a modelled,
+    // expected race between two concurrent checkouts; anything else here is
+    // unclassified and reported as a fault by default.
+    const isLockContention =
+      error instanceof Error &&
+      (error.message.includes("currently checking out") ||
+        error.message.includes("currently being booked"));
+    // Tag-only: the explicit lock-expiry throw above ("...already in
+    // progress...") is the same modelled race, but is NOT folded into
+    // isLockContention — that variable also picks the rethrow message below,
+    // and this message already classifies correctly downstream (LOCK_CONTENTION
+    // via payment-error-classification.ts), so changing it would misroute it
+    // to AVAILABILITY instead.
+    const isModeledLockRace =
+      isLockContention ||
+      (error instanceof Error && error.message.includes("already in progress"));
+    reportSentryError(error, { subsystem: "payments", expected: isModeledLockRace });
     // Enhanced error handling with lock-specific errors
-    if (error instanceof Error) {
-      if (
-        error.message.includes("currently checking out") ||
-        error.message.includes("currently being booked")
-      ) {
-        throw new Error(
-          "Another user is currently booking this slot. Please wait a few seconds and try again.",
-        );
-      }
+    if (isLockContention) {
+      throw new Error(
+        "Another user is currently booking this slot. Please wait a few seconds and try again.",
+      );
     }
     throw error;
   } finally {

@@ -5,11 +5,11 @@
  * dependency-light); this module carries the heavier graph (computeOverage +
  * the Novu member-due notification).
  */
+import { reportSentryError } from "@/lib/observability/report";
 import prisma from "@/lib/prisma";
 import {
   PaymentStatus,
   type Currency,
-  type Prisma,
   type PaymentGateway,
   type ProgramType,
 } from "@prisma/client";
@@ -138,12 +138,16 @@ export async function recordOverageAtCheckout(
   // Circuit breaker: ceiling exceeded → reject the booking like BLOCK. Distinct
   // code so the dashboard can explain it's the cycle cap, not the allocation.
   if (overage.decision === "BLOCK" && overage.chargeTo === null) {
-    throw Object.assign(
+    const capExhaustedErr = Object.assign(
       new Error(
         "PROGRAM_CAP_EXHAUSTED: This booking would exceed the program's per-cycle overage ceiling. Contact your organization administrator to raise the ceiling or wait for the next cycle.",
       ),
       { httpStatus: 402, code: "PROGRAM_CAP_EXHAUSTED" },
     );
+    // Modelled outcome (the circuit breaker working as designed), not a
+    // fault — captured for volume/pattern visibility only.
+    reportSentryError(capExhaustedErr, { subsystem: "payments", expected: true });
+    throw capExhaustedErr;
   }
 
   if (marginalPaise <= 0) return;
@@ -212,11 +216,18 @@ export async function recordOverageAtCheckout(
       // tx rather than silently double-collect basePaise. Reachable today because
       // isReachableOrgFundingPath doesn't constrain overageBehavior by funding.
       if (!parentBase || parentBase.amountPaise < basePaise) {
-        throw new Error(
+        const carveErr = new Error(
           `CHARGE_MEMBER overage on payment ${paymentId}: cannot carve basePaise=${basePaise} ` +
             `from parent INVOICE_ACCRUAL leg (${parentBase ? parentBase.amountPaise : "absent"}); ` +
             `non-invoice-funded member-overage credit-back not implemented (#715) — refusing to double-collect`,
         );
+        // A genuine coverage gap (#715), not a modelled outcome — this aborts
+        // a booking with real money on the line.
+        reportSentryError(carveErr, {
+          subsystem: "payments",
+          contexts: { overage: { paymentId, basePaise } },
+        });
+        throw carveErr;
       }
       await tx.paymentLeg.update({
         where: { paymentId_source: { paymentId, source: "INVOICE_ACCRUAL" } },
@@ -254,9 +265,10 @@ export async function recordOverageAtCheckout(
           payUrl: `/dashboard/overage?charge=${memberOverageEvent.id}`,
         });
       })
-      .catch((notifyErr) =>
-        console.error("[notifyOrgProgramOverageDue] failed:", notifyErr),
-      );
+      .catch((notifyErr) => {
+        console.error("[notifyOrgProgramOverageDue] failed:", notifyErr);
+        reportSentryError(notifyErr, { subsystem: "payments", level: "warning" });
+      });
     return;
   }
 

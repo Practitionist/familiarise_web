@@ -37,7 +37,7 @@
  * the paise.
  */
 
-import * as Sentry from "@sentry/nextjs";
+import { reportSentryError, reportSentryMessage } from "@/lib/observability/report";
 import prisma, { type Tx } from "@/lib/prisma";
 import {
   EarningStatus,
@@ -104,6 +104,19 @@ export class RefundValidationError extends Error {
   }
 }
 
+/**
+ * Report a modelled refund-validation outcome (already-refunded, race-loss,
+ * blocked-by-dispute, etc.) for visibility only. Never changes control flow —
+ * every call site still throws the same error object right after this.
+ */
+function reportModelledRefundOutcome(err: RefundValidationError): void {
+  reportSentryError(err, {
+    subsystem: "payments",
+    tags: { feature: "refund" },
+    expected: true,
+  });
+}
+
 /** Gateway rejected or errored on the refund call. The Refund row is kept
  * (PENDING with a `pending_` placeholder, or FAILED when the gateway
  * definitively declined) so the reconcile cron / failed-refund notifier own
@@ -151,16 +164,20 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
   });
 
   if (!payment) {
-    throw new RefundValidationError(
+    const err = new RefundValidationError(
       `Payment ${input.paymentId} not found`,
       "PAYMENT_NOT_FOUND",
     );
+    reportModelledRefundOutcome(err);
+    throw err;
   }
   if (payment.paymentStatus !== PaymentStatus.SUCCEEDED) {
-    throw new RefundValidationError(
+    const err = new RefundValidationError(
       `Payment ${input.paymentId} is not SUCCEEDED (status=${payment.paymentStatus}); cannot refund`,
       "PAYMENT_NOT_SUCCEEDED",
     );
+    reportModelledRefundOutcome(err);
+    throw err;
   }
 
   // Sum already-refunded across non-FAILED, non-CANCELLED refunds. A
@@ -194,12 +211,14 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
 
   const refundable = payment.amount - alreadyRefunded;
   if (refundable <= 0) {
-    throw new RefundValidationError(
+    const err = new RefundValidationError(
       `Payment ${input.paymentId} has no refundable balance (amount=${payment.amount}, ` +
         `refunded=${refundedSoFar}, chargeback-reversed=${chargedBack}); the customer was ` +
         `already made whole — a chargeback returns money via the bank, not an app refund`,
       "ALREADY_FULLY_REFUNDED",
     );
+    reportModelledRefundOutcome(err);
+    throw err;
   }
 
   // #1008 — block an app-initiated refund while a dispute is LIVE (non-terminal)
@@ -215,24 +234,30 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
     select: { status: true },
   });
   if (liveDispute) {
-    throw new RefundValidationError(
+    const err = new RefundValidationError(
       `Payment ${input.paymentId} has an open dispute (${liveDispute.status}); resolve it before refunding`,
       "REFUND_BLOCKED_BY_DISPUTE",
     );
+    reportModelledRefundOutcome(err);
+    throw err;
   }
 
   const requested = input.amountPaise ?? refundable;
   if (requested <= 0) {
-    throw new RefundValidationError(
+    const err = new RefundValidationError(
       `Refund amount must be positive; got ${requested}`,
       "INVALID_AMOUNT",
     );
+    reportModelledRefundOutcome(err);
+    throw err;
   }
   if (requested > refundable) {
-    throw new RefundValidationError(
+    const err = new RefundValidationError(
       `Refund amount ${requested} exceeds refundable ${refundable} on payment ${input.paymentId}`,
       "AMOUNT_EXCEEDS_REFUNDABLE",
     );
+    reportModelledRefundOutcome(err);
+    throw err;
   }
 
   // PHASE 1 — reserve. Create the Refund row in PENDING with a `pending_`
@@ -282,10 +307,12 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
           refundedNow -
           sumPaise(chargedBackNow._sum.amountPaise);
         if (requested > remainingNow) {
-          throw new RefundValidationError(
+          const err = new RefundValidationError(
             `Race-loss: refund amount ${requested} exceeds refundable ${remainingNow} on payment ${input.paymentId}`,
             "AMOUNT_EXCEEDS_REFUNDABLE",
           );
+          reportModelledRefundOutcome(err);
+          throw err;
         }
 
         // #1008 — re-check for a live dispute inside the Serializable tx. Reading
@@ -300,10 +327,12 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
           select: { id: true },
         });
         if (liveDisputeNow) {
-          throw new RefundValidationError(
+          const err = new RefundValidationError(
             `Payment ${input.paymentId} has an open dispute; resolve it before refunding`,
             "REFUND_BLOCKED_BY_DISPUTE",
           );
+          reportModelledRefundOutcome(err);
+          throw err;
         }
 
         return tx.refund.create({
@@ -347,13 +376,11 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
       idempotencyKey: reserved.id,
     });
   } catch (err) {
-    Sentry.captureException(
-      err instanceof Error ? err : new Error(String(err)),
-      {
-        tags: { subsystem: "payments", feature: "refund" },
-        extra: { paymentId: input.paymentId, refundRowId: reserved.id },
-      },
-    );
+    reportSentryError(err, {
+      subsystem: "payments",
+      tags: { feature: "refund" },
+      extra: { paymentId: input.paymentId, refundRowId: reserved.id },
+    });
     // Keep the PENDING placeholder: the reconcile cron matches it against
     // the gateway (covers "call actually landed but we never heard back")
     // or FAILs it after 24h, which triggers the payer notification (#779).
@@ -390,11 +417,19 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
         failedAt: new Date(),
       },
     });
-    throw new RefundGatewayError(
+    const declineErr = new RefundGatewayError(
       `Gateway declined refund for payment ${input.paymentId}`,
       "GATEWAY_REFUND_DECLINED",
       reserved.id,
     );
+    // Declined outcomes reach here as data (gateway.status), never a thrown
+    // rejection, so unlike the catch above this had no Sentry trace at all.
+    reportSentryError(declineErr, {
+      subsystem: "payments",
+      tags: { feature: "refund" },
+      extra: { paymentId: input.paymentId, refundRowId: reserved.id },
+    });
+    throw declineErr;
   }
 
   await prisma.refund.update({
@@ -507,20 +542,20 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
       });
     } catch (err) {
       // ALREADY_FULLY_REFUNDED / PAYMENT_NOT_SUCCEEDED are benign idempotent
-      // re-drives; anything else is a real gap between the parent refund and the
-      // member's credit-back — page ops rather than fail the settled parent.
+      // re-drives — the nested refundPayment call already reported them
+      // (expected:true) at their origin above; anything else here is a real
+      // gap between the parent refund and the member's credit-back — page
+      // ops rather than fail the settled parent.
       if (
         !(err instanceof RefundValidationError) ||
         (err.code !== "ALREADY_FULLY_REFUNDED" &&
           err.code !== "PAYMENT_NOT_SUCCEEDED")
       ) {
-        Sentry.captureException(
-          err instanceof Error ? err : new Error(String(err)),
-          {
-            tags: { subsystem: "payments", feature: "overage-credit-back" },
-            extra: { parentPaymentId: input.paymentId, sidePaymentId },
-          },
-        );
+        reportSentryError(err, {
+          subsystem: "payments",
+          tags: { feature: "overage-credit-back" },
+          extra: { parentPaymentId: input.paymentId, sidePaymentId },
+        });
         void recordSystemError({
           organizationId: null,
           category: "PAYMENT",
@@ -584,6 +619,15 @@ export async function applyRefundCascade(
     data: { cascadedAt: new Date() },
   });
   if (claim.count === 0) {
+    // Idempotency short-circuit — the system working as designed (a
+    // redelivered webhook or a racing cron lost the claim). Reported for
+    // volume/pattern visibility only.
+    reportSentryMessage("Refund cascade idempotency short-circuit", {
+      subsystem: "payments",
+      tags: { feature: "refund" },
+      expected: true,
+      extra: { refundId: input.refundId, paymentId: input.paymentId },
+    });
     return {
       legsReversed: 0,
       consultantEarningsReversed: 0,
@@ -1261,15 +1305,12 @@ export async function applyRefundCascade(
     console.error(
       `[ledger] refund reversal posting FAILED for payment ${payment.id} — rolling back the cascade: ${err instanceof Error ? err.message : String(err)}`,
     );
-    Sentry.captureException(
-      err instanceof Error ? err : new Error(String(err)),
-      {
-        tags: { subsystem: "payments" },
-        contexts: {
-          refund: { paymentId: payment.id, refundId: input.refundId },
-        },
+    reportSentryError(err, {
+      subsystem: "payments",
+      contexts: {
+        refund: { paymentId: payment.id, refundId: input.refundId },
       },
-    );
+    });
     void recordSystemError({
       organizationId: payment.organizationId ?? null,
       category: "LEDGER",

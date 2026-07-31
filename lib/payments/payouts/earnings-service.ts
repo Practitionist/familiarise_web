@@ -15,7 +15,7 @@
  * consultant's personal payout for that booking is zero.
  */
 
-import * as Sentry from "@sentry/nextjs";
+import { reportSentryError } from "@/lib/observability/report";
 import prisma, { type Tx } from "@/lib/prisma";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import {
@@ -256,11 +256,11 @@ async function resolveOrgSplit(
   }
 
   if (orgShare < 0) {
-    Sentry.captureException(
+    reportSentryError(
       new Error(
         `[Earnings] Negative orgShare (${orgShare}) for org ${orgId}: platformBps=${resolved.platformBps}, consultantBps=${resolved.consultantBps}. Clamping.`,
       ),
-      { tags: { subsystem: "payments" }, level: "warning" },
+      { subsystem: "payments", level: "warning" },
     );
     console.error(
       `[Earnings] Negative orgShare (${orgShare}) for org ${orgId}: ` +
@@ -813,12 +813,7 @@ export async function createEarningsFromPayment({
                 err instanceof Prisma.PrismaClientKnownRequestError &&
                 err.code === "P2034";
               if (!isRetryableSerialization) {
-                Sentry.captureException(
-                  err instanceof Error ? err : new Error(String(err)),
-                  {
-                    tags: { subsystem: "payments" },
-                  },
-                );
+                reportSentryError(err, { subsystem: "payments" });
                 console.error(
                   `[ledger] booking posting FAILED for payment ${payment.id} — rolling back the booking: ${err instanceof Error ? err.message : String(err)}`,
                 );
@@ -833,6 +828,10 @@ export async function createEarningsFromPayment({
                   err,
                   context: { paymentId: payment.id },
                 }).catch(() => {});
+              } else {
+                // Lost SSI race — withSerializableRetry re-runs the whole txn.
+                // Modelled outcome, reported at low volume/info only.
+                reportSentryError(err, { subsystem: "payments", expected: true });
               }
               throw err;
             }
@@ -852,6 +851,11 @@ export async function createEarningsFromPayment({
       console.warn(
         `[Earnings] Duplicate earnings creation for payment ${payment.id} (P2002). Treating as idempotent success.`,
       );
+      reportSentryError(error, {
+        subsystem: "payments",
+        expected: true,
+        extra: { paymentId: payment.id, consultantProfileId },
+      });
       const existing = await prisma.consultantEarnings.findFirst({
         where: { paymentId: payment.id, consultantProfileId },
       });
