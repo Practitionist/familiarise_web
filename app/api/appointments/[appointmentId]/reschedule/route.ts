@@ -580,20 +580,25 @@ export async function POST(
     // stays PENDING_REVIEW for the consultant to answer.
     let autoConfirmed = false;
     if (result.rescheduleRequestId) {
-      const proposalEventType = result.logContext.consultationId
-        ? ("consultation" as const)
-        : result.logContext.subscriptionId
-          ? ("subscription" as const)
-          : null;
-      const proposalEventId =
-        result.logContext.consultationId ?? result.logContext.subscriptionId;
+      // Only the two 1:1 kinds carry proposals; a group event never opens one.
+      const proposal = result.logContext.consultationId
+        ? { type: "consultation" as const, id: result.logContext.consultationId }
+        : null;
+      const proposalTarget =
+        proposal ??
+        (result.logContext.subscriptionId
+          ? {
+              type: "subscription" as const,
+              id: result.logContext.subscriptionId,
+            }
+          : null);
 
-      if (proposalEventType && proposalEventId) {
+      if (proposalTarget) {
         try {
           const outcome = await tryAutoConfirmProposal(
             result.rescheduleRequestId,
-            proposalEventType,
-            proposalEventId,
+            proposalTarget.type,
+            proposalTarget.id,
           );
           autoConfirmed = outcome.confirmed;
         } catch (err) {

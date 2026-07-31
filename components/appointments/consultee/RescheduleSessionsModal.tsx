@@ -65,6 +65,129 @@ function formatSlotTime(date: Date | string): string {
   return format(toDate(date), "h:mm a");
 }
 
+type SessionWithProps = {
+  slots: SlotLike[];
+  isWithin24Hours: boolean;
+  startTime: Date;
+  endTime: Date;
+};
+
+/**
+ * The which-sessions picker.
+ *
+ * Extracted because the modal now carries a second step, and holding both the
+ * step machinery and this list in one function put it past the complexity
+ * budget — the list is self-contained, so it moves rather than the step logic
+ * being contorted around it.
+ */
+function SessionSelector({
+  rescheduleType,
+  sessions,
+  selectedSlotIds,
+  selectedSessionCount,
+  onToggle,
+}: Readonly<{
+  rescheduleType: "individual" | "multiple";
+  sessions: SessionWithProps[];
+  selectedSlotIds: string[];
+  selectedSessionCount: number;
+  onToggle: React.Dispatch<React.SetStateAction<string[]>>;
+}>) {
+  return (
+    <div className="mt-4 space-y-2">
+      <Label className="text-sm font-medium text-foreground">
+        {rescheduleType === "individual"
+          ? "Select the session to reschedule:"
+          : "Select sessions to reschedule:"}
+      </Label>
+      <div className="max-h-48 overflow-y-auto space-y-2 rounded-lg border border-border p-2">
+        {sessions.map((session, sessionIndex) => {
+          const sessionSlotIds = session.slots.map((s) => s.id);
+          const isSelected = sessionSlotIds.every((id) =>
+            selectedSlotIds.includes(id),
+          );
+
+          const handleSessionClick = () => {
+            if (session.isWithin24Hours) return;
+            if (rescheduleType === "individual") {
+              onToggle(sessionSlotIds);
+            } else if (isSelected) {
+              onToggle((prev) =>
+                prev.filter((id) => !sessionSlotIds.includes(id)),
+              );
+            } else {
+              onToggle((prev) =>
+                Array.from(new Set([...prev, ...sessionSlotIds])),
+              );
+            }
+          };
+
+          return (
+            <button
+              key={`session-${sessionIndex}`}
+              type="button"
+              onClick={handleSessionClick}
+              disabled={session.isWithin24Hours}
+              className={cn(
+                "w-full flex items-center justify-between p-2.5 rounded-md text-left transition-colors",
+                isSelected
+                  ? "bg-primary text-primary-foreground"
+                  : session.isWithin24Hours
+                    ? "bg-muted text-muted-foreground/70 cursor-not-allowed"
+                    : "bg-muted hover:bg-muted/80 text-foreground",
+              )}
+            >
+              <div className="flex items-center gap-2">
+                {rescheduleType === "multiple" && (
+                  <div
+                    className={cn(
+                      "w-4 h-4 rounded border flex items-center justify-center",
+                      isSelected
+                        ? "bg-primary-foreground border-primary-foreground"
+                        : session.isWithin24Hours
+                          ? "border-border"
+                          : "border-muted-foreground",
+                    )}
+                  >
+                    {isSelected && <Check className="h-3 w-3 text-primary" />}
+                  </div>
+                )}
+                <div>
+                  <div className="text-sm font-medium">
+                    {formatSlotDate(session.startTime)}
+                  </div>
+                  <div
+                    className={cn(
+                      "text-xs",
+                      isSelected
+                        ? "text-primary-foreground/70"
+                        : "text-muted-foreground",
+                    )}
+                  >
+                    {formatSlotTime(session.startTime)} -{" "}
+                    {formatSlotTime(session.endTime)}
+                  </div>
+                </div>
+              </div>
+              {session.isWithin24Hours && (
+                <span className="text-xs bg-orange-100 text-orange-600 dark:bg-orange-900/30 dark:text-orange-300 px-2 py-0.5 rounded">
+                  Within 24h
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+      {rescheduleType === "multiple" && selectedSlotIds.length > 0 && (
+        <p className="text-sm text-muted-foreground font-medium">
+          {selectedSessionCount} session
+          {selectedSessionCount > 1 ? "s" : ""} selected
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function RescheduleSessionsModal({
   open,
   onOpenChange,
@@ -275,103 +398,15 @@ export function RescheduleSessionsModal({
                 </div>
               </RadioGroup>
 
-              {/* Session Selector */}
               {(rescheduleType === "individual" ||
                 rescheduleType === "multiple") && (
-                <div className="mt-4 space-y-2">
-                  <Label className="text-sm font-medium text-foreground">
-                    {rescheduleType === "individual"
-                      ? "Select the session to reschedule:"
-                      : "Select sessions to reschedule:"}
-                  </Label>
-                  <div className="max-h-48 overflow-y-auto space-y-2 rounded-lg border border-border p-2">
-                    {sessionsWithDynamicProps.map((session, sessionIndex) => {
-                      const sessionSlotIds = session.slots.map((s) => s.id);
-                      const isSelected = sessionSlotIds.every((id) =>
-                        selectedSlotIds.includes(id),
-                      );
-
-                      const handleSessionClick = () => {
-                        if (session.isWithin24Hours) return;
-                        if (rescheduleType === "individual") {
-                          setSelectedSlotIds(sessionSlotIds);
-                        } else if (isSelected) {
-                          setSelectedSlotIds((prev) =>
-                            prev.filter((id) => !sessionSlotIds.includes(id)),
-                          );
-                        } else {
-                          setSelectedSlotIds((prev) =>
-                            Array.from(new Set([...prev, ...sessionSlotIds])),
-                          );
-                        }
-                      };
-
-                      return (
-                        <button
-                          key={`session-${sessionIndex}`}
-                          type="button"
-                          onClick={handleSessionClick}
-                          disabled={session.isWithin24Hours}
-                          className={cn(
-                            "w-full flex items-center justify-between p-2.5 rounded-md text-left transition-colors",
-                            isSelected
-                              ? "bg-primary text-primary-foreground"
-                              : session.isWithin24Hours
-                                ? "bg-muted text-muted-foreground/70 cursor-not-allowed"
-                                : "bg-muted hover:bg-muted/80 text-foreground",
-                          )}
-                        >
-                          <div className="flex items-center gap-2">
-                            {rescheduleType === "multiple" && (
-                              <div
-                                className={cn(
-                                  "w-4 h-4 rounded border flex items-center justify-center",
-                                  isSelected
-                                    ? "bg-primary-foreground border-primary-foreground"
-                                    : session.isWithin24Hours
-                                      ? "border-border"
-                                      : "border-muted-foreground",
-                                )}
-                              >
-                                {isSelected && (
-                                  <Check className="h-3 w-3 text-primary" />
-                                )}
-                              </div>
-                            )}
-                            <div>
-                              <div className="text-sm font-medium">
-                                {formatSlotDate(session.startTime)}
-                              </div>
-                              <div
-                                className={cn(
-                                  "text-xs",
-                                  isSelected
-                                    ? "text-primary-foreground/70"
-                                    : "text-muted-foreground",
-                                )}
-                              >
-                                {formatSlotTime(session.startTime)} -{" "}
-                                {formatSlotTime(session.endTime)}
-                              </div>
-                            </div>
-                          </div>
-                          {session.isWithin24Hours && (
-                            <span className="text-xs bg-orange-100 text-orange-600 dark:bg-orange-900/30 dark:text-orange-300 px-2 py-0.5 rounded">
-                              Within 24h
-                            </span>
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  {rescheduleType === "multiple" &&
-                    selectedSlotIds.length > 0 && (
-                      <p className="text-sm text-muted-foreground font-medium">
-                        {selectedSessionCount} session
-                        {selectedSessionCount > 1 ? "s" : ""} selected
-                      </p>
-                    )}
-                </div>
+                <SessionSelector
+                  rescheduleType={rescheduleType}
+                  sessions={sessionsWithDynamicProps}
+                  selectedSlotIds={selectedSlotIds}
+                  selectedSessionCount={selectedSessionCount}
+                  onToggle={setSelectedSlotIds}
+                />
               )}
 
               <div className="bg-amber-50 border border-amber-200 dark:bg-amber-900/20 dark:border-amber-900/40 rounded-lg p-3">
