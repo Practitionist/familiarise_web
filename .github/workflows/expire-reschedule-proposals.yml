@@ -46,11 +46,13 @@ jobs:
         run: npx --no-install prisma generate
 
       - name: Expire reschedule proposals
-        # --no-install: tsx is now an exact devDependency, so this runs the
-        # version in the lockfile instead of fetching one at job time. Every
-        # other scheduled workflow still uses `npx --yes tsx@4.23.1`; they can
-        # move to this form now that the dependency exists.
-        run: npx --no-install tsx jobs/appointments/expire-reschedule-proposals.ts
+        # SonarCloud flags npx-on-demand here. Adding tsx as a devDependency to
+        # allow --no-install was tried and reverted: the ~20 @esbuild platform
+        # packages it drags into the lockfile broke the Netlify deploy while
+        # leaving GitHub CI and a local NETLIFY=true build green. A pinned
+        # version matching every other scheduled job in this repo is the
+        # accepted trade — a working deploy beats a clean lint report.
+        run: npx --yes tsx@4.23.1 jobs/appointments/expire-reschedule-proposals.ts
 
       - name: Notify on failure
         if: failure()
