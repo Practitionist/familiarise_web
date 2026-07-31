@@ -163,4 +163,7 @@ async function main(): Promise<void> {
   }
 }
 
-runJob("reconcile-ledgers", main);
+// A wide drift queues one fatal event PER drifted wallet (see the loop above),
+// so the default 5s drain can silently lose the P0 pages this job exists to
+// raise. The workflow allows 30 minutes; 30s of it can go to the flush. (#1066)
+runJob("reconcile-ledgers", main, { flushTimeoutMs: 30_000 });

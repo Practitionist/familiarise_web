@@ -8,33 +8,18 @@
  * the easy half to get right.
  */
 
-const initSentry = jest.fn();
-jest.mock("../../sentry.shared.config", () => ({
-  __esModule: true,
-  initSentry: () => initSentry(),
-}));
-
+// sentry.shared.config is deliberately NOT mocked: the environment gating is
+// the thing under test, so it has to run for real. Only the SDK is faked.
+const init = jest.fn();
 const flush = jest.fn(async (_timeoutMs?: number) => true);
 const captureException = jest.fn();
 const loggerInfo = jest.fn();
 jest.mock("@sentry/nextjs", () => ({
   __esModule: true,
+  init: (options: unknown) => init(options),
   flush: (timeoutMs?: number) => flush(timeoutMs),
   captureException: (...args: unknown[]) => captureException(...args),
   logger: { info: (...args: unknown[]) => loggerInfo(...args) },
-}));
-
-// Declared outside the factory so every isolated module registry sees the SAME
-// class object — `instanceof` in the runner would not match a fresh one.
-class mockCronLockHeldError extends Error {
-  constructor(readonly jobName: string) {
-    super(`${jobName} is already running — skipped (cron lock held)`);
-    this.name = "CronLockHeldError";
-  }
-}
-jest.mock("../../lib/cron/with-cron-lock", () => ({
-  __esModule: true,
-  CronLockHeldError: mockCronLockHeldError,
 }));
 
 const appendFileSync = jest.fn();
@@ -43,16 +28,32 @@ jest.mock("node:fs", () => ({
   default: { appendFileSync: (...args: unknown[]) => appendFileSync(...args) },
 }));
 
-type JobSentryModule = typeof import("../../lib/observability/job-sentry");
+type SentryInitOptions = { enabled?: boolean; tracesSampleRate?: number };
+const lastInitOptions = (): SentryInitOptions =>
+  init.mock.calls.at(-1)?.[0] as SentryInitOptions;
 
-/** Fresh module registry each time so the one-shot `init` guard resets. */
-function loadModule(): JobSentryModule {
+type JobSentryModule = typeof import("../../lib/observability/job-sentry");
+type LockErrorsModule = typeof import("../../lib/cron/cron-lock-errors");
+
+/**
+ * Fresh module registry each time so the one-shot `init` guard resets.
+ *
+ * The lock-error classes come out of the SAME registry, because `instanceof`
+ * compares class identity and an isolated registry builds its own copy. They
+ * are the real ones rather than stand-ins — lib/cron/cron-lock-errors is a leaf
+ * with no imports, so using it costs nothing, and it means these tests would
+ * actually catch someone making Unavailable extend Held. (#1066 F9/F11)
+ */
+function loadModule(): JobSentryModule & LockErrorsModule {
   let mod!: JobSentryModule;
+  let errors!: LockErrorsModule;
   jest.isolateModules(() => {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    /* eslint-disable @typescript-eslint/no-require-imports */
     mod = require("../../lib/observability/job-sentry") as JobSentryModule;
+    errors = require("../../lib/cron/cron-lock-errors") as LockErrorsModule;
+    /* eslint-enable @typescript-eslint/no-require-imports */
   });
-  return mod;
+  return { ...mod, ...errors };
 }
 
 describe("job Sentry runner", () => {
@@ -181,20 +182,20 @@ describe("job Sentry runner", () => {
     // decide this for itself; centralising it is what removed 58 copies of
     // the same catch block.
     it("does not set a non-zero exit code", async () => {
-      const { runJobWithSentry } = loadModule();
+      const { runJobWithSentry, CronLockHeldError } = loadModule();
 
       await runJobWithSentry("locked-job", async () => {
-        throw new mockCronLockHeldError("locked-job");
+        throw new CronLockHeldError("locked-job");
       });
 
       expect(process.exitCode).toBeUndefined();
     });
 
     it("is not captured to Sentry as an error", async () => {
-      const { runJobWithSentry } = loadModule();
+      const { runJobWithSentry, CronLockHeldError } = loadModule();
 
       await runJobWithSentry("locked-job", async () => {
-        throw new mockCronLockHeldError("locked-job");
+        throw new CronLockHeldError("locked-job");
       });
 
       expect(captureException).not.toHaveBeenCalled();
@@ -204,10 +205,10 @@ describe("job Sentry runner", () => {
     });
 
     it("still flushes, because the skipped run may already have logged", async () => {
-      const { runJobWithSentry } = loadModule();
+      const { runJobWithSentry, CronLockHeldError } = loadModule();
 
       await runJobWithSentry("locked-job", async () => {
-        throw new mockCronLockHeldError("locked-job");
+        throw new CronLockHeldError("locked-job");
       });
 
       expect(flush).toHaveBeenCalledTimes(1);
@@ -216,21 +217,27 @@ describe("job Sentry runner", () => {
     it("does not mark the workflow step failed", async () => {
       process.env.GITHUB_ACTIONS = "true";
       process.env.GITHUB_OUTPUT = "/tmp/does-not-matter";
-      const { runJobWithSentry } = loadModule();
+      const { runJobWithSentry, CronLockHeldError } = loadModule();
 
       await runJobWithSentry("locked-job", async () => {
-        throw new mockCronLockHeldError("locked-job");
+        throw new CronLockHeldError("locked-job");
       });
 
       expect(appendFileSync).not.toHaveBeenCalled();
     });
 
-    it("still fails on a lock error that is NOT a held lock", async () => {
-      // CronLockUnavailableError (fail-closed, Redis down) must keep paging.
-      const { runJobWithSentry } = loadModule();
+    it("still pages on CronLockUnavailableError, which is a different thing", async () => {
+      // A fail-closed money job that cannot obtain a real lock has NOT been
+      // skipped by a healthy sibling — it has failed. The real class is used
+      // here so that making it extend CronLockHeldError breaks this test.
+      const { runJobWithSentry, CronLockHeldError, CronLockUnavailableError } =
+        loadModule();
+      expect(new CronLockUnavailableError("unlockable-job")).not.toBeInstanceOf(
+        CronLockHeldError,
+      );
 
       await runJobWithSentry("unlockable-job", async () => {
-        throw new Error("fail-closed job requires a real Redis lock");
+        throw new CronLockUnavailableError("unlockable-job");
       });
 
       expect(captureException).toHaveBeenCalledTimes(1);
@@ -287,7 +294,7 @@ describe("job Sentry runner", () => {
     it("initialises before the body runs, reusing the app's shared config", async () => {
       const { runJobWithSentry } = loadModule();
       const order: string[] = [];
-      initSentry.mockImplementation(() => order.push("init"));
+      init.mockImplementation(() => order.push("init"));
 
       await runJobWithSentry("ordered-job", async () => {
         order.push("body");
@@ -302,8 +309,83 @@ describe("job Sentry runner", () => {
       await runJobWithSentry("a", async () => {});
       await runJobWithSentry("b", async () => {});
 
-      expect(initSentry).toHaveBeenCalledTimes(1);
+      expect(init).toHaveBeenCalledTimes(1);
       expect(flush).toHaveBeenCalledTimes(2);
+    });
+
+    it("runs the job anyway if Sentry setup throws", async () => {
+      // initJobSentry() is called outside the try, so a throw here would become
+      // an unhandled rejection: no capture, no annotation, no flush.
+      const { runJobWithSentry } = loadModule();
+      init.mockImplementation(() => {
+        throw new Error("bad DSN");
+      });
+      const body = jest.fn(async () => {});
+
+      await expect(
+        runJobWithSentry("uninstrumentable-job", body),
+      ).resolves.toBeUndefined();
+      expect(body).toHaveBeenCalledTimes(1);
+      expect(process.exitCode).toBeUndefined();
+    });
+  });
+
+  describe("does not ship a developer's local run to production Sentry", () => {
+    // #901 gated `next dev` off via NODE_ENV. A bare `npx tsx jobs/…` process
+    // has no NODE_ENV at all, so that gate passes — and 16 jobs load
+    // dotenv/config from a .env carrying a real production DSN.
+    const asBareTsxProcess = () => {
+      delete (process.env as Record<string, string | undefined>).NODE_ENV;
+      process.env.NEXT_PUBLIC_SENTRY_DSN = "https://key@example.test/1";
+    };
+
+    it("stays disabled for a local run with no NODE_ENV and a development environment", () => {
+      asBareTsxProcess();
+      process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT = "development";
+
+      loadModule().initJobSentry();
+
+      expect(lastInitOptions().enabled).toBe(false);
+    });
+
+    it("stays disabled when the Sentry environment is not set at all", () => {
+      asBareTsxProcess();
+      delete process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT;
+
+      loadModule().initJobSentry();
+
+      expect(lastInitOptions().enabled).toBe(false);
+    });
+
+    it("is enabled for a GitHub Actions run, which sets environment=production", () => {
+      asBareTsxProcess();
+      process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT = "production";
+
+      loadModule().initJobSentry();
+
+      expect(lastInitOptions().enabled).toBe(true);
+    });
+
+    it("stays disabled in a deployed environment with no DSN", () => {
+      // The job gate only ever NARROWS what the shared config decided.
+      asBareTsxProcess();
+      delete process.env.NEXT_PUBLIC_SENTRY_DSN;
+      process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT = "production";
+
+      loadModule().initJobSentry();
+
+      expect(lastInitOptions().enabled).toBe(false);
+    });
+
+    it("pins the trace sample rate instead of inheriting the NODE_ENV default", () => {
+      // Without this, an unset NODE_ENV resolves to 100% sampling while the
+      // events report environment: production.
+      asBareTsxProcess();
+      process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT = "production";
+
+      loadModule().initJobSentry();
+
+      expect(lastInitOptions().tracesSampleRate).toBe(0);
     });
   });
 
@@ -332,6 +414,40 @@ describe("job Sentry runner", () => {
 
       expect(captureException).toHaveBeenCalledTimes(1);
       expect(process.exitCode).toBe(1);
+    });
+
+    it("warns when the drain TIMES OUT, which resolves false rather than throwing", async () => {
+      // The quiet one: flush() returning false means the events were dropped,
+      // and nothing else in the run would ever say so.
+      const { runJobWithSentry } = loadModule();
+      flush.mockImplementation(async () => false);
+
+      await runJobWithSentry("slow-drain-job", async () => {});
+
+      expect(consoleWarn).toHaveBeenCalledWith(
+        expect.stringContaining("queued events were dropped"),
+      );
+    });
+  });
+
+  describe("flush budget", () => {
+    it("uses the shared default when a job asks for nothing", async () => {
+      const { runJobWithSentry, JOB_FLUSH_TIMEOUT_MS } = loadModule();
+
+      await runJobWithSentry("ordinary-job", async () => {});
+
+      expect(flush).toHaveBeenCalledWith(JOB_FLUSH_TIMEOUT_MS);
+    });
+
+    it("honours a per-job override for jobs that queue events in a loop", async () => {
+      // reconcile-ledgers fires one fatal event per drifted wallet.
+      const { runJobWithSentry } = loadModule();
+
+      await runJobWithSentry("batch-job", async () => {}, {
+        flushTimeoutMs: 30_000,
+      });
+
+      expect(flush).toHaveBeenCalledWith(30_000);
     });
   });
 
