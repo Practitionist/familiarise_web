@@ -43,16 +43,19 @@ jobs:
       - name: Generate Prisma client
         # --no-install: prisma IS a project dependency, so there is nothing to
         # fetch and npx must not be allowed to.
-        run: npx --no-install prisma generate
+        run: npx --no-install --ignore-scripts prisma generate
 
       - name: Expire reschedule proposals
-        # SonarCloud flags npx-on-demand here. Adding tsx as a devDependency to
-        # allow --no-install was tried and reverted: the ~20 @esbuild platform
-        # packages it drags into the lockfile broke the Netlify deploy while
-        # leaving GitHub CI and a local NETLIFY=true build green. A pinned
-        # version matching every other scheduled job in this repo is the
-        # accepted trade — a working deploy beats a clean lint report.
-        run: npx --yes tsx@4.23.1 jobs/appointments/expire-reschedule-proposals.ts
+        # Adding tsx as a devDependency to allow --no-install was tried and
+        # reverted: the ~20 @esbuild platform packages it drags into the
+        # lockfile broke the Netlify deploy while leaving GitHub CI and a local
+        # NETLIFY=true build green. So the version is pinned exactly and
+        # lifecycle scripts are refused instead — this job holds DATABASE_URL,
+        # and an on-demand fetch is the one place a postinstall could reach it.
+        # Verified that esbuild still transpiles under --ignore-scripts: its
+        # platform binaries ship as optionalDependencies, not a postinstall
+        # download.
+        run: npx --yes --ignore-scripts tsx@4.23.1 jobs/appointments/expire-reschedule-proposals.ts
 
       - name: Notify on failure
         if: failure()
