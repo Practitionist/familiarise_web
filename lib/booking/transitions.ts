@@ -17,6 +17,7 @@ import type {
   ClassStatus,
   Prisma,
   AppointmentStatus,
+  RescheduleRequestStatus,
   SlotCompletionStatus,
   WebinarStatus,
 } from "@prisma/client";
@@ -165,3 +166,68 @@ export const SLOT_RESCHEDULABLE_FROM: SlotCompletionStatus[] = [
   "SCHEDULED",
   "RESCHEDULED",
 ];
+
+//////////////////////////////////////////////// Reschedule proposals ////////////////////////////////////////////////
+
+// A proposal is a two-party negotiation with exactly one counter-round, so the
+// legal graph is small and every edge is terminal-or-countered. AUTO_ACCEPTED
+// has no allowed-from: it is only ever written at creation, when a consultee's
+// times land in the consultant's published availability and both calendars are
+// free, so there is no state to move out of.
+export const RESCHEDULE_ALLOWED_FROM: Record<
+  RescheduleRequestStatus,
+  RescheduleRequestStatus[]
+> = {
+  AUTO_ACCEPTED: [],
+  PENDING_REVIEW: ["COUNTERED"],
+  COUNTERED: ["PENDING_REVIEW"],
+  ACCEPTED: ["PENDING_REVIEW", "COUNTERED"],
+  DECLINED: ["PENDING_REVIEW", "COUNTERED"],
+  EXPIRED: ["PENDING_REVIEW", "COUNTERED"],
+};
+
+/** The states in which a proposal is still awaiting an answer. */
+export const RESCHEDULE_OPEN_STATUSES: RescheduleRequestStatus[] = [
+  "PENDING_REVIEW",
+  "COUNTERED",
+];
+
+/** Terminal states — the request is answered and holds no claim on its slots. */
+export const RESCHEDULE_TERMINAL_STATUSES: RescheduleRequestStatus[] = [
+  "AUTO_ACCEPTED",
+  "ACCEPTED",
+  "DECLINED",
+  "EXPIRED",
+];
+
+export async function transitionRescheduleRequest(
+  tx: Pick<Tx, "rescheduleRequest">,
+  args: {
+    where: { id: string };
+    to: RescheduleRequestStatus;
+    data?: Omit<Prisma.RescheduleRequestUncheckedUpdateManyInput, "status">;
+    /** Narrow or widen the from-set for flow-specific edges. */
+    fromIn?: RescheduleRequestStatus[];
+  },
+): Promise<void> {
+  // Reaching a terminal state also releases openForAppointmentId, so the
+  // nullable-unique stops reserving the appointment and a fresh reschedule can
+  // open. Callers must not have to remember this.
+  const releasesLock = RESCHEDULE_TERMINAL_STATUSES.includes(args.to);
+  const res = await tx.rescheduleRequest.updateMany({
+    where: {
+      ...args.where,
+      status: { in: args.fromIn ?? RESCHEDULE_ALLOWED_FROM[args.to] },
+    },
+    data: {
+      status: args.to,
+      ...(releasesLock
+        ? { openForAppointmentId: null, resolvedAt: new Date() }
+        : {}),
+      ...args.data,
+    },
+  });
+  if (res.count === 0) {
+    throw new IllegalTransitionError("RescheduleRequest", args.to);
+  }
+}
