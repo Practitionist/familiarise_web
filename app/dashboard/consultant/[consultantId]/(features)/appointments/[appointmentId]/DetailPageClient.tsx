@@ -65,7 +65,6 @@ export default function DetailPageClient({
             : null;
         }}
       />
-      {adapter.renderDialogs()}
       <ConsultantResponseUpload
         appointmentId={appointmentId}
         isOpen={uploadOpen}

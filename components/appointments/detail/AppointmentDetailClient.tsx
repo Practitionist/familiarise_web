@@ -505,6 +505,13 @@ export function AppointmentDetailClient({
           </aside>
         </div>
       </div>
+
+      {/* Mounted HERE, not by each caller. This component renders the overflow
+          menu whose every item opens one of these dialogs, so making the host
+          remember to mount them separately is a contract that gets forgotten —
+          and was: the consultee's detail page never did, leaving Reschedule,
+          Cancel and Report issue setting state nothing was listening for. */}
+      {adapter.renderDialogs()}
     </DashboardErrorBoundary>
   );
 }
