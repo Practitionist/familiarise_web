@@ -97,7 +97,10 @@ export function AppointmentsFilterBar({
             onChange={(e) =>
               onDateRangeChange({ ...dateRange, from: e.target.value })
             }
-            className="h-9 w-[140px] text-xs"
+            // Wider and tighter than the default Input: at 140px with px-3,
+            // "dd/mm/yyyy" plus Chrome's own calendar-picker indicator
+            // overflows the content box and the icon sits on the border.
+            className="h-9 w-[158px] px-2.5 text-xs"
             aria-label="From date"
           />
           <span className="text-xs text-muted-foreground">–</span>
@@ -107,7 +110,10 @@ export function AppointmentsFilterBar({
             onChange={(e) =>
               onDateRangeChange({ ...dateRange, to: e.target.value })
             }
-            className="h-9 w-[140px] text-xs"
+            // Wider and tighter than the default Input: at 140px with px-3,
+            // "dd/mm/yyyy" plus Chrome's own calendar-picker indicator
+            // overflows the content box and the icon sits on the border.
+            className="h-9 w-[158px] px-2.5 text-xs"
             aria-label="To date"
           />
           {hasRange && (
