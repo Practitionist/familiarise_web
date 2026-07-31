@@ -49,6 +49,7 @@ import {
   resolveAttemptKey,
   type AllocationAttemptKey,
 } from "@/hooks/scheduling/useSlotAllocation";
+import { cn } from "@/utils/tailwind";
 
 // Slot with tentative status for reschedule visibility
 interface RequestedSlot {
@@ -183,6 +184,183 @@ async function fetchDataFromApi<T>(
     }
     return { ok: false, data: null, error: message };
   }
+}
+
+/** One line, one time. Long-form dates wrap into three lines in a table cell. */
+function formatDateTime(value: string | Date): string {
+  const date = value instanceof Date ? value : new Date(value);
+  if (isNaN(date.getTime())) return "Invalid date";
+  return date.toLocaleString(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+}
+
+/** Beyond this the list stops being scannable and starts being a wall. */
+const MAX_VISIBLE_SLOTS = 3;
+
+/**
+ * The live offer: who wants what, and until when.
+ *
+ * Given its own bordered block with an accent rail because it is the one thing
+ * on the row that has to be read before any button is pressed — everything
+ * else is context for it.
+ */
+function ProposalBlock({ proposal }: { proposal: RescheduleProposalInfo }) {
+  const slots = currentRoundSlots(proposal);
+  if (slots.length === 0) return null;
+
+  return (
+    <div className="rounded-md border border-l-2 border-border/70 border-l-primary bg-muted/40 px-2.5 py-2">
+      <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
+        <span className="flex items-center gap-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+          <CalendarClock className="h-3 w-3" />
+          {proposal.initiatorRole === "CONSULTEE"
+            ? "Consultee asked for"
+            : "You proposed"}
+        </span>
+        {proposal.round > 1 && (
+          <Badge
+            variant="outline"
+            className="border-border px-1.5 py-0 text-[10px] font-medium uppercase tracking-wide"
+          >
+            Counter-offer
+          </Badge>
+        )}
+      </div>
+      <ul className="mt-1 space-y-0.5">
+        {slots.map((slot) => (
+          <li
+            key={slot.startsAt}
+            className="whitespace-nowrap text-sm font-medium tabular-nums text-foreground"
+          >
+            {formatDateTime(slot.startsAt)}
+          </li>
+        ))}
+      </ul>
+      {proposal.reason && (
+        <p className="mt-1 line-clamp-2 text-xs italic text-muted-foreground">
+          &ldquo;{proposal.reason}&rdquo;
+        </p>
+      )}
+      <p className="mt-1 whitespace-nowrap text-[11px] text-muted-foreground">
+        Expires {formatDateTime(proposal.expiresAt)}
+      </p>
+    </div>
+  );
+}
+
+/**
+ * Whether this is a whole-booking reschedule or a single session moving.
+ *
+ * Lives beside the title rather than in the times column: it describes the
+ * request, not any one time, and stacking it above the times was what made
+ * that column three blocks tall.
+ */
+function RescheduleBadge({ request }: { request: Request }) {
+  const tentative = request.tentativeSlotCount ?? 0;
+  const total = request.totalSlotCount;
+  if (tentative === 0 || total === undefined) return null;
+
+  if (tentative === total) {
+    return (
+      <Badge
+        variant="secondary"
+        className="gap-1 px-1.5 py-0.5 text-[11px] font-medium"
+      >
+        <RefreshCw className="h-3 w-3" />
+        Full reschedule &middot; {total} session{total !== 1 ? "s" : ""}
+      </Badge>
+    );
+  }
+
+  return (
+    <Badge
+      variant="outline"
+      className="gap-1 border-amber-500/40 bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-700 dark:bg-amber-950/40 dark:text-amber-400"
+    >
+      <AlertTriangle className="h-3 w-3" />
+      {tentative} of {total} need{tentative === 1 ? "s" : ""} a new time
+    </Badge>
+  );
+}
+
+/**
+ * The times already on the appointment.
+ *
+ * With a live proposal these are what the consultee is moving away from, so
+ * they read as the quiet "from" half under the offer; without one they are the
+ * request itself. Tentative slots sort first because in a partial reschedule
+ * they are the only ones needing a decision, and the truncation used to hide
+ * them behind a dozen untouched sessions.
+ */
+function StoredTimes({ request }: { request: Request }) {
+  const slots =
+    request.requestedSlots && request.requestedSlots.length > 0
+      ? request.requestedSlots
+      : request.requestedTimes?.map((startsAt) => ({
+          startsAt,
+          isTentative: false,
+        }));
+
+  if (slots && slots.length > 0) {
+    const ordered = [...slots].sort(
+      (a, b) => Number(b.isTentative) - Number(a.isTentative),
+    );
+    const hidden = ordered.length - MAX_VISIBLE_SLOTS;
+
+    return (
+      <div className="space-y-0.5">
+        {request.proposal && (
+          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
+            Currently
+          </p>
+        )}
+        {ordered.slice(0, MAX_VISIBLE_SLOTS).map((slot, index) => (
+          <div
+            key={`${request.id}-slot-${index}`}
+            className={cn(
+              "flex items-center gap-1.5 whitespace-nowrap text-xs tabular-nums",
+              slot.isTentative ? "text-amber-600" : "text-muted-foreground",
+            )}
+          >
+            {slot.isTentative ? (
+              <AlertTriangle className="h-3 w-3 flex-shrink-0" />
+            ) : (
+              <CheckCircle2 className="h-3 w-3 flex-shrink-0 text-emerald-600/70" />
+            )}
+            <span>{formatDateTime(slot.startsAt)}</span>
+            {slot.isTentative && (
+              <span className="sr-only">(needs rescheduling)</span>
+            )}
+          </div>
+        ))}
+        {hidden > 0 && (
+          <p className="pl-[18px] text-[11px] text-muted-foreground">
+            +{hidden} more slot{hidden !== 1 ? "s" : ""}
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  if (
+    request.type === AppointmentsType.SUBSCRIPTION &&
+    request.startDate &&
+    request.endDate
+  ) {
+    return (
+      <div className="text-xs">
+        <p className="font-medium text-foreground">Scheduling period</p>
+        <p className="whitespace-nowrap text-muted-foreground">
+          {request.startDate.toLocaleDateString()} &ndash;{" "}
+          {request.endDate.toLocaleDateString()}
+        </p>
+      </div>
+    );
+  }
+
+  return <p className="text-xs text-muted-foreground">Not available</p>;
 }
 
 export function RequestSlotAllocationTab({
@@ -582,19 +760,16 @@ export function RequestSlotAllocationTab({
     onUpdate();
   };
 
+  // No heading here: both mount points already render a "Requests" page header,
+  // so anything this component titles itself is the second copy of it.
   if (loading) {
     return (
       <Card className="border-0 shadow-none rounded-none">
-        <CardHeader>
-          <CardTitle className="text-xl font-bold">Requests</CardTitle>
-          <CardDescription>
+        <CardContent className="flex flex-col items-center justify-center gap-3 p-8">
+          <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-foreground"></div>
+          <p className="text-sm text-muted-foreground">
             Loading requests and availability...
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="flex items-center justify-center p-8">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
-          </div>
+          </p>
         </CardContent>
       </Card>
     );
@@ -618,203 +793,93 @@ export function RequestSlotAllocationTab({
     {
       key: "type",
       header: "Type",
-      headClassName: "w-[110px]",
+      headClassName: "w-[96px]",
+      className: "align-top whitespace-nowrap",
       cell: (request) => getRequestTypeLabel(request.type),
     },
     {
       key: "title",
       header: "Title",
       primary: true,
-      headClassName: "w-[150px]",
-      cell: (request) => request.title,
+      headClassName: "w-[190px]",
+      className: "align-top",
+      // The reschedule state and the slot count both describe the booking, so
+      // they belong under its name — not stacked on top of the times.
+      cell: (request) => (
+        <div className="flex flex-col items-start gap-1">
+          <span className="font-medium text-foreground">{request.title}</span>
+          <RescheduleBadge request={request} />
+          <span className="text-xs text-muted-foreground">
+            {request.requiredSlots === undefined
+              ? "Slot count unavailable"
+              : `${request.requiredSlots} slot${
+                  request.requiredSlots !== 1 ? "s" : ""
+                } to allocate`}
+          </span>
+        </div>
+      ),
     },
     {
       key: "requestedBy",
       header: "Requested By",
-      headClassName: "w-[130px]",
-      cell: (request) => request.requestedBy.user.name,
+      headClassName: "w-[124px]",
+      className: "align-top",
+      cell: (request) => (
+        <span
+          className="block max-w-[124px] truncate"
+          title={request.requestedBy.user.name}
+        >
+          {request.requestedBy.user.name}
+        </span>
+      ),
     },
     {
       key: "requestedAt",
-      header: "Requested At",
-      headClassName: "w-[130px]",
-      cell: (request) =>
-        new Date(request.requestedAt).toLocaleString(undefined, {
-          dateStyle: "medium",
-          timeStyle: "short",
-        }),
+      header: "Requested",
+      headClassName: "w-[112px]",
+      className: "align-top",
+      cell: (request) => {
+        const requestedAt = new Date(request.requestedAt);
+        return (
+          <div className="whitespace-nowrap text-xs">
+            <div className="text-foreground">
+              {requestedAt.toLocaleDateString(undefined, {
+                dateStyle: "medium",
+              })}
+            </div>
+            <div className="text-muted-foreground">
+              {requestedAt.toLocaleTimeString(undefined, {
+                timeStyle: "short",
+              })}
+            </div>
+          </div>
+        );
+      },
     },
     {
       key: "requestedTimes",
       header: "Requested Times",
+      // The min-width rides on the <td> (desktop only) so it cannot force a
+      // phone card wider than the screen. Nowrap times give this column the
+      // widest max-content in the table, which is what finally makes the auto
+      // layout hand it the slack instead of padding out the right-hand edge.
+      className: "min-w-[220px] align-top",
+      // The live offer on top, the times it moves away from underneath: one
+      // "from -> to" reading instead of two competing cards.
       cell: (request) => (
-        <>
-          {/* The times the consultee actually asked for. Before proposals a
-              reschedule arrived with no stated preference at all, so the only
-              honest thing this column could show was the ORIGINAL times. */}
-          {request.proposal && currentRoundSlots(request.proposal).length > 0 && (
-            <div className="mb-2 rounded-md border border-primary/30 bg-primary/5 px-2 py-1.5">
-              <div className="flex items-center gap-1.5 text-xs font-medium">
-                <CalendarClock className="h-3 w-3" />
-                {request.proposal.initiatorRole === "CONSULTEE"
-                  ? "Consultee asked for"
-                  : "You proposed"}
-                {request.proposal.round > 1 ? " (counter-offer)" : ""}
-              </div>
-              <ul className="mt-1 space-y-0.5">
-                {currentRoundSlots(request.proposal).map((slot) => (
-                  <li key={slot.startsAt} className="text-xs">
-                    {new Date(slot.startsAt).toLocaleString(undefined, {
-                      dateStyle: "medium",
-                      timeStyle: "short",
-                    })}
-                  </li>
-                ))}
-              </ul>
-              {request.proposal.reason && (
-                <p className="mt-1 text-xs italic text-muted-foreground">
-                  &ldquo;{request.proposal.reason}&rdquo;
-                </p>
-              )}
-              <p className="mt-1 text-xs text-muted-foreground">
-                Expires{" "}
-                {new Date(request.proposal.expiresAt).toLocaleString(
-                  undefined,
-                  {
-                    dateStyle: "medium",
-                    timeStyle: "short",
-                  },
-                )}
-              </p>
-            </div>
-          )}
-
-          {/* Reschedule indicator */}
-          {request.tentativeSlotCount !== undefined &&
-            request.tentativeSlotCount > 0 &&
-            request.totalSlotCount !== undefined && (
-              <div className="mb-2">
-                {request.tentativeSlotCount === request.totalSlotCount ? (
-                  <div className="flex items-center gap-1.5 text-xs font-medium text-foreground bg-secondary px-2 py-1 rounded-md">
-                    <RefreshCw className="h-3 w-3" />
-                    Full Reschedule (all {request.totalSlotCount} session
-                    {request.totalSlotCount !== 1 ? "s" : ""})
-                  </div>
-                ) : request.tentativeSlotCount === 1 ? (
-                  <div className="flex items-center gap-1.5 text-xs font-medium text-amber-600 bg-amber-50 px-2 py-1 rounded-md">
-                    <AlertTriangle className="h-3 w-3" />
-                    Individual Session (1 of {request.totalSlotCount} needs new
-                    time)
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-1.5 text-xs font-medium text-amber-600 bg-amber-50 px-2 py-1 rounded-md">
-                    <AlertTriangle className="h-3 w-3" />
-                    Multiple Sessions ({request.tentativeSlotCount} of{" "}
-                    {request.totalSlotCount} need new times)
-                  </div>
-                )}
-              </div>
-            )}
-
-          {request.requestedSlots && request.requestedSlots.length > 0 ? (
-            <div className="space-y-1">
-              {request.requestedSlots.slice(0, 5).map((slot, index) => {
-                const date = new Date(slot.startsAt);
-                const isValidDate = !isNaN(date.getTime());
-
-                return (
-                  <div
-                    key={`${request.id}-slot-${index}`}
-                    className={`flex items-center gap-1.5 text-sm ${
-                      slot.isTentative
-                        ? "text-amber-600"
-                        : "text-muted-foreground"
-                    }`}
-                  >
-                    {slot.isTentative ? (
-                      <AlertTriangle className="h-3 w-3 flex-shrink-0" />
-                    ) : (
-                      <CheckCircle2 className="h-3 w-3 flex-shrink-0 text-green-500" />
-                    )}
-                    <span>
-                      {isValidDate
-                        ? date.toLocaleString(undefined, {
-                            dateStyle: "medium",
-                            timeStyle: "short",
-                          })
-                        : "Invalid date"}
-                    </span>
-                    {slot.isTentative && (
-                      <span className="text-xs text-amber-500">
-                        (needs rescheduling)
-                      </span>
-                    )}
-                  </div>
-                );
-              })}
-              {request.requestedSlots.length > 5 && (
-                <div className="text-xs text-muted-foreground pl-5">
-                  ... and {request.requestedSlots.length - 5} more slot
-                  {request.requestedSlots.length - 5 !== 1 ? "s" : ""}
-                </div>
-              )}
-            </div>
-          ) : request.requestedTimes && request.requestedTimes.length > 0 ? (
-            // Fallback to old format if requestedSlots not available
-            <div className="space-y-1">
-              {request.requestedTimes.slice(0, 5).map((time, index) => {
-                const date = new Date(time);
-                const isValidDate = !isNaN(date.getTime());
-
-                return (
-                  <div key={`${request.id}-time-${index}`} className="text-sm">
-                    {isValidDate
-                      ? date.toLocaleString(undefined, {
-                          dateStyle: "medium",
-                          timeStyle: "short",
-                        })
-                      : "Invalid date"}
-                  </div>
-                );
-              })}
-              {request.requestedTimes.length > 5 && (
-                <div className="text-xs text-muted-foreground">
-                  ... and {request.requestedTimes.length - 5} more slot
-                  {request.requestedTimes.length - 5 !== 1 ? "s" : ""}
-                </div>
-              )}
-            </div>
-          ) : request.type === AppointmentsType.SUBSCRIPTION &&
-            request.startDate &&
-            request.endDate ? (
-            <div className="text-sm">
-              <div className="font-medium text-foreground">
-                Scheduling Period
-              </div>
-              <div className="text-xs text-muted-foreground">
-                {request.startDate.toLocaleDateString()} -{" "}
-                {request.endDate.toLocaleDateString()}
-              </div>
-            </div>
-          ) : (
-            <div className="text-sm text-muted-foreground">Not available</div>
-          )}
-        </>
+        <div className="space-y-1.5 text-left">
+          {request.proposal && <ProposalBlock proposal={request.proposal} />}
+          <StoredTimes request={request} />
+        </div>
       ),
-    },
-    {
-      key: "requiredSlots",
-      header: "Required Slots",
-      headClassName: "w-[90px] text-center",
-      className: "text-center",
-      cell: (request) => request.requiredSlots ?? "—",
     },
     {
       key: "status",
       header: "Status",
-      headClassName: "w-[120px]",
+      headClassName: "w-[116px]",
+      className: "align-top",
       cell: (request) => (
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col items-start gap-1">
           <Badge variant={getRequestStatusBadgeVariant(request.status)}>
             {getRequestStatusLabel(request.status)}
           </Badge>
@@ -827,7 +892,8 @@ export function RequestSlotAllocationTab({
     {
       key: "actions",
       header: "Actions",
-      headClassName: "w-[150px]",
+      headClassName: "w-[152px]",
+      className: "align-top",
       cell: (request) =>
         request.status === AppointmentStatus.PENDING ? (
           <div className="flex flex-col gap-1.5">
@@ -837,6 +903,16 @@ export function RequestSlotAllocationTab({
               </p>
             ) : (
               <>
+                <Button
+                  size="sm"
+                  className="w-full"
+                  onClick={() => {
+                    setSelectedRequest(request);
+                    setDialogOpen(true);
+                  }}
+                >
+                  Allocate Slots
+                </Button>
                 {/* Hidden for directly booked consultations (Bug #8 fix), and
                     for anything awaiting reschedule: those slots still carry
                     the ORIGINAL startsAt, so "using" them would re-confirm the
@@ -846,7 +922,7 @@ export function RequestSlotAllocationTab({
                   request.bookingSource === "REQUEST_SUBMITTED" &&
                   (request.rescheduledSlotCount ?? 0) === 0 && (
                     <Button
-                      variant="secondary"
+                      variant="outline"
                       size="sm"
                       className="w-full"
                       onClick={() => {
@@ -857,24 +933,15 @@ export function RequestSlotAllocationTab({
                       Use Requested Times
                     </Button>
                   )}
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="w-full"
-                  onClick={() => {
-                    setSelectedRequest(request);
-                    setDialogOpen(true);
-                  }}
-                >
-                  Allocate Slots
-                </Button>
               </>
             )}
+            {/* Quiet by design: declining is the rarer branch, and nothing is
+                destroyed until the request is actually rejected. */}
             {request.type === AppointmentsType.CONSULTATION && (
               <Button
-                variant="destructive"
+                variant="ghost"
                 size="sm"
-                className="w-full"
+                className="w-full text-destructive hover:bg-destructive/10 hover:text-destructive"
                 onClick={() => handleDecline(request)}
               >
                 Decline
@@ -887,14 +954,6 @@ export function RequestSlotAllocationTab({
 
   return (
     <Card className="border-0 shadow-none rounded-none">
-      <CardHeader>
-        <CardTitle className="text-fluid-xl font-semibold tracking-tight">
-          Requests
-        </CardTitle>
-        <CardDescription>
-          Review and allocate slots for incoming session requests
-        </CardDescription>
-      </CardHeader>
       <CardContent className="p-0 sm:p-6">
         {requests.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-center">
@@ -910,10 +969,14 @@ export function RequestSlotAllocationTab({
             </p>
           </div>
         ) : (
+          // Cards until lg: seven columns of dense, non-wrapping content need
+          // ~1000px, and the md default left tablets with a table that either
+          // scrolled sideways or squeezed the times into unreadable fragments.
           <ResponsiveTable<Request>
             columns={columns}
             rows={requests}
             getRowId={(r) => r.id}
+            breakpoint="lg"
           />
         )}
 
