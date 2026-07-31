@@ -129,6 +129,20 @@ function nextUtcDayAt(utcDay: number, minuteOfDay: number): Date {
 
 const UTC_MONDAY = 1;
 
+// Pin the clock. nextUtcDayAt below always rolls forward a full week when the
+// target weekday is today, but getNextOccurrenceWeekly keeps today whenever the
+// row's time has not yet passed — so on a Monday before 09:00 UTC the service
+// would place the session today while these expectations point a week out, and
+// the suite would fail purely on when CI happened to run. Wednesday keeps every
+// case away from that boundary.
+beforeAll(() => {
+  jest.useFakeTimers({ doNotFake: ["nextTick", "setImmediate"] });
+  jest.setSystemTime(new Date("2026-08-05T12:00:00Z"));
+});
+afterAll(() => {
+  jest.useRealTimers();
+});
+
 describe("findAvailableSlots — scanning within an availability row", () => {
   // IST Monday 14:30-22:30 == UTC Monday 09:00-17:00. Sixteen 30-min starts.
   const MON_0900_UTC = 9 * 60;
@@ -345,6 +359,88 @@ describe("findAvailableSlots — recurring placement buckets by scheduling timez
 
     const dayKeys = slots.map((s) => SlotCalculationService.dayKey(s, IST));
     expect(new Set(dayKeys).size).toBe(dayKeys.length);
+  });
+
+  it("never reuses a day a surviving session already occupies", async () => {
+    const periodStart = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    const periodEnd = new Date(periodStart.getTime() + 56 * 24 * 60 * 60 * 1000);
+    const config = {
+      sessionsPerWeek: 2,
+      sessionDurationInHours: 0.5,
+      schedulingPeriodStartsAt: periodStart,
+      schedulingPeriodEndsAt: periodEnd,
+      schedulingTimezone: IST,
+    };
+    const twoDayConsultant = weeklyConsultant([
+      { day: "SATURDAY", startUtc: SAT_0900_UTC, endUtc: SAT_1300_UTC },
+      { day: "SUNDAY", startUtc: SAT_0900_UTC, endUtc: SAT_1300_UTC },
+    ]);
+
+    // Take the first placement the allocator would make, then hand it back as a
+    // surviving confirmed session. The per-day cap counts existing appointments,
+    // so re-placing on that day would be rejected downstream.
+    const survivor = (
+      await findAvailableSlots(dbOccupying([]), twoDayConsultant, 1, 1, "subscription", config)
+    )[0];
+
+    const slots = await findAvailableSlots(
+      dbOccupying([]),
+      twoDayConsultant,
+      2,
+      1,
+      "subscription",
+      config,
+      [],
+      [
+        {
+          id: "surviving-appointment",
+          slotsOfAppointment: [{ id: "s1", startsAt: survivor }],
+        },
+      ],
+    );
+
+    const occupiedDay = SlotCalculationService.dayKey(survivor, IST);
+    for (const s of slots) {
+      expect(SlotCalculationService.dayKey(s, IST)).not.toBe(occupiedDay);
+    }
+  });
+
+  it("never places a session whose end spills past the scheduling period", async () => {
+    // A 1-hour session needs two atoms. Cut the period so only the row's first
+    // 30 minutes fall inside it: testing the START alone would emit a block
+    // running past the period end, which the validator then rejects outright.
+    const probe = (
+      await findAvailableSlots(
+        dbOccupying([]),
+        consultant,
+        1,
+        1,
+        "subscription",
+        {
+          sessionsPerWeek: 1,
+          sessionDurationInHours: 0.5,
+          schedulingPeriodStartsAt: new Date(Date.now() + 60 * 60 * 1000),
+          schedulingPeriodEndsAt: new Date(
+            Date.now() + 60 * 24 * 60 * 60 * 1000,
+          ),
+          schedulingTimezone: IST,
+        },
+      )
+    )[0];
+
+    // The period now ends 30 minutes into the earliest bookable row, so a
+    // 1-hour session cannot fit anywhere inside it. Refusing is the only correct
+    // answer; before the fix the search accepted the row start and emitted a
+    // block running 30 minutes past the period end.
+    await expect(
+      findAvailableSlots(dbOccupying([]), consultant, 2, 2, "subscription", {
+        sessionsPerWeek: 1,
+        sessionDurationInHours: 1,
+        schedulingPeriodStartsAt: new Date(Date.now() + 60 * 60 * 1000),
+        schedulingPeriodEndsAt: new Date(probe.getTime() + 30 * 60 * 1000),
+        schedulingTimezone: IST,
+      }),
+    ).rejects.toThrow(/Could only find/);
   });
 
   it("counts a partial reschedule's surviving sessions against the week cap", async () => {

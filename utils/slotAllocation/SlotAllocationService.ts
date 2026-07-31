@@ -1186,7 +1186,23 @@ export class SlotAllocationService {
       );
     }
 
+    // #898 follow-up — serialize on the consultee too. The GiST overlap guard
+    // is consultant-keyed, so it cannot see a cross-consultant double-booking,
+    // and this path confirms the consultee's slots. Without it an approval here
+    // and an auto/manual allocation for the same consultee under a DIFFERENT
+    // consultant both pass their conflict validation under Read Committed and
+    // both commit. Lock order matches the other two paths: consultant → consultee.
+    let consulteeLock: ApprovalLock | null = null;
+
     try {
+      const consulteeLockUserId = await this.getConsulteeUserId(
+        eventType,
+        eventId,
+      );
+      if (consulteeLockUserId) {
+        consulteeLock = await lockConsulteeBooking(consulteeLockUserId);
+      }
+
       return await prisma.$transaction(
         async (tx) => {
           // Multi-tab guard: another tab already confirmed slots for this
@@ -1342,10 +1358,14 @@ export class SlotAllocationService {
           };
         },
         {
-          timeout: 120000, // 120 seconds (2 min) - handles large allocations (200+ slots)
+          // Shared with the auto/manual paths rather than a local literal, so
+          // all three allocation transactions age out the same way.
+          maxWait: ALLOCATION_TX_MAX_WAIT_MS,
+          timeout: ALLOCATION_TX_TIMEOUT_MS,
         },
       );
     } finally {
+      if (consulteeLock) await unlockConsulteeBooking(consulteeLock);
       await unlockAutoAllocate(lock);
     }
   }
@@ -1475,10 +1495,17 @@ export class SlotAllocationService {
       rowStart,
       consultant,
     )) {
+      // The whole session must fit, not just its first slot: the validator
+      // rejects any slot whose end passes endDate, so testing the start alone
+      // would emit a block the validator then throws out.
+      const candidateEnd = new Date(
+        candidateStart.getTime() + slotsPerCall * SLOT_DURATION_MS,
+      );
+
       if (
         candidateStart < now ||
         candidateStart < startDate ||
-        candidateStart > endDate ||
+        candidateEnd > endDate ||
         SlotCalculationService.dayKey(candidateStart, schedulingTimezone) !==
           rowDayKey
       ) {
@@ -1731,6 +1758,11 @@ export class SlotAllocationService {
     // other event types), and exclude the tentative ones being replaced.
     const excludeSet = new Set(excludeAppointmentIds);
     const existingSessionsPerWeek = new Map<string, number>();
+    // Days already spoken for by surviving sessions. Seeded for the same reason
+    // as the week map: validatePerDaySessionCap counts existing appointments, so
+    // a partial reschedule that only looked at this run's placements could put a
+    // replacement on a day that already has one and be rejected downstream.
+    const seededDayKeys = new Set<string>();
     for (const apt of eventOwnAppointments) {
       if (excludeSet.has(apt.id)) continue; // skip tentative (being replaced)
       if (apt.slotsOfAppointment.length === 0) continue;
@@ -1746,6 +1778,12 @@ export class SlotAllocationService {
         weekKey,
         (existingSessionsPerWeek.get(weekKey) || 0) + 1,
       );
+      seededDayKeys.add(
+        SlotCalculationService.dayKey(
+          new Date(firstSlot.startsAt),
+          config.schedulingTimezone,
+        ),
+      );
     }
 
     // The cursor advances in UTC days because matchWeeklySlotToDay resolves the
@@ -1758,7 +1796,7 @@ export class SlotAllocationService {
     // Caps are counted in the event's scheduling timezone (ADR B9), keyed off
     // the placed slot rather than the cursor, so the two bucketings cannot drift.
     const sessionsPlacedPerWeek = new Map(existingSessionsPerWeek);
-    const usedDayKeys = new Set<string>();
+    const usedDayKeys = new Set(seededDayKeys);
 
     const cursor = new Date(
       Date.UTC(
