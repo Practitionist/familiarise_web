@@ -3,6 +3,8 @@ import { DayOfWeek } from "@prisma/client";
 import { TSlotTiming } from "@/types/slots";
 import { WeeklyAvailability } from "./WeeklyAvailability";
 import { CustomAvailability } from "./CustomAvailability";
+import { SlotStatusLegend } from "@/components/scheduling/SlotStatusLegend";
+import { BUYER_LEGEND_KEYS } from "@/lib/scheduling/slot-status-tokens";
 import { addDays, startOfDay, endOfDay } from "date-fns";
 import { toZonedTime, formatInTimeZone } from "date-fns-tz";
 import type { ConsultantDetailData, ProcessedSlot } from "../types";
@@ -190,6 +192,11 @@ export function ConsultantAvailability({
           onNextWeek={handleNextWeek}
         />
       )}
+
+      {/* This grid is a read-only overview — booking happens in the pricing
+          panel — so the colours need explaining even more than the interactive
+          ones do. */}
+      <SlotStatusLegend keys={BUYER_LEGEND_KEYS} className="mt-4" />
     </div>
   );
 }
