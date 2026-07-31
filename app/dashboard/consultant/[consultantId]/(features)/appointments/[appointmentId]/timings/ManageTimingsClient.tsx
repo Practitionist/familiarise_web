@@ -6,6 +6,7 @@ import {
   manageTimingsPolicy,
   type SlotPickerSubject,
 } from "@/components/scheduling/slot-picker-policy";
+import { useSetBreadcrumbLabel } from "@/components/dashboard/breadcrumb-override";
 
 /**
  * The consultant half of the manage-timings page — the allocate-mode grid
@@ -16,8 +17,15 @@ import {
 export function ManageTimingsClient({
   subject,
   backHref,
-}: Readonly<{ subject: SlotPickerSubject; backHref: string }>) {
+  title,
+}: Readonly<{
+  subject: SlotPickerSubject;
+  backHref: string;
+  title: string;
+}>) {
   const router = useRouter();
+  // Replaces the generic "timings" crumb with the offering's own name (#1064).
+  useSetBreadcrumbLabel(title);
 
   const goBack = () => {
     router.push(backHref);

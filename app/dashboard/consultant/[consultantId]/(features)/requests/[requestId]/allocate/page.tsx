@@ -1,9 +1,8 @@
 import { cache } from "react";
 import type { Metadata } from "next";
-import Link from "next/link";
 import { notFound } from "next/navigation";
 
-import { DashboardHeader } from "@/components/dashboard/PageScaffold";
+import { PanelHeader } from "@/components/dashboard/PageScaffold";
 import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
 import { readAllocationRequest } from "@/lib/data/allocation-request";
 
@@ -75,28 +74,21 @@ export default async function AllocateSlotsPage({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
-      {/* The BOOKING is the h1, the task is the line under it. Both routes
-          reached from the requests table look identical otherwise, and a
-          consultant with several open could not tell which one they were
-          allocating (#1064). */}
-      <DashboardHeader
-        title={request.title}
-        subtitle={
+      {/* The BOOKING now lives in the breadcrumb itself (AllocateClient sets
+          it via useSetBreadcrumbLabel) — the back link is the breadcrumb's
+          own parent crumb. This line keeps the one thing the breadcrumb
+          can't say: who the task is for (#1064). */}
+      <PanelHeader
+        description={
           request.consulteeName
             ? `Allocate slots for ${request.consulteeName}`
             : "Allocate slots"
         }
       />
 
-      <Link
-        href={backHref}
-        className="self-start text-sm font-medium underline underline-offset-4"
-      >
-        Back to requests
-      </Link>
-
       <AllocateClient
         backHref={backHref}
+        title={request.title}
         subject={{
           consultantProfileId: consultantId,
           eventType: request.eventType,

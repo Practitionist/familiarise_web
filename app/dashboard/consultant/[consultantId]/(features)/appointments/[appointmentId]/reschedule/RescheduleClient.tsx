@@ -8,6 +8,7 @@ import {
 } from "@/components/scheduling/slot-picker-policy";
 import { useConsultantEventActions } from "../../components/useConsultantEventActions";
 import type { BookingTypeLabel } from "@/lib/scheduling/slot-picker-subject";
+import { useSetBreadcrumbLabel } from "@/components/dashboard/breadcrumb-override";
 
 /**
  * The consultant half of the reschedule page.
@@ -33,6 +34,8 @@ export function RescheduleClient({
   backHref: string;
 }>) {
   const router = useRouter();
+  // Replaces the generic "reschedule" crumb with the booking's own name (#1064).
+  useSetBreadcrumbLabel(title);
 
   const actions = useConsultantEventActions({
     consultantId,

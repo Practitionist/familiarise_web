@@ -8,6 +8,7 @@ import {
 } from "@/components/scheduling/slot-picker-policy";
 import { useEventActions } from "@/components/appointments/consultee/useEventActions";
 import type { BookingTypeLabel } from "@/lib/scheduling/slot-picker-subject";
+import { useSetBreadcrumbLabel } from "@/components/dashboard/breadcrumb-override";
 
 /**
  * The consultee half of the reschedule page: the shared picker, the consultee
@@ -28,6 +29,8 @@ export function RescheduleClient({
   backHref: string;
 }>) {
   const router = useRouter();
+  // Replaces the generic "reschedule" crumb with the booking's own name (#1064).
+  useSetBreadcrumbLabel(title);
 
   const actions = useEventActions({
     appointmentId,

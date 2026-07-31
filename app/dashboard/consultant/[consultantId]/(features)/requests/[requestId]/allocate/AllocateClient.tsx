@@ -8,6 +8,7 @@ import {
 } from "@/components/scheduling/slot-picker-policy";
 import { toast } from "@/components/ui/use-toast";
 import { allocatedElsewhere } from "@/lib/scheduling/allocationMessages";
+import { useSetBreadcrumbLabel } from "@/components/dashboard/breadcrumb-override";
 
 /**
  * The consultant's allocation surface, replacing the dialog the requests table
@@ -18,8 +19,15 @@ import { allocatedElsewhere } from "@/lib/scheduling/allocationMessages";
 export function AllocateClient({
   subject,
   backHref,
-}: Readonly<{ subject: SlotPickerSubject; backHref: string }>) {
+  title,
+}: Readonly<{
+  subject: SlotPickerSubject;
+  backHref: string;
+  title: string;
+}>) {
   const router = useRouter();
+  // Replaces the generic "allocate" crumb with the booking's own name (#1064).
+  useSetBreadcrumbLabel(title);
 
   const goBack = () => {
     router.push(backHref);

@@ -1,9 +1,8 @@
 import { cache } from "react";
 import type { Metadata } from "next";
-import Link from "next/link";
 import { notFound } from "next/navigation";
 
-import { DashboardHeader } from "@/components/dashboard/PageScaffold";
+import { PanelHeader } from "@/components/dashboard/PageScaffold";
 import prisma from "@/lib/prisma";
 import { readAppointmentDetail } from "@/lib/data/appointment-detail";
 import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
@@ -81,24 +80,17 @@ export default async function RescheduleAppointmentPage({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
-      {/* The BOOKING is the h1, the task is the line under it — every
-          reschedule page rendered an identical "Reschedule" heading, so the
-          consultee could not tell which session they were moving (#1064). */}
-      <DashboardHeader
-        title={resolved.title}
-        subtitle={
+      {/* The BOOKING now lives in the breadcrumb (RescheduleClient sets it via
+          useSetBreadcrumbLabel); every reschedule page used to render an
+          identical "Reschedule" heading, so the consultee could not tell
+          which session they were moving (#1064). */}
+      <PanelHeader
+        description={
           resolved.consultantName
             ? `Choose a new time for your ${resolved.typeLabel.toLowerCase()} with ${resolved.consultantName}`
             : `Choose a new time for your ${resolved.typeLabel.toLowerCase()}`
         }
       />
-
-      <Link
-        href={backHref}
-        className="self-start text-sm font-medium underline underline-offset-4"
-      >
-        Back to appointments
-      </Link>
 
       <RescheduleClient
         appointmentId={appointmentId}

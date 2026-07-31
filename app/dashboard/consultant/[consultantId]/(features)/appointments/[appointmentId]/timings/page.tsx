@@ -1,9 +1,8 @@
 import { cache } from "react";
 import type { Metadata } from "next";
-import Link from "next/link";
 import { notFound } from "next/navigation";
 
-import { DashboardHeader } from "@/components/dashboard/PageScaffold";
+import { PanelHeader } from "@/components/dashboard/PageScaffold";
 import { Badge } from "@/components/ui/badge";
 import { readManageTimingsTarget } from "@/lib/data/manage-timings-target";
 import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
@@ -72,16 +71,10 @@ export default async function ManageTimingsPage({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
-      {/* The OFFERING is the h1, the task is the line under it — see the
-          reschedule/allocate pages (#1064). */}
-      <DashboardHeader title={resolved.title} subtitle={resolved.description} />
-
-      <Link
-        href={backHref}
-        className="self-start text-sm font-medium underline underline-offset-4"
-      >
-        Back to appointments
-      </Link>
+      {/* The OFFERING now lives in the breadcrumb (ManageTimingsClient sets it
+          via useSetBreadcrumbLabel) — see the reschedule/allocate pages
+          (#1064). */}
+      <PanelHeader description={resolved.description} />
 
       {resolved.classInfo && (
         <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
@@ -105,7 +98,11 @@ export default async function ManageTimingsPage({
         </div>
       )}
 
-      <ManageTimingsClient subject={resolved.subject} backHref={backHref} />
+      <ManageTimingsClient
+        subject={resolved.subject}
+        backHref={backHref}
+        title={resolved.title}
+      />
     </div>
   );
 }

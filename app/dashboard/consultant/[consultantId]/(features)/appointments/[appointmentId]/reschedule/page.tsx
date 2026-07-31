@@ -1,9 +1,8 @@
 import { cache } from "react";
 import type { Metadata } from "next";
-import Link from "next/link";
 import { notFound } from "next/navigation";
 
-import { DashboardHeader } from "@/components/dashboard/PageScaffold";
+import { PanelHeader } from "@/components/dashboard/PageScaffold";
 import { readAppointmentDetail } from "@/lib/data/appointment-detail";
 import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
 import { buildRescheduleSubject } from "@/lib/scheduling/slot-picker-subject";
@@ -79,23 +78,15 @@ export default async function ConsultantReschedulePage({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
-      {/* The BOOKING is the h1, the task is the line under it — see the
-          consultee's twin (#1064). */}
-      <DashboardHeader
-        title={resolved.title}
-        subtitle={
+      {/* The BOOKING now lives in the breadcrumb (RescheduleClient sets it
+          via useSetBreadcrumbLabel) — see the consultee's twin (#1064). */}
+      <PanelHeader
+        description={
           resolved.consulteeName
             ? `Propose a new time for ${resolved.consulteeName}`
             : "Propose a new time"
         }
       />
-
-      <Link
-        href={backHref}
-        className="self-start text-sm font-medium underline underline-offset-4"
-      >
-        Back to appointments
-      </Link>
 
       <RescheduleClient
         consultantId={consultantId}
