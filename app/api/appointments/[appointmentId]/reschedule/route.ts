@@ -29,6 +29,7 @@ import {
   SLOT_RESCHEDULABLE_FROM,
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
+import { isUniqueViolation } from "@/lib/db/pg-errors";
 
 const MINIMUM_HOURS_BEFORE_RESCHEDULE = 24;
 
@@ -792,6 +793,21 @@ export async function POST(
       message: resultMessage(),
     });
   } catch (error) {
+    // openForAppointmentId is a nullable @unique, so a second reschedule while
+    // one is still open is MEANT to fail here — that is the DB-level guarantee
+    // of at most one live proposal per appointment. Without this branch the
+    // expected outcome surfaced as a 500 "Failed to request reschedule" and
+    // was reported to Sentry as an unexpected error.
+    if (isUniqueViolation(error)) {
+      return NextResponse.json(
+        {
+          error: "A reschedule request is already open for this booking.",
+          code: "RESCHEDULE_ALREADY_OPEN",
+        },
+        { status: 409 },
+      );
+    }
+
     // B2 — the CAS guard's structured 409 (NOT_RESCHEDULABLE).
     if (error instanceof Error && "httpStatus" in error) {
       const status =

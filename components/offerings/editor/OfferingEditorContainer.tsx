@@ -74,16 +74,20 @@ export function OfferingEditorContainer({
    * boolean is deliberate — a disabled button with no explanation is the thing
    * people file bugs about.
    */
-  const publishBlockedReason = React.useMemo(() => {
-    if (type === "webinar" && !form.watch("scheduledAt" as never)) {
-      return "Add a session time before publishing.";
-    }
-    if (type === "class" && !form.watch("schedulingStartDate" as never)) {
-      return "Add a start date before publishing.";
-    }
-    return null;
-    // watch() already subscribes this component to the fields it reads.
-  }, [type, form]);
+  // Deliberately NOT memoised. watch() subscribes the component so it
+  // re-renders on every keystroke, but a memo keyed on [type, form] never
+  // recomputes — both are stable for the editor's lifetime. The reason froze
+  // at its first-render value, so Publish stayed blocked forever after the
+  // user supplied the very field it was asking for (#1060).
+  const watchedScheduledAt = form.watch("scheduledAt" as never);
+  const watchedStartDate = form.watch("schedulingStartDate" as never);
+
+  let publishBlockedReason: string | null = null;
+  if (type === "webinar" && !watchedScheduledAt) {
+    publishBlockedReason = "Add a session time before publishing.";
+  } else if (type === "class" && !watchedStartDate) {
+    publishBlockedReason = "Add a start date before publishing.";
+  }
 
   const persist = async (
     values: Record<string, unknown>,

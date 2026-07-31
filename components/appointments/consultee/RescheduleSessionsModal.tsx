@@ -515,6 +515,24 @@ export function RescheduleSessionsModal({
             </Button>
           )}
 
+          {/* Naming a time is an OPTION, never a requirement. A one-session
+              booking opens straight on the picker and has no sessions step to
+              go back to, so without this its only submit is "Request this
+              time" — disabled until a time is picked. That removed the
+              release-only path the old confirm-only dialog always offered, and
+              releasing without a preference is still perfectly valid: it hands
+              the consultant a request to allocate, which is what every
+              reschedule did before proposals existed. */}
+          {step === "times" && isSingleSession && (
+            <Button
+              variant="outline"
+              onClick={() => submit(false)}
+              disabled={isLoading}
+            >
+              Any time works
+            </Button>
+          )}
+
           <Button
             variant={step === "times" ? "default" : "outline"}
             onClick={() => submit(step === "times")}

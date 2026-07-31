@@ -10,8 +10,16 @@ import {
 import { apiError } from "@/lib/errors";
 import { z } from "zod";
 
+// Must list every TPlanImageType member. It admitted only two, so a
+// consultation or subscription upload 400'd here before verifyPlanOwnership
+// ever ran — leaving that function's new branches unreachable (#1060).
 const planImageSchema = z.object({
-  planType: z.enum(["webinar-plans", "class-plans"]),
+  planType: z.enum([
+    "webinar-plans",
+    "class-plans",
+    "consultation-plans",
+    "subscription-plans",
+  ]),
   planId: z.string().min(1),
 });
 
@@ -69,18 +77,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Update Prisma record with imageUrl
-    if (planType === "class-plans") {
-      await prisma.classPlan.update({
-        where: { id: planId },
-        data: { imageUrl: result.fileUrl },
-      });
-    } else {
-      await prisma.webinarPlan.update({
-        where: { id: planId },
-        data: { imageUrl: result.fileUrl },
-      });
-    }
+    await writePlanImageUrl(planType, planId, result.fileUrl);
 
     return NextResponse.json({ imageUrl: result.fileUrl }, { status: 200 });
   } catch (error) {
@@ -130,23 +127,43 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
-    // Set imageUrl to null in DB
-    if (planType === "class-plans") {
-      await prisma.classPlan.update({
-        where: { id: planId },
-        data: { imageUrl: null },
-      });
-    } else {
-      await prisma.webinarPlan.update({
-        where: { id: planId },
-        data: { imageUrl: null },
-      });
-    }
+    await writePlanImageUrl(planType, planId, null);
 
     return NextResponse.json({ success: true }, { status: 200 });
   } catch (error) {
     Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
     return apiError({ tag: "[PlanImage.DELETE]", error });
+  }
+}
+
+/**
+ * Writes imageUrl for any plan type.
+ *
+ * Exhaustive on TPlanImageType, for the same reason verifyPlanOwnership is:
+ * both verbs used to be a binary `class-plans ? classPlan : webinarPlan`, so a
+ * consultation or subscription upload would have written to a WEBINAR row —
+ * corrupting an unrelated plan rather than failing (#1060).
+ */
+async function writePlanImageUrl(
+  planType: TPlanImageType,
+  planId: string,
+  imageUrl: string | null,
+): Promise<void> {
+  const args = { where: { id: planId }, data: { imageUrl } } as const;
+
+  switch (planType) {
+    case "class-plans":
+      await prisma.classPlan.update(args);
+      return;
+    case "webinar-plans":
+      await prisma.webinarPlan.update(args);
+      return;
+    case "consultation-plans":
+      await prisma.consultationPlan.update(args);
+      return;
+    case "subscription-plans":
+      await prisma.subscriptionPlan.update(args);
+      return;
   }
 }
 
