@@ -38,29 +38,46 @@ export interface AllocationPreference {
 }
 
 /**
- * Half-open hour bands, contiguous and covering the clock, so every candidate
- * falls in exactly one and no time is left unscoreable. EVENING deliberately
- * wraps midnight and takes everything the other two do not.
- */
-const TIME_OF_DAY_BANDS: Record<
-  ReschedulePreferredTimeOfDay,
-  (hour: number) => boolean
-> = {
-  MORNING: (hour) => hour >= 5 && hour < 12,
-  AFTERNOON: (hour) => hour >= 12 && hour < 17,
-  EVENING: (hour) => hour >= 17 || hour < 5,
-};
-
-const WEEKEND_DAYS = new Set([0, 6]);
-
-/**
- * Both halves weigh the same, so the score is simply how many of the stated
- * preferences a candidate satisfies. Ranking one above the other would decide
+ * What one satisfied preference is worth.
+ *
+ * Both halves weigh the same, so a candidate's score is essentially how many of
+ * the stated preferences it satisfies. Ranking one above the other would decide
  * on the customer's behalf whether "Saturday morning" beats "Tuesday morning"
  * for someone who asked for weekday mornings; an equal weight leaves that tie
  * to the existing chronological order, which prefers the sooner session.
  */
-const PREFERENCE_WEIGHT = 1;
+const FULL_MATCH = 2;
+
+/**
+ * What the late-night tail of EVENING is worth: something, but never as much as
+ * a real evening.
+ *
+ * The bands have to be TOTAL — every hour must score, or an hour nobody claimed
+ * becomes unreachable in the preferred sweep. But totality put 00:00-04:59 in
+ * EVENING at full marks, and since ties break chronologically that handed a
+ * consultee who asked for evenings a 2 AM session ahead of a 7 PM one. Scoring
+ * the tail strictly below the core keeps the band total while making late night
+ * the answer only when nothing else is available.
+ */
+const PARTIAL_MATCH = 1;
+
+/**
+ * Half-open hour bands, contiguous and covering the clock, so every candidate
+ * falls in exactly one and no time is left unscoreable.
+ */
+const TIME_OF_DAY_SCORE: Record<
+  ReschedulePreferredTimeOfDay,
+  (hour: number) => number
+> = {
+  MORNING: (hour) => (hour >= 5 && hour < 12 ? FULL_MATCH : 0),
+  AFTERNOON: (hour) => (hour >= 12 && hour < 17 ? FULL_MATCH : 0),
+  // 17:00-23:59 is what anyone means by "evenings"; 00:00-04:59 is the tail
+  // that keeps the band total without being what was asked for.
+  EVENING: (hour) =>
+    hour >= 17 ? FULL_MATCH : hour < 5 ? PARTIAL_MATCH : 0,
+};
+
+const WEEKEND_DAYS = new Set([0, 6]);
 
 /** True when the preference expresses nothing — absent or all-null. */
 export function isEmptyPreference(
@@ -81,22 +98,35 @@ export function maxPreferenceScore(
   preference?: AllocationPreference | null,
 ): number {
   let max = 0;
-  if (preference?.preferredTimeOfDay) max += PREFERENCE_WEIGHT;
-  if (preference?.preferredDays) max += PREFERENCE_WEIGHT;
+  if (preference?.preferredTimeOfDay) max += FULL_MATCH;
+  if (preference?.preferredDays) max += FULL_MATCH;
   return max;
 }
 
-/** Whether an instant falls in the preferred part of the week. */
+/** Whether a weekday index (0 = Sunday) falls in the preferred part of the week. */
+function weekdayMatches(
+  weekday: number,
+  preferredDays: ReschedulePreferredDays,
+): boolean {
+  const isWeekend = WEEKEND_DAYS.has(weekday);
+  return preferredDays === "WEEKENDS" ? isWeekend : !isWeekend;
+}
+
+/**
+ * Whether an instant falls in the preferred part of the week — true when no day
+ * preference was stated, so callers can use it as a cheap "could this day ever
+ * be a full match?" test without special-casing the empty preference.
+ */
 export function matchesPreferredDays(
   start: Date,
   preference: AllocationPreference | null | undefined,
   timeZone?: string,
 ): boolean {
   if (!preference?.preferredDays) return true;
-  const isWeekend = WEEKEND_DAYS.has(
+  return weekdayMatches(
     SlotCalculationService.weekdayInTz(start, timeZone),
+    preference.preferredDays,
   );
-  return preference.preferredDays === "WEEKENDS" ? isWeekend : !isWeekend;
 }
 
 /**
@@ -112,17 +142,17 @@ export function scoreCandidateStart(
 ): number {
   if (isEmptyPreference(preference)) return 0;
 
+  // One Intl round-trip for both axes; this runs per candidate, per row, under
+  // the allocation lock.
+  const { hour, weekday } = SlotCalculationService.zonedClock(start, timeZone);
+
   let score = 0;
 
   const band = preference?.preferredTimeOfDay;
-  if (band) {
-    const hour = SlotCalculationService.hourInTz(start, timeZone);
-    if (TIME_OF_DAY_BANDS[band](hour)) score += PREFERENCE_WEIGHT;
-  }
+  if (band) score += TIME_OF_DAY_SCORE[band](hour);
 
-  if (preference?.preferredDays && matchesPreferredDays(start, preference, timeZone)) {
-    score += PREFERENCE_WEIGHT;
-  }
+  const days = preference?.preferredDays;
+  if (days && weekdayMatches(weekday, days)) score += FULL_MATCH;
 
   return score;
 }

@@ -1,4 +1,6 @@
+import type { AppointmentsType } from "@prisma/client";
 import type { SlotLike } from "@/lib/appointments/view-model";
+import { supportsProposals } from "@/lib/booking/reschedule-proposals";
 
 /**
  * The four surfaces that place slots on a consultant's calendar, expressed as
@@ -25,6 +27,37 @@ export type SlotPickerPolicyKind =
 export interface SlotPreference {
   preferredTimeOfDay?: "MORNING" | "AFTERNOON" | "EVENING";
   preferredDays?: "WEEKDAYS" | "WEEKENDS";
+}
+
+/**
+ * The picker's lowercase event types against the Prisma enum the policy layer
+ * speaks. A total map rather than a cast, so adding an event type is a compile
+ * error here instead of a silent `false` at runtime.
+ */
+const APPOINTMENT_TYPE: Record<
+  SlotPickerSubject["eventType"],
+  AppointmentsType
+> = {
+  consultation: "CONSULTATION",
+  subscription: "SUBSCRIPTION",
+  webinar: "WEBINAR",
+  class: "CLASS",
+};
+
+/**
+ * Whether a stated preference would survive being submitted for this booking.
+ *
+ * The reschedule API only opens a RescheduleRequest for the kinds that support
+ * proposals, and a group event has no single counterparty to state one on
+ * behalf of — so on a webinar or class the server discards a preference with no
+ * row, no error and no feedback. Asking for something that is silently dropped
+ * is worse than not being asked, so the control does not render there. Reads
+ * the SAME predicate the route gates on rather than restating the rule.
+ */
+export function acceptsSlotPreference(
+  eventType: SlotPickerSubject["eventType"],
+): boolean {
+  return supportsProposals(APPOINTMENT_TYPE[eventType]);
 }
 
 export interface SlotPickerSubmission {

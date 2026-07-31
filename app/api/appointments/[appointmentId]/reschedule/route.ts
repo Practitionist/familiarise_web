@@ -470,13 +470,13 @@ export async function POST(
         //
         // #1065 — a stated preference opens the same record with no times on
         // it, so "any time works, but ideally weekday mornings" survives to the
-        // allocator. That row deliberately does NOT take the
-        // openForAppointmentId reservation: the reservation exists to stop a
-        // second PROPOSAL racing a live one, and nothing resolves a
-        // preference-only row when the consultant simply auto-allocates, so
-        // claiming it would strand the booking until the hourly expiry sweep.
-        // The released slots (completionStatus RESCHEDULED) already stop the UI
-        // offering a second reschedule.
+        // allocator. It takes the openForAppointmentId reservation like any
+        // other reschedule: "at most one live reschedule per appointment" is an
+        // invariant four other places rely on, and a row that opted out of it
+        // could shadow a real proposal in the consultant's card or be picked
+        // arbitrarily by the withdraw route. The allocator closes the row when
+        // it places the replacement times (resolveConsumedPreferenceRequests),
+        // so the reservation is released the moment it stops meaning anything.
         let rescheduleRequestId: string | null = null;
         const hasPreference = Boolean(preferredTimeOfDay || preferredDays);
         if (
@@ -520,9 +520,10 @@ export async function POST(
               releasedSlotIds: slotsToReschedule.map((s) => s.id),
               expiresAt,
               // Reserves the appointment: the nullable @unique makes a second
-              // live reschedule a DB-level conflict rather than a race. Only a
-              // real proposal claims it — see above for why a preference does not.
-              openForAppointmentId: proposedSlots?.length ? appointmentId : null,
+              // live reschedule a DB-level conflict rather than a race. Claimed
+              // by EVERY reschedule row, times or preference-only, because the
+              // uniqueness is what four downstream readers assume (#1065).
+              openForAppointmentId: appointmentId,
               organizationId: appointment.organizationId ?? null,
               preferredTimeOfDay,
               preferredDays,

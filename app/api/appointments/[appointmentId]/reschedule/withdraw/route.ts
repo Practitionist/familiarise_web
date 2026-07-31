@@ -26,13 +26,16 @@ export async function POST(
 
     // Found via the appointment rather than by request id: the caller is acting
     // on a booking they can see, and openForAppointmentId already guarantees at
-    // most one live reschedule per appointment, so there is nothing to choose
-    // between.
+    // most one live reschedule per appointment — including the preference-only
+    // rows added in #1065, which claim the reservation for exactly this reason —
+    // so there is nothing to choose between. The ordering is belt-and-braces
+    // against that invariant ever lapsing: newest is the one the user means.
     const open = await prisma.rescheduleRequest.findFirst({
       where: {
         appointmentId,
         status: { in: RESCHEDULE_OPEN_STATUSES },
       },
+      orderBy: { createdAt: "desc" },
       select: { id: true, initiatedById: true },
     });
 

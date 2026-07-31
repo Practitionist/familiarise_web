@@ -98,13 +98,27 @@ export class SlotCalculationService {
   }
 
   /**
-   * Wall-clock hour (0-23) of an instant, as read in `timeZone` (ADR B9).
+   * Wall-clock hour and weekday of an instant, as read in `timeZone` (ADR B9).
    *
-   * #1065 — the allocator scores "morning"/"evening" with this rather than
-   * Date#getHours(), which answers in whatever timezone the Node process
-   * happens to run in and would make the same booking morning on one host and
-   * afternoon on another.
+   * #1065 — the allocator scores "morning"/"weekend" with this rather than
+   * Date#getHours()/getDay(), which answer in whatever timezone the Node
+   * process happens to run in and would make the same booking a morning on one
+   * host and an afternoon on another.
+   *
+   * Both come back together because the scorer needs both for every candidate
+   * and `formatToParts` is the expensive part: asking twice doubled the Intl
+   * work inside the allocation search, which runs while the allocation lock is
+   * held.
    */
+  static zonedClock(
+    d: Date,
+    timeZone: string = this.DEFAULT_SCHEDULING_TIMEZONE,
+  ): { hour: number; weekday: number } {
+    const { hour, weekday } = this.getCalendarParts(d, timeZone);
+    return { hour, weekday };
+  }
+
+  /** Wall-clock hour (0-23) of an instant in `timeZone`. */
   static hourInTz(
     d: Date,
     timeZone: string = this.DEFAULT_SCHEDULING_TIMEZONE,

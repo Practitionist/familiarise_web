@@ -3608,6 +3608,11 @@ model RescheduleRequest {
   /// The @unique is a DB-level guarantee of at most one live reschedule per
   /// appointment; NULLs don't collide, so resolved rows accumulate freely.
   /// Same nullable-unique trick as Appointment.allocationIdempotencyKey.
+  ///
+  /// EVERY open row must claim this, including a preference-only one that names
+  /// no times (#1065). It is the only guard there is — the route has no
+  /// pre-check and the 409 is a bare P2002 catch — and list-selects, the
+  /// withdraw route and slotsAllowReschedule all read "at most one" as given.
   openForAppointmentId String? @unique
 
   resolvedAt   DateTime? @db.Timestamptz

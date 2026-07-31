@@ -53,8 +53,9 @@ export function slotsAllowReschedule(
   // Tentative means the request is still awaiting allocation, not booked.
   if (slots[0]?.isTentative) return false;
   // A released slot awaiting a new time IS the open reschedule: at most one may
-  // be live per appointment (the nullable-unique openForAppointmentId), so
-  // offering the action again only earns a 409.
+  // be live per appointment (the nullable-unique openForAppointmentId, claimed
+  // by preference-only rows too — #1065), so offering the action again only
+  // earns a 409.
   return !slots.some((slot) => slot.completionStatus === "RESCHEDULED");
 }
 

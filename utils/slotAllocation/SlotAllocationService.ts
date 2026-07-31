@@ -33,6 +33,7 @@ import {
 } from "./types";
 import { SlotCalculationService } from "./SlotCalculationService";
 import {
+  matchesPreferredDays,
   maxPreferenceScore,
   scoreCandidateStart,
   type AllocationPreference,
@@ -59,6 +60,7 @@ import {
   CLASS_EVENT_ALLOWED_FROM,
   RESCHEDULE_OPEN_STATUSES,
   transitionConsultationRequest,
+  transitionRescheduleRequest,
   transitionSubscriptionRequest,
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
@@ -462,34 +464,130 @@ export class SlotAllocationService {
   }
 
   /**
-   * The preference attached to the live reschedule of any of these
-   * appointments, if the initiator stated one (#1065).
+   * The slots this allocation is replacing — the ones a reschedule released.
+   *
+   * These are the identity of the reschedule, and the only safe key for finding
+   * what the initiator asked for. `RescheduleRequest.appointmentId` is NOT: the
+   * consultee's reschedule URL resolves to the booking's next actionable
+   * session (map-consultee's nextActionableChild) while the picker deliberately
+   * offers every session of the program, so on a multi-session booking the row
+   * is written against one appointment and the released slots land on another.
+   * Keying on the appointment made the preference apply only when the released
+   * session happened to be the next one — silent, and right often enough to
+   * look flaky rather than broken.
+   *
+   * RESCHEDULED rather than merely tentative: every pending request carries
+   * tentative slots (request-for-approval and unpaid checkout both create them
+   * that way), and those were never released by anybody.
+   */
+  private static releasedSlotIdsOf(
+    appointments: AppointmentWithSlots[],
+  ): string[] {
+    return appointments.flatMap((appointment) =>
+      appointment.slotsOfAppointment
+        .filter(
+          (slot) =>
+            slot.isTentative &&
+            slot.completionStatus === SlotCompletionStatus.RESCHEDULED,
+        )
+        .map((slot) => slot.id),
+    );
+  }
+
+  /** Open, preference-bearing reschedules that released any of these slots. */
+  private static openPreferenceRequestWhere(
+    releasedSlotIds: string[],
+  ): Prisma.RescheduleRequestWhereInput {
+    return {
+      releasedSlotIds: { hasSome: releasedSlotIds },
+      status: { in: RESCHEDULE_OPEN_STATUSES },
+      OR: [
+        { preferredTimeOfDay: { not: null } },
+        { preferredDays: { not: null } },
+      ],
+    };
+  }
+
+  /**
+   * The preference attached to the reschedule that released these slots, if the
+   * initiator stated one (#1065).
    *
    * Read here rather than passed in because the allocator is reached from the
    * consultant's allocate surface, the auto-confirm path and the API route
-   * alike — none of which know what the consultee asked for. Absent for every
+   * alike — none of which know what the consultee asked for. Empty for every
    * non-reschedule allocation, which is exactly when it must not apply.
+   *
+   * Matching on the released slots also scopes it in TIME without needing a
+   * timestamp: a consumed reschedule's slot rows are deleted and replaced with
+   * fresh ids, so a stale row from an earlier reschedule of the same session
+   * cannot overlap this one and cannot leak its preference into it.
    */
   private static async findAllocationPreference(
-    appointmentIds: string[],
+    releasedSlotIds: string[],
   ): Promise<AllocationPreference | undefined> {
-    if (appointmentIds.length === 0) return undefined;
+    if (releasedSlotIds.length === 0) return undefined;
 
     const stated = await prisma.rescheduleRequest.findFirst({
-      where: {
-        appointmentId: { in: appointmentIds },
-        status: { in: RESCHEDULE_OPEN_STATUSES },
-        OR: [
-          { preferredTimeOfDay: { not: null } },
-          { preferredDays: { not: null } },
-        ],
-      },
-      // Newest wins; an older lapsed ask must not outrank the current one.
+      where: this.openPreferenceRequestWhere(releasedSlotIds),
+      // Newest wins; an older ask must not outrank the current one.
       orderBy: { createdAt: "desc" },
       select: { preferredTimeOfDay: true, preferredDays: true },
     });
 
     return stated ?? undefined;
+  }
+
+  /**
+   * Close the preference-only reschedule this allocation just answered.
+   *
+   * Placing replacement times IS the answer to "move these, ideally mornings",
+   * so leaving the row PENDING_REVIEW would both mislabel it in the audit trail
+   * — it was fulfilled, not lapsed unanswered — and keep its
+   * openForAppointmentId reservation held until the hourly expiry sweep, which
+   * would block the consultee from rescheduling the same booking again for up
+   * to 72 hours.
+   *
+   * Deliberately scoped to rows carrying NO proposed times. A request that
+   * named times and got different ones back has not been accepted, and how that
+   * case resolves is existing behaviour (it lapses to EXPIRED) that this change
+   * has no business rewriting.
+   *
+   * resolvedById is left null: the allocator is reached from routes, crons and
+   * the auto-confirm path, and inventing an actor here would be worse than
+   * recording none.
+   */
+  private static async resolveConsumedPreferenceRequests(
+    tx: Tx,
+    releasedSlotIds: string[],
+  ): Promise<void> {
+    if (releasedSlotIds.length === 0) return;
+
+    const consumed = await tx.rescheduleRequest.findMany({
+      where: {
+        ...this.openPreferenceRequestWhere(releasedSlotIds),
+        proposedSlots: { none: {} },
+      },
+      select: { id: true },
+    });
+
+    for (const request of consumed) {
+      try {
+        // The shared transition helper rather than a bare update: reaching a
+        // terminal state is what releases openForAppointmentId and stamps
+        // resolvedAt, and callers must not have to remember that.
+        await transitionRescheduleRequest(tx, {
+          where: { id: request.id },
+          to: "ACCEPTED",
+        });
+      } catch (err) {
+        // Losing the CAS means the initiator withdrew (or the sweep expired the
+        // row) between the read above and here. That is a perfectly good ending
+        // for the request and no reason to roll back an allocation that has
+        // already placed real times — closing the row is bookkeeping, the
+        // booking is the outcome.
+        if (!(err instanceof IllegalTransitionError)) throw err;
+      }
+    }
   }
 
   private static async autoAllocate(
@@ -699,12 +797,11 @@ export class SlotAllocationService {
         );
       }
 
-      // #1065 — the released appointments are the ones a reschedule preference
-      // could be attached to, so this is empty (and the preference inert) for
-      // every fresh allocation.
-      const preference = isReschedule
-        ? await this.findAllocationPreference(appointmentIdsToExclude)
-        : undefined;
+      // #1065 — captured BEFORE the write txn deletes these rows. Empty for a
+      // fresh allocation, which is exactly when a preference must not apply.
+      const releasedSlotIds = this.releasedSlotIdsOf(existingAppointments);
+      const preference =
+        await this.findAllocationPreference(releasedSlotIds);
 
       // Find available slots (read-only; runs out-of-txn under the locks)
       // Pass appointmentIdsToExclude so their slots are excluded from bookedSlots
@@ -828,6 +925,10 @@ export class SlotAllocationService {
             selectedSlots[0],
             config,
           );
+
+          // #1065 — these times ARE the answer to the preference, so close it
+          // here rather than leaving it open for the expiry sweep to mislabel.
+          await this.resolveConsumedPreferenceRequests(tx, releasedSlotIds);
 
           return {
             success: true,
@@ -1067,6 +1168,12 @@ export class SlotAllocationService {
             .map((a) => a.id)
         : existingAppointments.map((a) => a.id);
 
+      // #1065 — a hand-placed allocation answers a stated preference just as an
+      // auto one does (it does not READ the preference — the consultant chose
+      // the times — but it consumes the request all the same). Captured before
+      // the write txn deletes these rows.
+      const releasedSlotIds = this.releasedSlotIdsOf(existingAppointments);
+
       // Validate total slot count for recurring event types
       if (isRecurringEventType(eventType)) {
         if (isReschedule) {
@@ -1217,6 +1324,9 @@ export class SlotAllocationService {
             slots[0],
             config,
           );
+
+          // #1065 — see autoAllocate: placing the replacement answers the ask.
+          await this.resolveConsumedPreferenceRequests(tx, releasedSlotIds);
 
           return {
             success: true,
@@ -2033,6 +2143,20 @@ export class SlotAllocationService {
         if ((sessionsPlacedPerWeek.get(rowWeekKey) ?? 0) >= sessionsPerWeek)
           continue;
 
+        // Day-of-week is a property of the whole row, so a preferred-only sweep
+        // can rule the row out here instead of walking its availability,
+        // building blocks and then discarding them below. On a year-long class
+        // with a weekend preference that is ~260 days of wasted block-building
+        // per sweep. Safe because bestFittingBlockInRow holds every candidate
+        // to the row's own timezone day, so they all share this weekday.
+        if (perfectOnly && !matchesPreferredDays(
+          rowStart,
+          preference,
+          config.schedulingTimezone,
+        )) {
+          continue;
+        }
+
         const candidate = this.bestFittingBlockInRow(
           rowStart,
           slotsPerCall,
@@ -2047,6 +2171,10 @@ export class SlotAllocationService {
           preference,
         );
         if (!candidate) continue;
+        // LOAD-BEARING: discarding a placeable block here is only safe because
+        // sweepPeriod(false) below is UNCONDITIONAL. Any early return inserted
+        // between the two sweeps turns this line into a filter and
+        // reintroduces #1065 — the preference would start costing allocations.
         if (perfectOnly && candidate.score < maxScore) continue;
 
         // A full match ends the row walk for the same reason it ends the
@@ -2106,8 +2234,9 @@ export class SlotAllocationService {
     // Skipped entirely when nothing was asked for, so the single sweep below is
     // the only one that runs and today's placements are reproduced exactly.
     if (maxScore > 0) sweepPeriod(true);
-    // Always runs, and always over the whole window: this is what guarantees an
-    // unsatisfiable preference costs a less-liked time rather than a session.
+    // MUST stay unconditional and MUST stay over the whole window. This is the
+    // only thing making the preferred-only sweep above a preference rather than
+    // a filter: everything it declined is reconsidered here.
     sweepPeriod(false);
 
     if (selectedSlots.length < totalSlotsNeeded) {

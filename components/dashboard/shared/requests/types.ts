@@ -42,6 +42,9 @@ export interface RescheduleProposalInfo {
   round: number;
   expiresAt: string;
   initiatorRole: string;
+  /** #1065 — stated instead of naming times; both may be absent. */
+  preferredTimeOfDay?: "MORNING" | "AFTERNOON" | "EVENING" | null;
+  preferredDays?: "WEEKDAYS" | "WEEKENDS" | null;
   proposedSlots: { startsAt: string; endsAt: string; round: number }[];
 }
 

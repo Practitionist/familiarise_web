@@ -21,7 +21,10 @@ import "./setup";
 
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
-  default: { appointment: { findMany: jest.fn() } },
+  default: {
+    appointment: { findMany: jest.fn() },
+    rescheduleRequest: { findFirst: jest.fn() },
+  },
   ALLOCATION_TX_MAX_WAIT_MS: 8000,
   ALLOCATION_TX_TIMEOUT_MS: 30000,
 }));
@@ -34,6 +37,7 @@ jest.mock("../../utils/appointmentlock", () => ({
   unlockConsulteeBooking: jest.fn(),
 }));
 
+import prisma from "../../lib/prisma";
 import { SlotAllocationService } from "../../utils/slotAllocation/SlotAllocationService";
 import { SlotCalculationService } from "../../utils/slotAllocation/SlotCalculationService";
 import {
@@ -381,6 +385,82 @@ describe("among equally-valid candidates the preferred one wins", () => {
   });
 });
 
+// ─── Partial satisfaction: the reason the sweep runs twice ──────────────────
+
+describe("a partly satisfiable day preference tops itself up", () => {
+  /**
+   * A CUSTOM schedule, because this needs availability that does NOT repeat
+   * weekly: Saturdays in the first two weeks only, Mondays in all four. A
+   * weekly row cannot express "some weeks and not others".
+   */
+  function customConsultant(days: Date[]): ConsultantAllocationData {
+    return {
+      userId: "consultant-user",
+      scheduleType: "CUSTOM",
+      slotsOfAvailabilityWeekly: [],
+      slotsOfAvailabilityCustom: days.map((startsAt, i) => ({
+        id: `custom-${i}`,
+        startsAt,
+        endsAt: new Date(startsAt.getTime() + 3 * 60 * MINUTE),
+      })),
+    };
+  }
+
+  /** The next `count` occurrences of a UTC weekday, at 10:00 IST. */
+  function weekdayRuns(utcWeekday: number, count: number): Date[] {
+    const first = new Date("2026-08-05T12:00:00Z");
+    let delta = utcWeekday - first.getUTCDay();
+    if (delta <= 0) delta += 7;
+    const day0 = new Date(first);
+    day0.setUTCDate(first.getUTCDate() + delta);
+    day0.setUTCHours(
+      Math.floor(istToUtcMinutes(10) / 60),
+      istToUtcMinutes(10) % 60,
+      0,
+      0,
+    );
+    return Array.from(
+      { length: count },
+      (_, i) => new Date(day0.getTime() + i * 7 * 24 * 60 * MINUTE),
+    );
+  }
+
+  const UTC_SATURDAY = 6;
+  const UTC_MONDAY = 1;
+
+  it("places the preferred days it can and fills the rest from anywhere", async () => {
+    const consultant = customConsultant([
+      ...weekdayRuns(UTC_SATURDAY, 2), // weekends exist in weeks 1-2 only
+      ...weekdayRuns(UTC_MONDAY, 4), // weekdays exist throughout
+    ]);
+
+    const slots = await findAvailableSlots(
+      consultant,
+      4,
+      1,
+      "subscription",
+      recurringConfig(5),
+      { preferredDays: "WEEKENDS" },
+    );
+
+    // Every session placed — the preference cost nothing.
+    expect(slots).toHaveLength(4);
+
+    const weekdays = slots.map(istWeekday);
+    // Sweep 1 took both available Saturdays; sweep 2 topped up with Mondays.
+    expect(weekdays.filter((d) => d === 6)).toHaveLength(2);
+    expect(weekdays.filter((d) => d === 1)).toHaveLength(2);
+
+    // And the caps still hold across the two sweeps.
+    const perWeek = new Map<string, number>();
+    for (const slot of slots) {
+      const key = SlotCalculationService.weekKey(slot, IST);
+      perWeek.set(key, (perWeek.get(key) ?? 0) + 1);
+    }
+    for (const count of perWeek.values()) expect(count).toBe(1);
+  });
+});
+
 // ─── No preference changes nothing ──────────────────────────────────────────
 
 describe("a null preference leaves selection where it was", () => {
@@ -493,6 +573,79 @@ describe("bands are read in the event's scheduling timezone", () => {
   });
 });
 
+// ─── Finding the stated preference ──────────────────────────────────────────
+
+describe("findAllocationPreference", () => {
+  /** Private, and the seam where the preference is either found or silently lost. */
+  const findAllocationPreference = (
+    releasedSlotIds: string[],
+  ): Promise<AllocationPreference | undefined> =>
+    (
+      SlotAllocationService as unknown as {
+        findAllocationPreference: (
+          ids: string[],
+        ) => Promise<AllocationPreference | undefined>;
+      }
+    ).findAllocationPreference(releasedSlotIds);
+
+  const findFirst = prisma.rescheduleRequest.findFirst as jest.Mock;
+
+  beforeEach(() => findFirst.mockReset());
+
+  it("finds a request whose row is filed against a SIBLING appointment", async () => {
+    // The case that made this feature look flaky rather than broken. On a
+    // multi-session booking the consultee's reschedule URL resolves to the
+    // NEXT ACTIONABLE session (A1) while the picker offers every session, so
+    // releasing session 3 files the row against A1 and releases A3's slots.
+    // Keying the lookup on appointmentId found nothing and the allocation
+    // quietly fell back to first-fit.
+    findFirst.mockResolvedValue({
+      preferredTimeOfDay: "MORNING",
+      preferredDays: null,
+    });
+
+    const found = await findAllocationPreference(["a3-slot-1", "a3-slot-2"]);
+
+    expect(found).toEqual({
+      preferredTimeOfDay: "MORNING",
+      preferredDays: null,
+    });
+
+    const where = findFirst.mock.calls[0][0].where;
+    // Matched by what was RELEASED, which is the same on every appointment of
+    // the booking...
+    expect(where.releasedSlotIds).toEqual({
+      hasSome: ["a3-slot-1", "a3-slot-2"],
+    });
+    // ...and never by the appointment the row happens to be filed against.
+    expect(where).not.toHaveProperty("appointmentId");
+  });
+
+  it("only considers open, preference-bearing requests", async () => {
+    findFirst.mockResolvedValue(null);
+    await findAllocationPreference(["slot-1"]);
+
+    const where = findFirst.mock.calls[0][0].where;
+    expect(where.status).toEqual({ in: ["PENDING_REVIEW", "COUNTERED"] });
+    expect(where.OR).toEqual([
+      { preferredTimeOfDay: { not: null } },
+      { preferredDays: { not: null } },
+    ]);
+  });
+
+  it("does not query at all when nothing was released", async () => {
+    // A fresh allocation has no released slots, so there is no reschedule to
+    // read a preference from and no reason to touch the database.
+    await expect(findAllocationPreference([])).resolves.toBeUndefined();
+    expect(findFirst).not.toHaveBeenCalled();
+  });
+
+  it("returns undefined rather than null when nothing was stated", async () => {
+    findFirst.mockResolvedValue(null);
+    await expect(findAllocationPreference(["slot-1"])).resolves.toBeUndefined();
+  });
+});
+
 // ─── The scorer in isolation ────────────────────────────────────────────────
 
 describe("scoreCandidateStart", () => {
@@ -509,15 +662,16 @@ describe("scoreCandidateStart", () => {
   const monday = (hour: number) => at("2026-08-10", hour);
   const saturday = (hour: number) => at("2026-08-08", hour);
 
-  it("scores each stated half independently", () => {
+  it("scores each stated half independently and equally", () => {
     const both: AllocationPreference = {
       preferredTimeOfDay: "MORNING",
       preferredDays: "WEEKDAYS",
     };
-    expect(maxPreferenceScore(both)).toBe(2);
-    expect(scoreCandidateStart(monday(9), both, IST)).toBe(2);
-    expect(scoreCandidateStart(monday(15), both, IST)).toBe(1);
-    expect(scoreCandidateStart(saturday(9), both, IST)).toBe(1);
+    const max = maxPreferenceScore(both);
+    expect(scoreCandidateStart(monday(9), both, IST)).toBe(max);
+    // Exactly one half satisfied, either way round, scores the same.
+    expect(scoreCandidateStart(monday(15), both, IST)).toBe(max / 2);
+    expect(scoreCandidateStart(saturday(9), both, IST)).toBe(max / 2);
     expect(scoreCandidateStart(saturday(15), both, IST)).toBe(0);
   });
 
@@ -532,6 +686,43 @@ describe("scoreCandidateStart", () => {
       // Exactly one band claims each hour: no gap, no overlap.
       expect(matches).toHaveLength(1);
     }
+  });
+
+  it("ranks 2 AM below a real evening without making it unscoreable", () => {
+    const evenings: AllocationPreference = { preferredTimeOfDay: "EVENING" };
+    const max = maxPreferenceScore(evenings);
+
+    const lateNight = scoreCandidateStart(monday(2), evenings, IST);
+    const actualEvening = scoreCandidateStart(monday(19), evenings, IST);
+
+    // Nobody choosing "Evenings" means 2 AM. But the band has to stay total,
+    // so the tail scores something — just never enough to win a tie-break, and
+    // never enough to satisfy the preferred-only sweep.
+    expect(actualEvening).toBe(max);
+    expect(lateNight).toBeGreaterThan(0);
+    expect(lateNight).toBeLessThan(actualEvening);
+  });
+
+  it("gives an evening-preferring consultee 7 PM over an earlier 2 AM", () => {
+    // Both rows are legal and 02:00 comes first, so a band that scored the two
+    // alike would hand out the 2 AM slot on the chronological tie-break.
+    const consultant = weeklyConsultant([
+      { day: "MONDAY", startUtc: istToUtcMinutes(2), endUtc: istToUtcMinutes(4) },
+      {
+        day: "MONDAY",
+        startUtc: istToUtcMinutes(19),
+        endUtc: istToUtcMinutes(21),
+      },
+    ]);
+
+    return findAvailableSlots(
+      consultant,
+      2,
+      2,
+      "consultation",
+      consultationConfig,
+      { preferredTimeOfDay: "EVENING" },
+    ).then((slots) => expect(istHour(slots[0])).toBe(19));
   });
 
   it("treats an absent or all-null preference as neutral", () => {

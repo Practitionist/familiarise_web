@@ -17,10 +17,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import type {
-  SlotPickerPolicy,
-  SlotPickerSubject,
-  SlotPreference,
+import {
+  acceptsSlotPreference,
+  type SlotPickerPolicy,
+  type SlotPickerSubject,
+  type SlotPreference,
 } from "@/components/scheduling/slot-picker-policy";
 import { cn } from "@/utils/tailwind";
 
@@ -114,7 +115,16 @@ export function SlotPicker({
    * on the no-times submit: picking a concrete time already says everything a
    * preference could.
    */
+  /**
+   * Group events never reach the server's proposal path, so a preference stated
+   * on one would be dropped without a word. Gate the control on the same rule.
+   */
+  const canStatePreference =
+    policy.allowReleaseWithoutTime && acceptsSlotPreference(subject.eventType);
+
   const preference = (): SlotPreference | undefined => {
+    if (!canStatePreference) return undefined;
+
     const stated: SlotPreference = {
       ...(timeOfDay !== NO_PREFERENCE && {
         preferredTimeOfDay: timeOfDay as SlotPreference["preferredTimeOfDay"],
@@ -216,7 +226,7 @@ export function SlotPicker({
               it is how you say "any time, but ideally these" instead of naming
               one. The allocator ranks candidates by it and never rules any out,
               so an impossible pairing still gets the booking placed (#1065). */}
-          {policy.allowReleaseWithoutTime && proposedSlots.length === 0 && (
+          {canStatePreference && proposedSlots.length === 0 && (
             <div className="mr-auto flex flex-wrap items-center gap-2">
               <span className="text-sm text-muted-foreground">Ideally</span>
               <Select value={timeOfDay} onValueChange={setTimeOfDay}>
