@@ -16,6 +16,7 @@
  * OrganizationEarnings.status MUST call this guard first.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { EarningStatus } from "@prisma/client";
 
 export class IllegalEarningStatusTransitionError extends Error {
@@ -37,10 +38,22 @@ export function assertEarningStatusTransitionLegal(
   to: EarningStatus,
 ): void {
   if (from === EarningStatus.PAID && to !== EarningStatus.REFUNDED) {
-    throw new IllegalEarningStatusTransitionError(from, to, earningsId);
+    const err = new IllegalEarningStatusTransitionError(from, to, earningsId);
+    // Modelled invariant guard (a lost race or a caller bug) — reported for
+    // visibility, control flow unchanged.
+    Sentry.captureException(err, {
+      tags: { subsystem: "payments", expected: "true" },
+      level: "warning",
+    });
+    throw err;
   }
   // REFUNDED is terminal — once refunded, no further status mutations.
   if (from === EarningStatus.REFUNDED) {
-    throw new IllegalEarningStatusTransitionError(from, to, earningsId);
+    const err = new IllegalEarningStatusTransitionError(from, to, earningsId);
+    Sentry.captureException(err, {
+      tags: { subsystem: "payments", expected: "true" },
+      level: "warning",
+    });
+    throw err;
   }
 }

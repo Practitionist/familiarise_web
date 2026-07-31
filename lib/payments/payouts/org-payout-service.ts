@@ -484,6 +484,12 @@ export async function createOrgPayoutBatch(
         },
       });
       if (existing) {
+        // Lost race — a sibling worker already created this payout under the
+        // same idempotency key. Modelled outcome, not a fault.
+        Sentry.captureException(err, {
+          tags: { subsystem: "payments", expected: "true" },
+          level: "info",
+        });
         return {
           payoutId: existing.id,
           amountPaise: existing.amountPaise,
@@ -494,7 +500,7 @@ export async function createOrgPayoutBatch(
         };
       }
     }
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "payments" } });
+    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "payments", expected: "false" } });
     throw err;
   } finally {
     await releaseLock(lockKey, token);
@@ -632,6 +638,14 @@ export async function processOrgPayout(
       } catch (err) {
         const cls = classifyGatewaySubmissionError(err);
         if (cls === "PERMANENT_4XX") {
+          // Gateway declined the submission — an answer, not a fault.
+          Sentry.captureException(
+            err instanceof Error ? err : new Error(String(err)),
+            {
+              tags: { subsystem: "payments", expected: "true" },
+              level: "info",
+            },
+          );
           await markPayoutFailedFromSubmission(
             payoutId,
             err instanceof Error ? err.message : String(err),
@@ -647,7 +661,7 @@ export async function processOrgPayout(
         }
         // Transient — leave row in PROCESSING and re-throw so the cron
         // retries with the same idempotency key.
-        Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "payments" } });
+        Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "payments", expected: "false" } });
         throw err;
       }
     });
@@ -846,7 +860,7 @@ export async function processPendingOrgPayouts(): Promise<OrgProcessingResult> {
         result.advanced++;
       }
     } catch (err) {
-      Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "payments" } });
+      Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "payments", expected: "false" } });
       const message = err instanceof Error ? err.message : String(err);
       result.errors.push(`OrgPayout ${p.id}: ${message}`);
     }
@@ -1232,7 +1246,7 @@ export async function markOrgPayoutReversed(
         kind: "REVERSED",
         dashboardUrl: `${getAppUrl()}/dashboard/organization/${completedResult.notify.organizationId}/payouts`,
       }).catch((e) => {
-        Sentry.captureException(e instanceof Error ? e : new Error(String(e)), { tags: { subsystem: "payments" } });
+        Sentry.captureException(e instanceof Error ? e : new Error(String(e)), { tags: { subsystem: "payments", expected: "false" } });
         console.error("[org-payout] REVERSED notify failed:", e);
       });
     }

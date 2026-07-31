@@ -123,6 +123,16 @@ export async function cancelPendingCheckout(args: {
         });
         // Foreign payments 404 like missing ones — don't leak existence.
         if (!payment || payment.userId !== args.userId) {
+          // Authorization-denial-shaped outcome (or a genuinely missing
+          // payment) — modelled, reported for visibility only.
+          Sentry.captureMessage(
+            "cancelPendingCheckout: not found / not owned by caller",
+            {
+              level: "info",
+              tags: { subsystem: "payments", expected: "true" },
+              extra: { paymentId: args.paymentId },
+            },
+          );
           return {
             outcome: { ok: false, code: "NOT_FOUND" },
             gatewayCancel: null,
@@ -140,6 +150,16 @@ export async function cancelPendingCheckout(args: {
           data: { paymentStatus: "EXPIRED" },
         });
         if (claimed.count === 0) {
+          // Lost CAS race — the webhook/cron/a parallel cancel already won.
+          // The system working as designed.
+          Sentry.captureMessage(
+            "cancelPendingCheckout: lost CAS race (already terminal)",
+            {
+              level: "info",
+              tags: { subsystem: "payments", expected: "true" },
+              extra: { paymentId: args.paymentId },
+            },
+          );
           return {
             outcome: { ok: false, code: "NOT_PENDING" },
             gatewayCancel: null,
@@ -208,7 +228,7 @@ export async function cancelPendingCheckout(args: {
     } catch (error) {
       Sentry.captureException(
         error instanceof Error ? error : new Error(String(error)),
-        { tags: { subsystem: "payments" } },
+        { tags: { subsystem: "payments", expected: "false" } },
       );
       console.warn(
         JSON.stringify({

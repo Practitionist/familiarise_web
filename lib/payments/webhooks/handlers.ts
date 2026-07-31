@@ -192,13 +192,24 @@ export async function handlePaymentSuccess(
         });
 
         if (!payment) {
-          throw new Error(
+          const err = new Error(
             `Payment record not found for intent: ${paymentIntentId}`,
           );
+          Sentry.captureException(err, {
+            tags: { subsystem: "payments", expected: "false" },
+          });
+          throw err;
         }
 
         if (payment.paymentStatus === PaymentStatus.SUCCEEDED) {
           console.log(`Payment ${paymentIntentId} has already been processed.`);
+          // Idempotency short-circuit — a redelivered webhook. The system
+          // working as designed.
+          Sentry.captureMessage("Payment webhook idempotency short-circuit", {
+            level: "info",
+            tags: { subsystem: "payments", expected: "true" },
+            extra: { paymentIntentId },
+          });
           return null; // Signal: already processed, skip Phase 2
         }
 
@@ -217,7 +228,7 @@ export async function handlePaymentSuccess(
               `Capture amount mismatch for ${paymentIntentId}: gateway=${gatewayAmountPaise} expected=${payment.amount}`,
             ),
             {
-              tags: { subsystem: "payments" },
+              tags: { subsystem: "payments", expected: "false" },
               level: "fatal",
               contexts: {
                 payment: {
@@ -280,7 +291,7 @@ export async function handlePaymentSuccess(
               ? validationError
               : new Error(String(validationError)),
             {
-              tags: { subsystem: "payments" },
+              tags: { subsystem: "payments", expected: "false" },
               level: "fatal",
               contexts: {
                 payment: {
@@ -482,7 +493,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
           ? refundError
           : new Error(String(refundError)),
         {
-          tags: { subsystem: "payments" },
+          tags: { subsystem: "payments", expected: "false" },
           level: "error",
           contexts: {
             payment: {
@@ -517,7 +528,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
         refundError instanceof Error
           ? refundError
           : new Error(String(refundError)),
-        { tags: { subsystem: "payments" }, level: "error" },
+        { tags: { subsystem: "payments", expected: "false" }, level: "error" },
       );
       console.error(
         "Failed to auto-refund capture-after-cancellation (Phase 2):",
@@ -556,7 +567,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
           ? refundError
           : new Error(String(refundError)),
         {
-          tags: { subsystem: "payments" },
+          tags: { subsystem: "payments", expected: "false" },
           level: "error",
           contexts: {
             booking: {
@@ -596,7 +607,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
   } catch (emailError) {
     Sentry.captureException(
       emailError instanceof Error ? emailError : new Error(String(emailError)),
-      { tags: { subsystem: "payments" }, level: "warning" },
+      { tags: { subsystem: "payments", expected: "false" }, level: "warning" },
     );
     console.error(
       "Failed to send payment success email (Phase 2):",
@@ -733,7 +744,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
       referralError instanceof Error
         ? referralError
         : new Error(String(referralError)),
-      { tags: { subsystem: "payments" }, level: "warning" },
+      { tags: { subsystem: "payments", expected: "false" }, level: "warning" },
     );
     console.error(
       `⚠️ Failed to process referral qualifying action for user ${userId}:`,
@@ -752,7 +763,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
       consultantReferralError instanceof Error
         ? consultantReferralError
         : new Error(String(consultantReferralError)),
-      { tags: { subsystem: "payments" }, level: "warning" },
+      { tags: { subsystem: "payments", expected: "false" }, level: "warning" },
     );
     console.error(
       `⚠️ Failed to process consultant referral qualifying action:`,
@@ -865,7 +876,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
   } catch (novuError) {
     Sentry.captureException(
       novuError instanceof Error ? novuError : new Error(String(novuError)),
-      { tags: { subsystem: "payments" }, level: "warning" },
+      { tags: { subsystem: "payments", expected: "false" }, level: "warning" },
     );
     console.error(
       `⚠️ Failed to send Novu notifications for payment ${paymentId}:`,
@@ -1000,6 +1011,11 @@ export async function handlePaymentFailure(paymentIntentId: string) {
       console.warn(
         `Payment record not found for failed intent: ${paymentIntentId}`,
       );
+      Sentry.captureMessage("Payment failure webhook: payment not found", {
+        level: "warning",
+        tags: { subsystem: "payments", expected: "false" },
+        extra: { paymentIntentId },
+      });
       return;
     }
 
@@ -1007,6 +1023,14 @@ export async function handlePaymentFailure(paymentIntentId: string) {
     if (payment.paymentStatus === PaymentStatus.FAILED) {
       console.log(
         `Payment ${paymentIntentId} has already been marked as failed.`,
+      );
+      Sentry.captureMessage(
+        "Payment failure webhook idempotency short-circuit",
+        {
+          level: "info",
+          tags: { subsystem: "payments", expected: "true" },
+          extra: { paymentIntentId },
+        },
       );
       return;
     }
@@ -1017,6 +1041,14 @@ export async function handlePaymentFailure(paymentIntentId: string) {
       console.warn(
         `Payment ${paymentIntentId} already SUCCEEDED. Ignoring late failure webhook.`,
       );
+      Sentry.captureMessage(
+        "Payment failure webhook arrived after SUCCEEDED — ignored",
+        {
+          level: "warning",
+          tags: { subsystem: "payments", expected: "true" },
+          extra: { paymentIntentId },
+        },
+      );
       return;
     }
 
@@ -1025,6 +1057,14 @@ export async function handlePaymentFailure(paymentIntentId: string) {
     if (payment.paymentStatus === PaymentStatus.EXPIRED) {
       console.log(
         `Payment ${paymentIntentId} already EXPIRED. Ignoring late failure webhook.`,
+      );
+      Sentry.captureMessage(
+        "Payment failure webhook arrived after EXPIRED — ignored",
+        {
+          level: "info",
+          tags: { subsystem: "payments", expected: "true" },
+          extra: { paymentIntentId },
+        },
       );
       return;
     }
@@ -1064,7 +1104,7 @@ export async function handlePaymentFailure(paymentIntentId: string) {
     } catch (novuError) {
       Sentry.captureException(
         novuError instanceof Error ? novuError : new Error(String(novuError)),
-        { tags: { subsystem: "payments" }, level: "warning" },
+        { tags: { subsystem: "payments", expected: "false" }, level: "warning" },
       );
       console.error(
         `⚠️ Failed to send Novu payment failed notification for payment ${payment.id}:`,
@@ -1517,11 +1557,14 @@ export async function confirmExistingAppointment(
         select: { id: true, appointmentId: true },
       });
       if (conflict) {
+        // Modelled outcome — the #827 first-confirmed-wins guard working as
+        // designed (lost race). Phase 2 auto-refunds the loser; still
+        // reported at "warning" (not "info") since it needs that follow-up.
         Sentry.captureException(
           new Error("CONFIRMATION_BLOCKED_DOUBLE_BOOKING"),
           {
-            tags: { subsystem: "payments" },
-            level: "error",
+            tags: { subsystem: "payments", expected: "true" },
+            level: "warning",
             contexts: {
               booking: {
                 appointmentId,
@@ -1776,7 +1819,7 @@ async function sendPaymentSuccessNotification(
         new Error(
           `Cannot send payment success email: appointment ${appointmentId} not found`,
         ),
-        { tags: { subsystem: "payments" }, level: "warning" },
+        { tags: { subsystem: "payments", expected: "false" }, level: "warning" },
       );
       console.error(
         `Cannot send payment success email: appointment ${appointmentId} not found`,
@@ -1829,7 +1872,7 @@ async function sendPaymentSuccessNotification(
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "payments" }, level: "warning" },
+      { tags: { subsystem: "payments", expected: "false" }, level: "warning" },
     );
     // Don't throw - email failures shouldn't block payment processing
     console.error("Failed to send payment success email:", error);
@@ -1875,7 +1918,7 @@ async function sendPaymentFailureNotification(
         new Error(
           `Cannot send payment failure email: appointment not found for payment ${payment.id}`,
         ),
-        { tags: { subsystem: "payments" }, level: "warning" },
+        { tags: { subsystem: "payments", expected: "false" }, level: "warning" },
       );
       console.error(
         `Cannot send payment failure email: appointment not found for payment ${payment.id}`,
@@ -1923,7 +1966,7 @@ async function sendPaymentFailureNotification(
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "payments" }, level: "warning" },
+      { tags: { subsystem: "payments", expected: "false" }, level: "warning" },
     );
     // Don't throw - email failures shouldn't block payment processing
     console.error("Failed to send payment failure email:", error);

@@ -197,7 +197,7 @@ export class PaymentIntentManager {
       Sentry.captureException(
         error instanceof Error ? error : new Error(String(error)),
         {
-          tags: { subsystem: "payments" },
+          tags: { subsystem: "payments", expected: "false" },
         },
       );
       throw new Error(
@@ -221,7 +221,7 @@ export class PaymentIntentManager {
       Sentry.captureException(
         error instanceof Error ? error : new Error(String(error)),
         {
-          tags: { subsystem: "payments" },
+          tags: { subsystem: "payments", expected: "false" },
           level: "warning",
         },
       );
@@ -2251,7 +2251,7 @@ export async function handleCheckout(
             ? paymentError
             : new Error(String(paymentError)),
           {
-            tags: { subsystem: "payments" },
+            tags: { subsystem: "payments", expected: "false" },
           },
         );
         throw new Error(
@@ -2546,7 +2546,7 @@ export async function handleCheckout(
                         ? notifyErr
                         : new Error(String(notifyErr)),
                       {
-                        tags: { subsystem: "payments" },
+                        tags: { subsystem: "payments", expected: "false" },
                         level: "warning",
                       },
                     );
@@ -2659,7 +2659,7 @@ export async function handleCheckout(
                         ? notifyErr
                         : new Error(String(notifyErr)),
                       {
-                        tags: { subsystem: "payments" },
+                        tags: { subsystem: "payments", expected: "false" },
                         level: "warning",
                       },
                     );
@@ -2880,7 +2880,7 @@ export async function handleCheckout(
               ? referralError
               : new Error(String(referralError)),
             {
-              tags: { subsystem: "payments" },
+              tags: { subsystem: "payments", expected: "false" },
               level: "warning",
             },
           );
@@ -3028,7 +3028,7 @@ export async function handleCheckout(
               ? consultantRefError
               : new Error(String(consultantRefError)),
             {
-              tags: { subsystem: "payments" },
+              tags: { subsystem: "payments", expected: "false" },
               level: "warning",
             },
           );
@@ -3050,10 +3050,36 @@ export async function handleCheckout(
       };
     } catch (dbError) {
       console.error("Failed to create payment record:", dbError);
+      // Classification for Sentry tagging ONLY — deliberately NOT the same
+      // list `preservedMessages` below uses for the rethrow decision, so
+      // adding a tagging-only pattern here can never change which message
+      // reaches the caller.
+      const modelledOutcomePatterns = [
+        "already registered",
+        "already enrolled",
+        "full",
+        "cancelled",
+        "ended",
+        "not been scheduled",
+        "already have a pending or active subscription",
+        "overlapping dates",
+        "insufficient credits",
+        "session cap", // ProgramAssignmentLimitError-derived message, above
+      ];
+      const isModelledOutcome =
+        dbError instanceof WalletFrozenError ||
+        (dbError instanceof Error &&
+          modelledOutcomePatterns.some((msg) =>
+            dbError.message.toLowerCase().includes(msg),
+          ));
       Sentry.captureException(
         dbError instanceof Error ? dbError : new Error(String(dbError)),
         {
-          tags: { subsystem: "payments" },
+          tags: {
+            subsystem: "payments",
+            expected: isModelledOutcome ? "true" : "false",
+          },
+          level: isModelledOutcome ? "info" : "error",
         },
       );
 
@@ -3100,16 +3126,31 @@ export async function handleCheckout(
       );
     }
   } catch (error) {
+    // Outermost boundary — also catches validation errors from
+    // calculateAmountAndValidate/acquireCheckoutLock/revalidateInsideLock
+    // (steps 1-3, above the STEP-5 try/catch that already reports) which
+    // otherwise reach here uncaptured. Lock contention is a modelled,
+    // expected race between two concurrent checkouts; anything else here is
+    // unclassified and reported as a fault by default.
+    const isLockContention =
+      error instanceof Error &&
+      (error.message.includes("currently checking out") ||
+        error.message.includes("currently being booked"));
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      {
+        tags: {
+          subsystem: "payments",
+          expected: isLockContention ? "true" : "false",
+        },
+        level: isLockContention ? "info" : "error",
+      },
+    );
     // Enhanced error handling with lock-specific errors
-    if (error instanceof Error) {
-      if (
-        error.message.includes("currently checking out") ||
-        error.message.includes("currently being booked")
-      ) {
-        throw new Error(
-          "Another user is currently booking this slot. Please wait a few seconds and try again.",
-        );
-      }
+    if (isLockContention) {
+      throw new Error(
+        "Another user is currently booking this slot. Please wait a few seconds and try again.",
+      );
     }
     throw error;
   } finally {

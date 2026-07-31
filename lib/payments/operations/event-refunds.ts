@@ -83,7 +83,7 @@ export async function refundWholeEventPayments(
     } catch (err) {
       summary.failures.push({ paymentId: p.id, error: errMsg(err) });
       Sentry.captureException(err instanceof Error ? err : new Error(String(err)), {
-        tags: { subsystem: "payments", feature: "whole-event-refund" },
+        tags: { subsystem: "payments", feature: "whole-event-refund", expected: "false" },
         extra: { paymentId: p.id, eventId, kind },
       });
     }
@@ -127,7 +127,7 @@ export async function refundWholeEventPayments(
         summary.failures.push({ paymentId: p.id, error: errMsg(err) });
       }
       Sentry.captureException(err instanceof Error ? err : new Error(String(err)), {
-        tags: { subsystem: "payments", feature: "whole-event-refund" },
+        tags: { subsystem: "payments", feature: "whole-event-refund", expected: "false" },
         extra: { eventId, kind, internalCount: internal.length },
       });
     }

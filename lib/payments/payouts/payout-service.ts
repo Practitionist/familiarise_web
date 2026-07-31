@@ -603,6 +603,13 @@ async function processSinglePayout(payout: {
       console.warn(
         `[Payouts] Payout ${payout.id} already claimed by a concurrent run — skipping`,
       );
+      // Lost CAS race — a concurrent runner already claimed this payout. The
+      // system working as designed.
+      Sentry.captureMessage("Payout CAS claim lost to a concurrent runner", {
+        level: "info",
+        tags: { subsystem: "payments", expected: "true" },
+        extra: { payoutId: payout.id },
+      });
       return { payoutId: payout.id, success: false, skipped: true };
     }
 
@@ -776,7 +783,7 @@ async function processSinglePayout(payout: {
             ? persistErr
             : new Error(String(persistErr)),
           {
-            tags: { subsystem: "payments" },
+            tags: { subsystem: "payments", expected: "false" },
             level: "fatal",
             contexts: { payout: { payoutId: payout.id, providerPayoutId } },
           },
@@ -788,7 +795,7 @@ async function processSinglePayout(payout: {
       Sentry.captureException(
         new Error(`gateway-accepted-db-write-failed: payout ${payout.id}`),
         {
-          tags: { subsystem: "payments" },
+          tags: { subsystem: "payments", expected: "false" },
           level: "error",
           contexts: { payout: { payoutId: payout.id, providerPayoutId } },
         },
@@ -1006,6 +1013,13 @@ export async function handlePayoutWebhook(
       console.log(
         `Payout ${payout.id} already in terminal state, skipping duplicate ${status} webhook`,
       );
+      // Idempotency short-circuit — a redelivered/duplicate gateway webhook.
+      // The system working as designed.
+      Sentry.captureMessage("Payout webhook idempotency short-circuit", {
+        level: "info",
+        tags: { subsystem: "payments", expected: "true" },
+        extra: { payoutId: payout.id, status },
+      });
       return;
     }
 
@@ -1141,7 +1155,7 @@ export async function handlePayoutWebhook(
         Sentry.captureException(
           error instanceof Error ? error : new Error(String(error)),
           {
-            tags: { subsystem: "payments" },
+            tags: { subsystem: "payments", expected: "false" },
             level: "warning",
           },
         );
@@ -1180,6 +1194,14 @@ export async function markConsultantPayoutReversed(
       console.warn(
         `[payouts] markConsultantPayoutReversed: payout not found for provider ID ${providerPayoutId}`,
       );
+      Sentry.captureMessage(
+        "markConsultantPayoutReversed: payout not found for provider ID",
+        {
+          level: "warning",
+          tags: { subsystem: "payments", expected: "false" },
+          extra: { providerPayoutId },
+        },
+      );
       return { wasNoOp: true, notify: null };
     }
 
@@ -1191,7 +1213,19 @@ export async function markConsultantPayoutReversed(
         failureReason: reason.slice(0, 500),
       },
     });
-    if (claim.count === 0) return { wasNoOp: true, notify: null };
+    if (claim.count === 0) {
+      // Modelled no-op — caller falls through to the pre-settlement FAILED
+      // path when the payout wasn't COMPLETED.
+      Sentry.captureMessage(
+        "markConsultantPayoutReversed: no-op (not COMPLETED)",
+        {
+          level: "info",
+          tags: { subsystem: "payments", expected: "true" },
+          extra: { payoutId: payout.id },
+        },
+      );
+      return { wasNoOp: true, notify: null };
+    }
 
     // Re-open the earnings this payout had marked PAID so a future batch re-pays
     // them — the inverse of the completion path's PAID flip. Unlike the FAILED

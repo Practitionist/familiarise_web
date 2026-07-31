@@ -117,8 +117,19 @@ export async function createStripeCheckoutSession({
     };
   } catch (error) {
     console.error("Stripe checkout session creation failed:", error);
+    // A declined/invalid card is an ANSWER the gateway gave us, not a fault —
+    // tag it separately so the dashboard doesn't read "Stripe is down" for
+    // routine card declines.
+    const isCardDecline =
+      error instanceof Stripe.errors.StripeError &&
+      error.type === "StripeCardError";
     Sentry.captureException(error, {
-      tags: { subsystem: "payments", provider: "stripe" },
+      tags: {
+        subsystem: "payments",
+        provider: "stripe",
+        expected: isCardDecline ? "true" : "false",
+      },
+      level: isCardDecline ? "info" : "error",
       contexts: { payment: { amount, currency } },
     });
     throw handleStripeError(error);
@@ -162,13 +173,23 @@ export async function cancelStripePayment(
         console.log(
           `✅ Payment was already expired/cancelled: ${paymentIntentId}`,
         );
+        Sentry.captureException(error, {
+          tags: {
+            subsystem: "payments",
+            provider: "stripe",
+            expected: "true",
+          },
+          level: "info",
+        });
         return;
       }
     }
     console.error(`Failed to cancel Stripe payment ${paymentIntentId}:`, error);
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "payments", provider: "stripe" } },
+      {
+        tags: { subsystem: "payments", provider: "stripe", expected: "false" },
+      },
     );
   }
 }
@@ -217,7 +238,7 @@ export async function createStripeRefund({
   } catch (error) {
     console.error("Stripe refund creation failed:", error);
     Sentry.captureException(error, {
-      tags: { subsystem: "payments", provider: "stripe" },
+      tags: { subsystem: "payments", provider: "stripe", expected: "false" },
     });
     throw handleStripeRefundError(error);
   }
@@ -249,7 +270,7 @@ export async function getStripeRefund(refundId: string): Promise<RefundResult> {
     console.error("Stripe refund retrieval failed:", error);
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "payments", provider: "stripe" } },
+      { tags: { subsystem: "payments", provider: "stripe", expected: "false" } },
     );
     throw handleStripeRefundError(error);
   }
@@ -287,7 +308,7 @@ export async function listStripeRefunds(
     console.error("Stripe refunds list failed:", error);
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "payments", provider: "stripe" } },
+      { tags: { subsystem: "payments", provider: "stripe", expected: "false" } },
     );
     throw handleStripeRefundError(error);
   }
@@ -334,7 +355,7 @@ export async function getStripeDispute(
     }
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "payments", provider: "stripe" } },
+      { tags: { subsystem: "payments", provider: "stripe", expected: "false" } },
     );
     throw handleStripeDisputeError(error);
   }
@@ -391,7 +412,7 @@ export async function submitStripeDisputeEvidence({
     console.error("Stripe dispute evidence submission failed:", error);
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "payments", provider: "stripe" } },
+      { tags: { subsystem: "payments", provider: "stripe", expected: "false" } },
     );
     throw handleStripeDisputeError(error);
   }
@@ -427,7 +448,7 @@ export async function listStripeDisputes(
     console.error("Stripe disputes list failed:", error);
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "payments", provider: "stripe" } },
+      { tags: { subsystem: "payments", provider: "stripe", expected: "false" } },
     );
     throw handleStripeDisputeError(error);
   }

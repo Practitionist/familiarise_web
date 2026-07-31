@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import type { PrismaLike } from "@/lib/prisma";
 /**
  * #771 D1/D5 — double-entry posting helper (Batch 2 foundation).
@@ -22,8 +23,6 @@ import type {
   LedgerAccountKind,
   LedgerDirection,
   LedgerTransactionKind,
-  Prisma,
-  PrismaClient,
 } from "@prisma/client";
 import { sumPaise } from "@/lib/payments/utils/money";
 
@@ -112,21 +111,35 @@ export async function postLedgerTxn(
   input: PostLedgerTxnInput,
 ): Promise<{ transactionId: string; created: boolean }> {
   if (input.postings.length === 0) {
-    throw new Error(`postLedgerTxn "${input.idempotencyKey}": no postings`);
+    const err = new Error(
+      `postLedgerTxn "${input.idempotencyKey}": no postings`,
+    );
+    Sentry.captureException(err, {
+      tags: { subsystem: "payments", expected: "false" },
+    });
+    throw err;
   }
   let debit = 0;
   let credit = 0;
   for (const p of input.postings) {
     if (!Number.isInteger(p.amountPaise) || p.amountPaise <= 0) {
-      throw new Error(
+      const err = new Error(
         `postLedgerTxn "${input.idempotencyKey}": each posting must be a positive integer paise (got ${p.amountPaise})`,
       );
+      Sentry.captureException(err, {
+        tags: { subsystem: "payments", expected: "false" },
+      });
+      throw err;
     }
     if (p.direction === "DEBIT") debit += p.amountPaise;
     else credit += p.amountPaise;
   }
   if (debit !== credit) {
-    throw new LedgerImbalanceError(input.idempotencyKey, debit, credit);
+    const err = new LedgerImbalanceError(input.idempotencyKey, debit, credit);
+    Sentry.captureException(err, {
+      tags: { subsystem: "payments", expected: "false" },
+    });
+    throw err;
   }
 
   // Idempotency fast-path. `idempotencyKey @unique` is the hard guard: if two
@@ -136,7 +149,16 @@ export async function postLedgerTxn(
     where: { idempotencyKey: input.idempotencyKey },
     select: { id: true },
   });
-  if (existing) return { transactionId: existing.id, created: false };
+  if (existing) {
+    // Idempotency short-circuit — a retried/replayed caller hit an
+    // already-posted key. The system working as designed.
+    Sentry.captureMessage("Ledger posting idempotency short-circuit", {
+      level: "info",
+      tags: { subsystem: "payments", expected: "true" },
+      extra: { idempotencyKey: input.idempotencyKey, kind: input.kind },
+    });
+    return { transactionId: existing.id, created: false };
+  }
 
   const accountIds = await Promise.all(
     input.postings.map((p) => resolveAccountId(db, p.account)),
@@ -198,11 +220,39 @@ export async function postLedgerTxn(
           where: { idempotencyKey: input.idempotencyKey },
           select: { id: true },
         });
-        if (winner) return { transactionId: winner.id, created: false };
-      } catch {
+        if (winner) {
+          // Lost-race rescue succeeded — a concurrent poster with the same
+          // key committed first. Modelled outcome, not a fault.
+          Sentry.captureMessage("Ledger posting P2002 race rescued", {
+            level: "info",
+            tags: { subsystem: "payments", expected: "true" },
+            extra: { idempotencyKey: input.idempotencyKey, kind: input.kind },
+          });
+          return { transactionId: winner.id, created: false };
+        }
+      } catch (rescueErr) {
         // Aborted transaction — fall through and rethrow the original P2002.
+        // This inner failure is itself expected inside a tx (Postgres already
+        // aborted it, so ANY further read throws 25P02) — captured for
+        // pattern visibility only, not as a new fault.
+        Sentry.captureException(
+          rescueErr instanceof Error ? rescueErr : new Error(String(rescueErr)),
+          {
+            tags: { subsystem: "payments", expected: "true" },
+            level: "info",
+            extra: { idempotencyKey: input.idempotencyKey },
+          },
+        );
       }
     }
+    // Genuine, unrecovered ledger-write failure — every caller must see this;
+    // captured here so callers that don't wrap postLedgerTxn in their own
+    // try/catch (some do, redundantly capturing the same error again) still
+    // get visibility.
+    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), {
+      tags: { subsystem: "payments", expected: "false" },
+      extra: { idempotencyKey: input.idempotencyKey, kind: input.kind },
+    });
     throw err;
   }
 

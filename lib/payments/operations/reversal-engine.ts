@@ -272,7 +272,17 @@ async function reversePayoutClawback(
     where: { id: orgPayoutId },
     select: { id: true, clawbackInitiatedAt: true },
   });
-  if (!payout) return false;
+  if (!payout) {
+    Sentry.captureMessage(
+      "reversePayoutClawback: target OrganizationPayout not found",
+      {
+        level: "warning",
+        tags: { subsystem: "payments", expected: "false" },
+        extra: { orgPayoutId, refundId: input.refundId },
+      },
+    );
+    return false;
+  }
 
   await tx.organizationPayout.update({
     where: { id: orgPayoutId },
@@ -320,7 +330,7 @@ async function reversePayoutClawback(
   } catch (err) {
     Sentry.captureException(
       err instanceof Error ? err : new Error(String(err)),
-      { tags: { subsystem: "payments" }, level: "fatal" },
+      { tags: { subsystem: "payments", expected: "false" }, level: "fatal" },
     );
     console.error(
       `[ledger] payout clawback posting FAILED for payout ${orgPayoutId} (reconcile will flag): ${err instanceof Error ? err.message : String(err)}`,

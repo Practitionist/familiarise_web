@@ -260,7 +260,7 @@ async function resolveOrgSplit(
       new Error(
         `[Earnings] Negative orgShare (${orgShare}) for org ${orgId}: platformBps=${resolved.platformBps}, consultantBps=${resolved.consultantBps}. Clamping.`,
       ),
-      { tags: { subsystem: "payments" }, level: "warning" },
+      { tags: { subsystem: "payments", expected: "false" }, level: "warning" },
     );
     console.error(
       `[Earnings] Negative orgShare (${orgShare}) for org ${orgId}: ` +
@@ -816,7 +816,7 @@ export async function createEarningsFromPayment({
                 Sentry.captureException(
                   err instanceof Error ? err : new Error(String(err)),
                   {
-                    tags: { subsystem: "payments" },
+                    tags: { subsystem: "payments", expected: "false" },
                   },
                 );
                 console.error(
@@ -833,6 +833,16 @@ export async function createEarningsFromPayment({
                   err,
                   context: { paymentId: payment.id },
                 }).catch(() => {});
+              } else {
+                // Lost SSI race — withSerializableRetry re-runs the whole txn.
+                // Modelled outcome, reported at low volume/info only.
+                Sentry.captureException(
+                  err instanceof Error ? err : new Error(String(err)),
+                  {
+                    tags: { subsystem: "payments", expected: "true" },
+                    level: "info",
+                  },
+                );
               }
               throw err;
             }
@@ -852,6 +862,11 @@ export async function createEarningsFromPayment({
       console.warn(
         `[Earnings] Duplicate earnings creation for payment ${payment.id} (P2002). Treating as idempotent success.`,
       );
+      Sentry.captureException(error, {
+        tags: { subsystem: "payments", expected: "true" },
+        level: "info",
+        extra: { paymentId: payment.id, consultantProfileId },
+      });
       const existing = await prisma.consultantEarnings.findFirst({
         where: { paymentId: payment.id, consultantProfileId },
       });
