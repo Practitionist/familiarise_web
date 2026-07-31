@@ -39,13 +39,18 @@ export async function generateMetadata({
   params,
   searchParams,
 }: Readonly<PageProps>): Promise<Metadata> {
-  const { requestId } = await params;
+  const { consultantId, requestId } = await params;
   const { type } = await searchParams;
   const request = await loadRequest(
     requestId,
     type === "subscription" ? "subscription" : "consultation",
   ).catch(() => null);
-  if (!request) return { title: "Allocate slots — Familiarise" };
+  // Metadata runs BEFORE the body's guards and is not covered by them, so the
+  // same ownership check runs here — otherwise the tab title named the
+  // offering and the buyer for any request id a signed-in consultant tried.
+  if (!request || request.consultantProfileId !== consultantId) {
+    return { title: "Allocate slots — Familiarise" };
+  }
 
   const who = request.consulteeName ? ` · ${request.consulteeName}` : "";
   return { title: `Allocate: ${request.title}${who} — Familiarise` };

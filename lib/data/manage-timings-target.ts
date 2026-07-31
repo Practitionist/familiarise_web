@@ -1,6 +1,7 @@
 import prisma from "@/lib/prisma";
 import { toPlain } from "@/lib/data/serialize";
 import { readAppointmentDetail } from "@/lib/data/appointment-detail";
+import { resolvePlanOwnerIds } from "@/lib/booking/plan-owners";
 import type { ManageTimingsAppointmentLike } from "@/lib/scheduling/manage-timings-subject";
 
 /**
@@ -116,18 +117,7 @@ export async function readManageTimingsTarget(
     return null;
   }
 
-  const planOwnerIds = ownerIds(
-    appointment.consultation?.consultationPlan?.consultantProfile?.id,
-    appointment.subscription?.subscriptionPlan?.consultantProfile?.id,
-    appointment.webinar?.webinarPlan?.consultantProfile?.id,
-    appointment.class?.classPlan?.consultantProfile?.id,
-    ...(appointment.webinar?.webinarPlan?.collaborators ?? []).map(
-      (c) => c.consultantProfile?.id,
-    ),
-    ...(appointment.class?.classPlan?.collaborators ?? []).map(
-      (c) => c.consultantProfile?.id,
-    ),
-  );
+  const planOwnerIds = resolvePlanOwnerIds(appointment);
 
   // A subscription/class session is one Appointment among several; progress
   // is only meaningful across the whole program, same as the consultant
@@ -140,6 +130,18 @@ export async function readManageTimingsTarget(
   const scheduled = program?.filter(
     (row) => row.slotsOfAppointment.length > 0,
   );
+
+  // The PLAN's count, not the number of Appointment rows that happen to carry
+  // slots. Siblings are real appointments, not session placeholders, so an
+  // unscheduled one is simply absent — counting rows made the total shrink to
+  // whatever was already scheduled, and "remaining" then folded completed
+  // sessions in with future ones.
+  const groupTotalSessions =
+    appointment.appointmentType === "SUBSCRIPTION"
+      ? (appointment.subscription?.subscriptionPlan?.totalSessions ?? undefined)
+      : appointment.appointmentType === "CLASS"
+        ? (appointment.class?.classPlan?.totalSessions ?? undefined)
+        : undefined;
 
   return {
     // Narrowed shape only: the guard above already ruled out TRIAL, but Prisma's
@@ -161,6 +163,6 @@ export async function readManageTimingsTarget(
     completedSessions: scheduled
       ? scheduled.filter((row) => isCompleted(row.slotsOfAppointment)).length
       : undefined,
-    groupTotalSessions: scheduled?.length,
+    groupTotalSessions,
   };
 }

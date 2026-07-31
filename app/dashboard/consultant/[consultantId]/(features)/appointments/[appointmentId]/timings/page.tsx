@@ -38,7 +38,12 @@ export async function generateMetadata({
 }: Readonly<PageProps>): Promise<Metadata> {
   const { consultantId, appointmentId } = await params;
   const target = await loadTarget(appointmentId).catch(() => null);
-  if (!target) return { title: "Manage timings — Familiarise" };
+  // Metadata runs BEFORE the body's guards and is not covered by them, so the
+  // same ownership check runs here — otherwise the tab title named the
+  // offering for any id a signed-in consultant cared to try.
+  if (!target || !target.planOwnerIds.includes(consultantId)) {
+    return { title: "Manage timings — Familiarise" };
+  }
 
   const resolved = buildManageTimingsSubject(consultantId, target.appointment);
   return { title: `Manage timings: ${resolved.title} — Familiarise` };

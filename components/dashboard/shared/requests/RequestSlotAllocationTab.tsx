@@ -481,6 +481,10 @@ export function RequestSlotAllocationTab({
   const fetchData = useCallback(async () => {
     setLoading(true);
     setError(null);
+    // Local, not the `error` state: reading that in `finally` sees the value
+    // from render time, not the one just set, so a failed fetch still stamped
+    // "Updated" with a timestamp it had not earned.
+    let succeeded = false;
 
     try {
       // Fetch data in parallel (only PENDING requests).
@@ -498,10 +502,9 @@ export function RequestSlotAllocationTab({
 
       for (const result of results) {
         if (!result.ok && result.error) {
-          // Set the first encountered error and stop
+          // Set the first encountered error and stop. `finally` clears loading.
           setError(result.error);
-          setLoading(false); // Ensure loading state is updated
-          return; // Exit fetchData early
+          return;
         }
       }
 
@@ -660,6 +663,7 @@ export function RequestSlotAllocationTab({
 
       // --- Update State ---
       setRequests(processedRequests);
+      succeeded = true;
     } catch (err) {
       // This catch block now primarily handles errors during data *processing*
       Sentry.captureException(
@@ -673,16 +677,18 @@ export function RequestSlotAllocationTab({
           : "An unexpected error occurred while processing data.",
       );
     } finally {
-      // setLoading(false) is handled earlier in case of fetch errors
-      // Only set it here if no fetch error occurred
-      if (!error) {
-        setLoading(false);
-        setLastUpdated(new Date());
-      }
+      // Loading always clears; the timestamp only moves on a real success.
+      setLoading(false);
+      if (succeeded) setLastUpdated(new Date());
     }
     // orgScope belongs here: fetchData builds both URLs from it, so without it
     // a scope change without a remount keeps refetching the previous org's rows.
-  }, [consultantId, type, error, orgScope]);
+    //
+    // `error` must NOT: it is written by this callback and read by the effect
+    // that calls it, so a failing endpoint looped — fail, set error, new
+    // identity, refire, clear error, new identity, refire — hammering the API
+    // and never letting the error view settle.
+  }, [consultantId, type, orgScope]);
 
   // Fetches once. Nothing refetches on its own — not a timer, not focus.
   //

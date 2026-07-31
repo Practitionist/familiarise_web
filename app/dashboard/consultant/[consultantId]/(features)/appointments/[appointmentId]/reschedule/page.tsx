@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 
 import { PanelHeader } from "@/components/dashboard/PageScaffold";
 import { readAppointmentDetail } from "@/lib/data/appointment-detail";
+import { resolvePlanOwnerIds } from "@/lib/booking/plan-owners";
 import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
 import { buildRescheduleSubject } from "@/lib/scheduling/slot-picker-subject";
 
@@ -32,9 +33,15 @@ const loadDetail = cache(readAppointmentDetail);
 export async function generateMetadata({
   params,
 }: Readonly<PageProps>): Promise<Metadata> {
-  const { appointmentId } = await params;
+  const { consultantId, appointmentId } = await params;
   const detail = await loadDetail(appointmentId).catch(() => null);
-  const resolved = detail ? buildRescheduleSubject(detail) : null;
+  // Metadata runs BEFORE the body's guards and is not covered by them, so the
+  // same ownership check runs here — otherwise the tab title named the
+  // offering and the client for any appointment id a signed-in consultant
+  // cared to try.
+  const owned =
+    !!detail && resolvePlanOwnerIds(detail.appointment).includes(consultantId);
+  const resolved = owned && detail ? buildRescheduleSubject(detail) : null;
   if (!resolved) return { title: "Reschedule — Familiarise" };
 
   const who = resolved.consulteeName ? ` · ${resolved.consulteeName}` : "";
@@ -56,20 +63,7 @@ export default async function ConsultantReschedulePage({
   // Mirrors the detail page: this binds the appointment to the URL's
   // consultant, the guard above binds that consultant to the session.
   const { appointment } = detail;
-  const planOwnerIds = [
-    appointment.consultation?.consultationPlan?.consultantProfile?.id,
-    appointment.subscription?.subscriptionPlan?.consultantProfile?.id,
-    appointment.webinar?.webinarPlan?.consultantProfile?.id,
-    appointment.class?.classPlan?.consultantProfile?.id,
-    appointment.trialSession?.subscriptionPlan?.consultantProfile?.id,
-    ...(appointment.webinar?.webinarPlan?.collaborators ?? []).map(
-      (collaborator) => collaborator.consultantProfile?.id,
-    ),
-    ...(appointment.class?.classPlan?.collaborators ?? []).map(
-      (collaborator) => collaborator.consultantProfile?.id,
-    ),
-  ];
-  if (!planOwnerIds.includes(consultantId)) notFound();
+  if (!resolvePlanOwnerIds(appointment).includes(consultantId)) notFound();
 
   const resolved = buildRescheduleSubject(detail);
   if (!resolved) notFound();

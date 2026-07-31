@@ -24,6 +24,37 @@ type PageProps = {
 
 // React.cache so generateMetadata() and the page body share one query per request.
 const loadDetail = cache(readAppointmentDetail);
+const loadConsulteeUserId = cache(async (consulteeId: string) =>
+  prisma.consulteeProfile.findUnique({
+    where: { id: consulteeId },
+    select: { userId: true },
+  }),
+);
+
+/**
+ * Binds the appointment to the URL's consultee. Mirrors the detail page.
+ *
+ * Shared with generateMetadata deliberately: metadata runs BEFORE the body's
+ * guards and is not covered by them, so without this the page `<title>` named
+ * the offering and the consultant for any appointment id a signed-in user
+ * cared to try.
+ */
+function consulteeOwns(
+  appointment: NonNullable<
+    Awaited<ReturnType<typeof loadDetail>>
+  >["appointment"],
+  consulteeId: string,
+  userId: string,
+): boolean {
+  return (
+    appointment.consultation?.requestedBy?.id === consulteeId ||
+    appointment.subscription?.requestedBy?.id === consulteeId ||
+    appointment.trialSession?.consulteeProfile?.id === consulteeId ||
+    appointment.slotsOfAppointment.some((slot) =>
+      slot.user.some((user) => user.id === userId),
+    )
+  );
+}
 
 /**
  * Names the booking, not the task. "Reschedule" on a backgrounded tab does not
@@ -32,10 +63,19 @@ const loadDetail = cache(readAppointmentDetail);
 export async function generateMetadata({
   params,
 }: Readonly<PageProps>): Promise<Metadata> {
-  const { appointmentId } = await params;
-  const detail = await loadDetail(appointmentId).catch(() => null);
-  const resolved = detail ? buildRescheduleSubject(detail) : null;
-  if (!resolved) return { title: "Reschedule — Familiarise" };
+  const { consulteeId, appointmentId } = await params;
+  const [detail, profile] = await Promise.all([
+    loadDetail(appointmentId).catch(() => null),
+    loadConsulteeUserId(consulteeId).catch(() => null),
+  ]);
+  const generic = { title: "Reschedule — Familiarise" };
+  if (!detail || !profile) return generic;
+  if (!consulteeOwns(detail.appointment, consulteeId, profile.userId)) {
+    return generic;
+  }
+
+  const resolved = buildRescheduleSubject(detail);
+  if (!resolved) return generic;
 
   const who = resolved.consultantName ? ` with ${resolved.consultantName}` : "";
   return { title: `Reschedule: ${resolved.title}${who} — Familiarise` };
@@ -51,24 +91,15 @@ export default async function RescheduleAppointmentPage({
 
   const [detail, profile] = await Promise.all([
     loadDetail(appointmentId),
-    prisma.consulteeProfile.findUnique({
-      where: { id: consulteeId },
-      select: { userId: true },
-    }),
+    loadConsulteeUserId(consulteeId),
   ]);
   if (!detail || !profile) notFound();
 
   // Binds the appointment to the URL's consultee; binding that consultee to
-  // the SESSION is the guard above. Mirrors the detail page's check.
-  const { appointment } = detail;
-  const owns =
-    appointment.consultation?.requestedBy?.id === consulteeId ||
-    appointment.subscription?.requestedBy?.id === consulteeId ||
-    appointment.trialSession?.consulteeProfile?.id === consulteeId ||
-    appointment.slotsOfAppointment.some((slot) =>
-      slot.user.some((user) => user.id === profile.userId),
-    );
-  if (!owns) notFound();
+  // the SESSION is the guard above.
+  if (!consulteeOwns(detail.appointment, consulteeId, profile.userId)) {
+    notFound();
+  }
 
   // The picker draws the CONSULTANT's availability, and this route's params
   // carry no consultant — so it is resolved from the booking, here, rather
