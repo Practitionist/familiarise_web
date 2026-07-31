@@ -31,6 +31,33 @@ export function isDeadSlot(slot: {
   );
 }
 
+/**
+ * Slot-derived half of "may this booking be rescheduled".
+ *
+ * The status, role and route checks genuinely differ per side and stay with
+ * their adapter. These three do not, and they drifted: the consultant's menu
+ * offered Reschedule on a booking with nothing allocated and on one already
+ * awaiting a new time, both of which the API then rejects.
+ */
+export function slotsAllowReschedule(
+  slots: Array<{
+    isTentative?: boolean | null;
+    completionStatus?: string | null;
+  }>,
+): boolean {
+  // An APPROVED booking with nothing allocated ("Not scheduled · 0/0") has no
+  // time to move, and the proposal window is derived from the earliest released
+  // session — so this fails with PROPOSAL_WINDOW_CLOSED rather than opening an
+  // empty picker.
+  if (slots.length === 0) return false;
+  // Tentative means the request is still awaiting allocation, not booked.
+  if (slots[0]?.isTentative) return false;
+  // A released slot awaiting a new time IS the open reschedule: at most one may
+  // be live per appointment (the nullable-unique openForAppointmentId), so
+  // offering the action again only earns a 409.
+  return !slots.some((slot) => slot.completionStatus === "RESCHEDULED");
+}
+
 function slotTimes(slot: SlotLike): { start: number; end: number } {
   const start = toDate(slot.startsAt).getTime();
   const endsAt = toDateOrNull(slot.endsAt ?? null);

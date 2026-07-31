@@ -109,17 +109,20 @@ export function useEventActions({
     }
   };
 
+  /** Resolves true only when the release actually landed — the reschedule page
+   *  navigates away on that, and must stay put (with the selection) on a
+   *  failure the user can retry. */
   const handleReschedule = async (
     slotIds?: string[],
     proposedSlots?: { startsAt: string; endsAt: string }[],
-  ) => {
+  ): Promise<boolean> => {
     if (!appointmentId) {
       toast({
         title: "Error",
         description: "Appointment ID is missing",
         variant: "destructive",
       });
-      return;
+      return false;
     }
 
     setIsLoading(true);
@@ -163,6 +166,7 @@ export function useEventActions({
       );
 
       invalidateBookingData();
+      return true;
     } catch (error) {
       Sentry.captureException(
         error instanceof Error ? error : new Error(String(error)),
@@ -177,6 +181,7 @@ export function useEventActions({
             : "Failed to request reschedule",
         variant: "destructive",
       });
+      return false;
     } finally {
       setIsLoading(false);
     }

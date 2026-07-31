@@ -66,6 +66,39 @@ function isValidOvernightSlot(startTime: Date, endTime: Date): boolean {
   return false; // Invalid slot
 }
 
+// An org OWNER/MAINTAINER acting for a member consultant (RequestSlotAllocationTab
+// mounts mode="allocate" for org admins allocating on a consultant's behalf)
+// is authorized the same as the owning consultant. isPrivileged only covers
+// PLATFORM staff, so without this an org admin 403s and loses the whole
+// calendar rather than just the tooltip detail. EXPERT/other org roles are
+// deliberately excluded — same Membership shape requireOrgAccess/catalog
+// route use elsewhere (consultantProfileId + role: "EXPERT" identifies the
+// org the consultant belongs to; isAtLeastRole's MAINTAINER floor is the
+// "admin" rank used throughout app/api/organizations/**).
+async function isOrgAdminOfConsultant(
+  userId: string,
+  consultantId: string,
+): Promise<boolean> {
+  const membership = await prisma.membership.findFirst({
+    where: {
+      userId,
+      status: "ACTIVE",
+      role: { in: ["OWNER", "MAINTAINER"] },
+      organization: {
+        memberships: {
+          some: {
+            consultantProfileId: consultantId,
+            role: "EXPERT",
+            status: "ACTIVE",
+          },
+        },
+      },
+    },
+    select: { id: true },
+  });
+  return !!membership;
+}
+
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ consultantId: string }> },
@@ -99,21 +132,58 @@ export async function GET(
       includeAppointmentDetailsRequested || requestedConsulteeUserId
         ? await getSession(true)
         : null;
+    // Ownership is a fact about the database, not about the session.
+    //
+    // The session field is a snapshot from when the session was minted, so a
+    // consultant whose profile link changed since then fails this check while
+    // requirePersonalProfileAccess — which re-reads the user — lets them onto
+    // the page. The result was a page that rendered and then 403'd its own
+    // calendar. Session first because it is free and almost always right; the
+    // read only happens when it disagrees.
     const isOwningConsultant =
-      session?.user?.consultantProfileId === consultantId;
+      !!session?.user?.id &&
+      (session.user.consultantProfileId === consultantId ||
+        (await prisma.consultantProfile.count({
+          where: { id: consultantId, userId: session.user.id },
+        })) > 0);
+
+    // Resolved lazily and once: BOTH gates below need it, and the second used
+    // not to know about it at all — an org admin cleared the details gate and
+    // was then refused by the consultee gate with "cannot read another user's
+    // calendar", which made Allocate Slots unusable for them.
+    let orgAdminCheck: Promise<boolean> | null = null;
+    const isOrgAdmin = () => {
+      if (!session?.user?.id) return Promise.resolve(false);
+      orgAdminCheck ??= isOrgAdminOfConsultant(session.user.id, consultantId);
+      return orgAdminCheck;
+    };
 
     let includeAppointmentDetails = false;
     if (includeAppointmentDetailsRequested) {
-      if (
-        !session?.user?.id ||
-        (!isOwningConsultant && !isPrivileged(session.user.role))
-      ) {
+      // Three outcomes, not two.
+      //
+      // The detail payload carries plan titles and participant names. The
+      // consultant may see their own; platform staff may see anyone's. An org
+      // admin allocating for a member consultant needs the CALENDAR — which
+      // cells are taken — but not what each block is: the consultant's personal
+      // bookings with unrelated consultees are content, and ADR 20 gives an org
+      // metadata, not content.
+      //
+      // So they are neither authorized nor refused. They get the same
+      // busy/free grid a buyer gets, and the allocate surface works. 403ing
+      // them cost the whole calendar over a tooltip they must not see anyway.
+      const maySeeDetails =
+        !!session?.user?.id &&
+        (isOwningConsultant || isPrivileged(session.user.role));
+      const maySeeCalendar = maySeeDetails || (await isOrgAdmin());
+
+      if (!maySeeCalendar) {
         return NextResponse.json(
           { error: "Forbidden: appointment details require consultant ownership" },
           { status: 403 },
         );
       }
-      includeAppointmentDetails = true;
+      includeAppointmentDetails = maySeeDetails;
     }
 
     // The allocator treats the CONSULTEE's bookings with ANY consultant as
@@ -126,8 +196,17 @@ export async function GET(
     // consultant (and staff) may ask about a consultee booking with them.
     let consulteeUserId: string | null = null;
     if (requestedConsulteeUserId) {
+      // The org-admin arm belongs here too. This parameter only marks cells
+      // BUSY — it carries no titles or names — so it is metadata, which ADR 20
+      // does allow an org to see, and allocation is wrong without it: the grid
+      // would paint cells green that validation then rejects.
       const isSelf = session?.user?.id === requestedConsulteeUserId;
-      if (!isSelf && !isOwningConsultant && !isPrivileged(session?.user?.role)) {
+      if (
+        !isSelf &&
+        !isOwningConsultant &&
+        !isPrivileged(session?.user?.role) &&
+        !(await isOrgAdmin())
+      ) {
         return NextResponse.json(
           { error: "Forbidden: cannot read another user's calendar" },
           { status: 403 },

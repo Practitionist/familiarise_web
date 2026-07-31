@@ -212,4 +212,8 @@ describe("slot status tokens", () => {
       Object.keys(SLOT_STATUS_TOKENS).sort(),
     );
   });
+
+  // The cell-vs-legend colour-equality and border-conflict regression tests
+  // for #1064 live in __tests__/schedule/slot-palette.test.ts, alongside a
+  // source scan for the retired hardcoded classes.
 });

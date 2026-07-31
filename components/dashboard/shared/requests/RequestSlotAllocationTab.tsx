@@ -9,13 +9,6 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import {
-  ResponsiveModal,
-  ResponsiveModalContent,
-  ResponsiveModalDescription,
-  ResponsiveModalHeader,
-  ResponsiveModalTitle,
-} from "@/components/ui/responsive-modal";
-import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
@@ -25,14 +18,13 @@ import {
   AlertTriangle,
   CalendarClock,
   CheckCircle2,
+  ChevronDown,
   RefreshCw,
 } from "lucide-react";
-import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { RequestedSlotsDialog } from "./components/RequestedSlotsDialog";
 import { PaymentRequiredBadge } from "./components/PaymentRequiredBadge";
-import { SafeUnifiedCalendar } from "@/components/scheduling/SafeUnifiedCalendar";
 import {
   ConsultationApiResponse,
   RequestedBy,
@@ -201,6 +193,75 @@ function formatDateTime(value: string | Date): string {
 
 /** Beyond this the list stops being scannable and starts being a wall. */
 const MAX_VISIBLE_SLOTS = 3;
+
+/**
+ * The consultee's note, clamped to 3 lines with an expand toggle underneath.
+ *
+ * The toggle appears only when the clamp is actually cutting text off — a
+ * permanent "Read more" under a two-line note is noise nobody asked for. And
+ * the overflow is measured rather than guessed from a character count: this
+ * column is `max-w-[26rem]` but flexes narrower, so the same string clips at
+ * one width and not another.
+ *
+ * `components/ui/collapsible` is the wrong primitive here — it hides its
+ * content outright, and the point of this cell is that three lines stay
+ * readable while collapsed. Same chevron-and-"Show less" shape as the other
+ * in-place expanders (`SessionTimeline`, `FacetGroup`).
+ */
+function RequestNote({ notes }: Readonly<{ notes: string }>) {
+  const textRef = useRef<HTMLParagraphElement>(null);
+  const [isClamped, setIsClamped] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    const el = textRef.current;
+    // Measured only while COLLAPSED. Expanding drops the clamp, so an expanded
+    // paragraph always reports scrollHeight === clientHeight; re-measuring
+    // then would decide it no longer overflows and remove the only control
+    // that collapses it again.
+    if (!el || expanded) return;
+
+    // +1 absorbs the subpixel rounding between scrollHeight and clientHeight
+    // that would otherwise flag an exactly-3-line note as clipped.
+    const measure = () => setIsClamped(el.scrollHeight > el.clientHeight + 1);
+    measure();
+
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [notes, expanded]);
+
+  return (
+    <div className="max-w-[26rem] text-left">
+      <p
+        ref={textRef}
+        className={cn(
+          "text-xs italic text-muted-foreground",
+          !expanded && "line-clamp-3",
+        )}
+      >
+        &ldquo;{notes}&rdquo;
+      </p>
+      {isClamped && (
+        <button
+          type="button"
+          aria-expanded={expanded}
+          className="mt-1 flex items-center gap-1 text-[11px] font-medium text-muted-foreground hover:text-foreground"
+          onClick={() => setExpanded((prev) => !prev)}
+        >
+          <ChevronDown
+            className={cn(
+              "h-3 w-3 transition-transform",
+              expanded && "rotate-180",
+            )}
+          />
+          {expanded ? "Show less" : "Read more"}
+        </button>
+      )}
+    </div>
+  );
+}
 
 /**
  * The live offer: who wants what, and until when.
@@ -399,18 +460,18 @@ export function RequestSlotAllocationTab({
   orgScope = "personal",
 }: RequestSlotAllocationTabProps) {
   const params = useParams();
-  // Only the consultant tree has this param, and the dedicated allocate page
-  // lives inside that tree behind a personal-profile check — so an org admin
-  // viewing someone else's requests must not be offered a link that 403s.
+  const router = useRouter();
   const routeConsultantId = params.consultantId as string | undefined;
+  // The allocate page lives in the consultant tree behind a personal-profile
+  // check, and this id passes it on both mount points: the consultant route
+  // supplies its own, and the org route supplies the VIEWER's own consultant
+  // profile (allocation is a delivery act — only the deliverer allocates).
   const consultantId = consultantProfileId ?? (routeConsultantId as string);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [requests, setRequests] = useState<Request[]>([]);
   /** When the rows on screen were last successfully read. */
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  const [selectedRequest, setSelectedRequest] = useState<Request | null>(null);
-  const [dialogOpen, setDialogOpen] = useState(false);
   const [requestedSlotsDialogOpen, setRequestedSlotsDialogOpen] =
     useState(false);
   const [selectedRequestForDialog, setSelectedRequestForDialog] =
@@ -420,6 +481,10 @@ export function RequestSlotAllocationTab({
   const fetchData = useCallback(async () => {
     setLoading(true);
     setError(null);
+    // Local, not the `error` state: reading that in `finally` sees the value
+    // from render time, not the one just set, so a failed fetch still stamped
+    // "Updated" with a timestamp it had not earned.
+    let succeeded = false;
 
     try {
       // Fetch data in parallel (only PENDING requests).
@@ -437,10 +502,9 @@ export function RequestSlotAllocationTab({
 
       for (const result of results) {
         if (!result.ok && result.error) {
-          // Set the first encountered error and stop
+          // Set the first encountered error and stop. `finally` clears loading.
           setError(result.error);
-          setLoading(false); // Ensure loading state is updated
-          return; // Exit fetchData early
+          return;
         }
       }
 
@@ -599,6 +663,7 @@ export function RequestSlotAllocationTab({
 
       // --- Update State ---
       setRequests(processedRequests);
+      succeeded = true;
     } catch (err) {
       // This catch block now primarily handles errors during data *processing*
       Sentry.captureException(
@@ -612,32 +677,37 @@ export function RequestSlotAllocationTab({
           : "An unexpected error occurred while processing data.",
       );
     } finally {
-      // setLoading(false) is handled earlier in case of fetch errors
-      // Only set it here if no fetch error occurred
-      if (!error) {
-        setLoading(false);
-        setLastUpdated(new Date());
-      }
+      // Loading always clears; the timestamp only moves on a real success.
+      setLoading(false);
+      if (succeeded) setLastUpdated(new Date());
     }
     // orgScope belongs here: fetchData builds both URLs from it, so without it
     // a scope change without a remount keeps refetching the previous org's rows.
-  }, [consultantId, type, error, orgScope]);
+    //
+    // `error` must NOT: it is written by this callback and read by the effect
+    // that calls it, so a failing endpoint looped — fail, set error, new
+    // identity, refire, clear error, new identity, refire — hammering the API
+    // and never letting the error view settle.
+  }, [consultantId, type, orgScope]);
 
+  // Fetches once. Nothing refetches on its own — not a timer, not focus.
+  //
+  // This went 5-minute interval -> focus -> neither, and the last step is the
+  // one that mattered: focus fires on every alt-tab, which is far MORE often
+  // than the timer it replaced for anyone actually working. It also reached
+  // the calendar, because this tab used to host it — a repaint mid-selection,
+  // caused by data nobody asked for.
+  //
+  // Staleness is safe to leave. This grid is a hint; allocation re-validates
+  // server-side under a Redis lock against SlotValidationService and the
+  // btree_gist exclusion constraint, so a stale view cannot double-book — at
+  // worst a submit is rejected with a clear message. Refreshing bought no
+  // correctness and cost a selection.
+  //
+  // The Refresh button and the "Updated" label carry it instead: the user
+  // decides when, and staleness is stated rather than implied.
   useEffect(() => {
     fetchData();
-
-    // Refetch when the tab regains focus, and ONLY then.
-    //
-    // The 5-minute interval this replaces bought almost nothing: requests
-    // arrive when a consultee books, which no consultant sits watching, so
-    // minutes of staleness cost nothing — while every open tab hit two
-    // paginated endpoints with four-level includes, forever, for data nobody
-    // was reading. Focus is when someone actually looks, so it is both cheaper
-    // and better timed. The explicit Refresh button covers the rest, and the
-    // "updated" label makes staleness visible instead of implying it is live.
-    const onFocus = () => fetchData();
-    window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
   }, [fetchData]);
 
   // Idempotency key for the requested-times flow; a retry of the same request
@@ -649,8 +719,6 @@ export function RequestSlotAllocationTab({
   const handleConflict = useCallback(
     (requestId?: string) => {
       toast(allocatedElsewhere());
-      setDialogOpen(false);
-      setSelectedRequest(null);
       setRequestedSlotsDialogOpen(false);
       setSelectedRequestForDialog(null);
       if (requestId) {
@@ -771,25 +839,6 @@ export function RequestSlotAllocationTab({
         variant: "destructive",
       });
     }
-  };
-
-  // Handle allocation complete from UnifiedCalendar
-  const handleAllocationComplete = async () => {
-    toast({
-      title: "Schedule confirmed",
-      description: "All session times have been scheduled.",
-      variant: "default",
-    });
-
-    // Close dialog and reset state
-    setDialogOpen(false);
-    setSelectedRequest(null);
-
-    // Remove request from list
-    setRequests((prev) => prev.filter((r) => r.id !== selectedRequest?.id));
-
-    // Notify parent
-    onUpdate();
   };
 
   // No heading here: both mount points already render a "Requests" page header,
@@ -915,9 +964,7 @@ export function RequestSlotAllocationTab({
       className: "align-top",
       cell: (request) =>
         request.requestNotes?.trim() ? (
-          <p className="line-clamp-3 max-w-[26rem] text-left text-xs italic text-muted-foreground">
-            &ldquo;{request.requestNotes.trim()}&rdquo;
-          </p>
+          <RequestNote notes={request.requestNotes.trim()} />
         ) : (
           // An em dash rather than blank: "they said nothing" and "we failed to
           // load it" should not look identical.
@@ -954,13 +1001,17 @@ export function RequestSlotAllocationTab({
               </p>
             ) : (
               <>
+                {/* A page, not a dialog: placing N sessions across a
+                    scheduling period under per-day and per-week caps needs
+                    the width, and a URL the notification can link to. */}
                 <Button
                   size="sm"
                   className="w-full"
-                  onClick={() => {
-                    setSelectedRequest(request);
-                    setDialogOpen(true);
-                  }}
+                  onClick={() =>
+                    router.push(
+                      `/dashboard/consultant/${consultantId}/requests/${request.id}/allocate?type=${request.type.toLowerCase()}`,
+                    )
+                  }
                 >
                   Allocate Slots
                 </Button>
@@ -985,23 +1036,6 @@ export function RequestSlotAllocationTab({
                     </Button>
                   )}
               </>
-            )}
-            {/* Preview of the full-width allocation surface that replaces this
-                dialog next. Read-only, so it sits beside the real actions
-                rather than competing with them. */}
-            {routeConsultantId && (
-              <Button
-                asChild
-                variant="ghost"
-                size="sm"
-                className="w-full text-muted-foreground"
-              >
-                <Link
-                  href={`/dashboard/consultant/${routeConsultantId}/requests/${request.id}/allocate?type=${request.type.toLowerCase()}`}
-                >
-                  Open as page
-                </Link>
-              </Button>
             )}
             {/* Quiet by design: declining is the rarer branch, and nothing is
                 destroyed until the request is actually rejected. */}
@@ -1074,105 +1108,6 @@ export function RequestSlotAllocationTab({
             breakpoint="lg"
           />
         )}
-
-        {/* Single Allocation Dialog - moved outside map loop to prevent multiple dialogs */}
-        <ResponsiveModal open={dialogOpen} onOpenChange={setDialogOpen}>
-          <ResponsiveModalContent className="max-w-[95vw] w-full lg:max-w-[1400px] max-h-[90dvh] overflow-hidden flex flex-col">
-            <ResponsiveModalHeader className="shrink-0">
-              <ResponsiveModalTitle>Allocate Slots</ResponsiveModalTitle>
-              <ResponsiveModalDescription asChild>
-                {selectedRequest && (
-                  <div className="space-y-1 text-sm text-muted-foreground">
-                    <p>
-                      Choose {selectedRequest.requiredSlots} slots for{" "}
-                      {selectedRequest.type.toLowerCase()}
-                    </p>
-                    {selectedRequest.type === "SUBSCRIPTION" &&
-                      selectedRequest.sessionDurationInHours && (
-                        <p className="text-xs">
-                          Each call is{" "}
-                          {selectedRequest.sessionDurationInHours === 1
-                            ? "1 hour"
-                            : `${selectedRequest.sessionDurationInHours} hours`}{" "}
-                          (
-                          {Math.ceil(
-                            selectedRequest.sessionDurationInHours / 0.5,
-                          )}{" "}
-                          consecutive slots per call)
-                        </p>
-                      )}
-                    {selectedRequest.type === "CONSULTATION" &&
-                      selectedRequest.durationInHours && (
-                        <p className="text-xs">
-                          Consultation is{" "}
-                          {selectedRequest.durationInHours === 1
-                            ? "1 hour"
-                            : `${selectedRequest.durationInHours} hours`}{" "}
-                          ({Math.ceil(selectedRequest.durationInHours / 0.5)}{" "}
-                          consecutive slots)
-                        </p>
-                      )}
-                    {selectedRequest.startDate && selectedRequest.endDate && (
-                      <p className="text-xs text-muted-foreground">
-                        Scheduling period:{" "}
-                        {selectedRequest.startDate.toLocaleDateString()} -{" "}
-                        {selectedRequest.endDate.toLocaleDateString()}
-                      </p>
-                    )}
-                  </div>
-                )}
-              </ResponsiveModalDescription>
-            </ResponsiveModalHeader>
-            {selectedRequest && (
-              <SafeUnifiedCalendar
-                className="min-h-0 flex-1"
-                consultantId={consultantId}
-                eventType={
-                  selectedRequest.type.toLowerCase() as
-                    | "consultation"
-                    | "subscription"
-                }
-                eventId={selectedRequest.id}
-                consulteeUserId={selectedRequest.requestedBy?.user?.id}
-                mode="allocate"
-                onAllocationComplete={handleAllocationComplete}
-                onAllocationConflict={() => handleConflict(selectedRequest.id)}
-                initialAllocation={
-                  (selectedRequest.tentativeSlotCount ?? 0) === 0
-                }
-                showAllocationButtons={true}
-                durationInMonths={
-                  selectedRequest.type === "SUBSCRIPTION"
-                    ? selectedRequest.durationInMonths
-                    : undefined
-                }
-                durationInHours={
-                  selectedRequest.type === "CONSULTATION"
-                    ? selectedRequest.durationInHours
-                    : undefined
-                }
-                sessionsPerWeek={
-                  selectedRequest.type === "SUBSCRIPTION"
-                    ? selectedRequest.sessionsPerWeek
-                    : undefined
-                }
-                sessionDurationInHours={
-                  selectedRequest.type === "SUBSCRIPTION"
-                    ? selectedRequest.sessionDurationInHours
-                    : undefined
-                }
-                allowedStart={selectedRequest.startDate}
-                allowedEnd={selectedRequest.endDate}
-                schedulingTimezone={selectedRequest.schedulingTimezone}
-                totalSessions={
-                  selectedRequest.type === "SUBSCRIPTION"
-                    ? selectedRequest.totalSessions
-                    : undefined
-                }
-              />
-            )}
-          </ResponsiveModalContent>
-        </ResponsiveModal>
 
         <RequestedSlotsDialog
           open={requestedSlotsDialogOpen}

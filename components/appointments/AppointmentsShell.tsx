@@ -35,12 +35,16 @@ import { NextUpHero, type HeroStat } from "./NextUpHero";
 
 type TabValue = AppointmentBucket | "all";
 
+// "All" leads, matching AppointmentsFilterBar's "All types" chip: one rule for
+// where the everything-option sits, so the two rows share a left edge. Order
+// here is presentation only — `initialTab` switches on the value, and the
+// default selection is still Upcoming.
 const TABS: Array<{ value: TabValue; label: string }> = [
+  { value: "all", label: "All" },
   { value: "upcoming", label: "Upcoming" },
   { value: "needsAction", label: "Needs action" },
   { value: "past", label: "Past" },
   { value: "cancelled", label: "Cancelled" },
-  { value: "all", label: "All" },
 ];
 
 const EMPTY_COPY: Record<TabValue, { title: string; description: string }> = {

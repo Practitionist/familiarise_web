@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useEffect } from "react";
+import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { reportSentryError } from "@/lib/observability/report";
 import {
   startOfWeek,
@@ -242,6 +242,11 @@ export function useCalendarData(
   >({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Flicker fix — a fetch for week N can resolve after the user has already
+  // navigated to week N+1 (no AbortController here). Only the response
+  // matching the MOST RECENTLY issued request may commit state; a stale one
+  // is silently dropped instead of repainting the wrong week.
+  const availabilityRequestIdRef = useRef(0);
 
   // PERFORMANCE: Computed available slots from raw data using useMemo
   const availableSlots = useMemo((): TimeSlot[] => {
@@ -290,6 +295,8 @@ export function useCalendarData(
   const fetchAvailabilitySlots = useCallback(async (): Promise<void> => {
     if (!consultantId) return;
 
+    const requestId = ++availabilityRequestIdRef.current;
+
     try {
       // Always start from the view's natural start so pre-period weeks have
       // availability data (allows "Outside Period" label on consultant's actual
@@ -316,6 +323,10 @@ export function useCalendarData(
         includeAppointmentDetails,
         consulteeUserId,
       );
+
+      // A newer request was issued (user moved on) while this one was in
+      // flight — its result is stale, discard rather than repaint.
+      if (requestId !== availabilityRequestIdRef.current) return;
 
       // Defensive: Validate data structure before using
       if (!data || typeof data !== "object") {
@@ -354,6 +365,10 @@ export function useCalendarData(
 
       setRawAvailabilitySlots(validatedData);
     } catch (error) {
+      // A stale request's failure must not clobber the error state of
+      // whatever the user has since navigated to.
+      if (requestId !== availabilityRequestIdRef.current) return;
+
       console.error("Error fetching availability slots:", error);
       // Not captured here — AllocationService.fetchAvailabilitySlots already
       // reports this exact error (see fetchConsultantDetails above).
@@ -720,13 +735,12 @@ export function useCalendarData(
           setLoading(false);
         });
     }
-  }, [
-    autoLoad,
-    consultantId,
-    consultantDetails,
-    weeklySlotCount,
-    fetchAvailabilitySlots,
-  ]);
+    // consultantDetails/weeklySlotCount deliberately excluded: both are SET
+    // BY this effect's own fetch, so listing them re-fires it every time the
+    // fetch it just ran completes — a self-triggering refetch loop on every
+    // week navigation (read via closure for isInitialLoad, not as triggers).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoLoad, consultantId, fetchAvailabilitySlots]);
 
   // ENHANCEMENT: Individual refetch functions for granular control
   const refetchConsultant = useCallback(async (): Promise<void> => {

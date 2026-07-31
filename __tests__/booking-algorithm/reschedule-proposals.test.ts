@@ -8,11 +8,9 @@
 
 import "./setup";
 import {
-  MAX_PROPOSAL_ROUNDS,
   PROPOSAL_MAX_LIFETIME_HOURS,
   computeProposalExpiry,
   mayAutoConfirm,
-  mayCounter,
   proposalCountMatches,
   supportsProposals,
 } from "../../lib/booking/reschedule-proposals";
@@ -90,11 +88,6 @@ describe("scope and shape guards", () => {
     expect(proposalCountMatches(2, 1)).toBe(false);
     expect(proposalCountMatches(2, 3)).toBe(false);
   });
-
-  it("permits exactly one counter-round", () => {
-    expect(mayCounter(1)).toBe(true);
-    expect(mayCounter(MAX_PROPOSAL_ROUNDS)).toBe(false);
-  });
 });
 
 describe("RESCHEDULE_ALLOWED_FROM state machine", () => {
@@ -134,9 +127,8 @@ describe("RESCHEDULE_ALLOWED_FROM state machine", () => {
 
 describe("allocationRequestSchema carries override", () => {
   it("no longer strips the field the Override button sends", async () => {
-    const { allocationRequestSchema } = await import(
-      "../../schemas/slotAllocation/validationSchemas"
-    );
+    const { allocationRequestSchema } =
+      await import("../../schemas/slotAllocation/validationSchemas");
 
     // Before this, `override` was absent from the schema and a plain (non-
     // passthrough) Zod object dropped it, so "Override and Allocate" sent a

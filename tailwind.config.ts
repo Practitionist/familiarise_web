@@ -2,9 +2,18 @@ import type { Config } from "tailwindcss";
 
 const config: Config = {
   darkMode: ["class"],
+  // `lib/` and `utils/` hold class strings too — the slot palette, appointment
+  // status badges, session and org labels, document icons. Tailwind only emits
+  // a utility it has SEEN in a scanned file, so every one of those was being
+  // dropped from the stylesheet unless the same class happened to appear under
+  // components/ or app/ as well. That is what made grid cells painted from
+  // `lib/scheduling/slot-status-tokens` render with no fill and no border at
+  // all — not faint, absent (#1064).
   content: [
     "./components/**/*.{js,ts,jsx,tsx,mdx}",
     "./app/**/*.{js,ts,jsx,tsx,mdx}",
+    "./lib/**/*.{js,ts,jsx,tsx,mdx}",
+    "./utils/**/*.{js,ts,jsx,tsx,mdx}",
   ],
   theme: {
     extend: {

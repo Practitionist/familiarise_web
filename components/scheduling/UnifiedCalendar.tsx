@@ -56,6 +56,11 @@ import {
   notEnoughConsecutive,
 } from "@/lib/scheduling/allocationMessages";
 import { useToast } from "@/hooks/use-toast";
+import {
+  SLOT_STATUS_TOKENS,
+  resolveSlotStatusKey,
+  slotCellClassName,
+} from "@/lib/scheduling/slot-status-tokens";
 
 /**
  * Small pure helpers for clarity and reuse. These do not cause side effects.
@@ -440,7 +445,10 @@ export function UnifiedCalendar({
         // allocated slots appear correctly.
         await Promise.all([refetchEventSlots(), refetchAvailability()]);
       } catch (error) {
-        Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
+        Sentry.captureException(
+          error instanceof Error ? error : new Error(String(error)),
+          { tags: { subsystem: "client" } },
+        );
         console.error(
           "Error refetching calendar data after allocation:",
           error,
@@ -539,7 +547,7 @@ export function UnifiedCalendar({
   // re-renders.
   //
   // The callback is held in a ref and kept out of the dependency array on
-  // purpose. RescheduleSessionsModal passes an inline arrow, so depending on
+  // purpose. SlotPicker passes an inline arrow, so depending on
   // it meant a new identity every render: effect fires, parent setState,
   // re-render, new identity, fire again, forever — React error #185. Nothing
   // caught it because "select" is the consultee picker's mode and the picker
@@ -899,17 +907,33 @@ export function UnifiedCalendar({
         (allowedStart && intervalEnd <= allowedStart) ||
         (allowedEnd && intervalStart >= allowedEnd);
 
-      // Fast-exit: avoid rendering a clickable button for cells that have no
-      // availability **and** are disabled (e.g. past date).  Rendering a
-      // lightweight placeholder saves performance.
+      // Fast-exit: a cell with nothing published, nothing booked and already
+      // past is never interactive, so it renders as a plain block instead of a
+      // button. It paints from the same `unavailable` token as every other
+      // dead cell — it used to be its own gray-100/gray-200 pair, which is how
+      // past days and future days ended up disagreeing about what "nothing
+      // here" looks like (#1064).
       if (!status.isAvailable && !status.isBooked && status.isInPast) {
         return (
-          <div className="h-8 w-full bg-gray-100 border border-gray-200 rounded-sm" />
+          <div className={slotCellClassName("unavailable", { faded: true })} />
         );
       }
 
-      let cellClassName =
-        "h-8 w-full relative transition-colors duration-75 ease-in-out border border-transparent rounded-sm text-[10px] leading-tight px-1 py-0.5 disabled:pointer-events-none disabled:opacity-50";
+      const statusKey = resolveSlotStatusKey({
+        isSelected: isCurrentlySelected,
+        isThisEventSlot: isCurrentEventSlot,
+        isRescheduling: isCurrentEventTentative,
+        isBookedForDisplay: status.isBookedForDisplay,
+        isPartiallyBooked: status.isPartiallyBooked,
+        isAvailable: status.isAvailable,
+        isInPast: status.isInPast,
+      });
+      // ONE token, appended once, on top of a base string that carries no
+      // border-COLOUR. Every branch below adds cursor/opacity only — a second
+      // border-color utility on this element is structurally impossible now,
+      // which is what the reverted attempt got wrong (#1064).
+      let cellClassName = slotCellClassName(statusKey);
+
       let buttonText = "";
       const showTooltip =
         ((status.isBookedForDisplay || status.isPartiallyBooked) &&
@@ -917,62 +941,51 @@ export function UnifiedCalendar({
         isCurrentEventSlot;
 
       if (isCurrentlySelected) {
-        // Dark green for manually selected slots
-        cellClassName +=
-          " bg-green-700 text-white hover:bg-green-800 border-green-900";
-        buttonText = "Selected";
+        cellClassName += " cursor-pointer";
+        buttonText = SLOT_STATUS_TOKENS.selected.label;
       } else if (isCurrentEventSlot) {
-        // Black for this event's already booked slots
-        cellClassName +=
-          " bg-black text-white cursor-pointer hover:bg-gray-900 border-gray-800";
+        cellClassName += " cursor-pointer";
         cellClassName += status.isInPast ? " opacity-60" : "";
-        buttonText = status.isInPast ? "Past Session" : "This Event";
+        buttonText = status.isInPast
+          ? "Past session"
+          : SLOT_STATUS_TOKENS.thisEvent.label;
       } else if (isCurrentEventTentative) {
-        // Amber for THIS event's slot being rescheduled — distinct from the gray
-        // "Booked" used for foreign appointments. It's the consultant's own slot
-        // pending a new time, not someone else's booking.
-        cellClassName +=
-          " bg-amber-400 text-amber-900 cursor-pointer hover:bg-amber-500 border-amber-500";
+        // THIS event's slot being rescheduled — distinct from the "Booked"
+        // state used for foreign appointments below.
+        cellClassName += " cursor-pointer";
         cellClassName += status.isInPast ? " opacity-50" : "";
-        buttonText = "Rescheduling";
+        buttonText = SLOT_STATUS_TOKENS.rescheduling.label;
       } else if (status.isBookedForDisplay) {
-        // Grey for other appointments
-        cellClassName +=
-          " bg-slate-400 text-slate-800 cursor-pointer hover:bg-slate-500";
+        cellClassName += " cursor-pointer";
         cellClassName += status.isInPast ? " opacity-50" : "";
-        buttonText = "Booked";
+        buttonText = SLOT_STATUS_TOKENS.fullyBooked.label;
       } else if (status.isPartiallyBooked) {
-        cellClassName +=
-          " bg-yellow-400 text-yellow-900 cursor-pointer hover:bg-yellow-500";
+        cellClassName += " cursor-pointer";
         cellClassName += status.isInPast ? " opacity-50" : "";
-        buttonText = "Partially Booked";
+        buttonText = SLOT_STATUS_TOKENS.partiallyBooked.label;
       } else if (status.isAvailable) {
-        // Available slot - check if past for fading
         if (status.isInPast) {
           // A past slot is NOT available, whatever the consultant published.
           // It used to render green and say "Available", differing from a real
           // opening only by opacity — so a picker opened on the current week
           // offered times that had already happened. Still clickable, because
           // the toast explains why; it just no longer claims to be bookable.
-          cellClassName +=
-            " bg-slate-100 text-slate-400 border-slate-200 cursor-pointer hover:bg-slate-200";
+          cellClassName += " cursor-pointer";
           buttonText = isOutsideAllowedRange ? "Outside Period" : "Past";
         } else {
-          // Future available slot - unfaded, clickable
-          cellClassName +=
-            " bg-green-300 text-green-950 cursor-pointer hover:bg-green-400 border-green-400";
+          cellClassName += " cursor-pointer";
           if (eventType === "consultation") {
             cellClassName += " hover:shadow-md";
           }
-          buttonText = isOutsideAllowedRange ? "Outside Period" : "Available";
+          buttonText = isOutsideAllowedRange
+            ? "Outside Period"
+            : SLOT_STATUS_TOKENS.available.label;
         }
       } else {
-        if (status.isInPast) {
-          cellClassName +=
-            " bg-gray-300 text-gray-700 cursor-not-allowed opacity-70";
-        } else {
-          cellClassName += " bg-slate-200 cursor-not-allowed";
-        }
+        // Genuinely unpublished interval — never carried button text, before
+        // or after this change; only the colour source moved.
+        cellClassName += " cursor-not-allowed";
+        cellClassName += status.isInPast ? " opacity-70" : "";
       }
 
       // Only disable in view mode or if no availability at all (gray slots)
@@ -1414,7 +1427,10 @@ export function UnifiedCalendar({
                   return `${formatDurationLabel(totalMinutes)} selected`;
                 return `${formatDurationLabel(chosenMinutes)} of ${formatDurationLabel(totalMinutes)} selected`;
               } catch (error) {
-                Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
+                Sentry.captureException(
+                  error instanceof Error ? error : new Error(String(error)),
+                  { tags: { subsystem: "client" } },
+                );
                 console.error("Error calculating footer stats:", error);
                 if (error instanceof Error) {
                   return error.message;

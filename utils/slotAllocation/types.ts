@@ -47,6 +47,18 @@ export interface AllocationRequest {
   // in the manual path silently deleting the winner's allocation.
   initialAllocation?: boolean;
   /**
+   * Manual mode only. When true the Redis lock is taken consultant-WIDE rather
+   * than sharded by the target day.
+   *
+   * #860 shards the manual key so allocations on different days for one
+   * consultant run in parallel, with #440's GiST constraint backstopping
+   * overlap. But GiST only prevents time OVERLAP — per-day and per-week caps
+   * are validated by COUNTING, so two sharded allocations can each read the
+   * same count and both add, taking a 4-session week to 5. Callers that place
+   * times a human did not pick per-day (auto-confirm) must set this.
+   */
+  wideLock?: boolean;
+  /**
    * Consultant's explicit acceptance of times outside their own published
    * availability. Routes must only set this for the consultant or a privileged
    * caller — a consultee cannot wave away the consultant's schedule.

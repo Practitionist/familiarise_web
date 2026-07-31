@@ -140,6 +140,11 @@ const PAGE_LABELS: Record<string, string> = {
   webinars: "Webinar",
   planner: "Event Planner",
   requests: "Requests",
+  // Task routes hanging off a record id. Without these the trail ends on the
+  // raw lowercase segment ("timings").
+  timings: "Timings",
+  allocate: "Allocate",
+  reschedule: "Reschedule",
   collaborations: "Collaborations",
   recordings: "Recordings",
   documents: "Documents",
@@ -509,23 +514,22 @@ function ConsultantLayoutInner({
 
     const crumbs: { label: string; href?: string }[] = [];
     let acc = basePath;
-    let lastSegWasRecordId = false;
 
     for (const seg of parts) {
       acc = `${acc}/${seg}`;
       if (looksLikeRecordId(seg)) {
-        lastSegWasRecordId = true;
+        // The label goes HERE, in the id's own position — that segment IS the
+        // record, so its human name belongs where the id was. Previously this
+        // was deferred to after the loop and only applied when the id was the
+        // LAST segment, so a task route (…/<id>/timings) reset the flag on its
+        // way past and the override never rendered at all.
+        if (overrideLabel) crumbs.push({ label: overrideLabel, href: acc });
         continue;
       }
-      lastSegWasRecordId = false;
       crumbs.push({
         label: PAGE_LABELS[seg] ?? seg,
         href: acc,
       });
-    }
-
-    if (lastSegWasRecordId && overrideLabel) {
-      crumbs.push({ label: overrideLabel });
     }
 
     return crumbs.map((crumb, index) => {
