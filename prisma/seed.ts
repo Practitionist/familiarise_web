@@ -26,6 +26,8 @@ import { createSlotsOfAvailability } from "./seedFiles/5a-create-slots-of-availa
 
 // Phase 6: Appointments
 import { createAppointments } from "./seedFiles/6a-create-appointments";
+import { createDraftSessions } from "./seedFiles/6b-create-draft-sessions";
+import { createRescheduleProposals } from "./seedFiles/6c-create-reschedule-proposals";
 
 // Phase 7: Engagement
 import { createWaitlistSubscribers } from "./seedFiles/7a-create-waitlist-subscribers";
@@ -128,6 +130,16 @@ async function seed() {
     // Phase 6: Appointments and bookings
     console.log("\n[Phase 6] Creating appointments (this may take a while)...");
     await createAppointments(consultees);
+
+    // Drafts are instances with no appointment at all, so they follow the
+    // booked ones rather than sharing their path.
+    console.log("Creating draft webinars and classes...");
+    await createDraftSessions();
+
+    // Must follow createAppointments: a proposal releases slots that only
+    // exist once the bookings do.
+    console.log("Creating reschedule proposals...");
+    await createRescheduleProposals();
 
     // Phase 7: Engagement data
     console.log("\n[Phase 7] Creating engagement data...");
