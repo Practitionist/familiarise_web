@@ -3263,6 +3263,11 @@ model Webinar {
 }
 
 enum WebinarStatus {
+  /// Authored but not live: no seat can be bought and no detail page renders
+  /// for anyone but the owner. Publishing requires at least one real session,
+  /// which is what stops an unparseable scheduledAt producing a webinar with
+  /// nothing to join.
+  DRAFT
   SCHEDULED
   IN_PROGRESS
   COMPLETED
@@ -3417,6 +3422,8 @@ model SubscriptionContent {
 }
 
 enum ClassStatus {
+  /// See WebinarStatus.DRAFT.
+  DRAFT
   SCHEDULED
   IN_PROGRESS
   COMPLETED

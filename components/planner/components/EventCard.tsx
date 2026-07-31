@@ -217,6 +217,9 @@ function getStatusVariant(
   status: WebinarStatus | ClassStatus,
 ): "default" | "secondary" | "destructive" | "outline" {
   switch (status) {
+    case WebinarStatus.DRAFT:
+    case ClassStatus.DRAFT:
+      return "outline";
     case WebinarStatus.SCHEDULED:
     case ClassStatus.SCHEDULED:
       return "default";

@@ -74,3 +74,30 @@ describe("cancel cleans up after a reschedule", () => {
     expect(RESCHEDULE_OPEN_STATUSES).not.toContain("AUTO_ACCEPTED");
   });
 });
+
+describe("DRAFT is only left by publishing", () => {
+  it("does not let a reschedule publish an unpublished offering", async () => {
+    const { EVENT_ALLOWED_FROM } = await import(
+      "../../lib/booking/transitions"
+    );
+    // Reschedule re-stamps SCHEDULED. If DRAFT were in that allowed-from set,
+    // rescheduling a draft would publish it as a side effect.
+    expect(EVENT_ALLOWED_FROM.SCHEDULED).not.toContain("DRAFT");
+  });
+
+  it("has no way back into DRAFT", async () => {
+    const { EVENT_ALLOWED_FROM } = await import(
+      "../../lib/booking/transitions"
+    );
+    // Withdrawing a published offering is archivedAt, not a trip back to DRAFT,
+    // so anything ever buyable keeps a stable public identity.
+    expect(EVENT_ALLOWED_FROM.DRAFT).toEqual([]);
+  });
+
+  it("makes publishing its own explicit edge out of DRAFT", async () => {
+    const { EVENT_PUBLISHABLE_FROM } = await import(
+      "../../lib/booking/transitions"
+    );
+    expect(EVENT_PUBLISHABLE_FROM).toEqual(["DRAFT"]);
+  });
+});

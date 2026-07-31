@@ -113,3 +113,56 @@ describe("isPlanViewable", () => {
     );
   });
 });
+
+/**
+ * Owner preview. A consultant may open their own DRAFT or archived offering at
+ * the REAL detail URL, so "preview" is the actual page rather than a second
+ * renderer that can drift from it. Nobody else's access changes.
+ */
+describe("isPlanViewable — owner preview", () => {
+  const noMembership = jest.fn(async () => false);
+
+  const ownedPlan = (over: Record<string, unknown> = {}) =>
+    ({
+      visibility: "ORG_ONLY" as const,
+      organizationId: "org1",
+      archivedAt: null,
+      consultantProfileId: "cp-1",
+      ...over,
+    }) as NonNullable<Parameters<typeof isPlanViewable>[0]>;
+
+  it("shows an author their own ORG_ONLY plan", async () => {
+    await expect(
+      isPlanViewable(ownedPlan(), "user-1", noMembership, "cp-1"),
+    ).resolves.toBe(true);
+  });
+
+  it("shows an author their own ARCHIVED plan", async () => {
+    await expect(
+      isPlanViewable(
+        ownedPlan({ archivedAt: new Date("2026-01-01") }),
+        "user-1",
+        noMembership,
+        "cp-1",
+      ),
+    ).resolves.toBe(true);
+  });
+
+  it("does not widen anything for a different consultant", async () => {
+    await expect(
+      isPlanViewable(ownedPlan(), "user-2", noMembership, "cp-2"),
+    ).resolves.toBe(false);
+  });
+
+  it("does not widen anything for a signed-out visitor", async () => {
+    await expect(
+      isPlanViewable(ownedPlan(), null, noMembership, null),
+    ).resolves.toBe(false);
+  });
+
+  it("leaves behaviour unchanged when the caller passes no owner context", async () => {
+    await expect(
+      isPlanViewable(ownedPlan(), "user-1", noMembership),
+    ).resolves.toBe(false);
+  });
+});

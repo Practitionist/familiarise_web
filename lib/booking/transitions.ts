@@ -109,6 +109,13 @@ export async function transitionSubscriptionRequest(
 // exact complement of the old `notIn: [CANCELLED, COMPLETED]` guards —
 // explicit allowed-from is robust against future enum additions (#837).
 export const EVENT_ALLOWED_FROM: Record<WebinarStatus, WebinarStatus[]> = {
+  // Nothing returns to DRAFT: publishing is one-way. Unpublishing is what
+  // archivedAt is for, so an offering that has ever been buyable keeps a stable
+  // public identity.
+  DRAFT: [],
+  // Deliberately NOT reachable from DRAFT. This set is what reschedule
+  // re-stamps, and a reschedule must never be able to publish an unpublished
+  // offering as a side effect. Publishing has its own edge below.
   SCHEDULED: ["SCHEDULED", "IN_PROGRESS"],
   IN_PROGRESS: ["SCHEDULED"],
   COMPLETED: ["SCHEDULED", "IN_PROGRESS"],
@@ -117,6 +124,11 @@ export const EVENT_ALLOWED_FROM: Record<WebinarStatus, WebinarStatus[]> = {
 // Type-level proof the two enums stay in lockstep.
 export const CLASS_EVENT_ALLOWED_FROM: Record<ClassStatus, ClassStatus[]> =
   EVENT_ALLOWED_FROM;
+
+// Publishing is the only way out of DRAFT, and it is one-way: withdrawing a
+// published offering is `archivedAt`, not a trip back to DRAFT, so anything
+// that was ever buyable keeps a stable public identity.
+export const EVENT_PUBLISHABLE_FROM: WebinarStatus[] = ["DRAFT"];
 
 export async function transitionWebinarEvent(
   tx: Pick<Tx, "webinar">,
