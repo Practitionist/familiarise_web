@@ -684,21 +684,24 @@ export function RequestSlotAllocationTab({
     // a scope change without a remount keeps refetching the previous org's rows.
   }, [consultantId, type, error, orgScope]);
 
+  // Fetches once. Nothing refetches on its own — not a timer, not focus.
+  //
+  // This went 5-minute interval -> focus -> neither, and the last step is the
+  // one that mattered: focus fires on every alt-tab, which is far MORE often
+  // than the timer it replaced for anyone actually working. It also reached
+  // the calendar, because this tab used to host it — a repaint mid-selection,
+  // caused by data nobody asked for.
+  //
+  // Staleness is safe to leave. This grid is a hint; allocation re-validates
+  // server-side under a Redis lock against SlotValidationService and the
+  // btree_gist exclusion constraint, so a stale view cannot double-book — at
+  // worst a submit is rejected with a clear message. Refreshing bought no
+  // correctness and cost a selection.
+  //
+  // The Refresh button and the "Updated" label carry it instead: the user
+  // decides when, and staleness is stated rather than implied.
   useEffect(() => {
     fetchData();
-
-    // Refetch when the tab regains focus, and ONLY then.
-    //
-    // The 5-minute interval this replaces bought almost nothing: requests
-    // arrive when a consultee books, which no consultant sits watching, so
-    // minutes of staleness cost nothing — while every open tab hit two
-    // paginated endpoints with four-level includes, forever, for data nobody
-    // was reading. Focus is when someone actually looks, so it is both cheaper
-    // and better timed. The explicit Refresh button covers the rest, and the
-    // "updated" label makes staleness visible instead of implying it is live.
-    const onFocus = () => fetchData();
-    window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
   }, [fetchData]);
 
   // Idempotency key for the requested-times flow; a retry of the same request

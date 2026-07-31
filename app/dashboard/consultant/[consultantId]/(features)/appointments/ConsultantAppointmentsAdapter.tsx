@@ -17,32 +17,15 @@ import {
   isInactiveStatus,
 } from "@/lib/appointments/status";
 import type { AppointmentVM } from "@/lib/appointments/view-model";
-import type {
-  ConsultantTrialLike,
-  UnscheduledClassLike,
-  UnscheduledWebinarLike,
-} from "@/lib/appointments/map-consultant";
-import type { TAppointment } from "@/types/appointment";
-import type { UnscheduledClass, UnscheduledWebinar } from "../../types";
+import type { ConsultantTrialLike } from "@/lib/appointments/map-consultant";
 import { useLazyJoinMeeting } from "@/hooks/scheduling/useLazyJoinMeeting";
-import {
-  buildUnscheduledClassAppointment,
-  buildUnscheduledWebinarAppointment,
-  type UnscheduledAppointment,
-} from "./utils/unscheduledAppointments";
 import {
   getParticipantManagementUrl,
   supportsParticipantManagement,
 } from "./utils/participantHelpers";
-import { EventTimingsCalendar } from "./components/EventTimingsCalendar";
 import { useConsultantEventActions } from "./components/useConsultantEventActions";
 import { CancelConfirmationDialog } from "@/components/appointments/consultee/CancelConfirmationDialog";
 import { ConsultantResponseUpload } from "../documents/ConsultantResponseUpload";
-
-interface TimingsTarget {
-  appointment: TAppointment | UnscheduledAppointment;
-  groupProgress: { completedSessions: number; totalSessions: number } | null;
-}
 
 type DialogKind = "cancel" | "documents";
 
@@ -85,9 +68,6 @@ export function useConsultantAppointmentsAdapter(
 ): AppointmentActionAdapter {
   const router = useRouter();
   const joinMeeting = useLazyJoinMeeting();
-  const [timingsTarget, setTimingsTarget] = useState<TimingsTarget | null>(
-    null,
-  );
   const [joiningId, setJoiningId] = useState<string | null>(null);
   const [activeVm, setActiveVm] = useState<AppointmentVM | null>(null);
   const [dialog, setDialog] = useState<DialogKind | null>(null);
@@ -159,35 +139,22 @@ export function useConsultantAppointmentsAdapter(
     if (!navigating) setJoiningId(null);
   };
 
+  /**
+   * `vm.id` already carries the `unscheduled-class-`/`unscheduled-webinar-`
+   * prefix for an offering with no `Appointment` row yet; a scheduled one
+   * routes on the real appointment id. The timings page resolves either
+   * shape itself (lib/data/manage-timings-target.ts).
+   */
   const openTimings = (vm: AppointmentVM) => {
-    if (vm.id.startsWith("unscheduled-class-")) {
-      setTimingsTarget({
-        appointment: buildUnscheduledClassAppointment(
-          vm.raw.source as UnscheduledClassLike as UnscheduledClass,
-        ),
-        groupProgress: null,
-      });
-      return;
-    }
-    if (vm.id.startsWith("unscheduled-webinar-")) {
-      setTimingsTarget({
-        appointment: buildUnscheduledWebinarAppointment(
-          vm.raw.source as UnscheduledWebinarLike as UnscheduledWebinar,
-        ),
-        groupProgress: null,
-      });
-      return;
-    }
-    if (!vm.raw.appointment) return;
-    setTimingsTarget({
-      appointment: vm.raw.appointment,
-      groupProgress: vm.group
-        ? {
-            completedSessions: vm.group.completed,
-            totalSessions: vm.group.total,
-          }
-        : null,
-    });
+    const targetId =
+      vm.id.startsWith("unscheduled-class-") ||
+      vm.id.startsWith("unscheduled-webinar-")
+        ? vm.id
+        : vm.appointmentId;
+    if (!targetId) return;
+    router.push(
+      `/dashboard/consultant/${consultantId}/appointments/${targetId}/timings`,
+    );
   };
 
   const trialJoinable = (vm: AppointmentVM) => {
@@ -320,16 +287,6 @@ export function useConsultantAppointmentsAdapter(
 
   const renderDialogs = () => (
     <>
-      {timingsTarget && (
-        <EventTimingsCalendar
-          isOpen
-          onClose={() => setTimingsTarget(null)}
-          appointment={timingsTarget.appointment}
-          completedSessions={timingsTarget.groupProgress?.completedSessions}
-          groupTotalSessions={timingsTarget.groupProgress?.totalSessions}
-        />
-      )}
-
       {activeVm && (
         <>
           <CancelConfirmationDialog
