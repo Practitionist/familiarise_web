@@ -635,7 +635,7 @@ export class SlotAllocationService {
         consultant,
         config,
         appointmentIdsToExclude,
-        consulteeUserId, // #676 AE-1 — also check the consultee's calendar
+        { consulteeUserId }, // #676 AE-1 — also check the consultee's calendar
       );
 
       if (!validation.isValid) {
@@ -1023,7 +1023,7 @@ export class SlotAllocationService {
         consultant,
         config,
         appointmentIdsToExclude,
-        consulteeUserId, // #676 AE-1 — also check the consultee's calendar
+        { consulteeUserId }, // #676 AE-1 — also check the consultee's calendar
       );
 
       if (!validation.isValid) {
@@ -1304,8 +1304,7 @@ export class SlotAllocationService {
             consultant,
             config,
             existingAppointmentIds,
-            consulteeUserId, // #676 AE-1 — also check the consultee's calendar
-            { overrideAvailabilityWindow },
+            { consulteeUserId, overrideAvailabilityWindow },
           );
 
           if (!validation.isValid) {

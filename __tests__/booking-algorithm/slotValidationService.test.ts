@@ -918,7 +918,7 @@ describe("#676 AE-1: validate threads consulteeUserId into the conflict scan", (
       weeklyConsultant,
       { durationInHours: 1 },
       undefined,
-      "consultee-ae1",
+      { consulteeUserId: "consultee-ae1" },
     );
     // The single batched conflict query must scan the consultee's calendar too.
     expect(

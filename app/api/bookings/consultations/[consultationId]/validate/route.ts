@@ -143,7 +143,7 @@ export async function POST(
           durationInHours: consultationPlan.durationInHours,
         },
         excludeIds,
-        consulteeUserId,
+        { consulteeUserId },
       );
 
       // If validation passed, all slots are valid

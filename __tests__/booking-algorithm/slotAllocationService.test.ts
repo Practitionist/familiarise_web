@@ -1305,7 +1305,9 @@ describe("fetchEventData - config extraction", () => {
         schedulingPeriodEndsAt: expect.any(Date),
       }),
       expect.any(Array), // appointmentIdsToExclude
-      "consultee-1", // #676 AE-1 — consulteeUserId threaded for the conflict scan
+      // #676 AE-1 — consulteeUserId threaded for the conflict scan, now inside
+      // the options object that brought validate() back under the param limit.
+      { consulteeUserId: "consultee-1" },
     );
   });
 
@@ -1326,7 +1328,10 @@ describe("fetchEventData - config extraction", () => {
       expect.objectContaining({ userId: "consultant-1" }),
       expect.objectContaining({ durationInHours: 1 }),
       expect.any(Array), // appointmentIdsToExclude
-      undefined, // #676 AE-1 — group event, no single consultee
+      // consulteeUserId moved into the options object when validate() came back
+      // under the parameter limit. Still undefined here: #676 AE-1 — a group
+      // event has no single consultee.
+      { consulteeUserId: undefined },
     );
   });
 
@@ -1371,7 +1376,10 @@ describe("fetchEventData - config extraction", () => {
         sessionDurationInHours: 1.5,
       }),
       expect.any(Array), // appointmentIdsToExclude
-      undefined, // #676 AE-1 — group event, no single consultee
+      // consulteeUserId moved into the options object when validate() came back
+      // under the parameter limit. Still undefined here: #676 AE-1 — a group
+      // event has no single consultee.
+      { consulteeUserId: undefined },
     );
   });
 });

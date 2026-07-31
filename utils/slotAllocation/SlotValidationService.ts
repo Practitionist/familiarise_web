@@ -119,15 +119,18 @@ export class SlotValidationService {
     consultant: ConsultantAllocationData,
     config: EventConfig,
     excludeAppointmentIds?: string[],
-    // #676 AE-1 — when set, the consultee's calendar is checked too, so a
-    // consultee can't be double-booked across event types at the same instant.
-    consulteeUserId?: string,
     /**
-     * Flow-specific relaxations. An object rather than a further positional
-     * parameter: this signature is already at the limit, and a bare trailing
-     * boolean at call site nine reads as nothing at all.
+     * Who and what this validation is for, beyond the slots themselves. An
+     * object rather than more positional parameters: the signature was at the
+     * limit, and a bare trailing boolean at the ninth position reads as nothing
+     * at the call site.
      */
     options?: {
+      /**
+       * #676 AE-1 — when set, the consultee's calendar is checked too, so a
+       * consultee can't be double-booked across event types at the same instant.
+       */
+      consulteeUserId?: string;
       /**
        * The consultant explicitly accepting times outside their own published
        * availability. Skips ONLY the availability-window check — conflicts,
@@ -152,7 +155,7 @@ export class SlotValidationService {
       slots,
       consultant.userId,
       excludeAppointmentIds,
-      consulteeUserId,
+      options?.consulteeUserId,
     );
     if (!conflictCheck.isValid) return conflictCheck;
 

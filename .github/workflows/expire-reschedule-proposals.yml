@@ -2,10 +2,13 @@ name: Expire Reschedule Proposals
 
 on:
   schedule:
-    # Hourly at :35. A proposal's deadline can be as tight as 24h before the
+    # Hourly at :45. A proposal's deadline can be as tight as 24h before the
     # session it concerns, so a daily sweep could let one outlive its session.
-    # :35 keeps it off the top-of-hour crowd.
-    - cron: "35 * * * *"
+    # The minute is not arbitrary: check-workflow-hygiene rejects a recurring
+    # job that starts alongside another recurring one, because simultaneous
+    # starts stampede the Supavisor pool (#932). :45 was unclaimed across the
+    # whole fleet, including the */10 and */15 step schedules.
+    - cron: "45 * * * *"
   workflow_dispatch: # Allow manual triggering
 
 jobs:
