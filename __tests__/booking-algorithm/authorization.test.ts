@@ -283,6 +283,12 @@ function makeMockTx(appointmentData: any = null) {
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
     slotOfAppointment: { updateMany: jest.fn(), deleteMany: jest.fn() },
+    // Cancel closes any live reschedule proposal so the appointment's
+    // openForAppointmentId reservation is released.
+    rescheduleRequest: {
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      create: jest.fn().mockResolvedValue({ id: "reschedule-request-1" }),
+    },
   };
 }
 

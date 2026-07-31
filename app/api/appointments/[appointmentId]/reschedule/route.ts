@@ -20,6 +20,7 @@ import { notifyAppointmentRescheduled } from "@/lib/novu/service";
 import { notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
 import { logActivity } from "@/lib/activity/log-activity";
+import { tryAutoConfirmProposal } from "@/lib/booking/reschedule-auto-confirm";
 import { hasActiveDisputeForAppointment } from "@/lib/payments/dispute-guard";
 import {
   CLASS_EVENT_ALLOWED_FROM,
@@ -556,12 +557,48 @@ export async function POST(
             webinarId: appointment.webinar?.id,
             classId: appointment.class?.id,
           },
+          rescheduleRequestId,
         };
       },
       {
         timeout: 60000, // 60 second timeout for complex transactions
       },
     );
+
+    // A consultee's proposal that lands in published availability and finds both
+    // calendars free needs no approval, so take it now. Deliberately AFTER the
+    // transaction: validating inside it would pin a pooled connection through
+    // the whole availability check, which is the shape #908 documents as having
+    // 500'd with "Unable to start a transaction in the given time".
+    //
+    // Failure here is an ordinary outcome, not an error — the proposal simply
+    // stays PENDING_REVIEW for the consultant to answer.
+    let autoConfirmed = false;
+    if (result.rescheduleRequestId) {
+      const proposalEventType = result.logContext.consultationId
+        ? ("consultation" as const)
+        : result.logContext.subscriptionId
+          ? ("subscription" as const)
+          : null;
+      const proposalEventId =
+        result.logContext.consultationId ?? result.logContext.subscriptionId;
+
+      if (proposalEventType && proposalEventId) {
+        try {
+          const outcome = await tryAutoConfirmProposal(
+            result.rescheduleRequestId,
+            proposalEventType,
+            proposalEventId,
+          );
+          autoConfirmed = outcome.confirmed;
+        } catch (err) {
+          Sentry.captureException(
+            err instanceof Error ? err : new Error(String(err)),
+            { tags: { subsystem: "bookings", op: "reschedule-auto-confirm" } },
+          );
+        }
+      }
+    }
 
     // B14 — reschedule now leaves an activity-log entry (cancel always did).
     if (result.logContext.cpId) {
@@ -718,7 +755,18 @@ export async function POST(
       console.error("[reschedule] Failed to send notification:", error);
     }
 
-    return NextResponse.json(result);
+    return NextResponse.json({
+      ...result,
+      autoConfirmed,
+      // The two outcomes read very differently to a user — "you're moved" versus
+      // "we've asked" — so the client must be able to tell them apart rather
+      // than inferring it from the proposal's presence.
+      message: autoConfirmed
+        ? "Your new time is confirmed."
+        : result.rescheduleRequestId
+          ? "Your requested time has been sent to the consultant."
+          : result.message,
+    });
   } catch (error) {
     // B2 — the CAS guard's structured 409 (NOT_RESCHEDULABLE).
     if (error instanceof Error && "httpStatus" in error) {
