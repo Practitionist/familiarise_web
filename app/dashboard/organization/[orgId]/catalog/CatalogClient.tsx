@@ -1,5 +1,7 @@
 "use client";
 
+import { useRouter } from "next/navigation";
+
 import { useCallback, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Library, Plus } from "lucide-react";
@@ -19,8 +21,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { EventPlannerForWebinar } from "@/components/planner/components/EventPlannerForWebinar";
-import { EventPlannerForClass } from "@/components/planner/components/EventPlannerForClass";
 import type { WebinarEvent, ClassEvent } from "@/types/planner-events";
 import { CatalogPanel } from "./CatalogPanel";
 import type { CatalogRow, CatalogResponse, Kind } from "./types";
@@ -36,6 +36,7 @@ export function CatalogClient({
 }: Readonly<{ orgId: string; experts: Expert[] }>) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const router = useRouter();
   const [composing, setComposing] = useState<Kind | null>(null);
   const [expertId, setExpertId] = useState<string>(
     experts.length === 1 ? experts[0].consultantProfileId : "",
@@ -266,7 +267,11 @@ export function CatalogClient({
                 </Select>
               </div>
               <Button
-                onClick={() => setComposing("WEBINAR")}
+                onClick={() =>
+                  router.push(
+                    `/dashboard/organization/${orgId}/catalog/webinar/new?expertId=${expertId}`,
+                  )
+                }
                 disabled={!expertId}
               >
                 <Plus className="mr-1.5 h-4 w-4" />
@@ -274,7 +279,11 @@ export function CatalogClient({
               </Button>
               <Button
                 variant="outline"
-                onClick={() => setComposing("CLASS")}
+                onClick={() =>
+                  router.push(
+                    `/dashboard/organization/${orgId}/catalog/class/new?expertId=${expertId}`,
+                  )
+                }
                 disabled={!expertId}
               >
                 <Plus className="mr-1.5 h-4 w-4" />
@@ -358,29 +367,6 @@ export function CatalogClient({
         )}
       </DashboardContent>
 
-      {/* The same forms the consultant planner uses. `organizationId` is what
-          makes the resulting plan org-owned; `consultantId` names the deliverer,
-          which on this surface is the picked expert rather than the viewer. */}
-      {composing === "WEBINAR" && expertId && (
-        <EventPlannerForWebinar
-          isOpen
-          onClose={() => setComposing(null)}
-          onSave={handleWebinarSave}
-          consultantId={expertId}
-          organizationId={orgId}
-          isSaving={createPlan.isPending}
-        />
-      )}
-      {composing === "CLASS" && expertId && (
-        <EventPlannerForClass
-          isOpen
-          onClose={() => setComposing(null)}
-          onSave={handleClassSave}
-          consultantId={expertId}
-          organizationId={orgId}
-          isSaving={createPlan.isPending}
-        />
-      )}
     </>
   );
 }

@@ -155,17 +155,30 @@ async function verifyPlanOwnership(
   planId: string,
   userId: string,
 ): Promise<boolean> {
-  if (planType === "class-plans") {
-    const plan = await prisma.classPlan.findUnique({
-      where: { id: planId },
-      select: { consultantProfile: { select: { userId: true } } },
-    });
-    return plan?.consultantProfile?.userId === userId;
-  } else {
-    const plan = await prisma.webinarPlan.findUnique({
-      where: { id: planId },
-      select: { consultantProfile: { select: { userId: true } } },
-    });
-    return plan?.consultantProfile?.userId === userId;
+  // Exhaustive on TPlanImageType: adding a plan type without an ownership
+  // check here is a compile error rather than a silent upload someone else can
+  // overwrite.
+  const ownerSelect = {
+    where: { id: planId },
+    select: { consultantProfile: { select: { userId: true } } },
+  } as const;
+
+  switch (planType) {
+    case "class-plans": {
+      const plan = await prisma.classPlan.findUnique(ownerSelect);
+      return plan?.consultantProfile?.userId === userId;
+    }
+    case "webinar-plans": {
+      const plan = await prisma.webinarPlan.findUnique(ownerSelect);
+      return plan?.consultantProfile?.userId === userId;
+    }
+    case "consultation-plans": {
+      const plan = await prisma.consultationPlan.findUnique(ownerSelect);
+      return plan?.consultantProfile?.userId === userId;
+    }
+    case "subscription-plans": {
+      const plan = await prisma.subscriptionPlan.findUnique(ownerSelect);
+      return plan?.consultantProfile?.userId === userId;
+    }
   }
 }

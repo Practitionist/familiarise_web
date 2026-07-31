@@ -736,8 +736,18 @@ You can find this key in: Dashboard > Settings > API > service_role key
 `.trim();
 };
 
-// Plan image upload types
-export type TPlanImageType = "webinar-plans" | "class-plans";
+// Plan image upload types.
+//
+// All four plan models carry `imageUrl`, but only these two buckets existed, so
+// a consultation or subscription could never actually be given a cover image
+// however the form was built. The storage path is `{planType}/{planId}`, so
+// adding a type needs no bucket provisioning — only ownership verification,
+// which lives in app/api/plans/image/route.ts.
+export type TPlanImageType =
+  | "webinar-plans"
+  | "class-plans"
+  | "consultation-plans"
+  | "subscription-plans";
 
 interface IPlanImageUploadOptions {
   planType: TPlanImageType;
