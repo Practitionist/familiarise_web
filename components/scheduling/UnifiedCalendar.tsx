@@ -408,6 +408,12 @@ export function UnifiedCalendar({
     allowedEnd,
     sessionDurationInHours,
     consulteeUserId,
+    // Follows `mode` rather than being its own prop: "allocate" is the
+    // consultant's own surface, the only one that renders the overlap
+    // tooltips, and the only one the route authorizes for them. A consultee
+    // picker is always "select", so it cannot forget to opt out and 403 its
+    // entire calendar over a tooltip it never draws.
+    includeAppointmentDetails: mode === "allocate",
   });
 
   // Wrap onAllocationComplete to refetch data before calling parent callback

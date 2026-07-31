@@ -47,6 +47,13 @@ export interface UseCalendarDataOptions {
    * with ANY consultant as occupied, so passing it keeps the grid from showing
    * cells that allocation will reject. */
   consulteeUserId?: string;
+  /**
+   * Request the per-interval tooltip metadata (title/participant of an
+   * overlapping appointment). Defaults FALSE — the route 403s the request for
+   * anyone who is not the owning consultant, so a surface that asks for it
+   * speculatively loses its whole calendar rather than losing a tooltip.
+   */
+  includeAppointmentDetails?: boolean;
 }
 
 export interface TimeSlot {
@@ -212,6 +219,7 @@ export function useCalendarData(
     allowedEnd,
     sessionDurationInHours,
     consulteeUserId,
+    includeAppointmentDetails = false,
   } = options;
   const { toast } = useToast();
 
@@ -291,16 +299,16 @@ export function useCalendarData(
             ? endOfWeek(currentDate)
             : endOfMonth(currentDate);
 
-      // #997 Phase 2 — this hook only ever backs the consultant's OWN
-      // Allocate-Slots calendar (never the public consultee/trials one), so
-      // always request the server-computed tooltip/orphan-slot detail. The
-      // route re-verifies ownership server-side regardless of this flag.
+      // #997 Phase 2 — the server-computed tooltip/orphan-slot detail. The
+      // route re-verifies ownership regardless of this flag, and 403s rather
+      // than downgrading, so only a surface that KNOWS it is the owning
+      // consultant may ask for it.
       const data = await AllocationService.fetchAvailabilitySlots(
         consultantId,
         startDate,
         endDate,
         undefined,
-        true,
+        includeAppointmentDetails,
         consulteeUserId,
       );
 
@@ -351,7 +359,16 @@ export function useCalendarData(
         description: errorMessage,
       });
     }
-  }, [consultantId, toast, view, currentDate, mode, allowedEnd, consulteeUserId]);
+  }, [
+    consultantId,
+    toast,
+    view,
+    currentDate,
+    mode,
+    allowedEnd,
+    consulteeUserId,
+    includeAppointmentDetails,
+  ]);
 
   const fetchEventSlots = useCallback(async (): Promise<void> => {
     // Fetch event slots for ALL event types (subscription, consultation, webinar, class)
