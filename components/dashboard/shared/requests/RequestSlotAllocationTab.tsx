@@ -273,6 +273,15 @@ function sessionsFromSlots(request: Request, slotCount: number): number {
   return Math.max(1, Math.round(slotCount / perSession));
 }
 
+/** "just now" / "4m ago" / a time — enough to judge whether to hit Refresh. */
+function formatRelativeTime(at: Date): string {
+  const seconds = Math.max(0, Math.round((Date.now() - at.getTime()) / 1000));
+  if (seconds < 45) return "just now";
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  return at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
 function RescheduleBadge({ request }: { request: Request }) {
   const tentativeSlots = request.tentativeSlotCount ?? 0;
   const totalSlots = request.totalSlotCount;
@@ -393,6 +402,8 @@ export function RequestSlotAllocationTab({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [requests, setRequests] = useState<Request[]>([]);
+  /** When the rows on screen were last successfully read. */
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [selectedRequest, setSelectedRequest] = useState<Request | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [requestedSlotsDialogOpen, setRequestedSlotsDialogOpen] =
@@ -600,6 +611,7 @@ export function RequestSlotAllocationTab({
       // Only set it here if no fetch error occurred
       if (!error) {
         setLoading(false);
+        setLastUpdated(new Date());
       }
     }
     // orgScope belongs here: fetchData builds both URLs from it, so without it
@@ -608,25 +620,19 @@ export function RequestSlotAllocationTab({
 
   useEffect(() => {
     fetchData();
-    // Set up polling for real-time updates
-    const REQUEST_POLL_INTERVAL = parseInt(
-      process.env.NEXT_PUBLIC_REQUEST_POLL_INTERVAL ?? "300000",
-    ); // 5 minutes
-    // Perf RCA: skip the tick while the tab is hidden — the old interval
-    // kept hitting the API from backgrounded tabs.
-    const interval = setInterval(() => {
-      if (!document.hidden) fetchData();
-    }, REQUEST_POLL_INTERVAL);
 
-    // Multi-tab self-heal: a tab returning to focus refetches so requests
-    // allocated/declined elsewhere disappear without waiting for the poll.
+    // Refetch when the tab regains focus, and ONLY then.
+    //
+    // The 5-minute interval this replaces bought almost nothing: requests
+    // arrive when a consultee books, which no consultant sits watching, so
+    // minutes of staleness cost nothing — while every open tab hit two
+    // paginated endpoints with four-level includes, forever, for data nobody
+    // was reading. Focus is when someone actually looks, so it is both cheaper
+    // and better timed. The explicit Refresh button covers the rest, and the
+    // "updated" label makes staleness visible instead of implying it is live.
     const onFocus = () => fetchData();
     window.addEventListener("focus", onFocus);
-
-    return () => {
-      clearInterval(interval);
-      window.removeEventListener("focus", onFocus);
-    };
+    return () => window.removeEventListener("focus", onFocus);
   }, [fetchData]);
 
   // Idempotency key for the requested-times flow; a retry of the same request
@@ -995,6 +1001,33 @@ export function RequestSlotAllocationTab({
   return (
     <Card className="border-0 shadow-none rounded-none">
       <CardContent className="p-0 sm:p-6">
+        {/* Staleness is stated rather than implied. The list refreshes when the
+            tab regains focus; between those moments it is a snapshot, and
+            saying so is more honest than a spinner that suggests it is live. */}
+        <div className="mb-3 flex items-center justify-end gap-3">
+          {lastUpdated && (
+            <span
+              className="text-xs text-muted-foreground"
+              title={lastUpdated.toLocaleString()}
+            >
+              Updated {formatRelativeTime(lastUpdated)}
+            </span>
+          )}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => fetchData()}
+            disabled={loading}
+            className="gap-1.5"
+          >
+            <RefreshCw
+              className={cn("h-3.5 w-3.5", loading && "animate-spin")}
+              aria-hidden
+            />
+            Refresh
+          </Button>
+        </div>
+
         {requests.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-center">
             <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-muted">
