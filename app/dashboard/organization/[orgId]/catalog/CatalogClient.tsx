@@ -68,7 +68,9 @@ export function CatalogClient({
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error(body.message ?? body.error ?? "Could not save the plan");
+        throw new Error(
+          body.message ?? body.error ?? "Could not save the plan",
+        );
       }
       return res.json();
     },
@@ -157,9 +159,19 @@ export function CatalogClient({
         maxParticipants: plan.maxParticipants,
         durationInHours: plan.durationInHours,
         language: plan.language ?? "English",
-        level: plan.level ?? "Beginner",
+        // PlanLevel is BEGINNER|INTERMEDIATE|ADVANCED|ALL_LEVELS; "Beginner"
+        // was not a member and 400'd on every plan that omitted a level.
+        level: plan.level ?? "ALL_LEVELS",
         certificateProvided: plan.certificateProvided,
         recordingEnabled: plan.recordingEnabled,
+        // ADR 24 positioning content. The endpoint has always accepted these
+        // via planPositioningShape and even nested-creates the FAQs; the client
+        // simply never sent them, so an org-authored offering was structurally
+        // thinner than the identical personal one.
+        subtitle: plan.subtitle ?? null,
+        targetAudience: plan.targetAudience ?? [],
+        whatsIncluded: plan.whatsIncluded ?? [],
+        faqs: plan.faqs ?? [],
       });
     },
     [createPlan, expertId],
@@ -181,9 +193,19 @@ export function CatalogClient({
         sessionsPerWeek: plan.sessionsPerWeek,
         sessionDurationInHours: plan.sessionDurationInHours,
         language: plan.language ?? "English",
-        level: plan.level ?? "Beginner",
+        // PlanLevel is BEGINNER|INTERMEDIATE|ADVANCED|ALL_LEVELS; "Beginner"
+        // was not a member and 400'd on every plan that omitted a level.
+        level: plan.level ?? "ALL_LEVELS",
         certificateProvided: plan.certificateProvided,
         recordingEnabled: plan.recordingEnabled,
+        // ADR 24 positioning content. The endpoint has always accepted these
+        // via planPositioningShape and even nested-creates the FAQs; the client
+        // simply never sent them, so an org-authored offering was structurally
+        // thinner than the identical personal one.
+        subtitle: plan.subtitle ?? null,
+        targetAudience: plan.targetAudience ?? [],
+        whatsIncluded: plan.whatsIncluded ?? [],
+        faqs: plan.faqs ?? [],
       });
     },
     [createPlan, expertId],

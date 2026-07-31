@@ -202,6 +202,23 @@ export async function POST(
             },
           });
 
+    // Create the sellable INSTANCE too, not just the plan.
+    //
+    // This route used to author a WebinarPlan/ClassPlan and stop, so an
+    // org-authored offering had no Webinar/Class row, no appointment and no
+    // slots — it appeared in the catalog and there was nothing to join. It
+    // lands in DRAFT because no session has been scheduled yet, which is the
+    // honest state and keeps it off the marketplace until someone sets a time.
+    if (body.kind === "WEBINAR") {
+      await tx.webinar.create({
+        data: { status: "DRAFT", webinarPlan: { connect: { id: plan.id } } },
+      });
+    } else {
+      await tx.class.create({
+        data: { status: "DRAFT", classPlan: { connect: { id: plan.id } } },
+      });
+    }
+
     await tx.orgAuditLog.create({
       data: {
         organizationId: orgId,
@@ -272,7 +289,10 @@ export async function DELETE(
 
     const { count: affected } =
       kind === "WEBINAR"
-        ? await tx.webinarPlan.updateMany({ where: scope, data: { archivedAt } })
+        ? await tx.webinarPlan.updateMany({
+            where: scope,
+            data: { archivedAt },
+          })
         : await tx.classPlan.updateMany({ where: scope, data: { archivedAt } });
 
     if (affected > 0) {
