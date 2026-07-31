@@ -27,6 +27,7 @@ import {
   CheckCircle2,
   RefreshCw,
 } from "lucide-react";
+import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { RequestedSlotsDialog } from "./components/RequestedSlotsDialog";
@@ -398,7 +399,11 @@ export function RequestSlotAllocationTab({
   orgScope = "personal",
 }: RequestSlotAllocationTabProps) {
   const params = useParams();
-  const consultantId = consultantProfileId ?? (params.consultantId as string);
+  // Only the consultant tree has this param, and the dedicated allocate page
+  // lives inside that tree behind a personal-profile check — so an org admin
+  // viewing someone else's requests must not be offered a link that 403s.
+  const routeConsultantId = params.consultantId as string | undefined;
+  const consultantId = consultantProfileId ?? (routeConsultantId as string);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [requests, setRequests] = useState<Request[]>([]);
@@ -980,6 +985,23 @@ export function RequestSlotAllocationTab({
                     </Button>
                   )}
               </>
+            )}
+            {/* Preview of the full-width allocation surface that replaces this
+                dialog next. Read-only, so it sits beside the real actions
+                rather than competing with them. */}
+            {routeConsultantId && (
+              <Button
+                asChild
+                variant="ghost"
+                size="sm"
+                className="w-full text-muted-foreground"
+              >
+                <Link
+                  href={`/dashboard/consultant/${routeConsultantId}/requests/${request.id}/allocate?type=${request.type.toLowerCase()}`}
+                >
+                  Open as page
+                </Link>
+              </Button>
             )}
             {/* Quiet by design: declining is the rarer branch, and nothing is
                 destroyed until the request is actually rejected. */}

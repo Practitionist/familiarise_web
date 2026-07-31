@@ -21,6 +21,8 @@ import {
   Loader2,
 } from "lucide-react";
 import { format } from "date-fns";
+import Link from "next/link";
+import { useParams } from "next/navigation";
 import { cn } from "@/utils/tailwind";
 import { toDate, type SlotLike } from "@/lib/appointments/view-model";
 import { SafeUnifiedCalendar } from "@/components/scheduling/SafeUnifiedCalendar";
@@ -213,6 +215,13 @@ export function RescheduleSessionsModal({
   >("entire");
   const [selectedSlotIds, setSelectedSlotIds] = React.useState<string[]>([]);
 
+  // The dedicated reschedule page is per-appointment and lives in the consultee
+  // tree; the consultant adapter mounts this same modal and has neither id, so
+  // both being present is also the check that we are on the right surface.
+  const routeParams = useParams();
+  const routeConsulteeId = routeParams.consulteeId as string | undefined;
+  const pageAppointmentId = rawSlots.find((slot) => slot.appointmentId)
+    ?.appointmentId;
 
   // Group slots by appointmentId — one session can span multiple slots.
   const groupedSessions = React.useMemo(() => {
@@ -491,6 +500,23 @@ export function RescheduleSessionsModal({
         </div>
 
         <ResponsiveModalFooter className="gap-2 sm:gap-0">
+          {/* Preview of the full-width picker this modal moves to next; the
+              modal stays authoritative until it does. */}
+          {routeConsulteeId && pageAppointmentId && (
+            <Button
+              asChild
+              variant="ghost"
+              size="sm"
+              className="sm:mr-auto text-muted-foreground"
+            >
+              <Link
+                href={`/dashboard/consultee/${routeConsulteeId}/appointments/${pageAppointmentId}/reschedule`}
+              >
+                Open as page
+              </Link>
+            </Button>
+          )}
+
           <Button
             variant="outline"
             onClick={() =>
