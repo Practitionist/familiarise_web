@@ -12,15 +12,11 @@ import { EventCarousel } from "./EventCarousel";
 import { waitForGlobalVideoClient } from "@/lib/stream/disconnect";
 import type { MeetingAppointment, MeetingSlot } from "@/lib/meeting";
 import {
-  WebinarEvent,
-  ClassEvent,
   PlannerWebinarEvent,
   PlannerClassEvent,
   ConsultationPlanEvent,
   SubscriptionPlanEvent,
-  Event,
 } from "@/types/planner-events";
-import { PlannerService } from "../services/planner";
 import type { ConsultationPlan, SubscriptionPlan } from "@/schemas/plans";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -30,7 +26,6 @@ import {
   useConsultationPlanMutations,
   useSubscriptionPlans,
   useSubscriptionPlanMutations,
-  usePlannerRefresh,
 } from "../hooks/usePlanner";
 import {
   LayoutTemplate,
@@ -67,7 +62,6 @@ export function EventManagementDashboard({
 }: Readonly<Props>) {
   const webinars = data.webinars;
   const classes = data.classes;
-  const [_isSaving, setIsSaving] = useState(false);
   const { toast } = useToast();
 
   // React Query hooks for consultation and subscription plans
@@ -79,17 +73,12 @@ export function EventManagementDashboard({
   // React Query mutations
   const { deleteWebinar } = useWebinarMutations(consultantId);
   const { deleteClass } = useClassMutations(consultantId);
-  const {
-    createConsultationPlan,
-    updateConsultationPlan,
-    deleteConsultationPlan,
-  } = useConsultationPlanMutations(consultantId);
-  const {
-    createSubscriptionPlan,
-    updateSubscriptionPlan,
-    deleteSubscriptionPlan,
-  } = useSubscriptionPlanMutations(consultantId);
-  const { refreshPlanner } = usePlannerRefresh(consultantId);
+  // Create/update moved to the offering editor, which owns its own save; the
+  // planner only deletes now.
+  const { deleteConsultationPlan } =
+    useConsultationPlanMutations(consultantId);
+  const { deleteSubscriptionPlan } =
+    useSubscriptionPlanMutations(consultantId);
   const router = useRouter();
   const [joiningEventId, setJoiningEventId] = useState<string | null>(null);
 

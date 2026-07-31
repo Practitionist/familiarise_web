@@ -32,6 +32,19 @@ import {
 const MINIMUM_HOURS_BEFORE_RESCHEDULE = 24;
 
 /**
+ * Which side is asking. Null for a privileged ADMIN/STAFF bypass, which is
+ * neither party and therefore never auto-confirms on someone else's behalf.
+ */
+function roleOf(
+  isConsultee: boolean,
+  isConsultant: boolean,
+): RescheduleInitiatorRole | null {
+  if (isConsultee) return "CONSULTEE";
+  if (isConsultant) return "CONSULTANT";
+  return null;
+}
+
+/**
  * POST /api/appointments/[appointmentId]/reschedule
  *
  * Reschedule an appointment or specific session(s) within a subscription.
@@ -185,11 +198,7 @@ export async function POST(
           const isConsultee =
             consulteeProfileId === appointment.consultation.requestedById;
           isParticipant = isConsultant || isConsultee;
-          initiatorRole = isConsultee
-            ? "CONSULTEE"
-            : isConsultant
-              ? "CONSULTANT"
-              : null;
+          initiatorRole = roleOf(isConsultee, isConsultant);
         } else if (appointment.subscription) {
           const subscriptionConsultantId =
             appointment.subscription.subscriptionPlan?.consultantProfileId;
@@ -198,11 +207,7 @@ export async function POST(
           const isConsultee =
             consulteeProfileId === appointment.subscription.requestedById;
           isParticipant = isConsultant || isConsultee;
-          initiatorRole = isConsultee
-            ? "CONSULTEE"
-            : isConsultant
-              ? "CONSULTANT"
-              : null;
+          initiatorRole = roleOf(isConsultee, isConsultant);
         } else if (appointment.webinar) {
           // Only the consultant (organizer) can reschedule group events,
           // since rescheduling changes the time for all participants.
@@ -755,17 +760,23 @@ export async function POST(
       console.error("[reschedule] Failed to send notification:", error);
     }
 
+    // The three outcomes read very differently to a user — you're moved, we've
+    // asked, or nothing was proposed — so they must not collapse into one line.
+    const resultMessage = () => {
+      if (autoConfirmed) return "Your new time is confirmed.";
+      if (result.rescheduleRequestId) {
+        return "Your requested time has been sent to the consultant.";
+      }
+      return result.message;
+    };
+
     return NextResponse.json({
       ...result,
       autoConfirmed,
       // The two outcomes read very differently to a user — "you're moved" versus
       // "we've asked" — so the client must be able to tell them apart rather
       // than inferring it from the proposal's presence.
-      message: autoConfirmed
-        ? "Your new time is confirmed."
-        : result.rescheduleRequestId
-          ? "Your requested time has been sent to the consultant."
-          : result.message,
+      message: resultMessage(),
     });
   } catch (error) {
     // B2 — the CAS guard's structured 409 (NOT_RESCHEDULABLE).

@@ -146,6 +146,17 @@ export function RescheduleSessionsModal({
 
   const canProposeTimes = !!consultantProfileId;
 
+  /**
+   * Releasing without naming a time is still valid — it hands the consultant a
+   * request with no stated preference, which is what every reschedule used to
+   * do — so the secondary button says so rather than reading like a cancel.
+   */
+  const submitLabel = (() => {
+    if (step === "times") return "Request this time";
+    if (canProposeTimes) return "Any time works";
+    return "Confirm Reschedule";
+  })();
+
   const submit = (withTimes: boolean) => {
     onConfirm({
       slotIds: releasedSlotIds,
@@ -457,15 +468,8 @@ export function RescheduleSessionsModal({
                 <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                 Processing...
               </>
-            ) : step === "times" ? (
-              "Request this time"
-            ) : canProposeTimes ? (
-              // Releasing without naming a time is still valid — it just hands
-              // the consultant a request with no stated preference, which is
-              // what every reschedule used to do.
-              "Any time works"
             ) : (
-              "Confirm Reschedule"
+              submitLabel
             )}
           </Button>
         </ResponsiveModalFooter>

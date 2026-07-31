@@ -48,7 +48,13 @@ export function computeProposalExpiry(
 ): Date | null {
   if (releasedSlotStarts.length === 0) return null;
 
-  const earliest = releasedSlotStarts.reduce((a, b) => (a < b ? a : b));
+  // Seeded rather than relying on the length guard above: an unseeded reduce on
+  // an empty array throws, and a future caller reordering these two lines would
+  // turn a null return into a crash.
+  const earliest = releasedSlotStarts.reduce(
+    (a, b) => (a < b ? a : b),
+    releasedSlotStarts[0],
+  );
   const mustResolveBy = new Date(
     earliest.getTime() - PROPOSAL_RESOLVE_BEFORE_SESSION_HOURS * HOUR_MS,
   );

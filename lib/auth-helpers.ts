@@ -545,7 +545,7 @@ export async function requireOrgOwner(
   opts?: Omit<OrgCapabilityGate, "minimumRole">,
 ): Promise<({ error?: never } & OrgAccessGrant) | { error: NextResponse }> {
   return requireOrgAccess(organizationId, {
-    ...(opts ?? {}),
+    ...opts,
     minimumRole: "OWNER",
   });
 }

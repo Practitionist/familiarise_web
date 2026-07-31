@@ -1305,7 +1305,7 @@ export class SlotAllocationService {
             config,
             existingAppointmentIds,
             consulteeUserId, // #676 AE-1 — also check the consultee's calendar
-            overrideAvailabilityWindow,
+            { overrideAvailabilityWindow },
           );
 
           if (!validation.isValid) {
@@ -1485,11 +1485,15 @@ export class SlotAllocationService {
     slotsPerCall: number,
     consultant: ConsultantAllocationData,
     bookedSlots: Set<string>,
-    now: Date,
-    startDate: Date,
-    endDate: Date,
-    schedulingTimezone?: string,
+    /** The clock and the window the placement has to fall inside. */
+    bounds: {
+      now: Date;
+      startDate: Date;
+      endDate: Date;
+      schedulingTimezone?: string;
+    },
   ): Date[] | null {
+    const { now, startDate, endDate, schedulingTimezone } = bounds;
     const rowDayKey = SlotCalculationService.dayKey(
       rowStart,
       schedulingTimezone,
@@ -1838,10 +1842,12 @@ export class SlotAllocationService {
           slotsPerCall,
           consultant,
           bookedSlots,
-          now,
-          startDate,
-          endDate,
-          config.schedulingTimezone,
+          {
+            now,
+            startDate,
+            endDate,
+            schedulingTimezone: config.schedulingTimezone,
+          },
         );
 
         if (!sessionSlots) return false;

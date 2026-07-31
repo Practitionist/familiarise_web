@@ -9,7 +9,11 @@
  * depending on which offering you were editing.
  */
 
-import type { Control, FieldValues } from "react-hook-form";
+import type {
+  Control,
+  ControllerRenderProps,
+  FieldValues,
+} from "react-hook-form";
 import {
   FormControl,
   FormDescription,
@@ -42,6 +46,103 @@ const SPAN_CLASS: Record<NonNullable<FieldSpec["span"]>, string> = {
   3: "md:col-span-3",
   6: "md:col-span-6",
 };
+
+/**
+ * The control for one field kind.
+ *
+ * Lives outside the component because it was a ninety-line switch inlined in
+ * JSX, which both the analyser and a reader mistake for a nested component.
+ */
+function renderControl<T extends FieldValues = FieldValues>(
+  spec: FieldSpec,
+  field: ControllerRenderProps<T, never>,
+  planId: string | undefined,
+  planImageType: TPlanImageType | undefined,
+) {
+  switch (spec.kind) {
+    case "textarea":
+      return (
+        <Textarea
+          placeholder={spec.placeholder}
+          className="min-h-24"
+          {...field}
+          value={field.value ?? ""}
+        />
+      );
+    case "number":
+      return (
+        <Input
+          type="number"
+          min={spec.min}
+          max={spec.max}
+          step={spec.step}
+          placeholder={spec.placeholder}
+          {...field}
+          value={field.value ?? ""}
+          onChange={(e) =>
+            field.onChange(
+              e.target.value === ""
+                ? undefined
+                : Number.parseFloat(e.target.value),
+            )
+          }
+        />
+      );
+    case "date":
+      return (
+        <Input
+          type="datetime-local"
+          {...field}
+          value={
+            field.value ? new Date(field.value).toISOString().slice(0, 16) : ""
+          }
+          onChange={(e) =>
+            field.onChange(e.target.value ? new Date(e.target.value) : null)
+          }
+        />
+      );
+    case "select":
+      return (
+        <Select onValueChange={field.onChange} value={field.value ?? undefined}>
+          <SelectTrigger>
+            <SelectValue placeholder={spec.placeholder} />
+          </SelectTrigger>
+          <SelectContent>
+            {spec.options?.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      );
+    case "switch":
+      return (
+        <Switch checked={!!field.value} onCheckedChange={field.onChange} />
+      );
+    case "image":
+      return planId && planImageType ? (
+        <PlanImageUploader
+          planType={planImageType}
+          planId={planId}
+          currentImageUrl={field.value ?? null}
+          onImageChange={field.onChange}
+        />
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          Save this offering as a draft first, then add a cover image.
+        </p>
+      );
+    default:
+      return (
+        <Input
+          placeholder={spec.placeholder}
+          {...field}
+          value={field.value ?? ""}
+        />
+      );
+  }
+}
 
 interface OfferingFieldProps<T extends FieldValues = FieldValues> {
   control: Control<T>;
@@ -124,102 +225,7 @@ export function OfferingField<T extends FieldValues = FieldValues>({
         <FormItem className={span}>
           {spec.label && <FormLabel>{spec.label}</FormLabel>}
           <FormControl>
-            {(() => {
-              switch (spec.kind) {
-                case "textarea":
-                  return (
-                    <Textarea
-                      placeholder={spec.placeholder}
-                      className="min-h-24"
-                      {...field}
-                      value={field.value ?? ""}
-                    />
-                  );
-                case "number":
-                  return (
-                    <Input
-                      type="number"
-                      min={spec.min}
-                      max={spec.max}
-                      step={spec.step}
-                      placeholder={spec.placeholder}
-                      {...field}
-                      value={field.value ?? ""}
-                      onChange={(e) =>
-                        field.onChange(
-                          e.target.value === ""
-                            ? undefined
-                            : Number.parseFloat(e.target.value),
-                        )
-                      }
-                    />
-                  );
-                case "date":
-                  return (
-                    <Input
-                      type="datetime-local"
-                      {...field}
-                      value={
-                        field.value
-                          ? new Date(field.value).toISOString().slice(0, 16)
-                          : ""
-                      }
-                      onChange={(e) =>
-                        field.onChange(
-                          e.target.value ? new Date(e.target.value) : null,
-                        )
-                      }
-                    />
-                  );
-                case "select":
-                  return (
-                    <Select
-                      onValueChange={field.onChange}
-                      value={field.value ?? undefined}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder={spec.placeholder} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {spec.options?.map((option) => (
-                          <SelectItem key={option.value} value={option.value}>
-                            {option.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  );
-                case "switch":
-                  return (
-                    <Switch
-                      checked={!!field.value}
-                      onCheckedChange={field.onChange}
-                    />
-                  );
-                case "image":
-                  return planId && planImageType ? (
-                    <PlanImageUploader
-                      planType={planImageType}
-                      planId={planId}
-                      currentImageUrl={field.value ?? null}
-                      onImageChange={field.onChange}
-                    />
-                  ) : (
-                    <p className="text-sm text-muted-foreground">
-                      Save this offering as a draft first, then add a cover
-                      image.
-                    </p>
-                  );
-                default:
-                  return (
-                    <Input
-                      placeholder={spec.placeholder}
-                      {...field}
-                      value={field.value ?? ""}
-                    />
-                  );
-              }
-            })()}
+            {renderControl(spec, field, planId, planImageType)}
           </FormControl>
           {spec.description && (
             <FormDescription>{spec.description}</FormDescription>

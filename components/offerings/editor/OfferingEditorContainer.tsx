@@ -63,7 +63,7 @@ export function OfferingEditorContainer({
     // Spread over the defaults rather than replacing them: a plan row saved
     // before a field existed must still populate that field, or the form
     // submits undefined and the API rejects it.
-    defaultValues: { ...adapter.defaults, ...(existingPlan ?? {}) },
+    defaultValues: { ...adapter.defaults, ...existingPlan },
     mode: "onBlur",
   });
 

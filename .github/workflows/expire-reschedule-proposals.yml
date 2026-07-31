@@ -32,12 +32,18 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm ci
+        # --ignore-scripts: a scheduled job holds DATABASE_URL and the Redis
+        # credentials, so a compromised transitive dependency's postinstall would
+        # run with them. Nothing here needs lifecycle scripts.
+        run: npm ci --ignore-scripts
 
       - name: Generate Prisma client
         run: npx prisma generate
 
       - name: Expire reschedule proposals
+        # tsx is not a project dependency, so --yes with a pinned version is
+        # how every scheduled job in this repo runs one-off TypeScript. Sonar
+        # flags npx-on-demand here; the version pin is the mitigation.
         run: npx --yes tsx@4.23.1 jobs/appointments/expire-reschedule-proposals.ts
 
       - name: Notify on failure

@@ -12,7 +12,7 @@ import {
   type RescheduleProposalExpiryResult,
 } from "../../scripts/appointments/expire-reschedule-proposals";
 import prisma from "../../lib/prisma";
-import fs from "fs";
+import fs from "node:fs";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
 import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
 import * as Sentry from "@sentry/nextjs";

@@ -123,20 +123,27 @@ export class SlotValidationService {
     // consultee can't be double-booked across event types at the same instant.
     consulteeUserId?: string,
     /**
-     * The consultant explicitly accepting times outside their own published
-     * availability. Skips ONLY the availability-window check — conflicts,
-     * caps, scheduling period and future-time all still apply, because those
-     * protect other people's bookings rather than the consultant's preference.
-     * Callers must have established that the requester is the consultant or a
-     * privileged user before setting this.
+     * Flow-specific relaxations. An object rather than a further positional
+     * parameter: this signature is already at the limit, and a bare trailing
+     * boolean at call site nine reads as nothing at all.
      */
-    overrideAvailabilityWindow?: boolean,
+    options?: {
+      /**
+       * The consultant explicitly accepting times outside their own published
+       * availability. Skips ONLY the availability-window check — conflicts,
+       * caps, scheduling period and future-time all still apply, because those
+       * protect other people's bookings rather than the consultant's
+       * preference. Callers must have established that the requester is the
+       * consultant or a privileged user before setting this.
+       */
+      overrideAvailabilityWindow?: boolean;
+    },
   ): Promise<ValidationResult> {
     // Universal validations (apply to all event types)
     const futureCheck = this.validateSlotsInFuture(slots);
     if (!futureCheck.isValid) return futureCheck;
 
-    if (!overrideAvailabilityWindow) {
+    if (!options?.overrideAvailabilityWindow) {
       const scheduleCheck = this.validateMatchesSchedule(slots, consultant);
       if (!scheduleCheck.isValid) return scheduleCheck;
     }
