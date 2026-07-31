@@ -1,4 +1,5 @@
 import * as Sentry from "@sentry/nextjs";
+import { reportError } from "@/lib/observability/report";
 import Razorpay from "razorpay";
 import {
   PaymentIntentParams,
@@ -88,8 +89,9 @@ export async function createRazorpayOrder({
     };
   } catch (error) {
     console.error("Razorpay order creation failed:", error);
-    Sentry.captureException(error, {
-      tags: { subsystem: "payments", provider: "razorpay", expected: "false" },
+    reportError(error, {
+      subsystem: "payments",
+      tags: { provider: "razorpay" },
       contexts: { payment: { amount, currency } },
     });
     throw handleRazorpayError(error);
@@ -123,13 +125,11 @@ export async function cancelRazorpayOrder(orderId: string): Promise<void> {
     console.log(
       `✅ Razorpay order fetch failed (likely safe to ignore): ${orderId}`,
     );
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      {
-        tags: { subsystem: "payments", provider: "razorpay", expected: "true" },
-        level: "info",
-      },
-    );
+    reportError(error, {
+      subsystem: "payments",
+      tags: { provider: "razorpay" },
+      expected: true,
+    });
   }
 }
 
@@ -311,13 +311,10 @@ export async function createRazorpayRefund({
     // doesn't conflate "Razorpay is down" with "this order has no payment".
     const isModelledValidation =
       error instanceof RefundError && error.code !== "UNKNOWN_ERROR";
-    Sentry.captureException(error, {
-      tags: {
-        subsystem: "payments",
-        provider: "razorpay",
-        expected: isModelledValidation ? "true" : "false",
-      },
-      level: isModelledValidation ? "info" : "error",
+    reportError(error, {
+      subsystem: "payments",
+      tags: { provider: "razorpay" },
+      expected: isModelledValidation,
     });
     throw handleRazorpayRefundError(error);
   }
@@ -351,12 +348,10 @@ export async function getRazorpayRefund(
     };
   } catch (error) {
     console.error("Razorpay refund retrieval failed:", error);
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      {
-        tags: { subsystem: "payments", provider: "razorpay", expected: "false" },
-      },
-    );
+    reportError(error, {
+      subsystem: "payments",
+      tags: { provider: "razorpay" },
+    });
     throw handleRazorpayRefundError(error);
   }
 }
@@ -405,12 +400,10 @@ export async function listRazorpayRefunds(
     }));
   } catch (error) {
     console.error("Razorpay refunds list failed:", error);
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      {
-        tags: { subsystem: "payments", provider: "razorpay", expected: "false" },
-      },
-    );
+    reportError(error, {
+      subsystem: "payments",
+      tags: { provider: "razorpay" },
+    });
     throw handleRazorpayRefundError(error);
   }
 }

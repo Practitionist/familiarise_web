@@ -1,4 +1,4 @@
-import * as Sentry from "@sentry/nextjs";
+import { reportError } from "@/lib/observability/report";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
 import { isPlanViewable } from "@/lib/api/plans/visibility";
@@ -22,10 +22,7 @@ export async function canViewPlanDetail(
   // app/api/waitlist/route.ts's identical fallback) — captured for
   // visibility only; the anonymous-fallback outcome itself is unchanged.
   const session = await getSession().catch((error) => {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "plans", expected: "true" }, level: "info" },
-    );
+    reportError(error, { subsystem: "plans", expected: true });
     return null;
   });
   return isPlanViewable(

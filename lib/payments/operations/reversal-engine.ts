@@ -1,4 +1,4 @@
-import * as Sentry from "@sentry/nextjs";
+import { reportError, reportMessage } from "@/lib/observability/report";
 import type { Tx } from "@/lib/prisma";
 /**
  * Unified reversal engine (#776 §C / ARCH #4).
@@ -273,14 +273,11 @@ async function reversePayoutClawback(
     select: { id: true, clawbackInitiatedAt: true },
   });
   if (!payout) {
-    Sentry.captureMessage(
-      "reversePayoutClawback: target OrganizationPayout not found",
-      {
-        level: "warning",
-        tags: { subsystem: "payments", expected: "false" },
-        extra: { orgPayoutId, refundId: input.refundId },
-      },
-    );
+    reportMessage("reversePayoutClawback: target OrganizationPayout not found", {
+      subsystem: "payments",
+      level: "warning",
+      extra: { orgPayoutId, refundId: input.refundId },
+    });
     return false;
   }
 
@@ -328,10 +325,7 @@ async function reversePayoutClawback(
       ],
     });
   } catch (err) {
-    Sentry.captureException(
-      err instanceof Error ? err : new Error(String(err)),
-      { tags: { subsystem: "payments", expected: "false" }, level: "fatal" },
-    );
+    reportError(err, { subsystem: "payments", level: "fatal" });
     console.error(
       `[ledger] payout clawback posting FAILED for payout ${orgPayoutId} (reconcile will flag): ${err instanceof Error ? err.message : String(err)}`,
     );

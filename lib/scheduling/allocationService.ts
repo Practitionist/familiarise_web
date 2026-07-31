@@ -1,4 +1,4 @@
-import * as Sentry from "@sentry/nextjs";
+import { reportError } from "@/lib/observability/report";
 import { TimeSlot } from "./calendarUtils";
 import type { SlotConflictResult } from "@/utils/slotAllocation/types";
 
@@ -137,16 +137,10 @@ export class AllocationService {
       };
     } catch (error) {
       console.error(`Allocation request failed (${url}):`, error);
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        {
-          tags: {
-            subsystem: "client",
-            feature: "slot-allocation",
-            expected: "false",
-          },
-        },
-      );
+      reportError(error, {
+        subsystem: "client",
+        tags: { feature: "slot-allocation" },
+      });
       return {
         success: false,
         error:
@@ -189,16 +183,7 @@ export class AllocationService {
       };
     } catch (error) {
       console.error("Error validating consultation slots:", error);
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        {
-          tags: {
-            subsystem: "scheduling",
-            op: "slot-allocation",
-            expected: "false",
-          },
-        },
-      );
+      reportError(error, { subsystem: "scheduling", op: "slot-allocation" });
       return {
         success: false,
         error:
@@ -241,16 +226,7 @@ export class AllocationService {
       };
     } catch (error) {
       console.error("Error validating subscription slots:", error);
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        {
-          tags: {
-            subsystem: "scheduling",
-            op: "slot-allocation",
-            expected: "false",
-          },
-        },
-      );
+      reportError(error, { subsystem: "scheduling", op: "slot-allocation" });
       return {
         success: false,
         error:
@@ -336,16 +312,7 @@ export class AllocationService {
       };
     } catch (error) {
       console.error("Error validating class slots:", error);
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        {
-          tags: {
-            subsystem: "scheduling",
-            op: "slot-allocation",
-            expected: "false",
-          },
-        },
-      );
+      reportError(error, { subsystem: "scheduling", op: "slot-allocation" });
       return {
         success: false,
         error:
@@ -388,16 +355,7 @@ export class AllocationService {
       };
     } catch (error) {
       console.error("Error validating webinar slots:", error);
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        {
-          tags: {
-            subsystem: "scheduling",
-            op: "slot-allocation",
-            expected: "false",
-          },
-        },
-      );
+      reportError(error, { subsystem: "scheduling", op: "slot-allocation" });
       return {
         success: false,
         error:
@@ -463,18 +421,12 @@ export class AllocationService {
           : undefined;
       const expected =
         typeof httpStatus === "number" && httpStatus >= 400 && httpStatus < 500;
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        {
-          tags: {
-            subsystem: "client",
-            op: "slot-allocation",
-            ...(expected ? { expected: "true" } : {}),
-          },
-          extra: { consultantId, httpStatus },
-          ...(expected ? { level: "info" as const } : {}),
-        },
-      );
+      reportError(error, {
+        subsystem: "client",
+        op: "slot-allocation",
+        expected,
+        extra: { consultantId, httpStatus },
+      });
       throw error;
     }
   }
@@ -569,18 +521,12 @@ export class AllocationService {
           : undefined;
       const expected =
         typeof httpStatus === "number" && httpStatus >= 400 && httpStatus < 500;
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        {
-          tags: {
-            subsystem: "client",
-            op: "slot-allocation",
-            ...(expected ? { expected: "true" } : {}),
-          },
-          extra: { consultantId, httpStatus },
-          ...(expected ? { level: "info" as const } : {}),
-        },
-      );
+      reportError(error, {
+        subsystem: "client",
+        op: "slot-allocation",
+        expected,
+        extra: { consultantId, httpStatus },
+      });
       throw error;
     }
   }
@@ -647,18 +593,12 @@ export class AllocationService {
           : undefined;
       const expected =
         typeof httpStatus === "number" && httpStatus >= 400 && httpStatus < 500;
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        {
-          tags: {
-            subsystem: "client",
-            op: "slot-allocation",
-            ...(expected ? { expected: "true" } : {}),
-          },
-          extra: { eventType, eventId, httpStatus },
-          ...(expected ? { level: "info" as const } : {}),
-        },
-      );
+      reportError(error, {
+        subsystem: "client",
+        op: "slot-allocation",
+        expected,
+        extra: { eventType, eventId, httpStatus },
+      });
       throw error;
     }
   }

@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, useEffect } from "react";
-import * as Sentry from "@sentry/nextjs";
+import { reportError } from "@/lib/observability/report";
 import {
   startOfWeek,
   endOfWeek,
@@ -269,16 +269,10 @@ export function useCalendarData(
       setConsultantDetails(data);
     } catch (error) {
       console.error("Error fetching consultant details:", error);
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        {
-          tags: {
-            subsystem: "client",
-            feature: "scheduling-calendar",
-            expected: "false",
-          },
-        },
-      );
+      reportError(error, {
+        subsystem: "client",
+        tags: { feature: "scheduling-calendar" },
+      });
       const errorMessage =
         error instanceof Error
           ? error.message
@@ -361,16 +355,10 @@ export function useCalendarData(
       setRawAvailabilitySlots(validatedData);
     } catch (error) {
       console.error("Error fetching availability slots:", error);
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        {
-          tags: {
-            subsystem: "client",
-            feature: "scheduling-calendar",
-            expected: "false",
-          },
-        },
-      );
+      reportError(error, {
+        subsystem: "client",
+        tags: { feature: "scheduling-calendar" },
+      });
       const errorMessage =
         error instanceof Error ? error.message : "Failed to fetch availability";
       setError(errorMessage);
@@ -490,16 +478,10 @@ export function useCalendarData(
       // Silent degrade to empty (no toast/setError, unlike the two siblings
       // above) — the calendar just shows no "This Event" slots, which reads
       // as "nothing booked yet" rather than "the fetch broke".
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        {
-          tags: {
-            subsystem: "client",
-            feature: "scheduling-calendar",
-            expected: "false",
-          },
-        },
-      );
+      reportError(error, {
+        subsystem: "client",
+        tags: { feature: "scheduling-calendar" },
+      });
       setEventSlots([]);
       setEventTentativeSlots([]);
       setWeeklyConfirmedCallCounts({});
@@ -676,16 +658,10 @@ export function useCalendarData(
       // Believed unreachable: the three awaited fetchers each self-catch and
       // never reject, so Promise.all here shouldn't throw. Capturing anyway
       // (not tagged expected) — if this ever fires, that invariant broke.
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        {
-          tags: {
-            subsystem: "client",
-            feature: "scheduling-calendar",
-            expected: "false",
-          },
-        },
-      );
+      reportError(error, {
+        subsystem: "client",
+        tags: { feature: "scheduling-calendar" },
+      });
       const errorMessage =
         error instanceof Error
           ? error.message
@@ -705,16 +681,10 @@ export function useCalendarData(
         (error) => {
           console.error("Error fetching date-independent data:", error);
           // Believed unreachable — see fetchAllData's identical comment.
-          Sentry.captureException(
-            error instanceof Error ? error : new Error(String(error)),
-            {
-              tags: {
-                subsystem: "client",
-                feature: "scheduling-calendar",
-                expected: "false",
-              },
-            },
-          );
+          reportError(error, {
+            subsystem: "client",
+            tags: { feature: "scheduling-calendar" },
+          });
           setError(
             error instanceof Error
               ? error.message
@@ -741,16 +711,10 @@ export function useCalendarData(
         .catch((error) => {
           console.error("Error fetching date-dependent data:", error);
           // Believed unreachable — see fetchAllData's identical comment.
-          Sentry.captureException(
-            error instanceof Error ? error : new Error(String(error)),
-            {
-              tags: {
-                subsystem: "client",
-                feature: "scheduling-calendar",
-                expected: "false",
-              },
-            },
-          );
+          reportError(error, {
+            subsystem: "client",
+            tags: { feature: "scheduling-calendar" },
+          });
           setError(
             error instanceof Error
               ? error.message

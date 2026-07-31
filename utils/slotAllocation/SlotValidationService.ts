@@ -5,7 +5,7 @@
  * Single source of truth for validation rules - eliminates duplication across routes.
  */
 
-import * as Sentry from "@sentry/nextjs";
+import { reportError } from "@/lib/observability/report";
 import prisma, { type PrismaLike } from "@/lib/prisma";
 import { AppointmentStatus, ScheduleType } from "@prisma/client";
 import {
@@ -668,18 +668,12 @@ export class SlotValidationService {
     } catch (error) {
       // A misconfigured duration failing validation is a modelled answer
       // (bad plan config), not a fault — reported at info for visibility.
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        {
-          tags: {
-            subsystem: "scheduling",
-            op: "slot-validation",
-            expected: "true",
-          },
-          extra: { phase: "consultation-duration" },
-          level: "info",
-        },
-      );
+      reportError(error, {
+        subsystem: "scheduling",
+        op: "slot-validation",
+        expected: true,
+        extra: { phase: "consultation-duration" },
+      });
       return {
         isValid: false,
         errors: [
@@ -851,18 +845,12 @@ export class SlotValidationService {
     } catch (error) {
       // Same reasoning as validateConsultation's duration guard: a modelled
       // config-validation answer, reported at info.
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        {
-          tags: {
-            subsystem: "scheduling",
-            op: "slot-validation",
-            expected: "true",
-          },
-          extra: { phase: "webinar-duration" },
-          level: "info",
-        },
-      );
+      reportError(error, {
+        subsystem: "scheduling",
+        op: "slot-validation",
+        expected: true,
+        extra: { phase: "webinar-duration" },
+      });
       return {
         isValid: false,
         errors: [
@@ -950,18 +938,12 @@ export class SlotValidationService {
       );
     } catch (error) {
       // Same reasoning as the consultation/webinar duration guards.
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        {
-          tags: {
-            subsystem: "scheduling",
-            op: "slot-validation",
-            expected: "true",
-          },
-          extra: { phase: "class-session-duration" },
-          level: "info",
-        },
-      );
+      reportError(error, {
+        subsystem: "scheduling",
+        op: "slot-validation",
+        expected: true,
+        extra: { phase: "class-session-duration" },
+      });
       return {
         isValid: false,
         errors: [

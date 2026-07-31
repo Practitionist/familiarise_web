@@ -1,4 +1,4 @@
-import * as Sentry from "@sentry/nextjs";
+import { reportError } from "@/lib/observability/report";
 import Stripe from "stripe";
 import {
   PaymentIntentParams,
@@ -123,13 +123,10 @@ export async function createStripeCheckoutSession({
     const isCardDecline =
       error instanceof Stripe.errors.StripeError &&
       error.type === "StripeCardError";
-    Sentry.captureException(error, {
-      tags: {
-        subsystem: "payments",
-        provider: "stripe",
-        expected: isCardDecline ? "true" : "false",
-      },
-      level: isCardDecline ? "info" : "error",
+    reportError(error, {
+      subsystem: "payments",
+      tags: { provider: "stripe" },
+      expected: isCardDecline,
       contexts: { payment: { amount, currency } },
     });
     throw handleStripeError(error);
@@ -173,24 +170,16 @@ export async function cancelStripePayment(
         console.log(
           `✅ Payment was already expired/cancelled: ${paymentIntentId}`,
         );
-        Sentry.captureException(error, {
-          tags: {
-            subsystem: "payments",
-            provider: "stripe",
-            expected: "true",
-          },
-          level: "info",
+        reportError(error, {
+          subsystem: "payments",
+          tags: { provider: "stripe" },
+          expected: true,
         });
         return;
       }
     }
     console.error(`Failed to cancel Stripe payment ${paymentIntentId}:`, error);
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      {
-        tags: { subsystem: "payments", provider: "stripe", expected: "false" },
-      },
-    );
+    reportError(error, { subsystem: "payments", tags: { provider: "stripe" } });
   }
 }
 
@@ -237,9 +226,7 @@ export async function createStripeRefund({
     };
   } catch (error) {
     console.error("Stripe refund creation failed:", error);
-    Sentry.captureException(error, {
-      tags: { subsystem: "payments", provider: "stripe", expected: "false" },
-    });
+    reportError(error, { subsystem: "payments", tags: { provider: "stripe" } });
     throw handleStripeRefundError(error);
   }
 }
@@ -268,10 +255,7 @@ export async function getStripeRefund(refundId: string): Promise<RefundResult> {
     };
   } catch (error) {
     console.error("Stripe refund retrieval failed:", error);
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "payments", provider: "stripe", expected: "false" } },
-    );
+    reportError(error, { subsystem: "payments", tags: { provider: "stripe" } });
     throw handleStripeRefundError(error);
   }
 }
@@ -306,10 +290,7 @@ export async function listStripeRefunds(
     }));
   } catch (error) {
     console.error("Stripe refunds list failed:", error);
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "payments", provider: "stripe", expected: "false" } },
-    );
+    reportError(error, { subsystem: "payments", tags: { provider: "stripe" } });
     throw handleStripeRefundError(error);
   }
 }
@@ -353,10 +334,7 @@ export async function getStripeDispute(
     } else {
       console.error("Stripe dispute retrieval failed:", error);
     }
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "payments", provider: "stripe", expected: "false" } },
-    );
+    reportError(error, { subsystem: "payments", tags: { provider: "stripe" } });
     throw handleStripeDisputeError(error);
   }
 }
@@ -410,10 +388,7 @@ export async function submitStripeDisputeEvidence({
     };
   } catch (error) {
     console.error("Stripe dispute evidence submission failed:", error);
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "payments", provider: "stripe", expected: "false" } },
-    );
+    reportError(error, { subsystem: "payments", tags: { provider: "stripe" } });
     throw handleStripeDisputeError(error);
   }
 }
@@ -446,10 +421,7 @@ export async function listStripeDisputes(
     }));
   } catch (error) {
     console.error("Stripe disputes list failed:", error);
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "payments", provider: "stripe", expected: "false" } },
-    );
+    reportError(error, { subsystem: "payments", tags: { provider: "stripe" } });
     throw handleStripeDisputeError(error);
   }
 }

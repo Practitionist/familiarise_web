@@ -37,7 +37,7 @@
  * the paise.
  */
 
-import * as Sentry from "@sentry/nextjs";
+import { reportError, reportMessage } from "@/lib/observability/report";
 import prisma, { type Tx } from "@/lib/prisma";
 import {
   EarningStatus,
@@ -110,9 +110,10 @@ export class RefundValidationError extends Error {
  * every call site still throws the same error object right after this.
  */
 function reportModelledRefundOutcome(err: RefundValidationError): void {
-  Sentry.captureException(err, {
-    tags: { subsystem: "payments", feature: "refund", expected: "true" },
-    level: "info",
+  reportError(err, {
+    subsystem: "payments",
+    tags: { feature: "refund" },
+    expected: true,
   });
 }
 
@@ -375,17 +376,11 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
       idempotencyKey: reserved.id,
     });
   } catch (err) {
-    Sentry.captureException(
-      err instanceof Error ? err : new Error(String(err)),
-      {
-        tags: {
-          subsystem: "payments",
-          feature: "refund",
-          expected: "false",
-        },
-        extra: { paymentId: input.paymentId, refundRowId: reserved.id },
-      },
-    );
+    reportError(err, {
+      subsystem: "payments",
+      tags: { feature: "refund" },
+      extra: { paymentId: input.paymentId, refundRowId: reserved.id },
+    });
     // Keep the PENDING placeholder: the reconcile cron matches it against
     // the gateway (covers "call actually landed but we never heard back")
     // or FAILs it after 24h, which triggers the payer notification (#779).
@@ -548,17 +543,11 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
         (err.code !== "ALREADY_FULLY_REFUNDED" &&
           err.code !== "PAYMENT_NOT_SUCCEEDED")
       ) {
-        Sentry.captureException(
-          err instanceof Error ? err : new Error(String(err)),
-          {
-            tags: {
-              subsystem: "payments",
-              feature: "overage-credit-back",
-              expected: "false",
-            },
-            extra: { parentPaymentId: input.paymentId, sidePaymentId },
-          },
-        );
+        reportError(err, {
+          subsystem: "payments",
+          tags: { feature: "overage-credit-back" },
+          extra: { parentPaymentId: input.paymentId, sidePaymentId },
+        });
         void recordSystemError({
           organizationId: null,
           category: "PAYMENT",
@@ -625,9 +614,10 @@ export async function applyRefundCascade(
     // Idempotency short-circuit — the system working as designed (a
     // redelivered webhook or a racing cron lost the claim). Reported for
     // volume/pattern visibility only.
-    Sentry.captureMessage("Refund cascade idempotency short-circuit", {
-      level: "info",
-      tags: { subsystem: "payments", feature: "refund", expected: "true" },
+    reportMessage("Refund cascade idempotency short-circuit", {
+      subsystem: "payments",
+      tags: { feature: "refund" },
+      expected: true,
       extra: { refundId: input.refundId, paymentId: input.paymentId },
     });
     return {
@@ -1307,15 +1297,12 @@ export async function applyRefundCascade(
     console.error(
       `[ledger] refund reversal posting FAILED for payment ${payment.id} — rolling back the cascade: ${err instanceof Error ? err.message : String(err)}`,
     );
-    Sentry.captureException(
-      err instanceof Error ? err : new Error(String(err)),
-      {
-        tags: { subsystem: "payments", expected: "false" },
-        contexts: {
-          refund: { paymentId: payment.id, refundId: input.refundId },
-        },
+    reportError(err, {
+      subsystem: "payments",
+      contexts: {
+        refund: { paymentId: payment.id, refundId: input.refundId },
       },
-    );
+    });
     void recordSystemError({
       organizationId: payment.organizationId ?? null,
       category: "LEDGER",

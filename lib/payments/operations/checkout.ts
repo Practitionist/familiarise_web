@@ -3,7 +3,7 @@
  * Handles the complete checkout flow for all appointment types
  */
 
-import * as Sentry from "@sentry/nextjs";
+import { reportError } from "@/lib/observability/report";
 import prisma, { type Tx } from "@/lib/prisma";
 import { CheckoutInput, checkoutSchema } from "@/schemas/checkout";
 import { calculateSubscriptionEndDate } from "@/utils/dateUtils";
@@ -194,12 +194,7 @@ export class PaymentIntentManager {
       return paymentResponse;
     } catch (error) {
       console.error("Payment intent creation failed:", error);
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        {
-          tags: { subsystem: "payments", expected: "false" },
-        },
-      );
+      reportError(error, { subsystem: "payments" });
       throw new Error(
         "Failed to create payment intent. Please try again later.",
       );
@@ -218,13 +213,7 @@ export class PaymentIntentManager {
       this.activeIntents.delete(intentId);
     } catch (error) {
       console.error(`Failed to cancel payment intent ${intentId}:`, error);
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        {
-          tags: { subsystem: "payments", expected: "false" },
-          level: "warning",
-        },
-      );
+      reportError(error, { subsystem: "payments", level: "warning" });
       // Don't throw - cleanup should be best-effort
     }
   }
@@ -2246,14 +2235,7 @@ export async function handleCheckout(
         });
       } catch (paymentError) {
         console.error("Payment intent creation failed:", paymentError);
-        Sentry.captureException(
-          paymentError instanceof Error
-            ? paymentError
-            : new Error(String(paymentError)),
-          {
-            tags: { subsystem: "payments", expected: "false" },
-          },
-        );
+        reportError(paymentError, { subsystem: "payments" });
         throw new Error(
           "Failed to create payment intent. Please try again later.",
         );
@@ -2541,15 +2523,10 @@ export async function handleCheckout(
                       "[notifyOrgProgramExhausted] failed:",
                       notifyErr,
                     );
-                    Sentry.captureException(
-                      notifyErr instanceof Error
-                        ? notifyErr
-                        : new Error(String(notifyErr)),
-                      {
-                        tags: { subsystem: "payments", expected: "false" },
-                        level: "warning",
-                      },
-                    );
+                    reportError(notifyErr, {
+                      subsystem: "payments",
+                      level: "warning",
+                    });
                   });
 
                 throw new Error(
@@ -2654,15 +2631,10 @@ export async function handleCheckout(
                       "[notifyOrgProgramCapNear] failed:",
                       notifyErr,
                     );
-                    Sentry.captureException(
-                      notifyErr instanceof Error
-                        ? notifyErr
-                        : new Error(String(notifyErr)),
-                      {
-                        tags: { subsystem: "payments", expected: "false" },
-                        level: "warning",
-                      },
-                    );
+                    reportError(notifyErr, {
+                      subsystem: "payments",
+                      level: "warning",
+                    });
                   });
               }
             }
@@ -2875,15 +2847,7 @@ export async function handleCheckout(
             `⚠️ Failed to process referral qualifying action for user ${userId}:`,
             referralError,
           );
-          Sentry.captureException(
-            referralError instanceof Error
-              ? referralError
-              : new Error(String(referralError)),
-            {
-              tags: { subsystem: "payments", expected: "false" },
-              level: "warning",
-            },
-          );
+          reportError(referralError, { subsystem: "payments", level: "warning" });
         }
 
         // Create consultant earnings (mock payments bypass webhooks, so earnings must be created here)
@@ -3023,15 +2987,10 @@ export async function handleCheckout(
             `⚠️ Failed to process consultant referral qualifying action:`,
             consultantRefError,
           );
-          Sentry.captureException(
-            consultantRefError instanceof Error
-              ? consultantRefError
-              : new Error(String(consultantRefError)),
-            {
-              tags: { subsystem: "payments", expected: "false" },
-              level: "warning",
-            },
-          );
+          reportError(consultantRefError, {
+            subsystem: "payments",
+            level: "warning",
+          });
         }
       }
 
@@ -3072,16 +3031,7 @@ export async function handleCheckout(
           modelledOutcomePatterns.some((msg) =>
             dbError.message.toLowerCase().includes(msg),
           ));
-      Sentry.captureException(
-        dbError instanceof Error ? dbError : new Error(String(dbError)),
-        {
-          tags: {
-            subsystem: "payments",
-            expected: isModelledOutcome ? "true" : "false",
-          },
-          level: isModelledOutcome ? "info" : "error",
-        },
-      );
+      reportError(dbError, { subsystem: "payments", expected: isModelledOutcome });
 
       // CRITICAL: Cancel payment intent since DB operation failed
       // (Skip cleanup for zero-amount payments — they have no real gateway intent)
@@ -3136,16 +3086,7 @@ export async function handleCheckout(
       error instanceof Error &&
       (error.message.includes("currently checking out") ||
         error.message.includes("currently being booked"));
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      {
-        tags: {
-          subsystem: "payments",
-          expected: isLockContention ? "true" : "false",
-        },
-        level: isLockContention ? "info" : "error",
-      },
-    );
+    reportError(error, { subsystem: "payments", expected: isLockContention });
     // Enhanced error handling with lock-specific errors
     if (isLockContention) {
       throw new Error(

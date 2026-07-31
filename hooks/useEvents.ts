@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import * as Sentry from "@sentry/nextjs";
+import { reportError } from "@/lib/observability/report";
 import { useToast } from "@/components/ui/use-toast";
 import {
   TConsultation,
@@ -170,9 +170,7 @@ function useEventsInternal(mode: TEventQueryMode): IEventsResult {
         setError(normalizedErr);
         // Falls through to an empty-list render otherwise — indistinguishable
         // from "this consultee genuinely has no bookings" without this.
-        Sentry.captureException(normalizedErr, {
-          tags: { subsystem: "client", expected: "false" },
-        });
+        reportError(normalizedErr, { subsystem: "client" });
         toast({
           title: "Error fetching events",
           description: message,

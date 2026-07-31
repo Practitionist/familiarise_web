@@ -11,7 +11,7 @@
  * the new Int-based representation.
  */
 
-import * as Sentry from "@sentry/nextjs";
+import { reportError } from "@/lib/observability/report";
 import { DayOfWeek, Prisma } from "@prisma/client";
 import {
   isNextDayOfWeek,
@@ -337,18 +337,12 @@ export function getTimezoneOffsetMinutes(
     // caller in the codebase invokes this once per request (timezone
     // resolution), never per slot candidate in a scan loop, so this can't
     // fan out into per-candidate volume.
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      {
-        tags: {
-          subsystem: "scheduling",
-          op: "slot-validation",
-          expected: "true",
-        },
-        extra: { timezone },
-        level: "info",
-      },
-    );
+    reportError(error, {
+      subsystem: "scheduling",
+      op: "slot-validation",
+      expected: true,
+      extra: { timezone },
+    });
     return 0;
   }
 }

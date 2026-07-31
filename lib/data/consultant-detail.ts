@@ -1,5 +1,5 @@
 import { cache } from "react";
-import * as Sentry from "@sentry/nextjs";
+import { reportError } from "@/lib/observability/report";
 import prisma from "@/lib/prisma";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
 
@@ -105,10 +105,7 @@ export const getConsultantDetail = cache(async (consultantId: string) => {
     // A throw here means the row picked up something non-JSON-safe (a
     // serialization regression, not a missing/empty result) — the public
     // detail page would otherwise 500 with no trace of why.
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "consultant", expected: "false" } },
-    );
+    reportError(error, { subsystem: "consultant" });
     throw error;
   }
 });

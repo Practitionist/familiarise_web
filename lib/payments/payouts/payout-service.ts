@@ -3,7 +3,7 @@
  * Provider-agnostic payout orchestration with admin approval workflow
  */
 
-import * as Sentry from "@sentry/nextjs";
+import { reportError, reportMessage } from "@/lib/observability/report";
 import prisma from "@/lib/prisma";
 import {
   PayoutStatus,
@@ -605,9 +605,9 @@ async function processSinglePayout(payout: {
       );
       // Lost CAS race — a concurrent runner already claimed this payout. The
       // system working as designed.
-      Sentry.captureMessage("Payout CAS claim lost to a concurrent runner", {
-        level: "info",
-        tags: { subsystem: "payments", expected: "true" },
+      reportMessage("Payout CAS claim lost to a concurrent runner", {
+        subsystem: "payments",
+        expected: true,
         extra: { payoutId: payout.id },
       });
       return { payoutId: payout.id, success: false, skipped: true };
@@ -778,25 +778,19 @@ async function processSinglePayout(payout: {
           `[payout-service] CRITICAL: gateway accepted ${providerPayoutId} but DB persist failed twice for payout ${payout.id}; manual reconcile required`,
           persistErr,
         );
-        Sentry.captureException(
-          persistErr instanceof Error
-            ? persistErr
-            : new Error(String(persistErr)),
-          {
-            tags: { subsystem: "payments", expected: "false" },
-            level: "fatal",
-            contexts: { payout: { payoutId: payout.id, providerPayoutId } },
-          },
-        );
+        reportError(persistErr, {
+          subsystem: "payments",
+          level: "fatal",
+          contexts: { payout: { payoutId: payout.id, providerPayoutId } },
+        });
       }
       console.error(
         `⚠️ Payout ${payout.id}: gateway accepted ${providerPayoutId} but DB write failed — quarantined PROCESSING (NOT failed) to avoid double-pay`,
       );
-      Sentry.captureException(
+      reportError(
         new Error(`gateway-accepted-db-write-failed: payout ${payout.id}`),
         {
-          tags: { subsystem: "payments", expected: "false" },
-          level: "error",
+          subsystem: "payments",
           contexts: { payout: { payoutId: payout.id, providerPayoutId } },
         },
       );
@@ -1015,9 +1009,9 @@ export async function handlePayoutWebhook(
       );
       // Idempotency short-circuit — a redelivered/duplicate gateway webhook.
       // The system working as designed.
-      Sentry.captureMessage("Payout webhook idempotency short-circuit", {
-        level: "info",
-        tags: { subsystem: "payments", expected: "true" },
+      reportMessage("Payout webhook idempotency short-circuit", {
+        subsystem: "payments",
+        expected: true,
         extra: { payoutId: payout.id, status },
       });
       return;
@@ -1152,13 +1146,7 @@ export async function handlePayoutWebhook(
         dashboardUrl: `${getAppUrl()}/dashboard`,
       }).catch((error) => {
         console.error("[payouts] Failed to send payout notification:", error);
-        Sentry.captureException(
-          error instanceof Error ? error : new Error(String(error)),
-          {
-            tags: { subsystem: "payments", expected: "false" },
-            level: "warning",
-          },
-        );
+        reportError(error, { subsystem: "payments", level: "warning" });
       });
     }
   }
@@ -1194,13 +1182,9 @@ export async function markConsultantPayoutReversed(
       console.warn(
         `[payouts] markConsultantPayoutReversed: payout not found for provider ID ${providerPayoutId}`,
       );
-      Sentry.captureMessage(
+      reportMessage(
         "markConsultantPayoutReversed: payout not found for provider ID",
-        {
-          level: "warning",
-          tags: { subsystem: "payments", expected: "false" },
-          extra: { providerPayoutId },
-        },
+        { subsystem: "payments", level: "warning", extra: { providerPayoutId } },
       );
       return { wasNoOp: true, notify: null };
     }
@@ -1216,14 +1200,11 @@ export async function markConsultantPayoutReversed(
     if (claim.count === 0) {
       // Modelled no-op — caller falls through to the pre-settlement FAILED
       // path when the payout wasn't COMPLETED.
-      Sentry.captureMessage(
-        "markConsultantPayoutReversed: no-op (not COMPLETED)",
-        {
-          level: "info",
-          tags: { subsystem: "payments", expected: "true" },
-          extra: { payoutId: payout.id },
-        },
-      );
+      reportMessage("markConsultantPayoutReversed: no-op (not COMPLETED)", {
+        subsystem: "payments",
+        expected: true,
+        extra: { payoutId: payout.id },
+      });
       return { wasNoOp: true, notify: null };
     }
 

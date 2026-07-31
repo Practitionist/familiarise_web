@@ -5,7 +5,7 @@
  * dependency-light); this module carries the heavier graph (computeOverage +
  * the Novu member-due notification).
  */
-import * as Sentry from "@sentry/nextjs";
+import { reportError } from "@/lib/observability/report";
 import prisma from "@/lib/prisma";
 import {
   PaymentStatus,
@@ -146,10 +146,7 @@ export async function recordOverageAtCheckout(
     );
     // Modelled outcome (the circuit breaker working as designed), not a
     // fault — captured for volume/pattern visibility only.
-    Sentry.captureException(capExhaustedErr, {
-      tags: { subsystem: "payments", expected: "true" },
-      level: "info",
-    });
+    reportError(capExhaustedErr, { subsystem: "payments", expected: true });
     throw capExhaustedErr;
   }
 
@@ -226,8 +223,8 @@ export async function recordOverageAtCheckout(
         );
         // A genuine coverage gap (#715), not a modelled outcome — this aborts
         // a booking with real money on the line.
-        Sentry.captureException(carveErr, {
-          tags: { subsystem: "payments", expected: "false" },
+        reportError(carveErr, {
+          subsystem: "payments",
           contexts: { overage: { paymentId, basePaise } },
         });
         throw carveErr;
@@ -270,13 +267,7 @@ export async function recordOverageAtCheckout(
       })
       .catch((notifyErr) => {
         console.error("[notifyOrgProgramOverageDue] failed:", notifyErr);
-        Sentry.captureException(
-          notifyErr instanceof Error ? notifyErr : new Error(String(notifyErr)),
-          {
-            tags: { subsystem: "payments", expected: "false" },
-            level: "warning",
-          },
-        );
+        reportError(notifyErr, { subsystem: "payments", level: "warning" });
       });
     return;
   }

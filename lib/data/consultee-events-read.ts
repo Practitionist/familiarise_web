@@ -14,7 +14,7 @@
  * and is callable from a Server Component.
  */
 
-import * as Sentry from "@sentry/nextjs";
+import { reportError } from "@/lib/observability/report";
 import prisma from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
 import type { Scope } from "@/lib/api/scope/parse";
@@ -49,10 +49,7 @@ export async function readConsulteeEvents(
     // captured for visibility only (stale link / deleted profile), not a
     // fault in this read.
     const notFoundErr = new ConsulteeProfileNotFoundError(consulteeId);
-    Sentry.captureException(notFoundErr, {
-      tags: { subsystem: "consultees", expected: "true" },
-      level: "info",
-    });
+    reportError(notFoundErr, { subsystem: "consultees", expected: true });
     throw notFoundErr;
   }
 

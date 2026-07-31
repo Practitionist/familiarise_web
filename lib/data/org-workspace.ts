@@ -14,7 +14,7 @@
  * verbatim against the client query keys.
  */
 
-import * as Sentry from "@sentry/nextjs";
+import { reportError } from "@/lib/observability/report";
 import type { FundingSource, MemberRole, OrgStatus } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { sumPaise } from "@/lib/payments/utils/money";
@@ -394,10 +394,7 @@ export async function getWorkspaceSettings(
     // client-side fetch (see docstring above) — captured for visibility
     // into how often the IDOR-checked id resolves to no row.
     const notFoundErr = new Error("OrgWorkspaceProfile not found");
-    Sentry.captureException(notFoundErr, {
-      tags: { subsystem: "organizations", expected: "true" },
-      level: "info",
-    });
+    reportError(notFoundErr, { subsystem: "organizations", expected: true });
     throw notFoundErr;
   }
 

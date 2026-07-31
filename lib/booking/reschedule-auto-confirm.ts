@@ -17,7 +17,7 @@
  * outcome, not an error.
  */
 
-import * as Sentry from "@sentry/nextjs";
+import { reportError } from "@/lib/observability/report";
 import prisma from "@/lib/prisma";
 import type { EventType } from "@/utils/slotAllocation/types";
 import { SlotAllocationService } from "@/utils/slotAllocation/SlotAllocationService";
@@ -107,21 +107,15 @@ export async function tryAutoConfirmProposal(
       }
     });
   } catch (err) {
-    Sentry.captureException(
-      err instanceof Error ? err : new Error(String(err)),
-      {
-        tags: {
-          subsystem: "bookings",
-          op: "reschedule-auto-confirm",
-          expected: "false",
-        },
-        extra: {
-          phase: "stamp",
-          rescheduleRequestId,
-          releasedSlotIds: request.releasedSlotIds,
-        },
+    reportError(err, {
+      subsystem: "bookings",
+      op: "reschedule-auto-confirm",
+      extra: {
+        phase: "stamp",
+        rescheduleRequestId,
+        releasedSlotIds: request.releasedSlotIds,
       },
-    );
+    });
     throw err;
   }
 
@@ -152,23 +146,17 @@ export async function tryAutoConfirmProposal(
         }
       });
     } catch (err) {
-      Sentry.captureException(
-        err instanceof Error ? err : new Error(String(err)),
-        {
-          tags: {
-            subsystem: "bookings",
-            op: "reschedule-auto-confirm",
-            expected: "false",
-          },
-          level: "fatal",
-          extra: {
-            phase: "restore",
-            rescheduleRequestId,
-            releasedSlotIds: request.releasedSlotIds,
-            originalSlotIds: pairs.map((p) => p.slot.id),
-          },
+      reportError(err, {
+        subsystem: "bookings",
+        op: "reschedule-auto-confirm",
+        level: "fatal",
+        extra: {
+          phase: "restore",
+          rescheduleRequestId,
+          releasedSlotIds: request.releasedSlotIds,
+          originalSlotIds: pairs.map((p) => p.slot.id),
         },
-      );
+      });
       throw err;
     }
     return {
@@ -196,18 +184,12 @@ export async function tryAutoConfirmProposal(
     // but the proposal's own bookkeeping never caught up, which is worth
     // knowing at the default fault level.
     const isLostRace = err instanceof IllegalTransitionError;
-    Sentry.captureException(
-      err instanceof Error ? err : new Error(String(err)),
-      {
-        tags: {
-          subsystem: "bookings",
-          op: "reschedule-auto-confirm",
-          ...(isLostRace ? { expected: "true" } : {}),
-        },
-        extra: { phase: "finalize", rescheduleRequestId, eventType, eventId },
-        ...(isLostRace ? { level: "info" as const } : {}),
-      },
-    );
+    reportError(err, {
+      subsystem: "bookings",
+      op: "reschedule-auto-confirm",
+      expected: isLostRace,
+      extra: { phase: "finalize", rescheduleRequestId, eventType, eventId },
+    });
     throw err;
   }
 

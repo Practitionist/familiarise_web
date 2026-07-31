@@ -6,6 +6,7 @@
  */
 
 import * as Sentry from "@sentry/nextjs";
+import { reportError, reportMessage } from "@/lib/observability/report";
 import crypto from "crypto";
 
 // ============================================
@@ -321,16 +322,10 @@ export class RazorpayPayoutsService {
       // Genuinely unexpected (network/shape/auth) — the fail-open null return
       // is a deliberate caller-side decision (assertPayoutBalance), not a
       // claim that this failure is routine.
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        {
-          tags: {
-            subsystem: "payments",
-            provider: "razorpay",
-            expected: "false",
-          },
-        },
-      );
+      reportError(error, {
+        subsystem: "payments",
+        tags: { provider: "razorpay" },
+      });
       return null;
     }
   }
@@ -439,9 +434,11 @@ export class RazorpayPayoutsService {
       // captured at warning/expected so it never reads as a platform fault.
       // Candidate for a Sentry inbound rate-limit on this event if volume
       // ever needs bounding.
-      Sentry.captureMessage("RazorpayX webhook signature length mismatch", {
+      reportMessage("RazorpayX webhook signature length mismatch", {
+        subsystem: "payments",
+        tags: { provider: "razorpay" },
+        expected: true,
         level: "warning",
-        tags: { subsystem: "payments", provider: "razorpay", expected: "true" },
       });
       return false;
     }
@@ -452,9 +449,11 @@ export class RazorpayPayoutsService {
     );
     if (!valid) {
       // Same rate-limit candidacy note as above.
-      Sentry.captureMessage("RazorpayX webhook signature mismatch", {
+      reportMessage("RazorpayX webhook signature mismatch", {
+        subsystem: "payments",
+        tags: { provider: "razorpay" },
+        expected: true,
         level: "warning",
-        tags: { subsystem: "payments", provider: "razorpay", expected: "true" },
       });
     }
     return valid;
@@ -559,17 +558,11 @@ export function isRazorpayPayoutsConfigured(): boolean {
   } catch (error) {
     // Constructor throws only on missing credentials — a modelled
     // "not configured yet" outcome (e.g. local/dev env), not a fault.
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      {
-        tags: {
-          subsystem: "payments",
-          provider: "razorpay",
-          expected: "true",
-        },
-        level: "info",
-      },
-    );
+    reportError(error, {
+      subsystem: "payments",
+      tags: { provider: "razorpay" },
+      expected: true,
+    });
     return false;
   }
 }

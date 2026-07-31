@@ -5,7 +5,7 @@
  * Handles auto, manual, and requested slot allocation.
  */
 
-import * as Sentry from "@sentry/nextjs";
+import { reportError } from "@/lib/observability/report";
 import prisma, {
   type Tx,
   type PrismaLike,
@@ -150,23 +150,17 @@ export class SlotAllocationService {
       // available" for a database failure. Real faults keep the default
       // error level with no expected tag.
       const modeled = this.isModeledOutcome(error);
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        {
-          tags: {
-            subsystem: "scheduling",
-            op: "slot-allocation",
-            ...(modeled ? { expected: "true" } : {}),
-          },
-          extra: {
-            mode: request.mode,
-            eventType: request.eventType,
-            eventId: request.eventId,
-            errorCode,
-          },
-          ...(modeled ? { level: "info" as const } : {}),
+      reportError(error, {
+        subsystem: "scheduling",
+        op: "slot-allocation",
+        expected: modeled,
+        extra: {
+          mode: request.mode,
+          eventType: request.eventType,
+          eventId: request.eventId,
+          errorCode,
         },
-      );
+      });
       return {
         success: false,
         error: error instanceof Error ? error.message : "Allocation failed",
@@ -1397,33 +1391,21 @@ export class SlotAllocationService {
                 // A same-key retry losing this race is the ordinary replay
                 // case (#837) — reported at info so its frequency is visible
                 // without reading as a fault.
-                Sentry.captureException(
-                  err instanceof Error ? err : new Error(String(err)),
-                  {
-                    tags: {
-                      subsystem: "scheduling",
-                      op: "slot-allocation",
-                      expected: "true",
-                    },
-                    extra: { phase: "requested-stamp", idempotencyKey },
-                    level: "info",
-                  },
-                );
+                reportError(err, {
+                  subsystem: "scheduling",
+                  op: "slot-allocation",
+                  expected: true,
+                  extra: { phase: "requested-stamp", idempotencyKey },
+                });
                 throw new AllocationConflictError(
                   "This allocation was already submitted; the original result applies.",
                 );
               }
-              Sentry.captureException(
-                err instanceof Error ? err : new Error(String(err)),
-                {
-                  tags: {
-                    subsystem: "scheduling",
-                    op: "slot-allocation",
-                    expected: "false",
-                  },
-                  extra: { phase: "requested-stamp", idempotencyKey },
-                },
-              );
+              reportError(err, {
+                subsystem: "scheduling",
+                op: "slot-allocation",
+                extra: { phase: "requested-stamp", idempotencyKey },
+              });
               throw err;
             }
           }
@@ -2245,33 +2227,21 @@ export class SlotAllocationService {
       if (isExclusionViolation(error) || isUniqueViolation(error)) {
         // A concurrent booking winning the #440 overlap guard is the ordinary
         // "someone else got there first" race, not a fault.
-        Sentry.captureException(
-          error instanceof Error ? error : new Error(String(error)),
-          {
-            tags: {
-              subsystem: "scheduling",
-              op: "slot-allocation",
-              expected: "true",
-            },
-            extra: { phase: "create-appointments", eventType, eventId },
-            level: "info",
-          },
-        );
+        reportError(error, {
+          subsystem: "scheduling",
+          op: "slot-allocation",
+          expected: true,
+          extra: { phase: "create-appointments", eventType, eventId },
+        });
         throw new AllocationConflictError(
           "This time slot was just booked by someone else. Please pick another time.",
         );
       }
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        {
-          tags: {
-            subsystem: "scheduling",
-            op: "slot-allocation",
-            expected: "false",
-          },
-          extra: { phase: "create-appointments", eventType, eventId },
-        },
-      );
+      reportError(error, {
+        subsystem: "scheduling",
+        op: "slot-allocation",
+        extra: { phase: "create-appointments", eventType, eventId },
+      });
       throw error;
     }
 
@@ -2442,28 +2412,19 @@ export class SlotAllocationService {
         // to the appropriate HTTP status for the route handler. An
         // organization's overage cap being hit is an ANSWER, not a fault —
         // reported at info so its rate is visible without paging anyone.
-        Sentry.captureException(err, {
-          tags: {
-            subsystem: "scheduling",
-            op: "slot-allocation",
-            expected: "true",
-          },
+        reportError(err, {
+          subsystem: "scheduling",
+          op: "slot-allocation",
+          expected: true,
           extra: { phase: "subscription-cap", subscriptionId, consulteeUserId },
-          level: "info",
         });
         throw err;
       }
-      Sentry.captureException(
-        err instanceof Error ? err : new Error(String(err)),
-        {
-          tags: {
-            subsystem: "scheduling",
-            op: "slot-allocation",
-            expected: "false",
-          },
-          extra: { phase: "subscription-cap", subscriptionId, consulteeUserId },
-        },
-      );
+      reportError(err, {
+        subsystem: "scheduling",
+        op: "slot-allocation",
+        extra: { phase: "subscription-cap", subscriptionId, consulteeUserId },
+      });
       throw err;
     }
   }

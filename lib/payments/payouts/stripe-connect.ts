@@ -5,7 +5,7 @@
  * API Documentation: https://docs.stripe.com/connect
  */
 
-import * as Sentry from "@sentry/nextjs";
+import { reportError } from "@/lib/observability/report";
 import Stripe from "stripe";
 
 // ============================================
@@ -538,17 +538,11 @@ export function isStripeConnectConfigured(): boolean {
   } catch (error) {
     // Constructor throws only on a missing secret key — a modelled
     // "not configured yet" outcome (e.g. local/dev env), not a fault.
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      {
-        tags: {
-          subsystem: "payments",
-          provider: "stripe",
-          expected: "true",
-        },
-        level: "info",
-      },
-    );
+    reportError(error, {
+      subsystem: "payments",
+      tags: { provider: "stripe" },
+      expected: true,
+    });
     return false;
   }
 }

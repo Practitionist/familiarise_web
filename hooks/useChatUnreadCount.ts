@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import * as Sentry from "@sentry/nextjs";
+import { reportError } from "@/lib/observability/report";
 import { StreamChat } from "stream-chat";
 
 const apiKey = process.env.NEXT_PUBLIC_STREAM_API_KEY;
@@ -59,10 +59,7 @@ export function useChatUnreadCount(): number {
         // A failed recount leaves the previous number in place — a stale badge
         // beats one that drops to zero on a transient error. Reported for
         // visibility only; the degrade itself is unchanged.
-        Sentry.captureException(
-          error instanceof Error ? error : new Error(String(error)),
-          { tags: { subsystem: "client", expected: "true" }, level: "info" },
-        );
+        reportError(error, { subsystem: "client", expected: true });
       }
     };
 
