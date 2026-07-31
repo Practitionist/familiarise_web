@@ -80,6 +80,18 @@ export interface AppointmentVM {
   title: string;
   /** The "other side" — consultant for consultee views, consultee/host for consultant views. */
   counterpart: PersonVM;
+  /**
+   * The consultant delivering this booking, for surfaces that need to load
+   * their availability (the reschedule picker).
+   *
+   * Required rather than optional so the compiler names every mapper: it is
+   * NOT derivable from `raw.appointment` on the consultee side, where the read
+   * starts at the Consultation and nests the appointment beneath it — leaving
+   * the plan a sibling, not a child. Reading it off the appointment there
+   * silently yields null, which reads as "this consultant has no availability"
+   * rather than as a bug.
+   */
+  consultantProfileId: string | null;
   /** Normalized (uppercase) lifecycle status from the owning event's enum. */
   status: string;
   bucket: AppointmentBucket;
@@ -136,19 +148,3 @@ export function sortSessions(sessions: SessionVM[]): SessionVM[] {
  * Group events return null: they are organizer-rescheduled only, so no proposal
  * surface is offered for them.
  */
-export function consultantProfileIdOf(
-  appointment:
-    | {
-        consultation?: { consultationPlan?: { consultantProfileId: string | null } | null } | null;
-        subscription?: { subscriptionPlan?: { consultantProfileId: string | null } | null } | null;
-      }
-    | null
-    | undefined,
-): string | null {
-  if (!appointment) return null;
-  return (
-    appointment.consultation?.consultationPlan?.consultantProfileId ??
-    appointment.subscription?.subscriptionPlan?.consultantProfileId ??
-    null
-  );
-}

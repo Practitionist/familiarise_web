@@ -45,6 +45,10 @@ interface RescheduleSessionsModalProps {
    * it the dialog degrades to release-only, which is the old behaviour.
    */
   consultantProfileId?: string | null;
+  /** The viewer's own user id. The picker greys out times they are ALREADY
+   *  booked at with any consultant — allocation rejects those, so painting
+   *  them green would only fail at submit. */
+  consulteeUserId?: string;
   /** Session length in hours, so the picker asks for the right block size. */
   sessionDurationInHours?: number;
   /**
@@ -195,6 +199,7 @@ export function RescheduleSessionsModal({
   rawSlots,
   isLoading,
   consultantProfileId,
+  consulteeUserId,
   sessionDurationInHours,
   onConfirm,
 }: Readonly<RescheduleSessionsModalProps>) {
@@ -314,17 +319,24 @@ export function RescheduleSessionsModal({
         <ResponsiveModalHeader>
           <ResponsiveModalTitle className="flex items-center gap-2">
             <Clock className="h-5 w-5 text-muted-foreground" />
-            Reschedule Options
+            {isSingleSession ? "Reschedule Session" : "Reschedule Options"}
           </ResponsiveModalTitle>
           <ResponsiveModalDescription>
-            Choose how you&apos;d like to reschedule your{" "}
-            {typeLabel.toLowerCase()} sessions.
+            {isSingleSession
+              ? `Pick a new time for your ${typeLabel.toLowerCase()}.`
+              : `Choose how you'd like to reschedule your ${typeLabel.toLowerCase()} sessions.`}
           </ResponsiveModalDescription>
         </ResponsiveModalHeader>
 
         <div className="py-4 space-y-4">
           {step === "sessions" && (
             <>
+              {/* Every session-selection control hangs off this ONE check.
+                  Gating the step but not its chrome is how a one-session
+                  consultation ended up being asked to "Reschedule Multiple
+                  Sessions" and warned that "All 1 sessions will be released". */}
+              {!isSingleSession && (
+                <>
               <RadioGroup
                 value={rescheduleType}
                 onValueChange={(value) => {
@@ -427,6 +439,8 @@ export function RescheduleSessionsModal({
                   onToggle={setSelectedSlotIds}
                 />
               )}
+                </>
+              )}
 
               <div className="bg-amber-50 border border-amber-200 dark:bg-amber-900/20 dark:border-amber-900/40 rounded-lg p-3">
                 <p className="text-xs text-amber-800 dark:text-amber-300">
@@ -452,6 +466,7 @@ export function RescheduleSessionsModal({
 
               <SafeUnifiedCalendar
                 consultantId={consultantProfileId}
+                consulteeUserId={consulteeUserId}
                 eventType="consultation"
                 mode="select"
                 sessionDurationInHours={sessionDurationInHours}

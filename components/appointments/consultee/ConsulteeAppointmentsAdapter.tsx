@@ -30,7 +30,7 @@ import type {
 } from "@/lib/appointments/view-model";
 import { useEventActions } from "@/components/appointments/consultee/useEventActions";
 import { RescheduleSessionsModal } from "@/components/appointments/consultee/RescheduleSessionsModal";
-import { consultantProfileIdOf } from "@/lib/appointments/view-model";
+import { useSession } from "@/lib/auth-client";
 import { CancelConfirmationDialog } from "@/components/appointments/consultee/CancelConfirmationDialog";
 import { ReportIssueDialog } from "@/components/appointments/consultee/ReportIssueDialog";
 import { DocumentUpload } from "@/components/appointments/DocumentUpload";
@@ -70,6 +70,10 @@ export function useConsulteeAppointmentsAdapter(): AppointmentActionAdapter {
   const client = useStreamVideoClient();
   const params = useParams<{ consulteeId: string }>();
   const consulteeId = params?.consulteeId;
+  // The viewer's USER id (not the consultee-profile id in the route) — the
+  // availability grid keys occupancy off slot participation, and the route's
+  // `isSelf` gate compares against session.user.id.
+  const { data: session } = useSession();
 
   // ONE set of dialogs, keyed off the row that opened them.
   const [activeVm, setActiveVm] = useState<AppointmentVM | null>(null);
@@ -173,14 +177,26 @@ export function useConsulteeAppointmentsAdapter(): AppointmentActionAdapter {
   const overflowItems = (vm: AppointmentVM): OverflowItem[] => {
     const items: OverflowItem[] = [];
     const inactive = isInactiveStatus(vm.status);
-    const firstRaw = vm.raw.rawSlots?.[0];
+    const slots = vm.raw.rawSlots ?? [];
+    const firstRaw = slots[0];
     const tentative = firstRaw?.isTentative ?? false;
+    // A released slot awaiting a new time IS the open reschedule: at most one
+    // may be live per appointment (the nullable-unique openForAppointmentId),
+    // so offering the action again only earns a 409.
+    const rescheduleInFlight = slots.some(
+      (slot) => slot.completionStatus === "RESCHEDULED",
+    );
 
     if (
       vm.appointmentId &&
       !inactive &&
       !tentative &&
-      isApprovedStatus(vm.status)
+      isApprovedStatus(vm.status) &&
+      // An APPROVED booking with nothing allocated yet ("Not scheduled · 0/0")
+      // has no time to move. The proposal window is derived from the earliest
+      // released session, so this would fail with PROPOSAL_WINDOW_CLOSED.
+      slots.length > 0 &&
+      !rescheduleInFlight
     ) {
       items.push({
         key: "reschedule",
@@ -269,7 +285,8 @@ export function useConsulteeAppointmentsAdapter(): AppointmentActionAdapter {
           typeLabel={typeLabel}
           rawSlots={activeVm.raw.rawSlots ?? []}
           isLoading={actions.isLoading}
-          consultantProfileId={consultantProfileIdOf(activeVm.raw.appointment)}
+          consultantProfileId={activeVm.consultantProfileId}
+          consulteeUserId={session?.user?.id}
           sessionDurationInHours={
             activeVm.raw.appointment?.subscription?.subscriptionPlan
               ?.sessionDurationInHours ?? undefined
