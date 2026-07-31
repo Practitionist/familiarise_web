@@ -66,6 +66,39 @@ function isValidOvernightSlot(startTime: Date, endTime: Date): boolean {
   return false; // Invalid slot
 }
 
+// An org OWNER/MAINTAINER acting for a member consultant (RequestSlotAllocationTab
+// mounts mode="allocate" for org admins allocating on a consultant's behalf)
+// is authorized the same as the owning consultant. isPrivileged only covers
+// PLATFORM staff, so without this an org admin 403s and loses the whole
+// calendar rather than just the tooltip detail. EXPERT/other org roles are
+// deliberately excluded — same Membership shape requireOrgAccess/catalog
+// route use elsewhere (consultantProfileId + role: "EXPERT" identifies the
+// org the consultant belongs to; isAtLeastRole's MAINTAINER floor is the
+// "admin" rank used throughout app/api/organizations/**).
+async function isOrgAdminOfConsultant(
+  userId: string,
+  consultantId: string,
+): Promise<boolean> {
+  const membership = await prisma.membership.findFirst({
+    where: {
+      userId,
+      status: "ACTIVE",
+      role: { in: ["OWNER", "MAINTAINER"] },
+      organization: {
+        memberships: {
+          some: {
+            consultantProfileId: consultantId,
+            role: "EXPERT",
+            status: "ACTIVE",
+          },
+        },
+      },
+    },
+    select: { id: true },
+  });
+  return !!membership;
+}
+
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ consultantId: string }> },
@@ -104,16 +137,33 @@ export async function GET(
 
     let includeAppointmentDetails = false;
     if (includeAppointmentDetailsRequested) {
-      if (
-        !session?.user?.id ||
-        (!isOwningConsultant && !isPrivileged(session.user.role))
-      ) {
+      // Three outcomes, not two.
+      //
+      // The detail payload carries plan titles and participant names. The
+      // consultant may see their own; platform staff may see anyone's. An org
+      // admin allocating for a member consultant needs the CALENDAR — which
+      // cells are taken — but not what each block is: the consultant's personal
+      // bookings with unrelated consultees are content, and ADR 20 gives an org
+      // metadata, not content.
+      //
+      // So they are neither authorized nor refused. They get the same
+      // busy/free grid a buyer gets, and the allocate surface works. 403ing
+      // them cost the whole calendar over a tooltip they must not see anyway.
+      const maySeeDetails =
+        !!session?.user?.id &&
+        (isOwningConsultant || isPrivileged(session.user.role));
+      const maySeeCalendar =
+        maySeeDetails ||
+        (!!session?.user?.id &&
+          (await isOrgAdminOfConsultant(session.user.id, consultantId)));
+
+      if (!maySeeCalendar) {
         return NextResponse.json(
           { error: "Forbidden: appointment details require consultant ownership" },
           { status: 403 },
         );
       }
-      includeAppointmentDetails = true;
+      includeAppointmentDetails = maySeeDetails;
     }
 
     // The allocator treats the CONSULTEE's bookings with ANY consultant as
