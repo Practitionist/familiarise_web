@@ -208,15 +208,6 @@ export function RescheduleSessionsModal({
   >("entire");
   const [selectedSlotIds, setSelectedSlotIds] = React.useState<string[]>([]);
 
-  // Reset selection whenever the dialog (re)opens for a program.
-  React.useEffect(() => {
-    if (open) {
-      setRescheduleType("entire");
-      setSelectedSlotIds([]);
-      setStep("sessions");
-      setProposedSlots([]);
-    }
-  }, [open]);
 
   // Group slots by appointmentId — one session can span multiple slots.
   const groupedSessions = React.useMemo(() => {
@@ -276,6 +267,27 @@ export function RescheduleSessionsModal({
 
   const canProposeTimes = !!consultantProfileId;
 
+  /**
+   * A one-session booking has nothing to choose between, so the "which
+   * sessions" step is noise: there is only ever one answer. Skipping it is what
+   * lets this modal serve consultations too, replacing the separate
+   * confirm-only dialog they used to get — which offered no way to propose a
+   * time at all.
+   */
+  const isSingleSession = groupedSessions.length <= 1;
+
+
+  // Reset whenever the dialog (re)opens, and start on the step that actually
+  // has a question to answer: a one-session booking has nothing to choose
+  // between, so it opens straight on "when would you like it instead".
+  React.useEffect(() => {
+    if (open) {
+      setRescheduleType("entire");
+      setSelectedSlotIds([]);
+      setStep(isSingleSession && canProposeTimes ? "times" : "sessions");
+      setProposedSlots([]);
+    }
+  }, [open, isSingleSession, canProposeTimes]);
 
   /**
    * Releasing without naming a time is still valid — it hands the consultant a
@@ -467,14 +479,18 @@ export function RescheduleSessionsModal({
           <Button
             variant="outline"
             onClick={() =>
-              step === "times" ? setStep("sessions") : onOpenChange(false)
+              // A single-session booking never had a sessions step to go back
+              // to, so "Back" there would strand the user on a dead button.
+              step === "times" && !isSingleSession
+                ? setStep("sessions")
+                : onOpenChange(false)
             }
             disabled={isLoading}
           >
-            {step === "times" ? "Back" : "Cancel"}
+            {step === "times" && !isSingleSession ? "Back" : "Cancel"}
           </Button>
 
-          {step === "sessions" && canProposeTimes && (
+          {step === "sessions" && canProposeTimes && !isSingleSession && (
             <Button
               onClick={() => setStep("times")}
               disabled={isLoading || selectionIncomplete}
