@@ -23,6 +23,23 @@ import { streamLogger } from "@/lib/stream-logger";
 const slotIdSchema = z.string().min(1, "Slot ID is required");
 const streamCallIdSchema = z.string().min(1, "Stream Call ID is required");
 
+/** Only what the anchor walk and `MeetingSlot` need — see #1061. */
+const anchorSlotSelect = {
+  id: true,
+  startsAt: true,
+  endsAt: true,
+  isTentative: true,
+  appointmentId: true,
+} as const;
+
+export type AnchorSlot = {
+  id: string;
+  startsAt: Date;
+  endsAt: Date;
+  isTentative: boolean;
+  appointmentId: string;
+};
+
 const slotSchema = z.object({
   id: z.string().min(1),
   startsAt: z.coerce.date(),
@@ -30,6 +47,70 @@ const slotSchema = z.object({
   isTentative: z.boolean().optional(),
   appointmentId: z.string().nullable().optional(),
 });
+
+/**
+ * Resolves the slot row a session's video room is keyed to (#1061).
+ *
+ * A booking longer than 30 minutes is stored as N consecutive rows, and the
+ * three dashboard surfaces each hand us a different one — so the room has to
+ * be anchored to the run's FIRST row or the two sides of the same call end up
+ * in different Stream rooms. This must be resolved server-side: the planner
+ * builds a `MeetingAppointment` carrying a single slot, so the client cannot
+ * see the run it belongs to.
+ *
+ * @param slotId Any row of the session.
+ * @returns The anchor row, or null when it cannot be resolved (caller falls
+ *   back to the row it was given, preserving today's behaviour).
+ */
+export async function resolveSessionAnchorSlot(
+  slotId: string,
+): Promise<AnchorSlot | null> {
+  const validatedSlotId = slotIdSchema.parse(slotId);
+
+  try {
+    const slot = await prisma.slotOfAppointment.findUnique({
+      where: { id: validatedSlotId },
+      select: anchorSlotSelect,
+    });
+    if (!slot) return null;
+
+    // Served by @@index([appointmentId]).
+    const siblings = await prisma.slotOfAppointment.findMany({
+      where: {
+        appointmentId: slot.appointmentId,
+        deletedAt: null,
+        completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
+      },
+      orderBy: { startsAt: "asc" },
+      select: anchorSlotSelect,
+    });
+
+    // The row we were handed is itself dead or soft-deleted — it anchors only
+    // itself, which keeps a stale Join click on its existing room.
+    let index = siblings.findIndex((s) => s.id === slot.id);
+    if (index < 0) return slot;
+
+    while (
+      index > 0 &&
+      siblings[index - 1].endsAt.getTime() ===
+        siblings[index].startsAt.getTime() &&
+      siblings[index - 1].isTentative === siblings[index].isTentative
+    ) {
+      index -= 1;
+    }
+
+    return siblings[index];
+  } catch (error) {
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "stream" } },
+    );
+    streamLogger.error("Failed to resolve session anchor slot", error, {
+      slotId: validatedSlotId,
+    });
+    return null;
+  }
+}
 
 /**
  * Finds an existing meeting session in the database by slot ID.

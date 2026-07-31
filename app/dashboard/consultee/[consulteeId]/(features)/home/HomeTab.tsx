@@ -137,13 +137,16 @@ function UpcomingSessionCard({
   const isTentative = event.joinableSlot?.isTentative ?? true;
   const canShowJoin = !isTentative && isApproved && !isInactive;
 
-  // Time-window gate (matching JoinButton.tsx:getJoinState)
+  // Time-window gate (matching JoinButton.tsx:getJoinState). #1061 — measured
+  // over the whole session (event.startsAt/endsAt now span the run of slot
+  // rows), not over `joinableSlot`, which is only the run's anchor row and
+  // would close the window half an hour into a one-hour booking.
   const isWithinJoinWindow = (() => {
     if (!event.joinableSlot) return false;
     const now = Date.now();
-    const start = new Date(event.joinableSlot.startsAt).getTime();
-    const end = event.joinableSlot.endsAt
-      ? new Date(event.joinableSlot.endsAt).getTime()
+    const start = event.startsAt.getTime();
+    const end = event.endsAt
+      ? event.endsAt.getTime()
       : start + DEFAULT_MEETING_DURATION_MS;
     const joinWindow = start - JOIN_WINDOW_BEFORE_START_MS;
     return now >= joinWindow && now <= end;

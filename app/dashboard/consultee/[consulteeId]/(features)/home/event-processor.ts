@@ -15,6 +15,7 @@ import type {
   TConsulteeClass,
 } from "@/types/consultee-events";
 import type { MeetingAppointment, MeetingSlot } from "@/lib/meeting";
+import { getCurrentOrNextSession } from "@/lib/appointments/slots";
 
 /**
  * Unified event type for display in the dashboard
@@ -65,7 +66,14 @@ interface SlotWithContext {
 }
 
 /**
- * Find the next upcoming slot from a list of slots
+ * The session that is live or next up, spanning its whole run of slot rows.
+ *
+ * #1061 — this used to return the first slot whose `startsAt` was in the
+ * FUTURE. From minute 0 of a one-hour session that is the second half-hour
+ * row, so Home greyed Join out while the session was live and then, once the
+ * second row's own window opened, dropped the consultee into a different room
+ * from the consultant. `startsAt`/`endsAt` now describe the run, and
+ * `rawSlot` is the run's anchor — the row the video room is keyed to.
  */
 function findNextSlot(slots: SlotWithContext[]): SlotWithContext | null {
   if (slots.length === 0) return null;
@@ -75,11 +83,48 @@ function findNextSlot(slots: SlotWithContext[]): SlotWithContext | null {
     (a, b) => a.startsAt.getTime() - b.startsAt.getTime(),
   );
 
-  // Find first upcoming slot, or fall back to most recent past slot
+  const run = getCurrentOrNextSession(
+    slots.map((s) => ({ ...s.rawSlot, appointmentId: s.appointmentId })),
+    now,
+  );
+  const anchor = run
+    ? slots.find((s) => s.rawSlot.id === run.anchor.id)
+    : undefined;
+  if (run && anchor) {
+    return { ...anchor, startsAt: run.startsAt, endsAt: run.endsAt };
+  }
+
+  // Every row was cancelled/rescheduled: keep the old shape so the card still
+  // renders (with Join inert) instead of vanishing from Home.
   return (
     sortedSlots.find((s) => s.startsAt > now) ??
     sortedSlots[sortedSlots.length - 1]
   );
+}
+
+/** Slot rows in the shape `findNextSlot` groups on. */
+function toSlotContexts(
+  slots: Array<{
+    id: string;
+    startsAt: Date | string;
+    endsAt: Date | string | null;
+    isTentative: boolean;
+    appointmentId: string | null;
+  }>,
+  appointmentId: string,
+): SlotWithContext[] {
+  return slots.map((slot) => ({
+    startsAt: new Date(slot.startsAt),
+    endsAt: new Date(slot.endsAt ?? slot.startsAt),
+    rawSlot: {
+      id: slot.id,
+      startsAt: slot.startsAt,
+      endsAt: slot.endsAt,
+      isTentative: slot.isTentative,
+      appointmentId: slot.appointmentId,
+    },
+    appointmentId,
+  }));
 }
 
 /**
@@ -91,8 +136,11 @@ function processConsultation(
   const slots = consultation.appointment?.slotsOfAppointment;
   if (!slots || slots.length === 0) return null;
 
-  const firstSlot = slots[0];
   const appointmentId = consultation.appointment?.id ?? "";
+  // #1061 — the card's time range and its Join target are the whole session,
+  // not the first 30-minute row of it.
+  const session = findNextSlot(toSlotContexts(slots, appointmentId));
+  if (!session) return null;
 
   // Build meeting appointment
   const joinableAppointment: MeetingAppointment = {
@@ -117,14 +165,7 @@ function processConsultation(
     },
   };
 
-  // Build meeting slot
-  const joinableSlot: MeetingSlot = {
-    id: firstSlot.id,
-    startsAt: firstSlot.startsAt,
-    endsAt: firstSlot.endsAt,
-    isTentative: firstSlot.isTentative,
-    appointmentId: firstSlot.appointmentId,
-  };
+  const joinableSlot: MeetingSlot = session.rawSlot;
 
   return {
     id: consultation.id,
@@ -134,8 +175,8 @@ function processConsultation(
       consultation.consultationPlan?.consultantProfile?.user?.name ?? "Expert",
     consultantImage:
       consultation.consultationPlan?.consultantProfile?.user?.image,
-    startsAt: new Date(firstSlot.startsAt),
-    endsAt: new Date(firstSlot.endsAt ?? firstSlot.startsAt),
+    startsAt: session.startsAt,
+    endsAt: session.endsAt,
     status: consultation.status ?? "PENDING",
     slots: slots.map((s) => ({
       startsAt: new Date(s.startsAt),
@@ -158,20 +199,9 @@ function processSubscription(
   const allSlots: SlotWithContext[] = [];
 
   subscription.appointments?.forEach((appointment) => {
-    appointment.slotsOfAppointment?.forEach((slot) => {
-      allSlots.push({
-        startsAt: new Date(slot.startsAt),
-        endsAt: new Date(slot.endsAt ?? slot.startsAt),
-        rawSlot: {
-          id: slot.id,
-          startsAt: slot.startsAt,
-          endsAt: slot.endsAt,
-          isTentative: slot.isTentative,
-          appointmentId: slot.appointmentId,
-        },
-        appointmentId: appointment.id,
-      });
-    });
+    allSlots.push(
+      ...toSlotContexts(appointment.slotsOfAppointment ?? [], appointment.id),
+    );
   });
 
   if (allSlots.length === 0) return null;
@@ -239,20 +269,12 @@ function processWebinar(webinar: TConsulteeWebinar): ProcessedEvent | null {
   const appointmentId = webinar.appointment?.id ?? "";
 
   // Get slots from the appointment
-  webinar.appointment?.slotsOfAppointment?.forEach((slot) => {
-    allSlots.push({
-      startsAt: new Date(slot.startsAt),
-      endsAt: new Date(slot.endsAt ?? slot.startsAt),
-      rawSlot: {
-        id: slot.id,
-        startsAt: slot.startsAt,
-        endsAt: slot.endsAt,
-        isTentative: slot.isTentative,
-        appointmentId: slot.appointmentId,
-      },
+  allSlots.push(
+    ...toSlotContexts(
+      webinar.appointment?.slotsOfAppointment ?? [],
       appointmentId,
-    });
-  });
+    ),
+  );
 
   if (allSlots.length === 0) return null;
 
@@ -324,20 +346,9 @@ function processClass(classEvent: TConsulteeClass): ProcessedEvent | null {
   const allSlots: SlotWithContext[] = [];
 
   classEvent.appointments?.forEach((appointment) => {
-    appointment.slotsOfAppointment?.forEach((slot) => {
-      allSlots.push({
-        startsAt: new Date(slot.startsAt),
-        endsAt: new Date(slot.endsAt ?? slot.startsAt),
-        rawSlot: {
-          id: slot.id,
-          startsAt: slot.startsAt,
-          endsAt: slot.endsAt,
-          isTentative: slot.isTentative,
-          appointmentId: slot.appointmentId,
-        },
-        appointmentId: appointment.id,
-      });
-    });
+    allSlots.push(
+      ...toSlotContexts(appointment.slotsOfAppointment ?? [], appointment.id),
+    );
   });
 
   if (allSlots.length === 0) return null;

@@ -2,6 +2,7 @@ import * as Sentry from "@sentry/nextjs";
 import {
   createDbMeetingSession,
   findDbMeetingSessionBySlot,
+  resolveSessionAnchorSlot,
 } from "@/actions/stream/meetings/meeting.action";
 import type { Call } from "@stream-io/video-react-sdk";
 import { StreamVideoClient } from "@stream-io/video-react-sdk";
@@ -85,8 +86,17 @@ export const getOrCreateAppointmentMeeting = async (
   }
 
   try {
+    // #1061 — a session longer than 30 minutes is N consecutive slot rows, and
+    // each dashboard surface hands us a different one. Key the room to the
+    // run's first row so both sides, at any point in the hour, resolve the
+    // same call. Server-side because the planner passes a lone slot.
+    const anchorSlot: MeetingSlot =
+      (await resolveSessionAnchorSlot(slot.id)) ?? slot;
+
     // 1. Try to find an existing meeting session via server action
-    const existingMeetingSession = await findDbMeetingSessionBySlot(slot.id);
+    const existingMeetingSession = await findDbMeetingSessionBySlot(
+      anchorSlot.id,
+    );
 
     let streamCallId: string;
 
@@ -95,15 +105,15 @@ export const getOrCreateAppointmentMeeting = async (
       streamCallId = existingMeetingSession.streamCallId;
     } else {
       // 2b. No existing session found, create a new one.
-      // Use a deterministic call ID derived from the slot ID so concurrent
-      // callers produce the same Stream call. Stream's getOrCreate is
-      // idempotent for the same call ID, preventing orphaned calls.
-      streamCallId = `slot-${slot.id}`;
+      // Use a deterministic call ID derived from the anchor slot ID so
+      // concurrent callers produce the same Stream call. Stream's getOrCreate
+      // is idempotent for the same call ID, preventing orphaned calls.
+      streamCallId = `slot-${anchorSlot.id}`;
 
       // 3. Create the Stream call
       const call: Call = client.call("default", streamCallId);
-      const startsAt = slot.startsAt
-        ? new Date(slot.startsAt).toISOString()
+      const startsAt = anchorSlot.startsAt
+        ? new Date(anchorSlot.startsAt).toISOString()
         : new Date().toISOString();
 
       // Determine title and description based on appointment type
@@ -133,7 +143,7 @@ export const getOrCreateAppointmentMeeting = async (
         title: title,
         description: description,
         appointmentId: appointment.id,
-        slotId: slot.id,
+        slotId: anchorSlot.id,
         appointmentType: appointment.appointmentType,
         ...(resolvedOrgId ? { organizationId: resolvedOrgId } : {}),
         // #org-appts — per-appointment identity for host/guest derivation.
@@ -152,8 +162,10 @@ export const getOrCreateAppointmentMeeting = async (
         },
       });
 
-      // 4. Create the corresponding record in the database via server action
-      await createDbMeetingSession(slot, streamCallId);
+      // 4. Create the corresponding record in the database via server action.
+      // Attached to the anchor, so MeetingSession.slotOfAppointmentId stays
+      // @unique-correct: one session per run, not one per half hour.
+      await createDbMeetingSession(anchorSlot, streamCallId);
     }
 
     // 5. Return the Stream Call ID (either existing or newly created)

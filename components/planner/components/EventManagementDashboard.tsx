@@ -11,6 +11,7 @@ import { EventCarousel } from "./EventCarousel";
 // click time and the meeting helper is lazy-imported on demand.
 import { waitForGlobalVideoClient } from "@/lib/stream/disconnect";
 import type { MeetingAppointment, MeetingSlot } from "@/lib/meeting";
+import { getJoinableSession } from "@/lib/appointments/slots";
 import {
   PlannerWebinarEvent,
   PlannerClassEvent,
@@ -36,6 +37,9 @@ import {
   Video,
   GraduationCap,
 } from "lucide-react";
+
+/** The planner has always let hosts in 10 minutes early; kept as-is. */
+const PLANNER_JOIN_WINDOW_MS = 10 * 60 * 1000;
 
 interface PlannerData {
   webinars: PlannerWebinarEvent[];
@@ -82,46 +86,30 @@ export function EventManagementDashboard({
   const router = useRouter();
   const [joiningEventId, setJoiningEventId] = useState<string | null>(null);
 
-  // Compute which webinar/class events are currently joinable (within 10 min before start to end)
+  // Compute which webinar/class events are currently joinable (within 10 min
+  // before start to end). #1061 — measured over the run of slot rows the
+  // session is stored as; the old `slotsOfAppointment[0]` read closed the
+  // window 30 minutes into anything longer than half an hour.
   const joinableEventIds = useMemo(() => {
     const now = new Date();
     const ids = new Set<string>();
 
     for (const webinar of webinars) {
-      const startTimeStr =
-        webinar.appointment?.slotsOfAppointment?.[0]?.startsAt;
-      const endTimeStr = webinar.appointment?.slotsOfAppointment?.[0]?.endsAt;
-      if (startTimeStr) {
-        const startTime = new Date(startTimeStr);
-        const endTime = endTimeStr
-          ? new Date(endTimeStr)
-          : new Date(
-              startTime.getTime() +
-                (webinar.webinarPlan.durationInHours ?? 1) * 60 * 60 * 1000,
-            );
-        const joinWindow = new Date(startTime.getTime() - 10 * 60 * 1000);
-        if (now >= joinWindow && now <= endTime && webinar.id) {
-          ids.add(webinar.id);
-        }
-      }
+      const run = getJoinableSession(
+        webinar.appointment?.slotsOfAppointment ?? [],
+        { joinWindowMs: PLANNER_JOIN_WINDOW_MS, now },
+      );
+      if (run && webinar.id) ids.add(webinar.id);
     }
 
     for (const cls of classes) {
       // For classes, check the nearest upcoming appointment
-      const appointments = cls.appointments ?? [];
-      for (const appt of appointments) {
-        const startTimeStr = appt.slotsOfAppointment?.[0]?.startsAt;
-        const endTimeStr = appt.slotsOfAppointment?.[0]?.endsAt;
-        if (startTimeStr) {
-          const startTime = new Date(startTimeStr);
-          const endTime = endTimeStr
-            ? new Date(endTimeStr)
-            : new Date(startTime.getTime() + 60 * 60 * 1000);
-          const joinWindow = new Date(startTime.getTime() - 10 * 60 * 1000);
-          if (now >= joinWindow && now <= endTime && cls.id) {
-            ids.add(cls.id);
-          }
-        }
+      for (const appt of cls.appointments ?? []) {
+        const run = getJoinableSession(appt.slotsOfAppointment ?? [], {
+          joinWindowMs: PLANNER_JOIN_WINDOW_MS,
+          now,
+        });
+        if (run && cls.id) ids.add(cls.id);
       }
     }
 
@@ -142,7 +130,12 @@ export function EventManagementDashboard({
       return;
     }
 
-    const slot = webinar.appointment?.slotsOfAppointment?.[0];
+    // #1061 — the session's anchor row, not whichever row happens to be first
+    // in the payload, so a late Join lands in the room already in progress.
+    const slots = webinar.appointment?.slotsOfAppointment ?? [];
+    const slot =
+      getJoinableSession(slots, { joinWindowMs: PLANNER_JOIN_WINDOW_MS })
+        ?.anchor ?? slots[0];
     if (!slot || !webinar.appointment) {
       toast({
         title: "Error",
@@ -200,25 +193,23 @@ export function EventManagementDashboard({
       return;
     }
 
-    // Find the nearest joinable appointment for this class
+    // Find the nearest joinable session for this class. #1061 — evaluated over
+    // the whole run of slot rows, so a two-hour class stays joinable (and in
+    // the same room) past its first half hour instead of reporting "No
+    // joinable session found".
     const now = new Date();
-    const appointments = classEvent.appointments ?? [];
     let targetAppt = null;
     let targetSlot = null;
 
-    for (const appt of appointments) {
-      const slot = appt.slotsOfAppointment?.[0];
-      if (slot?.startsAt) {
-        const startTime = new Date(slot.startsAt);
-        const endTime = slot.endsAt
-          ? new Date(slot.endsAt)
-          : new Date(startTime.getTime() + 60 * 60 * 1000);
-        const joinWindow = new Date(startTime.getTime() - 10 * 60 * 1000);
-        if (now >= joinWindow && now <= endTime) {
-          targetAppt = appt;
-          targetSlot = slot;
-          break;
-        }
+    for (const appt of classEvent.appointments ?? []) {
+      const run = getJoinableSession(appt.slotsOfAppointment ?? [], {
+        joinWindowMs: PLANNER_JOIN_WINDOW_MS,
+        now,
+      });
+      if (run) {
+        targetAppt = appt;
+        targetSlot = run.anchor;
+        break;
       }
     }
 
