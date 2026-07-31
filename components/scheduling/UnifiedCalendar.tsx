@@ -56,10 +56,6 @@ import {
   notEnoughConsecutive,
 } from "@/lib/scheduling/allocationMessages";
 import { useToast } from "@/hooks/use-toast";
-import {
-  SLOT_STATUS_TOKENS,
-  type SlotStatusKey,
-} from "@/lib/scheduling/slot-status-tokens";
 
 /**
  * Small pure helpers for clarity and reuse. These do not cause side effects.
@@ -920,68 +916,63 @@ export function UnifiedCalendar({
           status.overlappingAppointments.length > 0) ||
         isCurrentEventSlot;
 
-      // ONE palette. Cells render from SLOT_STATUS_TOKENS — the same source
-      // SlotStatusLegend renders from.
-      //
-      // These were two independent hardcoded palettes: the grid on
-      // green-300/yellow-400/slate-400/black, the legend on the emerald/amber/
-      // zinc tokens. So the legend documented colours the grid never used and
-      // its swatches did not match the cells sitting beside them. The token
-      // file was added to end exactly that, and then the renderer was never
-      // migrated to it.
-      const paint = (
-        key: SlotStatusKey,
-        opts?: { faded?: boolean; label?: string },
-      ) => {
-        const token = SLOT_STATUS_TOKENS[key];
-        cellClassName += ` ${token.className}`;
-        if (opts?.faded) cellClassName += " opacity-60";
-        buttonText = opts?.label ?? token.label;
-      };
-
       if (isCurrentlySelected) {
-        paint("selected");
-        cellClassName += " cursor-pointer";
+        // Dark green for manually selected slots
+        cellClassName +=
+          " bg-green-700 text-white hover:bg-green-800 border-green-900";
+        buttonText = "Selected";
       } else if (isCurrentEventSlot) {
-        paint("thisEvent", {
-          faded: status.isInPast,
-          ...(status.isInPast ? { label: "Past session" } : {}),
-        });
-        cellClassName += " cursor-pointer";
+        // Black for this event's already booked slots
+        cellClassName +=
+          " bg-black text-white cursor-pointer hover:bg-gray-900 border-gray-800";
+        cellClassName += status.isInPast ? " opacity-60" : "";
+        buttonText = status.isInPast ? "Past Session" : "This Event";
       } else if (isCurrentEventTentative) {
-        // Distinct from the grey "Booked" used for foreign appointments: this
-        // is the consultant's OWN slot awaiting a new time, not someone else's.
-        paint("rescheduling", { faded: status.isInPast });
-        cellClassName += " cursor-pointer";
+        // Amber for THIS event's slot being rescheduled — distinct from the gray
+        // "Booked" used for foreign appointments. It's the consultant's own slot
+        // pending a new time, not someone else's booking.
+        cellClassName +=
+          " bg-amber-400 text-amber-900 cursor-pointer hover:bg-amber-500 border-amber-500";
+        cellClassName += status.isInPast ? " opacity-50" : "";
+        buttonText = "Rescheduling";
       } else if (status.isBookedForDisplay) {
-        paint("fullyBooked", { faded: status.isInPast });
-        cellClassName += " cursor-pointer";
+        // Grey for other appointments
+        cellClassName +=
+          " bg-slate-400 text-slate-800 cursor-pointer hover:bg-slate-500";
+        cellClassName += status.isInPast ? " opacity-50" : "";
+        buttonText = "Booked";
       } else if (status.isPartiallyBooked) {
-        paint("partiallyBooked", { faded: status.isInPast });
-        cellClassName += " cursor-pointer";
+        cellClassName +=
+          " bg-yellow-400 text-yellow-900 cursor-pointer hover:bg-yellow-500";
+        cellClassName += status.isInPast ? " opacity-50" : "";
+        buttonText = "Partially Booked";
       } else if (status.isAvailable) {
+        // Available slot - check if past for fading
         if (status.isInPast) {
           // A past slot is NOT available, whatever the consultant published.
           // It used to render green and say "Available", differing from a real
           // opening only by opacity — so a picker opened on the current week
           // offered times that had already happened. Still clickable, because
           // the toast explains why; it just no longer claims to be bookable.
-          paint("unavailable", {
-            label: isOutsideAllowedRange ? "Outside period" : "Past",
-          });
-          cellClassName += " cursor-pointer";
+          cellClassName +=
+            " bg-slate-100 text-slate-400 border-slate-200 cursor-pointer hover:bg-slate-200";
+          buttonText = isOutsideAllowedRange ? "Outside Period" : "Past";
         } else {
-          paint("available", {
-            ...(isOutsideAllowedRange ? { label: "Outside period" } : {}),
-          });
-          cellClassName += " cursor-pointer";
+          // Future available slot - unfaded, clickable
+          cellClassName +=
+            " bg-green-300 text-green-950 cursor-pointer hover:bg-green-400 border-green-400";
           if (eventType === "consultation") {
             cellClassName += " hover:shadow-md";
           }
+          buttonText = isOutsideAllowedRange ? "Outside Period" : "Available";
         }
       } else {
-        paint("unavailable", { faded: status.isInPast, label: "" });
-        cellClassName += " cursor-not-allowed";
+        if (status.isInPast) {
+          cellClassName +=
+            " bg-gray-300 text-gray-700 cursor-not-allowed opacity-70";
+        } else {
+          cellClassName += " bg-slate-200 cursor-not-allowed";
+        }
       }
 
       // Only disable in view mode or if no availability at all (gray slots)
