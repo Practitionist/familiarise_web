@@ -18,6 +18,7 @@ import {
   AlertTriangle,
   CalendarClock,
   CheckCircle2,
+  ChevronDown,
   RefreshCw,
 } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
@@ -192,6 +193,75 @@ function formatDateTime(value: string | Date): string {
 
 /** Beyond this the list stops being scannable and starts being a wall. */
 const MAX_VISIBLE_SLOTS = 3;
+
+/**
+ * The consultee's note, clamped to 3 lines with an expand toggle underneath.
+ *
+ * The toggle appears only when the clamp is actually cutting text off — a
+ * permanent "Read more" under a two-line note is noise nobody asked for. And
+ * the overflow is measured rather than guessed from a character count: this
+ * column is `max-w-[26rem]` but flexes narrower, so the same string clips at
+ * one width and not another.
+ *
+ * `components/ui/collapsible` is the wrong primitive here — it hides its
+ * content outright, and the point of this cell is that three lines stay
+ * readable while collapsed. Same chevron-and-"Show less" shape as the other
+ * in-place expanders (`SessionTimeline`, `FacetGroup`).
+ */
+function RequestNote({ notes }: { notes: string }) {
+  const textRef = useRef<HTMLParagraphElement>(null);
+  const [isClamped, setIsClamped] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    const el = textRef.current;
+    // Measured only while COLLAPSED. Expanding drops the clamp, so an expanded
+    // paragraph always reports scrollHeight === clientHeight; re-measuring
+    // then would decide it no longer overflows and remove the only control
+    // that collapses it again.
+    if (!el || expanded) return;
+
+    // +1 absorbs the subpixel rounding between scrollHeight and clientHeight
+    // that would otherwise flag an exactly-3-line note as clipped.
+    const measure = () => setIsClamped(el.scrollHeight > el.clientHeight + 1);
+    measure();
+
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [notes, expanded]);
+
+  return (
+    <div className="max-w-[26rem] text-left">
+      <p
+        ref={textRef}
+        className={cn(
+          "text-xs italic text-muted-foreground",
+          !expanded && "line-clamp-3",
+        )}
+      >
+        &ldquo;{notes}&rdquo;
+      </p>
+      {isClamped && (
+        <button
+          type="button"
+          aria-expanded={expanded}
+          className="mt-1 flex items-center gap-1 text-[11px] font-medium text-muted-foreground hover:text-foreground"
+          onClick={() => setExpanded((prev) => !prev)}
+        >
+          <ChevronDown
+            className={cn(
+              "h-3 w-3 transition-transform",
+              expanded && "rotate-180",
+            )}
+          />
+          {expanded ? "Show less" : "Read more"}
+        </button>
+      )}
+    </div>
+  );
+}
 
 /**
  * The live offer: who wants what, and until when.
@@ -885,9 +955,7 @@ export function RequestSlotAllocationTab({
       className: "align-top",
       cell: (request) =>
         request.requestNotes?.trim() ? (
-          <p className="line-clamp-3 max-w-[26rem] text-left text-xs italic text-muted-foreground">
-            &ldquo;{request.requestNotes.trim()}&rdquo;
-          </p>
+          <RequestNote notes={request.requestNotes.trim()} />
         ) : (
           // An em dash rather than blank: "they said nothing" and "we failed to
           // load it" should not look identical.

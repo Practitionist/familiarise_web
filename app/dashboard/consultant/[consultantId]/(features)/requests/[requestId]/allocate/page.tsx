@@ -1,3 +1,5 @@
+import { cache } from "react";
+import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
@@ -25,6 +27,30 @@ type PageProps = {
   searchParams: Promise<{ type?: string }>;
 };
 
+// React.cache so generateMetadata() and the page body share one query per request.
+const loadRequest = cache(readAllocationRequest);
+
+/**
+ * Names the booking, not the task. A consultant working three requests has
+ * three of these tabs open, and "Allocate slots" on all of them tells them
+ * nothing (#1064).
+ */
+export async function generateMetadata({
+  params,
+  searchParams,
+}: Readonly<PageProps>): Promise<Metadata> {
+  const { requestId } = await params;
+  const { type } = await searchParams;
+  const request = await loadRequest(
+    requestId,
+    type === "subscription" ? "subscription" : "consultation",
+  ).catch(() => null);
+  if (!request) return { title: "Allocate slots — Familiarise" };
+
+  const who = request.consulteeName ? ` · ${request.consulteeName}` : "";
+  return { title: `Allocate: ${request.title}${who} — Familiarise` };
+}
+
 export default async function AllocateSlotsPage({
   params,
   searchParams,
@@ -39,7 +65,7 @@ export default async function AllocateSlotsPage({
   // by it. The caller already knows, so it travels in the link.
   const eventType = type === "subscription" ? "subscription" : "consultation";
 
-  const request = await readAllocationRequest(requestId, eventType);
+  const request = await loadRequest(requestId, eventType);
   if (!request) notFound();
   // Binds the request to the URL's consultant; the guard above binds that
   // consultant to the session.
@@ -49,12 +75,16 @@ export default async function AllocateSlotsPage({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
+      {/* The BOOKING is the h1, the task is the line under it. Both routes
+          reached from the requests table look identical otherwise, and a
+          consultant with several open could not tell which one they were
+          allocating (#1064). */}
       <DashboardHeader
-        title="Allocate slots"
+        title={request.title}
         subtitle={
           request.consulteeName
-            ? `${request.title} for ${request.consulteeName}`
-            : request.title
+            ? `Allocate slots for ${request.consulteeName}`
+            : "Allocate slots"
         }
       />
 

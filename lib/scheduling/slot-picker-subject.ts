@@ -29,6 +29,10 @@ export interface RescheduleSubject {
   /** The booking's consultee, for the page's ownership check. */
   consulteeProfileId?: string;
   consulteeUserId?: string;
+  /** Counterpart names for the page header — already on the plan/requestedBy
+   * includes `readAppointmentDetail` selects, so no second query. */
+  consultantName?: string;
+  consulteeName?: string;
 }
 
 /** Slots that a reschedule could still act on: ahead of now, and not already dead. */
@@ -74,6 +78,8 @@ export function buildRescheduleSubject(
     consultantProfileId?: string;
     consulteeProfileId?: string;
     consulteeUserId?: string;
+    consultantName?: string;
+    consulteeName?: string;
     title: string;
     typeLabel: BookingTypeLabel;
     sessionDurationInHours?: number;
@@ -85,6 +91,8 @@ export function buildRescheduleSubject(
           consultantProfileId: plan?.consultantProfile?.id,
           consulteeProfileId: appointment.consultation?.requestedBy?.id,
           consulteeUserId: appointment.consultation?.requestedBy?.userId,
+          consultantName: plan?.consultantProfile?.user?.name,
+          consulteeName: appointment.consultation?.requestedBy?.user?.name,
           title: plan?.title ?? "Consultation",
           typeLabel: "Consultation",
           sessionDurationInHours: plan?.durationInHours,
@@ -96,6 +104,8 @@ export function buildRescheduleSubject(
           consultantProfileId: plan?.consultantProfile?.id,
           consulteeProfileId: appointment.subscription?.requestedBy?.id,
           consulteeUserId: appointment.subscription?.requestedBy?.userId,
+          consultantName: plan?.consultantProfile?.user?.name,
+          consulteeName: appointment.subscription?.requestedBy?.user?.name,
           title: plan?.title ?? "Subscription",
           typeLabel: "Subscription",
           sessionDurationInHours: plan?.sessionDurationInHours,
@@ -105,6 +115,7 @@ export function buildRescheduleSubject(
         const plan = appointment.webinar?.webinarPlan;
         return {
           consultantProfileId: plan?.consultantProfile?.id,
+          consultantName: plan?.consultantProfile?.user?.name,
           title: plan?.title ?? "Webinar",
           typeLabel: "Webinar",
           sessionDurationInHours: plan?.durationInHours,
@@ -114,6 +125,7 @@ export function buildRescheduleSubject(
         const plan = appointment.class?.classPlan;
         return {
           consultantProfileId: plan?.consultantProfile?.id,
+          consultantName: plan?.consultantProfile?.user?.name,
           title: plan?.title ?? "Class",
           typeLabel: "Class",
           sessionDurationInHours: plan?.sessionDurationInHours ?? undefined,
@@ -125,6 +137,8 @@ export function buildRescheduleSubject(
           consultantProfileId: plan?.consultantProfile?.id,
           consulteeProfileId: appointment.trialSession?.consulteeProfile?.id,
           consulteeUserId: appointment.trialSession?.consulteeProfile?.userId,
+          consultantName: plan?.consultantProfile?.user?.name,
+          consulteeName: appointment.trialSession?.consulteeProfile?.user?.name,
           title: plan?.title ?? "Trial session",
           typeLabel: "Trial",
           sessionDurationInHours: plan?.sessionDurationInHours,
@@ -143,6 +157,8 @@ export function buildRescheduleSubject(
     consultantProfileId: resolved.consultantProfileId,
     consulteeProfileId: resolved.consulteeProfileId,
     consulteeUserId: resolved.consulteeUserId,
+    consultantName: resolved.consultantName,
+    consulteeName: resolved.consulteeName,
     subject: {
       consultantProfileId: resolved.consultantProfileId,
       // Availability only, keyed to no event: a reschedule asks "when is this

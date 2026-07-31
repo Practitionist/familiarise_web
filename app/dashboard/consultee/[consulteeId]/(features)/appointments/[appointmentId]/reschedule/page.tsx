@@ -1,3 +1,5 @@
+import { cache } from "react";
+import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
@@ -21,6 +23,25 @@ type PageProps = {
   params: Promise<{ consulteeId: string; appointmentId: string }>;
 };
 
+// React.cache so generateMetadata() and the page body share one query per request.
+const loadDetail = cache(readAppointmentDetail);
+
+/**
+ * Names the booking, not the task. "Reschedule" on a backgrounded tab does not
+ * say which of a consultee's sessions is being moved (#1064).
+ */
+export async function generateMetadata({
+  params,
+}: Readonly<PageProps>): Promise<Metadata> {
+  const { appointmentId } = await params;
+  const detail = await loadDetail(appointmentId).catch(() => null);
+  const resolved = detail ? buildRescheduleSubject(detail) : null;
+  if (!resolved) return { title: "Reschedule — Familiarise" };
+
+  const who = resolved.consultantName ? ` with ${resolved.consultantName}` : "";
+  return { title: `Reschedule: ${resolved.title}${who} — Familiarise` };
+}
+
 export default async function RescheduleAppointmentPage({
   params,
 }: Readonly<PageProps>) {
@@ -30,7 +51,7 @@ export default async function RescheduleAppointmentPage({
   await requirePersonalProfileAccess("consultee", consulteeId);
 
   const [detail, profile] = await Promise.all([
-    readAppointmentDetail(appointmentId),
+    loadDetail(appointmentId),
     prisma.consulteeProfile.findUnique({
       where: { id: consulteeId },
       select: { userId: true },
@@ -60,9 +81,16 @@ export default async function RescheduleAppointmentPage({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
+      {/* The BOOKING is the h1, the task is the line under it — every
+          reschedule page rendered an identical "Reschedule" heading, so the
+          consultee could not tell which session they were moving (#1064). */}
       <DashboardHeader
-        title="Reschedule"
-        subtitle={`Choose a new time for your ${resolved.typeLabel.toLowerCase()} — ${resolved.title}`}
+        title={resolved.title}
+        subtitle={
+          resolved.consultantName
+            ? `Choose a new time for your ${resolved.typeLabel.toLowerCase()} with ${resolved.consultantName}`
+            : `Choose a new time for your ${resolved.typeLabel.toLowerCase()}`
+        }
       />
 
       <Link

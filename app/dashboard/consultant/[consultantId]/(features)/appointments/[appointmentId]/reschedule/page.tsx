@@ -1,3 +1,5 @@
+import { cache } from "react";
+import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
@@ -21,6 +23,25 @@ type PageProps = {
   params: Promise<{ consultantId: string; appointmentId: string }>;
 };
 
+// React.cache so generateMetadata() and the page body share one query per request.
+const loadDetail = cache(readAppointmentDetail);
+
+/**
+ * Names the booking, not the task. A consultant moving sessions for several
+ * clients has identical "Reschedule" tabs otherwise (#1064).
+ */
+export async function generateMetadata({
+  params,
+}: Readonly<PageProps>): Promise<Metadata> {
+  const { appointmentId } = await params;
+  const detail = await loadDetail(appointmentId).catch(() => null);
+  const resolved = detail ? buildRescheduleSubject(detail) : null;
+  if (!resolved) return { title: "Reschedule — Familiarise" };
+
+  const who = resolved.consulteeName ? ` · ${resolved.consulteeName}` : "";
+  return { title: `Reschedule: ${resolved.title}${who} — Familiarise` };
+}
+
 export default async function ConsultantReschedulePage({
   params,
 }: Readonly<PageProps>) {
@@ -29,7 +50,7 @@ export default async function ConsultantReschedulePage({
   // so its check runs only after this server render has already streamed.
   await requirePersonalProfileAccess("consultant", consultantId);
 
-  const detail = await readAppointmentDetail(appointmentId);
+  const detail = await loadDetail(appointmentId);
   if (!detail) notFound();
 
   // The route's consultant must own the plan or be an ACCEPTED collaborator.
@@ -58,9 +79,15 @@ export default async function ConsultantReschedulePage({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
+      {/* The BOOKING is the h1, the task is the line under it — see the
+          consultee's twin (#1064). */}
       <DashboardHeader
-        title="Reschedule"
-        subtitle={`Propose a new time for ${resolved.title}`}
+        title={resolved.title}
+        subtitle={
+          resolved.consulteeName
+            ? `Propose a new time for ${resolved.consulteeName}`
+            : "Propose a new time"
+        }
       />
 
       <Link
