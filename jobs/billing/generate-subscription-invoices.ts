@@ -40,6 +40,7 @@ import { getAppUrl } from "@/lib/url";
 import { Currency, OrgInvoiceStatus, Prisma } from "@prisma/client";
 import { withCronLock, CronLockHeldError, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 import * as Sentry from "@sentry/nextjs";
+import { runJob } from "@/lib/observability/job-sentry";
 
 // Reminder fires when nextInvoiceDate is within this many days. Once
 // per cycle (gated by BillingSubscription.renewalReminderSentAt).
@@ -346,19 +347,20 @@ async function main() {
 }
 
 if (require.main === module) {
-  main()
-    .catch((err) => {
+  runJob("generate-subscription-invoices", async () => {
+    try {
+      await main();
+    } catch (err) {
       // #476 — lock held = another run is live; skip cleanly (exit 0).
       if (err instanceof CronLockHeldError) {
         Sentry.logger.info("job:generate-subscription-invoices lock held, skipping");
         console.log(`⏭️  ${err.message}`);
         return;
       }
-      Sentry.captureException(err, { tags: { subsystem: "jobs", job: "generate-subscription-invoices" } });
-      console.error("[generate-subscription-invoices] Failed:", err);
-      process.exitCode = 1;
-    })
-    .finally(async () => {
+      // Anything else escapes to runJob, which captures it and flushes. (#1066)
+      throw err;
+    } finally {
       await prisma.$disconnect();
-    });
+    }
+  });
 }

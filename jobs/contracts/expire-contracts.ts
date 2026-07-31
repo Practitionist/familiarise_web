@@ -28,6 +28,7 @@ import prisma from "@/lib/prisma";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { withCronLock, CronLockHeldError } from "@/lib/cron/with-cron-lock";
 import * as Sentry from "@sentry/nextjs";
+import { runJob } from "@/lib/observability/job-sentry";
 
 interface ExpireStats {
   scanned: number;
@@ -128,19 +129,20 @@ async function main() {
 // Only run when invoked directly (allows the function to be imported and
 // unit-tested without spinning up the cron entry-point).
 if (require.main === module) {
-  main()
-    .catch((err) => {
+  runJob("expire-contracts", async () => {
+    try {
+      await main();
+    } catch (err) {
       // #476 — lock held = another run is live; skip cleanly (exit 0).
       if (err instanceof CronLockHeldError) {
         Sentry.logger.info("job:expire-contracts lock held — skipping");
         console.log(`⏭️  ${err.message}`);
         return;
       }
-      Sentry.captureException(err, { tags: { subsystem: "jobs", job: "expire-contracts" } });
-      console.error("[expire-contracts] Failed:", err);
-      process.exitCode = 1;
-    })
-    .finally(async () => {
+      // Anything else escapes to runJob, which captures it and flushes. (#1066)
+      throw err;
+    } finally {
       await prisma.$disconnect();
-    });
+    }
+  });
 }

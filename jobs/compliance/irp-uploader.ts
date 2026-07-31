@@ -34,6 +34,7 @@ import { generateIrn } from "@/lib/compliance/irp";
 import { buildIrpPayload } from "@/lib/compliance/irp-payload";
 import { withCronLock, CronLockHeldError } from "@/lib/cron/with-cron-lock";
 import * as Sentry from "@sentry/nextjs";
+import { runJob } from "@/lib/observability/job-sentry";
 
 // #703 — platform-side seller constants. GSTIN mirrors the invoice-PDF
 // route (PLATFORM_GSTIN); the rest are env-overridable for a future
@@ -229,19 +230,20 @@ async function runIrpUploaderUnlocked(): Promise<{
 // unit tests without triggering the cron body. Mirrors the pattern in
 // jobs/contracts/expire-contracts.ts.
 if (require.main === module) {
-  runIrpUploader()
-    .catch((err) => {
+  runJob("irp-uploader", async () => {
+    try {
+      await runIrpUploader();
+    } catch (err) {
       // #476 — lock held = another run is live; skip cleanly (exit 0).
       if (err instanceof CronLockHeldError) {
         Sentry.logger.info("job:irp-uploader lock held — skipping");
         console.log(`⏭️  ${err.message}`);
         return;
       }
-      Sentry.captureException(err, { tags: { subsystem: "jobs", job: "irp-uploader" } });
-      console.error("[IRP] uploader failed:", err);
-      process.exitCode = 1;
-    })
-    .finally(async () => {
+      // Anything else escapes to runJob, which captures it and flushes. (#1066)
+      throw err;
+    } finally {
       await prisma.$disconnect();
-    });
+    }
+  });
 }

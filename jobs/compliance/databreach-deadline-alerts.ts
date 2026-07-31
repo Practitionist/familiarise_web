@@ -35,6 +35,7 @@
 // docs/enterprise/50-operations/03-runbooks.md "Running cron jobs locally".
 import "dotenv/config";
 import * as Sentry from "@sentry/nextjs";
+import { runJob } from "@/lib/observability/job-sentry";
 import prisma from "@/lib/prisma";
 import { Resend } from "resend";
 import { getAppUrl } from "@/lib/url";
@@ -173,24 +174,23 @@ async function runDataBreachDeadlineAlertsUnlocked(): Promise<{
 
 // Self-execute when invoked directly via `npx tsx`.
 if (require.main === module) {
-  runDataBreachDeadlineAlerts()
-    .then((r) => {
+  runJob("databreach-deadline-alerts", async () => {
+    try {
+      const r = await runDataBreachDeadlineAlerts();
       console.log(
         `[DataBreach] cron done — atRisk=${r.atRisk} overdue=${r.overdue} emailSent=${r.emailSent}`,
       );
-    })
-    .catch((err) => {
+    } catch (err) {
       // #476 — lock held = another run is live; skip cleanly (exit 0).
       if (err instanceof CronLockHeldError) {
         Sentry.logger.info("job:databreach-deadline-alerts skipped — lock held");
         console.log(`⏭️  ${err.message}`);
         return;
       }
-      Sentry.captureException(err, { tags: { subsystem: "jobs", job: "databreach-deadline-alerts" } });
-      console.error("[DataBreach] cron failed:", err);
-      process.exitCode = 1;
-    })
-    .finally(async () => {
+      // Anything else escapes to runJob, which captures it and flushes. (#1066)
+      throw err;
+    } finally {
       await prisma.$disconnect();
-    });
+    }
+  });
 }

@@ -16,6 +16,7 @@ import fs from "fs";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
 import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
 import * as Sentry from "@sentry/nextjs";
+import { runJob } from "../../lib/observability/job-sentry";
 
 /**
  * Output results to GitHub Actions
@@ -85,7 +86,7 @@ async function main(): Promise<void> {
     });
 
     if (!result.success) {
-      process.exit(1);
+      process.exitCode = 1;
     }
   } catch (error) {
     // #476 — lock held = another run is live; skipping is the correct
@@ -100,10 +101,10 @@ async function main(): Promise<void> {
       tags: { subsystem: "jobs", job: "reconcile-disputes" },
     });
     console.error("❌ Fatal error in dispute reconciliation:", error);
-    process.exit(1);
+    process.exitCode = 1;
   } finally {
     await disconnectDatabase();
   }
 }
 
-main();
+runJob("reconcile-disputes", main);

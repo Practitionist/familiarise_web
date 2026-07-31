@@ -16,6 +16,7 @@ import {
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
 import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
 import * as Sentry from "@sentry/nextjs";
+import { runJob } from "../../lib/observability/job-sentry";
 
 function outputToGitHubActions(result: StreamRetentionResult): void {
   if (!process.env.GITHUB_ACTIONS) return;
@@ -32,7 +33,7 @@ function outputToGitHubActions(result: StreamRetentionResult): void {
 }
 
 if (require.main === module) {
-  (async () => {
+  runJob("cleanup-old-stream-recordings", async () => {
     await abortIfMaintenance("cleanup-old-stream-recordings");
     Sentry.logger.info("job:cleanup-old-stream-recordings started");
     console.log("🎬 Sweeping old Stream recordings...");
@@ -41,7 +42,7 @@ if (require.main === module) {
       console.log(JSON.stringify(result, null, 2));
       outputToGitHubActions(result);
       Sentry.logger.info("job:cleanup-old-stream-recordings finished", { scanned: result.scanned, expired: result.expired });
-      if (!result.success) process.exit(1);
+      if (!result.success) process.exitCode = 1;
     } catch (err) {
       // #476 — lock held = another run is live; skip cleanly (exit 0).
       if (err instanceof CronLockHeldError) {
@@ -51,9 +52,9 @@ if (require.main === module) {
       }
       Sentry.captureException(err, { tags: { subsystem: "jobs", job: "cleanup-old-stream-recordings" } });
       console.error("Fatal error:", err);
-      process.exit(1);
+      process.exitCode = 1;
     } finally {
       await disconnectDatabase();
     }
-  })();
+  });
 }

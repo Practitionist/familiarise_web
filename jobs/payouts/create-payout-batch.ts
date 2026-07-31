@@ -19,6 +19,7 @@ import {
 import fs from "fs";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
 import * as Sentry from "@sentry/nextjs";
+import { runJob } from "../../lib/observability/job-sentry";
 
 /**
  * Output results to GitHub Actions using environment files
@@ -90,10 +91,9 @@ async function main(): Promise<void> {
         skippedNoAccount: result.skippedNoAccount,
       });
       console.log("🎉 Payout batch creation job completed successfully");
-      process.exit(0);
     } else {
       console.error("❌ Payout batch creation job completed with errors");
-      process.exit(1);
+      process.exitCode = 1;
     }
   } catch (error) {
     const errorMessage =
@@ -109,15 +109,11 @@ async function main(): Promise<void> {
       console.log(`::error::Payout batch creation job failed: ${errorMessage}`);
     }
 
-    process.exit(1);
+    process.exitCode = 1;
   } finally {
     await disconnectDatabase();
   }
 }
 
 // Run the job
-main().catch((error) => {
-  console.error("\n❌ Payout batch creation job failed:");
-  console.error(error);
-  process.exit(1);
-});
+runJob("create-payout-batch", main);

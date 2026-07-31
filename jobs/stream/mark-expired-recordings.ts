@@ -7,6 +7,7 @@
  */
 
 import * as Sentry from "@sentry/nextjs";
+import { runJob } from "../../lib/observability/job-sentry";
 import { RecordingTransferService } from "../../lib/stream/recording-transfer-service";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
 import {
@@ -55,11 +56,8 @@ async function main(): Promise<void> {
     if (process.env.GITHUB_ACTIONS && process.env.GITHUB_OUTPUT) {
       fs.appendFileSync(process.env.GITHUB_OUTPUT, "success=false\n");
     }
-    process.exit(1);
+    process.exitCode = 1;
   }
 }
 
-main().catch((error) => {
-  console.error("❌ Unexpected error:", error);
-  process.exit(1);
-});
+runJob("mark-expired-recordings", main);

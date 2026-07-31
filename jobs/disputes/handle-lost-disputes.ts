@@ -17,6 +17,7 @@ import fs from "fs";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
 import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
 import * as Sentry from "@sentry/nextjs";
+import { runJob } from "../../lib/observability/job-sentry";
 
 /**
  * Output results to GitHub Actions
@@ -88,7 +89,7 @@ async function main(): Promise<void> {
 
     // Exit with error if we have critical cases
     if (!result.success || result.alreadyPaidCount > 0) {
-      process.exit(1);
+      process.exitCode = 1;
     }
   } catch (error) {
     // #476 — lock held = another run is live; skipping is the correct
@@ -101,10 +102,10 @@ async function main(): Promise<void> {
     }
     Sentry.captureException(error, { tags: { subsystem: "jobs", job: "handle-lost-disputes" } });
     console.error("❌ Fatal error in lost dispute handler:", error);
-    process.exit(1);
+    process.exitCode = 1;
   } finally {
     await disconnectDatabase();
   }
 }
 
-main();
+runJob("handle-lost-disputes", main);

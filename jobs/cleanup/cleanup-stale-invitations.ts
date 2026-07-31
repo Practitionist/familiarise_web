@@ -19,6 +19,7 @@ import {
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
 import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
 import * as Sentry from "@sentry/nextjs";
+import { runJob } from "../../lib/observability/job-sentry";
 
 function outputToGitHubActions(result: StaleInvitationsCleanupResult): void {
   if (!process.env.GITHUB_ACTIONS) return;
@@ -60,7 +61,8 @@ async function main(): Promise<void> {
     outputToGitHubActions(result);
 
     if (!result.success) {
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
 
     Sentry.logger.info("job:cleanup-stale-invitations finished", { expired: result.expired });
@@ -73,10 +75,10 @@ async function main(): Promise<void> {
     }
     Sentry.captureException(error, { tags: { subsystem: "jobs", job: "cleanup-stale-invitations" } });
     console.error("❌ Fatal error in stale invitation cleanup:", error);
-    process.exit(1);
+    process.exitCode = 1;
   } finally {
     await disconnectDatabase();
   }
 }
 
-main();
+runJob("cleanup-stale-invitations", main);

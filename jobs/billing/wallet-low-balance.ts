@@ -21,6 +21,7 @@
 
 import "dotenv/config";
 import * as Sentry from "@sentry/nextjs";
+import { runJob } from "@/lib/observability/job-sentry";
 import prisma from "@/lib/prisma";
 import { notifyOrgWalletLow } from "@/lib/novu/org-workflows";
 import { getAppUrl } from "@/lib/url";
@@ -111,19 +112,20 @@ async function main() {
 }
 
 if (require.main === module) {
-  main()
-    .catch((err) => {
+  runJob("wallet-low-balance", async () => {
+    try {
+      await main();
+    } catch (err) {
       // #476 — lock held = another run is live; skip cleanly (exit 0).
       if (err instanceof CronLockHeldError) {
         Sentry.logger.info("job:wallet-low-balance lock held, skipping");
         console.log(`⏭️  ${err.message}`);
         return;
       }
-      Sentry.captureException(err, { tags: { subsystem: "jobs", job: "wallet-low-balance" } });
-      console.error("[wallet-low-balance] Failed:", err);
-      process.exitCode = 1;
-    })
-    .finally(async () => {
+      // Anything else escapes to runJob, which captures it and flushes. (#1066)
+      throw err;
+    } finally {
       await prisma.$disconnect();
-    });
+    }
+  });
 }

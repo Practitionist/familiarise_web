@@ -26,6 +26,7 @@ import {
 import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
 import { freezeWalletSpend } from "../../lib/payments/wallet-freeze";
 import * as Sentry from "@sentry/nextjs";
+import { runJob } from "../../lib/observability/job-sentry";
 
 async function main(): Promise<void> {
   await abortIfMaintenance("reconcile-ledgers");
@@ -139,11 +140,11 @@ async function main(): Promise<void> {
           },
         );
       }
-      // #837 — captureException queues asynchronously; process.exit would drop
-      // the discrepancy alert + wallet-freeze P0 pages before the transport
-      // flushes. Drain first so the pages actually reach Sentry.
-      await Sentry.flush(2000);
-      process.exit(2);
+      // #837/#1066 — the discrepancy alert + wallet-freeze P0 pages are queued,
+      // not sent. Setting the code instead of exiting lets runJob's flush drain
+      // them; process.exit() here would drop every one.
+      process.exitCode = 2;
+      return;
     }
   } catch (error) {
     // #476 — lock held = another run is live; skip cleanly (exit 0).
@@ -162,11 +163,10 @@ async function main(): Promise<void> {
       summary: "Ledger reconciliation crashed",
       err: error,
     });
-    await Sentry.flush(2000);
-    process.exit(1);
+    process.exitCode = 1;
   } finally {
     await prisma.$disconnect();
   }
 }
 
-main();
+runJob("reconcile-ledgers", main);

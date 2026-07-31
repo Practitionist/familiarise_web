@@ -17,6 +17,7 @@ import { abortIfMaintenance } from "@/lib/maintenance-cron";
 import { rollupOrgInvoiceAccruals } from "@/lib/payments/billing/invoice-rollup";
 import { withCronLock, CronLockHeldError, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 import * as Sentry from "@sentry/nextjs";
+import { runJob } from "@/lib/observability/job-sentry";
 
 export async function settleInvoiceAccruals(): Promise<{
   orgsProcessed: number;
@@ -102,19 +103,20 @@ async function main() {
 }
 
 if (require.main === module) {
-  main()
-    .catch((err) => {
+  runJob("settle-invoice-accruals", async () => {
+    try {
+      await main();
+    } catch (err) {
       // #476 — lock held = another run is live; skip cleanly (exit 0).
       if (err instanceof CronLockHeldError) {
         console.log(`⏭️  ${err.message}`);
         Sentry.logger.info("job:settle-invoice-accruals skipped — lock held");
         return;
       }
-      console.error("[settle-invoice-accruals] Failed:", err);
-      Sentry.captureException(err, { tags: { subsystem: "jobs", job: "settle-invoice-accruals" } });
-      process.exitCode = 1;
-    })
-    .finally(async () => {
+      // Anything else escapes to runJob, which captures it and flushes. (#1066)
+      throw err;
+    } finally {
       await prisma.$disconnect();
-    });
+    }
+  });
 }

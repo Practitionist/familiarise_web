@@ -40,6 +40,7 @@ import { withCronLock, CronLockHeldError } from "@/lib/cron/with-cron-lock";
 import { recordSystemError } from "@/lib/enterprise/system-events";
 import { abortIfMaintenance } from "@/lib/maintenance-cron";
 import * as Sentry from "@sentry/nextjs";
+import { runJob } from "@/lib/observability/job-sentry";
 
 const MAX_BATCH = 50;
 const MAX_ATTEMPTS = 5;
@@ -216,7 +217,7 @@ if (require.main === module) {
   // RESEND_API_KEY/DATABASE_URL are undefined. (Mirrors the webhook wrapper.)
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   require("dotenv/config");
-  (async () => {
+  runJob("retry-failed-emails", async () => {
     await abortIfMaintenance("retry-failed-emails");
     Sentry.logger.info("job:retry-failed-emails started");
     console.log("📧 Retrying dead-lettered transactional emails...");
@@ -230,7 +231,7 @@ if (require.main === module) {
         deadLettered: result.deadLettered,
         errors: result.errors.length,
       });
-      if (result.errors.length > 0) process.exit(1);
+      if (result.errors.length > 0) process.exitCode = 1;
     } catch (err) {
       // #476 — lock held = another run is live; skip cleanly (exit 0).
       if (err instanceof CronLockHeldError) {
@@ -246,9 +247,9 @@ if (require.main === module) {
         err,
       });
       Sentry.captureException(err, { tags: { subsystem: "jobs", job: "retry-failed-emails" } });
-      process.exit(1);
+      process.exitCode = 1;
     } finally {
       await prisma.$disconnect();
     }
-  })();
+  });
 }

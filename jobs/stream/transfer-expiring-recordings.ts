@@ -17,6 +17,7 @@ import { notifyRecordingExpiring } from "../../lib/novu/service";
 import { getAppUrl } from "../../lib/url";
 import fs from "fs";
 import * as Sentry from "@sentry/nextjs";
+import { runJob } from "../../lib/observability/job-sentry";
 
 // STR-3 — one expiry warning per consultant (count + soonest deadline), so a
 // consultant with several expiring STREAM_ONLY recordings isn't spammed.
@@ -133,7 +134,8 @@ async function main(): Promise<void> {
 
     if (result.failed > 0) {
       console.warn("⚠️ Some transfers failed");
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
 
     console.log("🎉 Job completed successfully");
@@ -149,11 +151,8 @@ async function main(): Promise<void> {
     if (process.env.GITHUB_ACTIONS && process.env.GITHUB_OUTPUT) {
       fs.appendFileSync(process.env.GITHUB_OUTPUT, "success=false\n");
     }
-    process.exit(1);
+    process.exitCode = 1;
   }
 }
 
-main().catch((error) => {
-  console.error("❌ Unexpected error:", error);
-  process.exit(1);
-});
+runJob("transfer-expiring-recordings", main);

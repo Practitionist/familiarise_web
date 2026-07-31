@@ -16,6 +16,7 @@ import fs from "node:fs";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
 import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
 import * as Sentry from "@sentry/nextjs";
+import { runJob } from "../../lib/observability/job-sentry";
 
 /**
  * Output results to GitHub Actions
@@ -74,7 +75,7 @@ async function main(): Promise<void> {
     });
 
     if (!result.success) {
-      process.exit(1);
+      process.exitCode = 1;
     }
   } catch (error) {
     // #476 — lock held = another run is live; skip cleanly (exit 0).
@@ -88,13 +89,12 @@ async function main(): Promise<void> {
     });
     console.error("❌ Fatal error in reschedule proposal expiry:", error);
     // Set the code, do not exit here: process.exit() terminates immediately and
-    // skips the finally below, so a failing run leaked its Prisma connection
-    // every time. Setting exitCode lets the runtime exit naturally once the
-    // disconnect has happened.
+    // skips both the finally below and runJob's Sentry flush, so a failing run
+    // leaked its Prisma connection and dropped its event. (#1066)
     process.exitCode = 1;
   } finally {
     await prisma.$disconnect();
   }
 }
 
-main();
+runJob("expire-reschedule-proposals", main);

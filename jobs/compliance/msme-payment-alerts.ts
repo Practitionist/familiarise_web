@@ -24,6 +24,7 @@
 // docs/enterprise/50-operations/03-runbooks.md "Running cron jobs locally".
 import "dotenv/config";
 import * as Sentry from "@sentry/nextjs";
+import { runJob } from "@/lib/observability/job-sentry";
 import prisma from "@/lib/prisma";
 import { Resend } from "resend";
 import { getAppUrl } from "@/lib/url";
@@ -184,24 +185,23 @@ async function runMsmePaymentAlertsUnlocked(): Promise<{
 // Self-execute when invoked directly via `npx tsx`. Allows imports for
 // unit tests without triggering the cron body.
 if (require.main === module) {
-  runMsmePaymentAlerts()
-    .then((r) => {
+  runJob("msme-payment-alerts", async () => {
+    try {
+      const r = await runMsmePaymentAlerts();
       console.log(
         `[MSME] cron done — alerted=${r.alerted} atRisk=${r.atRisk} emailSent=${r.emailSent}`,
       );
-    })
-    .catch((err) => {
+    } catch (err) {
       // #476 — lock held = another run is live; skip cleanly (exit 0).
       if (err instanceof CronLockHeldError) {
         console.log(`⏭️  ${err.message}`);
         Sentry.logger.info("job:msme-payment-alerts skipped — lock held");
         return;
       }
-      console.error("[MSME] cron failed:", err);
-      Sentry.captureException(err, { tags: { subsystem: "jobs", job: "msme-payment-alerts" } });
-      process.exitCode = 1;
-    })
-    .finally(async () => {
+      // Anything else escapes to runJob, which captures it and flushes. (#1066)
+      throw err;
+    } finally {
       await prisma.$disconnect();
-    });
+    }
+  });
 }

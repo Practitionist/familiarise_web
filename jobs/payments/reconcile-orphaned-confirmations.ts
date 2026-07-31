@@ -11,6 +11,7 @@ import {
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
 import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
 import * as Sentry from "@sentry/nextjs";
+import { runJob } from "../../lib/observability/job-sentry";
 
 async function main(): Promise<void> {
   await abortIfMaintenance("reconcile-orphaned-confirmations");
@@ -35,10 +36,10 @@ async function main(): Promise<void> {
     }
     Sentry.captureException(error, { tags: { subsystem: "jobs", job: "reconcile-orphaned-confirmations" } });
     console.error("❌ Fatal error in orphaned-confirmation reconcile:", error);
-    process.exit(1);
+    process.exitCode = 1;
   } finally {
     await disconnectDatabase();
   }
 }
 
-main();
+runJob("reconcile-orphaned-confirmations", main);

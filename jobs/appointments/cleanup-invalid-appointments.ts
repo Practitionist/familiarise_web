@@ -16,6 +16,7 @@ import fs from "fs";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
 import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
 import * as Sentry from "@sentry/nextjs";
+import { runJob } from "../../lib/observability/job-sentry";
 
 /**
  * Output results to GitHub Actions using environment files
@@ -93,10 +94,9 @@ async function main(): Promise<void> {
         totalCancelled: result.totalCancelled,
         errorCount: result.errors.length,
       });
-      process.exit(0);
     } else {
       console.error("❌ Cleanup job completed with errors");
-      process.exit(1);
+      process.exitCode = 1;
     }
   } catch (error) {
     // #476 — lock held = another run is live; skip cleanly (exit 0).
@@ -118,14 +118,10 @@ async function main(): Promise<void> {
       console.log(`::error::Cleanup job failed: ${errorMessage}`);
     }
 
-    process.exit(1);
+    process.exitCode = 1;
   }
   // Note: runAllCleanupTasks() handles database disconnection in its finally block
 }
 
 // Run the cleanup job
-main().catch((error) => {
-  console.error("\n❌ Cleanup job failed:");
-  console.error(error);
-  process.exit(1);
-});
+runJob("cleanup-invalid-appointments", main);

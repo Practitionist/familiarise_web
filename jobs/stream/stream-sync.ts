@@ -16,6 +16,7 @@ import {
 import fs from "fs";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
 import * as Sentry from "@sentry/nextjs";
+import { runJob } from "../../lib/observability/job-sentry";
 
 /**
  * Output results to GitHub Actions
@@ -80,7 +81,8 @@ async function main(): Promise<void> {
 
     if (!result.success) {
       console.error("\n❌ Job completed with some failures");
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
 
     Sentry.logger.info("job:stream-sync finished", {
@@ -104,14 +106,11 @@ async function main(): Promise<void> {
       console.log(`::error::Stream sync job failed: ${errorMessage}`);
     }
 
-    process.exit(1);
+    process.exitCode = 1;
   } finally {
     await disconnectDatabase();
   }
 }
 
 // Run the job
-main().catch((error) => {
-  console.error("\n❌ Unexpected error:", error);
-  process.exit(1);
-});
+runJob("stream-sync", main);

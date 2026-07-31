@@ -17,6 +17,7 @@ import fs from "fs";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
 import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
 import * as Sentry from "@sentry/nextjs";
+import { runJob } from "../../lib/observability/job-sentry";
 
 /**
  * Output results to GitHub Actions using environment files
@@ -72,10 +73,9 @@ async function main(): Promise<void> {
     if (result.success) {
       Sentry.logger.info("job:release-earnings finished", { releasedCount: result.releasedCount, errorCount: result.errorCount });
       console.log("🎉 Release earnings job completed successfully");
-      process.exit(0);
     } else {
       console.error("❌ Release earnings job completed with errors");
-      process.exit(1);
+      process.exitCode = 1;
     }
   } catch (error) {
     // #476 — lock held = another run is live; skipping is the correct
@@ -99,15 +99,11 @@ async function main(): Promise<void> {
       console.log(`::error::Release earnings job failed: ${errorMessage}`);
     }
 
-    process.exit(1);
+    process.exitCode = 1;
   } finally {
     await disconnectDatabase();
   }
 }
 
 // Run the job
-main().catch((error) => {
-  console.error("\n❌ Release earnings job failed:");
-  console.error(error);
-  process.exit(1);
-});
+runJob("release-earnings", main);

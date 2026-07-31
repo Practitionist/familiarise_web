@@ -22,6 +22,7 @@ import {
 import fs from "fs";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
 import * as Sentry from "@sentry/nextjs";
+import { runJob } from "../../lib/observability/job-sentry";
 
 interface JobSummary {
   processed: number;
@@ -150,10 +151,9 @@ async function main(): Promise<void> {
     if (result.success) {
       Sentry.logger.info("job:process-payouts finished", { processed: result.processed, succeeded: result.succeeded, failed: result.failed, orgErrors: result.orgErrors });
       console.log("🎉 Payout processing job completed successfully");
-      process.exit(0);
     } else {
       console.error("❌ Payout processing job completed with errors");
-      process.exit(1);
+      process.exitCode = 1;
     }
   } catch (error) {
     Sentry.captureException(error, { tags: { subsystem: "jobs", job: "process-payouts" } });
@@ -169,15 +169,11 @@ async function main(): Promise<void> {
       console.log(`::error::Payout processing job failed: ${errorMessage}`);
     }
 
-    process.exit(1);
+    process.exitCode = 1;
   } finally {
     await prisma.$disconnect();
   }
 }
 
 // Run the job
-main().catch((error) => {
-  console.error("\n❌ Payout processing job failed:");
-  console.error(error);
-  process.exit(1);
-});
+runJob("process-payouts", main);
