@@ -46,6 +46,12 @@ export interface AllocationRequest {
   // Redis lock keys (#860), so a cross-mode race from two tabs otherwise ends
   // in the manual path silently deleting the winner's allocation.
   initialAllocation?: boolean;
+  /**
+   * Consultant's explicit acceptance of times outside their own published
+   * availability. Routes must only set this for the consultant or a privileged
+   * caller — a consultee cannot wave away the consultant's schedule.
+   */
+  override?: boolean;
 }
 
 /**

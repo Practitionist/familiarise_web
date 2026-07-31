@@ -129,6 +129,7 @@ export class SlotAllocationService {
             request.eventId,
             request.initialAllocation,
             request.idempotencyKey,
+            request.override,
           );
 
         default:
@@ -1157,6 +1158,8 @@ export class SlotAllocationService {
     // here, because approving stored times is only valid for an unallocated event.
     _initialAllocation: boolean | undefined,
     idempotencyKey?: string,
+    /** Consultant accepting times outside their own published availability. */
+    overrideAvailabilityWindow?: boolean,
   ): Promise<AllocationResult> {
     // #837 — a retry whose first response was lost must replay the approved
     // batch, not trip the initial-allocation guard with a 409.
@@ -1302,6 +1305,7 @@ export class SlotAllocationService {
             config,
             existingAppointmentIds,
             consulteeUserId, // #676 AE-1 — also check the consultee's calendar
+            overrideAvailabilityWindow,
           );
 
           if (!validation.isValid) {

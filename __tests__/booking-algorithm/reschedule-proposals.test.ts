@@ -131,3 +131,35 @@ describe("RESCHEDULE_ALLOWED_FROM state machine", () => {
     expect(partitioned).toEqual(all);
   });
 });
+
+describe("allocationRequestSchema carries override", () => {
+  it("no longer strips the field the Override button sends", async () => {
+    const { allocationRequestSchema } = await import(
+      "../../schemas/slotAllocation/validationSchemas"
+    );
+
+    // Before this, `override` was absent from the schema and a plain (non-
+    // passthrough) Zod object dropped it, so "Override and Allocate" sent a
+    // flag nothing read and reliably 400'd with OUTSIDE_AVAILABILITY.
+    const parsed = allocationRequestSchema.parse({
+      isAuto: false,
+      useRequestedSlots: true,
+      override: true,
+    });
+
+    expect(parsed.override).toBe(true);
+  });
+
+  it("still rejects a non-boolean override", () => {
+    return import("../../schemas/slotAllocation/validationSchemas").then(
+      ({ allocationRequestSchema }) => {
+        const result = allocationRequestSchema.safeParse({
+          isAuto: false,
+          useRequestedSlots: true,
+          override: "yes",
+        });
+        expect(result.success).toBe(false);
+      },
+    );
+  });
+});

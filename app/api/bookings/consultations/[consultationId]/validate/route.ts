@@ -115,6 +115,17 @@ export async function POST(
       });
       const excludeIds = tentativeAppointments.map((a) => a.id);
 
+      // The allocator counts the CONSULTEE's bookings with any consultant as
+      // conflicts, so a preflight that omitted them reported "no conflicts" for
+      // times the very next call would reject. The dialog renders its verdict
+      // from this response, so the omission made that verdict unsound.
+      const consulteeUserId = (
+        await prisma.consultation.findUnique({
+          where: { id: consultationId },
+          select: { requestedBy: { select: { user: { select: { id: true } } } } },
+        })
+      )?.requestedBy?.user?.id;
+
       const validationResult = await validationService.validate(
         "consultation",
         consultationId,
@@ -132,6 +143,7 @@ export async function POST(
           durationInHours: consultationPlan.durationInHours,
         },
         excludeIds,
+        consulteeUserId,
       );
 
       // If validation passed, all slots are valid

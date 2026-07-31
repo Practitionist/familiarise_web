@@ -3,7 +3,7 @@ title: Slots and sessions — the canonical glossary
 band: 00-foundations
 audience: sde3
 status: live
-last-reviewed: 2026-06-10
+last-reviewed: 2026-07-31
 ---
 
 # Slots and sessions — the canonical glossary
@@ -13,8 +13,9 @@ codebase, and the June 2026 domain audit confirmed that the blur has caused
 real bugs and real review confusion. This glossary fixes one true name per
 concept. The convention going forward: the chain is **availability window →
 bookable slot → booked slot → appointment → engagement → meeting**, with
-trials and auth sessions as separate things, and the bare word "session" is
-reserved for nothing.
+trials and auth sessions as separate things. The bare word "session" names no
+concept in that chain — see "The colloquial traps" for the one place the
+`session*` prefix is deliberate.
 
 ## The eight concepts
 
@@ -63,10 +64,18 @@ scheduling; never rename anything else to "Session."
 
 ## The colloquial traps
 
-The plan fields `sessionDurationInHours` and `totalSessions` mean *meeting
-occurrences per plan* — they are appointment-adjacent counts, not video
-calls and not auth sessions. They predate this glossary and are kept under
-the schema freeze; this document is their disambiguation.
+The plan fields `sessionDurationInHours`, `totalSessions` and `sessionsPerWeek`
+mean *meeting occurrences per plan* — they are appointment-adjacent counts, not
+video calls and not auth sessions. The first two predate this glossary and are
+kept under the schema freeze; `sessionsPerWeek` joined them via ADR 24, which
+unified `SubscriptionPlan.callsPerWeek` and `ClassPlan.meetingsPerWeek` under one
+name (#1011). This document is their disambiguation.
+
+So "session" is barred as a *concept or model name* — there is no `Session` in
+the scheduling chain, and nothing else may be renamed to it — while the
+`session*` prefix on these plan-side counts is deliberate and settled. User-facing
+copy should say "session" for one occurrence of a recurring plan, never "call"
+(which means the Stream video record) or "meeting".
 
 "Enterprise referrals" is not a feature. The phrase has been used loosely
 for three unrelated real things: trial attribution

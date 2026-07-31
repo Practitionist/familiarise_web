@@ -416,7 +416,7 @@ export function EventPlannerForSubscription({
                 <p>
                   {initialData
                     ? "Update the details of your subscription plan."
-                    : "Create a recurring subscription offering with scheduled calls and support."}
+                    : "Create a recurring subscription offering with scheduled sessions and support."}
                 </p>
                 {activeSubscriptionsCount > 0 && (
                   <div className="mt-2 text-sm text-blue-600 font-medium">
@@ -528,7 +528,7 @@ export function EventPlannerForSubscription({
               {/* Support Options Section */}
               <FormSection
                 title="Support Options"
-                description="Define call frequency, duration, and support level"
+                description="Define session frequency, duration, and support level"
                 icon={Headphones}
               >
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -537,7 +537,7 @@ export function EventPlannerForSubscription({
                     name="sessionsPerWeek"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Calls Per Week</FormLabel>
+                        <FormLabel>Sessions Per Week</FormLabel>
                         <FormControl>
                           <Input
                             type="number"
@@ -554,7 +554,7 @@ export function EventPlannerForSubscription({
                           />
                         </FormControl>
                         <FormDescription>
-                          Number of scheduled calls per week
+                          Number of scheduled sessions per week
                         </FormDescription>
                         <FormMessage />
                       </FormItem>

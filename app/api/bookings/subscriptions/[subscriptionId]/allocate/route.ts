@@ -18,7 +18,11 @@ import {
   eventIdSchema,
 } from "@/schemas/slotAllocation/validationSchemas";
 import { ZodError } from "zod";
-import { requireApiAuth, authorizeEventAccess } from "@/lib/auth-helpers";
+import {
+  requireApiAuth,
+  authorizeEventAccess,
+  isEventConsultant,
+} from "@/lib/auth-helpers";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 
 export async function PATCH(
@@ -71,6 +75,12 @@ export async function PATCH(
         `[Subscription Allocation] Mode: ${mode}, Slots: ${body.slots ? body.slots.length : "auto"}`,
       );
 
+      const canOverride = await isEventConsultant(
+        authResult.session,
+        "subscription",
+        subscriptionId,
+      );
+
       // LAYER 2: Business Logic Validation & Allocation
       const result = await SlotAllocationService.allocate({
         eventType: "subscription",
@@ -81,6 +91,10 @@ export async function PATCH(
         // the first batch instead of allocating twice.
         idempotencyKey: request.headers.get("Idempotency-Key") ?? undefined,
         initialAllocation: body.initialAllocation,
+        // Honoured only for the consultant (or ADMIN/STAFF): accepting a
+        // time outside the published availability is the consultant's call,
+        // not something a consultee may assert about someone else's schedule.
+        override: body.override === true && canOverride,
       });
 
       const duration = Date.now() - startTime;
@@ -146,7 +160,10 @@ export async function PATCH(
       `[Subscription Allocation] Error after ${duration}ms:`,
       error,
     );
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "bookings" } },
+    );
     return NextResponse.json(
       {
         error:

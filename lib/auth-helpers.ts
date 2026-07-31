@@ -31,10 +31,7 @@ export async function requireApiAuth(): Promise<
   // cover the normal paths; this catches a session minted in the race window.
   if (session.user.banned === true) {
     return {
-      error: NextResponse.json(
-        { error: "Account suspended" },
-        { status: 403 },
-      ),
+      error: NextResponse.json({ error: "Account suspended" }, { status: 403 }),
     };
   }
   return { session };
@@ -317,10 +314,7 @@ export async function authorizeEventAccess(
 // ============================================================================
 
 import { isAtLeastRole } from "@/lib/auth/role-ranks";
-import {
-  hasOrgPermission,
-  type OrgSurface,
-} from "@/lib/auth/org-permissions";
+import { hasOrgPermission, type OrgSurface } from "@/lib/auth/org-permissions";
 
 export type OrgAccessGrant = {
   session: Session;
@@ -550,5 +544,63 @@ export async function requireOrgOwner(
   organizationId: string,
   opts?: Omit<OrgCapabilityGate, "minimumRole">,
 ): Promise<({ error?: never } & OrgAccessGrant) | { error: NextResponse }> {
-  return requireOrgAccess(organizationId, { ...(opts ?? {}), minimumRole: "OWNER" });
+  return requireOrgAccess(organizationId, {
+    ...(opts ?? {}),
+    minimumRole: "OWNER",
+  });
+}
+
+/**
+ * Whether this caller may waive the consultant's own published availability
+ * when allocating.
+ *
+ * Deliberately narrower than {@link authorizeEventAccess}, which admits the
+ * consultee as a participant. Accepting a time outside the published window is
+ * the consultant's decision about their own schedule; a consultee asserting it
+ * would let them book whenever they liked.
+ */
+export async function isEventConsultant(
+  session: Session,
+  eventType: "consultation" | "subscription" | "webinar" | "class",
+  eventId: string,
+): Promise<boolean> {
+  if (isPrivileged(session.user.role)) return true;
+
+  const consultantProfileId = session.user.consultantProfileId;
+  if (!consultantProfileId) return false;
+
+  switch (eventType) {
+    case "consultation": {
+      const event = await prisma.consultation.findUnique({
+        where: { id: eventId },
+        select: { consultationPlan: { select: { consultantProfileId: true } } },
+      });
+      return (
+        event?.consultationPlan.consultantProfileId === consultantProfileId
+      );
+    }
+    case "subscription": {
+      const event = await prisma.subscription.findUnique({
+        where: { id: eventId },
+        select: { subscriptionPlan: { select: { consultantProfileId: true } } },
+      });
+      return (
+        event?.subscriptionPlan.consultantProfileId === consultantProfileId
+      );
+    }
+    case "webinar": {
+      const event = await prisma.webinar.findUnique({
+        where: { id: eventId },
+        select: { webinarPlan: { select: { consultantProfileId: true } } },
+      });
+      return event?.webinarPlan.consultantProfileId === consultantProfileId;
+    }
+    case "class": {
+      const event = await prisma.class.findUnique({
+        where: { id: eventId },
+        select: { classPlan: { select: { consultantProfileId: true } } },
+      });
+      return event?.classPlan.consultantProfileId === consultantProfileId;
+    }
+  }
 }
