@@ -13,6 +13,7 @@ import {
   CONSULTEE_JOIN_WINDOW_MS,
   getJoinableSlot as getJoinableSlotShared,
 } from "@/lib/appointments/slots";
+import type { SlotPreference } from "@/components/scheduling/slot-picker-policy";
 
 interface UseEventActionsOptions {
   appointmentId?: string;
@@ -115,6 +116,9 @@ export function useEventActions({
   const handleReschedule = async (
     slotIds?: string[],
     proposedSlots?: { startsAt: string; endsAt: string }[],
+    // #1065 — only meaningful alongside an absent proposedSlots: how to place
+    // the replacement when the consultee names no time.
+    preference?: SlotPreference,
   ): Promise<boolean> => {
     if (!appointmentId) {
       toast({
@@ -137,6 +141,10 @@ export function useEventActions({
       const payload: Record<string, unknown> = {};
       if (slotIds && slotIds.length > 0) payload.slotIds = slotIds;
       if (proposedSlots?.length) payload.proposedSlots = proposedSlots;
+      if (preference?.preferredTimeOfDay)
+        payload.preferredTimeOfDay = preference.preferredTimeOfDay;
+      if (preference?.preferredDays)
+        payload.preferredDays = preference.preferredDays;
 
       const response = await fetch(url, {
         method: "POST",

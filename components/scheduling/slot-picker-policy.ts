@@ -16,11 +16,24 @@ export type SlotPickerPolicyKind =
   | "RESCHEDULE_CONSULTANT"
   | "MANAGE_TIMINGS";
 
+/**
+ * How the initiator would like the replacement placed when they name no time
+ * (#1065). Two independent axes so "weekday mornings" is sayable, and both are
+ * scored by the allocator rather than filtered on — the worst case of a
+ * preference nobody can meet is a less-liked time, never a failed allocation.
+ */
+export interface SlotPreference {
+  preferredTimeOfDay?: "MORNING" | "AFTERNOON" | "EVENING";
+  preferredDays?: "WEEKDAYS" | "WEEKENDS";
+}
+
 export interface SlotPickerSubmission {
   /** Sessions being released. Undefined = every session of the booking. */
   slotIds?: string[];
   /** Times asked for. Absent = "any time works". */
   proposedSlots?: { startsAt: string; endsAt: string }[];
+  /** Only ever set alongside an absent `proposedSlots` — naming a time says it. */
+  preference?: SlotPreference;
 }
 
 export interface SlotPickerPolicy {

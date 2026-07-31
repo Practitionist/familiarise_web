@@ -72,11 +72,17 @@ export class SlotCalculationService {
     return Math.round((wallAsUtc - at.getTime()) / 60_000);
   }
 
-  /** Calendar date {year, month(1-12), day, weekday(0=Sun)} of an instant in a timezone. */
+  /** Calendar date {year, month(1-12), day, weekday(0=Sun), hour(0-23)} of an instant in a timezone. */
   private static getCalendarParts(
     d: Date,
     timeZone: string,
-  ): { year: number; month: number; day: number; weekday: number } {
+  ): {
+    year: number;
+    month: number;
+    day: number;
+    weekday: number;
+    hour: number;
+  } {
     const parts = this.getDateFormatter(timeZone).formatToParts(d);
     const get = (type: string) =>
       parts.find((p) => p.type === type)?.value ?? "";
@@ -85,7 +91,33 @@ export class SlotCalculationService {
       month: Number(get("month")),
       day: Number(get("day")),
       weekday: WEEKDAY_INDEX[get("weekday")] ?? 0,
+      // Intl reports 24 for midnight under the h24 hourCycle; normalize as
+      // tzOffsetMinutes above does, or midnight reads as hour 24.
+      hour: Number(get("hour")) % 24,
     };
+  }
+
+  /**
+   * Wall-clock hour (0-23) of an instant, as read in `timeZone` (ADR B9).
+   *
+   * #1065 — the allocator scores "morning"/"evening" with this rather than
+   * Date#getHours(), which answers in whatever timezone the Node process
+   * happens to run in and would make the same booking morning on one host and
+   * afternoon on another.
+   */
+  static hourInTz(
+    d: Date,
+    timeZone: string = this.DEFAULT_SCHEDULING_TIMEZONE,
+  ): number {
+    return this.getCalendarParts(d, timeZone).hour;
+  }
+
+  /** Day of week (0 = Sunday) of an instant, as read in `timeZone` (ADR B9). */
+  static weekdayInTz(
+    d: Date,
+    timeZone: string = this.DEFAULT_SCHEDULING_TIMEZONE,
+  ): number {
+    return this.getCalendarParts(d, timeZone).weekday;
   }
   /**
    * Count the number of distinct Sunday-start weeks overlapping [start, end].

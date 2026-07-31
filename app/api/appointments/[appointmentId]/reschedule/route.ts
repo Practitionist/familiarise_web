@@ -3,7 +3,11 @@ import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth-server";
 import { isPrivileged } from "@/lib/auth-helpers";
-import type { RescheduleInitiatorRole } from "@prisma/client";
+import type {
+  RescheduleInitiatorRole,
+  ReschedulePreferredDays,
+  ReschedulePreferredTimeOfDay,
+} from "@prisma/client";
 import { RescheduleProposalSchema } from "@/schemas/appointments";
 import {
   computeProposalExpiry,
@@ -101,6 +105,10 @@ export async function POST(
     // still a valid request and remains the whole contract for group events.
     let proposedSlots: { startsAt: Date; endsAt: Date }[] | undefined;
     let reason: string | undefined;
+    // #1065 — how the initiator wants the replacement placed when they name no
+    // time. Scored by the allocator, never used to exclude a candidate.
+    let preferredTimeOfDay: ReschedulePreferredTimeOfDay | undefined;
+    let preferredDays: ReschedulePreferredDays | undefined;
     try {
       const body = await request.json();
       // Support both single slotId (legacy) and slotIds array
@@ -128,6 +136,8 @@ export async function POST(
         }));
       }
       reason = parsedProposal.data.reason;
+      preferredTimeOfDay = parsedProposal.data.preferredTimeOfDay;
+      preferredDays = parsedProposal.data.preferredDays;
     } catch {
       // No body or invalid JSON - that's fine, every field here is optional
     }
@@ -457,13 +467,25 @@ export async function POST(
         // this a reschedule reaches the consultant carrying LESS information
         // than the original booking did — which slots to drop, and nothing
         // about when the consultee actually wants them.
+        //
+        // #1065 — a stated preference opens the same record with no times on
+        // it, so "any time works, but ideally weekday mornings" survives to the
+        // allocator. That row deliberately does NOT take the
+        // openForAppointmentId reservation: the reservation exists to stop a
+        // second PROPOSAL racing a live one, and nothing resolves a
+        // preference-only row when the consultant simply auto-allocates, so
+        // claiming it would strand the booking until the hourly expiry sweep.
+        // The released slots (completionStatus RESCHEDULED) already stop the UI
+        // offering a second reschedule.
         let rescheduleRequestId: string | null = null;
+        const hasPreference = Boolean(preferredTimeOfDay || preferredDays);
         if (
-          proposedSlots?.length &&
+          (proposedSlots?.length || hasPreference) &&
           initiatorRole &&
           supportsProposals(derivedType)
         ) {
           if (
+            proposedSlots?.length &&
             !proposalCountMatches(slotsToReschedule.length, proposedSlots.length)
           ) {
             throw Object.assign(
@@ -498,11 +520,14 @@ export async function POST(
               releasedSlotIds: slotsToReschedule.map((s) => s.id),
               expiresAt,
               // Reserves the appointment: the nullable @unique makes a second
-              // live reschedule a DB-level conflict rather than a race.
-              openForAppointmentId: appointmentId,
+              // live reschedule a DB-level conflict rather than a race. Only a
+              // real proposal claims it — see above for why a preference does not.
+              openForAppointmentId: proposedSlots?.length ? appointmentId : null,
               organizationId: appointment.organizationId ?? null,
+              preferredTimeOfDay,
+              preferredDays,
               proposedSlots: {
-                create: proposedSlots.map((s) => ({
+                create: (proposedSlots ?? []).map((s) => ({
                   startsAt: s.startsAt,
                   endsAt: s.endsAt,
                   proposedById: session.user.id,
@@ -511,7 +536,10 @@ export async function POST(
             },
             select: { id: true },
           });
-          rescheduleRequestId = created.id;
+          // Only a request carrying times can auto-confirm or be answered, and
+          // the caller reads this id as "times were sent" — so a preference-only
+          // row deliberately leaves it null.
+          if (proposedSlots?.length) rescheduleRequestId = created.id;
         }
 
         // #448 — count SESSIONS, not raw slots: one Appointment is one session

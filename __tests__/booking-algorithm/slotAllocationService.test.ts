@@ -30,6 +30,10 @@ jest.mock("../../lib/prisma", () => ({
     webinar: { findUnique: jest.fn() },
     class: { findUnique: jest.fn() },
     appointment: { findMany: jest.fn() },
+    // #1065 — a reschedule reads the initiator's stated placement preference
+    // before searching. Unstubbed it resolves undefined, which is the "no
+    // preference" case every test here means.
+    rescheduleRequest: { findFirst: jest.fn() },
   },
   ALLOCATION_TX_MAX_WAIT_MS: 8000,
   ALLOCATION_TX_TIMEOUT_MS: 30000,
