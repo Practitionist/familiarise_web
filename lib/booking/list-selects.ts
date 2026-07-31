@@ -77,6 +77,11 @@ export const APPOINTMENT_LIST_SELECT = {
           select: { startsAt: true, endsAt: true, round: true },
         },
       },
+      // take:1 without an order is whichever row Postgres hands back first.
+      // At most one reschedule is open per appointment today (the nullable
+      // @unique), so this is currently unambiguous — but the ordering is what
+      // keeps it correct if that ever stops being true, and costs nothing.
+      orderBy: { createdAt: "desc" },
       take: 1,
     },
   },

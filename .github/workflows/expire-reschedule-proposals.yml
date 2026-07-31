@@ -11,8 +11,21 @@ on:
     - cron: "45 * * * *"
   workflow_dispatch: # Allow manual triggering
 
+# This job reads code and writes to the database. It never pushes, comments or
+# releases, so the default repository token scope is far more than it needs —
+# and it runs holding DATABASE_URL and the Redis credentials.
+permissions:
+  contents: read
+
+# The cron lock already protects the DATABASE from a double run; this stops a
+# queued duplicate consuming a runner to discover that.
+concurrency:
+  group: expire-reschedule-proposals
+  cancel-in-progress: false
+
 jobs:
   expire-reschedule-proposals:
+    name: Expire reschedule proposals
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -27,6 +40,10 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+        with:
+          # Otherwise the token is left in .git/config for every later step and
+          # every dependency they run. Nothing here needs to talk back to git.
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v5

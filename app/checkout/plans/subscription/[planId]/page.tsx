@@ -557,7 +557,12 @@ export default function SubscriptionCheckoutPage({
             </div>
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Sessions per Week</div>
-              <div>{planData?.data?.sessionsPerWeek || 1} calls</div>
+              <div>
+                {planData?.data?.sessionsPerWeek || 1}{" "}
+                {(planData?.data?.sessionsPerWeek || 1) === 1
+                  ? "session"
+                  : "sessions"}
+              </div>
             </div>
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Session Duration</div>

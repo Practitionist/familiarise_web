@@ -87,7 +87,11 @@ async function main(): Promise<void> {
       tags: { subsystem: "jobs", job: "expire-reschedule-proposals" },
     });
     console.error("❌ Fatal error in reschedule proposal expiry:", error);
-    process.exit(1);
+    // Set the code, do not exit here: process.exit() terminates immediately and
+    // skips the finally below, so a failing run leaked its Prisma connection
+    // every time. Setting exitCode lets the runtime exit naturally once the
+    // disconnect has happened.
+    process.exitCode = 1;
   } finally {
     await prisma.$disconnect();
   }
