@@ -158,6 +158,10 @@ export async function GET(request: NextRequest) {
           status: true,
           requestedAt: true,
           bookingSource: true,
+          // What the consultee actually said. The Requests table had a wide
+          // empty column and no way to see it, so the consultant allocated
+          // times without ever reading the one thing explaining the request.
+          requestNotes: true,
           schedulingPeriodStartsAt: true,
           schedulingPeriodEndsAt: true,
           schedulingTimezone: true,

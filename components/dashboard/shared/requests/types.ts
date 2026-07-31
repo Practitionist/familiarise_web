@@ -59,6 +59,8 @@ export interface ConsultationApiResponse {
   appointment?: AppointmentInfo;
   status: AppointmentStatus;
   bookingSource?: "DIRECT_CHECKOUT" | "REQUEST_SUBMITTED"; // Booking source enum
+  /** What the consultee said when booking. */
+  requestNotes?: string | null;
 }
 
 export interface SubscriptionApiResponse {
@@ -74,4 +76,6 @@ export interface SubscriptionApiResponse {
   schedulingPeriodEndsAt?: string;
   /** Defines the limit day/week buckets (ADR B9); column default Asia/Kolkata. */
   schedulingTimezone?: string;
+  /** What the consultee said when booking. */
+  requestNotes?: string | null;
 }

@@ -88,6 +88,8 @@ interface Request {
   rescheduledSlotCount?: number;
   /** The times the consultee asked for, when they named any. */
   proposal?: RescheduleProposalInfo;
+  /** What the consultee said when booking. */
+  requestNotes?: string | null;
 }
 
 // interface SlotInterval { ... } // Removed - Now imported
@@ -257,12 +259,29 @@ function ProposalBlock({ proposal }: { proposal: RescheduleProposalInfo }) {
  * request, not any one time, and stacking it above the times was what made
  * that column three blocks tall.
  */
-function RescheduleBadge({ request }: { request: Request }) {
-  const tentative = request.tentativeSlotCount ?? 0;
-  const total = request.totalSlotCount;
-  if (tentative === 0 || total === undefined) return null;
+/**
+ * Slots are 30-minute atoms (ADR B1); a session is however many of them the
+ * plan's duration needs. Reporting the raw count called a one-hour
+ * consultation "2 sessions".
+ */
+function sessionsFromSlots(request: Request, slotCount: number): number {
+  const hours =
+    request.type === AppointmentsType.CONSULTATION
+      ? request.durationInHours
+      : request.sessionDurationInHours;
+  const perSession = Math.max(1, Math.round((hours ?? 0.5) / 0.5));
+  return Math.max(1, Math.round(slotCount / perSession));
+}
 
-  if (tentative === total) {
+function RescheduleBadge({ request }: { request: Request }) {
+  const tentativeSlots = request.tentativeSlotCount ?? 0;
+  const totalSlots = request.totalSlotCount;
+  if (tentativeSlots === 0 || totalSlots === undefined) return null;
+
+  const tentative = sessionsFromSlots(request, tentativeSlots);
+  const total = sessionsFromSlots(request, totalSlots);
+
+  if (tentativeSlots === totalSlots) {
     return (
       <Badge
         variant="secondary"
@@ -447,6 +466,7 @@ export function RequestSlotAllocationTab({
               durationInHours:
                 consultation.consultationPlan?.durationInHours || 1,
               bookingSource: consultation.bookingSource,
+              requestNotes: consultation.requestNotes,
               tentativeSlotCount: tentativeCount,
               rescheduledSlotCount: rescheduledCount,
               proposal: proposalOf(consultation.appointment),
@@ -549,6 +569,7 @@ export function RequestSlotAllocationTab({
                 : undefined,
               schedulingTimezone: subscription.schedulingTimezone,
               bookingSource: subscription.bookingSource,
+              requestNotes: subscription.requestNotes,
               tentativeSlotCount: tentativeCount,
               rescheduledSlotCount: rescheduledCount,
               proposal: subscription.appointments
@@ -872,6 +893,25 @@ export function RequestSlotAllocationTab({
           <StoredTimes request={request} />
         </div>
       ),
+    },
+    {
+      key: "note",
+      header: "Note",
+      // The row's flexible column. The table had ~200px of dead space between
+      // the times and the status, while the one thing explaining WHY the
+      // consultee wants those times was fetched by nobody and shown nowhere —
+      // so the consultant allocated without ever reading the request.
+      className: "align-top",
+      cell: (request) =>
+        request.requestNotes?.trim() ? (
+          <p className="line-clamp-3 max-w-[26rem] text-left text-xs italic text-muted-foreground">
+            &ldquo;{request.requestNotes.trim()}&rdquo;
+          </p>
+        ) : (
+          // An em dash rather than blank: "they said nothing" and "we failed to
+          // load it" should not look identical.
+          <span className="text-xs text-muted-foreground/60">&mdash;</span>
+        ),
     },
     {
       key: "status",
