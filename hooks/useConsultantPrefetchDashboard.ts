@@ -2,6 +2,7 @@
 
 import { useQueryClient, type FetchQueryOptions } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef } from "react";
+import * as Sentry from "@sentry/nextjs";
 
 import {
   createConsultantQueries,
@@ -107,6 +108,12 @@ export function usePrefetchDashboard({
       safePrefetch([queries.planner], "medium");
     } catch (error) {
       console.warn("Consultant data prefetching failed:", error);
+      // Best-effort dashboard prefetch — the real useQuery on the actual
+      // tab still fetches on demand. Reported for volume visibility only.
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "client", expected: "true" }, level: "info" },
+      );
     }
   }, [consultantId, safePrefetch]);
 
@@ -127,6 +134,11 @@ export function usePrefetchDashboard({
       );
     } catch (error) {
       console.warn("Consultee data prefetching failed:", error);
+      // Best-effort dashboard prefetch — see the consultant twin above.
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "client", expected: "true" }, level: "info" },
+      );
     }
   }, [consulteeId, safePrefetch]);
 
@@ -205,8 +217,9 @@ export function usePrefetchDashboard({
 
   // Cleanup function to clear prefetch tracking on unmount
   useEffect(() => {
+    const trackedSet = prefetchedRef.current;
     return () => {
-      prefetchedRef.current.clear();
+      trackedSet.clear();
     };
   }, []);
 

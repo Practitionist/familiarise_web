@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import * as Sentry from "@sentry/nextjs";
 import { useToast } from "@/components/ui/use-toast";
 import {
   TConsultation,
@@ -165,7 +166,13 @@ function useEventsInternal(mode: TEventQueryMode): IEventsResult {
       } catch (err: unknown) {
         console.error("Error fetching events:", err);
         const message = err instanceof Error ? err.message : "Unknown error";
-        setError(err instanceof Error ? err : new Error(message));
+        const normalizedErr = err instanceof Error ? err : new Error(message);
+        setError(normalizedErr);
+        // Falls through to an empty-list render otherwise — indistinguishable
+        // from "this consultee genuinely has no bookings" without this.
+        Sentry.captureException(normalizedErr, {
+          tags: { subsystem: "client", expected: "false" },
+        });
         toast({
           title: "Error fetching events",
           description: message,

@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
 import { isPlanViewable } from "@/lib/api/plans/visibility";
@@ -17,7 +18,16 @@ export async function canViewPlanDetail(
     archivedAt?: Date | null;
   } | null,
 ): Promise<boolean> {
-  const session = await getSession().catch(() => null);
+  // A session-lookup failure is treated as anonymous by design (matches
+  // app/api/waitlist/route.ts's identical fallback) — captured for
+  // visibility only; the anonymous-fallback outcome itself is unchanged.
+  const session = await getSession().catch((error) => {
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "plans", expected: "true" }, level: "info" },
+    );
+    return null;
+  });
   return isPlanViewable(
     plan,
     session?.user?.id ?? null,

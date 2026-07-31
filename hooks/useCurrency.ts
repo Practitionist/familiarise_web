@@ -2,6 +2,7 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useSyncExternalStore } from "react";
+import * as Sentry from "@sentry/nextjs";
 import { CURRENCY_LOCALE_MAP } from "@/utils/formatting";
 
 const STORAGE_KEY = "preferred-currency";
@@ -73,11 +74,22 @@ export function useCurrency() {
   const { data, isLoading } = useQuery<CurrencyData>({
     queryKey: ["currency-rate", selectedCurrency],
     queryFn: async () => {
-      const res = await fetch(
-        `/api/currency?to=${encodeURIComponent(selectedCurrency)}`,
-      );
-      if (!res.ok) throw new Error("Failed to fetch currency rate");
-      return res.json();
+      try {
+        const res = await fetch(
+          `/api/currency?to=${encodeURIComponent(selectedCurrency)}`,
+        );
+        if (!res.ok) throw new Error("Failed to fetch currency rate");
+        return await res.json();
+      } catch (error) {
+        // React Query retries this (retry: 2) and formatPrice already has an
+        // honest INR fallback while rate is null — captured for visibility
+        // into retry volume, not because the degrade itself needs fixing.
+        Sentry.captureException(
+          error instanceof Error ? error : new Error(String(error)),
+          { tags: { subsystem: "client", expected: "true" }, level: "info" },
+        );
+        throw error;
+      }
     },
     enabled: !isINR,
     staleTime: 60 * 60 * 1000, // 1 hour
@@ -126,7 +138,16 @@ export function useCurrency() {
           minimumFractionDigits: 0,
           maximumFractionDigits: 0,
         }).format(converted);
-      } catch {
+      } catch (error) {
+        // Only throws on a malformed currency code (e.g. a bad value from
+        // /api/currency) \u2014 a real data bug, not the "still loading" case.
+        Sentry.captureException(
+          error instanceof Error ? error : new Error(String(error)),
+          {
+            tags: { subsystem: "client", expected: "false" },
+            extra: { displayCurrency },
+          },
+        );
         return `${rate === null ? "\u20B9" : symbol}${Math.round(converted).toLocaleString()}`;
       }
     },

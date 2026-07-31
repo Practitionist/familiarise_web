@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import * as Sentry from "@sentry/nextjs";
 import { useToast } from "@/components/ui/use-toast";
 import { TConsultantProfile } from "@/types/consultant";
 import { TConsulteeProfile } from "@/types/consultee";
@@ -69,7 +70,8 @@ export const useUserData = (userId: string) => {
         const error = err instanceof Error ? err : new Error(String(err));
         setError(error);
         // 401 is expected after sign-out (session cleared before component unmounts)
-        if (err != null && typeof err === "object" && "status" in err && (err as { status: number }).status === 401) return;
+        if (err !== null && err !== undefined && typeof err === "object" && "status" in err && (err as { status: number }).status === 401) return;
+        Sentry.captureException(error, { tags: { subsystem: "client", expected: "false" } });
         console.error("Error fetching user details:", err);
         toast({
           title: "Error fetching user details",
