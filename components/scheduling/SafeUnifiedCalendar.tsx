@@ -3,7 +3,10 @@
 import { UnifiedCalendar, UnifiedCalendarProps } from "./UnifiedCalendar";
 import CalendarErrorBoundary from "./CalendarErrorBoundary";
 import { SlotStatusLegend } from "./SlotStatusLegend";
-import { CONSULTANT_LEGEND_KEYS } from "@/lib/scheduling/slot-status-tokens";
+import {
+  BUYER_LEGEND_KEYS,
+  CONSULTANT_LEGEND_KEYS,
+} from "@/lib/scheduling/slot-status-tokens";
 import { cn } from "@/utils/tailwind";
 
 /**
@@ -26,7 +29,20 @@ export function SafeUnifiedCalendar({
           the calendar stopped filling its dialog. */}
       <div className={cn("flex min-h-0 flex-col gap-3", className)}>
         <UnifiedCalendar {...props} className="min-h-0 flex-1" />
-        <SlotStatusLegend keys={CONSULTANT_LEGEND_KEYS} className="shrink-0" />
+        {/* A buyer picking a time has no use for "This booking" or "Being
+            moved" — those name states of an allocation they are not doing, and
+            one of them refers to a slot the picker does not even display.
+            Follows `mode` for the same reason includeAppointmentDetails does:
+            "allocate" is the consultant's surface, everything else is a
+            buyer's. */}
+        <SlotStatusLegend
+          keys={
+            props.mode === "allocate"
+              ? CONSULTANT_LEGEND_KEYS
+              : BUYER_LEGEND_KEYS
+          }
+          className="shrink-0"
+        />
       </div>
     </CalendarErrorBoundary>
   );
