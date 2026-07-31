@@ -208,7 +208,7 @@ const MAX_VISIBLE_SLOTS = 3;
  * readable while collapsed. Same chevron-and-"Show less" shape as the other
  * in-place expanders (`SessionTimeline`, `FacetGroup`).
  */
-function RequestNote({ notes }: { notes: string }) {
+function RequestNote({ notes }: Readonly<{ notes: string }>) {
   const textRef = useRef<HTMLParagraphElement>(null);
   const [isClamped, setIsClamped] = useState(false);
   const [expanded, setExpanded] = useState(false);

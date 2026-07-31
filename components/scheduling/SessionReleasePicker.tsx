@@ -77,7 +77,7 @@ function SessionList({
 }>) {
   return (
     <div className="max-h-64 space-y-2 overflow-y-auto rounded-lg border border-border p-2">
-      {sessions.map((session, index) => {
+      {sessions.map((session) => {
         const sessionSlotIds = session.slots.map((s) => s.id);
         const isSelected = sessionSlotIds.every((id) =>
           selectedSlotIds.includes(id),
@@ -101,7 +101,9 @@ function SessionList({
 
         return (
           <button
-            key={`session-${index}`}
+            // The sorted list reorders when subject.slots changes; the first
+            // slot's id is stable across that, an index is not.
+            key={sessionSlotIds[0]}
             type="button"
             onClick={toggle}
             disabled={locked}
@@ -211,7 +213,14 @@ export function SessionReleasePicker({
       const alreadyPicked = sessions.find((session) =>
         session.slots.some((slot) => selectedSlotIds.includes(slot.id)),
       );
-      const target = alreadyPicked ?? sessions[0];
+      // NOT sessions[0]: the list is earliest-first, so the first entry is the
+      // one most likely to be inside the lead window — and SessionList
+      // disables that row, leaving it ticked and untickable. The submit stays
+      // enabled (it only counts selected ids), so the server rejects a release
+      // the user cannot change.
+      const target =
+        alreadyPicked ??
+        sessions.find((session) => !isWithinLeadTime(session, minLeadHours));
       onSelectionChange(target ? target.slots.map((s) => s.id) : []);
     }
   };

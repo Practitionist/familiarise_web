@@ -18,6 +18,8 @@
  * two were written out by hand (#1064).
  */
 
+import { cn } from "@/utils/tailwind";
+
 export type SlotStatusKey =
   | "available"
   | "partiallyBooked"
@@ -172,14 +174,18 @@ export function slotCellClassName(
   key: SlotStatusKey,
   options?: { faded?: boolean; className?: string },
 ): string {
-  return [
+  // cn, not a join: Tailwind resolves same-specificity conflicts by position in
+  // the GENERATED stylesheet, not by concatenation order — the exact mechanism
+  // behind this file's `border-transparent` regression (#1064). A plain join
+  // gives the open `className` extension point no protection against a caller
+  // passing a conflicting `bg-*`/`border-*`; twMerge makes the last argument
+  // win, which is the order a caller would reasonably expect.
+  return cn(
     SLOT_CELL_BASE_CLASS,
     SLOT_STATUS_TOKENS[key].className,
-    options?.faded ? "opacity-60" : "",
-    options?.className ?? "",
-  ]
-    .filter(Boolean)
-    .join(" ");
+    options?.faded && "opacity-60",
+    options?.className,
+  );
 }
 
 /** The booleans a cell resolves through, in the precedence they apply. */

@@ -30,7 +30,16 @@ export function DesktopOnlyNotice({
     // Tailwind's `lg`. Kept in sync by hand: a media query string cannot read
     // the theme, and the alternative is measuring on every resize.
     const query = window.matchMedia("(min-width: 1024px)");
-    const sync = () => setIsDesktop(query.matches);
+    // Latches: once true it never goes back. Unmounting on a shrink would
+    // destroy the calendar's own slot selection while SlotPicker keeps its
+    // copy, so a resize, a split screen or a browser zoom leaves the footer
+    // claiming "N slots selected" over a grid showing none — and submitting
+    // sends times the user can no longer see. The CSS gate still hides the
+    // subtree below `lg`, which is what the notice is actually for; this only
+    // decides whether the fetch-on-mount ever happens.
+    const sync = () => {
+      if (query.matches) setIsDesktop(true);
+    };
     sync();
     query.addEventListener("change", sync);
     return () => query.removeEventListener("change", sync);
