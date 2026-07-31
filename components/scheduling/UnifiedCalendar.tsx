@@ -32,7 +32,7 @@ import {
   Zap,
   RotateCcw,
 } from "lucide-react";
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
   TimeSlot,
   AppointmentDetail,
@@ -520,12 +520,30 @@ export function UnifiedCalendar({
     }
   }, [preSelectedSlots, selectedSlots, setSelectedSlots]);
 
-  // Call onSlotsSelected when selection changes
+  // Call onSlotsSelected when the SELECTION changes — not when the parent
+  // re-renders.
+  //
+  // The callback is held in a ref and kept out of the dependency array on
+  // purpose. RescheduleSessionsModal passes an inline arrow, so depending on
+  // it meant a new identity every render: effect fires, parent setState,
+  // re-render, new identity, fire again, forever — React error #185. Nothing
+  // caught it because "select" is the consultee picker's mode and the picker
+  // never mounted while consultantProfileId was resolving to null.
+  //
+  // A ref rather than asking callers to useCallback: a component that
+  // infinite-loops when handed an inline arrow is a trap, and the sibling
+  // preSelectedSlots effect above already had to defend against the same
+  // class of bug by comparing contents.
+  const onSlotsSelectedRef = useRef(onSlotsSelected);
   useEffect(() => {
-    if (mode === "select" && onSlotsSelected) {
-      onSlotsSelected(selectedSlots);
+    onSlotsSelectedRef.current = onSlotsSelected;
+  });
+
+  useEffect(() => {
+    if (mode === "select") {
+      onSlotsSelectedRef.current?.(selectedSlots);
     }
-  }, [selectedSlots, mode, onSlotsSelected]);
+  }, [selectedSlots, mode]);
 
   // Set warning banner if duration configuration is missing
   useEffect(() => {
