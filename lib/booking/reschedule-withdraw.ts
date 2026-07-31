@@ -1,0 +1,104 @@
+import prisma from "@/lib/prisma";
+import { reportSentryError } from "@/lib/observability/report";
+import {
+  RESCHEDULE_OPEN_STATUSES,
+  transitionRescheduleRequest,
+} from "@/lib/booking/transitions";
+
+/**
+ * The initiator takes their own reschedule back, and the booking returns to
+ * exactly what it was.
+ *
+ * ONLY withdrawal restores. Decline and expiry deliberately leave the slots
+ * released: in both of those the consultee still wants to move and the
+ * consultant simply has not agreed a time, so the booking belongs in their
+ * allocate queue. A withdrawal is the opposite — the person who asked no
+ * longer wants it, so nothing should have moved.
+ *
+ * This is cheap for one reason worth stating: a reschedule never rewrites
+ * `startsAt`. The released rows still carry their original times, so restoring
+ * is flipping two flags, not replaying data from a snapshot. (Auto-confirm is
+ * the only path that ever wrote proposed times onto rows, and it no longer
+ * does — it hands them to the allocator instead.)
+ */
+export async function withdrawRescheduleRequest(args: {
+  rescheduleRequestId: string;
+  /** Must be the initiator. The caller is responsible for proving that. */
+  withdrawnById: string;
+}): Promise<{ withdrawn: boolean; reason?: string }> {
+  const { rescheduleRequestId, withdrawnById } = args;
+
+  const request = await prisma.rescheduleRequest.findUnique({
+    where: { id: rescheduleRequestId },
+    select: {
+      id: true,
+      status: true,
+      initiatedById: true,
+      releasedSlotIds: true,
+      appointmentId: true,
+      appointment: {
+        select: {
+          consultationId: true,
+          subscriptionId: true,
+        },
+      },
+    },
+  });
+
+  if (!request) return { withdrawn: false, reason: "PROPOSAL_NOT_FOUND" };
+
+  // Withdrawal is the initiator's alone. The other side already has Decline,
+  // which ends the same request with a different meaning and a different
+  // outcome for the slots — giving them this too would just be a second
+  // Decline wearing a friendlier word.
+  if (request.initiatedById !== withdrawnById) {
+    return { withdrawn: false, reason: "NOT_INITIATOR" };
+  }
+  if (!RESCHEDULE_OPEN_STATUSES.includes(request.status)) {
+    return { withdrawn: false, reason: "PROPOSAL_NOT_OPEN" };
+  }
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      // The CAS is the guard: if the other party answered while we were
+      // deciding, this matches zero rows and throws rather than un-releasing
+      // slots that a concurrent accept has already re-confirmed.
+      await transitionRescheduleRequest(tx, {
+        where: { id: request.id },
+        to: "WITHDRAWN",
+        data: { resolvedById: withdrawnById },
+      });
+
+      // Reverses exactly what the reschedule did to these rows.
+      await tx.slotOfAppointment.updateMany({
+        where: {
+          id: { in: request.releasedSlotIds },
+          completionStatus: "RESCHEDULED",
+        },
+        data: { isTentative: false, completionStatus: "SCHEDULED" },
+      });
+
+      // A consultation reschedule sends the booking back to PENDING so it
+      // re-enters the consultant's queue; withdrawing has to undo that or the
+      // consultee is left with a confirmed-looking booking still sitting in
+      // someone's inbox. A subscription is deliberately NOT flipped on
+      // reschedule (#448 — it has no per-session status), so there is nothing
+      // to put back there.
+      if (request.appointment?.consultationId) {
+        await tx.consultation.updateMany({
+          where: { id: request.appointment.consultationId, status: "PENDING" },
+          data: { status: "APPROVED" },
+        });
+      }
+    });
+  } catch (err) {
+    reportSentryError(err, {
+      subsystem: "bookings",
+      op: "reschedule-withdraw",
+      extra: { rescheduleRequestId, releasedSlotIds: request.releasedSlotIds },
+    });
+    throw err;
+  }
+
+  return { withdrawn: true };
+}

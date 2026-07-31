@@ -3613,6 +3613,10 @@ model RescheduleRequest {
   resolvedAt   DateTime? @db.Timestamptz
   resolvedBy   User?     @relation("RescheduleResolver", fields: [resolvedById], references: [id], onDelete: SetNull)
   resolvedById String?
+  /// The answering party's reply. `reason` runs consultee -> consultant; this
+  /// is the return leg, and it is the difference between "your sessions moved"
+  /// and "moved to Thursdays, I have blocked Tuesdays from September".
+  resolutionNote String?
 
   /// ADR 19/23 — inherits the appointment's org-ness so notifications route and
   /// org dashboards scope correctly.
@@ -3663,6 +3667,12 @@ enum RescheduleRequestStatus {
   COUNTERED
   ACCEPTED
   DECLINED
+  /// The INITIATOR took their own request back. Distinct from DECLINED, which
+  /// is the other party refusing: only a withdrawal restores the booking to its
+  /// original times, because nothing should have moved if the person who asked
+  /// no longer wants it. Collapsing the two would make the audit trail unable
+  /// to say who ended it.
+  WITHDRAWN
   /// Lapsed unanswered; the request falls back to consultant allocation.
   EXPIRED
 }
