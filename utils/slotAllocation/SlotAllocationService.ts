@@ -122,6 +122,7 @@ export class SlotAllocationService {
             request.slots,
             request.idempotencyKey,
             request.initialAllocation,
+            request.wideLock,
           );
 
         case "requested":
@@ -829,6 +830,7 @@ export class SlotAllocationService {
     slotStrings: string[],
     idempotencyKey?: string,
     initialAllocation?: boolean,
+    wideLock?: boolean,
   ): Promise<AllocationResult> {
     // #837 — return the prior batch on a double-submit before doing any work.
     const replay = await this.findIdempotentAllocation(
@@ -858,12 +860,19 @@ export class SlotAllocationService {
     // #860 — shard the lock by the earliest target day so allocations for
     // different days don't serialize; same-day (the actual duplicate risk)
     // still shares the key. #440's GiST constraint backstops cross-day overlap.
-    const lockScope = slotStrings
-      .map((s) => new Date(s))
-      .filter((d) => !Number.isNaN(d.getTime()))
-      .sort((a, b) => a.getTime() - b.getTime())[0]
-      ?.toISOString()
-      .slice(0, 10);
+    //
+    // wideLock opts out of the sharding: the caller is placing times nobody
+    // picked per-day, so parallel same-consultant allocations could each pass
+    // the per-week cap check on a stale count. GiST cannot see a cap, only an
+    // overlap.
+    const lockScope = wideLock
+      ? undefined
+      : slotStrings
+          .map((s) => new Date(s))
+          .filter((d) => !Number.isNaN(d.getTime()))
+          .sort((a, b) => a.getTime() - b.getTime())[0]
+          ?.toISOString()
+          .slice(0, 10);
     const lock = await lockAutoAllocate(consultantProfileId, lockScope);
     // #898 follow-up — serialize on the consultee too (consultant → consultee
     // lock order) so one person can't be booked with two consultants at once.

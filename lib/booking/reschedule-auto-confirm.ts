@@ -60,105 +60,43 @@ export async function tryAutoConfirmProposal(
   if (!mayAutoConfirm(request.initiatorRole)) {
     return { confirmed: false, reason: "CONSULTANT_INITIATED" };
   }
-  if (request.proposedSlots.length !== request.releasedSlotIds.length) {
-    return { confirmed: false, reason: "COUNT_MISMATCH" };
-  }
-
-  // Snapshot the originals in memory so a rejected proposal can be put back
-  // exactly as it was. A reschedule never rewrites startsAt, so these rows still
-  // hold the times the consultee is trying to move away from.
-  const originals = await prisma.slotOfAppointment.findMany({
-    where: { id: { in: request.releasedSlotIds } },
-    orderBy: { startsAt: "asc" },
-    select: {
-      id: true,
-      startsAt: true,
-      endsAt: true,
-      isTentative: true,
-      completionStatus: true,
-    },
-  });
-
-  if (originals.length !== request.proposedSlots.length) {
-    return { confirmed: false, reason: "SLOTS_MISSING" };
-  }
-
-  // Pair by chronological order: the Nth-earliest released session takes the
-  // Nth-earliest proposed time.
-  const pairs = originals.map((slot, i) => ({
-    slot,
-    proposed: request.proposedSlots[i],
-  }));
-
-  try {
-    await prisma.$transaction(async (tx) => {
-      for (const { slot, proposed } of pairs) {
-        await tx.slotOfAppointment.update({
-          where: { id: slot.id },
-          data: {
-            startsAt: proposed.startsAt,
-            endsAt: proposed.endsAt,
-            // Back to SCHEDULED so the requested-mode guard (which refuses to
-            // reuse times that are still awaiting reschedule) does not block the
-            // very times we just wrote. Still tentative — allocation confirms.
-            completionStatus: "SCHEDULED",
-          },
-        });
-      }
-    });
-  } catch (err) {
-    reportSentryError(err, {
-      subsystem: "bookings",
-      op: "reschedule-auto-confirm",
-      extra: {
-        phase: "stamp",
-        rescheduleRequestId,
-        releasedSlotIds: request.releasedSlotIds,
-      },
-    });
-    throw err;
-  }
+  // Deliberately NOT comparing proposed count to released count. The allocator
+  // is handed the times as a set and validates them as one; pairing them
+  // one-to-one only ever made sense while we were writing each proposed time
+  // onto a specific released row, which we no longer do.
 
   const result = await SlotAllocationService.allocate({
     eventType,
     eventId,
-    mode: "requested",
+    // The proposed times go STRAIGHT to the allocator. Nothing is written until
+    // it commits.
+    //
+    // This used to stamp the times onto the released slot rows, run the
+    // allocator in "requested" mode so it would read them back, and restore the
+    // originals from an in-memory snapshot if validation rejected them. Two
+    // ways that broke: the finalize step below ran in its own transaction, so
+    // failing it left a confirmed booking whose proposal never closed —
+    // openForAppointmentId still set, blocking every later reschedule of that
+    // appointment. And a crash anywhere in between left the rows holding
+    // proposed times with the originals only ever in RAM, unrecoverable.
+    //
+    // Manual mode already accepts explicit times, and on a reschedule
+    // deleteExistingAppointments removes only TENTATIVE slots — which is
+    // exactly the released ones — so confirmed sessions elsewhere in the
+    // booking survive untouched.
+    mode: "manual",
+    slots: request.proposedSlots.map((p) => p.startsAt.toISOString()),
+    // Consultant-wide lock: these times were not picked per-day by a human, so
+    // the day-sharded manual key would let two concurrent confirmations each
+    // pass the per-week cap on a stale count (#860 shards for throughput; GiST
+    // backstops overlap, but a cap is a count, not an overlap).
+    wideLock: true,
   });
 
   if (!result.success) {
-    // Put the booking back the way the consultee left it and let the consultant
-    // decide. Nothing was confirmed, so there is no half-applied state — unless
-    // this restore itself fails, in which case the slots are stuck holding the
-    // rejected proposed times with no pending allocation to justify them. That
-    // is a corrupted booking with no other trace, so it always reports.
-    try {
-      await prisma.$transaction(async (tx) => {
-        for (const { slot } of pairs) {
-          await tx.slotOfAppointment.update({
-            where: { id: slot.id },
-            data: {
-              startsAt: slot.startsAt,
-              endsAt: slot.endsAt,
-              isTentative: slot.isTentative,
-              completionStatus: slot.completionStatus,
-            },
-          });
-        }
-      });
-    } catch (err) {
-      reportSentryError(err, {
-        subsystem: "bookings",
-        op: "reschedule-auto-confirm",
-        level: "fatal",
-        extra: {
-          phase: "restore",
-          rescheduleRequestId,
-          releasedSlotIds: request.releasedSlotIds,
-          originalSlotIds: pairs.map((p) => p.slot.id),
-        },
-      });
-      throw err;
-    }
+    // Nothing was written, so there is nothing to undo. The released slots are
+    // untouched and still carry their original times; the request stays open
+    // for the consultant to answer.
     return {
       confirmed: false,
       reason: result.errorCode ?? "VALIDATION_FAILED",
@@ -178,11 +116,9 @@ export async function tryAutoConfirmProposal(
     });
   } catch (err) {
     // A lost race (the proposal was answered or expired concurrently) is the
-    // ordinary outcome this CAS guard models by throwing — not an error, but
-    // still reported at info/expected so its rate is visible (full-coverage
-    // policy). Anything else means the reallocation above already succeeded
-    // but the proposal's own bookkeeping never caught up, which is worth
-    // knowing at the default fault level.
+    // ordinary outcome this CAS guard models by throwing. Anything else means
+    // the reallocation above already succeeded but the proposal's bookkeeping
+    // never caught up — the booking is correct, its paperwork is not.
     const isLostRace = err instanceof IllegalTransitionError;
     reportSentryError(err, {
       subsystem: "bookings",
