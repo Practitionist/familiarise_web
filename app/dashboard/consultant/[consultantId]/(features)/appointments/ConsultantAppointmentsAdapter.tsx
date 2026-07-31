@@ -10,6 +10,7 @@ import type {
 import {
   CONSULTANT_JOIN_WINDOW_MS,
   getJoinableSlot,
+  slotsAllowReschedule,
 } from "@/lib/appointments/slots";
 import {
   isApprovedStatus,
@@ -204,8 +205,7 @@ export function useConsultantAppointmentsAdapter(
     const items: OverflowItem[] = [];
     const appointment = vm.raw.appointment;
     const inactive = isInactiveStatus(vm.status);
-    const firstRaw = actionableRawSlots(vm)[0];
-    const tentative = firstRaw?.isTentative ?? false;
+    const rawSlots = actionableRawSlots(vm);
     const lifecycleOk = canManageBookingLifecycle(vm);
     const isTrial = vm.kind === "TRIAL";
 
@@ -230,8 +230,8 @@ export function useConsultantAppointmentsAdapter(
       !isTrial &&
       lifecycleOk &&
       !inactive &&
-      !tentative &&
-      isApprovedStatus(vm.status)
+      isApprovedStatus(vm.status) &&
+      slotsAllowReschedule(rawSlots)
     ) {
       items.push({
         key: "reschedule",

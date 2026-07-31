@@ -17,6 +17,7 @@ import type {
 import {
   CONSULTEE_JOIN_WINDOW_MS,
   getJoinableSlot,
+  slotsAllowReschedule,
 } from "@/lib/appointments/slots";
 import {
   isApprovedStatus,
@@ -168,28 +169,14 @@ export function useConsulteeAppointmentsAdapter(): AppointmentActionAdapter {
     const items: OverflowItem[] = [];
     const inactive = isInactiveStatus(vm.status);
     const slots = vm.raw.rawSlots ?? [];
-    const firstRaw = slots[0];
-    const tentative = firstRaw?.isTentative ?? false;
-    // A released slot awaiting a new time IS the open reschedule: at most one
-    // may be live per appointment (the nullable-unique openForAppointmentId),
-    // so offering the action again only earns a 409.
-    const rescheduleInFlight = slots.some(
-      (slot) => slot.completionStatus === "RESCHEDULED",
-    );
-
     if (
       vm.appointmentId &&
       // The reschedule page lives under this route's consultee; off that route
       // there is no id to send them to.
       consulteeId &&
       !inactive &&
-      !tentative &&
       isApprovedStatus(vm.status) &&
-      // An APPROVED booking with nothing allocated yet ("Not scheduled · 0/0")
-      // has no time to move. The proposal window is derived from the earliest
-      // released session, so this would fail with PROPOSAL_WINDOW_CLOSED.
-      slots.length > 0 &&
-      !rescheduleInFlight
+      slotsAllowReschedule(slots)
     ) {
       items.push({
         key: "reschedule",
