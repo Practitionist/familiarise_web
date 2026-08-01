@@ -9,7 +9,7 @@
  * appointment's live slots always form exactly one contiguous run.
  */
 
-import type { Prisma } from "@prisma/client";
+import type { PrismaLike } from "@/lib/prisma";
 import { SlotCalculationService } from "@/utils/slotAllocation/SlotCalculationService";
 import { groupSlotsIntoRuns, isDeadSlot } from "@/lib/appointments/slots";
 
@@ -99,15 +99,15 @@ export function assertSingleContiguousLiveRun(
   }
 }
 
-type Tx = Prisma.TransactionClient;
-
 /**
  * Delete live (non-CANCELLED / non-RESCHEDULED) slots on the appointment and
  * recreate a contiguous N-atom run from `startsAt` + duration. Preserves
  * enrolled users from the previous live rows.
  */
 export async function replaceContiguousSlotRun(
-  tx: Tx,
+  // PrismaLike (not Prisma.TransactionClient) — the app client is extended
+  // and interactive-tx clients fail assignability against the bare type.
+  tx: PrismaLike,
   args: {
     appointmentId: string;
     startsAt: Date;

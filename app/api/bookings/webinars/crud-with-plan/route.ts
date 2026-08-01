@@ -792,6 +792,12 @@ export async function PATCH(request: NextRequest) {
                 "Invalid duration for rewriting contiguous slot run.",
               );
             }
+            const ownerProfileId = existingPlan.consultantProfileId;
+            if (!ownerProfileId) {
+              throw new Error(
+                "Webinar plan is missing consultantProfileId; cannot rewrite slots.",
+              );
+            }
 
             if (appointment) {
               console.log("Replacing contiguous slot run (#1071):", {
@@ -805,7 +811,7 @@ export async function PATCH(request: NextRequest) {
                 appointmentId: appointment.id,
                 startsAt: startTime,
                 durationInHours: effectiveDurationForSlots,
-                consultantProfileId: existingPlan.consultantProfileId,
+                consultantProfileId: ownerProfileId,
                 isTentative: false,
               });
             } else {
@@ -819,7 +825,7 @@ export async function PATCH(request: NextRequest) {
                     create: buildContiguousSlotAtoms({
                       startsAt: startTime,
                       durationInHours: effectiveDurationForSlots,
-                      consultantProfileId: existingPlan.consultantProfileId,
+                      consultantProfileId: ownerProfileId,
                       isTentative: false,
                     }).map(
                       ({
