@@ -8,9 +8,11 @@ import type {
   PrimaryAction,
 } from "@/lib/appointments/adapter";
 import {
+  allowsManageTimings,
   CONSULTANT_JOIN_WINDOW_MS,
   getJoinableSlot,
   slotsAllowReschedule,
+  upcomingSlots,
 } from "@/lib/appointments/slots";
 import {
   isApprovedStatus,
@@ -38,7 +40,7 @@ const TYPE_LABEL: Record<AppointmentVM["kind"], string> = {
   TRIAL: "Trial",
 };
 
-/** Webinar/class cancel+reschedule is plan-owner only (API rejects collaborators). */
+/** Webinar/class lifecycle actions are plan-owner only (API rejects collaborators). */
 function canManageBookingLifecycle(vm: AppointmentVM): boolean {
   if (vm.kind === "WEBINAR" || vm.kind === "CLASS") {
     return !vm.collaboratorRole || vm.collaboratorRole === "HOST";
@@ -54,14 +56,9 @@ function actionableRawSlots(vm: AppointmentVM) {
       : vm.raw.appointment
         ? [vm.raw.appointment]
         : [];
-  const now = Date.now();
-  return sources
-    .flatMap((a) => a.slotsOfAppointment ?? [])
-    .filter((slot) => new Date(slot.endsAt).getTime() >= now)
-    .sort(
-      (a, b) =>
-        new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
-    );
+  // Shared with the timings page's own gate, so the menu cannot offer a route
+  // that then 404s on a different reading of the same slots (#1082).
+  return upcomingSlots(sources.flatMap((a) => a.slotsOfAppointment ?? []));
 }
 
 export function useConsultantAppointmentsAdapter(
@@ -209,7 +206,18 @@ export function useConsultantAppointmentsAdapter(
     const lifecycleOk = canManageBookingLifecycle(vm);
     const isTrial = vm.kind === "TRIAL";
 
-    if (appointment && vm.bucket !== "cancelled" && vm.bucket !== "past") {
+    // Manage Timings moves sessions with no notice and no acceptance, so it is
+    // only offered where nobody else has committed to the time. A 1:1 whose
+    // consultee already holds a confirmed slot gets Reschedule below instead —
+    // the two are alternatives, never both (#1082).
+    const timingsOk = allowsManageTimings(vm.kind, rawSlots);
+
+    if (
+      appointment &&
+      vm.bucket !== "cancelled" &&
+      vm.bucket !== "past" &&
+      timingsOk
+    ) {
       items.push({
         key: "timings",
         label: "Timings",
@@ -231,6 +239,9 @@ export function useConsultantAppointmentsAdapter(
       lifecycleOk &&
       !inactive &&
       isApprovedStatus(vm.status) &&
+      // Reschedule is the negotiated path, so it belongs exactly where Manage
+      // Timings does not: a booking a counterparty holds a confirmed time on.
+      !timingsOk &&
       slotsAllowReschedule(rawSlots)
     ) {
       items.push({

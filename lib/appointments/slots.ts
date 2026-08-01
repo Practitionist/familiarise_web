@@ -7,6 +7,7 @@
 import {
   toDate,
   toDateOrNull,
+  type AppointmentKind,
   type SessionVM,
   type SlotLike,
 } from "./view-model";
@@ -56,6 +57,52 @@ export function slotsAllowReschedule(
   // be live per appointment (the nullable-unique openForAppointmentId), so
   // offering the action again only earns a 409.
   return !slots.some((slot) => slot.completionStatus === "RESCHEDULED");
+}
+
+/**
+ * Whether Manage Timings may be offered at all — the menu item AND the page,
+ * since that URL is linkable (#1082).
+ *
+ * Manage Timings writes new times straight onto the calendar: no notice
+ * requirement, no acceptance from anyone. That is honest only while nobody
+ * else has committed to a time, so the deciding question is whether a
+ * counterparty already holds one — not who owns the calendar.
+ *
+ * The exact complement of `slotsAllowReschedule` for the surfaces that offer
+ * both, so a consultant is never handed the unilateral surface and the
+ * negotiated one for the same booking.
+ */
+export function allowsManageTimings(
+  kind: AppointmentKind,
+  slots: Array<{ isTentative?: boolean | null }>,
+): boolean {
+  // A webinar or class is a published schedule attendees buy into rather than
+  // a time anyone negotiated, so the organiser keeps this surface even once
+  // the instance is confirmed — there is no single counterparty to propose to,
+  // and asking every attendee to accept is not a coherent flow.
+  if (kind === "WEBINAR" || kind === "CLASS") return true;
+  // Nothing placed: an offering that was never scheduled, or a booking whose
+  // sessions are not allocated yet. Still the consultant's own calendar.
+  if (slots.length === 0) return true;
+  // Tentative means the request is still awaiting allocation, not booked —
+  // same reading as slotsAllowReschedule, which refuses on the same test.
+  return Boolean(slots[0]?.isTentative);
+}
+
+/**
+ * The slots a time-change decision acts on: still ahead of now, chronological.
+ * A finished session is not what "has someone committed to a time" is asking
+ * about, and the first entry has to be the earliest for the tentative test.
+ */
+export function upcomingSlots<
+  T extends { startsAt: Date | string; endsAt: Date | string },
+>(slots: T[], now: Date = new Date()): T[] {
+  const cutoff = now.getTime();
+  return slots
+    .filter((slot) => toDate(slot.endsAt).getTime() >= cutoff)
+    .sort(
+      (a, b) => toDate(a.startsAt).getTime() - toDate(b.startsAt).getTime(),
+    );
 }
 
 function slotTimes(slot: SlotLike): { start: number; end: number } {
