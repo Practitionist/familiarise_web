@@ -6,6 +6,7 @@ import {
   isPrivileged,
   forbiddenResponse,
 } from "@/lib/auth-helpers";
+import { refundRemovedAttendeeSeat } from "@/lib/payments/operations/event-refunds";
 import {
   applyRateLimit,
   eventMutationLimiter,
@@ -182,7 +183,17 @@ export async function DELETE(
       ),
     );
 
-    return new NextResponse(null, { status: 204 });
+    // #1003 — the seat was paid for. Removing the attendee without returning
+    // the fee let the organiser keep money for a session they just barred the
+    // buyer from. Post-commit and non-throwing: the removal stands either way.
+    const refund = await refundRemovedAttendeeSeat({
+      kind: "class",
+      eventId: classId,
+      attendeeUserId: userId,
+      initiatedByUserId: session.user.id,
+    });
+
+    return NextResponse.json({ removed: true, refund });
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
