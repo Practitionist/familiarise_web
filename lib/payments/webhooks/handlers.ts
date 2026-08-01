@@ -17,6 +17,7 @@ import { calculateSubscriptionEndDate } from "@/utils/dateUtils";
 import { buildOccupiedAppointmentFilter } from "@/utils/slotAllocation/occupancyPolicy";
 import { REQUEST_ALLOWED_FROM } from "@/lib/booking/transitions";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
+import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
 import { recordSystemError } from "@/lib/enterprise/system-events";
 import { refundPayment } from "@/lib/payments/operations/refund";
 import {
@@ -1199,6 +1200,10 @@ async function createConsultation(tx: Tx, data: ConsultationData) {
 async function createSubscription(tx: Tx, data: SubscriptionData) {
   const plan = await tx.subscriptionPlan.findUnique({
     where: { id: data.planId },
+    // #1076 — the owning consultant's zone is what the caps bucket on.
+    include: {
+      consultantProfile: { select: { user: { select: { timezone: true } } } },
+    },
   });
   if (!plan) throw new Error("Subscription plan not found");
 
@@ -1228,6 +1233,9 @@ async function createSubscription(tx: Tx, data: SubscriptionData) {
       bookingSource: "DIRECT_CHECKOUT",
       schedulingPeriodStartsAt: startDate,
       schedulingPeriodEndsAt: endDate,
+      schedulingTimezone: resolveSchedulingTimezone(
+        plan.consultantProfile?.user?.timezone,
+      ),
     },
   });
 
