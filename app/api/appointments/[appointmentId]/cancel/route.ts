@@ -399,17 +399,35 @@ export async function POST(
     let refund: {
       amountRefundedPaise: number;
       refundPct: number;
+      /**
+       * What actually happened to the money. `amountRefundedPaise: 0` alone is
+       * ambiguous — it is equally "the policy owes nothing", "the balance was
+       * already exhausted" and "the gateway refused" — and the client was left
+       * inferring failure from a positive `refundPct`, which is a guess.
+       */
+      status:
+        | "REFUNDED"
+        | "FAILED"
+        | "NOTHING_REFUNDABLE"
+        | "POLICY_ZERO"
+        | "MANUAL_REVIEW";
       /** #1006 — set when the refund needs a human, not a formula. */
       requiresManualReview?: boolean;
     } | null = null;
     if (bookingCtx) {
       const paidPayment = bookingCtx.paidPayment;
       if (paidPayment) {
+        // "Not the buyer's choice" is the real question the tier asks, and a
+        // platform-initiated cancellation is not the buyer's choice either.
+        // Requiring the actor to BE the consultant meant an admin cancelling
+        // in the final hours settled a buyer who never asked at 0%, while
+        // `cancel-user-engagements.ts` settles the same platform act at 100%.
         const isConsultantInitiated =
-          session.user.consultantProfileId !== null &&
-          session.user.consultantProfileId !== undefined &&
-          session.user.id !== undefined &&
-          consultantUserId === session.user.id;
+          (session.user.consultantProfileId !== null &&
+            session.user.consultantProfileId !== undefined &&
+            session.user.id !== undefined &&
+            consultantUserId === session.user.id) ||
+          (isPrivilegedUser && session.user.id !== consulteeUserId);
         // A booking with no session ever scheduled has INFINITE notice, not
         // negative notice. Mapping "never allocated" onto the same -1 as
         // "already started" made cancelling earlier score worse than
@@ -470,6 +488,7 @@ export async function POST(
           refund = {
             amountRefundedPaise: 0,
             refundPct,
+            status: "MANUAL_REVIEW",
             requiresManualReview: true,
           };
         } else if (refundAmount > 0) {
@@ -482,10 +501,16 @@ export async function POST(
               }-initiated)`,
               initiatedByUserId: session.user.id,
             });
-            refund = { amountRefundedPaise: r.amountRefundedPaise, refundPct };
+            refund = {
+              amountRefundedPaise: r.amountRefundedPaise,
+              refundPct,
+              status: "REFUNDED",
+            };
           } catch (refundErr) {
             // The cancellation itself stands; a failed refund must be visible,
-            // not silently swallowed — surface for ops + tell the caller.
+            // not silently swallowed. Sentry alone is not a queue — this is
+            // money owed on a booking that is already cancelled, so it lands on
+            // the same durable ops surface as the proration escalation.
             Sentry.captureException(
               refundErr instanceof Error
                 ? refundErr
@@ -496,10 +521,35 @@ export async function POST(
               `[cancel] refund failed for payment ${paidPayment.id}:`,
               refundErr,
             );
-            refund = { amountRefundedPaise: 0, refundPct };
+            await recordSystemError({
+              organizationId: appointment.organizationId ?? null,
+              category: "PAYMENT",
+              summary:
+                `Cancellation refund failed for payment ${paidPayment.id}; ` +
+                `${refundPct}% of ${paidPayment.amountPaise} paise is still owed`,
+              err: refundErr,
+              context: {
+                appointmentId,
+                paymentId: paidPayment.id,
+                refundPct,
+                attemptedPaise: refundAmount,
+                refundablePaise: paidPayment.refundablePaise,
+              },
+            }).catch(() => {});
+            refund = { amountRefundedPaise: 0, refundPct, status: "FAILED" };
           }
         } else {
-          refund = { amountRefundedPaise: 0, refundPct };
+          // Two different facts, and the buyer is owed different words for
+          // each: the policy tier is genuinely zero, or the tier is positive
+          // but nothing is left to give back.
+          refund = {
+            amountRefundedPaise: 0,
+            refundPct,
+            status:
+              refundPct > 0 && paidPayment.refundablePaise <= 0
+                ? "NOTHING_REFUNDABLE"
+                : "POLICY_ZERO",
+          };
         }
       }
     }
@@ -580,10 +630,16 @@ export async function POST(
           "appointments",
         ),
         reason: validatedData.reason || undefined,
+        // Three-way, not two. A group event has no consultee at all, so the
+        // old else-branch told every attendee that "the consultee cancelled"
+        // whenever an admin did — and on a 1:1 it said the same of a platform
+        // cancellation. `system` is what the payload has for that.
         cancelledBy:
           notificationMeta.cancelledBy === notificationMeta.consultantUserId
             ? "consultant"
-            : "consultee",
+            : notificationMeta.cancelledBy === consulteeUserId
+              ? "consultee"
+              : "system",
       });
     }
 

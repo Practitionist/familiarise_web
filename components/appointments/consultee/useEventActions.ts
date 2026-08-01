@@ -62,26 +62,43 @@ function rescheduleOutcomeToast(outcome: {
 type CancelRefund = {
   amountRefundedPaise: number;
   refundPct: number;
+  status?:
+    | "REFUNDED"
+    | "FAILED"
+    | "NOTHING_REFUNDABLE"
+    | "POLICY_ZERO"
+    | "MANUAL_REVIEW";
   requiresManualReview?: boolean;
 } | null;
 
 function describeRefund(refund: CancelRefund): string {
   // A free booking has no money to speak about.
   if (!refund) return "";
-  if (refund.requiresManualReview) {
-    return "Because sessions had already been delivered, our team is reviewing your refund and will be in touch.";
+
+  // Branch on what the route SAYS happened, never on the amount: zero is
+  // equally "the policy owes nothing", "the balance was already exhausted" and
+  // "the gateway refused", and only one of those deserves an apology.
+  switch (refund.status) {
+    case "MANUAL_REVIEW":
+      return "Because sessions had already been delivered, our team is reviewing your refund and will be in touch.";
+    case "FAILED":
+      return "We could not complete your refund automatically — our team has been alerted and will sort it out.";
+    case "NOTHING_REFUNDABLE":
+      // No alert was raised here, so do not claim one was.
+      return "This booking had already been refunded, so there is nothing further to return.";
+    case "POLICY_ZERO":
+      return "No refund applies under the cancellation policy for this booking.";
+    default:
+      break;
   }
+
   if (refund.amountRefundedPaise > 0) {
     const rupees = (refund.amountRefundedPaise / 100).toLocaleString("en-IN", {
       maximumFractionDigits: 2,
     });
     return `A refund of ₹${rupees} (${refund.refundPct}%) is on its way back to you.`;
   }
-  // A tier of 0% is the policy working; a positive tier that refunded nothing
-  // is a failed refund, and saying "no refund applies" there would be a lie.
-  return refund.refundPct > 0
-    ? "We could not complete your refund automatically — our team has been alerted and will sort it out."
-    : "No refund applies under the cancellation policy for this booking.";
+  return "";
 }
 
 export function useEventActions({

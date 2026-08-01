@@ -194,7 +194,18 @@ function bookingRows(opts: {
   ];
 }
 
-function sessionAs(role: "consultant" | "consultee") {
+function sessionAs(role: "consultant" | "consultee" | "admin") {
+  if (role === "admin") {
+    return {
+      user: {
+        id: "admin-1",
+        name: "Ops",
+        role: "ADMIN",
+        consultantProfileId: null,
+        consulteeProfileId: null,
+      },
+    };
+  }
   return {
     user:
       role === "consultant"
@@ -247,6 +258,7 @@ describe("a consultee cancelling a paid consultation gets their money back", () 
     expect(body.refund).toEqual({
       amountRefundedPaise: GROSS,
       refundPct: 100,
+      status: "REFUNDED",
     });
     expect(mockRefundBookingPayment).toHaveBeenCalledWith(
       expect.objectContaining({ paymentId: "pay-1", amountPaise: GROSS }),
@@ -277,7 +289,11 @@ describe("a consultee cancelling a paid consultation gets their money back", () 
     const res = await cancelHandler(makeRequest(), makeParams(APPT));
     const body = await res.json();
 
-    expect(body.refund).toEqual({ amountRefundedPaise: 0, refundPct: 0 });
+    expect(body.refund).toEqual({
+      amountRefundedPaise: 0,
+      refundPct: 0,
+      status: "POLICY_ZERO",
+    });
     expect(mockRefundBookingPayment).not.toHaveBeenCalled();
   });
 
@@ -303,6 +319,25 @@ describe("a consultee cancelling a paid consultation gets their money back", () 
 describe("a consultant cancelling always refunds in full", () => {
   it("ignores the clock", async () => {
     mockGetSession.mockResolvedValue(sessionAs("consultant"));
+    mockAppointmentFindUnique.mockResolvedValue(consultationAppointment());
+    mockAppointmentFindMany.mockImplementation(async () =>
+      bookingRows({ liveSlotHours: [1] }),
+    );
+
+    const res = await cancelHandler(makeRequest(), makeParams(APPT));
+    const body = await res.json();
+
+    expect(body.refund.refundPct).toBe(100);
+    expect(body.refund.amountRefundedPaise).toBe(GROSS);
+  });
+});
+
+describe("a platform cancellation is not the buyer's choice", () => {
+  it("settles an admin cancellation at the consultant tier", async () => {
+    // Requiring the actor to BE the consultant meant an admin cancelling in
+    // the final hours settled a buyer who never asked at 0%, while
+    // cancel-user-engagements.ts settles the same platform act at 100%.
+    mockGetSession.mockResolvedValue(sessionAs("admin"));
     mockAppointmentFindUnique.mockResolvedValue(consultationAppointment());
     mockAppointmentFindMany.mockImplementation(async () =>
       bookingRows({ liveSlotHours: [1] }),
@@ -355,6 +390,7 @@ describe("subscriptions", () => {
     const body = await res.json();
 
     expect(body.refund.requiresManualReview).toBe(true);
+    expect(body.refund.status).toBe("MANUAL_REVIEW");
     expect(mockRefundBookingPayment).not.toHaveBeenCalled();
     // A Sentry breadcrumb is not a queue — this has to be durable.
     expect(mockRecordSystemError).toHaveBeenCalledWith(
@@ -383,7 +419,36 @@ describe("failure modes leave the cancellation standing", () => {
 
     expect(res.status).toBe(200);
     expect(body.success).toBe(true);
-    expect(body.refund).toEqual({ amountRefundedPaise: 0, refundPct: 100 });
+    // "0 refunded at a 100% tier" is not self-explanatory — the client was
+    // left inferring failure from it. The route says so instead.
+    expect(body.refund).toEqual({
+      amountRefundedPaise: 0,
+      refundPct: 100,
+      status: "FAILED",
+    });
+    // A failed refund on an already-cancelled booking is money owed, so it
+    // lands on the durable ops surface, not only in Sentry.
+    expect(mockRecordSystemError).toHaveBeenCalledWith(
+      expect.objectContaining({ category: "PAYMENT" }),
+    );
+  });
+
+  it("distinguishes an exhausted balance from a failure", async () => {
+    mockGetSession.mockResolvedValue(sessionAs("consultee"));
+    mockAppointmentFindUnique.mockResolvedValue(consultationAppointment());
+    mockAppointmentFindMany.mockImplementation(async () =>
+      bookingRows({
+        liveSlotHours: [120],
+        paymentRefunds: [{ amountPaise: GROSS, status: "SUCCEEDED" }],
+      }),
+    );
+
+    const res = await cancelHandler(makeRequest(), makeParams(APPT));
+    const body = await res.json();
+
+    // Nothing failed and nobody was paged; the money was already returned.
+    expect(body.refund.status).toBe("NOTHING_REFUNDABLE");
+    expect(mockRefundBookingPayment).not.toHaveBeenCalled();
   });
 
   it("mints no refund for a free booking", async () => {
