@@ -20,6 +20,7 @@ import {
 } from "../../lib/enterprise/system-events";
 import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
 import * as Sentry from "@sentry/nextjs";
+import { runJob } from "../../lib/observability/job-sentry";
 
 /**
  * Output results to GitHub Actions
@@ -116,28 +117,23 @@ async function main(): Promise<void> {
     }
 
     if (!result.success) {
-      process.exit(1);
+      process.exitCode = 1;
     }
   } catch (error) {
-    // #476 — lock held = another run is live; skipping is the correct
-    // outcome (exit 0, no page). CronLockUnavailableError falls through
-    // to exit 1 so the workflow's notify step pages.
-    if (error instanceof CronLockHeldError) {
-      Sentry.logger.info("job:handle-stuck-payouts skipped — lock held");
-      console.log(`⏭️  ${error.message}`);
-      return;
+    // #776 §K — a crashed handler means a consultant isn't getting paid, so it
+    // goes to the telemetry sink as well. Everything generic (capture, job tag,
+    // step annotation, exit code, lock-held skip) is runJob's. (#1066)
+    if (!(error instanceof CronLockHeldError)) {
+      await recordSystemError({
+        category: "PAYOUT",
+        summary: "Stuck-payout handler crashed",
+        err: error,
+      });
     }
-    console.error("❌ Fatal error in stuck payouts handler:", error);
-    Sentry.captureException(error, { tags: { subsystem: "jobs", job: "handle-stuck-payouts" } });
-    await recordSystemError({
-      category: "PAYOUT",
-      summary: "Stuck-payout handler crashed",
-      err: error,
-    });
-    process.exit(1);
+    throw error;
   } finally {
     await disconnectDatabase();
   }
 }
 
-main();
+runJob("handle-stuck-payouts", main);

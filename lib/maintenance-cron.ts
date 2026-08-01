@@ -16,6 +16,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { Redis } from "@upstash/redis";
+import { flushJobSentry } from "@/lib/observability/job-sentry";
 
 // Financial jobs that must NOT run even in DEGRADED mode.
 // These jobs call external APIs to create/cancel financial objects,
@@ -68,10 +69,13 @@ export async function abortIfMaintenance(jobName: string): Promise<void> {
     const redis = new Redis({ url, token });
     const phase = await redis.get<string>("maintenance:phase");
 
+    // These two exits bypass runJob's finally, so they own the drain
+    // themselves — anything the job logged before the guard would be lost. (#1066)
     if (phase === "OFFLINE") {
       console.log(
         `[${jobName}] Maintenance mode is OFFLINE — skipping job to protect DB during migration`,
       );
+      await flushJobSentry();
       process.exit(0);
     }
 
@@ -79,6 +83,7 @@ export async function abortIfMaintenance(jobName: string): Promise<void> {
       console.log(
         `[${jobName}] Maintenance mode is DEGRADED — skipping financial job to protect payment integrity`,
       );
+      await flushJobSentry();
       process.exit(0);
     }
 

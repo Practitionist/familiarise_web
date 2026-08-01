@@ -693,6 +693,18 @@ shared helpers) is executable via `tsx`. Useful when you need to
 reproduce a GitHub-Actions failure offline, force a one-off sweep,
 or smoke-test a new cron before wiring its workflow.
 
+A local run does **not** report to Sentry, and it says so on the first
+line of its output. The runner enables Sentry only when
+`NEXT_PUBLIC_SENTRY_ENVIRONMENT` names a deployed environment, which the
+workflows set to `production` and a developer's `.env` sets to
+`development`. This matters because a bare `tsx` process has no
+`NODE_ENV` at all, so the guard that keeps `next dev` out of the shared
+production project (#901) does not apply here and local runs would
+otherwise ship straight into it. If you genuinely need to watch events
+arrive while debugging, point `NEXT_PUBLIC_SENTRY_DSN` at your own
+throwaway Sentry project and set `NEXT_PUBLIC_SENTRY_ENVIRONMENT` to
+something outside `development`, `test` and `local` for that one run.
+
 ```bash
 # Minimum required env (loaded via dotenv/config from .env at the top
 # of every standalone job):
