@@ -1178,6 +1178,34 @@ export async function applyRefundCascade(
         });
       }
     }
+    // #1003 — a LICENSE-funded booking has exactly one leg and it is worth
+    // zero (the contract absorbs the cost, so no money moves per booking), yet
+    // `Payment.amount` is the full price. So `legAmounts` comes back empty,
+    // `fundingTotal` is 0, and this whole block used to be skipped — while
+    // Steps 6 and 7 above had already reversed the consultant's and the org's
+    // share. The booking journal DID post for these: with no funding debit it
+    // debits DISCOUNT for the gross and credits the payables and GST
+    // (earnings-service.ts). Leaving the reversal unposted stranded those
+    // credits forever as EARNINGS_LEDGER_DRIFT the reconciler cannot repair.
+    //
+    // Crediting DISCOUNT by the same proportional gross makes this the exact
+    // inverse of that journal: the existing plug then debits the payables, the
+    // GST and the platform fee, and the transaction balances by construction.
+    if (
+      credits.length === 0 &&
+      (payment.earnings.length > 0 || payment.organizationEarnings.length > 0)
+    ) {
+      const discountBack =
+        proportion(payment.originalAmount) + proportion(payment.taxAmount ?? 0);
+      if (discountBack > 0) {
+        credits.push({
+          account: { kind: "DISCOUNT" },
+          direction: "CREDIT",
+          amountPaise: discountBack,
+        });
+      }
+    }
+
     const fundingTotal = credits.reduce((s, c) => s + c.amountPaise, 0);
     if (fundingTotal > 0) {
       const consRev = payment.earnings.reduce(

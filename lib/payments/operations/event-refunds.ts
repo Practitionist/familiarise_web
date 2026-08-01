@@ -3,8 +3,20 @@ import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { recordSystemError } from "@/lib/enterprise/system-events";
+import {
+  REFUNDABLE_BALANCE_SELECT,
+  refundableBalancePaise,
+} from "@/lib/payments/refundable-balance";
+import { getAppUrl } from "@/lib/url";
+import { notifyRefundProcessed } from "@/lib/novu";
+import { notificationScope } from "@/lib/novu/workflows";
 import { applyReversal } from "./reversal-engine";
 import { refundPayment, RefundValidationError } from "./refund";
+import { isInternalFundedIntent, refundBookingPayment } from "./booking-refund";
+import {
+  computeRefundPct,
+  parsePolicySnapshot,
+} from "./cancellation-policy";
 
 /**
  * Whole-event refund (#776 §C) — the production front door for the reversal
@@ -36,11 +48,6 @@ export type WholeEventRefundSummary = {
   failures: { paymentId: string; error: string }[];
 };
 
-/** Org-funded seats carry a synthetic paymentIntent the gateways can't refund. */
-function isInternalFunded(paymentIntent: string): boolean {
-  return paymentIntent.startsWith("org_");
-}
-
 function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
@@ -69,8 +76,12 @@ export async function refundWholeEventPayments(
   });
   if (payments.length === 0) return summary;
 
-  const internal = payments.filter((p) => isInternalFunded(p.paymentIntent));
-  const gateway = payments.filter((p) => !isInternalFunded(p.paymentIntent));
+  const internal = payments.filter((p) =>
+    isInternalFundedIntent(p.paymentIntent),
+  );
+  const gateway = payments.filter(
+    (p) => !isInternalFundedIntent(p.paymentIntent),
+  );
 
   // Gateway / mock seats — one gateway-aware refund each (refundPayment also
   // handles any CHARGE_MEMBER overage credit-back internally).
@@ -165,4 +176,127 @@ export async function refundWholeEventPayments(
   }
 
   return summary;
+}
+
+/**
+ * Refund ONE attendee's seat when the organiser removes them from a live
+ * class/webinar (#1003).
+ *
+ * The participant-removal endpoints moved the roster and left the money alone:
+ * a consultant could pull a paying attendee out of an event and keep the fee,
+ * with no refund, no earnings reversal and no notice to the attendee. The
+ * moderation bulk-cancel has always refunded a removed attendee in full; the
+ * interactive endpoints were the outlier.
+ *
+ * A removal is the organiser's act, so the frozen policy settles it at
+ * `consultantInitiatedPct` (100% under the platform defaults) — the attendee
+ * did nothing wrong. Routed through `refundBookingPayment` so an org-funded
+ * seat reverses in-ledger instead of dying on UNKNOWN_GATEWAY.
+ *
+ * Never throws: the roster change has already committed.
+ */
+export async function refundRemovedAttendeeSeat(args: {
+  kind: "class" | "webinar";
+  eventId: string;
+  attendeeUserId: string;
+  initiatedByUserId: string | null;
+}): Promise<{ amountRefundedPaise: number; refundPct: number } | null> {
+  const eventFilter =
+    args.kind === "webinar"
+      ? { webinarId: args.eventId }
+      : { classId: args.eventId };
+
+  // Hoisted so the catch can scope its ops event to the funding organisation;
+  // a failure reported against `null` never reaches the org that is owed it.
+  let organizationId: string | null = null;
+
+  try {
+    const payment = await prisma.payment.findFirst({
+      // Deterministic: the seat they bought first is the one being released.
+      orderBy: { createdAt: "asc" },
+      where: {
+        userId: args.attendeeUserId,
+        appointment: eventFilter,
+        paymentStatus: "SUCCEEDED",
+        amount: { gt: 0 },
+        deletedAt: null,
+      },
+      select: {
+        id: true,
+        amount: true,
+        currency: true,
+        organizationId: true,
+        ...REFUNDABLE_BALANCE_SELECT,
+        appointment: { select: { cancellationPolicySnapshot: true } },
+      },
+    });
+    if (!payment) return null;
+    organizationId = payment.organizationId;
+
+    const refundPct = computeRefundPct(
+      parsePolicySnapshot(payment.appointment?.cancellationPolicySnapshot),
+      // Ignored on the consultant-initiated branch.
+      -1,
+      true,
+    );
+    // Clamp to the remaining balance, exactly as the cancel route does. A seat
+    // carrying an earlier partial refund would otherwise ask for more than is
+    // left, `refundPayment` would reject the whole request, and the attendee
+    // would receive nothing of the remainder they are owed.
+    const amountPaise = Math.min(
+      Math.floor((Number(payment.amount) * refundPct) / 100),
+      refundableBalancePaise(Number(payment.amount), payment),
+    );
+    if (amountPaise <= 0) return { amountRefundedPaise: 0, refundPct };
+
+    const result = await refundBookingPayment({
+      paymentId: payment.id,
+      amountPaise,
+      reason: `removed from ${args.kind} ${args.eventId} by the organiser (${refundPct}%)`,
+      initiatedByUserId: args.initiatedByUserId,
+    });
+
+    // Only the gateway rail puts money back where this person can see it. On
+    // the internal rail the value returned to the org's wallet, accrual or
+    // licence — the member never paid, so telling them a refund is coming is
+    // simply false.
+    if (result.rail === "GATEWAY") {
+      void notifyRefundProcessed(args.attendeeUserId, {
+        ...notificationScope(payment.organizationId),
+        amount: amountPaise,
+        currency: payment.currency,
+        reason: `You were removed from this ${args.kind}.`,
+        dashboardUrl: `${getAppUrl()}/dashboard`,
+      }).catch(() => {});
+    }
+
+    return { amountRefundedPaise: result.amountRefundedPaise, refundPct };
+  } catch (err) {
+    // Benign idempotent re-drives — a seat already refunded, or a payment that
+    // never captured. Paging ops for these turns every repeat click into an
+    // incident. Mirrors the overage credit-back exemption above.
+    // AMOUNT_EXCEEDS_REFUNDABLE is unreachable through the clamp above, but a
+    // concurrent refund settling between the read and the write can still
+    // produce it, and that race is the benign case too.
+    const benign =
+      err instanceof RefundValidationError &&
+      (err.code === "ALREADY_FULLY_REFUNDED" ||
+        err.code === "PAYMENT_NOT_SUCCEEDED" ||
+        err.code === "AMOUNT_EXCEEDS_REFUNDABLE");
+    if (benign) return { amountRefundedPaise: 0, refundPct: 0 };
+
+    reportSentryError(err, {
+      subsystem: "payments",
+      tags: { feature: "attendee-removal-refund" },
+      extra: { ...args },
+    });
+    void recordSystemError({
+      organizationId,
+      category: "PAYMENT",
+      summary: `Seat refund failed for attendee removed from ${args.kind} ${args.eventId}`,
+      err,
+      context: { ...args },
+    }).catch(() => {});
+    return { amountRefundedPaise: 0, refundPct: 0 };
+  }
 }

@@ -15,7 +15,9 @@ import {
 
 import { getSession } from "@/lib/auth-server";
 import { isPrivileged } from "@/lib/auth-helpers";
-import { refundPayment } from "@/lib/payments/operations/refund";
+import { recordSystemError } from "@/lib/enterprise/system-events";
+import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
+import { resolveBookingRefundContext } from "@/lib/booking/cancellation-scope";
 import {
   refundWholeEventPayments,
   type WholeEventRefundSummary,
@@ -97,24 +99,33 @@ export async function POST(
         },
         webinar: {
           include: {
-            webinarPlan: true,
+            webinarPlan: {
+              include: {
+                consultantProfile: {
+                  include: { user: { select: { id: true, name: true } } },
+                },
+              },
+            },
           },
         },
         class: {
           include: {
-            classPlan: true,
+            classPlan: {
+              include: {
+                consultantProfile: {
+                  include: { user: { select: { id: true, name: true } } },
+                },
+              },
+            },
           },
         },
-        // Earliest slot decides the refund tier — without orderBy the DB
-        // returns an arbitrary slot (review catch on #844).
+        // Notification copy only. The refund tier reads the whole booking's
+        // next undelivered session instead (#1006, cancellation-scope.ts) —
+        // this row's earliest slot is the wrong answer for a subscription.
         slotsOfAppointment: {
           take: 1,
           orderBy: { startsAt: "asc" },
           select: { startsAt: true },
-        },
-        // B1 — refund terms frozen at booking + the payment to refund.
-        payment: {
-          select: { id: true, amount: true, paymentStatus: true },
         },
       },
     });
@@ -195,6 +206,15 @@ export async function POST(
       consulteeName =
         appointment.subscription.requestedBy?.user?.name || undefined;
       planTitle = appointment.subscription.subscriptionPlan?.title;
+    } else if (appointment.webinar || appointment.class) {
+      // #1003 — group events had no recipients assembled at all, so cancelling
+      // one told nobody. The organiser is the consultant on the plan; the
+      // attendees are gathered after the refund fan-out below.
+      const plan =
+        appointment.webinar?.webinarPlan ?? appointment.class?.classPlan;
+      consultantUserId = plan?.consultantProfile?.user?.id;
+      consultantName = plan?.consultantProfile?.user?.name || undefined;
+      planTitle = plan?.title;
     }
 
     // #1008 — refuse to cancel while a dispute is live on this appointment: the
@@ -209,6 +229,28 @@ export async function POST(
         { status: 409 },
       );
     }
+
+    const isExclusiveType =
+      !!appointment.consultation || !!appointment.subscription;
+
+    // #1006 — resolve the refund facts BEFORE the transaction, alongside the
+    // rest of the pre-transaction fetch.
+    //
+    // This read MUST precede the cancel: the transaction below stamps every
+    // SCHEDULED/RESCHEDULED slot CANCELLED, and "which session is still owed"
+    // is derived from exactly those two statuses. Resolved afterwards, the
+    // booking always looks like it has no live session left, every
+    // consultee-initiated cancellation falls to the 0% tier, and the refund is
+    // silently skipped. It reads no transaction state, so hoisting it costs
+    // nothing; the alternative — teaching the resolver to treat slots
+    // cancelled by this very run as live — would couple it to one call site.
+    const bookingCtx = isExclusiveType
+      ? await resolveBookingRefundContext({
+          appointmentId,
+          consultationId: appointment.consultationId,
+          subscriptionId: appointment.subscriptionId,
+        })
+      : null;
 
     // Prepare cancellation data
     const cancellationData = {
@@ -348,65 +390,167 @@ export async function POST(
       },
     );
 
-    // B1 — policy-driven refund, AFTER the cancel tx commits (refundPayment
-    // runs its own Serializable tx; the CAS above guarantees this block runs
-    // at most once per appointment — a second cancel 409s before reaching it).
+    // B1 — policy-driven refund, AFTER the cancel tx commits (the refund runs
+    // its own Serializable tx; the CAS above guarantees this block runs at most
+    // once per appointment — a second cancel 409s before reaching it).
     // Scope here: consultation/subscription (single-payment, policy-tiered).
     // Whole-event class/webinar refunds are handled just below via the
     // reversal engine (#776 §C).
-    let refund: { amountRefundedPaise: number; refundPct: number } | null =
-      null;
-    const isExclusiveType =
-      !!appointment.consultation || !!appointment.subscription;
-    const paidPayment = appointment.payment?.find(
-      (p) => p.paymentStatus === "SUCCEEDED" && p.amount > 0,
-    );
-    if (isExclusiveType && paidPayment) {
-      const startsAt = appointment.slotsOfAppointment?.[0]?.startsAt;
-      const hoursUntilStart = startsAt
-        ? (startsAt.getTime() - Date.now()) / 3_600_000
-        : -1;
-      const isConsultantInitiated =
-        session.user.consultantProfileId !== null &&
-        session.user.consultantProfileId !== undefined &&
-        session.user.id !== undefined &&
-        consultantUserId === session.user.id;
-      const refundPct = computeRefundPct(
-        parsePolicySnapshot(appointment.cancellationPolicySnapshot),
-        hoursUntilStart,
-        isConsultantInitiated,
-      );
-      const refundAmount = Math.floor(
-        (Number(paidPayment.amount) * refundPct) / 100,
-      );
-      if (refundAmount > 0) {
-        try {
-          const r = await refundPayment({
-            paymentId: paidPayment.id,
-            amountPaise: refundAmount,
-            reason: `cancellation (${refundPct}% per booking-time policy, ${
-              isConsultantInitiated ? "consultant" : "consultee"
-            }-initiated)`,
-            initiatedByUserId: session.user.id,
-          });
-          refund = { amountRefundedPaise: r.amountRefundedPaise, refundPct };
-        } catch (refundErr) {
-          // The cancellation itself stands; a failed refund must be visible,
-          // not silently swallowed — surface for ops + tell the caller.
-          Sentry.captureException(
-            refundErr instanceof Error
-              ? refundErr
-              : new Error(String(refundErr)),
-            { tags: { subsystem: "appointments" } },
-          );
-          console.error(
-            `[cancel] refund failed for payment ${paidPayment.id}:`,
-            refundErr,
-          );
-          refund = { amountRefundedPaise: 0, refundPct };
+    let refund: {
+      amountRefundedPaise: number;
+      refundPct: number;
+      /**
+       * What actually happened to the money. `amountRefundedPaise: 0` alone is
+       * ambiguous — it is equally "the policy owes nothing", "the balance was
+       * already exhausted" and "the gateway refused" — and the client was left
+       * inferring failure from a positive `refundPct`, which is a guess.
+       */
+      status:
+        | "REFUNDED"
+        | "FAILED"
+        | "NOTHING_REFUNDABLE"
+        | "POLICY_ZERO"
+        | "MANUAL_REVIEW";
+      /** #1006 — set when the refund needs a human, not a formula. */
+      requiresManualReview?: boolean;
+    } | null = null;
+    if (bookingCtx) {
+      const paidPayment = bookingCtx.paidPayment;
+      if (paidPayment) {
+        // "Not the buyer's choice" is the real question the tier asks, and a
+        // platform-initiated cancellation is not the buyer's choice either.
+        // Requiring the actor to BE the consultant meant an admin cancelling
+        // in the final hours settled a buyer who never asked at 0%, while
+        // `cancel-user-engagements.ts` settles the same platform act at 100%.
+        const isConsultantInitiated =
+          (session.user.consultantProfileId !== null &&
+            session.user.consultantProfileId !== undefined &&
+            session.user.id !== undefined &&
+            consultantUserId === session.user.id) ||
+          (isPrivilegedUser && session.user.id !== consulteeUserId);
+        // A booking with no session ever scheduled has INFINITE notice, not
+        // negative notice. Mapping "never allocated" onto the same -1 as
+        // "already started" made cancelling earlier score worse than
+        // cancelling later, which no tier table can mean.
+        //
+        // Keyed on slotsTotal, deliberately: "no slot has ever existed" is the
+        // claim. Deriving it from the absence of live and completed slots would
+        // also match a booking whose slots are all CANCELLED, and would quietly
+        // hand a full refund to any caller that resolved this context after the
+        // cancel transaction had already terminalised them.
+        const neverScheduled = bookingCtx.slotsTotal === 0;
+        const refundPct = computeRefundPct(
+          parsePolicySnapshot(bookingCtx.policySnapshot),
+          neverScheduled
+            ? Number.POSITIVE_INFINITY
+            : (bookingCtx.hoursUntilNextSession ?? -1),
+          isConsultantInitiated,
+        );
+        // Tier the REMAINING refundable balance, not the gross. Against a
+        // payment with an earlier partial refund the gross overshoots, the
+        // operation throws AMOUNT_EXCEEDS_REFUNDABLE, and the catch below turns
+        // that into "refunded 0" — the buyer loses the remainder they were owed.
+        const refundAmount = Math.min(
+          Math.floor((paidPayment.amountPaise * refundPct) / 100),
+          paidPayment.refundablePaise,
+        );
+
+        // #1006 — a subscription that has already delivered sessions has no
+        // agreed proration rule, and the tier alone would hand back the full
+        // plan price for sessions the consultant has already held. The
+        // cancellation stands; the refund is escalated rather than guessed.
+        const needsProrationRule =
+          !!appointment.subscription && bookingCtx.sessionsCompleted > 0;
+
+        if (needsProrationRule) {
+          // Durable, not just a log line: this is money owed to a buyer whose
+          // sessions have already been cancelled, so it has to land somewhere an
+          // ops surface actually drains. recordSystemError is that surface.
+          await recordSystemError({
+            organizationId: appointment.organizationId ?? null,
+            category: "PAYMENT",
+            summary:
+              `Cancelled a partially-consumed subscription (${bookingCtx.sessionsCompleted} of ` +
+              `${bookingCtx.sessionsCompleted + bookingCtx.sessionsRemaining} sessions delivered); ` +
+              `refund needs the #1006 proration rule and is owed manually`,
+            err: new Error("SUBSCRIPTION_PRORATION_UNDEFINED"),
+            context: {
+              appointmentId,
+              subscriptionId: appointment.subscription?.id,
+              paymentId: paidPayment.id,
+              paidPaise: paidPayment.amountPaise,
+              refundablePaise: paidPayment.refundablePaise,
+              sessionsCompleted: bookingCtx.sessionsCompleted,
+              sessionsRemaining: bookingCtx.sessionsRemaining,
+              tierRefundPct: refundPct,
+            },
+          }).catch(() => {});
+          refund = {
+            amountRefundedPaise: 0,
+            refundPct,
+            status: "MANUAL_REVIEW",
+            requiresManualReview: true,
+          };
+        } else if (refundAmount > 0) {
+          try {
+            const r = await refundBookingPayment({
+              paymentId: paidPayment.id,
+              amountPaise: refundAmount,
+              reason: `cancellation (${refundPct}% per booking-time policy, ${
+                isConsultantInitiated ? "consultant" : "consultee"
+              }-initiated)`,
+              initiatedByUserId: session.user.id,
+            });
+            refund = {
+              amountRefundedPaise: r.amountRefundedPaise,
+              refundPct,
+              status: "REFUNDED",
+            };
+          } catch (refundErr) {
+            // The cancellation itself stands; a failed refund must be visible,
+            // not silently swallowed. Sentry alone is not a queue — this is
+            // money owed on a booking that is already cancelled, so it lands on
+            // the same durable ops surface as the proration escalation.
+            Sentry.captureException(
+              refundErr instanceof Error
+                ? refundErr
+                : new Error(String(refundErr)),
+              { tags: { subsystem: "appointments" } },
+            );
+            console.error(
+              `[cancel] refund failed for payment ${paidPayment.id}:`,
+              refundErr,
+            );
+            await recordSystemError({
+              organizationId: appointment.organizationId ?? null,
+              category: "PAYMENT",
+              summary:
+                `Cancellation refund failed for payment ${paidPayment.id}; ` +
+                `${refundPct}% of ${paidPayment.amountPaise} paise is still owed`,
+              err: refundErr,
+              context: {
+                appointmentId,
+                paymentId: paidPayment.id,
+                refundPct,
+                attemptedPaise: refundAmount,
+                refundablePaise: paidPayment.refundablePaise,
+              },
+            }).catch(() => {});
+            refund = { amountRefundedPaise: 0, refundPct, status: "FAILED" };
+          }
+        } else {
+          // Two different facts, and the buyer is owed different words for
+          // each: the policy tier is genuinely zero, or the tier is positive
+          // but nothing is left to give back.
+          refund = {
+            amountRefundedPaise: 0,
+            refundPct,
+            status:
+              refundPct > 0 && paidPayment.refundablePaise <= 0
+                ? "NOTHING_REFUNDABLE"
+                : "POLICY_ZERO",
+          };
         }
-      } else {
-        refund = { amountRefundedPaise: 0, refundPct };
       }
     }
 
@@ -439,11 +583,38 @@ export async function POST(
       cancelledBy: session.user.id,
     };
 
+    // #1003 — every paid attendee of a cancelled group event has to hear about
+    // it too. They have no 1:1 counterpart on the booking, so they are read off
+    // the payments, exactly as the moderation bulk-cancel does.
+    let attendeeUserIds: string[] = [];
+    if (appointment.class || appointment.webinar) {
+      const eventFilter = appointment.class
+        ? { classId: appointment.class.id }
+        : { webinarId: appointment.webinar!.id };
+      const attendeePayments = await prisma.payment.findMany({
+        where: {
+          appointment: eventFilter,
+          paymentStatus: "SUCCEEDED",
+          amount: { gt: 0 },
+          deletedAt: null,
+        },
+        select: { userId: true },
+      });
+      attendeeUserIds = Array.from(
+        new Set(attendeePayments.map((p) => p.userId)),
+      );
+    }
+
     // Fire-and-forget: notify both parties about cancellation
-    const userIds = [
-      notificationMeta.consultantUserId,
-      notificationMeta.consulteeUserId,
-    ].filter((id): id is string => !!id);
+    const userIds = Array.from(
+      new Set(
+        [
+          notificationMeta.consultantUserId,
+          notificationMeta.consulteeUserId,
+          ...attendeeUserIds,
+        ].filter((id): id is string => !!id),
+      ),
+    );
     if (userIds.length > 0) {
       void notifyAppointmentCancelled(userIds, {
         ...notificationScope(appointment.organizationId),
@@ -459,10 +630,16 @@ export async function POST(
           "appointments",
         ),
         reason: validatedData.reason || undefined,
+        // Three-way, not two. A group event has no consultee at all, so the
+        // old else-branch told every attendee that "the consultee cancelled"
+        // whenever an admin did — and on a 1:1 it said the same of a platform
+        // cancellation. `system` is what the payload has for that.
         cancelledBy:
           notificationMeta.cancelledBy === notificationMeta.consultantUserId
             ? "consultant"
-            : "consultee",
+            : notificationMeta.cancelledBy === consulteeUserId
+              ? "consultee"
+              : "system",
       });
     }
 

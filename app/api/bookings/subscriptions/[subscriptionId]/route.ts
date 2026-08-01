@@ -15,6 +15,7 @@ import {
   unlockApproval,
 } from "@/utils/appointmentlock";
 import { transitionSubscriptionRequest } from "@/lib/booking/transitions";
+import { refundRejectedRequest } from "@/lib/booking/rejection-refund";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { sendPaymentLinkEmail } from "@/lib/email";
 import {
@@ -436,6 +437,21 @@ export async function PATCH(
       );
     }
 
+    // #1004 — declining is the CONSULTANT's act. The transition guard enforces
+    // only the from-state, and REJECTED is legal from PENDING and
+    // APPROVED_PENDING_PAYMENT, so without this the consultee could reject
+    // their own paid request and collect the consultant-initiated 100% refund
+    // — every notice tier bypassed, on demand.
+    if (
+      status === AppointmentStatus.REJECTED &&
+      !isConsultant &&
+      !isPrivileged(session.user.role)
+    ) {
+      return forbiddenResponse(
+        "Only the consultant can decline a request. Cancel it instead.",
+      );
+    }
+
     if (!existingSubscription.subscriptionPlan?.consultantProfile?.user?.id) {
       return NextResponse.json(
         { error: "Invalid subscription: missing consultant information" },
@@ -714,6 +730,24 @@ export async function PATCH(
         }
       }
 
+      // #1004 — a rejected request that was already paid for has to give the
+      // money back. Direct checkout captures BEFORE the request exists, so the
+      // consultant is declining a booking the buyer has already paid; REJECTED
+      // is terminal and the cancel route refuses it, so this is the only exit.
+      // Runs after the transition commits — the allowed-from guard on that
+      // transition is what makes it at-most-once.
+      let rejectionRefund: Awaited<
+        ReturnType<typeof refundRejectedRequest>
+      > = null;
+      if (!result.duplicate && status === AppointmentStatus.REJECTED) {
+        rejectionRefund = await refundRejectedRequest({
+          kind: "subscription",
+          requestId: subscriptionId,
+          initiatedByUserId: session.user.id,
+          actor: isConsultant ? "CONSULTANT" : "PLATFORM",
+        });
+      }
+
       // Fire-and-forget: send Novu notifications for non-duplicate status changes
       if (!result.duplicate && "data" in result && result.data) {
         const subData = result.data;
@@ -805,7 +839,7 @@ export async function PATCH(
       // Return success response (exclude emailData from response)
       const { emailData: _emailData, ...responseData } =
         result as typeof result & { emailData?: unknown };
-      return NextResponse.json(responseData);
+      return NextResponse.json({ ...responseData, refund: rejectionRefund });
     } catch (error) {
       Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
       console.error(
