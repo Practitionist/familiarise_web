@@ -13,15 +13,14 @@ import type {
 import type { TAppointment } from "@/types/appointment";
 import { deriveBucket } from "./bucket";
 import { getAnchorTime, isSessionOver } from "./slots";
+import { sessionsOfAppointment } from "./sessions-of";
 import { normalizeStatus } from "./status";
 import { trialMeta } from "./trial-labels";
 import {
   sortSessions,
   toDate,
-  toSessionVM,
   type AppointmentVM,
   type PersonVM,
-  type SessionVM,
   type SlotLike,
 } from "./view-model";
 
@@ -121,15 +120,6 @@ function eventOf(appointment: TDetailAppointment): {
   };
 }
 
-function sessionsOf(appointment: {
-  id: string;
-  slotsOfAppointment: TDetailAppointment["slotsOfAppointment"];
-}): SessionVM[] {
-  return appointment.slotsOfAppointment.map((slot) =>
-    toSessionVM({ ...slot, appointmentId: appointment.id }),
-  );
-}
-
 export function mapAppointmentDetail(
   detail: TAppointmentDetail,
   role: Role,
@@ -138,14 +128,16 @@ export function mapAppointmentDetail(
   const { appointment, siblings } = detail;
   const facts = eventOf(appointment);
   const all = [appointment, ...siblings];
-  const sessions = sortSessions(all.flatMap((a) => sessionsOf(a)));
+  // Grouped PER APPOINTMENT before the flatten, or two sittings on different
+  // days would merge into one session.
+  const sessions = sortSessions(all.flatMap((a) => sessionsOfAppointment(a)));
 
   const isGroup =
     appointment.appointmentType === "SUBSCRIPTION" ||
     appointment.appointmentType === "CLASS";
   const withSlots = all.filter((a) => a.slotsOfAppointment.length > 0);
   const completed = withSlots.filter((a) =>
-    sessionsOf(a).every((s) => isSessionOver(s, now)),
+    sessionsOfAppointment(a).every((s) => isSessionOver(s, now)),
   ).length;
 
   const counterpart =
