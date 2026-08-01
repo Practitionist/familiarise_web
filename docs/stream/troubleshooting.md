@@ -392,6 +392,45 @@ curl -X GET "https://chat.stream-io-api.com/health"
 
 ## Connection Issues
 
+### Issue: The dashboard flickers or reloads as the page settles, and the first Join click does nothing
+
+#### Symptoms
+
+- The dashboard visibly remounts a second or two after load
+- Clicking Join appears to do nothing, so the user clicks it several more times
+- Component state (open dialogs, scroll position, half-filled forms) resets on its own
+- Possibly a React error #310 — "rendered more hooks than during the previous render" — pointing into Stream SDK internals
+
+#### Cause
+
+The provider held the chat and video clients in two independent `useState`s. Their connects race, so the element wrapping the dashboard changed *type* between renders (`children` → `<StreamVideo>` → `<Chat>`, in socket-arrival order). React cannot reconcile a type change in place, so it remounted the whole subtree — destroying any in-flight join.
+
+#### Fix
+
+Both clients are committed in a single `setClients` via `Promise.allSettled`, so the tree shape is a pure function of one settled value. See §Why one state and not two in `docs/stream/03-provider-authentication.md`.
+
+**If you see this again**, the first thing to check is whether someone has reintroduced a second source of truth for client state, or made the wrapper nesting order depend on which client arrived first.
+
+### Issue: Video works locally but fails in production, or the console fills with CSP violations
+
+#### Symptoms
+
+- `Refused to connect to 'https://hint.stream-io-video.com/…'` or `'wss://video.stream-io-api.com/…'`
+- Calls connect locally (where CSP is often not exercised) but not on a deploy preview or production
+- `POST /api/csp-report` returning `429`
+
+#### Cause
+
+Stream does **not** use `getstream.io` at runtime — that is the marketing domain. The SDKs talk to `*.stream-io-api.com`, `*.stream-io-video.com`, and `*.stream-io-cdn.com`. An allow-list containing only `*.getstream.io` does not match any of them.
+
+Separately, `/api/csp-report` was rate-limited at 5/hour, so the violation reports that would have revealed this were themselves being dropped.
+
+#### Fix
+
+Both are corrected in `next.config.mjs` and `lib/rate-limit.ts`. The full domain breakdown is in `docs/enterprise/20-iam-and-security/05-security-headers.md`.
+
+**Verify with the browser, not the docs.** This class of drift is only visible in a real network log; Stream's documentation does not enumerate the SFU and hint domains in one place.
+
 ### Issue: "Chat connection failed"
 
 #### Symptoms
