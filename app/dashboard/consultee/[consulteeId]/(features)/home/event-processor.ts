@@ -15,6 +15,10 @@ import type {
   TConsulteeClass,
 } from "@/types/consultee-events";
 import type { MeetingAppointment, MeetingSlot } from "@/lib/meeting";
+import {
+  getCurrentOrNextSession,
+  type SessionRun,
+} from "@/lib/appointments/slots";
 
 /**
  * Unified event type for display in the dashboard
@@ -43,6 +47,10 @@ export interface ProcessedEvent {
   // Data needed for joining meetings
   joinableAppointment?: MeetingAppointment;
   joinableSlot?: MeetingSlot;
+  // #1061 — the whole run `joinableSlot` anchors, so the card can ask
+  // getSessionJoinState for a real state (including `ended`) instead of
+  // re-deriving a time window from one row.
+  joinableSession?: SessionRun<ProcessedSlot> | null;
   // Registration state for webinars/classes. There is no queue any more —
   // either the consultee holds a seat or the row is a plain event card.
   bookingStatus?: BookingStatus;
@@ -55,19 +63,43 @@ export interface ProcessedEvent {
 }
 
 /**
+ * A slot row as this tab carries it: `MeetingSlot` (what the join helper
+ * needs) plus the two fields the session helpers read. Dropping them made
+ * `groupSlotsIntoRuns` treat cancelled rows as live and left the card unable
+ * to see that the host had ended the call — both silently, because they are
+ * optional on `SessionSlotLike` (#1061).
+ */
+export type ProcessedSlot = MeetingSlot & {
+  completionStatus?: string | null;
+  meetingSession?: { id: string; endedAt: Date | string | null } | null;
+};
+
+/**
  * Internal type for tracking slots with their raw data
  */
 interface SlotWithContext {
   startsAt: Date;
   endsAt: Date;
-  rawSlot: MeetingSlot;
+  rawSlot: ProcessedSlot;
   appointmentId: string;
 }
 
+/** A picked session: the run, plus its anchor row in list-item shape. */
+interface SessionPick extends SlotWithContext {
+  run: SessionRun<ProcessedSlot> | null;
+}
+
 /**
- * Find the next upcoming slot from a list of slots
+ * The session that is live or next up, spanning its whole run of slot rows.
+ *
+ * #1061 — this used to return the first slot whose `startsAt` was in the
+ * FUTURE. From minute 0 of a one-hour session that is the second half-hour
+ * row, so Home greyed Join out while the session was live and then, once the
+ * second row's own window opened, dropped the consultee into a different room
+ * from the consultant. `startsAt`/`endsAt` now describe the run, and
+ * `rawSlot` is the run's anchor — the row the video room is keyed to.
  */
-function findNextSlot(slots: SlotWithContext[]): SlotWithContext | null {
+function findNextSlot(slots: SlotWithContext[]): SessionPick | null {
   if (slots.length === 0) return null;
 
   const now = new Date();
@@ -75,11 +107,55 @@ function findNextSlot(slots: SlotWithContext[]): SlotWithContext | null {
     (a, b) => a.startsAt.getTime() - b.startsAt.getTime(),
   );
 
-  // Find first upcoming slot, or fall back to most recent past slot
-  return (
-    sortedSlots.find((s) => s.startsAt > now) ??
-    sortedSlots[sortedSlots.length - 1]
+  const run = getCurrentOrNextSession(
+    slots.map((s) => ({ ...s.rawSlot, appointmentId: s.appointmentId })),
+    now,
   );
+  const anchor = run
+    ? slots.find((s) => s.rawSlot.id === run.anchor.id)
+    : undefined;
+  if (run && anchor) {
+    return { ...anchor, startsAt: run.startsAt, endsAt: run.endsAt, run };
+  }
+
+  // Every row was cancelled/rescheduled: keep the old shape so the card still
+  // renders (with Join inert) instead of vanishing from Home.
+  const fallback =
+    sortedSlots.find((s) => s.startsAt > now) ??
+    sortedSlots[sortedSlots.length - 1];
+  return { ...fallback, run: null };
+}
+
+/** Slot rows in the shape `findNextSlot` groups on. */
+function toSlotContexts(
+  slots: Array<{
+    id: string;
+    startsAt: Date | string;
+    endsAt: Date | string | null;
+    isTentative: boolean;
+    appointmentId: string | null;
+    completionStatus?: string | null;
+    meetingSession?: { id: string; endedAt: Date | string | null } | null;
+  }>,
+  appointmentId: string,
+): SlotWithContext[] {
+  return slots.map((slot) => ({
+    startsAt: new Date(slot.startsAt),
+    endsAt: new Date(slot.endsAt ?? slot.startsAt),
+    rawSlot: {
+      id: slot.id,
+      startsAt: slot.startsAt,
+      endsAt: slot.endsAt,
+      isTentative: slot.isTentative,
+      appointmentId: slot.appointmentId,
+      // Both are already selected by the events read
+      // (lib/data/consultee-events-read.ts): the slot include is unfiltered,
+      // and `meetingSession: { id, endedAt }` is explicit on all four types.
+      completionStatus: slot.completionStatus ?? null,
+      meetingSession: slot.meetingSession ?? null,
+    },
+    appointmentId,
+  }));
 }
 
 /**
@@ -91,8 +167,11 @@ function processConsultation(
   const slots = consultation.appointment?.slotsOfAppointment;
   if (!slots || slots.length === 0) return null;
 
-  const firstSlot = slots[0];
   const appointmentId = consultation.appointment?.id ?? "";
+  // #1061 — the card's time range and its Join target are the whole session,
+  // not the first 30-minute row of it.
+  const session = findNextSlot(toSlotContexts(slots, appointmentId));
+  if (!session) return null;
 
   // Build meeting appointment
   const joinableAppointment: MeetingAppointment = {
@@ -117,14 +196,7 @@ function processConsultation(
     },
   };
 
-  // Build meeting slot
-  const joinableSlot: MeetingSlot = {
-    id: firstSlot.id,
-    startsAt: firstSlot.startsAt,
-    endsAt: firstSlot.endsAt,
-    isTentative: firstSlot.isTentative,
-    appointmentId: firstSlot.appointmentId,
-  };
+  const joinableSlot: MeetingSlot = session.rawSlot;
 
   return {
     id: consultation.id,
@@ -134,8 +206,8 @@ function processConsultation(
       consultation.consultationPlan?.consultantProfile?.user?.name ?? "Expert",
     consultantImage:
       consultation.consultationPlan?.consultantProfile?.user?.image,
-    startsAt: new Date(firstSlot.startsAt),
-    endsAt: new Date(firstSlot.endsAt ?? firstSlot.startsAt),
+    startsAt: session.startsAt,
+    endsAt: session.endsAt,
     status: consultation.status ?? "PENDING",
     slots: slots.map((s) => ({
       startsAt: new Date(s.startsAt),
@@ -145,6 +217,7 @@ function processConsultation(
     appointmentId,
     joinableAppointment,
     joinableSlot,
+    joinableSession: session.run,
     organizationId: consultation.appointment?.organizationId ?? null,
   };
 }
@@ -158,20 +231,9 @@ function processSubscription(
   const allSlots: SlotWithContext[] = [];
 
   subscription.appointments?.forEach((appointment) => {
-    appointment.slotsOfAppointment?.forEach((slot) => {
-      allSlots.push({
-        startsAt: new Date(slot.startsAt),
-        endsAt: new Date(slot.endsAt ?? slot.startsAt),
-        rawSlot: {
-          id: slot.id,
-          startsAt: slot.startsAt,
-          endsAt: slot.endsAt,
-          isTentative: slot.isTentative,
-          appointmentId: slot.appointmentId,
-        },
-        appointmentId: appointment.id,
-      });
-    });
+    allSlots.push(
+      ...toSlotContexts(appointment.slotsOfAppointment ?? [], appointment.id),
+    );
   });
 
   if (allSlots.length === 0) return null;
@@ -227,6 +289,7 @@ function processSubscription(
     appointmentId: nextSlot.appointmentId,
     joinableAppointment,
     joinableSlot: nextSlot.rawSlot,
+    joinableSession: nextSlot.run,
     organizationId: nextAppointment?.organizationId ?? null,
   };
 }
@@ -239,20 +302,12 @@ function processWebinar(webinar: TConsulteeWebinar): ProcessedEvent | null {
   const appointmentId = webinar.appointment?.id ?? "";
 
   // Get slots from the appointment
-  webinar.appointment?.slotsOfAppointment?.forEach((slot) => {
-    allSlots.push({
-      startsAt: new Date(slot.startsAt),
-      endsAt: new Date(slot.endsAt ?? slot.startsAt),
-      rawSlot: {
-        id: slot.id,
-        startsAt: slot.startsAt,
-        endsAt: slot.endsAt,
-        isTentative: slot.isTentative,
-        appointmentId: slot.appointmentId,
-      },
+  allSlots.push(
+    ...toSlotContexts(
+      webinar.appointment?.slotsOfAppointment ?? [],
       appointmentId,
-    });
-  });
+    ),
+  );
 
   if (allSlots.length === 0) return null;
 
@@ -311,6 +366,7 @@ function processWebinar(webinar: TConsulteeWebinar): ProcessedEvent | null {
     appointmentId,
     joinableAppointment,
     joinableSlot: nextSlot.rawSlot,
+    joinableSession: nextSlot.run,
     bookingStatus,
     collaborators,
     organizationId: webinar.appointment?.organizationId ?? null,
@@ -324,20 +380,9 @@ function processClass(classEvent: TConsulteeClass): ProcessedEvent | null {
   const allSlots: SlotWithContext[] = [];
 
   classEvent.appointments?.forEach((appointment) => {
-    appointment.slotsOfAppointment?.forEach((slot) => {
-      allSlots.push({
-        startsAt: new Date(slot.startsAt),
-        endsAt: new Date(slot.endsAt ?? slot.startsAt),
-        rawSlot: {
-          id: slot.id,
-          startsAt: slot.startsAt,
-          endsAt: slot.endsAt,
-          isTentative: slot.isTentative,
-          appointmentId: slot.appointmentId,
-        },
-        appointmentId: appointment.id,
-      });
-    });
+    allSlots.push(
+      ...toSlotContexts(appointment.slotsOfAppointment ?? [], appointment.id),
+    );
   });
 
   if (allSlots.length === 0) return null;
@@ -403,6 +448,7 @@ function processClass(classEvent: TConsulteeClass): ProcessedEvent | null {
     appointmentId: nextSlot.appointmentId,
     joinableAppointment,
     joinableSlot: nextSlot.rawSlot,
+    joinableSession: nextSlot.run,
     bookingStatus,
     collaborators,
     organizationId: nextAppointment?.organizationId ?? null,

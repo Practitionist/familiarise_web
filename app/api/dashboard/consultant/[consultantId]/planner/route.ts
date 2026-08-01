@@ -30,26 +30,73 @@ const webinarInclude = {
           // (isTentative etc.) still come through; the in-memory
           // participant count below relies on them.
           user: { select: { id: true, name: true, email: true, image: true } },
+          // #1061 — without this the planner cannot tell that the host has
+          // already ended the call, so its Join gate could only ever expire on
+          // the clock. Two columns per row.
+          meetingSession: { select: { id: true, endedAt: true } },
         },
       },
     },
   },
 } satisfies Prisma.WebinarInclude;
 
-const classInclude = {
-  classPlan: {
-    include: {
-      consultantProfile: true,
-      topics: true,
-      classContents: {
-        orderBy: {
-          order: "asc" as const,
+/**
+ * How far either side of now a class slot row has to be to matter to the
+ * planner. The only reader of these rows is the Join affordance, and a run
+ * that is joinable now cannot have started, or end, outside a day of now — so
+ * the bound drops rows the join path could never pick while keeping every run
+ * it can pick whole. Truncating a run mid-way would re-split the room #1061
+ * just closed, which is why the window is a day and not the join window.
+ */
+const PLANNER_CLASS_SLOT_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Bounded by `now`, so this is a factory rather than the module-level constant
+ * the webinar side can be.
+ */
+const classInclude = (now: Date) =>
+  ({
+    classPlan: {
+      include: {
+        consultantProfile: true,
+        topics: true,
+        classContents: {
+          orderBy: {
+            order: "asc" as const,
+          },
         },
       },
     },
-  },
-  appointments: true,
-} satisfies Prisma.ClassInclude;
+    appointments: {
+      include: {
+        // #1080 — the planner derives a class's joinable session from these
+        // rows, and `appointments: true` returned none of them, so every class
+        // reported "No joinable session found" at every hour of every day.
+        // Only the fields the join path reads: this route trims deliberately,
+        // and the attendee `user` rows the webinar side carries are not read
+        // here (the class participant count has its own batched query).
+        // `meetingSession` is not optional — without it `getSessionJoinState`
+        // can only expire on the clock and never sees a host-ended call, the
+        // same reason `webinarInclude` selects it.
+        slotsOfAppointment: {
+          where: {
+            startsAt: {
+              gte: new Date(now.getTime() - PLANNER_CLASS_SLOT_WINDOW_MS),
+              lte: new Date(now.getTime() + PLANNER_CLASS_SLOT_WINDOW_MS),
+            },
+          },
+          select: {
+            id: true,
+            startsAt: true,
+            endsAt: true,
+            isTentative: true,
+            completionStatus: true,
+            meetingSession: { select: { id: true, endedAt: true } },
+          },
+        },
+      },
+    },
+  }) satisfies Prisma.ClassInclude;
 
 // Derive types from the include objects via the extended client — raw
 // GetPayload would re-introduce bigint money fields (#780).
@@ -60,7 +107,7 @@ type PlannerWebinar = Prisma.Result<
 >;
 type PlannerClass = Prisma.Result<
   typeof prisma.class,
-  { include: typeof classInclude },
+  { include: ReturnType<typeof classInclude> },
   "findFirstOrThrow"
 >;
 
@@ -122,10 +169,10 @@ function countWebinarParticipants(
 }
 
 /**
- * Class participant counts still need their one batched query —
- * classInclude fetches bare appointments without slots (the class payload
- * doesn't show attendees), so the user ids aren't already in memory.
- * FIX #142: batched, never N+1.
+ * Class participant counts still need their one batched query — classInclude
+ * now carries slot rows (#1080) but not the attendees on them, and it is
+ * bounded to a day either side of now, so the user ids are not in memory and
+ * counting from them would under-report. FIX #142: batched, never N+1.
  */
 async function getClassParticipantCounts(
   classIds: string[],
@@ -276,6 +323,10 @@ export async function GET(
             }
           : undefined;
 
+    // Read once, so the owned and collaborated class queries bound their slot
+    // rows to the same instant and a session cannot straddle the two.
+    const classSlotsAround = classInclude(new Date());
+
     // Fetch owned plans, collaborated plans, and collaborator roles in parallel
     const [
       ownedWebinarsRaw,
@@ -297,7 +348,7 @@ export async function GET(
           classPlan: { consultantProfileId: consultantId },
           ...(classApptOrg ?? {}),
         },
-        include: classInclude,
+        include: classSlotsAround,
       }),
       // Collaborated plans (only ACCEPTED)
       prisma.webinar.findMany({
@@ -320,7 +371,7 @@ export async function GET(
           },
           ...(classApptOrg ?? {}),
         },
-        include: classInclude,
+        include: classSlotsAround,
       }),
       // Collaborator role lookups (#784 — one merged model for both plan types)
       prisma.collaborator.findMany({

@@ -2,7 +2,14 @@ import * as Sentry from "@sentry/nextjs";
 import {
   createDbMeetingSession,
   findDbMeetingSessionBySlot,
+  getMeetingCreationRefusal,
+  resolveSessionAnchorSlot,
+  resolveSessionCallProfile,
 } from "@/actions/stream/meetings/meeting.action";
+import {
+  isUserFacingError,
+  userFacingError,
+} from "@/lib/errors/classification/client-failure";
 import type { Call } from "@stream-io/video-react-sdk";
 import { StreamVideoClient } from "@stream-io/video-react-sdk";
 import type { AppointmentsType } from "@prisma/client";
@@ -85,8 +92,26 @@ export const getOrCreateAppointmentMeeting = async (
   }
 
   try {
+    // #1061 — a session longer than 30 minutes is N consecutive slot rows, and
+    // each dashboard surface hands us a different one. Key the room to the
+    // run's first row so both sides, at any point in the hour, resolve the
+    // same call. Server-side because the planner passes a lone slot.
+    //
+    // The `?? slot` fallback is NOT safe, and is chosen anyway: if the anchor
+    // lookup fails for one of two people clicking Join at the same moment,
+    // that person mints `slot-<their row>` and leaves a stray MeetingSession
+    // on a non-anchor row — exactly the split this change exists to remove.
+    // It is still better than the alternative, because the failure is a
+    // transient DB error and refusing to join would take the whole meeting
+    // down for both sides rather than degrading to today's behaviour for one.
+    // Pinned by __tests__/stream/session-room-identity.test.ts.
+    const anchorSlot: MeetingSlot =
+      (await resolveSessionAnchorSlot(slot.id)) ?? slot;
+
     // 1. Try to find an existing meeting session via server action
-    const existingMeetingSession = await findDbMeetingSessionBySlot(slot.id);
+    const existingMeetingSession = await findDbMeetingSessionBySlot(
+      anchorSlot.id,
+    );
 
     let streamCallId: string;
 
@@ -95,16 +120,35 @@ export const getOrCreateAppointmentMeeting = async (
       streamCallId = existingMeetingSession.streamCallId;
     } else {
       // 2b. No existing session found, create a new one.
-      // Use a deterministic call ID derived from the slot ID so concurrent
-      // callers produce the same Stream call. Stream's getOrCreate is
-      // idempotent for the same call ID, preventing orphaned calls.
-      streamCallId = `slot-${slot.id}`;
+      // Use a deterministic call ID derived from the anchor slot ID so
+      // concurrent callers produce the same Stream call. Stream's getOrCreate
+      // is idempotent for the same call ID, preventing orphaned calls.
+      streamCallId = `slot-${anchorSlot.id}`;
 
-      // 3. Create the Stream call
+      // #1077 — anything that can refuse this join runs BEFORE the mint.
+      // `createDbMeetingSession` used to be the first to see maintenance, by
+      // which point Stream already held a call our database would never write
+      // a row for, carrying the bounds and members computed at the blocked
+      // moment with nothing to ever correct them.
+      const refusal = await getMeetingCreationRefusal(anchorSlot);
+      if (refusal) throw userFacingError(refusal);
+
+      // 3. Create the Stream call.
+      // #1070 — a call created with nothing but an id is illegible in Stream's
+      // dashboard and in a recording listing, and leaves every surface to
+      // re-infer who is hosting. Resolve the session's real bounds, offering
+      // and participants once, server-side. Everything it feeds is additive
+      // and every field is individually optional, so a null profile creates
+      // exactly the call this code created before.
+      const callProfile = await resolveSessionCallProfile(anchorSlot.id);
+
       const call: Call = client.call("default", streamCallId);
-      const startsAt = slot.startsAt
-        ? new Date(slot.startsAt).toISOString()
-        : new Date().toISOString();
+      // The RUN's start, not the clicked row's: joining a 10:00–11:00 session
+      // from its 10:30 row must not tell Stream the meeting starts at 10:30.
+      const startsAt = (
+        callProfile?.startsAt ??
+        (anchorSlot.startsAt ? new Date(anchorSlot.startsAt) : new Date())
+      ).toISOString();
 
       // Determine title and description based on appointment type
       let title = `Meeting for Appointment ${appointment.id}`;
@@ -129,19 +173,50 @@ export const getOrCreateAppointmentMeeting = async (
           ? appointment.organizationId ?? null
           : organizationId;
 
+      // #org-appts — per-appointment identity for host/guest derivation. The
+      // caller's values win where present; otherwise the server-resolved ones
+      // fill them in, which is the first time most surfaces have carried them
+      // at all (no caller in the tree populates these today).
+      const consultantUserId =
+        appointment.consultantUserId ?? callProfile?.hostUserIds[0] ?? null;
+      const consulteeUserId =
+        appointment.consulteeUserId ?? callProfile?.guestUserIds[0] ?? null;
+
       const custom: Record<string, unknown> = {
         title: title,
         description: description,
         appointmentId: appointment.id,
-        slotId: slot.id,
+        slotId: anchorSlot.id,
+        // Named explicitly so a Stream dashboard or recording entry says which
+        // row keys the room without anyone having to know `slotId` means the
+        // anchor (#1061).
+        anchorSlotId: anchorSlot.id,
         appointmentType: appointment.appointmentType,
         ...(resolvedOrgId ? { organizationId: resolvedOrgId } : {}),
-        // #org-appts — per-appointment identity for host/guest derivation.
-        ...(appointment.consultantUserId
-          ? { consultantUserId: appointment.consultantUserId }
-          : {}),
-        ...(appointment.consulteeUserId
-          ? { consulteeUserId: appointment.consulteeUserId }
+        ...(consultantUserId ? { consultantUserId } : {}),
+        ...(consulteeUserId ? { consulteeUserId } : {}),
+        // #1070 — the session's real shape. `CallRequest` in the installed
+        // SDK has no `ends_at`, so the end travels as call metadata; see the
+        // note on `settings_override` below for why the one field that could
+        // enforce it is not used.
+        ...(callProfile
+          ? {
+              sessionStartsAt: callProfile.startsAt.toISOString(),
+              sessionEndsAt: callProfile.endsAt.toISOString(),
+              sessionDurationMinutes: callProfile.durationMinutes,
+              ...(callProfile.offeringTitle
+                ? { offeringTitle: callProfile.offeringTitle }
+                : {}),
+              // Both sides by name, so each screen can lead with the OTHER
+              // one. `title` only ever held the requester, which showed the
+              // consultee their own name as their counterpart.
+              ...(callProfile.hostName
+                ? { hostName: callProfile.hostName }
+                : {}),
+              ...(callProfile.guestName
+                ? { guestName: callProfile.guestName }
+                : {}),
+            }
           : {}),
       };
 
@@ -149,27 +224,54 @@ export const getOrCreateAppointmentMeeting = async (
         data: {
           starts_at: startsAt,
           custom,
+          // Records who hosts, once, instead of every surface inferring it.
+          // Purely additive: the `default` call type does not restrict entry
+          // to members and no setting here enables that, so naming members
+          // cannot turn a working join into a refusal.
+          //
+          // Deliberately NOT sent (deferred to #1070): `backstage`,
+          // `join_ahead_time_seconds`, and `settings_override.limits
+          // .max_duration_seconds`. The first two let Stream refuse a join, so
+          // a consultant who never calls goLive() would strand a paying
+          // consultee on a backstage screen — invisible to us, unfixable
+          // without a deploy. The third hard-terminates a call that overruns.
+          // The join gate stays in our code, where we can see and fix it.
+          ...(callProfile && callProfile.members.length > 0
+            ? { members: callProfile.members }
+            : {}),
         },
       });
 
-      // 4. Create the corresponding record in the database via server action
-      await createDbMeetingSession(slot, streamCallId);
+      // 4. Create the corresponding record in the database via server action.
+      // Attached to the anchor, so MeetingSession.slotOfAppointmentId stays
+      // @unique-correct: one session per run, not one per half hour.
+      await createDbMeetingSession(anchorSlot, streamCallId);
     }
 
     // 5. Return the Stream Call ID (either existing or newly created)
     return streamCallId;
   } catch (error) {
+    // A refusal we authored (maintenance, a slot that is not one) travels
+    // unwrapped: prefixing it would bury the one sentence worth showing, and
+    // the classifier at the toast boundary shows it verbatim.
+    if (isUserFacingError(error)) throw error;
+
     console.error(
       `Error in getOrCreateAppointmentMeeting for slot ${slot.id}:`,
       error,
     );
     Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
-    // Wrap the original error
+    // Wrapped, but with `cause` set: the browser catch needs the original to
+    // classify it, and a chunk failure or a server-action `digest` is invisible
+    // once the message has been flattened into a string.
     if (error instanceof Error) {
-      throw new Error(`Failed to get/create meeting session: ${error.message}`);
+      throw new Error(`Failed to get/create meeting session: ${error.message}`, {
+        cause: error,
+      });
     }
     throw new Error(
       "An unknown error occurred while managing the appointment meeting session.",
+      { cause: error },
     );
   }
 };

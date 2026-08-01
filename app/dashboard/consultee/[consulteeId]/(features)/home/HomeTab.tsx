@@ -26,7 +26,13 @@ import { useState, useMemo, useRef } from "react";
 // lib/meeting (which imports the SDK) here — that would pull the heavy SDK into
 // the dashboard-HOME bundle / critical path. The video client + meeting helper
 // are acquired lazily inside the Join handler (only when a user clicks Join).
-import { waitForGlobalVideoClient } from "@/lib/stream/disconnect";
+import {
+  describeVideoClientWait,
+  waitForGlobalVideoClient,
+} from "@/lib/stream/disconnect";
+import { reportSentryMessage } from "@/lib/observability/report";
+import { reportClientFailure } from "@/lib/errors/classification/client-failure";
+import { failureToast } from "@/components/ui/failure-toast";
 import { useToast } from "@/hooks/use-toast";
 import type { TConsulteeEventsResponse } from "@/types/consultee-events";
 import {
@@ -49,7 +55,7 @@ import {
   isInactiveStatus,
   isApprovedStatus,
 } from "@/lib/appointments/status-guards";
-import { DEFAULT_MEETING_DURATION_MS } from "../appointments/types";
+import { getSessionJoinState } from "@/lib/appointments/slots";
 
 // Webinars/classes carry WebinarStatus/ClassStatus; consultations and
 // subscriptions carry AppointmentStatus. One resolver so both card
@@ -137,17 +143,15 @@ function UpcomingSessionCard({
   const isTentative = event.joinableSlot?.isTentative ?? true;
   const canShowJoin = !isTentative && isApproved && !isInactive;
 
-  // Time-window gate (matching JoinButton.tsx:getJoinState)
-  const isWithinJoinWindow = (() => {
-    if (!event.joinableSlot) return false;
-    const now = Date.now();
-    const start = new Date(event.joinableSlot.startsAt).getTime();
-    const end = event.joinableSlot.endsAt
-      ? new Date(event.joinableSlot.endsAt).getTime()
-      : start + DEFAULT_MEETING_DURATION_MS;
-    const joinWindow = start - JOIN_WINDOW_BEFORE_START_MS;
-    return now >= joinWindow && now <= end;
-  })();
+  // #1061 — the same predicate the Appointments tabs and the planner use,
+  // over the whole run of slot rows rather than one of them. The hand-rolled
+  // time comparison this replaces could not see `ended`, so a session the host
+  // had already closed still offered Join for the rest of the booked hour.
+  const isWithinJoinWindow =
+    !!event.joinableSession &&
+    getSessionJoinState(event.joinableSession, {
+      joinWindowMs: JOIN_WINDOW_BEFORE_START_MS,
+    }) === "joinable";
 
   // Type badges - outline/border style only, no background colors
   const typeLabels: Record<string, string> = {
@@ -659,9 +663,19 @@ export default function HomeTab({
     // exists — show the joining spinner and briefly wait for it instead of
     // immediately erroring.
     setJoiningEventId(event.id);
+    const waitStartedAt = Date.now();
     const client = await waitForGlobalVideoClient();
     if (!client) {
       setJoiningEventId(null);
+      // Kept distinct from a chunk failure in Sentry as well as in the toast;
+      // the extras are what tell a cold start from a provider that never
+      // connected at all.
+      reportSentryMessage("Video client not ready at Join", {
+        subsystem: "client",
+        op: "join-meeting",
+        expected: true,
+        extra: describeVideoClientWait(Date.now() - waitStartedAt),
+      });
       toast({
         title: "Connecting…",
         description:
@@ -687,11 +701,19 @@ export default function HomeTab({
       });
     } catch (error) {
       console.error("Error joining meeting:", error);
-      toast({
-        title: "Error joining meeting",
-        description: error instanceof Error ? error.message : "Unknown error",
-        variant: "destructive",
-      });
+      toast(
+        failureToast(
+          reportClientFailure(error, {
+            subsystem: "client",
+            op: "join-meeting",
+            title: "Error joining meeting",
+            extra: {
+              appointmentId: event.joinableAppointment.id,
+              slotId: event.joinableSlot.id,
+            },
+          }),
+        ),
+      );
     } finally {
       setJoiningEventId(null);
     }
@@ -730,8 +752,13 @@ export default function HomeTab({
           (sum, p) => sum + (p.amount ?? 0),
           0,
         ),
+        // startsAt/endsAt already describe the whole run here (#1061), so the
+        // end goes over too — it is what tells "in progress" from "over".
         upcomingSessions: upcomingEvents.map((e) => ({
+          id: e.id,
+          appointmentId: e.appointmentId ?? null,
           startsAt: e.startsAt,
+          endsAt: e.endsAt,
           title: e.title,
         })),
         basePath: `/dashboard/consultee/${consulteeId}`,

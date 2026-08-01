@@ -7,8 +7,8 @@
 import {
   toDate,
   toDateOrNull,
+  type AppointmentKind,
   type SessionVM,
-  type SlotLike,
 } from "./view-model";
 
 export const DEFAULT_MEETING_DURATION_MS = 60 * 60 * 1000;
@@ -19,6 +19,34 @@ export const CONSULTEE_JOIN_WINDOW_MS = 10 * 60 * 1000;
 export const CONSULTANT_JOIN_WINDOW_MS = 15 * 60 * 1000;
 
 export type SlotJoinState = "disabled" | "countdown" | "joinable" | "ended";
+
+/**
+ * Structural slot shape the session helpers below accept. Deliberately looser
+ * than `SlotLike`: the join surfaces also hand us `lib/meeting`'s `MeetingSlot`
+ * and planner rows, which carry no `completionStatus` and an optional
+ * `isTentative`.
+ */
+export interface SessionSlotLike {
+  id: string;
+  appointmentId?: string | null;
+  startsAt: Date | string;
+  endsAt?: Date | string | null;
+  isTentative?: boolean | null;
+  completionStatus?: string | null;
+  meetingSession?: { id: string; endedAt: Date | string | null } | null;
+}
+
+/**
+ * One real session: the contiguous run of 30-minute slot rows that a single
+ * booking was chunked into (#1061). `anchor` is the run's first row and is the
+ * only row the video room may ever be keyed to.
+ */
+export interface SessionRun<T extends SessionSlotLike> {
+  anchor: T;
+  slots: T[];
+  startsAt: Date;
+  endsAt: Date;
+}
 
 const DEAD_COMPLETION_STATUSES = new Set(["CANCELLED", "RESCHEDULED"]);
 
@@ -59,7 +87,77 @@ export function slotsAllowReschedule(
   return !slots.some((slot) => slot.completionStatus === "RESCHEDULED");
 }
 
-function slotTimes(slot: SlotLike): { start: number; end: number } {
+/**
+ * Whether Manage Timings may be offered at all — the menu item AND the page,
+ * since that URL is linkable (#1082).
+ *
+ * Manage Timings writes new times straight onto the calendar: no notice
+ * requirement, no acceptance from anyone. That is honest only while nobody
+ * else has committed to a time, so the deciding question is whether a
+ * counterparty already holds one — not who owns the calendar.
+ *
+ * The exact complement of `slotsAllowReschedule` for the surfaces that offer
+ * both, so a consultant is never handed the unilateral surface and the
+ * negotiated one for the same booking.
+ */
+export function allowsManageTimings(
+  kind: AppointmentKind,
+  slots: Array<{ isTentative?: boolean | null }>,
+): boolean {
+  // A webinar or class is a published schedule attendees buy into rather than
+  // a time anyone negotiated, so the organiser keeps this surface even once
+  // the instance is confirmed — there is no single counterparty to propose to,
+  // and asking every attendee to accept is not a coherent flow.
+  if (kind === "WEBINAR" || kind === "CLASS") return true;
+  // Nothing placed: an offering that was never scheduled, or a booking whose
+  // sessions are not allocated yet. Still the consultant's own calendar.
+  if (slots.length === 0) return true;
+  // EVERY upcoming slot, not just the earliest. A partial reschedule releases
+  // one session of a multi-session booking and leaves the rest confirmed, so
+  // the first slot chronologically can be the released one while a consultee
+  // still holds a committed time later in the same booking. Reading only
+  // `slots[0]` handed back the unilateral surface in exactly that case.
+  return slots.every((slot) => Boolean(slot.isTentative));
+}
+
+/**
+ * Whether Unschedule may be offered — pulling a placed group event off the
+ * calendar and back into the allocate queue, without cancelling it (#1082).
+ *
+ * Orthogonal to the Timings/Reschedule pair rather than a third branch of it.
+ * A confirmed webinar offers Timings AND this; a 1:1 never offers it, because
+ * releasing a time a counterparty holds is the negotiation Reschedule already
+ * runs. It is emphatically NOT Cancel: the booking stays sold, attendees stay
+ * enrolled, and no money, earnings or ledger row moves.
+ */
+export function allowsUnschedule(
+  kind: AppointmentKind,
+  slots: Array<{ isTentative?: boolean | null }>,
+): boolean {
+  if (kind !== "WEBINAR" && kind !== "CLASS") return false;
+  // Nothing placed yet — an offering that was never scheduled, or one already
+  // unscheduled (the release leaves every slot tentative). No date to withdraw,
+  // and Timings is the surface for setting one.
+  return slots.some((slot) => !slot.isTentative);
+}
+
+/**
+ * The slots a time-change decision acts on: still ahead of now, chronological.
+ * A finished session is not what "has someone committed to a time" is asking
+ * about, and the first entry has to be the earliest for the tentative test.
+ */
+export function upcomingSlots<
+  T extends { startsAt: Date | string; endsAt: Date | string },
+>(slots: T[], now: Date = new Date()): T[] {
+  const cutoff = now.getTime();
+  return slots
+    .filter((slot) => toDate(slot.endsAt).getTime() >= cutoff)
+    .sort(
+      (a, b) => toDate(a.startsAt).getTime() - toDate(b.startsAt).getTime(),
+    );
+}
+
+function slotTimes(slot: SessionSlotLike): { start: number; end: number } {
   const start = toDate(slot.startsAt).getTime();
   const endsAt = toDateOrNull(slot.endsAt ?? null);
   return {
@@ -68,8 +166,13 @@ function slotTimes(slot: SlotLike): { start: number; end: number } {
   };
 }
 
+/**
+ * Per-row join state. Retained as the primitive; every join surface goes
+ * through the session-shaped helpers below, because a row is half an hour and
+ * a session is not (#1061).
+ */
 export function getSlotJoinState(
-  slot: SlotLike,
+  slot: SessionSlotLike,
   opts?: { joinWindowMs?: number; now?: Date },
 ): SlotJoinState {
   if (slot.isTentative) return "disabled";
@@ -86,18 +189,137 @@ export function getSlotJoinState(
   return "countdown";
 }
 
-/** Earliest slot currently inside its join window, or null. */
-export function getJoinableSlot<T extends SlotLike>(
+function buildRun<T extends SessionSlotLike>(slots: T[]): SessionRun<T> {
+  const first = slots[0];
+  const last = slots[slots.length - 1];
+  return {
+    anchor: first,
+    slots,
+    startsAt: new Date(slotTimes(first).start),
+    endsAt: new Date(slotTimes(last).end),
+  };
+}
+
+/**
+ * Split slot rows into sessions — runs of back-to-back rows inside the same
+ * appointment (#1061). A booking longer than 30 minutes is stored as N rows;
+ * treating any one of them as the session is what let the two sides of a call
+ * land in different Stream rooms.
+ *
+ * Cancelled/rescheduled rows are dropped: they can never be joined, and they
+ * must not bridge two runs that are not actually contiguous. A change of
+ * `isTentative` also breaks the run — an unallocated placeholder is not part
+ * of the confirmed session sitting next to it.
+ */
+export function groupSlotsIntoRuns<T extends SessionSlotLike>(
+  slots: T[],
+): SessionRun<T>[] {
+  const byAppointment = new Map<string, T[]>();
+  for (const slot of slots) {
+    if (isDeadSlot(slot)) continue;
+    // A row with no appointment cannot be grouped with anything, so it is its
+    // own session rather than being pooled with every other orphan.
+    const key = slot.appointmentId ?? `slot:${slot.id}`;
+    const bucket = byAppointment.get(key);
+    if (bucket) bucket.push(slot);
+    else byAppointment.set(key, [slot]);
+  }
+
+  const runs: SessionRun<T>[] = [];
+  for (const bucket of byAppointment.values()) {
+    const sorted = [...bucket].sort(
+      (a, b) => slotTimes(a).start - slotTimes(b).start,
+    );
+    let current: T[] = [];
+    for (const slot of sorted) {
+      const prev = current[current.length - 1];
+      const contiguous =
+        !!prev &&
+        slotTimes(prev).end === slotTimes(slot).start &&
+        !!prev.isTentative === !!slot.isTentative;
+      if (prev && !contiguous) {
+        runs.push(buildRun(current));
+        current = [];
+      }
+      current.push(slot);
+    }
+    if (current.length > 0) runs.push(buildRun(current));
+  }
+
+  return runs.sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime());
+}
+
+/** The run containing `slotId`, or null when the row is dead/absent. */
+export function findSessionRun<T extends SessionSlotLike>(
+  slots: T[],
+  slotId: string,
+): SessionRun<T> | null {
+  return (
+    groupSlotsIntoRuns(slots).find((run) =>
+      run.slots.some((slot) => slot.id === slotId),
+    ) ?? null
+  );
+}
+
+/** Join state for a whole session, evaluated over `[firstStart, lastEnd]`. */
+export function getSessionJoinState<T extends SessionSlotLike>(
+  run: SessionRun<T>,
+  opts?: { joinWindowMs?: number; now?: Date },
+): SlotJoinState {
+  if (run.anchor.isTentative) return "disabled";
+  // #1061 — the host ends ONE call for the run, and only the row that carried
+  // the MeetingSession learns about it. Which row that was must not decide
+  // whether Join re-lights into a fresh empty room for the rest of the hour.
+  if (
+    run.slots.some((slot) => toDateOrNull(slot.meetingSession?.endedAt ?? null))
+  )
+    return "ended";
+
+  const joinWindowMs = opts?.joinWindowMs ?? CONSULTEE_JOIN_WINDOW_MS;
+  const now = (opts?.now ?? new Date()).getTime();
+
+  if (now > run.endsAt.getTime()) return "ended";
+  if (now >= run.startsAt.getTime() - joinWindowMs) return "joinable";
+  return "countdown";
+}
+
+/** Earliest session currently inside its join window, or null. */
+export function getJoinableSession<T extends SessionSlotLike>(
+  slots: T[],
+  opts?: { joinWindowMs?: number; now?: Date },
+): SessionRun<T> | null {
+  for (const run of groupSlotsIntoRuns(slots)) {
+    if (getSessionJoinState(run, opts) === "joinable") return run;
+  }
+  return null;
+}
+
+/**
+ * The session that is live or next up, else the most recent past one. Used by
+ * surfaces that must render *a* session even outside the join window.
+ */
+export function getCurrentOrNextSession<T extends SessionSlotLike>(
+  slots: T[],
+  now: Date = new Date(),
+): SessionRun<T> | null {
+  const runs = groupSlotsIntoRuns(slots);
+  if (runs.length === 0) return null;
+  return (
+    runs.find((run) => run.endsAt.getTime() >= now.getTime()) ??
+    runs[runs.length - 1]
+  );
+}
+
+/**
+ * Anchor row of the earliest joinable session — the row the Stream call is
+ * keyed to. Returns a row rather than the run because every caller feeds it
+ * straight to `getOrCreateAppointmentMeeting` (#1061).
+ */
+export function getJoinableSlot<T extends SessionSlotLike>(
   slots: T[],
   opts?: { joinWindowMs?: number; now?: Date },
 ): T | null {
-  const sorted = [...slots].sort(
-    (a, b) => toDate(a.startsAt).getTime() - toDate(b.startsAt).getTime(),
-  );
-  for (const slot of sorted) {
-    if (getSlotJoinState(slot, opts) === "joinable") return slot;
-  }
-  return null;
+  return getJoinableSession(slots, opts)?.anchor ?? null;
 }
 
 function sessionEnd(session: SessionVM): number {

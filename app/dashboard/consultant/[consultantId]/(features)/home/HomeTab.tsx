@@ -167,15 +167,19 @@ export function HomeTab({
   const firstName = consultantName?.split(" ")[0];
 
   // "Needs you now" — derived from data already on the page, so no extra
-  // fetch. The upcoming list is flattened to {startsAt,title} because the
-  // derivation only cares about when a session starts and what it's called.
+  // fetch. The rows go over whole, ids and ends included: these are raw
+  // 30-minute slot rows, and without them a two-hour booking reported its
+  // second half as a separate session starting in 30 minutes (#1061).
   const actionItems = useMemo(
     () =>
       deriveConsultantActionItems({
         pendingApprovals: pendingRequestsCount,
         upcomingSessions: allUpcomingAppointments.flatMap((a) =>
           (a.slotsOfAppointment ?? []).map((slot) => ({
+            id: slot.id,
+            appointmentId: a.id,
             startsAt: slot.startsAt,
+            endsAt: slot.endsAt,
             title: getAppointmentTypeAndPlan(a),
           })),
         ),
