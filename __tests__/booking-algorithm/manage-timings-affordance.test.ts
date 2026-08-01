@@ -152,6 +152,28 @@ describe("allowsManageTimings", () => {
       unschedule: false,
     });
   });
+
+  it("refuses Timings when a LATER session is still committed", () => {
+    // The reverse of the case above, and the one that actually bit: a partial
+    // reschedule releases one session of a multi-session booking, so the
+    // earliest slot is the released one while the consultee still holds a
+    // confirmed time afterwards. Reading only slots[0] saw "tentative" and
+    // handed back the unilateral surface.
+    const releasedFirst: TestSlot[] = [
+      { isTentative: true, completionStatus: "RESCHEDULED" },
+      { isTentative: false, completionStatus: "SCHEDULED" },
+    ];
+    expect(menu("SUBSCRIPTION", releasedFirst).timings).toBe(false);
+    expect(menu("CONSULTATION", releasedFirst).timings).toBe(false);
+  });
+
+  it("still offers Timings when every upcoming session is unallocated", () => {
+    const allTentative: TestSlot[] = [
+      { isTentative: true, completionStatus: null },
+      { isTentative: true, completionStatus: null },
+    ];
+    expect(menu("SUBSCRIPTION", allTentative).timings).toBe(true);
+  });
 });
 
 describe("allowsUnschedule", () => {

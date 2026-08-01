@@ -84,9 +84,12 @@ export function allowsManageTimings(
   // Nothing placed: an offering that was never scheduled, or a booking whose
   // sessions are not allocated yet. Still the consultant's own calendar.
   if (slots.length === 0) return true;
-  // Tentative means the request is still awaiting allocation, not booked —
-  // same reading as slotsAllowReschedule, which refuses on the same test.
-  return Boolean(slots[0]?.isTentative);
+  // EVERY upcoming slot, not just the earliest. A partial reschedule releases
+  // one session of a multi-session booking and leaves the rest confirmed, so
+  // the first slot chronologically can be the released one while a consultee
+  // still holds a committed time later in the same booking. Reading only
+  // `slots[0]` handed back the unilateral surface in exactly that case.
+  return slots.every((slot) => Boolean(slot.isTentative));
 }
 
 /**
