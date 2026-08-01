@@ -4,7 +4,12 @@
  * the consultee useEventActions hook and the consultant joinState util.
  */
 
-import { toDate, toDateOrNull, type SessionVM } from "./view-model";
+import {
+  toDate,
+  toDateOrNull,
+  type AppointmentKind,
+  type SessionVM,
+} from "./view-model";
 
 export const DEFAULT_MEETING_DURATION_MS = 60 * 60 * 1000;
 
@@ -76,9 +81,80 @@ export function slotsAllowReschedule(
   // Tentative means the request is still awaiting allocation, not booked.
   if (slots[0]?.isTentative) return false;
   // A released slot awaiting a new time IS the open reschedule: at most one may
-  // be live per appointment (the nullable-unique openForAppointmentId), so
-  // offering the action again only earns a 409.
+  // be live per appointment (the nullable-unique openForAppointmentId, claimed
+  // by preference-only rows too — #1065), so offering the action again only
+  // earns a 409.
   return !slots.some((slot) => slot.completionStatus === "RESCHEDULED");
+}
+
+/**
+ * Whether Manage Timings may be offered at all — the menu item AND the page,
+ * since that URL is linkable (#1082).
+ *
+ * Manage Timings writes new times straight onto the calendar: no notice
+ * requirement, no acceptance from anyone. That is honest only while nobody
+ * else has committed to a time, so the deciding question is whether a
+ * counterparty already holds one — not who owns the calendar.
+ *
+ * The exact complement of `slotsAllowReschedule` for the surfaces that offer
+ * both, so a consultant is never handed the unilateral surface and the
+ * negotiated one for the same booking.
+ */
+export function allowsManageTimings(
+  kind: AppointmentKind,
+  slots: Array<{ isTentative?: boolean | null }>,
+): boolean {
+  // A webinar or class is a published schedule attendees buy into rather than
+  // a time anyone negotiated, so the organiser keeps this surface even once
+  // the instance is confirmed — there is no single counterparty to propose to,
+  // and asking every attendee to accept is not a coherent flow.
+  if (kind === "WEBINAR" || kind === "CLASS") return true;
+  // Nothing placed: an offering that was never scheduled, or a booking whose
+  // sessions are not allocated yet. Still the consultant's own calendar.
+  if (slots.length === 0) return true;
+  // EVERY upcoming slot, not just the earliest. A partial reschedule releases
+  // one session of a multi-session booking and leaves the rest confirmed, so
+  // the first slot chronologically can be the released one while a consultee
+  // still holds a committed time later in the same booking. Reading only
+  // `slots[0]` handed back the unilateral surface in exactly that case.
+  return slots.every((slot) => Boolean(slot.isTentative));
+}
+
+/**
+ * Whether Unschedule may be offered — pulling a placed group event off the
+ * calendar and back into the allocate queue, without cancelling it (#1082).
+ *
+ * Orthogonal to the Timings/Reschedule pair rather than a third branch of it.
+ * A confirmed webinar offers Timings AND this; a 1:1 never offers it, because
+ * releasing a time a counterparty holds is the negotiation Reschedule already
+ * runs. It is emphatically NOT Cancel: the booking stays sold, attendees stay
+ * enrolled, and no money, earnings or ledger row moves.
+ */
+export function allowsUnschedule(
+  kind: AppointmentKind,
+  slots: Array<{ isTentative?: boolean | null }>,
+): boolean {
+  if (kind !== "WEBINAR" && kind !== "CLASS") return false;
+  // Nothing placed yet — an offering that was never scheduled, or one already
+  // unscheduled (the release leaves every slot tentative). No date to withdraw,
+  // and Timings is the surface for setting one.
+  return slots.some((slot) => !slot.isTentative);
+}
+
+/**
+ * The slots a time-change decision acts on: still ahead of now, chronological.
+ * A finished session is not what "has someone committed to a time" is asking
+ * about, and the first entry has to be the earliest for the tentative test.
+ */
+export function upcomingSlots<
+  T extends { startsAt: Date | string; endsAt: Date | string },
+>(slots: T[], now: Date = new Date()): T[] {
+  const cutoff = now.getTime();
+  return slots
+    .filter((slot) => toDate(slot.endsAt).getTime() >= cutoff)
+    .sort(
+      (a, b) => toDate(a.startsAt).getTime() - toDate(b.startsAt).getTime(),
+    );
 }
 
 function slotTimes(slot: SessionSlotLike): { start: number; end: number } {

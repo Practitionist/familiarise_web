@@ -68,6 +68,12 @@ export const APPOINTMENT_LIST_SELECT = {
         round: true,
         expiresAt: true,
         initiatorRole: true,
+        // #1065 — only auto-allocate reads these; a consultant placing times by
+        // hand on the grid would otherwise have no idea one was stated, which
+        // is the same "arrives carrying less information than the booking did"
+        // complaint that motivated proposals in the first place.
+        preferredTimeOfDay: true,
+        preferredDays: true,
         proposedSlots: {
           orderBy: { startsAt: "asc" },
           // `round` is selected so the consultant sees the CURRENT offer only.
@@ -78,9 +84,12 @@ export const APPOINTMENT_LIST_SELECT = {
         },
       },
       // take:1 without an order is whichever row Postgres hands back first.
-      // At most one reschedule is open per appointment today (the nullable
-      // @unique), so this is currently unambiguous — but the ordering is what
-      // keeps it correct if that ever stops being true, and costs nothing.
+      // At most one reschedule is open per appointment (the nullable @unique,
+      // which every open row claims including preference-only ones — #1065), so
+      // this is unambiguous — but the ordering is what keeps it correct if that
+      // ever stops being true, and costs nothing. Were a row ever allowed to
+      // skip the reservation, this take:1 would silently hide a real proposal
+      // behind it.
       orderBy: { createdAt: "desc" },
       take: 1,
     },

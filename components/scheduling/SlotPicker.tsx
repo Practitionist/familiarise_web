@@ -10,9 +10,18 @@ import {
   SessionReleasePicker,
   type ReleaseMode,
 } from "@/components/scheduling/SessionReleasePicker";
-import type {
-  SlotPickerPolicy,
-  SlotPickerSubject,
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  acceptsSlotPreference,
+  type SlotPickerPolicy,
+  type SlotPickerSubject,
+  type SlotPreference,
 } from "@/components/scheduling/slot-picker-policy";
 import { resolveFocusTarget } from "@/lib/scheduling/slot-picker-focus";
 import { cn } from "@/utils/tailwind";
@@ -26,6 +35,25 @@ import { cn } from "@/utils/tailwind";
  * the submit; all of that is data in `slot-picker-policy.ts`, so nothing here
  * branches on which caller it is.
  */
+
+/**
+ * "No preference" needs a real value because Radix treats the empty string as
+ * "clear the selection" and refuses it as an item value.
+ */
+const NO_PREFERENCE = "ANY";
+
+const TIME_OF_DAY_OPTIONS = [
+  { value: NO_PREFERENCE, label: "Any time of day" },
+  { value: "MORNING", label: "Mornings" },
+  { value: "AFTERNOON", label: "Afternoons" },
+  { value: "EVENING", label: "Evenings" },
+] as const;
+
+const DAYS_OPTIONS = [
+  { value: NO_PREFERENCE, label: "Any day" },
+  { value: "WEEKDAYS", label: "Weekdays" },
+  { value: "WEEKENDS", label: "Weekends" },
+] as const;
 
 export interface SlotPickerProps {
   policy: SlotPickerPolicy;
@@ -63,6 +91,8 @@ export function SlotPicker({
   const [proposedSlots, setProposedSlots] = React.useState<
     { startsAt: string; endsAt: string }[]
   >([]);
+  const [timeOfDay, setTimeOfDay] = React.useState<string>(NO_PREFERENCE);
+  const [days, setDays] = React.useState<string>(NO_PREFERENCE);
 
   /** A one-session booking has nothing to choose between. */
   const showReleaseStep = policy.showReleasedSlots && sessions.length > 1;
@@ -90,11 +120,38 @@ export function SlotPicker({
     ? Math.max(selectedSessionCount, 1)
     : Math.max(sessions.length, 1);
 
+  /**
+   * The stated preference, or undefined when nothing was chosen. Only travels
+   * on the no-times submit: picking a concrete time already says everything a
+   * preference could.
+   */
+  /**
+   * Group events never reach the server's proposal path, so a preference stated
+   * on one would be dropped without a word. Gate the control on the same rule.
+   */
+  const canStatePreference =
+    policy.allowReleaseWithoutTime && acceptsSlotPreference(subject.eventType);
+
+  const preference = (): SlotPreference | undefined => {
+    if (!canStatePreference) return undefined;
+
+    const stated: SlotPreference = {
+      ...(timeOfDay !== NO_PREFERENCE && {
+        preferredTimeOfDay: timeOfDay as SlotPreference["preferredTimeOfDay"],
+      }),
+      ...(days !== NO_PREFERENCE && {
+        preferredDays: days as SlotPreference["preferredDays"],
+      }),
+    };
+    return Object.keys(stated).length > 0 ? stated : undefined;
+  };
+
   const submit = (withTimes: boolean) => {
+    const named = withTimes && proposedSlots.length > 0;
     void policy.onSubmit({
       slotIds: releasedSlotIds,
-      proposedSlots:
-        withTimes && proposedSlots.length > 0 ? proposedSlots : undefined,
+      proposedSlots: named ? proposedSlots : undefined,
+      preference: named ? undefined : preference(),
     });
   };
 
@@ -179,6 +236,40 @@ export function SlotPicker({
       {/* Only "select" needs a footer — the allocate grid renders its own. */}
       {isSelectMode && (
         <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+          {/* Sits with "Any time works" because it only applies to that button:
+              it is how you say "any time, but ideally these" instead of naming
+              one. The allocator ranks candidates by it and never rules any out,
+              so an impossible pairing still gets the booking placed (#1065). */}
+          {canStatePreference && proposedSlots.length === 0 && (
+            <div className="mr-auto flex flex-wrap items-center gap-2">
+              <span className="text-sm text-muted-foreground">Ideally</span>
+              <Select value={timeOfDay} onValueChange={setTimeOfDay}>
+                <SelectTrigger className="h-9 w-[9.5rem]" aria-label="Preferred time of day">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {TIME_OF_DAY_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={days} onValueChange={setDays}>
+                <SelectTrigger className="h-9 w-[8rem]" aria-label="Preferred days">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {DAYS_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
           {proposedSlots.length > 0 && (
             <p className="mr-auto text-sm text-muted-foreground">
               {proposedSlots.length} slot

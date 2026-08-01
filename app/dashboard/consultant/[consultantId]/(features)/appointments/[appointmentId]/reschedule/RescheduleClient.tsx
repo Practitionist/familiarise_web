@@ -51,8 +51,12 @@ export function RescheduleClient({
   };
 
   const policy = rescheduleConsultantPolicy({
-    onSubmit: async ({ slotIds, proposedSlots }) => {
-      const moved = await actions.handleReschedule(slotIds, proposedSlots);
+    onSubmit: async ({ slotIds, proposedSlots, preference }) => {
+      const moved = await actions.handleReschedule(
+        slotIds,
+        proposedSlots,
+        preference,
+      );
       if (moved) goBack();
     },
   });
