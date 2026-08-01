@@ -14,8 +14,8 @@ import {
 } from "../../scripts/appointments/expire-stale-requests";
 import fs from "fs";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
-import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
 import * as Sentry from "@sentry/nextjs";
+import { runJob } from "../../lib/observability/job-sentry";
 
 /**
  * Output results to GitHub Actions
@@ -83,21 +83,11 @@ async function main(): Promise<void> {
     });
 
     if (!result.success) {
-      process.exit(1);
+      process.exitCode = 1;
     }
-  } catch (error) {
-    // #476 — lock held = another run is live; skip cleanly (exit 0).
-    if (error instanceof CronLockHeldError) {
-      Sentry.logger.info("job:expire-stale-requests lock held, skipping");
-      console.log(`⏭️  ${error.message}`);
-      return;
-    }
-    Sentry.captureException(error, { tags: { subsystem: "jobs", job: "expire-stale-requests" } });
-    console.error("❌ Fatal error in stale request expiration:", error);
-    process.exit(1);
   } finally {
     await disconnectDatabase();
   }
 }
 
-main();
+runJob("expire-stale-requests", main);
