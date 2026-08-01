@@ -45,7 +45,11 @@ export class SlotCalculationService {
         hour: "2-digit",
         minute: "2-digit",
         second: "2-digit",
-        hour12: false,
+        // hourCycle, NOT `hour12: false` — the latter resolves to h24 under an
+        // en-US default, and h24 writes midnight as "24:00" against the
+        // PREVIOUS day's date. Every reader here would then get hour 0 with
+        // the day off by one, silently.
+        hourCycle: "h23",
       });
       this.dateFormatters.set(timeZone, formatter);
     }
@@ -59,13 +63,11 @@ export class SlotCalculationService {
     const parts = this.getDateFormatter(timeZone).formatToParts(at);
     const get = (type: string) =>
       Number(parts.find((p) => p.type === type)?.value ?? 0);
-    // Intl reports 24 for midnight with hourCycle h24 quirks; normalize.
-    const hour = get("hour") % 24;
     const wallAsUtc = Date.UTC(
       get("year"),
       get("month") - 1,
       get("day"),
-      hour,
+      get("hour"),
       get("minute"),
       get("second"),
     );
@@ -87,6 +89,38 @@ export class SlotCalculationService {
       weekday: WEEKDAY_INDEX[get("weekday")] ?? 0,
     };
   }
+
+  /**
+   * Wall-clock reading of an instant in a timezone: the calendar date AND the
+   * time of day.
+   *
+   * Shares the cached formatter with the limit-bucket keys below, so code that
+   * places something on a grid and code that buckets it cannot drift apart.
+   */
+  static wallClock(
+    d: Date,
+    timeZone: string = this.DEFAULT_SCHEDULING_TIMEZONE,
+  ): {
+    year: number;
+    month: number;
+    day: number;
+    hour: number;
+    minute: number;
+  } {
+    const parts = this.getDateFormatter(timeZone).formatToParts(d);
+    const get = (type: string) =>
+      Number(parts.find((p) => p.type === type)?.value ?? 0);
+    return {
+      year: get("year"),
+      month: get("month"),
+      day: get("day"),
+      // 0-23 without normalizing: the formatter is pinned to h23, so midnight
+      // is 00:00 on its own day rather than 24:00 on the day before.
+      hour: get("hour"),
+      minute: get("minute"),
+    };
+  }
+
   /**
    * Count the number of distinct Sunday-start weeks overlapping [start, end].
    * This is the SINGLE implementation used across the entire app.
