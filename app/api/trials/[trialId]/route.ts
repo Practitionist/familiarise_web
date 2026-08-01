@@ -3,6 +3,11 @@ import prisma from "@/lib/prisma";
 import { createApprovalPaymentIntent } from "@/lib/payments/operations/approval-payment";
 import { computeTrialPaymentDueAt } from "@/lib/trials/eligibility";
 import {
+  refundCancelledTrial,
+  softCancelTrialAppointment,
+  type TrialRefundOutcome,
+} from "@/lib/trials/cancellation";
+import {
   TrialSessionStatus,
   AppointmentsType,
   PaymentGateway,
@@ -214,6 +219,14 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     }
 
     const updateData: Prisma.TrialSessionUpdateInput = {};
+
+    // #1009 — set when this PATCH cancels or rejects the trial. The appointment
+    // retirement and the refund both run after the status write commits.
+    let deferredCancellation: {
+      appointmentId: string | null;
+      paymentId: string | null;
+      isConsultantInitiated: boolean;
+    } | null = null;
 
     if (notes !== undefined) {
       updateData.notes = notes;
@@ -569,25 +582,25 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           },
         );
 
-        // FIX #579: Clean up linked appointment and slots to free availability.
-        // Without this, PATCH cancellation leaves slots occupied while DELETE
-        // correctly frees them — same business action, different behavior.
-        // Wrapped in a transaction: disconnect trial first (avoids FK violation),
-        // then delete appointment (cascade handles slots automatically).
-        if (existingTrial.appointmentId) {
-          const appointmentIdToDelete = existingTrial.appointmentId;
-          await prisma.$transaction(async (tx) => {
-            // 1. Disconnect the appointment from the trial first
-            await tx.trialSession.update({
-              where: { id: trialId },
-              data: { appointment: { disconnect: true } },
-            });
-            // 2. Now safe to delete — cascade handles SlotOfAppointment
-            await tx.appointment.delete({
-              where: { id: appointmentIdToDelete },
-            });
-          });
-        }
+        // #1009 — soft-cancel, never delete. This used to hard-delete the
+        // appointment to free availability (FIX #579), which cascade-deleted the
+        // payment along with it once paid trials shipped. The slot is released by
+        // the status transition alone (see occupancyPolicy), which is what the
+        // hourly expiry job has always relied on, so the appointment can stay for
+        // audit and the money rows survive.
+        //
+        // Deferred until after the status write commits: refundPayment runs its
+        // own Serializable transaction, and a gateway failure must not roll back
+        // the cancellation.
+        deferredCancellation = {
+          appointmentId: existingTrial.appointmentId,
+          paymentId: existingTrial.paymentId,
+          // REJECTED is always the consultant declining. On CANCELLED the
+          // consultee is the only non-privileged actor the guards above let
+          // through, so anyone else is cancelling on the consultant's side.
+          isConsultantInitiated:
+            status === TrialSessionStatus.REJECTED || !isTrialConsultee,
+        };
       }
 
       // Handle trial conversion — requires a linked subscription
@@ -620,13 +633,11 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         }
 
         if (
-          subscription.subscriptionPlanId !==
-          existingTrial.subscriptionPlanId
+          subscription.subscriptionPlanId !== existingTrial.subscriptionPlanId
         ) {
           return NextResponse.json(
             {
-              error:
-                "Subscription must belong to the same plan as the trial",
+              error: "Subscription must belong to the same plan as the trial",
             },
             { status: 400 },
           );
@@ -706,7 +717,26 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       },
     });
 
-    return NextResponse.json({ data: updatedTrial });
+    // #1009 — the trial has left SCHEDULED/AWAITING_PAYMENT, so its slot is
+    // already free. Retire the appointment and settle the money.
+    let refund: TrialRefundOutcome | null = null;
+    if (deferredCancellation) {
+      if (deferredCancellation.appointmentId) {
+        await softCancelTrialAppointment(deferredCancellation.appointmentId);
+      }
+      refund = await refundCancelledTrial({
+        trialId,
+        appointmentId: deferredCancellation.appointmentId,
+        paymentId: deferredCancellation.paymentId,
+        initiatedByUserId: session.user.id,
+        isConsultantInitiated: deferredCancellation.isConsultantInitiated,
+      });
+    }
+
+    return NextResponse.json({
+      data: updatedTrial,
+      ...(refund ? { refund } : {}),
+    });
   } catch (error) {
     console.error("Error updating trial session:", error);
     return NextResponse.json(
@@ -777,27 +807,27 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
       );
     }
 
-    // Atomic: cancel trial + clean up appointment in one transaction.
-    // Disconnect appointment first to avoid FK violation, then delete
-    // (cascade handles SlotOfAppointment automatically).
-    const updatedTrial = await prisma.$transaction(async (tx) => {
-      const trial = await tx.trialSession.update({
-        where: { id: trialId },
-        data: {
-          status: TrialSessionStatus.CANCELLED,
-          ...(existingTrial.appointmentId
-            ? { appointment: { disconnect: true } }
-            : {}),
-        },
-      });
+    // #1009 — same soft-cancel as the PATCH path. CANCELLED drops the trial out
+    // of the occupancy filter, which is what frees the slot; the appointment is
+    // tombstoned rather than deleted so the payment it carries survives.
+    const updatedTrial = await prisma.trialSession.update({
+      where: { id: trialId },
+      data: { status: TrialSessionStatus.CANCELLED },
+    });
 
-      if (existingTrial.appointmentId) {
-        await tx.appointment.delete({
-          where: { id: existingTrial.appointmentId },
-        });
-      }
+    if (existingTrial.appointmentId) {
+      await softCancelTrialAppointment(existingTrial.appointmentId);
+    }
 
-      return trial;
+    // Only the consultee reaches DELETE without privilege, so a privileged
+    // caller is acting on the consultant's behalf.
+    const refund = await refundCancelledTrial({
+      trialId,
+      appointmentId: existingTrial.appointmentId,
+      paymentId: existingTrial.paymentId,
+      initiatedByUserId: session.user.id,
+      isConsultantInitiated:
+        session.user.consulteeProfileId !== existingTrial.consulteeProfileId,
     });
 
     // FIX #554: Send cancellation notification (DELETE path was missing this)
@@ -816,7 +846,10 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
       },
     );
 
-    return NextResponse.json({ data: updatedTrial });
+    return NextResponse.json({
+      data: updatedTrial,
+      ...(refund ? { refund } : {}),
+    });
   } catch (error) {
     console.error("Error cancelling trial session:", error);
     return NextResponse.json(
