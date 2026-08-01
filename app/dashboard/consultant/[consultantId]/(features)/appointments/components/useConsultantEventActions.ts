@@ -83,9 +83,7 @@ export function useConsultantEventActions({
       const response = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: Object.keys(payload).length
-          ? JSON.stringify(payload)
-          : undefined,
+        body: Object.keys(payload).length ? JSON.stringify(payload) : undefined,
       });
 
       const data = await response.json();
@@ -125,6 +123,61 @@ export function useConsultantEventActions({
           error instanceof Error
             ? error.message
             : "Failed to request reschedule",
+        variant: "destructive",
+      });
+      return false;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  /**
+   * Withdraw a published group event's date without ending the booking.
+   *
+   * Same route as `handleReschedule`, deliberately: for a WEBINAR/CLASS that
+   * call never opened a proposal — there is no single counterparty to propose
+   * to — it only released the slots back to the allocate queue. That behaviour
+   * was correct and is what this names (#1082). Nothing here touches money,
+   * enrolment, earnings or the ledger; that is Cancel.
+   */
+  const handleUnschedule = async (): Promise<boolean> => {
+    if (!appointmentId) {
+      toast({
+        title: "Error",
+        description: "Appointment ID is missing",
+        variant: "destructive",
+      });
+      return false;
+    }
+
+    setIsLoading(true);
+    try {
+      // No `type` param: the route derives it from the DB and only compares
+      // when one is supplied, so omitting it cannot mismatch.
+      const response = await fetch(
+        `/api/appointments/${appointmentId}/reschedule`,
+        { method: "POST", headers: { "Content-Type": "application/json" } },
+      );
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to unschedule");
+      }
+
+      toast({
+        title: `${type} unscheduled`,
+        description: `"${title}" is off the calendar and back in your queue. Attendees stay enrolled and have been told the date is withdrawn.`,
+      });
+      invalidateBookingData();
+      return true;
+    } catch (error) {
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "client" } },
+      );
+      toast({
+        title: "Error",
+        description:
+          error instanceof Error ? error.message : "Failed to unschedule",
         variant: "destructive",
       });
       return false;
@@ -194,6 +247,7 @@ export function useConsultantEventActions({
   return {
     isLoading,
     handleReschedule,
+    handleUnschedule,
     handleCancelConfirm,
   };
 }

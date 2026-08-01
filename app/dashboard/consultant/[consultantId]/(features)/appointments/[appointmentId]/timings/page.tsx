@@ -4,7 +4,12 @@ import { notFound } from "next/navigation";
 
 import { PanelHeader } from "@/components/dashboard/PageScaffold";
 import { Badge } from "@/components/ui/badge";
-import { readManageTimingsTarget } from "@/lib/data/manage-timings-target";
+import { allowsManageTimings, upcomingSlots } from "@/lib/appointments/slots";
+import { readAppointmentDetail } from "@/lib/data/appointment-detail";
+import {
+  readManageTimingsTarget,
+  type ManageTimingsTarget,
+} from "@/lib/data/manage-timings-target";
 import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
 import { buildManageTimingsSubject } from "@/lib/scheduling/manage-timings-subject";
 
@@ -28,6 +33,38 @@ type PageProps = {
 
 // React.cache so generateMetadata() and the page body share one query per request.
 const loadTarget = cache(readManageTimingsTarget);
+const loadDetail = cache(readAppointmentDetail);
+
+/**
+ * The counterparty gate, server side (#1082).
+ *
+ * This surface writes new times with no notice and no acceptance, which is
+ * honest only while nobody else has committed to one. The menu already hides
+ * it for a 1:1 whose consultee holds a confirmed slot, but the URL is linkable
+ * and survives a refresh, so the menu is not the control.
+ *
+ * Only the two 1:1 kinds need the extra read, and only they pay for it: a
+ * group event is allowed regardless. Slots are fetched here rather than
+ * widened into `ManageTimingsTarget` to stay clear of #1075; `cache` keeps it
+ * to one query across metadata and body.
+ */
+async function manageTimingsAllowed(
+  target: ManageTimingsTarget,
+  appointmentId: string,
+): Promise<boolean> {
+  const kind = target.appointment.appointmentType;
+  if (kind !== "CONSULTATION" && kind !== "SUBSCRIPTION") return true;
+
+  const detail = await loadDetail(appointmentId);
+  if (!detail) return false;
+  // Program-wide, same as the menu's group card: a subscription session is one
+  // Appointment among several and any of them may carry the committed time.
+  const slots = [
+    ...detail.appointment.slotsOfAppointment,
+    ...detail.siblings.flatMap((sibling) => sibling.slotsOfAppointment),
+  ];
+  return allowsManageTimings(kind, upcomingSlots(slots));
+}
 
 /**
  * Names the offering, not the task. A consultant with several unscheduled
@@ -40,10 +77,15 @@ export async function generateMetadata({
   const target = await loadTarget(appointmentId).catch(() => null);
   // Metadata runs BEFORE the body's guards and is not covered by them, so the
   // same ownership check runs here — otherwise the tab title named the
-  // offering for any id a signed-in consultant cared to try.
+  // offering for any id a signed-in consultant cared to try. The counterparty
+  // gate joins it so a route that 404s never gets a titled tab either.
   if (!target || !target.planOwnerIds.includes(consultantId)) {
     return { title: "Manage timings — Familiarise" };
   }
+  const allowed = await manageTimingsAllowed(target, appointmentId).catch(
+    () => false,
+  );
+  if (!allowed) return { title: "Manage timings — Familiarise" };
 
   const resolved = buildManageTimingsSubject(consultantId, target.appointment);
   return { title: `Manage timings: ${resolved.title} — Familiarise` };
@@ -64,6 +106,10 @@ export default async function ManageTimingsPage({
   // Binds the offering to the URL's consultant; the guard above binds that
   // consultant to the session.
   if (!target.planOwnerIds.includes(consultantId)) notFound();
+
+  // Ownership is not the question a booked consultee cares about — see
+  // manageTimingsAllowed. Reschedule is the route for that case.
+  if (!(await manageTimingsAllowed(target, appointmentId))) notFound();
 
   const resolved = buildManageTimingsSubject(
     consultantId,
@@ -98,8 +144,8 @@ export default async function ManageTimingsPage({
           Tip: Each class is{" "}
           {Math.ceil(resolved.classInfo.durationInHours / 0.5)} consecutive
           30-min slots. Complete an in-progress class before starting another.
-          Max {resolved.classInfo.sessionsPerWeek} classes per day; weekly
-          limit applies.
+          Max {resolved.classInfo.sessionsPerWeek} classes per day; weekly limit
+          applies.
         </div>
       )}
 
