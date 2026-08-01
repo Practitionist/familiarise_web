@@ -9,6 +9,7 @@ import type {
 } from "@/lib/appointments/adapter";
 import {
   allowsManageTimings,
+  allowsUnschedule,
   CONSULTANT_JOIN_WINDOW_MS,
   getJoinableSlot,
   slotsAllowReschedule,
@@ -28,9 +29,10 @@ import {
 } from "./utils/participantHelpers";
 import { useConsultantEventActions } from "./components/useConsultantEventActions";
 import { CancelConfirmationDialog } from "@/components/appointments/consultee/CancelConfirmationDialog";
+import { UnscheduleConfirmationDialog } from "@/components/appointments/UnscheduleConfirmationDialog";
 import { ConsultantResponseUpload } from "../documents/ConsultantResponseUpload";
 
-type DialogKind = "cancel" | "documents";
+type DialogKind = "cancel" | "unschedule" | "documents";
 
 const TYPE_LABEL: Record<AppointmentVM["kind"], string> = {
   CONSULTATION: "Consultation",
@@ -257,6 +259,25 @@ export function useConsultantAppointmentsAdapter(
       });
     }
 
+    // Unschedule is not a third branch of the pair above: a confirmed webinar
+    // offers Timings AND this. It withdraws the date only — the booking stays
+    // sold, attendees stay enrolled, no money moves — which is the whole of
+    // what separates it from Cancel below (#1082).
+    if (
+      vm.appointmentId &&
+      lifecycleOk &&
+      !inactive &&
+      // The route's own from-state for a group release is SCHEDULED/IN_PROGRESS.
+      isConfirmedStatus(vm.status) &&
+      allowsUnschedule(vm.kind, rawSlots)
+    ) {
+      items.push({
+        key: "unschedule",
+        label: "Unschedule",
+        onClick: () => openDialog(vm, "unschedule"),
+      });
+    }
+
     if (vm.appointmentId && !isTrial && lifecycleOk && !inactive) {
       items.push({
         key: "cancel",
@@ -309,6 +330,18 @@ export function useConsultantAppointmentsAdapter(
             onCancel={closeDialog}
             title={activeVm.title}
             consultant={activeVm.counterpart.name}
+            appointmentType={typeLabel}
+            isLoading={actions.isLoading}
+          />
+
+          <UnscheduleConfirmationDialog
+            isOpen={dialog === "unschedule"}
+            onConfirm={async () => {
+              await actions.handleUnschedule();
+              closeDialog();
+            }}
+            onCancel={closeDialog}
+            title={activeVm.title}
             appointmentType={typeLabel}
             isLoading={actions.isLoading}
           />

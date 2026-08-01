@@ -1,15 +1,21 @@
 /**
- * The Manage Timings menu item's gate, and its complement.
+ * The three time-change affordances on the consultant's appointment menu.
  *
  * Manage Timings writes new times straight onto the calendar with no notice
  * requirement and no acceptance from anyone, so it may only be offered where
  * nobody else has committed to a time. Where somebody has, the negotiated
  * Reschedule takes its place — the two are alternatives, and offering both
  * would hand a consultant a way around the proposal (#1082).
+ *
+ * Unschedule sits outside that pair rather than inside it. It withdraws a
+ * placed group event's date and puts it back in the allocate queue with the
+ * sale, the enrolment and the money all untouched, so a confirmed webinar
+ * offers Timings AND Unschedule, and a 1:1 never offers Unschedule at all.
  */
 
 import {
   allowsManageTimings,
+  allowsUnschedule,
   slotsAllowReschedule,
   upcomingSlots,
 } from "@/lib/appointments/slots";
@@ -30,6 +36,11 @@ const nothingAllocated: TestSlot[] = [];
 function offered(kind: AppointmentKind, slots: TestSlot[]) {
   const timings = allowsManageTimings(kind, slots);
   return { timings, reschedule: !timings && slotsAllowReschedule(slots) };
+}
+
+/** All three menu gates together, which is how a consultant actually meets them. */
+function menu(kind: AppointmentKind, slots: TestSlot[]) {
+  return { ...offered(kind, slots), unschedule: allowsUnschedule(kind, slots) };
 }
 
 describe("allowsManageTimings", () => {
@@ -135,9 +146,89 @@ describe("allowsManageTimings", () => {
       { isTentative: false, completionStatus: "SCHEDULED" },
       { isTentative: true, completionStatus: "RESCHEDULED" },
     ];
-    expect(offered("CONSULTATION", inFlight)).toEqual({
+    expect(menu("CONSULTATION", inFlight)).toEqual({
       timings: false,
       reschedule: false,
+      unschedule: false,
+    });
+  });
+});
+
+describe("allowsUnschedule", () => {
+  it("offers a confirmed webinar Timings AND Unschedule, never Reschedule", () => {
+    // The pair's "exactly one" property is about Timings vs Reschedule only.
+    // Unschedule is orthogonal: it withdraws the date, Timings sets a new one.
+    expect(menu("WEBINAR", confirmed)).toEqual({
+      timings: true,
+      reschedule: false,
+      unschedule: true,
+    });
+  });
+
+  it("offers a confirmed class Timings AND Unschedule, never Reschedule", () => {
+    expect(menu("CLASS", confirmed)).toEqual({
+      timings: true,
+      reschedule: false,
+      unschedule: true,
+    });
+  });
+
+  it("withholds Unschedule from an offering that was never scheduled", () => {
+    // No Appointment row, so no slots and no date to withdraw. Timings is the
+    // surface for putting one on the calendar in the first place.
+    expect(menu("WEBINAR", nothingAllocated)).toEqual({
+      timings: true,
+      reschedule: false,
+      unschedule: false,
+    });
+    expect(menu("CLASS", nothingAllocated)).toEqual({
+      timings: true,
+      reschedule: false,
+      unschedule: false,
+    });
+  });
+
+  it("withholds Unschedule from an event already unscheduled", () => {
+    // The release leaves every slot tentative, so the action is idempotent by
+    // construction rather than by a second guard.
+    expect(allowsUnschedule("WEBINAR", tentative)).toBe(false);
+    expect(allowsUnschedule("CLASS", tentative)).toBe(false);
+  });
+
+  it("offers Unschedule while any session of a part-released class is still placed", () => {
+    // A class is several session appointments; the route releases all of them,
+    // so one still-placed session is enough to have something to withdraw.
+    const partlyReleased: TestSlot[] = [
+      { isTentative: true, completionStatus: "RESCHEDULED" },
+      { isTentative: false, completionStatus: "SCHEDULED" },
+    ];
+    expect(allowsUnschedule("CLASS", partlyReleased)).toBe(true);
+  });
+
+  it("never offers Unschedule for a 1:1, whatever its slots look like", () => {
+    // Releasing a time a counterparty holds is the negotiation Reschedule runs.
+    const oneToOne: AppointmentKind[] = [
+      "CONSULTATION",
+      "SUBSCRIPTION",
+      "TRIAL",
+    ];
+    for (const kind of oneToOne) {
+      for (const slots of [confirmed, tentative, nothingAllocated]) {
+        expect(allowsUnschedule(kind, slots)).toBe(false);
+      }
+    }
+  });
+
+  it("gives a confirmed 1:1 Reschedule and neither other action", () => {
+    expect(menu("CONSULTATION", confirmed)).toEqual({
+      timings: false,
+      reschedule: true,
+      unschedule: false,
+    });
+    expect(menu("SUBSCRIPTION", confirmed)).toEqual({
+      timings: false,
+      reschedule: true,
+      unschedule: false,
     });
   });
 });

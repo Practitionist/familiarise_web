@@ -90,6 +90,27 @@ export function allowsManageTimings(
 }
 
 /**
+ * Whether Unschedule may be offered — pulling a placed group event off the
+ * calendar and back into the allocate queue, without cancelling it (#1082).
+ *
+ * Orthogonal to the Timings/Reschedule pair rather than a third branch of it.
+ * A confirmed webinar offers Timings AND this; a 1:1 never offers it, because
+ * releasing a time a counterparty holds is the negotiation Reschedule already
+ * runs. It is emphatically NOT Cancel: the booking stays sold, attendees stay
+ * enrolled, and no money, earnings or ledger row moves.
+ */
+export function allowsUnschedule(
+  kind: AppointmentKind,
+  slots: Array<{ isTentative?: boolean | null }>,
+): boolean {
+  if (kind !== "WEBINAR" && kind !== "CLASS") return false;
+  // Nothing placed yet — an offering that was never scheduled, or one already
+  // unscheduled (the release leaves every slot tentative). No date to withdraw,
+  // and Timings is the surface for setting one.
+  return slots.some((slot) => !slot.isTentative);
+}
+
+/**
  * The slots a time-change decision acts on: still ahead of now, chronological.
  * A finished session is not what "has someone committed to a time" is asking
  * about, and the first entry has to be the earliest for the tentative test.
