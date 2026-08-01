@@ -62,9 +62,9 @@ import {
   slotCellClassName,
 } from "@/lib/scheduling/slot-status-tokens";
 import {
-  FOCUS_LEAD_ROWS,
-  earliestAvailabilityRow,
   focusGridPosition,
+  focusScrollRow,
+  focusTargetRow,
   gridTimeZone,
   type SlotPickerFocus,
 } from "@/lib/scheduling/slot-picker-focus";
@@ -618,47 +618,42 @@ export function UnifiedCalendar({
     return [...Array(7)].map((_, i) => addDays(startDate, i));
   }, [currentDate]);
 
-  const weekGridRef = useRef<HTMLDivElement | null>(null);
-  // Once per open, tracked in a ref rather than effect deps. Re-running this
-  // would drag the grid back while the consultant is reading somewhere else,
-  // and the callback-identity loop this component already hit (React #185,
-  // see onSlotsSelectedRef) is what a deps-driven "focus" would become.
+  // A callback ref in STATE, not a plain ref: the week grid does not exist
+  // until `consultantDetails` has arrived, and a ref mutating cannot wake an
+  // effect. Keyed off the element, the effect runs when the grid appears —
+  // whichever of the two independent fetches wins the race, and again if the
+  // user visits month view before the grid has ever been focused.
+  const [weekGridEl, setWeekGridEl] = useState<HTMLDivElement | null>(null);
+  // Once per open. A ref rather than effect deps: re-running this would drag
+  // the grid back while the consultant is reading somewhere else, and the
+  // callback-identity loop this component already hit (React #185, see
+  // onSlotsSelectedRef) is what a deps-driven "focus" would become.
   const focusAppliedRef = useRef(false);
 
   useEffect(() => {
-    // `loading` is false only once availability has settled, which is what
-    // makes the first-availability anchor below meaningful, and the rows do
-    // not exist before then either.
-    if (!focus || focusAppliedRef.current || loading || view !== "week") return;
-
-    const container = weekGridRef.current;
-    if (!container || container.children.length === 0) return;
+    if (!focus || focusAppliedRef.current || !weekGridEl) return;
+    // The element's mere existence is the real guard: it renders only past
+    // the `loading`/`error`/`consultantDetails` gates below, and `loading` is
+    // held true from mount until the availability fetch settles — so by the
+    // time there is a grid, `availableSlots` is final. (`loading` alone would
+    // NOT do: it starts false, before anything is fetched.)
+    if (weekGridEl.children.length === 0) return;
     // The user got here first. Leave them where they are, permanently.
-    if (container.scrollTop > 0) {
+    if (weekGridEl.scrollTop > 0) {
       focusAppliedRef.current = true;
       return;
     }
 
-    const timeZone = gridTimeZone();
-    const position = focusGridPosition(focus.at, timeZone);
-    // A window bound carries no time of day, so its own row would just be
-    // 00:00 again; the consultant's earliest published hour is the real
-    // start of their day.
-    const targetRow =
-      focus.precision === "period"
-        ? (earliestAvailabilityRow(availableSlots, timeZone) ??
-          position.rowIndex)
-        : position.rowIndex;
-
-    const row = container.children[Math.max(0, targetRow - FOCUS_LEAD_ROWS)];
+    const targetRow = focusTargetRow(focus, availableSlots, gridTimeZone());
+    const row = weekGridEl.children[focusScrollRow(targetRow)];
     if (!(row instanceof HTMLElement)) return;
 
     focusAppliedRef.current = true;
     // Measured, not rowIndex × height: the row heights are a Tailwind detail
     // this component should not be re-deriving.
-    container.scrollTop +=
-      row.getBoundingClientRect().top - container.getBoundingClientRect().top;
-  }, [focus, loading, view, availableSlots]);
+    weekGridEl.scrollTop +=
+      row.getBoundingClientRect().top - weekGridEl.getBoundingClientRect().top;
+  }, [focus, weekGridEl, availableSlots]);
 
   /**
    * Builds an auto-expanded group of consecutive slots starting from a clicked slot.
@@ -1389,7 +1384,7 @@ export function UnifiedCalendar({
 
           {/* Week grid */}
           <div
-            ref={weekGridRef}
+            ref={setWeekGridEl}
             className="flex-1 overflow-y-auto scrollbar-thin min-h-0"
           >
             {INTERVALS.map((interval) => (

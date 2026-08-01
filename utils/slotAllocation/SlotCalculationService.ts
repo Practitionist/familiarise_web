@@ -45,7 +45,11 @@ export class SlotCalculationService {
         hour: "2-digit",
         minute: "2-digit",
         second: "2-digit",
-        hour12: false,
+        // hourCycle, NOT `hour12: false` — the latter resolves to h24 under an
+        // en-US default, and h24 writes midnight as "24:00" against the
+        // PREVIOUS day's date. Every reader here would then get hour 0 with
+        // the day off by one, silently.
+        hourCycle: "h23",
       });
       this.dateFormatters.set(timeZone, formatter);
     }
@@ -59,13 +63,11 @@ export class SlotCalculationService {
     const parts = this.getDateFormatter(timeZone).formatToParts(at);
     const get = (type: string) =>
       Number(parts.find((p) => p.type === type)?.value ?? 0);
-    // Intl reports 24 for midnight with hourCycle h24 quirks; normalize.
-    const hour = get("hour") % 24;
     const wallAsUtc = Date.UTC(
       get("year"),
       get("month") - 1,
       get("day"),
-      hour,
+      get("hour"),
       get("minute"),
       get("second"),
     );
@@ -112,8 +114,9 @@ export class SlotCalculationService {
       year: get("year"),
       month: get("month"),
       day: get("day"),
-      // Intl reports 24 for midnight with hourCycle h24 quirks; normalize.
-      hour: get("hour") % 24,
+      // 0-23 without normalizing: the formatter is pinned to h23, so midnight
+      // is 00:00 on its own day rather than 24:00 on the day before.
+      hour: get("hour"),
       minute: get("minute"),
     };
   }

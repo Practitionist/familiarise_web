@@ -59,6 +59,8 @@ const slotSelect = {
     endsAt: true,
     isTentative: true,
     completionStatus: true,
+    // A10 tombstone (#676): a deleted slot is not a time anyone requested.
+    deletedAt: true,
   },
 } as const;
 

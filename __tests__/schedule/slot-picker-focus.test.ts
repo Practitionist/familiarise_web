@@ -5,8 +5,11 @@
 
 import type { SlotLike } from "@/lib/appointments/view-model";
 import {
+  FOCUS_LEAD_ROWS,
   earliestAvailabilityRow,
   focusGridPosition,
+  focusScrollRow,
+  focusTargetRow,
   resolveFocusTarget,
 } from "@/lib/scheduling/slot-picker-focus";
 
@@ -92,6 +95,38 @@ describe("resolveFocusTarget", () => {
     });
   });
 
+  it("ignores a released session whose old time has already passed", () => {
+    // Opening on it would put the consultant on a week of disabled cells —
+    // the dead end the period anchor exists to avoid.
+    const focus = resolveFocusTarget(
+      {
+        slots: [
+          session("stale", "2026-07-10T05:00:00Z", { isTentative: true }),
+          session("next", "2026-08-05T05:00:00Z"),
+        ],
+      },
+      NOW,
+    );
+
+    expect(focus.at).toEqual(new Date("2026-08-05T05:00:00Z"));
+  });
+
+  it("ignores soft-deleted sessions", () => {
+    const focus = resolveFocusTarget(
+      {
+        slots: [
+          session("tombstoned", "2026-08-02T05:00:00Z", {
+            deletedAt: "2026-07-25T00:00:00Z",
+          }),
+          session("live", "2026-08-09T05:00:00Z"),
+        ],
+      },
+      NOW,
+    );
+
+    expect(focus.at).toEqual(new Date("2026-08-09T05:00:00Z"));
+  });
+
   it("falls back to the most recent session of a finished program", () => {
     const focus = resolveFocusTarget(
       {
@@ -127,6 +162,46 @@ describe("resolveFocusTarget", () => {
     );
 
     expect(focus.at).toEqual(new Date("2026-08-09T05:00:00Z"));
+  });
+
+  it("looks forward, not back, when placed sessions are over but the window is not", () => {
+    // Every session so far has run, and there are months of period left to
+    // fill. The remaining sessions can only go in the future, so the past is
+    // both the wrong answer and — in allocate mode, where the availability
+    // request runs from the visible week to `allowedEnd` — a needlessly
+    // enormous fetch (#997).
+    const focus = resolveFocusTarget(
+      {
+        slots: [
+          session("w1", "2026-05-04T05:00:00Z"),
+          session("w2", "2026-06-01T05:00:00Z"),
+        ],
+        allowedStart: new Date("2026-05-01T00:00:00Z"),
+        allowedEnd: new Date("2026-12-01T00:00:00Z"),
+      },
+      NOW,
+    );
+
+    expect(focus).toEqual({ at: NOW, precision: "period" });
+  });
+
+  it("still targets the last session once the window has closed too", () => {
+    const focus = resolveFocusTarget(
+      {
+        slots: [
+          session("w1", "2026-05-04T05:00:00Z"),
+          session("w2", "2026-06-01T05:00:00Z"),
+        ],
+        allowedStart: new Date("2026-05-01T00:00:00Z"),
+        allowedEnd: new Date("2026-06-30T00:00:00Z"),
+      },
+      NOW,
+    );
+
+    expect(focus).toEqual({
+      at: new Date("2026-06-01T05:00:00Z"),
+      precision: "session",
+    });
   });
 
   it("targets the start of the scheduling period when nothing is scheduled", () => {
@@ -178,6 +253,69 @@ describe("resolveFocusTarget", () => {
       precision: "period",
     });
   });
+
+  it("never lands past the end of an inverted window", () => {
+    // Bad data rather than a real window, but honouring it would open the
+    // picker outside the bound it clamps selection to.
+    const focus = resolveFocusTarget(
+      {
+        allowedStart: new Date("2026-12-01T00:00:00Z"),
+        allowedEnd: new Date("2026-09-01T00:00:00Z"),
+      },
+      NOW,
+    );
+
+    expect(focus.at).toEqual(new Date("2026-09-01T00:00:00Z"));
+  });
+});
+
+describe("focusTargetRow", () => {
+  const availability = [
+    { startTime: new Date("2026-08-03T10:00:00Z") },
+    { startTime: new Date("2026-08-04T08:30:00Z") },
+  ];
+
+  it("uses the session's own row, availability notwithstanding", () => {
+    const row = focusTargetRow(
+      { at: new Date("2026-08-03T14:30:00Z"), precision: "session" },
+      availability,
+      "UTC",
+    );
+
+    expect(row).toBe(29); // 14:30
+  });
+
+  it("routes a window bound through first availability instead of 00:00", () => {
+    const row = focusTargetRow(
+      { at: new Date("2026-08-03T00:00:00Z"), precision: "period" },
+      availability,
+      "UTC",
+    );
+
+    expect(row).toBe(17); // 08:30, not row 0
+  });
+
+  it("falls back to the bound's own row when nothing is published", () => {
+    const row = focusTargetRow(
+      { at: new Date("2026-08-03T06:00:00Z"), precision: "period" },
+      [],
+      "UTC",
+    );
+
+    expect(row).toBe(12);
+  });
+});
+
+describe("focusScrollRow", () => {
+  it("leaves rows above the target rather than clipping it to the edge", () => {
+    expect(focusScrollRow(20)).toBe(20 - FOCUS_LEAD_ROWS);
+  });
+
+  it("clamps at the top instead of scrolling negative", () => {
+    expect(focusScrollRow(0)).toBe(0);
+    expect(focusScrollRow(1)).toBe(0);
+    expect(focusScrollRow(FOCUS_LEAD_ROWS)).toBe(0);
+  });
 });
 
 describe("focusGridPosition", () => {
@@ -219,10 +357,17 @@ describe("focusGridPosition", () => {
     });
   });
 
-  it("puts midnight on the first row", () => {
-    expect(
-      focusGridPosition(new Date("2026-08-01T00:00:00Z"), "UTC").rowIndex,
-    ).toBe(0);
+  it("puts midnight on the first row, on its OWN day", () => {
+    // An h24 formatter writes this as 24:00 against 31 July; the day would
+    // then be off by one everywhere the same parts are read.
+    expect(focusGridPosition(new Date("2026-08-01T00:00:00Z"), "UTC")).toEqual({
+      year: 2026,
+      month: 8,
+      day: 1,
+      hour: 0,
+      minute: 0,
+      rowIndex: 0,
+    });
   });
 });
 

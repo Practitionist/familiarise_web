@@ -43,6 +43,10 @@ function liveSlotsInOrder(
 ): DatedSlot[] {
   return (subject.slots ?? [])
     .filter((slot) => !DEAD_STATUSES.has(slot.completionStatus ?? ""))
+    // A10 tombstone (#676). Filtered here rather than at each call site
+    // because every surface feeding this resolver reads its slots straight
+    // off a relation that keeps deleted rows.
+    .filter((slot) => !slot.deletedAt)
     .map((slot) => ({
       at: new Date(slot.startsAt),
       isTentative: Boolean(slot.isTentative),
@@ -61,8 +65,11 @@ function periodAnchor(now: Date, start?: Date, end?: Date): Date {
   // A window that has already closed still gets pointed at — its last day
   // explains the empty grid, where this week would not.
   if (end && now.getTime() > end.getTime()) return end;
-  if (start && start.getTime() > now.getTime()) return start;
-  return now;
+  const anchor = start && start.getTime() > now.getTime() ? start : now;
+  // A start later than the end is bad data rather than a real window, but
+  // honouring it would land the picker outside the bound it clamps to.
+  if (end && anchor.getTime() > end.getTime()) return end;
+  return anchor;
 }
 
 /**
@@ -71,8 +78,14 @@ function periodAnchor(now: Date, start?: Date, end?: Date): Date {
  * A released session outranks everything because it is the one AWAITING a
  * time: on a partly-placed program the job is filling the gaps, not admiring
  * what is already booked. Failing that, the next session that has not
- * happened is what a consultant means by "this booking", and on a finished
- * one the last session is the only thing left to point at.
+ * happened is what a consultant means by "this booking".
+ *
+ * The most recent past session is the last resort, and only once the window
+ * has closed. A program whose placed sessions have all run but whose period
+ * still has months left has sessions LEFT to place, and they can only go in
+ * the future — opening on a dead week would be both the wrong answer and,
+ * in allocate mode, a request stretching from that week to the end of the
+ * period on the endpoint #997 measured in tens of seconds.
  */
 export function resolveFocusTarget(
   subject: Pick<SlotPickerSubject, "slots" | "allowedStart" | "allowedEnd">,
@@ -80,14 +93,24 @@ export function resolveFocusTarget(
 ): SlotPickerFocus {
   const slots = liveSlotsInOrder(subject);
 
-  const awaitingATime = slots.find((slot) => slot.isTentative);
+  // Only one that can still BE placed. A released session whose old time has
+  // already passed was never re-booked, and opening on a week where every
+  // cell is disabled is the dead end `periodAnchor` avoids below.
+  const awaitingATime = slots.find(
+    (slot) => slot.isTentative && slot.at.getTime() >= now.getTime(),
+  );
   if (awaitingATime) return { at: awaitingATime.at, precision: "session" };
 
   const upcoming = slots.find((slot) => slot.at.getTime() >= now.getTime());
   if (upcoming) return { at: upcoming.at, precision: "session" };
 
+  const windowStillOpen = Boolean(
+    subject.allowedEnd && subject.allowedEnd.getTime() > now.getTime(),
+  );
   const mostRecentPast = slots[slots.length - 1];
-  if (mostRecentPast) return { at: mostRecentPast.at, precision: "session" };
+  if (mostRecentPast && !windowStillOpen) {
+    return { at: mostRecentPast.at, precision: "session" };
+  }
 
   return {
     at: periodAnchor(now, subject.allowedStart, subject.allowedEnd),
@@ -149,6 +172,32 @@ export function earliestAvailabilityRow(
     if (earliest === null || rowIndex < earliest) earliest = rowIndex;
   }
   return earliest;
+}
+
+/**
+ * The row the target sits on, given what the consultant has published.
+ *
+ * The whole of the effect's decision, kept out of the effect: a window bound
+ * carries no time of day, so its own row would just be 00:00 again and the
+ * earliest published hour is the real start of the working day. A session
+ * time answers for itself.
+ */
+export function focusTargetRow(
+  focus: SlotPickerFocus,
+  availableSlots: readonly { startTime: Date }[],
+  timeZone: string,
+): number {
+  const ownRow = focusGridPosition(focus.at, timeZone).rowIndex;
+  if (focus.precision !== "period") return ownRow;
+  return earliestAvailabilityRow(availableSlots, timeZone) ?? ownRow;
+}
+
+/**
+ * The row to bring to the top of the viewport, so the target itself sits a
+ * little below it rather than clipped against the boundary.
+ */
+export function focusScrollRow(targetRow: number): number {
+  return Math.max(0, targetRow - FOCUS_LEAD_ROWS);
 }
 
 /**

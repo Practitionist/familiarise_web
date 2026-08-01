@@ -2,6 +2,7 @@ import prisma from "@/lib/prisma";
 import { toPlain } from "@/lib/data/serialize";
 import { readAppointmentDetail } from "@/lib/data/appointment-detail";
 import { resolvePlanOwnerIds } from "@/lib/booking/plan-owners";
+import { toSlotLike } from "@/lib/appointments/view-model";
 import type { ManageTimingsAppointmentLike } from "@/lib/scheduling/manage-timings-subject";
 
 /**
@@ -157,10 +158,14 @@ export async function readManageTimingsTarget(
       // Program-wide, past sessions included: the picker opens on the earliest
       // session still awaiting a time, and falls back to the last one that
       // ran when everything is over (#1073).
+      //
+      // Through `toSlotLike`, never spread: these rows arrive from an
+      // `include` and carry the attendee list and recording URLs with them,
+      // which this route has no business shipping to the client.
       slots: [
         ...appointment.slotsOfAppointment,
         ...siblings.flatMap((sibling) => sibling.slotsOfAppointment),
-      ],
+      ].map(toSlotLike),
       consultation: appointment.consultation,
       subscription: appointment.subscription,
       webinar: appointment.webinar,

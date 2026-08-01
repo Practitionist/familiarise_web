@@ -1,6 +1,6 @@
 import type { SlotPickerSubject } from "@/components/scheduling/slot-picker-policy";
 import type { TAppointmentDetail } from "@/lib/data/appointment-detail";
-import type { SlotLike } from "@/lib/appointments/view-model";
+import { toSlotLike, type SlotLike } from "@/lib/appointments/view-model";
 
 /**
  * Turns one appointment into everything a reschedule page needs.
@@ -53,14 +53,9 @@ function liveFutureSlots(detail: TAppointmentDetail): SlotLike[] {
         slot.completionStatus !== "CANCELLED" &&
         slot.completionStatus !== "RESCHEDULED",
     )
-    .map((slot) => ({
-      id: slot.id,
-      appointmentId: slot.appointmentId,
-      startsAt: slot.startsAt,
-      endsAt: slot.endsAt,
-      isTentative: slot.isTentative,
-      completionStatus: slot.completionStatus,
-    }));
+    // The shared allowlist, not a hand-rolled one: these rows come from an
+    // `include` and carry attendees and recording URLs (#1073).
+    .map(toSlotLike);
 }
 
 /**
