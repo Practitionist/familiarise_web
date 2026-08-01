@@ -2,6 +2,7 @@ import { cache } from "react";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
+import { DashboardViewportFill } from "@/components/dashboard/DashboardViewportFill";
 import { PanelHeader } from "@/components/dashboard/PageScaffold";
 import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
 import { ALLOCATION_APPROVABLE_FROM } from "@/lib/booking/transitions";
@@ -89,18 +90,20 @@ export default async function AllocateSlotsPage({
   const backHref = `/dashboard/consultant/${consultantId}/requests`;
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-4">
+    <DashboardViewportFill className="gap-4">
       {/* The BOOKING now lives in the breadcrumb itself (AllocateClient sets
           it via useSetBreadcrumbLabel) — the back link is the breadcrumb's
           own parent crumb. This line keeps the one thing the breadcrumb
           can't say: who the task is for (#1064). */}
-      <PanelHeader
-        description={
-          request.consulteeName
-            ? `Allocate slots for ${request.consulteeName}`
-            : "Allocate slots"
-        }
-      />
+      <div className="shrink-0">
+        <PanelHeader
+          description={
+            request.consulteeName
+              ? `Allocate slots for ${request.consulteeName}`
+              : "Allocate slots"
+          }
+        />
+      </div>
 
       <AllocateClient
         backHref={backHref}
@@ -122,6 +125,6 @@ export default async function AllocateSlotsPage({
           slots: request.slots,
         }}
       />
-    </div>
+    </DashboardViewportFill>
   );
 }
