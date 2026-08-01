@@ -18,6 +18,10 @@
  * this runs and a gateway failure must not roll it back. Failures surface in
  * Sentry and as `failed` on the result.
  *
+ * WHO may trigger this is a security property, not a detail: the percentage is
+ * 100 and ignores every notice tier, so a buyer able to reach it has a
+ * self-service full refund. See the actor guard below.
+ *
  * At-most-once rests on the caller: the allowed-from guard on the REJECTED
  * transition means a second reject answers 409 before reaching here. Note that
  * the refund amount is *also* self-limiting today only because
@@ -31,6 +35,7 @@ import * as Sentry from "@sentry/nextjs";
 
 import prisma from "@/lib/prisma";
 import { getAppUrl } from "@/lib/url";
+import { recordSystemError } from "@/lib/enterprise/system-events";
 import { notifyRefundProcessed } from "@/lib/novu";
 import { notificationScope } from "@/lib/novu/workflows";
 import {
@@ -51,7 +56,33 @@ export async function refundRejectedRequest(args: {
   kind: "consultation" | "subscription";
   requestId: string;
   initiatedByUserId: string;
+  /**
+   * Who declined. `CONSULTEE` must never reach here — the PATCH routes reject
+   * it with a 403 — and this is the second lock on that door, not the first.
+   */
+  actor: "CONSULTANT" | "PLATFORM" | "CONSULTEE";
 }): Promise<RejectionRefundOutcome | null> {
+  // A rejection refund settles at the consultant-initiated percentage, which
+  // is 100% and ignores every notice tier. Reachable by the buyer, that is a
+  // self-service full refund on demand: `REJECTED` is legal from `PENDING` and
+  // `APPROVED_PENDING_PAYMENT`, both PATCH routes authorize any participant,
+  // and the transition guard enforces only the from-state, never the actor. So
+  // the actor is checked here as well as at the route — one missed guard on a
+  // future caller must not be enough to hand out the platform's money.
+  if (args.actor === "CONSULTEE") {
+    void recordSystemError({
+      organizationId: null,
+      category: "PAYMENT",
+      summary:
+        `A consultee-initiated REJECT reached the rejection refund for ` +
+        `${args.kind} ${args.requestId}; refusing to refund at the ` +
+        `consultant-initiated tier`,
+      err: new Error("REJECTION_REFUND_WRONG_ACTOR"),
+      context: { ...args },
+    }).catch(() => {});
+    return null;
+  }
+
   try {
     const ctx = await resolveBookingRefundContext(
       args.kind === "consultation"
@@ -86,8 +117,14 @@ export async function refundRejectedRequest(args: {
     // Only the gateway rail returns money the payer can see. On the internal
     // rail the value went back to the org's wallet, accrual or licence — the
     // requester never paid, so promising them a refund would be false.
+    // The CONFIRMED amount, not the requested one. Nothing forces the two to
+    // agree, and quoting a figure the buyer never receives is worse than
+    // quoting none.
     if (result.rail === "GATEWAY") {
-      void notifyRejectedRequestPayer(ctx.paidPayment.id, amountPaise);
+      void notifyRejectedRequestPayer(
+        ctx.paidPayment.id,
+        result.amountRefundedPaise,
+      );
     }
 
     return { refundPct, amountRefundedPaise: result.amountRefundedPaise };

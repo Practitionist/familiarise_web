@@ -17,6 +17,7 @@
  *  - the whole booking's payment is found, not just one appointment's
  *  - an unpaid request mints no refund at all
  *  - the refund never throws — the rejection has already committed
+ *  - ONLY the consultant can trigger it (see the security case below)
  */
 
 const mockResolveContext = jest.fn();
@@ -24,6 +25,7 @@ const mockRefundBookingPayment = jest.fn();
 const mockNotifyRefundProcessed = jest.fn();
 const mockPaymentFindUnique = jest.fn();
 const mockCaptureException = jest.fn();
+const mockRecordSystemError = jest.fn();
 
 jest.mock("../../lib/booking/cancellation-scope", () => ({
   resolveBookingRefundContext: (...a: unknown[]) => mockResolveContext(...a),
@@ -46,6 +48,10 @@ jest.mock("../../lib/prisma", () => ({
 
 jest.mock("@sentry/nextjs", () => ({
   captureException: (...a: unknown[]) => mockCaptureException(...a),
+}));
+
+jest.mock("../../lib/enterprise/system-events", () => ({
+  recordSystemError: (...a: unknown[]) => mockRecordSystemError(...a),
 }));
 
 import { refundRejectedRequest } from "../../lib/booking/rejection-refund";
@@ -73,6 +79,43 @@ beforeEach(() => {
     organizationId: null,
   });
   mockNotifyRefundProcessed.mockResolvedValue(undefined);
+  mockRecordSystemError.mockResolvedValue(undefined);
+});
+
+/**
+ * The percentage here is 100 and ignores every notice tier, so whoever can
+ * reach this function has a full refund on demand. `REJECTED` is legal from
+ * PENDING and APPROVED_PENDING_PAYMENT, both PATCH routes authorize any
+ * participant, and the transition guard checks only the from-state — so the
+ * actor is the ONLY thing standing between a buyer and their own money back.
+ */
+describe("who is allowed to trigger a rejection refund", () => {
+  it("refuses a consultee-initiated reject", async () => {
+    const result = await refundRejectedRequest({
+      kind: "consultation",
+      requestId: "cons-1",
+      initiatedByUserId: "consultee-1",
+      actor: "CONSULTEE",
+    });
+
+    expect(result).toBeNull();
+    expect(mockRefundBookingPayment).not.toHaveBeenCalled();
+    // Reaching here at all means a route guard is missing, so it is durable.
+    expect(mockRecordSystemError).toHaveBeenCalledWith(
+      expect.objectContaining({ category: "PAYMENT" }),
+    );
+  });
+
+  it("allows a platform-initiated reject", async () => {
+    const result = await refundRejectedRequest({
+      kind: "consultation",
+      requestId: "cons-1",
+      initiatedByUserId: "admin-1",
+      actor: "PLATFORM",
+    });
+
+    expect(result?.amountRefundedPaise).toBe(100_000);
+  });
 });
 
 describe("refundRejectedRequest", () => {
@@ -81,6 +124,7 @@ describe("refundRejectedRequest", () => {
       kind: "consultation",
       requestId: "cons-1",
       initiatedByUserId: "consultant-1",
+      actor: "CONSULTANT",
     });
 
     // Platform default consultantInitiatedPct — the buyer did nothing wrong.
@@ -95,6 +139,7 @@ describe("refundRejectedRequest", () => {
       kind: "subscription",
       requestId: "sub-1",
       initiatedByUserId: "consultant-1",
+      actor: "CONSULTANT",
     });
 
     expect(mockResolveContext).toHaveBeenCalledWith({ subscriptionId: "sub-1" });
@@ -107,6 +152,7 @@ describe("refundRejectedRequest", () => {
       kind: "consultation",
       requestId: "cons-1",
       initiatedByUserId: "consultant-1",
+      actor: "CONSULTANT",
     });
 
     expect(result).toBeNull();
@@ -124,6 +170,7 @@ describe("refundRejectedRequest", () => {
       kind: "consultation",
       requestId: "cons-1",
       initiatedByUserId: "consultant-1",
+      actor: "CONSULTANT",
     });
 
     expect(result?.refundPct).toBe(100);
@@ -134,12 +181,62 @@ describe("refundRejectedRequest", () => {
       kind: "consultation",
       requestId: "cons-1",
       initiatedByUserId: "consultant-1",
+      actor: "CONSULTANT",
     });
     await Promise.resolve();
 
     expect(mockNotifyRefundProcessed).toHaveBeenCalledWith(
       "user-1",
       expect.objectContaining({ amount: 100_000, currency: "INR" }),
+    );
+  });
+
+  it("clamps to what is still refundable", async () => {
+    // 100% of the gross overshoots a payment that has already given some back;
+    // the operation would reject the whole request and the buyer would get
+    // nothing instead of the remainder.
+    mockResolveContext.mockResolvedValue({
+      ...PAID,
+      paidPayment: { id: "pay-1", amountPaise: 100_000, refundablePaise: 30_000 },
+    });
+    mockRefundBookingPayment.mockResolvedValue({
+      refundId: "r1",
+      amountRefundedPaise: 30_000,
+      rail: "GATEWAY",
+    });
+
+    const result = await refundRejectedRequest({
+      kind: "consultation",
+      requestId: "cons-1",
+      initiatedByUserId: "consultant-1",
+      actor: "CONSULTANT",
+    });
+
+    expect(mockRefundBookingPayment).toHaveBeenCalledWith(
+      expect.objectContaining({ amountPaise: 30_000 }),
+    );
+    expect(result?.amountRefundedPaise).toBe(30_000);
+  });
+
+  it("quotes the confirmed amount to the payer, not the requested one", async () => {
+    mockRefundBookingPayment.mockResolvedValue({
+      refundId: "r1",
+      amountRefundedPaise: 90_000,
+      rail: "GATEWAY",
+    });
+
+    await refundRejectedRequest({
+      kind: "consultation",
+      requestId: "cons-1",
+      initiatedByUserId: "consultant-1",
+      actor: "CONSULTANT",
+    });
+    await Promise.resolve();
+
+    // Telling the buyer a figure they never receive is worse than telling none.
+    expect(mockNotifyRefundProcessed).toHaveBeenCalledWith(
+      "user-1",
+      expect.objectContaining({ amount: 90_000 }),
     );
   });
 
@@ -151,6 +248,7 @@ describe("refundRejectedRequest", () => {
       kind: "consultation",
       requestId: "cons-1",
       initiatedByUserId: "consultant-1",
+      actor: "CONSULTANT",
     });
 
     expect(result).toEqual({
@@ -169,6 +267,7 @@ describe("refundRejectedRequest", () => {
       kind: "consultation",
       requestId: "cons-1",
       initiatedByUserId: "consultant-1",
+      actor: "CONSULTANT",
     });
 
     expect(result?.amountRefundedPaise).toBe(100_000);

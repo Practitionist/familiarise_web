@@ -510,6 +510,21 @@ export async function PATCH(
       );
     }
 
+    // #1004 — declining is the CONSULTANT's act. The transition guard enforces
+    // only the from-state, and REJECTED is legal from PENDING and
+    // APPROVED_PENDING_PAYMENT, so without this the consultee could reject
+    // their own paid request and collect the consultant-initiated 100% refund
+    // — every notice tier bypassed, on demand.
+    if (
+      status === AppointmentStatus.REJECTED &&
+      !isConsultant &&
+      !isPrivileged(session.user.role)
+    ) {
+      return forbiddenResponse(
+        "Only the consultant can decline a request. Cancel it instead.",
+      );
+    }
+
     // LAYER 1: Distributed lock (only for APPROVED status changes)
     let lock;
     if (status === AppointmentStatus.APPROVED) {
@@ -744,6 +759,7 @@ export async function PATCH(
               kind: "consultation",
               requestId: consultationId,
               initiatedByUserId: session.user.id,
+              actor: isConsultant ? "CONSULTANT" : "PLATFORM",
             })
           : null;
 

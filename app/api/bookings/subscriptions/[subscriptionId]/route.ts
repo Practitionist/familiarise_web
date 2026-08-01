@@ -437,6 +437,21 @@ export async function PATCH(
       );
     }
 
+    // #1004 — declining is the CONSULTANT's act. The transition guard enforces
+    // only the from-state, and REJECTED is legal from PENDING and
+    // APPROVED_PENDING_PAYMENT, so without this the consultee could reject
+    // their own paid request and collect the consultant-initiated 100% refund
+    // — every notice tier bypassed, on demand.
+    if (
+      status === AppointmentStatus.REJECTED &&
+      !isConsultant &&
+      !isPrivileged(session.user.role)
+    ) {
+      return forbiddenResponse(
+        "Only the consultant can decline a request. Cancel it instead.",
+      );
+    }
+
     if (!existingSubscription.subscriptionPlan?.consultantProfile?.user?.id) {
       return NextResponse.json(
         { error: "Invalid subscription: missing consultant information" },
@@ -729,6 +744,7 @@ export async function PATCH(
           kind: "subscription",
           requestId: subscriptionId,
           initiatedByUserId: session.user.id,
+          actor: isConsultant ? "CONSULTANT" : "PLATFORM",
         });
       }
 
