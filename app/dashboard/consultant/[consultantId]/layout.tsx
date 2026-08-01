@@ -1,6 +1,6 @@
 "use client";
 
-import { usePathname, useRouter } from "next/navigation";
+import { useParams, usePathname, useRouter } from "next/navigation";
 import { use, useEffect, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
@@ -155,6 +155,16 @@ const PAGE_LABELS: Record<string, string> = {
   feedback: "Feedback",
   help: "Help",
 };
+
+// Segments that group routes without owning a page of their own — a crumb that
+// links one makes Next prefetch a URL that 404s, filling the console with
+// `?_rsc=` failures. Verified against the route tree: `offerings` has only
+// `[type]/…` children and `participants` only `[eventType]/…`.
+//
+// The other reason a segment is not navigable — being the VALUE of a dynamic
+// param, as `subscription` is in `…/offerings/subscription/<id>/edit` — needs no
+// list, because useParams() already names every one of them.
+const PATHLESS_SEGMENTS = new Set(["offerings", "participants"]);
 
 // Opaque record ids (cuid / uuid) in nested routes carry no meaning as crumbs.
 const looksLikeRecordId = (segment: string) =>
@@ -363,6 +373,7 @@ function ConsultantLayoutInner({
   const consultantId = resolvedParams.consultantId;
   const basePath = `/dashboard/consultant/${consultantId}`;
   const pathname = usePathname();
+  const routeParams = useParams();
   const { data: session, isPending: isSessionLoading } = useSession();
   const router = useRouter();
 
@@ -502,10 +513,23 @@ function ConsultantLayoutInner({
 
   const { overrideLabel } = useBreadcrumbOverride();
 
+  // Every value the current route bound to a dynamic param. Such a segment is
+  // never a URL of its own, so its crumb must not be a link.
+  const paramValues = useMemo(() => {
+    const values = new Set<string>();
+    for (const value of Object.values(routeParams ?? {})) {
+      for (const part of Array.isArray(value) ? value : [value]) {
+        if (part) values.add(part);
+      }
+    }
+    return values;
+  }, [routeParams]);
+
   // Full breadcrumb trail — every URL segment after the consultant id
   // becomes a crumb; opaque record ids are dropped (or replaced with an
   // override label such as the appointment title). Parent crumbs keep an
-  // href so users can click back (e.g. Appointments from a detail page).
+  // href so users can click back (e.g. Appointments from a detail page),
+  // but only when the accumulated path is a route the app can actually serve.
   const breadcrumbs = useMemo(() => {
     const parts = pathname
       .replace(basePath, "")
@@ -526,9 +550,10 @@ function ConsultantLayoutInner({
         if (overrideLabel) crumbs.push({ label: overrideLabel, href: acc });
         continue;
       }
+      const navigable = !PATHLESS_SEGMENTS.has(seg) && !paramValues.has(seg);
       crumbs.push({
         label: PAGE_LABELS[seg] ?? seg,
-        href: acc,
+        ...(navigable ? { href: acc } : {}),
       });
     }
 
@@ -541,7 +566,7 @@ function ConsultantLayoutInner({
       }
       return crumb;
     });
-  }, [pathname, basePath, overrideLabel]);
+  }, [pathname, basePath, overrideLabel, paramValues]);
 
   // Memoize StreamProvider children to prevent re-initialization on tab
   // switches. Must be called before any early returns (Rules of Hooks).

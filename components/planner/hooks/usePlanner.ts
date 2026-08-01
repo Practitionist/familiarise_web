@@ -120,7 +120,10 @@ export function useClassMutations(consultantId: string) {
 }
 
 // Consultation plan hooks
-export function useConsultationPlans(consultantId: string) {
+export function useConsultationPlans(
+  consultantId: string,
+  options?: { enabled?: boolean },
+) {
   return useQuery({
     queryKey: ["consultationPlans", consultantId],
     queryFn: async () => {
@@ -133,6 +136,7 @@ export function useConsultationPlans(consultantId: string) {
       const data = await response.json();
       return data.data;
     },
+    enabled: options?.enabled ?? true,
     staleTime: 2 * 60 * 1000,
     gcTime: 5 * 60 * 1000,
     refetchOnWindowFocus: false,
@@ -255,7 +259,10 @@ export function useConsultationPlanMutations(consultantId: string) {
 }
 
 // Subscription plan hooks
-export function useSubscriptionPlans(consultantId: string) {
+export function useSubscriptionPlans(
+  consultantId: string,
+  options?: { enabled?: boolean },
+) {
   return useQuery({
     queryKey: ["subscriptionPlans", consultantId],
     queryFn: async () => {
@@ -268,6 +275,7 @@ export function useSubscriptionPlans(consultantId: string) {
       const data = await response.json();
       return data.data;
     },
+    enabled: options?.enabled ?? true,
     staleTime: 2 * 60 * 1000,
     gcTime: 5 * 60 * 1000,
     refetchOnWindowFocus: false,

@@ -39,6 +39,11 @@ interface EventCardProps {
   isCollaborated?: boolean;
   onEdit: () => void;
   onDelete: () => void;
+  /**
+   * False for a row carrying no id — both actions address the offering by id,
+   * so neither has anything to act on. Defaults to true.
+   */
+  canManage?: boolean;
   onTrialsClick?: () => void;
   onJoinMeeting?: () => void;
   canJoinNow?: boolean;
@@ -248,6 +253,7 @@ export function EventCard({
   onJoinMeeting,
   canJoinNow,
   isJoiningMeeting,
+  canManage = true,
 }: Readonly<EventCardProps>) {
   const config = eventTypeConfig[eventType];
   const Icon = config.icon;
@@ -319,9 +325,10 @@ export function EventCard({
               <Button
                 variant="ghost"
                 size="icon"
+                disabled={!canManage}
                 className="h-8 w-8 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
                 aria-label={`Edit ${title}`}
-                title={`Edit ${title}`}
+                title={canManage ? `Edit ${title}` : "Not saved yet"}
                 onClick={(e) => {
                   e.stopPropagation();
                   onEdit();
@@ -332,9 +339,10 @@ export function EventCard({
               <Button
                 variant="ghost"
                 size="icon"
+                disabled={!canManage}
                 className="h-8 w-8 text-zinc-400 hover:bg-red-50 hover:text-red-600"
                 aria-label={`Delete ${title}`}
-                title={`Delete ${title}`}
+                title={canManage ? `Delete ${title}` : "Not saved yet"}
                 onClick={(e) => {
                   e.stopPropagation();
                   onDelete();

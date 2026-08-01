@@ -134,6 +134,82 @@ export const ConsultantProfileSchema = z.object({
   scheduleType: z.enum(["WEEKLY", "CUSTOM"]),
 });
 
+// Curriculum / roadmap entries. Declared ahead of the plan schemas because both
+// SubscriptionPlanSchema and ClassPlanSchema embed them.
+export const ClassContentSchema = z.object({
+  id: z.string().optional(),
+  title: z
+    .string()
+    .min(1, "Title is required")
+    .refine(
+      meaningfulContentRefinement,
+      "Title contains nonsensical text or gibberish",
+    )
+    .refine(profanityFreeRefinement, "Title contains inappropriate language"),
+  description: z
+    .string()
+    .min(1, "Description is required")
+    .refine(
+      meaningfulContentRefinement,
+      "Description contains nonsensical text or gibberish",
+    )
+    .refine(
+      profanityFreeRefinement,
+      "Description contains inappropriate language",
+    ),
+  contentType: z
+    .string()
+    .optional()
+    .nullable()
+    .refine(
+      (val) => !val || meaningfulContentRefinement(val),
+      "Content type contains nonsensical text or gibberish",
+    )
+    .refine(
+      (val) => !val || profanityFreeRefinement(val),
+      "Content type contains inappropriate language",
+    ),
+  contentUrl: z
+    .string()
+    .optional()
+    .nullable()
+    .refine(
+      (val) => !val || meaningfulContentRefinement(val),
+      "URL contains nonsensical text or gibberish",
+    )
+    .refine(
+      (val) => !val || profanityFreeRefinement(val),
+      "URL contains inappropriate language",
+    ),
+  order: z.number().optional(),
+  hoursAllotted: z
+    .number()
+    .min(0.5, "Hours allotted must be at least 30 minutes"),
+  // No gibberish refinement here — "Week 1" and "Sprint 2" are exactly the
+  // short alphanumeric strings isMeaningfulText rejects.
+  sectionLabel: z
+    .string()
+    .max(40, "Section label must be 40 characters or less")
+    .optional()
+    .nullable()
+    .refine(
+      (val) => !val || profanityFreeRefinement(val),
+      "Section label contains inappropriate language",
+    ),
+  outcomes: optionalBulletList("Session outcomes"),
+  // Optional fields for Prisma compatibility
+  createdAt: z.union([z.date(), z.string()]).optional(),
+  updatedAt: z.union([z.date(), z.string()]).optional(),
+  classPlanId: z.string().optional(),
+});
+
+// Subscription roadmap entries carry the same shape; only the owning FK differs.
+export const SubscriptionContentSchema = ClassContentSchema.omit({
+  classPlanId: true,
+}).extend({
+  subscriptionPlanId: z.string().optional(),
+});
+
 export const ConsultationPlanSchema = z.object({
   id: z.string().optional(),
   title: z
@@ -322,6 +398,16 @@ export const SubscriptionPlanSchema = z.object({
       profanityFreeArrayRefinement,
       "Topics contain inappropriate language",
     ),
+  // The session roadmap the editor's roadmap slot authors. Absent here, the
+  // resolver stripped it and every save sent an empty list, which the PUT
+  // treats as "replace with nothing" — wiping the roadmap.
+  subscriptionContents: z
+    .array(SubscriptionContentSchema)
+    .default([])
+    .refine((contents: z.infer<typeof SubscriptionContentSchema>[]) => {
+      const titles = contents.map((c) => c.title.trim().toLowerCase());
+      return new Set(titles).size === titles.length;
+    }, "Roadmap sessions must have unique titles"),
   ...planPositioningShape,
 });
 
@@ -449,81 +535,6 @@ export const WebinarPlanSchema = BaseEventPlanSchema.extend({
     }, "Start time must be at least 1 hour in the future"),
 });
 
-// Class specific schema
-export const ClassContentSchema = z.object({
-  id: z.string().optional(),
-  title: z
-    .string()
-    .min(1, "Title is required")
-    .refine(
-      meaningfulContentRefinement,
-      "Title contains nonsensical text or gibberish",
-    )
-    .refine(profanityFreeRefinement, "Title contains inappropriate language"),
-  description: z
-    .string()
-    .min(1, "Description is required")
-    .refine(
-      meaningfulContentRefinement,
-      "Description contains nonsensical text or gibberish",
-    )
-    .refine(
-      profanityFreeRefinement,
-      "Description contains inappropriate language",
-    ),
-  contentType: z
-    .string()
-    .optional()
-    .nullable()
-    .refine(
-      (val) => !val || meaningfulContentRefinement(val),
-      "Content type contains nonsensical text or gibberish",
-    )
-    .refine(
-      (val) => !val || profanityFreeRefinement(val),
-      "Content type contains inappropriate language",
-    ),
-  contentUrl: z
-    .string()
-    .optional()
-    .nullable()
-    .refine(
-      (val) => !val || meaningfulContentRefinement(val),
-      "URL contains nonsensical text or gibberish",
-    )
-    .refine(
-      (val) => !val || profanityFreeRefinement(val),
-      "URL contains inappropriate language",
-    ),
-  order: z.number().optional(),
-  hoursAllotted: z
-    .number()
-    .min(0.5, "Hours allotted must be at least 30 minutes"),
-  // No gibberish refinement here — "Week 1" and "Sprint 2" are exactly the
-  // short alphanumeric strings isMeaningfulText rejects.
-  sectionLabel: z
-    .string()
-    .max(40, "Section label must be 40 characters or less")
-    .optional()
-    .nullable()
-    .refine(
-      (val) => !val || profanityFreeRefinement(val),
-      "Section label contains inappropriate language",
-    ),
-  outcomes: optionalBulletList("Session outcomes"),
-  // Optional fields for Prisma compatibility
-  createdAt: z.union([z.date(), z.string()]).optional(),
-  updatedAt: z.union([z.date(), z.string()]).optional(),
-  classPlanId: z.string().optional(),
-});
-
-// Subscription roadmap entries carry the same shape; only the owning FK differs.
-export const SubscriptionContentSchema = ClassContentSchema.omit({
-  classPlanId: true,
-}).extend({
-  subscriptionPlanId: z.string().optional(),
-});
-
 export const ClassPlanSchema = BaseEventPlanSchema.extend({
   planType: z.literal("class"),
   // Bounds mirror SubscriptionPlanSchema. They were absent here, so a class
@@ -558,7 +569,10 @@ export const ClassPlanSchema = BaseEventPlanSchema.extend({
       );
       return new Set(titles).size === titles.length;
     }, "Class contents must have unique titles"),
-  startDate: z.date().optional().nullable(),
+  // Named for the manifest field that authors it. It was `startDate` here and
+  // `schedulingStartDate` on the form, so the resolver stripped the value and
+  // no class ever sent a start date to the API.
+  schedulingStartDate: z.date().optional().nullable(),
   endDate: z.date().optional().nullable(),
 });
 

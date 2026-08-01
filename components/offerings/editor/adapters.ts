@@ -42,6 +42,16 @@ const sharedDefaults = {
   faqs: [] as { question: string; answer: string; order?: number }[],
 };
 
+/**
+ * The date control writes a Date; the class endpoint takes an ISO string. A
+ * cleared date must stay undefined rather than becoming an invalid one.
+ */
+const toIsoDate = (value: unknown): string | undefined => {
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value === "string" && value) return value;
+  return undefined;
+};
+
 export interface OfferingAdapter {
   schema: ZodTypeAny;
   /** Which bucket the image uploader writes to. */
@@ -132,9 +142,27 @@ export const OFFERING_ADAPTERS: Record<OfferingType, OfferingAdapter> = {
       classContents: [],
       schedulingStartDate: null,
     },
-    planOf: (event) =>
-      (event as { classPlan?: Record<string, unknown> })?.classPlan,
+    // A class's start date is authored on the plan form but persisted on the
+    // Class row as `schedulingPeriodStartsAt`, so it is lifted into the form
+    // values here and mapped back to the API's `startDate` on save.
+    planOf: (event) => {
+      const wrapper = event as {
+        classPlan?: Record<string, unknown>;
+        schedulingPeriodStartsAt?: string | Date | null;
+      };
+      if (!wrapper?.classPlan) return undefined;
+      return {
+        ...wrapper.classPlan,
+        schedulingStartDate: wrapper.schedulingPeriodStartsAt
+          ? new Date(wrapper.schedulingPeriodStartsAt)
+          : null,
+      };
+    },
     save: (values, consultantId) =>
-      ClassService.saveClass({ classPlan: values } as never, consultantId),
+      ClassService.saveClass(
+        { classPlan: values } as never,
+        consultantId,
+        toIsoDate(values.schedulingStartDate),
+      ),
   },
 };
