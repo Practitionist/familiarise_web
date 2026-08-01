@@ -43,7 +43,7 @@ The run's first row is its **anchor**, and it is the only row anything may be ke
 
 ### Why the Walk Exists Rather Than Keying on `appointmentId`
 
-One appointment per session is the designed model, and the allocator enforces it on every path that creates a booking. It is not, however, enforced by the schema, and it is already violated in two real places. `prisma/seedFiles/6a-create-appointments.ts:368` attaches weeks-apart sessions to a single appointment, and the webinar reschedule described in #1071 moves only `slotsOfAppointment[0]`, which strands the remaining rows on a different day.
+One appointment per session is the designed model, and the allocator enforces it on every path that creates a booking. It is not, however, enforced by the schema, and it was historically violated in two places. `prisma/seedFiles/6a-create-appointments.ts:368` attaches weeks-apart sessions to a single appointment (seed-only). The planner webinar/class path used to write one long slot or move only `slotsOfAppointment[0]` (#1071); that path now goes through `lib/appointments/contiguous-slot-run.ts` and always writes a contiguous N×30min run.
 
 If sessions were keyed on `appointmentId` alone, both of those cases would collapse unrelated sessions into one shared video room. That is a cross-session privacy leak rather than a cosmetic defect, so the contiguity walk is load-bearing and must not be simplified away.
 

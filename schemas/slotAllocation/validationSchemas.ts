@@ -52,6 +52,16 @@ export const allocationRequestSchema = z
       })
       .optional(),
 
+    // #1012 — reschedule stale-tab precondition. When present, must equal the
+    // live tentative slot count or the allocate returns 409.
+    expectedTentativeSlotCount: z
+      .number({
+        invalid_type_error: "'expectedTentativeSlotCount' must be a number",
+      })
+      .int()
+      .nonnegative()
+      .optional(),
+
     // Consultant's explicit acceptance of times outside their own published
     // availability. The dialog has always offered this ("Override and
     // Allocate"), but the field was absent from this schema and therefore

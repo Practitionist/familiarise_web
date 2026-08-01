@@ -801,6 +801,11 @@ export function RequestSlotAllocationTab({
           initialAllocation:
             (selectedRequestForDialog.tentativeSlotCount ?? 0) === 0 ||
             undefined,
+          // #1012 — stale-tab reschedule precondition.
+          expectedTentativeSlotCount:
+            (selectedRequestForDialog.tentativeSlotCount ?? 0) > 0
+              ? selectedRequestForDialog.tentativeSlotCount
+              : undefined,
         }),
       });
 

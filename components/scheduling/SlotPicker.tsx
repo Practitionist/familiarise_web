@@ -219,6 +219,13 @@ export function SlotPicker({
             ? !subject.hasReleasedSlots
             : undefined
         }
+        // #1012 — when this is a reschedule (released/tentative slots), pin
+        // the tentative count so a stale tab 409s instead of replacing.
+        expectedTentativeSlotCount={
+          subject.hasReleasedSlots
+            ? (subject.slots?.filter((s) => s.isTentative).length ?? 0)
+            : undefined
+        }
         showAllocationButtons={!isSelectMode}
         onSlotsSelected={(slots) =>
           setProposedSlots(

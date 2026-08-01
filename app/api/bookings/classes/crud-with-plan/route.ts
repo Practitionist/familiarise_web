@@ -20,6 +20,7 @@ import {
 
 import { getSession } from "@/lib/auth-server";
 import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
+import { buildContiguousSlotAtoms } from "@/lib/appointments/contiguous-slot-run";
 // Schema for class content input (without Prisma-managed fields like createdAt, updatedAt, classPlanId)
 const ClassContentInputSchema = ClassContentSchema.omit({
   createdAt: true,
@@ -269,24 +270,29 @@ export async function POST(request: NextRequest) {
                       appointmentDate.getDate() + weekOffset + dayWithinWeek,
                     );
                     const slotStart = new Date(appointmentDate);
-                    const slotEnd = new Date(appointmentDate);
-                    slotEnd.setTime(
-                      slotEnd.getTime() +
-                        sessionDurationInHours * 60 * 60 * 1000,
-                    );
 
+                    // #1071 — N×30min atoms per session (allocator parity).
                     return {
                       appointmentType: "CLASS",
                       slotsOfAppointment: {
-                        create: {
+                        create: buildContiguousSlotAtoms({
                           startsAt: slotStart,
-                          endsAt: slotEnd,
-                          isTentative: true, // Mark as tentative until confirmed
-                          // #784 — owner denormalized so the overlap exclusion
-                          // guards the host once the session is confirmed
-                          // (constraint applies WHERE NOT isTentative).
+                          durationInHours: sessionDurationInHours,
                           consultantProfileId,
-                        },
+                          isTentative: true,
+                        }).map(
+                          ({
+                            startsAt,
+                            endsAt,
+                            isTentative,
+                            consultantProfileId: ownerId,
+                          }) => ({
+                            startsAt,
+                            endsAt,
+                            isTentative,
+                            consultantProfileId: ownerId,
+                          }),
+                        ),
                       },
                     };
                   })

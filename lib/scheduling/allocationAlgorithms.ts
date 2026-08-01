@@ -53,6 +53,8 @@ export interface AllocationOptions {
   idempotencyKey?: string;
   // Reject with 409 if the event already has confirmed slots (multi-tab guard).
   initialAllocation?: boolean;
+  /** #1012 — reschedule stale-tab precondition. */
+  expectedTentativeSlotCount?: number;
   // Timezone defining the limit day/week buckets (ADR B9); defaults to
   // Asia/Kolkata in the shared helpers.
   schedulingTimezone?: string;
@@ -208,6 +210,7 @@ export class AllocationAlgorithms {
         {
           idempotencyKey: options.idempotencyKey,
           initialAllocation: options.initialAllocation,
+          expectedTentativeSlotCount: options.expectedTentativeSlotCount,
         },
       );
 
@@ -369,6 +372,7 @@ export class AllocationAlgorithms {
           // as an explicit manual batch; isAuto would make the server re-pick.
           idempotencyKey: options.idempotencyKey,
           initialAllocation: options.initialAllocation,
+          expectedTentativeSlotCount: options.expectedTentativeSlotCount,
         },
       );
 
@@ -456,6 +460,7 @@ export class AllocationAlgorithms {
           useRequestedSlots: true,
           idempotencyKey: options.idempotencyKey,
           initialAllocation: options.initialAllocation,
+          expectedTentativeSlotCount: options.expectedTentativeSlotCount,
         },
       );
 

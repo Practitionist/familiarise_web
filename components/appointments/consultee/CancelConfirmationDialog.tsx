@@ -26,6 +26,10 @@ interface CancelConfirmationDialogProps {
    * irreversible cancellation of a paid session.
    */
   isPendingPayment?: boolean;
+  /**
+   * #1005 — group self-leave uses different copy than a full booking cancel.
+   */
+  mode?: "cancel" | "leave";
 }
 
 export function CancelConfirmationDialog({
@@ -37,25 +41,34 @@ export function CancelConfirmationDialog({
   appointmentType,
   isLoading = false,
   isPendingPayment = false,
+  mode = "cancel",
 }: Readonly<CancelConfirmationDialogProps>) {
+  const isLeave = mode === "leave";
   return (
     <AlertDialog open={isOpen} onOpenChange={(open) => !open && onCancel()}>
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle className="flex items-center gap-2">
             <AlertTriangle className="h-5 w-5 text-red-500" />
-            {isPendingPayment
-              ? `Cancel ${appointmentType} request?`
-              : `Cancel ${appointmentType}?`}
+            {isLeave
+              ? `Leave ${appointmentType}?`
+              : isPendingPayment
+                ? `Cancel ${appointmentType} request?`
+                : `Cancel ${appointmentType}?`}
           </AlertDialogTitle>
           <AlertDialogDescription asChild>
             <div className="space-y-2">
               <p>
-                Are you sure you want to cancel{" "}
+                Are you sure you want to {isLeave ? "leave" : "cancel"}{" "}
                 <strong>&quot;{title}&quot;</strong> with{" "}
                 <strong>{consultant}</strong>?
               </p>
-              {isPendingPayment ? (
+              {isLeave ? (
+                <p className="text-muted-foreground text-sm">
+                  You will be removed from this event. If you paid for a seat,
+                  a refund is issued under the event&apos;s cancellation policy.
+                </p>
+              ) : isPendingPayment ? (
                 <p className="text-muted-foreground">
                   You haven&apos;t been charged — this releases the approved
                   request without any payment.
@@ -66,7 +79,8 @@ export function CancelConfirmationDialog({
                     This action cannot be undone.
                   </p>
                   {(appointmentType === "Consultation" ||
-                    appointmentType === "Subscription") && (
+                    appointmentType === "Subscription" ||
+                    appointmentType === "Trial") && (
                     <p className="text-muted-foreground text-sm">
                       If a payment was captured, any refund follows the
                       booking&apos;s cancellation policy.
@@ -79,7 +93,7 @@ export function CancelConfirmationDialog({
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel onClick={onCancel} disabled={isLoading}>
-            Keep Appointment
+            {isLeave ? "Stay enrolled" : "Keep Appointment"}
           </AlertDialogCancel>
           <AlertDialogAction
             onClick={onConfirm}
@@ -89,8 +103,10 @@ export function CancelConfirmationDialog({
             {isLoading ? (
               <>
                 <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                Cancelling...
+                {isLeave ? "Leaving..." : "Cancelling..."}
               </>
+            ) : isLeave ? (
+              "Yes, Leave"
             ) : (
               "Yes, Cancel"
             )}

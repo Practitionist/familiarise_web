@@ -4,9 +4,10 @@ import { useState } from "react";
 import * as Sentry from "@sentry/nextjs";
 import { useParams, useRouter } from "next/navigation";
 import { useStreamVideoClient } from "@stream-io/video-react-sdk";
-
+import { useQueryClient } from "@tanstack/react-query";
 
 import { useToast } from "@/hooks/use-toast";
+import { useSession } from "@/lib/auth-client";
 import { getOrCreateAppointmentMeeting } from "@/lib/meeting";
 import type { SlotOfAppointment } from "@prisma/client";
 import type {
@@ -19,6 +20,10 @@ import {
   getJoinableSlot,
   slotsAllowReschedule,
 } from "@/lib/appointments/slots";
+import {
+  consulteeDestructiveAction,
+  consulteeMayReschedule,
+} from "@/lib/appointments/consultee-affordances";
 import {
   isApprovedStatus,
   isConfirmedStatus,
@@ -34,7 +39,12 @@ import { CancelConfirmationDialog } from "@/components/appointments/consultee/Ca
 import { ReportIssueDialog } from "@/components/appointments/consultee/ReportIssueDialog";
 import { DocumentUpload } from "@/components/appointments/DocumentUpload";
 
-type DialogKind = "cancel" | "report" | "documents";
+type DialogKind = "cancel" | "leave" | "report" | "documents";
+
+function sourceId(vm: AppointmentVM): string | null {
+  const source = vm.raw.source as { id?: string } | undefined;
+  return source?.id ?? null;
+}
 
 const KIND_TO_TYPE: Record<
   AppointmentVM["kind"],
@@ -63,6 +73,8 @@ export function useConsulteeAppointmentsAdapter(): AppointmentActionAdapter {
   const router = useRouter();
   const { toast } = useToast();
   const client = useStreamVideoClient();
+  const { data: session } = useSession();
+  const queryClient = useQueryClient();
   const params = useParams<{ consulteeId: string }>();
   const consulteeId = params?.consulteeId;
 
@@ -70,6 +82,7 @@ export function useConsulteeAppointmentsAdapter(): AppointmentActionAdapter {
   const [activeVm, setActiveVm] = useState<AppointmentVM | null>(null);
   const [dialog, setDialog] = useState<DialogKind | null>(null);
   const [joiningId, setJoiningId] = useState<string | null>(null);
+  const [actionLoading, setActionLoading] = useState(false);
 
   const typeLabel = activeVm ? KIND_TO_TYPE[activeVm.kind] : "Consultation";
   const actions = useEventActions({
@@ -169,7 +182,9 @@ export function useConsulteeAppointmentsAdapter(): AppointmentActionAdapter {
     const items: OverflowItem[] = [];
     const inactive = isInactiveStatus(vm.status);
     const slots = vm.raw.rawSlots ?? [];
+    // #1005 — kind-gate: only offer actions the server will honour.
     if (
+      consulteeMayReschedule(vm.kind) &&
       vm.appointmentId &&
       // The reschedule page lives under this route's consultee; off that route
       // there is no id to send them to.
@@ -189,7 +204,8 @@ export function useConsulteeAppointmentsAdapter(): AppointmentActionAdapter {
           ),
       });
     }
-    if (vm.appointmentId && !inactive) {
+    const destructive = consulteeDestructiveAction(vm.kind);
+    if (!inactive && destructive === "cancel-booking" && vm.appointmentId) {
       items.push({
         key: "cancel",
         label: isPendingPaymentStatus(vm.status)
@@ -197,6 +213,20 @@ export function useConsulteeAppointmentsAdapter(): AppointmentActionAdapter {
           : "Cancel booking",
         destructive: true,
         onClick: () => openDialog(vm, "cancel"),
+      });
+    } else if (!inactive && destructive === "cancel-trial" && sourceId(vm)) {
+      items.push({
+        key: "cancel",
+        label: "Cancel trial",
+        destructive: true,
+        onClick: () => openDialog(vm, "cancel"),
+      });
+    } else if (!inactive && destructive === "leave-event" && sourceId(vm)) {
+      items.push({
+        key: "leave",
+        label: "Leave event",
+        destructive: true,
+        onClick: () => openDialog(vm, "leave"),
       });
     }
     if (
@@ -236,27 +266,102 @@ export function useConsulteeAppointmentsAdapter(): AppointmentActionAdapter {
     return items;
   };
 
+  const invalidateBookings = () => {
+    if (!consulteeId) return;
+    void queryClient.invalidateQueries({
+      queryKey: ["consultee-events", consulteeId],
+    });
+    void queryClient.invalidateQueries({
+      queryKey: ["pending-payments", consulteeId],
+    });
+  };
+
+  const confirmDestructive = async () => {
+    if (!activeVm) return;
+    const id = sourceId(activeVm);
+    const destructive = consulteeDestructiveAction(activeVm.kind);
+
+    if (destructive === "cancel-booking") {
+      await actions.handleCancelConfirm();
+      closeDialog();
+      return;
+    }
+
+    setActionLoading(true);
+    try {
+      if (destructive === "cancel-trial") {
+        if (!id) throw new Error("Trial id is missing");
+        const response = await fetch(`/api/trials/${id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: "CANCELLED" }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(
+            (data as { error?: string }).error || "Failed to cancel trial",
+          );
+        }
+        toast({
+          title: "Trial cancelled",
+          description: `Your trial "${activeVm.title}" has been cancelled.`,
+        });
+      } else if (destructive === "leave-event") {
+        if (!id) throw new Error("Event id is missing");
+        const userId = session?.user?.id;
+        if (!userId) throw new Error("You must be signed in to leave");
+        const path =
+          activeVm.kind === "WEBINAR"
+            ? `/api/participants/webinar/${id}?userId=${encodeURIComponent(userId)}`
+            : `/api/participants/class/${id}?userId=${encodeURIComponent(userId)}`;
+        const response = await fetch(path, { method: "DELETE" });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(
+            (data as { error?: string }).error ||
+              "Failed to leave the event",
+          );
+        }
+        toast({
+          title: "Left event",
+          description: `You have left "${activeVm.title}".`,
+        });
+      }
+      closeDialog();
+      invalidateBookings();
+    } catch (error) {
+      Sentry.captureException(error);
+      toast({
+        title: "Error",
+        description:
+          error instanceof Error ? error.message : "Something went wrong",
+        variant: "destructive",
+      });
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   const renderDialogs = () => {
     if (!activeVm) return null;
     const isPendingPayment = isPendingPaymentStatus(activeVm.status);
     const scheduledAt = activeVm.raw.rawSlots?.[0]
       ? new Date(activeVm.raw.rawSlots[0].startsAt as Date | string).toISOString()
       : undefined;
+    const dialogMode = dialog === "leave" ? "leave" : "cancel";
 
     return (
       <>
         <CancelConfirmationDialog
-          isOpen={dialog === "cancel"}
-          onConfirm={async () => {
-            await actions.handleCancelConfirm();
-            closeDialog();
-          }}
+          isOpen={dialog === "cancel" || dialog === "leave"}
+          onConfirm={() => void confirmDestructive()}
           onCancel={closeDialog}
           title={activeVm.title}
           consultant={activeVm.counterpart.name}
           appointmentType={typeLabel}
-          isLoading={actions.isLoading}
+          isLoading={actions.isLoading || actionLoading}
           isPendingPayment={isPendingPayment}
+          mode={dialogMode}
         />
 
         {activeVm.appointmentId && dialog === "report" && (

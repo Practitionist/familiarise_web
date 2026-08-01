@@ -361,6 +361,8 @@ export interface UnifiedCalendarProps {
   /** Reject allocations if the event already has confirmed slots (fresh
    * PENDING allocations only; reschedule hosts must not set this). */
   initialAllocation?: boolean;
+  /** #1012 — tentative count captured when the allocate dialog opened. */
+  expectedTentativeSlotCount?: number;
   onClose?: () => void;
   showAllocationButtons?: boolean;
   preSelectedSlots?: TimeSlot[];
@@ -395,6 +397,7 @@ export function UnifiedCalendar({
   onAllocationComplete,
   onAllocationConflict,
   initialAllocation,
+  expectedTentativeSlotCount,
   onClose,
   showAllocationButtons = false,
   preSelectedSlots = [],
@@ -527,7 +530,9 @@ export function UnifiedCalendar({
     pastConfirmedSlotCount: isRecurringEventType(eventType)
       ? pastEventSlotCount
       : undefined,
+    weeklyConfirmedCallCounts,
     initialAllocation,
+    expectedTentativeSlotCount,
     schedulingTimezone,
     onSuccess: handleAllocationSuccess,
     onConflict: onAllocationConflict,

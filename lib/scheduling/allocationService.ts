@@ -34,6 +34,8 @@ export interface AllocationRequest {
    * Allocate Slots dialog so a stale tab can't silently replace another
    * tab's allocation. Reschedule flows omit it. */
   initialAllocation?: boolean;
+  /** #1012 — reschedule stale-tab precondition. */
+  expectedTentativeSlotCount?: number;
 }
 
 /** What the allocate endpoints actually return in `data`: the created (or
@@ -55,6 +57,8 @@ export interface AllocationCallOptions {
   isAuto?: boolean;
   useRequestedSlots?: boolean;
   initialAllocation?: boolean;
+  /** #1012 — reschedule stale-tab precondition. */
+  expectedTentativeSlotCount?: number;
   /** Sent as the Idempotency-Key header; the server replays the original
    * batch for a repeated key instead of double-booking (#837). */
   idempotencyKey?: string;
@@ -253,6 +257,7 @@ export class AllocationService {
       slots: allocationOptions?.isAuto ? undefined : slotStrings,
       useRequestedSlots: allocationOptions?.useRequestedSlots,
       initialAllocation: allocationOptions?.initialAllocation,
+      expectedTentativeSlotCount: allocationOptions?.expectedTentativeSlotCount,
     };
 
     const paths = {

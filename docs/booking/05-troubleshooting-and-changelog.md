@@ -101,6 +101,19 @@ Booking-calendar correctness sweep (branch `fix/booking-algorithm-calendar`, tra
 
 ---
 
+## Changelog: August 2026
+
+Booking algorithm Pre-MVP wave (`fix/booking-algorithm`, tracker #1072).
+
+| Fix | Severity | Description | Files / Issues |
+| --- | -------- | ----------- | -------------- |
+| Contiguous N×30min planner runs | Critical | Webinar/class CRUD create+update write allocator-parity atoms via `replaceContiguousSlotRun`; ends the #1071 stranded-slot corruption. | `lib/appointments/contiguous-slot-run.ts`, webinar/class `crud-with-plan` — #1071 |
+| Reschedule stale-tab precondition | Critical | Allocate accepts `expectedTentativeSlotCount`; mismatch → 409 before delete+recreate. | `SlotAllocationService`, allocate routes, SlotPicker — #1012 |
+| Consultee kind-gates + self-leave | High | Hide impossible Reschedule/Cancel; trial cancel via trial API; group Leave Event via participant DELETE self. | `consultee-affordances.ts`, adapter, participant routes — #1005 |
+| #997 Phase 3 weekly-limit parity | Medium | `useSlotAllocation` weekly guard now includes server `weeklyConfirmedCallCounts` (Phase 2 grid already shipped). Residual: per-cell rule-flag payload still optional follow-up. | `useSlotAllocation.ts`, `UnifiedCalendar.tsx` — Part of #997 |
+
+---
+
 ## Changelog: March 2026
 
 Security, auth, and booking fix sprint. 12 PRs merged.

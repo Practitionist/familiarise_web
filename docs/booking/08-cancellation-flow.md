@@ -33,7 +33,7 @@ Cancellation is one of the most architecturally nuanced flows in the booking sys
 2. **Nothing is deleted.** The appointment, its slots and its payment records are all preserved; the cancellation is a status change plus audit fields. `Payment.appointment` cascades on delete, so destroying an appointment would destroy the money trail with it.
 3. **Refunds are automatic and policy-driven.** The cancellation flow computes a refund from the tiers frozen onto the booking at checkout and drives it through the payment operations, without an admin in the loop.
 
-> **A note on this chapter's age.** Sections below still describe an earlier design in which cancellation deleted the appointment, required no authentication and never touched money. All three of those statements are false against the current route, and the passages that repeat them are corrected in place where they are load-bearing. A full rewrite of the walkthrough — including its line-number references, which no longer match the route — is tracked in #1013.
+> **A note on this chapter's age.** Sections below still describe an earlier design in which cancellation deleted the appointment, required no authentication and never touched money. All three of those statements are false against the current route (soft-cancel + CAS auth + automatic policy refunds, including whole-event fan-out for webinars/classes — #1003). Consultees leave group events via participant self-leave (#1005), not appointment cancel. A full rewrite of the walkthrough — including its line-number references and the outdated mermaid that still shows `delete Appointment` — is tracked in #1013.
 
 Here is the complete decision tree for the cancellation endpoint, from the moment a request arrives to the final response:
 

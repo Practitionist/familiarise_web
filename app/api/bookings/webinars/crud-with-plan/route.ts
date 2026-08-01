@@ -20,6 +20,10 @@ import {
   CollaboratorUnavailableError,
 } from "@/lib/collaborators/availability";
 import { isExclusionViolation } from "@/lib/db/pg-errors";
+import {
+  buildContiguousSlotAtoms,
+  replaceContiguousSlotRun,
+} from "@/lib/appointments/contiguous-slot-run";
 
 import { getSession } from "@/lib/auth-server";
 // Schema for POST request body based on WebinarPlanSchema
@@ -269,18 +273,29 @@ export async function POST(request: NextRequest) {
             appointment:
               startTime && endTime
                 ? {
-                    // Check if dates were successfully calculated
+                    // #1071 — N×30min atoms (same shape as SlotAllocationService),
+                    // never one long row spanning the full duration.
                     create: {
                       appointmentType: "WEBINAR",
                       slotsOfAppointment: {
-                        create: {
-                          startsAt: startTime, // Use calculated startTime
-                          endsAt: endTime, // Use calculated endTime
-                          isTentative: false,
-                          // #784 — owner denormalized so the slot overlap
-                          // exclusion guards the host on group events too.
+                        create: buildContiguousSlotAtoms({
+                          startsAt: startTime,
+                          durationInHours,
                           consultantProfileId,
-                        },
+                          isTentative: false,
+                        }).map(
+                          ({
+                            startsAt,
+                            endsAt,
+                            isTentative,
+                            consultantProfileId: ownerId,
+                          }) => ({
+                            startsAt,
+                            endsAt,
+                            isTentative,
+                            consultantProfileId: ownerId,
+                          }),
+                        ),
                       },
                     },
                   }
@@ -460,7 +475,8 @@ export async function PATCH(request: NextRequest) {
           include: {
             appointment: {
               include: {
-                slotsOfAppointment: true,
+                // #1071 — [0] is only meaningful when ordered by start.
+                slotsOfAppointment: { orderBy: { startsAt: "asc" } },
               },
             },
           },
@@ -493,7 +509,7 @@ export async function PATCH(request: NextRequest) {
           include: {
             appointment: {
               include: {
-                slotsOfAppointment: true,
+                slotsOfAppointment: { orderBy: { startsAt: "asc" } },
               },
             },
           },
@@ -538,9 +554,9 @@ export async function PATCH(request: NextRequest) {
         throw new Error("Invalid duration for calculating end time.");
       }
 
-      const endTimeDate = new Date(scheduledDate);
-      endTimeDate.setHours(endTimeDate.getHours() + effectiveDuration);
-      endTime = endTimeDate;
+      endTime = new Date(
+        scheduledDate.getTime() + effectiveDuration * 60 * 60 * 1000,
+      );
 
       console.log("Calculated slot times (PATCH):", {
         startTime: startTime.toISOString(),
@@ -549,13 +565,12 @@ export async function PATCH(request: NextRequest) {
       });
     } else if (
       durationInHours !== undefined &&
-      webinarToUpdate?.appointment?.slotsOfAppointment[0]
+      webinarToUpdate?.appointment?.slotsOfAppointment?.length
     ) {
-      // Handle case where only duration changes, recalculate end time based on existing start time
+      // Duration-only change: keep the run's earliest start (slots are ordered).
       const existingSlot = webinarToUpdate.appointment.slotsOfAppointment[0];
-      startTime = existingSlot.startsAt; // Keep existing start time
-      endTime = new Date(startTime);
-      endTime.setHours(startTime.getHours() + durationInHours);
+      startTime = existingSlot.startsAt;
+      endTime = new Date(startTime.getTime() + durationInHours * 60 * 60 * 1000);
       console.log(
         "Recalculated slot end time due to duration change (PATCH):",
         {
@@ -582,13 +597,15 @@ export async function PATCH(request: NextRequest) {
       // Only block when the time ACTUALLY differs from the current slot
       // (the planner client may always send scheduledAt even for non-time edits).
       if (activePayments > 0 && (startTime || endTime)) {
-        const existingSlot =
-          webinarToUpdate.appointment?.slotsOfAppointment?.[0];
+        const existingSlots =
+          webinarToUpdate.appointment?.slotsOfAppointment ?? [];
+        const runStart = existingSlots[0]?.startsAt;
+        const runEnd = existingSlots[existingSlots.length - 1]?.endsAt;
         const timeChanged =
-          !existingSlot ||
-          (startTime &&
-            existingSlot.startsAt.getTime() !== startTime.getTime()) ||
-          (endTime && existingSlot.endsAt.getTime() !== endTime.getTime());
+          !runStart ||
+          !runEnd ||
+          (startTime && runStart.getTime() !== startTime.getTime()) ||
+          (endTime && runEnd.getTime() !== endTime.getTime());
 
         if (timeChanged) {
           return NextResponse.json(
@@ -601,6 +618,9 @@ export async function PATCH(request: NextRequest) {
         }
       }
     }
+
+    const effectiveDurationForSlots =
+      durationInHours ?? existingPlan.durationInHours;
 
     // Update webinar plan and related data in a transaction
     const result = await prisma.$transaction(
@@ -752,9 +772,8 @@ export async function PATCH(request: NextRequest) {
             });
           }
 
-          // 8. Update appointment slot if startTime and endTime were calculated
+          // 8. Replace the appointment's live slot run (#1071) when times change.
           if (startTime && endTime) {
-            // Check if recalculation happened
             const appointment = updatedWebinar.appointment;
 
             // AE-2 (#784) — block (re)scheduling onto a time any ACCEPTED co-host
@@ -768,73 +787,56 @@ export async function PATCH(request: NextRequest) {
               excludeAppointmentId: appointment?.id ?? null,
             });
 
+            if (typeof effectiveDurationForSlots !== "number") {
+              throw new Error(
+                "Invalid duration for rewriting contiguous slot run.",
+              );
+            }
+
             if (appointment) {
-              // Update existing appointment slots
-              if (
-                appointment.slotsOfAppointment &&
-                appointment.slotsOfAppointment.length > 0
-              ) {
-                const slot = appointment.slotsOfAppointment[0];
+              console.log("Replacing contiguous slot run (#1071):", {
+                appointmentId: appointment.id,
+                startTime: startTime.toISOString(),
+                endTime: endTime.toISOString(),
+                durationInHours: effectiveDurationForSlots,
+              });
 
-                console.log("Updating existing slot:", {
-                  slotId: slot.id,
-                  oldStartTime: slot.startsAt,
-                  oldEndTime: slot.endsAt,
-                  newStartTime: startTime,
-                  newEndTime: endTime,
-                });
-
-                await tx.slotOfAppointment.update({
-                  where: { id: slot.id },
-                  data: {
-                    startsAt: startTime,
-                    endsAt: endTime,
-                    // #784 — denormalize the owner so slot_no_confirmed_overlap
-                    // guards the host against double-booking on group events too
-                    // (group slots were NULL here, leaving the owner unprotected).
-                    consultantProfileId: existingPlan.consultantProfileId,
-                  },
-                });
-              } else {
-                // Create a new slot if none exists
-                console.log("Creating new slot for appointment:", {
-                  appointmentId: appointment.id,
-                  startTime: startTime.toISOString(),
-                  endTime: endTime.toISOString(),
-                });
-
-                await tx.slotOfAppointment.create({
-                  data: {
-                    appointmentId: appointment.id,
-                    startsAt: startTime,
-                    endsAt: endTime,
-                    isTentative: false,
-                    // #784 — owner denormalized for the overlap exclusion guard.
-                    consultantProfileId: existingPlan.consultantProfileId,
-                  },
-                });
-              }
+              await replaceContiguousSlotRun(tx, {
+                appointmentId: appointment.id,
+                startsAt: startTime,
+                durationInHours: effectiveDurationForSlots,
+                consultantProfileId: existingPlan.consultantProfileId,
+                isTentative: false,
+              });
             } else {
-              // Create a new appointment and slot if no appointment exists
-              console.log("Creating new appointment and slot for webinar");
+              console.log("Creating new appointment + contiguous slot run");
 
-              const newAppointment = await tx.appointment.create({
+              await tx.appointment.create({
                 data: {
                   webinar: { connect: { id: updatedWebinar.id } },
                   appointmentType: "WEBINAR",
                   slotsOfAppointment: {
-                    create: {
+                    create: buildContiguousSlotAtoms({
                       startsAt: startTime,
-                      endsAt: endTime,
-                      isTentative: false,
-                      // #784 — owner denormalized for the overlap exclusion guard.
+                      durationInHours: effectiveDurationForSlots,
                       consultantProfileId: existingPlan.consultantProfileId,
-                    },
+                      isTentative: false,
+                    }).map(
+                      ({
+                        startsAt,
+                        endsAt,
+                        isTentative,
+                        consultantProfileId: ownerId,
+                      }) => ({
+                        startsAt,
+                        endsAt,
+                        isTentative,
+                        consultantProfileId: ownerId,
+                      }),
+                    ),
                   },
                 },
               });
-
-              console.log("Created new appointment:", newAppointment.id);
             }
           }
 

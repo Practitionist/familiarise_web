@@ -25,9 +25,11 @@
 
 Rescheduling allows a consultee to request new time slots for an existing appointment without creating a new booking and without triggering any payment operation. The original payment is fully reused -- there is no charge, no refund, and no new invoice.
 
-**Who can trigger a reschedule:** The user who originally booked the appointment (the consultee).
+**Who can trigger a reschedule:** For consultations and subscriptions, the consultee who booked (or the consultant on Manage Timings / allocate). Webinars, classes, and trials are **not** consultee-reschedulable (#1005); group events are organiser-managed.
 
 **Minimum notice:** 24 hours before any affected slot (`MINIMUM_HOURS_BEFORE_RESCHEDULE = 24`). If any slot selected for rescheduling starts within 24 hours, the entire request is rejected.
+
+**Stale-tab guard (#1012):** Re-allocation after a reschedule must send `expectedTentativeSlotCount` matching the live tentative set. A second tab that submits after the first finished receives 409 instead of delete+recreating confirmed slots.
 
 **Code location:** `app/api/appointments/[appointmentId]/reschedule/route.ts`
 

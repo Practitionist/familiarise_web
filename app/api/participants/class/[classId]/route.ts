@@ -120,10 +120,6 @@ export async function DELETE(
   if (authResult.error) return authResult.error;
   const { session } = authResult;
 
-  if (!isPrivileged(session.user.role) && !session.user.consultantProfileId) {
-    return forbiddenResponse("Only consultants can remove participants");
-  }
-
   const rl = await applyRateLimit(eventMutationLimiter, session.user.id);
   if (rl) return rl;
 
@@ -137,13 +133,21 @@ export async function DELETE(
       return new NextResponse("User ID is required", { status: 400 });
     }
 
-    // Ownership check only — the old shape loaded the entire roster
-    // (every appointment × every slot × every full User row) just to find
-    // the one participant being removed.
+    // #1005 — consultees may remove themselves (self-leave). Organisers and
+    // privileged roles may remove anyone on their event.
+    const isSelfLeave = userId === session.user.id;
+    const isOrganiser =
+      isPrivileged(session.user.role) || !!session.user.consultantProfileId;
+    if (!isSelfLeave && !isOrganiser) {
+      return forbiddenResponse("Only consultants can remove other participants");
+    }
+
+    // Ownership check for organiser removals; self-leave only needs the event
+    // to exist and the caller to be on the roster (checked via userSlots).
     const classEvent = await prisma.class.findFirst({
       where: {
         id: classId,
-        ...(isPrivileged(session.user.role)
+        ...(isSelfLeave || isPrivileged(session.user.role)
           ? {}
           : {
               classPlan: {

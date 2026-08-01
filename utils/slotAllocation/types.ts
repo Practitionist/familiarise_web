@@ -47,6 +47,13 @@ export interface AllocationRequest {
   // in the manual path silently deleting the winner's allocation.
   initialAllocation?: boolean;
   /**
+   * #1012 — reschedule stale-tab guard. When set, the current tentative slot
+   * count must match exactly; otherwise another tab already completed (or
+   * mutated) the reschedule and this submit would delete+recreate confirmed
+   * slots. Fresh allocations omit the field.
+   */
+  expectedTentativeSlotCount?: number;
+  /**
    * Manual mode only. When true the Redis lock is taken consultant-WIDE rather
    * than sharded by the target day.
    *
