@@ -39,7 +39,33 @@ export interface SlotLike {
   endsAt?: Date | string | null;
   isTentative: boolean;
   completionStatus?: string | null;
+  /** A10 soft-delete tombstone (#676) — a set value means the slot is gone. */
+  deletedAt?: Date | string | null;
   meetingSession?: { id: string; endedAt: Date | string | null } | null;
+}
+
+/**
+ * The five scheduling fields, and nothing else.
+ *
+ * `readAppointmentDetail`'s slots are built with `include`, so each row also
+ * drags along every attendee (`user[]`, name and image) and the session's
+ * recording URLs. Those rows are fine to READ on the server, but handing one
+ * to a client component serializes all of it into the RSC payload — and on a
+ * class or webinar the attendee list is shared by every slot, so a term's
+ * worth of sessions multiplies it by the whole roster. Same class of leak as
+ * the consultant-PII one #946 fixed with a select-allowlist; this is that
+ * allowlist, applied on the way out.
+ */
+export function toSlotLike(slot: SlotLike): SlotLike {
+  return {
+    id: slot.id,
+    appointmentId: slot.appointmentId ?? null,
+    startsAt: slot.startsAt,
+    endsAt: slot.endsAt ?? null,
+    isTentative: slot.isTentative,
+    completionStatus: slot.completionStatus ?? null,
+    deletedAt: slot.deletedAt ?? null,
+  };
 }
 
 export interface SessionVM {

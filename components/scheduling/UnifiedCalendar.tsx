@@ -61,6 +61,13 @@ import {
   resolveSlotStatusKey,
   slotCellClassName,
 } from "@/lib/scheduling/slot-status-tokens";
+import {
+  focusGridPosition,
+  focusScrollRow,
+  focusTargetRow,
+  gridTimeZone,
+  type SlotPickerFocus,
+} from "@/lib/scheduling/slot-picker-focus";
 
 /**
  * Small pure helpers for clarity and reuse. These do not cause side effects.
@@ -366,6 +373,12 @@ export interface UnifiedCalendarProps {
   /** Event's scheduling timezone — defines the limit day/week buckets
    * (ADR B9). Defaults to Asia/Kolkata in the shared helpers. */
   schedulingTimezone?: string;
+  /**
+   * Where to be looking on open (#1073). Applied ONCE, on first render of the
+   * week grid: it chooses the starting week and scroll position and then
+   * never touches either again.
+   */
+  focus?: SlotPickerFocus;
 }
 
 export function UnifiedCalendar({
@@ -391,10 +404,18 @@ export function UnifiedCalendar({
   allowedEnd,
   totalSessions,
   schedulingTimezone,
+  focus,
 }: UnifiedCalendarProps) {
   const { toast } = useToast();
   // State
-  const [currentDate, setCurrentDate] = useState(() => new Date());
+  const [currentDate, setCurrentDate] = useState(() => {
+    if (!focus) return new Date();
+    // Noon on the target's calendar date AS THE GRID READS IT: weekDates are
+    // derived from this with local date-fns, so a target near a midnight
+    // boundary lands a week out if the date is read in any other zone.
+    const { year, month, day } = focusGridPosition(focus.at, gridTimeZone());
+    return new Date(year, month - 1, day, 12);
+  });
   const [view, setView] = useState<"week" | "month">("week");
   const [browserTimezone, setBrowserTimezone] = useState("UTC");
   const [configWarning, setConfigWarning] = useState<string | null>(null);
@@ -596,6 +617,43 @@ export function UnifiedCalendar({
     const startDate = startOfWeek(currentDate);
     return [...Array(7)].map((_, i) => addDays(startDate, i));
   }, [currentDate]);
+
+  // A callback ref in STATE, not a plain ref: the week grid does not exist
+  // until `consultantDetails` has arrived, and a ref mutating cannot wake an
+  // effect. Keyed off the element, the effect runs when the grid appears —
+  // whichever of the two independent fetches wins the race, and again if the
+  // user visits month view before the grid has ever been focused.
+  const [weekGridEl, setWeekGridEl] = useState<HTMLDivElement | null>(null);
+  // Once per open. A ref rather than effect deps: re-running this would drag
+  // the grid back while the consultant is reading somewhere else, and the
+  // callback-identity loop this component already hit (React #185, see
+  // onSlotsSelectedRef) is what a deps-driven "focus" would become.
+  const focusAppliedRef = useRef(false);
+
+  useEffect(() => {
+    if (!focus || focusAppliedRef.current || !weekGridEl) return;
+    // The element's mere existence is the real guard: it renders only past
+    // the `loading`/`error`/`consultantDetails` gates below, and `loading` is
+    // held true from mount until the availability fetch settles — so by the
+    // time there is a grid, `availableSlots` is final. (`loading` alone would
+    // NOT do: it starts false, before anything is fetched.)
+    if (weekGridEl.children.length === 0) return;
+    // The user got here first. Leave them where they are, permanently.
+    if (weekGridEl.scrollTop > 0) {
+      focusAppliedRef.current = true;
+      return;
+    }
+
+    const targetRow = focusTargetRow(focus, availableSlots, gridTimeZone());
+    const row = weekGridEl.children[focusScrollRow(targetRow)];
+    if (!(row instanceof HTMLElement)) return;
+
+    focusAppliedRef.current = true;
+    // Measured, not rowIndex × height: the row heights are a Tailwind detail
+    // this component should not be re-deriving.
+    weekGridEl.scrollTop +=
+      row.getBoundingClientRect().top - weekGridEl.getBoundingClientRect().top;
+  }, [focus, weekGridEl, availableSlots]);
 
   /**
    * Builds an auto-expanded group of consecutive slots starting from a clicked slot.
@@ -1325,7 +1383,10 @@ export function UnifiedCalendar({
           </div>
 
           {/* Week grid */}
-          <div className="flex-1 overflow-y-auto scrollbar-thin min-h-0">
+          <div
+            ref={setWeekGridEl}
+            className="flex-1 overflow-y-auto scrollbar-thin min-h-0"
+          >
             {INTERVALS.map((interval) => (
               <div
                 key={`interval-row-${interval.hour}-${interval.minute}`}

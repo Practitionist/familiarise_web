@@ -1,4 +1,5 @@
 import type { SlotPickerSubject } from "@/components/scheduling/slot-picker-policy";
+import type { SlotLike } from "@/lib/appointments/view-model";
 import { getClassPlanDefaults, type ClassPlanType } from "@/utils/classPlans";
 
 /**
@@ -19,6 +20,12 @@ export type ManageTimingsAppointmentType =
 
 export interface ManageTimingsAppointmentLike {
   appointmentType: ManageTimingsAppointmentType;
+  /**
+   * Every session of the program, past ones included — what the picker opens
+   * focused on (#1073). A bare Class/Webinar row has none, which is itself
+   * the answer there.
+   */
+  slots?: SlotLike[];
   consultation?: {
     id?: string | null;
     consultationPlan?: {
@@ -272,6 +279,7 @@ export function buildManageTimingsSubject(
       // Guard rails: keep selection inside the plan's scheduling period.
       allowedStart: schedulingPeriod.start,
       allowedEnd: schedulingPeriod.end,
+      slots: appointment.slots,
     },
   };
 }
