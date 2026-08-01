@@ -1,7 +1,7 @@
 import { HydrationBoundary, QueryClient, dehydrate } from "@tanstack/react-query";
 import { requireAuth } from "@/lib/auth-guard";
 import { getWorkspaceBillingRollup } from "@/lib/data/org-workspace";
-import { workspaceBillingQueryKey } from "../hooks/useWorkspaceBilling";
+import { workspaceBillingQueryKey } from "../workspace-billing-keys";
 import { BillingPageClient } from "./BillingPageClient";
 
 /**
@@ -23,7 +23,7 @@ export default async function OrgWorkspaceBillingPage({
   const queryClient = new QueryClient();
 
   // Key MUST match BillingPageClient's useWorkspaceBilling or hydration
-  // won't apply.
+  // won't apply, which is why both read it from workspace-billing-keys.
   await Promise.allSettled([
     queryClient.prefetchQuery({
       queryKey: workspaceBillingQueryKey(orgWorkspaceId),
