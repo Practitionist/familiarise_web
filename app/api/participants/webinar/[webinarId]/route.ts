@@ -163,6 +163,18 @@ export async function DELETE(
       select: { id: true },
     });
 
+    // #1003 — nothing to remove means nothing to refund. Without this the
+    // handler committed an empty transaction and still called the seat refund,
+    // which looks the payment up by user + event rather than by what was
+    // actually released — so repeat clicks and stale tabs each raised an ops
+    // page for a removal that never happened.
+    if (userSlots.length === 0) {
+      return NextResponse.json(
+        { removed: false, refund: null },
+        { status: 404 },
+      );
+    }
+
     // One atomic batch — sequential awaits paid a DB round trip per slot
     // and could partially remove a participant on mid-loop failure.
     await prisma.$transaction(

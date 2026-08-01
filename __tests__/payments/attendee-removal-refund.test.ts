@@ -180,6 +180,47 @@ describe("refundRemovedAttendeeSeat", () => {
     );
   });
 
+  it("stays quiet when the money went to the org, not the member", async () => {
+    // On the internal rail the value returned to the org's wallet, accrual or
+    // licence. The member never paid, so promising them a refund is false.
+    mockPaymentFindFirst.mockResolvedValue(seat("org_wallet_1_a"));
+    mockRefundBookingPayment.mockResolvedValue({
+      refundId: "r1",
+      amountRefundedPaise: 50_000,
+      rail: "INTERNAL",
+    });
+
+    await refundRemovedAttendeeSeat({
+      kind: "webinar",
+      eventId: "web-1",
+      attendeeUserId: ATTENDEE,
+      initiatedByUserId: "consultant-1",
+    });
+
+    expect(mockNotifyRefundProcessed).not.toHaveBeenCalled();
+  });
+
+  it("does not page ops for an idempotent re-drive", async () => {
+    // A repeat click or a stale tab is not an incident.
+    const { RefundValidationError } = jest.requireMock(
+      "../../lib/payments/operations/refund",
+    ) as { RefundValidationError: new (m: string, c: string) => Error };
+    mockRefundBookingPayment.mockRejectedValue(
+      new RefundValidationError("already done", "ALREADY_FULLY_REFUNDED"),
+    );
+
+    const result = await refundRemovedAttendeeSeat({
+      kind: "class",
+      eventId: "class-1",
+      attendeeUserId: ATTENDEE,
+      initiatedByUserId: "consultant-1",
+    });
+
+    expect(result).toEqual({ amountRefundedPaise: 0, refundPct: 0 });
+    expect(mockRecordSystemError).not.toHaveBeenCalled();
+    expect(mockReportSentryError).not.toHaveBeenCalled();
+  });
+
   it("leaves the removal standing and pages ops when the refund fails", async () => {
     mockRefundBookingPayment.mockRejectedValue(new Error("gateway down"));
 

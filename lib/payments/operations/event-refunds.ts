@@ -204,6 +204,8 @@ export async function refundRemovedAttendeeSeat(args: {
 
   try {
     const payment = await prisma.payment.findFirst({
+      // Deterministic: the seat they bought first is the one being released.
+      orderBy: { createdAt: "asc" },
       where: {
         userId: args.attendeeUserId,
         appointment: eventFilter,
@@ -237,16 +239,31 @@ export async function refundRemovedAttendeeSeat(args: {
       initiatedByUserId: args.initiatedByUserId,
     });
 
-    void notifyRefundProcessed(args.attendeeUserId, {
-      ...notificationScope(payment.organizationId),
-      amount: amountPaise,
-      currency: payment.currency,
-      reason: `You were removed from this ${args.kind}.`,
-      dashboardUrl: `${getAppUrl()}/dashboard`,
-    }).catch(() => {});
+    // Only the gateway rail puts money back where this person can see it. On
+    // the internal rail the value returned to the org's wallet, accrual or
+    // licence — the member never paid, so telling them a refund is coming is
+    // simply false.
+    if (result.rail === "GATEWAY") {
+      void notifyRefundProcessed(args.attendeeUserId, {
+        ...notificationScope(payment.organizationId),
+        amount: amountPaise,
+        currency: payment.currency,
+        reason: `You were removed from this ${args.kind}.`,
+        dashboardUrl: `${getAppUrl()}/dashboard`,
+      }).catch(() => {});
+    }
 
     return { amountRefundedPaise: result.amountRefundedPaise, refundPct };
   } catch (err) {
+    // Benign idempotent re-drives — a seat already refunded, or a payment that
+    // never captured. Paging ops for these turns every repeat click into an
+    // incident. Mirrors the overage credit-back exemption above.
+    const benign =
+      err instanceof RefundValidationError &&
+      (err.code === "ALREADY_FULLY_REFUNDED" ||
+        err.code === "PAYMENT_NOT_SUCCEEDED");
+    if (benign) return { amountRefundedPaise: 0, refundPct: 0 };
+
     reportSentryError(err, {
       subsystem: "payments",
       tags: { feature: "attendee-removal-refund" },
