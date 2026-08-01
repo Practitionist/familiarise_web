@@ -47,6 +47,8 @@ flowchart LR
   LOG --> OP["operator scans during rollout, fixes allow-list"]
 ```
 
+**The observation window only works if the reports actually arrive.** `/api/csp-report` originally shared `spamLimiter`, which allows 5 requests per hour — a budget sized for a human deciding to file a support ticket. A browser emits one report per violated directive per navigation, so a single person opening a few dashboard pages exhausted the hour in seconds and every subsequent report was rejected with a `429`. The rollout was therefore blind in precisely the situation it exists to observe. The endpoint now has its own limiter (`cspReportLimiter`) sized for browser-generated volume. If you add a report sink in future, size its limiter by who generates the traffic, not by how much you want to receive.
+
 ## Header inventory (production)
 
 All seven production headers, their values, and what each one defends against, are listed in the table below.
@@ -71,11 +73,27 @@ and the public marketplace pages alike.
 
 Anything outside the directives below will be blocked once `ENABLE_CSP_ENFORCE=true`, so each external origin earns its place by being load-bearing for a real product surface.
 
-The `script-src` directive keeps `'self' 'unsafe-inline' 'unsafe-eval'`, which is non-negotiable until Next.js 16 ships hashed inline runtime chunks. Its external origins are Razorpay's checkout CDN (`https://checkout.razorpay.com`, the payment SDK), Sentry (`https://*.sentry.io`, error reporting), Stream.io (`https://*.getstream.io`, the call widget), and Supabase (`https://*.supabase.co`, storage signed URLs).
+The `script-src` directive keeps `'self' 'unsafe-inline' 'unsafe-eval'`, which is non-negotiable until Next.js 16 ships hashed inline runtime chunks. Its external origins are Razorpay's checkout CDN (`https://checkout.razorpay.com`, the payment SDK), Stripe (`https://js.stripe.com`), Sentry (`https://*.sentry.io`, error reporting), Stream.io (`https://*.getstream.io`), and Supabase (`https://*.supabase.co`, storage signed URLs). The Stream entry is inherited rather than observed — the SDK is bundled from npm and self-served, so no `script-src` fetch to Stream was seen in practice.
 
-The `connect-src` directive governs XHR, fetch, and WebSocket targets. It opens `https://api.razorpay.com` for payments, both `wss://*.getstream.io` and `https://*.getstream.io` for Stream call signalling and media, `https://*.supabase.co` and `https://*.upstash.io` for storage and Redis, `https://*.sentry.io` for error reporting, and `https://api.resend.com` for transactional email.
+The `connect-src` directive governs XHR, fetch, and WebSocket targets. It opens `https://api.razorpay.com` for payments, the three Stream domains described below, `https://*.supabase.co` and `https://*.upstash.io` for storage and Redis, `https://*.sentry.io` for error reporting, `https://api.resend.com` for transactional email, and `https://*.novu.co` plus `wss://*.novu.co` for the notification inbox.
 
-The `media-src` directive serves Stream.io recording and call audio/video, so it requires both `blob:` (local recording playback) and the getstream.io CDN.
+The `media-src` directive serves Stream.io recording and call audio/video, so it requires `blob:` for local recording playback alongside Stream's CDN and API origins.
+
+### Stream.io does not run on getstream.io
+
+This is the mistake the allow-list originally made, and it is worth stating plainly because it is easy to repeat: `getstream.io` is Stream's marketing and documentation domain. No SDK traffic goes there. The clients talk to three unrelated domains, and a CSP host wildcard does not span them:
+
+| Domain | Carries |
+| --- | --- |
+| `*.stream-io-api.com` | REST calls and both websockets (`wss://video.stream-io-api.com`, `wss://chat.stream-io-api.com`) |
+| `*.stream-io-video.com` | the edge-latency hint (`hint.stream-io-video.com`) the client fetches before a call to choose an SFU, then the SFU edge itself |
+| `*.stream-io-cdn.com` | call recordings and chat attachments |
+
+Because only `*.getstream.io` was listed, every dashboard load filed violation reports for traffic the product cannot function without, and video calling would have failed outright the moment `ENABLE_CSP_ENFORCE=true` was set. The domains above were confirmed against a real browser network log on a deploy preview rather than read off Stream's docs, which is the only way to catch this class of drift.
+
+`*.getstream.io` remains in the list: Stream still serves some static assets from it, and dropping it is a separate change with its own unobserved blast radius.
+
+`worker-src` is deliberately absent. Nothing in the app constructs a `Worker`, and Stream's background-filter and noise-cancellation add-ons — the features that would need `blob:` workers and `wasm-unsafe-eval` — are not installed. If they are ever adopted, `worker-src` is the directive that breaks first, and it will fall back to `default-src 'self'`.
 
 The `frame-src` directive allows Razorpay's checkout iframe; without this entry, payments break the moment CSP is flipped to enforce mode.
 
