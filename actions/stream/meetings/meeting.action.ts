@@ -5,6 +5,7 @@ import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { findSessionRun } from "@/lib/appointments/slots";
+import { resolvePlanOwnerIds } from "@/lib/booking/plan-owners";
 import { getMaintenanceState } from "@/lib/maintenance";
 /**
  * Minimal slot interface for database meeting session operations.
@@ -107,6 +108,198 @@ export async function resolveSessionAnchorSlot(
       { tags: { subsystem: "stream" } },
     );
     streamLogger.error("Failed to resolve session anchor slot", error, {
+      slotId: validatedSlotId,
+    });
+    return null;
+  }
+}
+
+/**
+ * Stream's default call roles. `host` carries the elevated capabilities
+ * (ending the call, muting, recording); everyone else is a plain member.
+ */
+const HOST_ROLE = "host";
+const GUEST_ROLE = "user";
+
+export type SessionCallMember = { user_id: string; role: string };
+
+export type SessionCallProfile = {
+  startsAt: Date;
+  endsAt: Date;
+  durationMinutes: number;
+  offeringTitle: string | null;
+  members: SessionCallMember[];
+  hostUserIds: string[];
+  guestUserIds: string[];
+};
+
+/** Consultant identity, deep enough for `resolvePlanOwnerIds` to read it. */
+const ownerProfileSelect = { select: { id: true, userId: true } } as const;
+const collaboratorsSelect = {
+  where: { status: "ACCEPTED" as const },
+  select: { consultantProfile: ownerProfileSelect },
+} as const;
+
+/**
+ * Everything about a session a Stream call should describe itself with — the
+ * run's real bounds, the offering it belongs to, and who is hosting it (#1070).
+ *
+ * Resolved server-side and once, at call-creation time, rather than left to
+ * each dashboard surface to infer. Only read on the branch that actually mints
+ * a call, so a normal join into an existing room pays nothing for it.
+ *
+ * @returns null when it cannot be resolved; the caller then creates the call
+ *   exactly as it did before, since every field this feeds is additive.
+ */
+export async function resolveSessionCallProfile(
+  anchorSlotId: string,
+): Promise<SessionCallProfile | null> {
+  const validatedSlotId = slotIdSchema.parse(anchorSlotId);
+
+  try {
+    const anchor = await prisma.slotOfAppointment.findUnique({
+      where: { id: validatedSlotId },
+      select: {
+        appointmentId: true,
+        appointment: {
+          select: {
+            appointmentType: true,
+            consultation: {
+              select: {
+                consultationPlan: {
+                  select: {
+                    title: true,
+                    consultantProfile: ownerProfileSelect,
+                  },
+                },
+              },
+            },
+            subscription: {
+              select: {
+                subscriptionPlan: {
+                  select: {
+                    title: true,
+                    consultantProfile: ownerProfileSelect,
+                  },
+                },
+              },
+            },
+            webinar: {
+              select: {
+                webinarPlan: {
+                  select: {
+                    title: true,
+                    consultantProfile: ownerProfileSelect,
+                    collaborators: collaboratorsSelect,
+                  },
+                },
+              },
+            },
+            class: {
+              select: {
+                classPlan: {
+                  select: {
+                    title: true,
+                    consultantProfile: ownerProfileSelect,
+                    collaborators: collaboratorsSelect,
+                  },
+                },
+              },
+            },
+            trialSession: {
+              select: {
+                subscriptionPlan: {
+                  select: {
+                    title: true,
+                    consultantProfile: ownerProfileSelect,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    const appointment = anchor?.appointment;
+    if (!anchor || !appointment) return null;
+
+    const siblings = await prisma.slotOfAppointment.findMany({
+      where: { appointmentId: anchor.appointmentId, deletedAt: null },
+      orderBy: { startsAt: "asc" },
+      select: { ...anchorSlotSelect, user: { select: { id: true } } },
+    });
+    const run = findSessionRun(siblings, validatedSlotId);
+    if (!run) return null;
+
+    // Ownership stays defined by resolvePlanOwnerIds — the same predicate the
+    // reschedule and timings routes authorize with. It answers in consultant
+    // PROFILE ids, so pair each profile with its user before filtering.
+    const profileToUser = new Map<string, string>();
+    const remember = (profile?: { id: string; userId: string } | null) => {
+      if (profile) profileToUser.set(profile.id, profile.userId);
+    };
+    remember(appointment.consultation?.consultationPlan?.consultantProfile);
+    remember(appointment.subscription?.subscriptionPlan?.consultantProfile);
+    remember(appointment.webinar?.webinarPlan?.consultantProfile);
+    remember(appointment.class?.classPlan?.consultantProfile);
+    remember(appointment.trialSession?.subscriptionPlan?.consultantProfile);
+    for (const collaborator of [
+      ...(appointment.webinar?.webinarPlan?.collaborators ?? []),
+      ...(appointment.class?.classPlan?.collaborators ?? []),
+    ]) {
+      remember(collaborator.consultantProfile);
+    }
+
+    const hostUserIds = [
+      ...new Set(
+        resolvePlanOwnerIds(appointment)
+          .map((profileId) => profileToUser.get(profileId))
+          .filter((userId): userId is string => Boolean(userId)),
+      ),
+    ];
+
+    // Attendees are named only for the 1:1 types, where both sides are
+    // connected to the slot. A webinar or class can hold hundreds of them and
+    // Stream would reject the oversized request, which would turn a working
+    // join into a failure — so group events name their hosts and nobody else.
+    const isGroupEvent =
+      appointment.appointmentType === "WEBINAR" ||
+      appointment.appointmentType === "CLASS";
+    const hosts = new Set(hostUserIds);
+    const guestUserIds = isGroupEvent
+      ? []
+      : [
+          ...new Set(run.slots.flatMap((slot) => slot.user.map((u) => u.id))),
+        ].filter((userId) => !hosts.has(userId));
+
+    const offeringTitle =
+      appointment.consultation?.consultationPlan?.title ??
+      appointment.subscription?.subscriptionPlan?.title ??
+      appointment.webinar?.webinarPlan?.title ??
+      appointment.class?.classPlan?.title ??
+      appointment.trialSession?.subscriptionPlan?.title ??
+      null;
+
+    return {
+      startsAt: run.startsAt,
+      endsAt: run.endsAt,
+      durationMinutes: Math.round(
+        (run.endsAt.getTime() - run.startsAt.getTime()) / 60_000,
+      ),
+      offeringTitle,
+      members: [
+        ...hostUserIds.map((user_id) => ({ user_id, role: HOST_ROLE })),
+        ...guestUserIds.map((user_id) => ({ user_id, role: GUEST_ROLE })),
+      ],
+      hostUserIds,
+      guestUserIds,
+    };
+  } catch (error) {
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "stream" } },
+    );
+    streamLogger.error("Failed to resolve session call profile", error, {
       slotId: validatedSlotId,
     });
     return null;

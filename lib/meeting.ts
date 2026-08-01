@@ -3,6 +3,7 @@ import {
   createDbMeetingSession,
   findDbMeetingSessionBySlot,
   resolveSessionAnchorSlot,
+  resolveSessionCallProfile,
 } from "@/actions/stream/meetings/meeting.action";
 import type { Call } from "@stream-io/video-react-sdk";
 import { StreamVideoClient } from "@stream-io/video-react-sdk";
@@ -119,11 +120,22 @@ export const getOrCreateAppointmentMeeting = async (
       // is idempotent for the same call ID, preventing orphaned calls.
       streamCallId = `slot-${anchorSlot.id}`;
 
-      // 3. Create the Stream call
+      // 3. Create the Stream call.
+      // #1070 — a call created with nothing but an id is illegible in Stream's
+      // dashboard and in a recording listing, and leaves every surface to
+      // re-infer who is hosting. Resolve the session's real bounds, offering
+      // and participants once, server-side. Everything it feeds is additive
+      // and every field is individually optional, so a null profile creates
+      // exactly the call this code created before.
+      const callProfile = await resolveSessionCallProfile(anchorSlot.id);
+
       const call: Call = client.call("default", streamCallId);
-      const startsAt = anchorSlot.startsAt
-        ? new Date(anchorSlot.startsAt).toISOString()
-        : new Date().toISOString();
+      // The RUN's start, not the clicked row's: joining a 10:00–11:00 session
+      // from its 10:30 row must not tell Stream the meeting starts at 10:30.
+      const startsAt = (
+        callProfile?.startsAt ??
+        (anchorSlot.startsAt ? new Date(anchorSlot.startsAt) : new Date())
+      ).toISOString();
 
       // Determine title and description based on appointment type
       let title = `Meeting for Appointment ${appointment.id}`;
@@ -148,19 +160,41 @@ export const getOrCreateAppointmentMeeting = async (
           ? appointment.organizationId ?? null
           : organizationId;
 
+      // #org-appts — per-appointment identity for host/guest derivation. The
+      // caller's values win where present; otherwise the server-resolved ones
+      // fill them in, which is the first time most surfaces have carried them
+      // at all (no caller in the tree populates these today).
+      const consultantUserId =
+        appointment.consultantUserId ?? callProfile?.hostUserIds[0] ?? null;
+      const consulteeUserId =
+        appointment.consulteeUserId ?? callProfile?.guestUserIds[0] ?? null;
+
       const custom: Record<string, unknown> = {
         title: title,
         description: description,
         appointmentId: appointment.id,
         slotId: anchorSlot.id,
+        // Named explicitly so a Stream dashboard or recording entry says which
+        // row keys the room without anyone having to know `slotId` means the
+        // anchor (#1061).
+        anchorSlotId: anchorSlot.id,
         appointmentType: appointment.appointmentType,
         ...(resolvedOrgId ? { organizationId: resolvedOrgId } : {}),
-        // #org-appts — per-appointment identity for host/guest derivation.
-        ...(appointment.consultantUserId
-          ? { consultantUserId: appointment.consultantUserId }
-          : {}),
-        ...(appointment.consulteeUserId
-          ? { consulteeUserId: appointment.consulteeUserId }
+        ...(consultantUserId ? { consultantUserId } : {}),
+        ...(consulteeUserId ? { consulteeUserId } : {}),
+        // #1070 — the session's real shape. `CallRequest` in the installed
+        // SDK has no `ends_at`, so the end travels as call metadata; see the
+        // note on `settings_override` below for why the one field that could
+        // enforce it is not used.
+        ...(callProfile
+          ? {
+              sessionStartsAt: callProfile.startsAt.toISOString(),
+              sessionEndsAt: callProfile.endsAt.toISOString(),
+              sessionDurationMinutes: callProfile.durationMinutes,
+              ...(callProfile.offeringTitle
+                ? { offeringTitle: callProfile.offeringTitle }
+                : {}),
+            }
           : {}),
       };
 
@@ -168,6 +202,21 @@ export const getOrCreateAppointmentMeeting = async (
         data: {
           starts_at: startsAt,
           custom,
+          // Records who hosts, once, instead of every surface inferring it.
+          // Purely additive: the `default` call type does not restrict entry
+          // to members and no setting here enables that, so naming members
+          // cannot turn a working join into a refusal.
+          //
+          // Deliberately NOT sent (deferred to #1070): `backstage`,
+          // `join_ahead_time_seconds`, and `settings_override.limits
+          // .max_duration_seconds`. The first two let Stream refuse a join, so
+          // a consultant who never calls goLive() would strand a paying
+          // consultee on a backstage screen — invisible to us, unfixable
+          // without a deploy. The third hard-terminates a call that overruns.
+          // The join gate stays in our code, where we can see and fix it.
+          ...(callProfile && callProfile.members.length > 0
+            ? { members: callProfile.members }
+            : {}),
         },
       });
 
