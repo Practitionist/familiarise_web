@@ -51,6 +51,7 @@ jest.mock("../../lib/prisma", () => ({
 
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
+import { getMaintenanceState } from "@/lib/maintenance";
 import { getOrCreateAppointmentMeeting } from "@/lib/meeting";
 
 const db = prisma as unknown as {
@@ -59,6 +60,7 @@ const db = prisma as unknown as {
   meetingSession: { findUnique: jest.Mock; create: jest.Mock };
 };
 const mockedGetSession = getSession as unknown as jest.Mock;
+const mockedMaintenance = getMaintenanceState as unknown as jest.Mock;
 
 /** Who is calling the server actions. Defaults to the booking's consultee. */
 interface Caller {
@@ -610,5 +612,62 @@ describe("anchor resolution failure", () => {
     db.slotOfAppointment.findMany.mockRejectedValue(new Error("db down"));
 
     expect(await join(b)).toBe("slot-B");
+  });
+});
+
+/**
+ * #1077 — the maintenance gate lived at the top of `createDbMeetingSession`,
+ * which runs AFTER `call.getOrCreate`. A blocked join therefore left a live
+ * Stream call that no `MeetingSession` row points at, stamped with the bounds
+ * and members computed at the blocked moment and never corrected, because only
+ * the mint branch writes them.
+ *
+ * The assertion that matters is the negative one: the Stream stub must not
+ * have been invoked at all. A test that only checked the rejection would have
+ * passed before this fix.
+ */
+describe("a refused join creates nothing on Stream", () => {
+  afterEach(() => {
+    mockedMaintenance.mockResolvedValue({ phase: "OFF" });
+  });
+
+  it("does not mint a call when maintenance blocks it", async () => {
+    seed([slotRow("A", "10:00", "10:30")]);
+    mockedMaintenance.mockResolvedValue({ phase: "OFFLINE" });
+
+    await expect(join(rows[0])).rejects.toThrow(
+      "New calls cannot be created during maintenance.",
+    );
+
+    expect(streamCallsCreated).toEqual([]);
+    expect(callPayloads).toEqual([]);
+    expect(db.meetingSession.create).not.toHaveBeenCalled();
+  });
+
+  it("still lets both sides back into a room that already exists", async () => {
+    // Maintenance refuses NEW calls only. Hoisting the gate must not put it in
+    // front of the existence check, or it would cut off a session in progress.
+    seed([slotRow("A", "10:00", "10:30")]);
+    sessions.push({ id: "ms-0", streamCallId: "slot-A", slotId: "A" });
+    mockedMaintenance.mockResolvedValue({ phase: "OFFLINE" });
+
+    expect(await join(rows[0])).toBe("slot-A");
+    expect(streamCallsCreated).toEqual([]);
+  });
+
+  it("does not mint a call for a slot that is not one", async () => {
+    // The other precondition hoisted with the gate. Unresolvable id, so the
+    // anchor lookup falls back to this object and the shape check sees it.
+    seed([]);
+
+    await expect(
+      getOrCreateAppointmentMeeting(client, appointment, {
+        id: "ghost",
+        startsAt: "not a date",
+        endsAt: null,
+      }),
+    ).rejects.toThrow("Invalid slot for meeting session");
+
+    expect(streamCallsCreated).toEqual([]);
   });
 });

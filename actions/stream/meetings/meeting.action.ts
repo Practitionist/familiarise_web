@@ -453,6 +453,84 @@ export async function findDbMeetingSessionBySlot(
 class MeetingSessionRefusal extends Error {}
 
 /**
+ * Every precondition that can REFUSE a join, in one place so it can run
+ * before anything is minted (#1077).
+ *
+ * Both are decisions, not work: the maintenance read sits behind
+ * `withCircuitBreaker` and falls back to OFF rather than throwing, and the
+ * shape check is pure. So evaluating them twice — once hoisted, once as the
+ * gate below — costs a cache read and cannot change the answer.
+ *
+ * The organization lookup deliberately stays out. It cannot refuse a join on
+ * policy, only fail transiently, and hoisting it would either run the same
+ * query twice or send its result back through the client to be replayed.
+ *
+ * @returns The refusal message, or null when the join may proceed.
+ */
+async function refuseMeetingCreation(
+  slot: MeetingSlot,
+): Promise<string | null> {
+  const maintenanceState = await getMaintenanceState();
+  if (maintenanceState.phase !== "OFF") {
+    return "New calls cannot be created during maintenance.";
+  }
+
+  // safeParse, so a rejection names the field instead of arriving as a bare
+  // ZodError the caller has to guess at.
+  const parsedSlot = slotSchema.safeParse({
+    id: slot.id,
+    startsAt: slot.startsAt,
+    endsAt: slot.endsAt,
+    isTentative: slot.isTentative,
+    appointmentId: slot.appointmentId,
+  });
+  if (!parsedSlot.success) {
+    return `Invalid slot for meeting session: ${parsedSlot.error.issues
+      .map((issue) => `${issue.path.join(".") || "value"} ${issue.message}`)
+      .join("; ")}`;
+  }
+
+  return null;
+}
+
+/**
+ * The refusal check, hoisted for `getOrCreateAppointmentMeeting` to run BEFORE
+ * `call.getOrCreate` (#1077).
+ *
+ * Blocked after the mint, Stream keeps a call no `MeetingSession` row points
+ * at, stamped with whatever bounds and members were computed at the blocked
+ * moment — and nothing ever corrects them, because only the mint branch writes
+ * that data.
+ *
+ * Fails OPEN. An unexpected throw here must not turn a working join into a
+ * refusal: the authoritative gate is still `createDbMeetingSession`, which runs
+ * a moment later on the same request.
+ */
+export async function getMeetingCreationRefusal(
+  slot: MeetingSlot,
+): Promise<string | null> {
+  try {
+    const refusal = await refuseMeetingCreation(slot);
+    if (refusal) {
+      streamLogger.warn("Refused a meeting before creating the call", {
+        slotId: slot.id,
+        reason: refusal,
+      });
+    }
+    return refusal;
+  } catch (error) {
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "stream" } },
+    );
+    streamLogger.error("Failed to pre-check meeting creation", error, {
+      slotId: slot.id,
+    });
+    return null;
+  }
+}
+
+/**
  * Creates a new meeting session in the database.
  * @param slot The appointment slot for which to create the session.
  * @param streamCallId The Stream Call ID to associate with the new session.
@@ -471,29 +549,12 @@ export async function createDbMeetingSession(
   // reported and then not reproducible, which is exactly what an unguarded
   // transient DB call on the mint-only branch looks like.
   try {
-    const maintenanceState = await getMaintenanceState();
-    if (maintenanceState.phase !== "OFF") {
-      throw new MeetingSessionRefusal(
-        "New calls cannot be created during maintenance.",
-      );
-    }
+    // Also run ahead of the Stream call by the caller (#1077); kept here
+    // because this module is `"use server"` and any client can reach this
+    // function directly with arguments of its choosing.
+    const refusal = await refuseMeetingCreation(slot);
+    if (refusal) throw new MeetingSessionRefusal(refusal);
 
-    // safeParse, so a rejection names the field instead of arriving as a bare
-    // ZodError the caller has to guess at.
-    const parsedSlot = slotSchema.safeParse({
-      id: slot.id,
-      startsAt: slot.startsAt,
-      endsAt: slot.endsAt,
-      isTentative: slot.isTentative,
-      appointmentId: slot.appointmentId,
-    });
-    if (!parsedSlot.success) {
-      throw new MeetingSessionRefusal(
-        `Invalid slot for meeting session: ${parsedSlot.error.issues
-          .map((issue) => `${issue.path.join(".") || "value"} ${issue.message}`)
-          .join("; ")}`,
-      );
-    }
     const validatedStreamCallId = streamCallIdSchema.parse(streamCallId);
 
     streamLogger.debug("Creating meeting session", {

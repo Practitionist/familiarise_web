@@ -2,6 +2,7 @@ import * as Sentry from "@sentry/nextjs";
 import {
   createDbMeetingSession,
   findDbMeetingSessionBySlot,
+  getMeetingCreationRefusal,
   resolveSessionAnchorSlot,
   resolveSessionCallProfile,
 } from "@/actions/stream/meetings/meeting.action";
@@ -119,6 +120,14 @@ export const getOrCreateAppointmentMeeting = async (
       // concurrent callers produce the same Stream call. Stream's getOrCreate
       // is idempotent for the same call ID, preventing orphaned calls.
       streamCallId = `slot-${anchorSlot.id}`;
+
+      // #1077 — anything that can refuse this join runs BEFORE the mint.
+      // `createDbMeetingSession` used to be the first to see maintenance, by
+      // which point Stream already held a call our database would never write
+      // a row for, carrying the bounds and members computed at the blocked
+      // moment with nothing to ever correct them.
+      const refusal = await getMeetingCreationRefusal(anchorSlot);
+      if (refusal) throw new Error(refusal);
 
       // 3. Create the Stream call.
       // #1070 — a call created with nothing but an id is illegible in Stream's
