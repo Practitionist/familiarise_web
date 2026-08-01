@@ -33,7 +33,18 @@ const LIVE_SLOT_STATUSES = ["SCHEDULED", "RESCHEDULED"] as const;
 
 export type BookingRefundContext = {
   /** The single SUCCEEDED, non-zero payment funding this booking, if any. */
-  paidPayment: { id: string; amountPaise: number } | null;
+  paidPayment: {
+    id: string;
+    /** Gross captured — the base the policy percentage applies to. */
+    amountPaise: number;
+    /**
+     * Gross less anything already given back. Callers must clamp to this: a
+     * percentage of the gross overshoots on a payment with an earlier partial
+     * refund, and the refund operation rejects the whole request rather than
+     * paying the remainder.
+     */
+    refundablePaise: number;
+  } | null;
   /** Terms frozen at purchase; null falls back to the platform defaults. */
   policySnapshot: Prisma.JsonValue | null;
   /**
@@ -46,6 +57,13 @@ export type BookingRefundContext = {
   sessionsCompleted: number;
   /** Sessions still owed to the buyer. */
   sessionsRemaining: number;
+  /**
+   * Slots of ANY status on the booking. Zero means no session was ever
+   * scheduled, which is a different fact from "every session is terminal" —
+   * and the two must not be conflated, because only the former means the
+   * consultant never held time for this buyer.
+   */
+  slotsTotal: number;
 };
 
 /** Identifies a booking: the parent request/event, or a lone appointment. */
@@ -81,6 +99,9 @@ export async function resolveBookingRefundContext(
   payerUserId?: string,
 ): Promise<BookingRefundContext> {
   const rows = await prisma.appointment.findMany({
+    // Deterministic: the booking's oldest appointment is the one checkout
+    // created, so it is the row that carries the payment and the frozen terms.
+    orderBy: { createdAt: "asc" },
     where: { ...bookingAppointmentFilter(ref), deletedAt: null },
     select: {
       id: true,
@@ -92,7 +113,12 @@ export async function resolveBookingRefundContext(
           deletedAt: null,
           ...(payerUserId ? { userId: payerUserId } : {}),
         },
-        select: { id: true, amount: true },
+        select: {
+          id: true,
+          amount: true,
+          refunds: { select: { amountPaise: true, status: true } },
+          disputes: { select: { amountPaise: true, status: true } },
+        },
         orderBy: { createdAt: "asc" },
       },
       slotsOfAppointment: {
@@ -103,8 +129,24 @@ export async function resolveBookingRefundContext(
   });
 
   const payer = rows.find((r) => r.payment.length > 0);
-  const paidPayment = payer
-    ? { id: payer.payment[0].id, amountPaise: Number(payer.payment[0].amount) }
+  const payment = payer?.payment[0];
+  // Mirror the refund operation's own balance maths, or the caller computes an
+  // amount that operation will reject. A FAILED/CANCELLED refund moved no
+  // money; a lost chargeback did, via the bank rather than an app refund.
+  const alreadyReturned = payment
+    ? payment.refunds
+        .filter((r) => r.status === "SUCCEEDED" || r.status === "PENDING")
+        .reduce((a, r) => a + r.amountPaise, 0) +
+      payment.disputes
+        .filter((d) => d.status === "LOST" || d.status === "CHARGE_REFUNDED")
+        .reduce((a, d) => a + d.amountPaise, 0)
+    : 0;
+  const paidPayment = payment
+    ? {
+        id: payment.id,
+        amountPaise: Number(payment.amount),
+        refundablePaise: Math.max(0, Number(payment.amount) - alreadyReturned),
+      }
     : null;
 
   // The terms that bind are the ones frozen on the row the buyer actually paid
@@ -132,5 +174,6 @@ export async function resolveBookingRefundContext(
     sessionsCompleted: slots.filter((s) => s.completionStatus === "COMPLETED")
       .length,
     sessionsRemaining: liveStarts.length,
+    slotsTotal: slots.length,
   };
 }

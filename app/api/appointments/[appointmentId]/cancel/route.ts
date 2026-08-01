@@ -15,7 +15,7 @@ import {
 
 import { getSession } from "@/lib/auth-server";
 import { isPrivileged } from "@/lib/auth-helpers";
-import { reportSentryMessage } from "@/lib/observability/report";
+import { recordSystemError } from "@/lib/enterprise/system-events";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
 import { resolveBookingRefundContext } from "@/lib/booking/cancellation-scope";
 import {
@@ -230,6 +230,28 @@ export async function POST(
       );
     }
 
+    const isExclusiveType =
+      !!appointment.consultation || !!appointment.subscription;
+
+    // #1006 — resolve the refund facts BEFORE the transaction, alongside the
+    // rest of the pre-transaction fetch.
+    //
+    // This read MUST precede the cancel: the transaction below stamps every
+    // SCHEDULED/RESCHEDULED slot CANCELLED, and "which session is still owed"
+    // is derived from exactly those two statuses. Resolved afterwards, the
+    // booking always looks like it has no live session left, every
+    // consultee-initiated cancellation falls to the 0% tier, and the refund is
+    // silently skipped. It reads no transaction state, so hoisting it costs
+    // nothing; the alternative — teaching the resolver to treat slots
+    // cancelled by this very run as live — would couple it to one call site.
+    const bookingCtx = isExclusiveType
+      ? await resolveBookingRefundContext({
+          appointmentId,
+          consultationId: appointment.consultationId,
+          subscriptionId: appointment.subscriptionId,
+        })
+      : null;
+
     // Prepare cancellation data
     const cancellationData = {
       status: "CANCELLED" as const,
@@ -380,18 +402,7 @@ export async function POST(
       /** #1006 — set when the refund needs a human, not a formula. */
       requiresManualReview?: boolean;
     } | null = null;
-    const isExclusiveType =
-      !!appointment.consultation || !!appointment.subscription;
-    if (isExclusiveType) {
-      // #1006 — resolve the payment, the frozen terms and the next undelivered
-      // session across the WHOLE booking. Reading them off the appointment we
-      // were handed refunded nothing at all for subscriptions, whose money sits
-      // on a slot-less placeholder the dashboards never target.
-      const bookingCtx = await resolveBookingRefundContext({
-        appointmentId,
-        consultationId: appointment.consultationId,
-        subscriptionId: appointment.subscriptionId,
-      });
+    if (bookingCtx) {
       const paidPayment = bookingCtx.paidPayment;
       if (paidPayment) {
         const isConsultantInitiated =
@@ -399,13 +410,31 @@ export async function POST(
           session.user.consultantProfileId !== undefined &&
           session.user.id !== undefined &&
           consultantUserId === session.user.id;
+        // A booking with no session ever scheduled has INFINITE notice, not
+        // negative notice. Mapping "never allocated" onto the same -1 as
+        // "already started" made cancelling earlier score worse than
+        // cancelling later, which no tier table can mean.
+        //
+        // Keyed on slotsTotal, deliberately: "no slot has ever existed" is the
+        // claim. Deriving it from the absence of live and completed slots would
+        // also match a booking whose slots are all CANCELLED, and would quietly
+        // hand a full refund to any caller that resolved this context after the
+        // cancel transaction had already terminalised them.
+        const neverScheduled = bookingCtx.slotsTotal === 0;
         const refundPct = computeRefundPct(
           parsePolicySnapshot(bookingCtx.policySnapshot),
-          bookingCtx.hoursUntilNextSession ?? -1,
+          neverScheduled
+            ? Number.POSITIVE_INFINITY
+            : (bookingCtx.hoursUntilNextSession ?? -1),
           isConsultantInitiated,
         );
-        const refundAmount = Math.floor(
-          (paidPayment.amountPaise * refundPct) / 100,
+        // Tier the REMAINING refundable balance, not the gross. Against a
+        // payment with an earlier partial refund the gross overshoots, the
+        // operation throws AMOUNT_EXCEEDS_REFUNDABLE, and the catch below turns
+        // that into "refunded 0" — the buyer loses the remainder they were owed.
+        const refundAmount = Math.min(
+          Math.floor((paidPayment.amountPaise * refundPct) / 100),
+          paidPayment.refundablePaise,
         );
 
         // #1006 — a subscription that has already delivered sessions has no
@@ -416,22 +445,28 @@ export async function POST(
           !!appointment.subscription && bookingCtx.sessionsCompleted > 0;
 
         if (needsProrationRule) {
-          reportSentryMessage(
-            "Cancelled a partially-consumed subscription; refund needs the #1006 proration rule",
-            {
-              subsystem: "payments",
-              level: "warning",
-              tags: { feature: "cancellation-refund" },
-              extra: {
-                appointmentId,
-                subscriptionId: appointment.subscription?.id,
-                paymentId: paidPayment.id,
-                sessionsCompleted: bookingCtx.sessionsCompleted,
-                sessionsRemaining: bookingCtx.sessionsRemaining,
-                tierRefundPct: refundPct,
-              },
+          // Durable, not just a log line: this is money owed to a buyer whose
+          // sessions have already been cancelled, so it has to land somewhere an
+          // ops surface actually drains. recordSystemError is that surface.
+          await recordSystemError({
+            organizationId: appointment.organizationId ?? null,
+            category: "PAYMENT",
+            summary:
+              `Cancelled a partially-consumed subscription (${bookingCtx.sessionsCompleted} of ` +
+              `${bookingCtx.sessionsCompleted + bookingCtx.sessionsRemaining} sessions delivered); ` +
+              `refund needs the #1006 proration rule and is owed manually`,
+            err: new Error("SUBSCRIPTION_PRORATION_UNDEFINED"),
+            context: {
+              appointmentId,
+              subscriptionId: appointment.subscription?.id,
+              paymentId: paidPayment.id,
+              paidPaise: paidPayment.amountPaise,
+              refundablePaise: paidPayment.refundablePaise,
+              sessionsCompleted: bookingCtx.sessionsCompleted,
+              sessionsRemaining: bookingCtx.sessionsRemaining,
+              tierRefundPct: refundPct,
             },
-          );
+          }).catch(() => {});
           refund = {
             amountRefundedPaise: 0,
             refundPct,

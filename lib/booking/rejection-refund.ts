@@ -17,6 +17,14 @@
  * Deliberately never throws: the rejection has already committed by the time
  * this runs and a gateway failure must not roll it back. Failures surface in
  * Sentry and as `failed` on the result.
+ *
+ * At-most-once rests on the caller: the allowed-from guard on the REJECTED
+ * transition means a second reject answers 409 before reaching here. Note that
+ * the refund amount is *also* self-limiting today only because
+ * `consultantInitiatedPct` is 100 — a full reversal leaves no refundable
+ * balance, so a hypothetical second call would be rejected by the balance
+ * re-derivation. Drop that percentage below 100 and the transition guard
+ * becomes the only thing standing between a double reject and a double refund.
  */
 
 import * as Sentry from "@sentry/nextjs";
@@ -59,8 +67,12 @@ export async function refundRejectedRequest(args: {
       ctx.hoursUntilNextSession ?? -1,
       true,
     );
-    const amountPaise = Math.floor(
-      (ctx.paidPayment.amountPaise * refundPct) / 100,
+    // Clamp to what is actually still refundable. A percentage of the gross
+    // overshoots on a payment with an earlier partial refund, and the refund
+    // operation rejects the whole request rather than paying the remainder.
+    const amountPaise = Math.min(
+      Math.floor((ctx.paidPayment.amountPaise * refundPct) / 100),
+      ctx.paidPayment.refundablePaise,
     );
     if (amountPaise <= 0) return { refundPct, amountRefundedPaise: 0 };
 
@@ -71,7 +83,12 @@ export async function refundRejectedRequest(args: {
       initiatedByUserId: args.initiatedByUserId,
     });
 
-    void notifyRejectedRequestPayer(ctx.paidPayment.id, amountPaise);
+    // Only the gateway rail returns money the payer can see. On the internal
+    // rail the value went back to the org's wallet, accrual or licence — the
+    // requester never paid, so promising them a refund would be false.
+    if (result.rail === "GATEWAY") {
+      void notifyRejectedRequestPayer(ctx.paidPayment.id, amountPaise);
+    }
 
     return { refundPct, amountRefundedPaise: result.amountRefundedPaise };
   } catch (error) {

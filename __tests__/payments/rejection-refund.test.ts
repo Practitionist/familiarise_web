@@ -51,11 +51,12 @@ jest.mock("@sentry/nextjs", () => ({
 import { refundRejectedRequest } from "../../lib/booking/rejection-refund";
 
 const PAID = {
-  paidPayment: { id: "pay-1", amountPaise: 100_000 },
+  paidPayment: { id: "pay-1", amountPaise: 100_000, refundablePaise: 100_000 },
   policySnapshot: null,
   hoursUntilNextSession: null,
   sessionsCompleted: 0,
   sessionsRemaining: 0,
+  slotsTotal: 0,
 };
 
 beforeEach(() => {

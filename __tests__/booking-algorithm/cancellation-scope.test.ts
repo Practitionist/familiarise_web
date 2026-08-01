@@ -57,7 +57,7 @@ function subscriptionRows() {
     {
       id: PLACEHOLDER,
       cancellationPolicySnapshot: null,
-      payment: [{ id: "pay-1", amount: 100_000 }],
+      payment: [{ id: "pay-1", amount: 100_000, refunds: [], disputes: [] }],
       slotsOfAppointment: [],
     },
     {
@@ -121,7 +121,11 @@ describe("resolveBookingRefundContext", () => {
     });
 
     // This is the bug: the money lives on the placeholder the UI never targets.
-    expect(ctx.paidPayment).toEqual({ id: "pay-1", amountPaise: 100_000 });
+    expect(ctx.paidPayment).toEqual({
+      id: "pay-1",
+      amountPaise: 100_000,
+      refundablePaise: 100_000,
+    });
   });
 
   it("times the tier off the next UNDELIVERED session of the booking", async () => {
@@ -152,7 +156,7 @@ describe("resolveBookingRefundContext", () => {
       {
         id: SESSION_1,
         cancellationPolicySnapshot: null,
-        payment: [{ id: "pay-1", amount: 100_000 }],
+        payment: [{ id: "pay-1", amount: 100_000, refunds: [], disputes: [] }],
         slotsOfAppointment: [
           { startsAt: hoursFromNow(30), completionStatus: "RESCHEDULED" },
         ],
@@ -171,7 +175,7 @@ describe("resolveBookingRefundContext", () => {
       {
         id: PLACEHOLDER,
         cancellationPolicySnapshot: null,
-        payment: [{ id: "pay-1", amount: 100_000 }],
+        payment: [{ id: "pay-1", amount: 100_000, refunds: [], disputes: [] }],
         slotsOfAppointment: [],
       },
     ]);
@@ -196,7 +200,7 @@ describe("resolveBookingRefundContext", () => {
       {
         id: PLACEHOLDER,
         cancellationPolicySnapshot: paidTerms,
-        payment: [{ id: "pay-1", amount: 100_000 }],
+        payment: [{ id: "pay-1", amount: 100_000, refunds: [], disputes: [] }],
         slotsOfAppointment: [],
       },
     ]);
@@ -217,7 +221,7 @@ describe("resolveBookingRefundContext", () => {
       {
         id: PLACEHOLDER,
         cancellationPolicySnapshot: null,
-        payment: [{ id: "pay-1", amount: 100_000 }],
+        payment: [{ id: "pay-1", amount: 100_000, refunds: [], disputes: [] }],
         slotsOfAppointment: [],
       },
       {
@@ -256,7 +260,7 @@ describe("resolveBookingRefundContext", () => {
       {
         id: "appt-c1",
         cancellationPolicySnapshot: null,
-        payment: [{ id: "pay-c", amount: 250_000 }],
+        payment: [{ id: "pay-c", amount: 250_000, refunds: [], disputes: [] }],
         slotsOfAppointment: [
           { startsAt: hoursFromNow(5), completionStatus: "SCHEDULED" },
         ],
@@ -268,9 +272,100 @@ describe("resolveBookingRefundContext", () => {
       consultationId: "cons-1",
     });
 
-    expect(ctx.paidPayment).toEqual({ id: "pay-c", amountPaise: 250_000 });
+    expect(ctx.paidPayment).toEqual({
+      id: "pay-c",
+      amountPaise: 250_000,
+      refundablePaise: 250_000,
+    });
     expect(ctx.sessionsCompleted).toBe(0);
     expect(ctx.hoursUntilNextSession).toBeGreaterThan(4);
+  });
+
+  it("nets prior refunds and lost chargebacks out of the refundable balance", async () => {
+    mockAppointmentFindMany.mockResolvedValue([
+      {
+        id: PLACEHOLDER,
+        cancellationPolicySnapshot: null,
+        payment: [
+          {
+            id: "pay-1",
+            amount: 100_000,
+            refunds: [
+              { amountPaise: 20_000, status: "SUCCEEDED" },
+              { amountPaise: 5_000, status: "PENDING" },
+              // Moved no money, so it must not reduce the balance.
+              { amountPaise: 40_000, status: "FAILED" },
+            ],
+            disputes: [
+              { amountPaise: 10_000, status: "LOST" },
+              // Still contested — nothing has been pulled yet.
+              { amountPaise: 30_000, status: "UNDER_REVIEW" },
+            ],
+          },
+        ],
+        slotsOfAppointment: [],
+      },
+    ]);
+
+    const ctx = await resolveBookingRefundContext({ subscriptionId: "sub-1" });
+
+    // Callers tier the gross but must clamp to this, or the refund operation
+    // rejects the whole request instead of paying the remainder.
+    expect(ctx.paidPayment?.amountPaise).toBe(100_000);
+    expect(ctx.paidPayment?.refundablePaise).toBe(65_000);
+  });
+
+  it("never reports a negative refundable balance", async () => {
+    mockAppointmentFindMany.mockResolvedValue([
+      {
+        id: PLACEHOLDER,
+        cancellationPolicySnapshot: null,
+        payment: [
+          {
+            id: "pay-1",
+            amount: 100_000,
+            refunds: [{ amountPaise: 100_000, status: "SUCCEEDED" }],
+            disputes: [{ amountPaise: 100_000, status: "LOST" }],
+          },
+        ],
+        slotsOfAppointment: [],
+      },
+    ]);
+
+    const ctx = await resolveBookingRefundContext({ subscriptionId: "sub-1" });
+
+    expect(ctx.paidPayment?.refundablePaise).toBe(0);
+  });
+
+  it("distinguishes never-scheduled from all-slots-terminal", async () => {
+    // These two look identical through sessionsCompleted/sessionsRemaining —
+    // both zero — but only the first means the consultant never held time.
+    // Conflating them hands a full refund to anyone reading the booking after
+    // a cancel has already terminalised its slots.
+    mockAppointmentFindMany.mockResolvedValue([
+      {
+        id: PLACEHOLDER,
+        cancellationPolicySnapshot: null,
+        payment: [{ id: "pay-1", amount: 100_000, refunds: [], disputes: [] }],
+        slotsOfAppointment: [],
+      },
+    ]);
+    expect((await resolveBookingRefundContext({ subscriptionId: "s" })).slotsTotal).toBe(0);
+
+    mockAppointmentFindMany.mockResolvedValue([
+      {
+        id: PLACEHOLDER,
+        cancellationPolicySnapshot: null,
+        payment: [{ id: "pay-1", amount: 100_000, refunds: [], disputes: [] }],
+        slotsOfAppointment: [
+          { startsAt: hoursFromNow(48), completionStatus: "CANCELLED" },
+        ],
+      },
+    ]);
+    const cancelled = await resolveBookingRefundContext({ subscriptionId: "s" });
+    expect(cancelled.slotsTotal).toBe(1);
+    expect(cancelled.sessionsRemaining).toBe(0);
+    expect(cancelled.sessionsCompleted).toBe(0);
   });
 
   it("skips soft-deleted appointments", async () => {
