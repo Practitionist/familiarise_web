@@ -43,12 +43,20 @@ const sharedDefaults = {
 };
 
 /**
- * The date control writes a Date; the class endpoint takes an ISO string. A
- * cleared date must stay undefined rather than becoming an invalid one.
+ * The date control writes a Date; the class endpoint takes an ISO string.
+ * Three outcomes matter for PATCH:
+ *   - ISO string → set the date
+ *   - null → clear an existing date (JSON keeps the key)
+ *   - undefined → omit the field so the route leaves the column alone
+ * Returning undefined for a cleared field used to drop the key from
+ * JSON.stringify, so clearing the editor never reached the API.
  */
-const toIsoDate = (value: unknown): string | undefined => {
-  if (value instanceof Date) return value.toISOString();
+const toIsoDate = (value: unknown): string | null | undefined => {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value.toISOString();
+  }
   if (typeof value === "string" && value) return value;
+  if (value === null || value === "") return null;
   return undefined;
 };
 

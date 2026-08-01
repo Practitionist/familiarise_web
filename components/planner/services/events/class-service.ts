@@ -90,7 +90,7 @@ export class ClassService {
   static async saveClass(
     classData: Partial<ClassEvent>,
     consultantId: string,
-    startDate?: string,
+    startDate?: string | null,
   ): Promise<ClassEvent> {
     try {
       const title = classData.classPlan?.title;
@@ -183,7 +183,7 @@ export class ClassService {
     isUpdate: boolean,
     planId: string,
     classId: string,
-    startDate?: string,
+    startDate?: string | null,
   ): ClassRequestBody {
     const plan = classData.classPlan;
 

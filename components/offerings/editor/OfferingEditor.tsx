@@ -91,6 +91,7 @@ export function OfferingEditor<T extends FieldValues = FieldValues>({
 
   // Keep the section tab in sync with whichever block is in view — otherwise
   // a wheel-scroll leaves the highlight on the tab the user last clicked.
+  // Root is <main>: that is the dashboard scrollport (see PersonalDashboardShell).
   React.useEffect(() => {
     const nodes = manifest.sections
       .map((section) =>
@@ -99,6 +100,7 @@ export function OfferingEditor<T extends FieldValues = FieldValues>({
       .filter((node): node is HTMLElement => node !== null);
     if (nodes.length === 0) return;
 
+    const root = document.querySelector("main");
     const observer = new IntersectionObserver(
       (entries) => {
         // The topmost intersecting section wins; entries arrive unordered.
@@ -109,7 +111,7 @@ export function OfferingEditor<T extends FieldValues = FieldValues>({
         if (id) setActiveSection(id);
       },
       // Bias toward the band just under the sticky section nav.
-      { root: null, rootMargin: "-20% 0px -55% 0px", threshold: 0 },
+      { root, rootMargin: "-20% 0px -55% 0px", threshold: 0 },
     );
     for (const node of nodes) observer.observe(node);
     return () => observer.disconnect();
@@ -138,13 +140,11 @@ export function OfferingEditor<T extends FieldValues = FieldValues>({
         }}
       >
         {/*
-          Sticky chrome for the long form: title + section tabs stay under the
-          dashboard context bar while the sections scroll. top-0 is relative to
-          <main>, which is the only scroll container once the shell clips the
-          document (see PersonalDashboardShell). No negative margins — those
-          were widening the scrollport past the content column.
+          Second navbar (Basics / Pricing / …): sticky to the top of <main>
+          under the dashboard context bar. Solid background — translucent
+          backdrop-blur let section content bleed through while scrolling.
         */}
-        <div className="sticky top-0 z-20 mb-6 border-b bg-background/95 pb-3 pt-1 backdrop-blur">
+        <div className="sticky top-0 z-20 mb-6 border-b bg-background pb-3 pt-1">
           <div className="mb-3 flex flex-wrap items-center gap-3">
             <h1 className="text-2xl font-semibold capitalize">
               {planId ? "Edit" : "New"} {manifest.noun}

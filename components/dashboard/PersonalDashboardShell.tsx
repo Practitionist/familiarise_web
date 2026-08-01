@@ -92,9 +92,10 @@ export function PersonalDashboardShell({
   };
 
   return (
-    // overflow-hidden is load-bearing: without it, a tall sidebar or page
-    // grows the DOCUMENT and the window scrolls the whole shell — including
-    // the context bar that is supposed to stay put above <main>.
+    // Shell clips the document so a tall page cannot window-scroll the
+    // context bar away. The RIGHT PANEL deliberately does NOT set
+    // overflow-hidden: that creates a second scrollport and breaks
+    // `position: sticky` for page chrome inside <main> (Basics/Pricing tabs).
     <div className="flex h-screen-maintenance overflow-hidden bg-zinc-50 dark:bg-zinc-950">
       {/* Collapsible sidebar — hidden on mobile, visible on md+ */}
       <div className="hidden h-full shrink-0 md:block">
@@ -114,7 +115,7 @@ export function PersonalDashboardShell({
       </div>
 
       {/* Right panel: context bar + banner + page content */}
-      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <DashboardContextBar {...contextBar} />
 
         {banner}
