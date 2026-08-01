@@ -135,9 +135,14 @@ const PAGE_LABELS: Record<string, string> = {
   appointments: "Appointments",
   participants: "Participants",
   classes: "Class",
+  class: "Class",
   consultations: "Consultation",
+  consultation: "Consultation",
   subscriptions: "Subscription",
+  subscription: "Subscription",
   webinars: "Webinar",
+  webinar: "Webinar",
+  offerings: "Offerings",
   planner: "Event Planner",
   requests: "Requests",
   // Task routes hanging off a record id. Without these the trail ends on the
@@ -154,17 +159,26 @@ const PAGE_LABELS: Record<string, string> = {
   support: "Support requests",
   feedback: "Feedback",
   help: "Help",
+  edit: "Edit",
+  new: "New",
 };
 
 // Segments that group routes without owning a page of their own — a crumb that
-// links one makes Next prefetch a URL that 404s, filling the console with
-// `?_rsc=` failures. Verified against the route tree: `offerings` has only
-// `[type]/…` children and `participants` only `[eventType]/…`.
+// links the accumulated path makes Next prefetch a URL that 404s. Verified
+// against the route tree: `offerings` has only `[type]/…` children and
+// `participants` only `[eventType]/…`.
 //
-// The other reason a segment is not navigable — being the VALUE of a dynamic
-// param, as `subscription` is in `…/offerings/subscription/<id>/edit` — needs no
-// list, because useParams() already names every one of them.
+// Offerings is special-cased below: the crumb stays, but its href is rewritten
+// to the Event Planner, which is the actual listings surface for those rows.
 const PATHLESS_SEGMENTS = new Set(["offerings", "participants"]);
+
+/** Offering types that appear as `/offerings/[type]/…` URL segments. */
+const OFFERING_TYPE_SEGMENTS = new Set([
+  "consultation",
+  "subscription",
+  "webinar",
+  "class",
+]);
 
 // Opaque record ids (cuid / uuid) in nested routes carry no meaning as crumbs.
 const looksLikeRecordId = (segment: string) =>
@@ -179,11 +193,7 @@ interface PageProps {
 }
 
 // Error types and their configurations
-type ErrorType =
-  | "not-found"
-  | "session-expired"
-  | "network"
-  | "unknown";
+type ErrorType = "not-found" | "session-expired" | "network" | "unknown";
 
 function getErrorConfig(errorMessage: string): {
   type: ErrorType;
@@ -365,10 +375,7 @@ export default function ConsultantLayout(props: Readonly<PageProps>) {
   );
 }
 
-function ConsultantLayoutInner({
-  children,
-  params,
-}: Readonly<PageProps>) {
+function ConsultantLayoutInner({ children, params }: Readonly<PageProps>) {
   const resolvedParams = use(params);
   const consultantId = resolvedParams.consultantId;
   const basePath = `/dashboard/consultant/${consultantId}`;
@@ -531,10 +538,13 @@ function ConsultantLayoutInner({
   // href so users can click back (e.g. Appointments from a detail page),
   // but only when the accumulated path is a route the app can actually serve.
   const breadcrumbs = useMemo(() => {
-    const parts = pathname
-      .replace(basePath, "")
-      .split("/")
-      .filter(Boolean);
+    const parts = pathname.replace(basePath, "").split("/").filter(Boolean);
+    const onOfferings = parts[0] === "offerings";
+    // Offerings have no list route of their own — the Event Planner is where
+    // those rows live. Point both the "Offerings" crumb and the type crumb
+    // (consultation / subscription / …) there so the trail is clickable
+    // without prefetching a 404.
+    const offeringsListingHref = `${basePath}/planner`;
 
     const crumbs: { label: string; href?: string }[] = [];
     let acc = basePath;
@@ -550,6 +560,18 @@ function ConsultantLayoutInner({
         if (overrideLabel) crumbs.push({ label: overrideLabel, href: acc });
         continue;
       }
+
+      if (
+        seg === "offerings" ||
+        (onOfferings && OFFERING_TYPE_SEGMENTS.has(seg))
+      ) {
+        crumbs.push({
+          label: PAGE_LABELS[seg] ?? seg,
+          href: offeringsListingHref,
+        });
+        continue;
+      }
+
       const navigable = !PATHLESS_SEGMENTS.has(seg) && !paramValues.has(seg);
       crumbs.push({
         label: PAGE_LABELS[seg] ?? seg,

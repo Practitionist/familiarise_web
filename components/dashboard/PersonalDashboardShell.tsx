@@ -92,9 +92,12 @@ export function PersonalDashboardShell({
   };
 
   return (
-    <div className="flex h-screen-maintenance bg-zinc-50 dark:bg-zinc-950">
+    // overflow-hidden is load-bearing: without it, a tall sidebar or page
+    // grows the DOCUMENT and the window scrolls the whole shell — including
+    // the context bar that is supposed to stay put above <main>.
+    <div className="flex h-screen-maintenance overflow-hidden bg-zinc-50 dark:bg-zinc-950">
       {/* Collapsible sidebar — hidden on mobile, visible on md+ */}
-      <div className="hidden md:block shrink-0">
+      <div className="hidden h-full shrink-0 md:block">
         <CollapsibleSidebar
           groups={groups}
           basePath={basePath}
@@ -111,12 +114,12 @@ export function PersonalDashboardShell({
       </div>
 
       {/* Right panel: context bar + banner + page content */}
-      <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <DashboardContextBar {...contextBar} />
 
         {banner}
 
-        <main className="flex-1 overflow-y-auto pb-16 md:pb-0">
+        <main className="min-h-0 flex-1 overflow-y-auto pb-16 md:pb-0">
           <div className="p-4 sm:p-6 lg:p-8">
             <DashboardErrorBoundary>{children}</DashboardErrorBoundary>
           </div>
