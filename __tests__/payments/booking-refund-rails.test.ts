@@ -237,6 +237,15 @@ describe("refundBookingPayment", () => {
     });
 
     expect(order).toEqual(["succeeded", "credits"]);
+    // Positional signature: a swap of `requested` and `payment.amount` would
+    // under- or over-restore credits and the ordering assertion alone would
+    // still pass.
+    expect(mockReverseCredits).toHaveBeenCalledWith(
+      PAYMENT_ID,
+      expect.anything(),
+      100_000,
+      100_000,
+    );
   });
 
   it("defaults to the full remaining balance, net of prior refunds", async () => {

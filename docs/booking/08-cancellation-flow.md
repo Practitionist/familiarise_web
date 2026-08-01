@@ -555,10 +555,10 @@ erDiagram
     CONSULTATION_PLAN ||--|| CONSULTANT_PROFILE : "offered by"
 ```
 
-Notice what is gone:
+Notice what changes:
 
-- The `Appointment` record -- **deleted**
-- The `SlotOfAppointment` record -- **deleted**
+- The `Appointment` record -- **preserved**, so the payment and any refund keep a row to hang off
+- The `SlotOfAppointment` records -- **preserved** with `CANCELLED` completion status, which releases the time without erasing that it was held
 
 Notice what remains:
 
@@ -727,14 +727,14 @@ flowchart TD
     subgraph TRANSACTION["TRANSACTION"]
         direction TB
         T1["1. UPDATE Event Record\n   set status to CANCELLED\n   (+audit fields if applicable)"]
-        T2["2. DELETE all SlotOfAppointment\n   for this appointmentId"]
-        T3["3. DELETE Appointment record"]
+        T2["2. UPDATE all SlotOfAppointment\n   set completionStatus = CANCELLED"]
+        T3["3. CLOSE any open RescheduleRequest"]
         T1 --> T2 --> T3
     end
 
     subgraph AFTER["AFTER Cancellation"]
         direction TB
-        A2["Appointment\nDELETED"] --- B2["SlotOfAppointment\nDELETED"]
+        A2["Appointment\nPRESERVED"] --- B2["SlotOfAppointment\nstatus = CANCELLED"]
         C2["Event Record\nstatus = CANCELLED\n(preserved for audit)"]
         D2["Payment Records\nPRESERVED\n(+ Refund row when due)"]
     end
@@ -871,7 +871,7 @@ const userIds = [
 ].filter((id): id is string => !!id);
 ```
 
-For webinars and classes where consultant/consultee relationships are not directly stored on the event model, the `userIds` array may be empty, in which case no notification is sent.
+For webinars and classes the organiser is read off the plan and every paid attendee is gathered after the refund fan-out, so the `userIds` array carries the organiser plus the attendees. It was empty for group events before #1003, which is why cancelling a class used to tell nobody at all.
 
 **Notification payload**:
 
@@ -991,7 +991,7 @@ flowchart TD
 { "error": "Appointment not found" }
 ```
 
-**Developer notes**: This also catches the case where a user tries to cancel the same appointment twice. Since the first cancellation deletes the appointment record, the second attempt gets a 404.
+**Developer notes**: A second cancellation of the same appointment does not reach this branch. The appointment is preserved rather than deleted, so the row is still found and the compare-and-set guard on the status transition is what refuses the repeat, answering 409.
 
 #### 500 Failed to Cancel Appointment
 
