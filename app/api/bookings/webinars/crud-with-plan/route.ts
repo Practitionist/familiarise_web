@@ -35,18 +35,19 @@ import { isDeadSlot } from "@/lib/appointments/slots";
  * onto the cancelled time. Filter at the query (and again with `isDeadSlot`
  * when reading already-loaded arrays) so runStart/runEnd are always live.
  *
- * `OR: [null, notIn(...)]` is required because SQL `NOT IN` does not match NULL.
+ * `completionStatus` is `SlotCompletionStatus @default(SCHEDULED)` — never
+ * NULL — so a plain `notIn` is enough (SQL's NULL/`NOT IN` caveat does not
+ * apply). `satisfies` keeps the hoisted literal contextually typed as
+ * Prisma's nested-args shape; without it `notIn: string[]` widens and poisons
+ * the whole webinar include inference.
  */
 const LIVE_SLOTS_INCLUDE = {
   orderBy: { startsAt: "asc" as const },
   where: {
     deletedAt: null,
-    OR: [
-      { completionStatus: null },
-      { completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] } },
-    ],
+    completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
   },
-};
+} satisfies Prisma.Appointment$slotsOfAppointmentArgs;
 
 import { getSession } from "@/lib/auth-server";
 // Schema for POST request body based on WebinarPlanSchema

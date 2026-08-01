@@ -165,6 +165,19 @@ export async function replaceContiguousSlotRun(
 
   const shared = Math.min(live.length, atoms.length);
 
+  // `slot_no_confirmed_overlap` is NOT DEFERRABLE: each UPDATE is checked
+  // against sibling rows that still hold their old times. Shifting a 2h run
+  // forward by 1h makes atom 0 land on atom 2's old window → 23P01 against
+  // ourselves. Flip every live row tentative first (drops them out of the
+  // partial exclusion index), then write the new times and restore the real
+  // flag. Contiguous `[)` target atoms cannot collide with each other.
+  if (live.length > 0) {
+    await tx.slotOfAppointment.updateMany({
+      where: { id: { in: live.map((s) => s.id) } },
+      data: { isTentative: true },
+    });
+  }
+
   // In-place updates: Stream room keys and recordings stay keyed to these ids.
   for (let i = 0; i < shared; i++) {
     const atom = atoms[i];
@@ -199,6 +212,7 @@ export async function replaceContiguousSlotRun(
 
   // Duration shrunk: mark leftover live atoms RESCHEDULED rather than delete.
   // Hard-delete would cascade MeetingSession → Recording for those rows.
+  // They are already tentative from the pre-pass above.
   for (let i = shared; i < live.length; i++) {
     await tx.slotOfAppointment.update({
       where: { id: live[i].id },
@@ -209,24 +223,22 @@ export async function replaceContiguousSlotRun(
     });
   }
 
-  // SQL `NOT IN (...)` excludes NULL completionStatus, so we OR-null explicitly.
-  const createdLive = await tx.slotOfAppointment.findMany({
+  // completionStatus defaults to SCHEDULED and is never NULL — plain notIn.
+  const liveAfter = await tx.slotOfAppointment.findMany({
     where: {
       appointmentId: args.appointmentId,
       deletedAt: null,
-      OR: [
-        { completionStatus: null },
-        { completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] } },
-      ],
+      completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
     },
     orderBy: { startsAt: "asc" },
   });
   assertSingleContiguousLiveRun(
-    createdLive.map((s) => ({ ...s, appointmentId: args.appointmentId })),
+    liveAfter.map((s) => ({ ...s, appointmentId: args.appointmentId })),
   );
 
   return {
-    createdCount: createdLive.length,
+    /** Live atoms after the rewrite (not "how many were inserted"). */
+    createdCount: liveAfter.length,
     preservedUserIds: userIds,
   };
 }

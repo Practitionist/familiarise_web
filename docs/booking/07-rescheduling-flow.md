@@ -31,6 +31,8 @@ Rescheduling allows a consultee to request new time slots for an existing appoin
 
 **Stale-tab guard (#1012):** Re-allocation after a reschedule must send `expectedTentativeSlotCount` matching the live tentative set. A second tab that submits after the first finished receives 409 instead of delete+recreating confirmed slots.
 
+**Planner webinar time/duration edits (#1071):** Host edits go through `replaceContiguousSlotRun`, which reconciles the live N×30min atoms in place (tentative-flip first so `slot_no_confirmed_overlap` cannot self-collide, then update / create / soft-retire). This is distinct from consultee allocate-reschedule; class planner PATCH does not rewrite session slot runs when only `sessionDurationInHours` changes.
+
 **Code location:** `app/api/appointments/[appointmentId]/reschedule/route.ts`
 
 ---

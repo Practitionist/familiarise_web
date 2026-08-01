@@ -163,14 +163,14 @@ export async function DELETE(
     // mutation so "Leave event" cannot be used as a post-session cleanup that
     // looks like a successful leave. Organiser removals (moderation) skip this.
     if (isSelfLeave) {
+      // Single contiguous event: once the first live atom has started, leave
+      // is closed (unlike class, which keys on the last session — see class
+      // DELETE). completionStatus is never NULL (@default SCHEDULED).
       const earliestLive = await prisma.slotOfAppointment.findFirst({
         where: {
           appointment: { webinarId },
           deletedAt: null,
-          OR: [
-            { completionStatus: null },
-            { completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] } },
-          ],
+          completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
         },
         orderBy: { startsAt: "asc" },
         select: { startsAt: true },

@@ -303,9 +303,8 @@ describe("refundRemovedAttendeeSeat", () => {
   });
 
   it("self-leave after start refunds 0% under attendee notice tiers (#1005)", async () => {
-    mockSlotFindFirst.mockResolvedValue({
-      startsAt: new Date(Date.now() - 60 * 60 * 1000),
-    });
+    // No upcoming live slot (startsAt >= now) → hoursUntilStart stays -1 → 0%.
+    mockSlotFindFirst.mockResolvedValue(null);
 
     const result = await refundRemovedAttendeeSeat({
       kind: "webinar",
@@ -317,5 +316,33 @@ describe("refundRemovedAttendeeSeat", () => {
 
     expect(result).toEqual({ amountRefundedPaise: 0, refundPct: 0 });
     expect(mockRefundBookingPayment).not.toHaveBeenCalled();
+    expect(mockSlotFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          startsAt: expect.objectContaining({ gte: expect.any(Date) }),
+        }),
+      }),
+    );
+  });
+
+  it("mid-program class self-leave uses the next future session for notice", async () => {
+    const nextStart = new Date(Date.now() + 72 * 60 * 60 * 1000);
+    mockSlotFindFirst.mockResolvedValue({ startsAt: nextStart });
+
+    const result = await refundRemovedAttendeeSeat({
+      kind: "class",
+      eventId: "class-1",
+      attendeeUserId: ATTENDEE,
+      initiatedByUserId: ATTENDEE,
+      initiatedBy: "attendee",
+    });
+
+    // Default policy: ≥48h notice → full attendee tier (100% under platform defaults).
+    expect(result).toEqual({ amountRefundedPaise: 50_000, refundPct: 100 });
+    expect(mockRefundBookingPayment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reason: expect.stringContaining("by the attendee"),
+      }),
+    );
   });
 });

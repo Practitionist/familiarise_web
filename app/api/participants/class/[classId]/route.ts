@@ -163,24 +163,25 @@ export async function DELETE(
       return new NextResponse("Class not found", { status: 404 });
     }
 
-    // #1005 — same gate as webinar DELETE: self-leave is pre-start only.
+    // #1005 — class self-leave is allowed between sessions until the *last*
+    // live session has started. Webinar DELETE correctly keys on the earliest
+    // atom (one contiguous event); a months-long class keeps past sessions as
+    // COMPLETED/UNVERIFIED which are still "live" for run math, so an earliest
+    // gate permanently 400s after week 1 while the UI still offers Leave.
     // Organiser removals keep working mid/post session for moderation.
     if (isSelfLeave) {
-      const earliestLive = await prisma.slotOfAppointment.findFirst({
+      const lastLive = await prisma.slotOfAppointment.findFirst({
         where: {
           appointment: { classId },
           deletedAt: null,
-          OR: [
-            { completionStatus: null },
-            { completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] } },
-          ],
+          completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
         },
-        orderBy: { startsAt: "asc" },
+        orderBy: { startsAt: "desc" },
         select: { startsAt: true },
       });
-      if (earliestLive && earliestLive.startsAt.getTime() <= Date.now()) {
+      if (lastLive && lastLive.startsAt.getTime() <= Date.now()) {
         return NextResponse.json(
-          { error: "Cannot leave an event that has already started." },
+          { error: "Cannot leave a class after its last session has started." },
           { status: 400 },
         );
       }

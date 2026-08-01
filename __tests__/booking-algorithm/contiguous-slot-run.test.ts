@@ -159,10 +159,15 @@ describe("replaceContiguousSlotRun", () => {
   function stubTx(liveRows: Array<Record<string, unknown>>) {
     const updates: Array<{ id: string; data: Record<string, unknown> }> = [];
     const creates: Array<Record<string, unknown>> = [];
+    const updateManyCalls: Array<{
+      where: { id: { in: string[] } };
+      data: Record<string, unknown>;
+    }> = [];
     let findManyCalls = 0;
     return {
       updates,
       creates,
+      updateManyCalls,
       tx: {
         slotOfAppointment: {
           findMany: jest.fn(async () => {
@@ -180,7 +185,7 @@ describe("replaceContiguousSlotRun", () => {
               r.completionStatus !== "RESCHEDULED" &&
               !retired.has(r.id as string);
             const kept = liveRows.filter(isLive).map((r) => {
-              const upd = updates.find((u) => u.id === r.id);
+              const upd = [...updates].reverse().find((u) => u.id === r.id);
               return upd ? { ...r, ...upd.data } : r;
             });
             return [...kept, ...creates].sort(
@@ -189,6 +194,21 @@ describe("replaceContiguousSlotRun", () => {
                 new Date(b.startsAt as Date).getTime(),
             );
           }),
+          updateMany: jest.fn(
+            async ({
+              where,
+              data,
+            }: {
+              where: { id: { in: string[] } };
+              data: Record<string, unknown>;
+            }) => {
+              updateManyCalls.push({ where, data });
+              for (const id of where.id.in) {
+                updates.push({ id, data });
+              }
+              return { count: where.id.in.length };
+            },
+          ),
           update: jest.fn(
             async ({
               where,
@@ -284,5 +304,45 @@ describe("replaceContiguousSlotRun", () => {
     expect(creates).toHaveLength(1);
     expect(result.preservedUserIds.sort()).toEqual(["buyer", "host"]);
     expect(result.createdCount).toBe(2);
+  });
+
+  it("tentative-flips the whole live run before an overlapping forward shift", async () => {
+    // 2h @ 10:00 → 11:00: without the pre-pass, updating s0 to [11:00,11:30)
+    // collides with s2 still holding that window under slot_no_confirmed_overlap.
+    const liveRows = [0, 1, 2, 3].map((i) => ({
+      id: `s${i}`,
+      startsAt: new Date(`2026-08-10T${10 + Math.floor(i / 2)}:${i % 2 === 0 ? "00" : "30"}:00.000Z`),
+      endsAt: new Date(
+        `2026-08-10T${10 + Math.floor((i + 1) / 2)}:${(i + 1) % 2 === 0 ? "00" : "30"}:00.000Z`,
+      ),
+      completionStatus: "SCHEDULED",
+      deletedAt: null,
+      user: [],
+    }));
+    const { tx, updateManyCalls, updates } = stubTx(liveRows);
+
+    await replaceContiguousSlotRun(tx as never, {
+      appointmentId: "a1",
+      startsAt: new Date("2026-08-10T11:00:00.000Z"),
+      durationInHours: 2,
+      consultantProfileId: "cp_1",
+      isTentative: false,
+    });
+
+    expect(updateManyCalls).toHaveLength(1);
+    expect(updateManyCalls[0].data).toEqual({ isTentative: true });
+    expect(updateManyCalls[0].where.id.in.sort()).toEqual([
+      "s0",
+      "s1",
+      "s2",
+      "s3",
+    ]);
+    // Per-row restores must follow the tentative pre-pass (first 4 updates
+    // are the updateMany fan-out in the stub).
+    const restoreIdx = updates.findIndex(
+      (u) => u.id === "s0" && u.data.startsAt instanceof Date,
+    );
+    expect(restoreIdx).toBeGreaterThanOrEqual(4);
+    expect(updates[restoreIdx].data.isTentative).toBe(false);
   });
 });

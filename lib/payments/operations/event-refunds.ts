@@ -199,7 +199,9 @@ export async function refundWholeEventPayments(
  *
  * Default remains `"organiser"` so existing roster/moderation callers keep the
  * full-refund behaviour without an explicit flag. Self-leave must pass
- * `"attendee"` and we resolve `hoursUntilStart` from the earliest live slot.
+ * `"attendee"` and we resolve `hoursUntilStart` from the next future live slot
+ * (`startsAt >= now`) so a mid-program class leave uses the upcoming session,
+ * not a past COMPLETED/UNVERIFIED row that would force 0%.
  *
  * Never throws: the roster change has already committed.
  */
@@ -254,21 +256,23 @@ export async function refundRemovedAttendeeSeat(args: {
     // have 400'd before we got here for self-leave).
     let hoursUntilStart = -1;
     if (!isOrganiserInitiated) {
+      const now = new Date();
       const nextLive = await prisma.slotOfAppointment.findFirst({
         where: {
           appointment: eventFilter,
           deletedAt: null,
-          OR: [
-            { completionStatus: null },
-            { completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] } },
-          ],
+          completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
+          // Next upcoming session — not the earliest historical live row.
+          // Past class sessions stay SCHEDULED/COMPLETED/UNVERIFIED and would
+          // otherwise pin hoursUntilStart negative → permanent 0% refund.
+          startsAt: { gte: now },
         },
         orderBy: { startsAt: "asc" },
         select: { startsAt: true },
       });
       if (nextLive) {
         hoursUntilStart =
-          (nextLive.startsAt.getTime() - Date.now()) / (1000 * 60 * 60);
+          (nextLive.startsAt.getTime() - now.getTime()) / (1000 * 60 * 60);
       }
     }
 
