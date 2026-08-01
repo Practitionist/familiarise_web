@@ -11,8 +11,7 @@
  * stayed payable and no ledger entry was written.
  *
  * `refundWholeEventPayments` already splits the two rails for class/webinar
- * seats. 1:1 bookings had no equivalent; this is that split, and it is the
- * front door every 1:1 cancellation/rejection refund should use.
+ * seats. 1:1 bookings had no equivalent; this is that split.
  *
  *   - GATEWAY / MOCK — real card money, must credit the card, so it keeps
  *     going through `refundPayment` (which owns the two-phase gateway
@@ -20,6 +19,13 @@
  *   - INTERNAL org-funded — no card was ever charged; the money lives in the
  *     wallet / invoice accrual / license ledger, so it reverses purely
  *     in-ledger through the reversal engine's BOOKING source.
+ *
+ * NOT yet a universal front door. A booking whose price was fully covered by
+ * referral credits carries a `free_` intent and `Payment.amount === 0`, so it
+ * has no refundable balance and never arrives here — its credits go
+ * unrestored and its BookingUtilization unreversed when it is cancelled.
+ * Callers filter those out upstream on `amount > 0`. That third rail is an
+ * open question on the cancellation audit, not something to guess at here.
  */
 
 import { Prisma, PaymentStatus, RefundStatus } from "@prisma/client";

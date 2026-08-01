@@ -18,6 +18,13 @@
  *  - every org_ intent reverses in-ledger through the reversal engine instead
  *  - the in-ledger path mints its own Refund row and settles it SUCCEEDED
  *  - it refuses to oversubscribe an already-refunded payment
+ *
+ * SCOPE: this suite stubs `applyReversal`, so it proves ROUTING and nothing
+ * about the reversal itself — not its postings, not its balance, not its
+ * idempotency. Stubbing the engine here is deliberate (the routing decision is
+ * what this module owns), but it does mean a cascade that reverses earnings
+ * without posting a journal would sail through untouched. That class of bug is
+ * covered by `license-refund-ledger.test.ts`, which runs the real cascade.
  */
 
 const mockRefundPayment = jest.fn();
@@ -114,11 +121,18 @@ describe("isInternalFundedIntent", () => {
   it.each(["pay_ABC", "order_ABC", "pi_ABC", "cs_ABC", "rzp_mock_1", "free_1"])(
     "treats %s as gateway-bound",
     (intent) => {
-      // `free_` is a zero-amount payment, which never reaches a refund at all —
-      // but it must not be mistaken for org funding either.
       expect(isInternalFundedIntent(intent)).toBe(false);
     },
   );
+
+  it("does not classify a fully-credit-funded booking as org-funded", () => {
+    // `free_` is a THIRD rail this module does not yet serve: those payments
+    // are zero-amount, so callers filter them out on `amount > 0` and their
+    // credits and program utilization are never reversed on cancellation. That
+    // is an open gap, not a solved case — asserted here only so the rail
+    // predicate does not silently absorb it into the org branch.
+    expect(isInternalFundedIntent("free_1730000000_abc")).toBe(false);
+  });
 });
 
 describe("refundBookingPayment", () => {
