@@ -1,0 +1,176 @@
+/**
+ * @jest-environment node
+ */
+
+/**
+ * Rejecting a paid request has to give the money back (#1004).
+ *
+ * Direct checkout captures BEFORE the request row exists — `createConsultation`
+ * / `createSubscription` land it `PENDING` with a `SUCCEEDED` payment already
+ * attached. `REJECTED` is legally reachable from `PENDING`, so a consultant
+ * declining a direct-checkout booking left the buyer paid-up with nothing, and
+ * with no way out: `REJECTED` is not in `CANCELLABLE_FROM`, so the cancel route
+ * 409s and the money simply stayed captured.
+ *
+ * Pinned here:
+ *  - a paid rejected request refunds at the consultant-initiated percentage
+ *  - the whole booking's payment is found, not just one appointment's
+ *  - an unpaid request mints no refund at all
+ *  - the refund never throws — the rejection has already committed
+ */
+
+const mockResolveContext = jest.fn();
+const mockRefundBookingPayment = jest.fn();
+const mockNotifyRefundProcessed = jest.fn();
+const mockPaymentFindUnique = jest.fn();
+const mockCaptureException = jest.fn();
+
+jest.mock("../../lib/booking/cancellation-scope", () => ({
+  resolveBookingRefundContext: (...a: unknown[]) => mockResolveContext(...a),
+}));
+
+jest.mock("../../lib/payments/operations/booking-refund", () => ({
+  refundBookingPayment: (...a: unknown[]) => mockRefundBookingPayment(...a),
+}));
+
+jest.mock("../../lib/novu", () => ({
+  notifyRefundProcessed: (...a: unknown[]) => mockNotifyRefundProcessed(...a),
+}));
+
+jest.mock("../../lib/prisma", () => ({
+  __esModule: true,
+  default: {
+    payment: { findUnique: (...a: unknown[]) => mockPaymentFindUnique(...a) },
+  },
+}));
+
+jest.mock("@sentry/nextjs", () => ({
+  captureException: (...a: unknown[]) => mockCaptureException(...a),
+}));
+
+import { refundRejectedRequest } from "../../lib/booking/rejection-refund";
+
+const PAID = {
+  paidPayment: { id: "pay-1", amountPaise: 100_000 },
+  policySnapshot: null,
+  hoursUntilNextSession: null,
+  sessionsCompleted: 0,
+  sessionsRemaining: 0,
+};
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  mockResolveContext.mockResolvedValue(PAID);
+  mockRefundBookingPayment.mockResolvedValue({
+    refundId: "r1",
+    amountRefundedPaise: 100_000,
+    rail: "GATEWAY",
+  });
+  mockPaymentFindUnique.mockResolvedValue({
+    userId: "user-1",
+    currency: "INR",
+    organizationId: null,
+  });
+  mockNotifyRefundProcessed.mockResolvedValue(undefined);
+});
+
+describe("refundRejectedRequest", () => {
+  it("refunds a rejected consultation in full", async () => {
+    const result = await refundRejectedRequest({
+      kind: "consultation",
+      requestId: "cons-1",
+      initiatedByUserId: "consultant-1",
+    });
+
+    // Platform default consultantInitiatedPct — the buyer did nothing wrong.
+    expect(result).toEqual({ refundPct: 100, amountRefundedPaise: 100_000 });
+    expect(mockRefundBookingPayment).toHaveBeenCalledWith(
+      expect.objectContaining({ paymentId: "pay-1", amountPaise: 100_000 }),
+    );
+  });
+
+  it("looks the payment up by the whole booking, not one appointment", async () => {
+    await refundRejectedRequest({
+      kind: "subscription",
+      requestId: "sub-1",
+      initiatedByUserId: "consultant-1",
+    });
+
+    expect(mockResolveContext).toHaveBeenCalledWith({ subscriptionId: "sub-1" });
+  });
+
+  it("mints nothing for a request that was never paid", async () => {
+    mockResolveContext.mockResolvedValue({ ...PAID, paidPayment: null });
+
+    const result = await refundRejectedRequest({
+      kind: "consultation",
+      requestId: "cons-1",
+      initiatedByUserId: "consultant-1",
+    });
+
+    expect(result).toBeNull();
+    expect(mockRefundBookingPayment).not.toHaveBeenCalled();
+  });
+
+  it("ignores the clock — a rejection is never time-tiered", async () => {
+    // The session is an hour out, where a consultee cancelling gets nothing.
+    mockResolveContext.mockResolvedValue({
+      ...PAID,
+      hoursUntilNextSession: 1,
+    });
+
+    const result = await refundRejectedRequest({
+      kind: "consultation",
+      requestId: "cons-1",
+      initiatedByUserId: "consultant-1",
+    });
+
+    expect(result?.refundPct).toBe(100);
+  });
+
+  it("tells the buyer their money is coming back", async () => {
+    await refundRejectedRequest({
+      kind: "consultation",
+      requestId: "cons-1",
+      initiatedByUserId: "consultant-1",
+    });
+    await Promise.resolve();
+
+    expect(mockNotifyRefundProcessed).toHaveBeenCalledWith(
+      "user-1",
+      expect.objectContaining({ amount: 100_000, currency: "INR" }),
+    );
+  });
+
+  it("leaves the rejection standing when the refund fails", async () => {
+    mockRefundBookingPayment.mockRejectedValue(new Error("gateway down"));
+
+    // Must not throw — the request is already REJECTED by the time this runs.
+    const result = await refundRejectedRequest({
+      kind: "consultation",
+      requestId: "cons-1",
+      initiatedByUserId: "consultant-1",
+    });
+
+    expect(result).toEqual({
+      refundPct: 0,
+      amountRefundedPaise: 0,
+      failed: true,
+    });
+    // A silently swallowed refund failure is how money goes missing unnoticed.
+    expect(mockCaptureException).toHaveBeenCalled();
+  });
+
+  it("does not fail a settled refund when the notification breaks", async () => {
+    mockNotifyRefundProcessed.mockRejectedValue(new Error("novu down"));
+
+    const result = await refundRejectedRequest({
+      kind: "consultation",
+      requestId: "cons-1",
+      initiatedByUserId: "consultant-1",
+    });
+
+    expect(result?.amountRefundedPaise).toBe(100_000);
+    expect(result?.failed).toBeUndefined();
+  });
+});
