@@ -19,6 +19,10 @@ import { PaymentStatus, SlotCompletionStatus } from "@prisma/client";
 
 import prisma from "@/lib/prisma";
 import {
+  REFUNDABLE_BALANCE_SELECT,
+  refundableBalancePaise,
+} from "@/lib/payments/refundable-balance";
+import {
   computeRefundPct,
   parsePolicySnapshot,
 } from "@/lib/payments/operations/cancellation-policy";
@@ -95,7 +99,7 @@ export async function refundCancelledTrial(args: {
           ? { appointmentId }
           : { id: "__none__" }),
     },
-    select: { id: true, amount: true },
+    select: { id: true, amount: true, ...REFUNDABLE_BALANCE_SELECT },
   });
 
   if (!payment) return null;
@@ -124,7 +128,14 @@ export async function refundCancelledTrial(args: {
     hoursUntilStart,
     args.isConsultantInitiated,
   );
-  const amountPaise = Math.floor((Number(payment.amount) * refundPct) / 100);
+  // Clamp to the remaining balance, as the cancel and seat-refund paths do. A
+  // percentage of the gross overshoots a payment that has already given some
+  // back, `refundPayment` rejects the whole request, and the catch below turns
+  // that into "refunded 0" — the buyer loses the remainder they were owed.
+  const amountPaise = Math.min(
+    Math.floor((Number(payment.amount) * refundPct) / 100),
+    refundableBalancePaise(Number(payment.amount), payment),
+  );
 
   if (amountPaise <= 0) return { refundPct, amountRefundedPaise: 0 };
 

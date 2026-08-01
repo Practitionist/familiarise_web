@@ -4,6 +4,7 @@ import type { Tx } from "@/lib/prisma";
 import { Prisma, type PaymentGateway } from "@prisma/client";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
+import { reverseBookingUtilization } from "@/lib/api/organizations/program-helpers";
 import {
   transitionConsultationRequest,
   transitionSubscriptionRequest,
@@ -163,6 +164,17 @@ export async function cancelPendingCheckout(args: {
         // Referral credits consumed at checkout go back to the user —
         // same step the abandoned-payments cron performs.
         await reverseCreditsForPayment(payment.id, tx);
+
+        // #1003 — and so does the org's program engagement. Checkout debits
+        // BookingUtilization inside the booking transaction, BEFORE capture, so
+        // abandoning an org-funded checkout burned a seat against a contracted
+        // cap permanently. Idempotent (it derives what is left to reverse from
+        // the immutable usage ledger) and a no-op for personal bookings, which
+        // have no utilization row.
+        await reverseBookingUtilization(tx, {
+          paymentId: payment.id,
+          reason: CANCEL_NOTE,
+        });
 
         let slotsReleased = 0;
         const appt = payment.appointment;
