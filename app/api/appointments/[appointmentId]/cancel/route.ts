@@ -15,7 +15,9 @@ import {
 
 import { getSession } from "@/lib/auth-server";
 import { isPrivileged } from "@/lib/auth-helpers";
-import { refundPayment } from "@/lib/payments/operations/refund";
+import { reportSentryMessage } from "@/lib/observability/report";
+import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
+import { resolveBookingRefundContext } from "@/lib/booking/cancellation-scope";
 import {
   refundWholeEventPayments,
   type WholeEventRefundSummary,
@@ -97,24 +99,33 @@ export async function POST(
         },
         webinar: {
           include: {
-            webinarPlan: true,
+            webinarPlan: {
+              include: {
+                consultantProfile: {
+                  include: { user: { select: { id: true, name: true } } },
+                },
+              },
+            },
           },
         },
         class: {
           include: {
-            classPlan: true,
+            classPlan: {
+              include: {
+                consultantProfile: {
+                  include: { user: { select: { id: true, name: true } } },
+                },
+              },
+            },
           },
         },
-        // Earliest slot decides the refund tier — without orderBy the DB
-        // returns an arbitrary slot (review catch on #844).
+        // Notification copy only. The refund tier reads the whole booking's
+        // next undelivered session instead (#1006, cancellation-scope.ts) —
+        // this row's earliest slot is the wrong answer for a subscription.
         slotsOfAppointment: {
           take: 1,
           orderBy: { startsAt: "asc" },
           select: { startsAt: true },
-        },
-        // B1 — refund terms frozen at booking + the payment to refund.
-        payment: {
-          select: { id: true, amount: true, paymentStatus: true },
         },
       },
     });
@@ -195,6 +206,15 @@ export async function POST(
       consulteeName =
         appointment.subscription.requestedBy?.user?.name || undefined;
       planTitle = appointment.subscription.subscriptionPlan?.title;
+    } else if (appointment.webinar || appointment.class) {
+      // #1003 — group events had no recipients assembled at all, so cancelling
+      // one told nobody. The organiser is the consultant on the plan; the
+      // attendees are gathered after the refund fan-out below.
+      const plan =
+        appointment.webinar?.webinarPlan ?? appointment.class?.classPlan;
+      consultantUserId = plan?.consultantProfile?.user?.id;
+      consultantName = plan?.consultantProfile?.user?.name || undefined;
+      planTitle = plan?.title;
     }
 
     // #1008 — refuse to cancel while a dispute is live on this appointment: the
@@ -348,65 +368,104 @@ export async function POST(
       },
     );
 
-    // B1 — policy-driven refund, AFTER the cancel tx commits (refundPayment
-    // runs its own Serializable tx; the CAS above guarantees this block runs
-    // at most once per appointment — a second cancel 409s before reaching it).
+    // B1 — policy-driven refund, AFTER the cancel tx commits (the refund runs
+    // its own Serializable tx; the CAS above guarantees this block runs at most
+    // once per appointment — a second cancel 409s before reaching it).
     // Scope here: consultation/subscription (single-payment, policy-tiered).
     // Whole-event class/webinar refunds are handled just below via the
     // reversal engine (#776 §C).
-    let refund: { amountRefundedPaise: number; refundPct: number } | null =
-      null;
+    let refund: {
+      amountRefundedPaise: number;
+      refundPct: number;
+      /** #1006 — set when the refund needs a human, not a formula. */
+      requiresManualReview?: boolean;
+    } | null = null;
     const isExclusiveType =
       !!appointment.consultation || !!appointment.subscription;
-    const paidPayment = appointment.payment?.find(
-      (p) => p.paymentStatus === "SUCCEEDED" && p.amount > 0,
-    );
-    if (isExclusiveType && paidPayment) {
-      const startsAt = appointment.slotsOfAppointment?.[0]?.startsAt;
-      const hoursUntilStart = startsAt
-        ? (startsAt.getTime() - Date.now()) / 3_600_000
-        : -1;
-      const isConsultantInitiated =
-        session.user.consultantProfileId !== null &&
-        session.user.consultantProfileId !== undefined &&
-        session.user.id !== undefined &&
-        consultantUserId === session.user.id;
-      const refundPct = computeRefundPct(
-        parsePolicySnapshot(appointment.cancellationPolicySnapshot),
-        hoursUntilStart,
-        isConsultantInitiated,
-      );
-      const refundAmount = Math.floor(
-        (Number(paidPayment.amount) * refundPct) / 100,
-      );
-      if (refundAmount > 0) {
-        try {
-          const r = await refundPayment({
-            paymentId: paidPayment.id,
-            amountPaise: refundAmount,
-            reason: `cancellation (${refundPct}% per booking-time policy, ${
-              isConsultantInitiated ? "consultant" : "consultee"
-            }-initiated)`,
-            initiatedByUserId: session.user.id,
-          });
-          refund = { amountRefundedPaise: r.amountRefundedPaise, refundPct };
-        } catch (refundErr) {
-          // The cancellation itself stands; a failed refund must be visible,
-          // not silently swallowed — surface for ops + tell the caller.
-          Sentry.captureException(
-            refundErr instanceof Error
-              ? refundErr
-              : new Error(String(refundErr)),
-            { tags: { subsystem: "appointments" } },
+    if (isExclusiveType) {
+      // #1006 — resolve the payment, the frozen terms and the next undelivered
+      // session across the WHOLE booking. Reading them off the appointment we
+      // were handed refunded nothing at all for subscriptions, whose money sits
+      // on a slot-less placeholder the dashboards never target.
+      const bookingCtx = await resolveBookingRefundContext({
+        appointmentId,
+        consultationId: appointment.consultationId,
+        subscriptionId: appointment.subscriptionId,
+      });
+      const paidPayment = bookingCtx.paidPayment;
+      if (paidPayment) {
+        const isConsultantInitiated =
+          session.user.consultantProfileId !== null &&
+          session.user.consultantProfileId !== undefined &&
+          session.user.id !== undefined &&
+          consultantUserId === session.user.id;
+        const refundPct = computeRefundPct(
+          parsePolicySnapshot(bookingCtx.policySnapshot),
+          bookingCtx.hoursUntilNextSession ?? -1,
+          isConsultantInitiated,
+        );
+        const refundAmount = Math.floor(
+          (paidPayment.amountPaise * refundPct) / 100,
+        );
+
+        // #1006 — a subscription that has already delivered sessions has no
+        // agreed proration rule, and the tier alone would hand back the full
+        // plan price for sessions the consultant has already held. The
+        // cancellation stands; the refund is escalated rather than guessed.
+        const needsProrationRule =
+          !!appointment.subscription && bookingCtx.sessionsCompleted > 0;
+
+        if (needsProrationRule) {
+          reportSentryMessage(
+            "Cancelled a partially-consumed subscription; refund needs the #1006 proration rule",
+            {
+              subsystem: "payments",
+              level: "warning",
+              tags: { feature: "cancellation-refund" },
+              extra: {
+                appointmentId,
+                subscriptionId: appointment.subscription?.id,
+                paymentId: paidPayment.id,
+                sessionsCompleted: bookingCtx.sessionsCompleted,
+                sessionsRemaining: bookingCtx.sessionsRemaining,
+                tierRefundPct: refundPct,
+              },
+            },
           );
-          console.error(
-            `[cancel] refund failed for payment ${paidPayment.id}:`,
-            refundErr,
-          );
+          refund = {
+            amountRefundedPaise: 0,
+            refundPct,
+            requiresManualReview: true,
+          };
+        } else if (refundAmount > 0) {
+          try {
+            const r = await refundBookingPayment({
+              paymentId: paidPayment.id,
+              amountPaise: refundAmount,
+              reason: `cancellation (${refundPct}% per booking-time policy, ${
+                isConsultantInitiated ? "consultant" : "consultee"
+              }-initiated)`,
+              initiatedByUserId: session.user.id,
+            });
+            refund = { amountRefundedPaise: r.amountRefundedPaise, refundPct };
+          } catch (refundErr) {
+            // The cancellation itself stands; a failed refund must be visible,
+            // not silently swallowed — surface for ops + tell the caller.
+            Sentry.captureException(
+              refundErr instanceof Error
+                ? refundErr
+                : new Error(String(refundErr)),
+              { tags: { subsystem: "appointments" } },
+            );
+            console.error(
+              `[cancel] refund failed for payment ${paidPayment.id}:`,
+              refundErr,
+            );
+            refund = { amountRefundedPaise: 0, refundPct };
+          }
+        } else {
           refund = { amountRefundedPaise: 0, refundPct };
         }
-      } else {
-        refund = { amountRefundedPaise: 0, refundPct };
       }
     }
 
@@ -439,11 +498,38 @@ export async function POST(
       cancelledBy: session.user.id,
     };
 
+    // #1003 — every paid attendee of a cancelled group event has to hear about
+    // it too. They have no 1:1 counterpart on the booking, so they are read off
+    // the payments, exactly as the moderation bulk-cancel does.
+    let attendeeUserIds: string[] = [];
+    if (appointment.class || appointment.webinar) {
+      const eventFilter = appointment.class
+        ? { classId: appointment.class.id }
+        : { webinarId: appointment.webinar!.id };
+      const attendeePayments = await prisma.payment.findMany({
+        where: {
+          appointment: eventFilter,
+          paymentStatus: "SUCCEEDED",
+          amount: { gt: 0 },
+          deletedAt: null,
+        },
+        select: { userId: true },
+      });
+      attendeeUserIds = Array.from(
+        new Set(attendeePayments.map((p) => p.userId)),
+      );
+    }
+
     // Fire-and-forget: notify both parties about cancellation
-    const userIds = [
-      notificationMeta.consultantUserId,
-      notificationMeta.consulteeUserId,
-    ].filter((id): id is string => !!id);
+    const userIds = Array.from(
+      new Set(
+        [
+          notificationMeta.consultantUserId,
+          notificationMeta.consulteeUserId,
+          ...attendeeUserIds,
+        ].filter((id): id is string => !!id),
+      ),
+    );
     if (userIds.length > 0) {
       void notifyAppointmentCancelled(userIds, {
         ...notificationScope(appointment.organizationId),

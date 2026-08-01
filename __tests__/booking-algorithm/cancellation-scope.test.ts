@@ -1,0 +1,287 @@
+/**
+ * @jest-environment node
+ */
+
+/**
+ * Cancellation is a whole-booking act; a booking is not one Appointment row.
+ *
+ * A subscription is a slot-less placeholder created at checkout — the row that
+ * carries the Payment — plus one further Appointment per allocated session,
+ * none of which carry money. The dashboards always target a SESSION row, so
+ * reading the payment off "the appointment we were handed" found nothing and
+ * cancelling a paid subscription refunded NOTHING while still cancelling every
+ * slot and the subscription itself.
+ *
+ * The refund tier had the matching defect: it read the earliest slot of that
+ * one appointment, COMPLETED sessions included, so the tier depended on which
+ * session you cancelled from and a live plan whose first session had already
+ * been held always scored 0%.
+ *
+ * Pinned here:
+ *  - the payment is found from ANY appointment of the booking
+ *  - the tier reads the earliest UNDELIVERED session of the whole booking
+ *  - already-delivered sessions are counted, so the caller can refuse to guess
+ *    a proration rule (#1006)
+ *  - a consultation still resolves exactly as it always did
+ */
+
+const mockAppointmentFindMany = jest.fn();
+
+jest.mock("../../lib/prisma", () => ({
+  __esModule: true,
+  default: {
+    appointment: { findMany: (...a: unknown[]) => mockAppointmentFindMany(...a) },
+  },
+}));
+
+import {
+  bookingAppointmentFilter,
+  resolveBookingRefundContext,
+} from "../../lib/booking/cancellation-scope";
+
+const HOUR = 3_600_000;
+const PLACEHOLDER = "appt-placeholder";
+const SESSION_1 = "appt-s1";
+const SESSION_2 = "appt-s2";
+
+function hoursFromNow(h: number) {
+  return new Date(Date.now() + h * HOUR);
+}
+
+/**
+ * A subscription mid-plan: session 1 delivered, sessions 2 and 3 still owed,
+ * and the money sitting on the slot-less placeholder.
+ */
+function subscriptionRows() {
+  return [
+    {
+      id: PLACEHOLDER,
+      cancellationPolicySnapshot: null,
+      payment: [{ id: "pay-1", amount: 100_000 }],
+      slotsOfAppointment: [],
+    },
+    {
+      id: SESSION_1,
+      cancellationPolicySnapshot: { version: 1, tiers: [] },
+      payment: [],
+      slotsOfAppointment: [
+        { startsAt: hoursFromNow(-48), completionStatus: "COMPLETED" },
+      ],
+    },
+    {
+      id: SESSION_2,
+      cancellationPolicySnapshot: { version: 1, tiers: [] },
+      payment: [],
+      slotsOfAppointment: [
+        { startsAt: hoursFromNow(72), completionStatus: "SCHEDULED" },
+        { startsAt: hoursFromNow(96), completionStatus: "SCHEDULED" },
+      ],
+    },
+  ];
+}
+
+beforeEach(() => {
+  jest.clearAllMocks();
+});
+
+describe("bookingAppointmentFilter", () => {
+  it("selects the whole subscription, not the one appointment handed in", () => {
+    expect(
+      bookingAppointmentFilter({ appointmentId: SESSION_2, subscriptionId: "sub-1" }),
+    ).toEqual({ subscriptionId: "sub-1" });
+  });
+
+  it("selects every session of a class", () => {
+    expect(bookingAppointmentFilter({ classId: "class-1" })).toEqual({
+      classId: "class-1",
+    });
+  });
+
+  it("falls back to the lone appointment for trials and unlinked rows", () => {
+    expect(bookingAppointmentFilter({ appointmentId: "appt-trial" })).toEqual({
+      id: "appt-trial",
+    });
+  });
+
+  it("refuses to select everything when nothing identifies the booking", () => {
+    // An empty filter would have matched every appointment in the table.
+    expect(() => bookingAppointmentFilter({})).toThrow(
+      /no booking identifier/,
+    );
+  });
+});
+
+describe("resolveBookingRefundContext", () => {
+  it("finds the subscription's payment even when handed a session row", async () => {
+    mockAppointmentFindMany.mockResolvedValue(subscriptionRows());
+
+    const ctx = await resolveBookingRefundContext({
+      appointmentId: SESSION_2,
+      subscriptionId: "sub-1",
+    });
+
+    // This is the bug: the money lives on the placeholder the UI never targets.
+    expect(ctx.paidPayment).toEqual({ id: "pay-1", amountPaise: 100_000 });
+  });
+
+  it("times the tier off the next UNDELIVERED session of the booking", async () => {
+    mockAppointmentFindMany.mockResolvedValue(subscriptionRows());
+
+    const ctx = await resolveBookingRefundContext({
+      subscriptionId: "sub-1",
+    });
+
+    // Session 1 is 48h in the past. Reading the earliest slot outright gave a
+    // negative value and therefore a 0% tier on a plan with sessions still owed.
+    expect(ctx.hoursUntilNextSession).toBeGreaterThan(71);
+    expect(ctx.hoursUntilNextSession).toBeLessThan(73);
+  });
+
+  it("counts what has been delivered and what is still owed", async () => {
+    mockAppointmentFindMany.mockResolvedValue(subscriptionRows());
+
+    const ctx = await resolveBookingRefundContext({ subscriptionId: "sub-1" });
+
+    // The caller refuses to auto-refund a partly-consumed plan on this (#1006).
+    expect(ctx.sessionsCompleted).toBe(1);
+    expect(ctx.sessionsRemaining).toBe(2);
+  });
+
+  it("treats a RESCHEDULED slot as still owed, not as delivered", async () => {
+    mockAppointmentFindMany.mockResolvedValue([
+      {
+        id: SESSION_1,
+        cancellationPolicySnapshot: null,
+        payment: [{ id: "pay-1", amount: 100_000 }],
+        slotsOfAppointment: [
+          { startsAt: hoursFromNow(30), completionStatus: "RESCHEDULED" },
+        ],
+      },
+    ]);
+
+    const ctx = await resolveBookingRefundContext({ subscriptionId: "sub-1" });
+
+    expect(ctx.sessionsRemaining).toBe(1);
+    expect(ctx.sessionsCompleted).toBe(0);
+    expect(ctx.hoursUntilNextSession).toBeGreaterThan(29);
+  });
+
+  it("reports no live session for a paid but unallocated subscription", async () => {
+    mockAppointmentFindMany.mockResolvedValue([
+      {
+        id: PLACEHOLDER,
+        cancellationPolicySnapshot: null,
+        payment: [{ id: "pay-1", amount: 100_000 }],
+        slotsOfAppointment: [],
+      },
+    ]);
+
+    const ctx = await resolveBookingRefundContext({ subscriptionId: "sub-1" });
+
+    // null, not a negative number: "never scheduled" and "already started" are
+    // different facts and only the caller can decide what each is worth.
+    expect(ctx.hoursUntilNextSession).toBeNull();
+    expect(ctx.paidPayment).not.toBeNull();
+  });
+
+  it("takes the terms frozen on the row the buyer actually paid for", async () => {
+    const paidTerms = { version: 1, tiers: [{ hoursBefore: 48, refundPct: 90 }] };
+    mockAppointmentFindMany.mockResolvedValue([
+      {
+        id: SESSION_1,
+        cancellationPolicySnapshot: { version: 1, tiers: [] },
+        payment: [],
+        slotsOfAppointment: [],
+      },
+      {
+        id: PLACEHOLDER,
+        cancellationPolicySnapshot: paidTerms,
+        payment: [{ id: "pay-1", amount: 100_000 }],
+        slotsOfAppointment: [],
+      },
+    ]);
+
+    const ctx = await resolveBookingRefundContext({ subscriptionId: "sub-1" });
+
+    expect(ctx.policySnapshot).toEqual(paidTerms);
+  });
+
+  it("falls back to a session's snapshot when the paid row carries none", async () => {
+    // The subscription placeholder predates the snapshot write, so without this
+    // fallback every subscription silently dropped to the platform defaults.
+    const sessionTerms = {
+      version: 1,
+      tiers: [{ hoursBefore: 12, refundPct: 25 }],
+    };
+    mockAppointmentFindMany.mockResolvedValue([
+      {
+        id: PLACEHOLDER,
+        cancellationPolicySnapshot: null,
+        payment: [{ id: "pay-1", amount: 100_000 }],
+        slotsOfAppointment: [],
+      },
+      {
+        id: SESSION_1,
+        cancellationPolicySnapshot: sessionTerms,
+        payment: [],
+        slotsOfAppointment: [],
+      },
+    ]);
+
+    const ctx = await resolveBookingRefundContext({ subscriptionId: "sub-1" });
+
+    expect(ctx.policySnapshot).toEqual(sessionTerms);
+  });
+
+  it("scopes the payment lookup to one buyer for group events", async () => {
+    mockAppointmentFindMany.mockResolvedValue([]);
+
+    await resolveBookingRefundContext({ classId: "class-1" }, "user-7");
+
+    // Every attendee's Payment hangs off the same appointment, so an unscoped
+    // lookup would refund whoever the DB returned first.
+    expect(mockAppointmentFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({
+          payment: expect.objectContaining({
+            where: expect.objectContaining({ userId: "user-7" }),
+          }),
+        }),
+      }),
+    );
+  });
+
+  it("resolves a consultation exactly as before — one row, one payment", async () => {
+    mockAppointmentFindMany.mockResolvedValue([
+      {
+        id: "appt-c1",
+        cancellationPolicySnapshot: null,
+        payment: [{ id: "pay-c", amount: 250_000 }],
+        slotsOfAppointment: [
+          { startsAt: hoursFromNow(5), completionStatus: "SCHEDULED" },
+        ],
+      },
+    ]);
+
+    const ctx = await resolveBookingRefundContext({
+      appointmentId: "appt-c1",
+      consultationId: "cons-1",
+    });
+
+    expect(ctx.paidPayment).toEqual({ id: "pay-c", amountPaise: 250_000 });
+    expect(ctx.sessionsCompleted).toBe(0);
+    expect(ctx.hoursUntilNextSession).toBeGreaterThan(4);
+  });
+
+  it("skips soft-deleted appointments", async () => {
+    mockAppointmentFindMany.mockResolvedValue([]);
+
+    await resolveBookingRefundContext({ subscriptionId: "sub-1" });
+
+    expect(mockAppointmentFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { subscriptionId: "sub-1", deletedAt: null },
+      }),
+    );
+  });
+});
