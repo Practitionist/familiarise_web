@@ -34,6 +34,12 @@ jest.mock("../../lib/stream-logger", () => ({
 jest.mock("../../lib/maintenance", () => ({
   getMaintenanceState: jest.fn().mockResolvedValue({ phase: "OFF" }),
 }));
+jest.mock("../../lib/auth-server", () => ({
+  getSession: jest.fn(),
+}));
+jest.mock("../../lib/auth-helpers", () => ({
+  isPrivileged: (role?: string | null) => role === "ADMIN" || role === "STAFF",
+}));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
@@ -44,6 +50,7 @@ jest.mock("../../lib/prisma", () => ({
 }));
 
 import prisma from "@/lib/prisma";
+import { getSession } from "@/lib/auth-server";
 import { getOrCreateAppointmentMeeting } from "@/lib/meeting";
 
 const db = prisma as unknown as {
@@ -51,6 +58,30 @@ const db = prisma as unknown as {
   appointment: { findUnique: jest.Mock };
   meetingSession: { findUnique: jest.Mock; create: jest.Mock };
 };
+const mockedGetSession = getSession as unknown as jest.Mock;
+
+/** Who is calling the server actions. Defaults to the booking's consultee. */
+interface Caller {
+  id: string;
+  consultantProfileId?: string | null;
+  role?: string;
+  banned?: boolean;
+}
+
+function signIn(caller: Caller | null) {
+  mockedGetSession.mockResolvedValue(
+    caller
+      ? {
+          user: {
+            id: caller.id,
+            consultantProfileId: caller.consultantProfileId ?? null,
+            role: caller.role ?? "USER",
+            banned: caller.banned ?? false,
+          },
+        }
+      : null,
+  );
+}
 
 const at = (hhmm: string) => new Date(`2026-08-01T${hhmm}:00.000Z`);
 
@@ -122,19 +153,37 @@ let callPayloads: CallData[] = [];
 function seed(
   slotRows: SlotRow[],
   appointment: Record<string, unknown> | null = consultationAppointment,
+  caller: Caller | null = { id: "user-consultee" },
 ) {
   rows = slotRows;
   appointmentRow = appointment;
   sessions = [];
   streamCallsCreated = [];
   callPayloads = [];
+  signIn(caller);
 
-  // Both the anchor walk and the call profile read a single row; the profile
-  // additionally pulls the appointment's plan graph off it.
+  // Both resolvers read a single row through the authorization gate, which
+  // pulls the appointment's plan graph and — filtered to the caller — the
+  // slot rows they are connected to. An empty `slotsOfAppointment` is how the
+  // real query says "this caller does not participate".
   db.slotOfAppointment.findUnique.mockImplementation(
     async ({ where }: { where: { id: string } }) => {
       const row = rows.find((r) => r.id === where.id);
-      return row ? { ...row, appointment: appointmentRow } : null;
+      if (!row) return null;
+      const participates = rows.some(
+        (r) =>
+          r.appointmentId === row.appointmentId &&
+          r.user.some((u) => u.id === caller?.id),
+      );
+      return {
+        ...row,
+        appointment: appointmentRow
+          ? {
+              ...appointmentRow,
+              slotsOfAppointment: participates ? [{ id: row.id }] : [],
+            }
+          : null,
+      };
     },
   );
   db.slotOfAppointment.findMany.mockImplementation(
@@ -351,6 +400,7 @@ describe("the call describes the session it belongs to", () => {
         slotRow("B", "10:30", "11:00", { user: [{ id: "user-attendee" }] }),
       ],
       webinarAppointment,
+      { id: "user-attendee" },
     );
 
     await join(rows[1]);
@@ -372,25 +422,147 @@ describe("the call describes the session it belongs to", () => {
 
     // Approach C in #1070 is deferred: backstage and join_ahead_time_seconds
     // let Stream REFUSE a join, which we cannot see or fix without a deploy.
+    // Both are call SETTINGS, so they are pinned on the settings surface —
+    // asserting them inside `custom` would pass for any implementation,
+    // because nothing could ever put them there.
     expect(callPayloads[0].data?.backstage).toBeUndefined();
     expect(callPayloads[0].data?.settings_override).toBeUndefined();
-    expect(custom().join_ahead_time_seconds).toBeUndefined();
+    // The strongest form of the same pin: adding either field, at any nesting,
+    // changes this key set and fails here.
+    expect(Object.keys(callPayloads[0].data ?? {}).sort()).toEqual([
+      "custom",
+      "members",
+      "starts_at",
+    ]);
   });
 
-  it("still creates the call when the profile cannot be resolved", async () => {
+  it("still creates the call when only the profile fails", async () => {
+    const [a, b] = [
+      slotRow("A", "10:00", "10:30"),
+      slotRow("B", "10:30", "11:00"),
+    ];
+    seed([a, b]);
+    // The anchor resolves; the profile's sibling read then falls over.
+    const working = db.slotOfAppointment.findMany.getMockImplementation()!;
+    db.slotOfAppointment.findMany
+      .mockImplementationOnce(working)
+      .mockImplementationOnce(async () => {
+        throw new Error("db down");
+      });
+
+    // Everything the profile feeds is optional, so a null profile must still
+    // produce the anchored call this code produced before #1070.
+    expect(await join(b)).toBe("slot-A");
+    expect(callPayloads[0].data?.members).toBeUndefined();
+    expect(custom().sessionEndsAt).toBeUndefined();
+    expect(custom().anchorSlotId).toBe("A");
+    expect(callPayloads[0].data?.starts_at).toBe(at("10:00").toISOString());
+  });
+
+  it("still creates a call when nothing about the slot resolves", async () => {
     const [a, b] = [
       slotRow("A", "10:00", "10:30"),
       slotRow("B", "10:30", "11:00"),
     ];
     seed([a, b], null);
 
-    // Everything the profile feeds is optional, so a null profile must produce
-    // exactly the call this code produced before #1070.
-    expect(await join(b)).toBe("slot-A");
+    // No appointment means neither resolver can authorize the caller, so both
+    // degrade together — to the pre-#1061 room, but never to a refused join.
+    expect(await join(b)).toBe("slot-B");
     expect(callPayloads[0].data?.members).toBeUndefined();
-    expect(custom().sessionEndsAt).toBeUndefined();
-    expect(custom().anchorSlotId).toBe("A");
-    expect(callPayloads[0].data?.starts_at).toBe(at("10:00").toISOString());
+    expect(custom().anchorSlotId).toBe("B");
+  });
+});
+
+/**
+ * Both resolvers are exported from a `"use server"` module, so they are
+ * callable directly by any signed-in client with any slot id. Validating the
+ * shape of that id is not authorization: the profile hands back the offering
+ * title and the user ids and names on both sides.
+ */
+describe("only people involved in the booking may resolve it", () => {
+  const twoRows = () => [
+    slotRow("A", "10:00", "10:30"),
+    slotRow("B", "10:30", "11:00"),
+  ];
+
+  it("tells a stranger nothing about someone else's session", async () => {
+    seed(twoRows(), consultationAppointment, { id: "user-stranger" });
+
+    // The join is not refused — entry must never regress on an authorization
+    // miss — but it degrades to the unanchored room and an undescribed call.
+    expect(await join(rows[1])).toBe("slot-B");
+    expect(callPayloads[0].data?.members).toBeUndefined();
+    const custom = callPayloads[0].data?.custom ?? {};
+    expect(custom.offeringTitle).toBeUndefined();
+    expect(custom.consultantUserId).toBeUndefined();
+    expect(custom.consulteeUserId).toBeUndefined();
+    expect(custom.sessionEndsAt).toBeUndefined();
+  });
+
+  it("gives a participating consultee the anchor and the profile", async () => {
+    seed(twoRows(), consultationAppointment, { id: "user-consultee" });
+
+    expect(await join(rows[1])).toBe("slot-A");
+    expect(callPayloads[0].data?.members).toEqual([
+      { user_id: "user-consultant", role: "host" },
+      { user_id: "user-consultee", role: "user" },
+    ]);
+  });
+
+  it("gives the owning consultant the same, via plan ownership", async () => {
+    // Not connected to any slot row, so participation cannot be what lets
+    // this caller through — `resolvePlanOwnerIds` is.
+    seed(
+      [
+        slotRow("A", "10:00", "10:30", { user: [{ id: "user-consultee" }] }),
+        slotRow("B", "10:30", "11:00", { user: [{ id: "user-consultee" }] }),
+      ],
+      consultationAppointment,
+      { id: "user-consultant", consultantProfileId: "cp-1" },
+    );
+
+    expect(await join(rows[1])).toBe("slot-A");
+    expect(callPayloads[0].data?.custom?.offeringTitle).toBe(
+      "Career strategy deep dive",
+    );
+  });
+
+  it("does not let an unrelated consultant in on their profile id", async () => {
+    seed(twoRows(), consultationAppointment, {
+      id: "user-other-consultant",
+      consultantProfileId: "cp-999",
+    });
+
+    expect(await join(rows[1])).toBe("slot-B");
+    expect(callPayloads[0].data?.members).toBeUndefined();
+  });
+
+  it("admits an ACCEPTED collaborator on a webinar", async () => {
+    seed(
+      [
+        slotRow("A", "10:00", "10:30", { user: [{ id: "user-attendee" }] }),
+        slotRow("B", "10:30", "11:00", { user: [{ id: "user-attendee" }] }),
+      ],
+      webinarAppointment,
+      { id: "user-collab", consultantProfileId: "cp-collab" },
+    );
+
+    expect(await join(rows[1])).toBe("slot-A");
+    expect(callPayloads[0].data?.custom?.offeringTitle).toBe(
+      "Scaling past Series A",
+    );
+  });
+
+  it("refuses a signed-out or banned caller", async () => {
+    seed(twoRows(), consultationAppointment, null);
+    expect(await join(rows[1])).toBe("slot-B");
+
+    seed(twoRows(), consultationAppointment, {
+      id: "user-consultee",
+      banned: true,
+    });
+    expect(await join(rows[1])).toBe("slot-B");
   });
 });
 

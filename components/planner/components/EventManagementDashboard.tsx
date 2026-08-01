@@ -14,6 +14,7 @@ import type { MeetingAppointment, MeetingSlot } from "@/lib/meeting";
 import {
   getCurrentOrNextSession,
   getJoinableSession,
+  getSessionJoinState,
 } from "@/lib/appointments/slots";
 import {
   PlannerWebinarEvent,
@@ -89,12 +90,21 @@ export function EventManagementDashboard({
   const router = useRouter();
   const [joiningEventId, setJoiningEventId] = useState<string | null>(null);
 
+  // The join window closes with the clock, not with a re-render. Without a
+  // tick the memo below keeps whatever answer it computed when the planner
+  // mounted, so Join stays lit after a session ends (#1061). Thirty seconds is
+  // fine for a window measured in minutes.
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 30_000);
+    return () => clearInterval(timer);
+  }, []);
+
   // Compute which webinar/class events are currently joinable (within 10 min
   // before start to end). #1061 — measured over the run of slot rows the
   // session is stored as; the old `slotsOfAppointment[0]` read closed the
   // window 30 minutes into anything longer than half an hour.
   const joinableEventIds = useMemo(() => {
-    const now = new Date();
     const ids = new Set<string>();
 
     for (const webinar of webinars) {
@@ -117,7 +127,7 @@ export function EventManagementDashboard({
     }
 
     return ids;
-  }, [webinars, classes]);
+  }, [webinars, classes, now]);
 
   // Handle joining a meeting from the planner. Reads the connected video
   // client singleton at click time (HomeTab idiom, #248) so the Stream SDK
@@ -138,14 +148,32 @@ export function EventManagementDashboard({
     // Both fallbacks are run-derived: `slotsOfAppointment` arrives unsorted,
     // so `[0]` could hand an arbitrary row's startsAt to the Stream call.
     const slots = webinar.appointment?.slotsOfAppointment ?? [];
-    const slot = (
+    const run =
       getJoinableSession(slots, { joinWindowMs: PLANNER_JOIN_WINDOW_MS }) ??
-      getCurrentOrNextSession(slots)
-    )?.anchor;
-    if (!slot || !webinar.appointment) {
+      getCurrentOrNextSession(slots);
+    const slot = run?.anchor;
+    if (!run || !slot || !webinar.appointment) {
       toast({
         title: "Error",
         description: "Meeting slot information is not available.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // `getJoinableSession` returns null for three different reasons —
+    // countdown, disabled and ended — and the fallback fires for all of them.
+    // Only `ended` must actually refuse: opening a room for a session the host
+    // has already closed, or whose time has passed, walks straight through the
+    // guard this change exists to build. Countdown still gets in, because
+    // hosts have always been able to open the room a little early.
+    if (
+      getSessionJoinState(run, { joinWindowMs: PLANNER_JOIN_WINDOW_MS }) ===
+      "ended"
+    ) {
+      toast({
+        title: "Session has ended",
+        description: "This session is over, so its meeting room is closed.",
         variant: "destructive",
       });
       return;

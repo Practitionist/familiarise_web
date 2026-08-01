@@ -30,6 +30,10 @@ const webinarInclude = {
           // (isTentative etc.) still come through; the in-memory
           // participant count below relies on them.
           user: { select: { id: true, name: true, email: true, image: true } },
+          // #1061 — without this the planner cannot tell that the host has
+          // already ended the call, so its Join gate could only ever expire on
+          // the clock. Two columns per row.
+          meetingSession: { select: { id: true, endedAt: true } },
         },
       },
     },

@@ -7,6 +7,8 @@ import prisma from "@/lib/prisma";
 import { findSessionRun } from "@/lib/appointments/slots";
 import { resolvePlanOwnerIds } from "@/lib/booking/plan-owners";
 import { getMaintenanceState } from "@/lib/maintenance";
+import { getSession } from "@/lib/auth-server";
+import { isPrivileged } from "@/lib/auth-helpers";
 /**
  * Minimal slot interface for database meeting session operations.
  * Matches the MeetingSlot interface from lib/meeting.ts.
@@ -48,6 +50,128 @@ export type AnchorSlot = {
   completionStatus: string;
 };
 
+/** Consultant identity, deep enough for `resolvePlanOwnerIds` to read it. */
+const ownerProfileSelect = {
+  select: { id: true, userId: true, user: { select: { name: true } } },
+} as const;
+const collaboratorsSelect = {
+  where: { status: "ACCEPTED" as const },
+  select: { consultantProfile: ownerProfileSelect },
+} as const;
+
+/**
+ * The plan graph both resolvers authorize against and read identity from.
+ * `slotsOfAppointment` is filtered to the caller: a non-empty array is the
+ * consultee-side proof of participation, and `take: 1` keeps it an existence
+ * check rather than a fetch of every attendee.
+ */
+const appointmentAccessSelect = (userId: string) =>
+  ({
+    appointmentType: true,
+    slotsOfAppointment: {
+      where: { user: { some: { id: userId } } },
+      select: { id: true },
+      take: 1,
+    },
+    consultation: {
+      select: {
+        consultationPlan: {
+          select: { title: true, consultantProfile: ownerProfileSelect },
+        },
+      },
+    },
+    subscription: {
+      select: {
+        subscriptionPlan: {
+          select: { title: true, consultantProfile: ownerProfileSelect },
+        },
+      },
+    },
+    webinar: {
+      select: {
+        webinarPlan: {
+          select: {
+            title: true,
+            consultantProfile: ownerProfileSelect,
+            collaborators: collaboratorsSelect,
+          },
+        },
+      },
+    },
+    class: {
+      select: {
+        classPlan: {
+          select: {
+            title: true,
+            consultantProfile: ownerProfileSelect,
+            collaborators: collaboratorsSelect,
+          },
+        },
+      },
+    },
+    trialSession: {
+      select: {
+        subscriptionPlan: {
+          select: { title: true, consultantProfile: ownerProfileSelect },
+        },
+      },
+    },
+  }) satisfies Prisma.AppointmentSelect;
+
+/**
+ * Loads a slot together with its appointment, but only for a caller entitled
+ * to it.
+ *
+ * Both resolvers below are exported from a `"use server"` module, which makes
+ * them callable directly by any authenticated client with any argument they
+ * like. Validating the shape of a slot id is not authorization: without this
+ * gate, one guessed id discloses an unrelated booking's offering title and the
+ * user ids on both sides of it.
+ *
+ * Entitlement is the union of the two sides. The consultant side is
+ * `resolvePlanOwnerIds` — plan owner plus ACCEPTED collaborators, the same
+ * predicate the reschedule and timings routes authorize with. The consultee
+ * side is participation: being connected to one of the appointment's slot
+ * rows, which every booking path does for both parties.
+ *
+ * Returns null rather than throwing so callers can degrade to a less
+ * informative join instead of refusing entry.
+ */
+async function readSlotForCaller(slotId: string) {
+  const session = await getSession(true);
+  const userId = session?.user?.id;
+  if (!userId || session.user.banned === true) return null;
+
+  const row = await prisma.slotOfAppointment.findUnique({
+    where: { id: slotId },
+    select: {
+      ...anchorSlotSelect,
+      appointment: { select: appointmentAccessSelect(userId) },
+    },
+  });
+  if (!row?.appointment) return null;
+
+  const { appointment, ...slot } = row;
+  const consultantProfileId = session.user.consultantProfileId;
+  const entitled =
+    appointment.slotsOfAppointment.length > 0 ||
+    (!!consultantProfileId &&
+      resolvePlanOwnerIds(appointment).includes(consultantProfileId)) ||
+    isPrivileged(session.user.role);
+
+  if (!entitled) {
+    streamLogger.warn("Rejected meeting resolution for unrelated caller", {
+      slotId,
+      userId,
+    });
+    return null;
+  }
+
+  // Split so a caller can hand `slot` straight back to the client without the
+  // ownership graph riding along in the server action's serialized result.
+  return { slot, appointment };
+}
+
 const slotSchema = z.object({
   id: z.string().min(1),
   startsAt: z.coerce.date(),
@@ -73,6 +197,10 @@ const slotSchema = z.object({
  * would put the server's room key and the client's window back out of step,
  * which is the defect this whole change removes.
  *
+ * Gated by `readSlotForCaller`: it takes a raw slot id, and even though it
+ * discloses less than the profile below, it still confirms that a slot exists
+ * and which appointment owns it.
+ *
  * @param slotId Any row of the session.
  * @returns The anchor row, or null when it cannot be resolved (caller falls
  *   back to the row it was given, preserving today's behaviour).
@@ -83,11 +211,11 @@ export async function resolveSessionAnchorSlot(
   const validatedSlotId = slotIdSchema.parse(slotId);
 
   try {
-    const slot = await prisma.slotOfAppointment.findUnique({
-      where: { id: validatedSlotId },
-      select: anchorSlotSelect,
-    });
-    if (!slot) return null;
+    const slot = (await readSlotForCaller(validatedSlotId))?.slot;
+    // An appointment-less row has no siblings to walk, and querying for them
+    // would ask Prisma for `appointmentId IS NULL` — every orphan in the
+    // table. The column is required today, so this is a guard, not a fix.
+    if (!slot?.appointmentId) return slot ?? null;
 
     // Served by @@index([appointmentId]). Only the soft-delete tombstone is
     // filtered here — it is a storage concern the grouping helper has no
@@ -141,15 +269,6 @@ export type SessionCallProfile = {
   guestName: string | null;
 };
 
-/** Consultant identity, deep enough for `resolvePlanOwnerIds` to read it. */
-const ownerProfileSelect = {
-  select: { id: true, userId: true, user: { select: { name: true } } },
-} as const;
-const collaboratorsSelect = {
-  where: { status: "ACCEPTED" as const },
-  select: { consultantProfile: ownerProfileSelect },
-} as const;
-
 /**
  * Everything about a session a Stream call should describe itself with — the
  * run's real bounds, the offering it belongs to, and who is hosting it (#1070).
@@ -158,8 +277,14 @@ const collaboratorsSelect = {
  * each dashboard surface to infer. Only read on the branch that actually mints
  * a call, so a normal join into an existing room pays nothing for it.
  *
- * @returns null when it cannot be resolved; the caller then creates the call
- *   exactly as it did before, since every field this feeds is additive.
+ * Gated by `readSlotForCaller`, and that gate is the reason this function can
+ * be as generous as it is: it hands back the offering title and the user ids
+ * and names on both sides, which is session membership. Without the check, one
+ * guessed slot id would disclose all of it for a stranger's booking.
+ *
+ * @returns null when it cannot be resolved OR the caller is not entitled to
+ *   it; the caller then creates the call exactly as it did before, since every
+ *   field this feeds is additive.
  */
 export async function resolveSessionCallProfile(
   anchorSlotId: string,
@@ -167,71 +292,12 @@ export async function resolveSessionCallProfile(
   const validatedSlotId = slotIdSchema.parse(anchorSlotId);
 
   try {
-    const anchor = await prisma.slotOfAppointment.findUnique({
-      where: { id: validatedSlotId },
-      select: {
-        appointmentId: true,
-        appointment: {
-          select: {
-            appointmentType: true,
-            consultation: {
-              select: {
-                consultationPlan: {
-                  select: {
-                    title: true,
-                    consultantProfile: ownerProfileSelect,
-                  },
-                },
-              },
-            },
-            subscription: {
-              select: {
-                subscriptionPlan: {
-                  select: {
-                    title: true,
-                    consultantProfile: ownerProfileSelect,
-                  },
-                },
-              },
-            },
-            webinar: {
-              select: {
-                webinarPlan: {
-                  select: {
-                    title: true,
-                    consultantProfile: ownerProfileSelect,
-                    collaborators: collaboratorsSelect,
-                  },
-                },
-              },
-            },
-            class: {
-              select: {
-                classPlan: {
-                  select: {
-                    title: true,
-                    consultantProfile: ownerProfileSelect,
-                    collaborators: collaboratorsSelect,
-                  },
-                },
-              },
-            },
-            trialSession: {
-              select: {
-                subscriptionPlan: {
-                  select: {
-                    title: true,
-                    consultantProfile: ownerProfileSelect,
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    });
-    const appointment = anchor?.appointment;
-    if (!anchor || !appointment) return null;
+    const authorized = await readSlotForCaller(validatedSlotId);
+    if (!authorized) return null;
+    const { slot: anchor, appointment } = authorized;
+    // Same guard as the anchor resolver: without it Prisma would ask for
+    // `appointmentId IS NULL` and pull every appointment-less row in the table.
+    if (!anchor.appointmentId) return null;
 
     const siblings = await prisma.slotOfAppointment.findMany({
       where: { appointmentId: anchor.appointmentId, deletedAt: null },
@@ -365,7 +431,10 @@ export async function findDbMeetingSessionBySlot(
 
     return meetingSession;
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "stream" } },
+    );
     streamLogger.error("Error finding meeting session", error, {
       slotId: validatedSlotId,
     });
@@ -493,7 +562,10 @@ export async function createDbMeetingSession(
       throw new Error(error.message);
     }
 
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "stream" } },
+    );
     streamLogger.error("Failed to create meeting session", error, {
       slotId: slot.id,
       streamCallId,
@@ -556,7 +628,10 @@ export async function updateMeetingSessionCallId(
 
     return updated;
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "stream" } },
+    );
     streamLogger.error("Failed to update meeting session", error, {
       sessionId: validatedSessionId,
     });
