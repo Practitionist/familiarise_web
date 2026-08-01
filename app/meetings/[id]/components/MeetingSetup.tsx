@@ -19,8 +19,12 @@ import {
   CalendarClock,
   Timer,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "@/utils/tailwind";
+import {
+  createMicLevelMeter,
+  SPEAKING_THRESHOLD,
+} from "@/lib/stream/audio-level";
 import {
   formatScheduledAt,
   sessionHeading,
@@ -40,35 +44,6 @@ import {
 interface MeetingSetupProps {
   setIsSetupComplete: (value: boolean) => void;
 }
-
-/**
- * Meters the microphone the CALL already owns.
- *
- * This used to open its own `getUserMedia({ audio: true })` and only ever
- * close the AudioContext on cleanup — which does not stop a MediaStreamTrack.
- * That second, un-owned capture stayed live for the life of the tab (a fresh
- * one per mic toggle), so the browser kept showing the recording indicator
- * long after the user had left the meeting. Reading Stream's stream means
- * there is exactly one capture, and the teardown that releases the call
- * releases it too.
- */
-const createAudioAnalyzer = (stream: MediaStream) => {
-  try {
-    const audioContext = new AudioContext();
-    const analyser = audioContext.createAnalyser();
-    analyser.fftSize = 256;
-
-    audioContext.createMediaStreamSource(stream).connect(analyser);
-
-    const bufferLength = analyser.frequencyBinCount;
-    const dataArray = new Uint8Array(bufferLength) as Uint8Array<ArrayBuffer>;
-
-    return { audioContext, analyser, dataArray, bufferLength };
-  } catch (error) {
-    console.error("Error metering microphone:", error);
-    return null;
-  }
-};
 
 const DeviceSelector = () => {
   const { useMicrophoneState, useCameraState, useSpeakerState } =
@@ -179,16 +154,6 @@ const DeviceSelector = () => {
   );
 };
 
-const calculateAudioLevel = (
-  analyser: AnalyserNode,
-  dataArray: Uint8Array<ArrayBuffer>,
-  bufferLength: number,
-) => {
-  analyser.getByteFrequencyData(dataArray);
-  const average = dataArray.reduce((a, b) => a + b, 0) / bufferLength;
-  return Math.min(average / 128, 1);
-};
-
 const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
   const call = useCall();
   const { useMicrophoneState, useCameraState } = useCallStateHooks();
@@ -201,7 +166,12 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
   const isCameraOn = camState.isEnabled;
   const micStream = micState.mediaStream;
 
-  const [micLevel, setMicLevel] = useState(0);
+  // The bar is driven through a ref rather than state: at one setState per
+  // animation frame React re-rendered the whole lobby ~60x/second, and the
+  // bar's own CSS transition then fought the updates. Only the caption, which
+  // changes rarely, is state.
+  const micBarRef = useRef<HTMLDivElement | null>(null);
+  const [isSpeaking, setIsSpeaking] = useState(false);
   const [isJoining, setIsJoining] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
 
@@ -227,30 +197,18 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
   }, [call, initDevices]);
 
   useEffect(() => {
-    setMicLevel(0);
+    setIsSpeaking(false);
+    if (micBarRef.current) micBarRef.current.style.width = "0%";
     if (!isMicOn || !micStream) return;
 
-    let animationFrame: number;
-
-    const analyzerData = createAudioAnalyzer(micStream);
-    if (!analyzerData) return;
-    const { audioContext, analyser, dataArray, bufferLength } = analyzerData;
-    // A context built before the page has seen a gesture starts suspended, and
-    // a suspended analyser reports silence — which reads as a broken mic.
-    void audioContext.resume().catch(() => {});
-
-    const updateLevel = () => {
-      setMicLevel(calculateAudioLevel(analyser, dataArray, bufferLength));
-      animationFrame = requestAnimationFrame(updateLevel);
-    };
-    updateLevel();
-
-    return () => {
-      if (animationFrame) cancelAnimationFrame(animationFrame);
-      // Only the meter is torn down here. The stream belongs to the call, so
-      // stopping its tracks would mute the user on join.
-      void audioContext.close();
-    };
+    // The stream is Stream's own (`useMicrophoneState().mediaStream`), so the
+    // meter observes it and never owns it — see lib/stream/audio-level.
+    return createMicLevelMeter(micStream, (level) => {
+      if (micBarRef.current) {
+        micBarRef.current.style.width = `${Math.max(level * 100, 2)}%`;
+      }
+      setIsSpeaking(level >= SPEAKING_THRESHOLD);
+    });
   }, [isMicOn, micStream]);
 
   const handleJoinMeeting = async () => {
@@ -320,28 +278,141 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
     }
   };
 
+  /** Mic and camera toggles, kept beside the preview so a change is seen. */
+  const deviceToggles = (
+    <div className="flex items-center gap-3">
+      <button
+        onClick={toggleMic}
+        aria-label={isMicOn ? "Turn microphone off" : "Turn microphone on"}
+        aria-pressed={isMicOn}
+        className={cn(
+          "w-12 h-12 rounded-full flex items-center justify-center transition-colors",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-900",
+          isMicOn
+            ? "bg-white/10 text-white hover:bg-white/20"
+            : "bg-red-500 text-white hover:bg-red-600",
+        )}
+      >
+        {isMicOn ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
+      </button>
+
+      <button
+        onClick={toggleCamera}
+        aria-label={isCameraOn ? "Turn camera off" : "Turn camera on"}
+        aria-pressed={isCameraOn}
+        className={cn(
+          "w-12 h-12 rounded-full flex items-center justify-center transition-colors",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-900",
+          isCameraOn
+            ? "bg-white/10 text-white hover:bg-white/20"
+            : "bg-red-500 text-white hover:bg-red-600",
+        )}
+      >
+        {isCameraOn ? (
+          <Video className="w-5 h-5" />
+        ) : (
+          <VideoOff className="w-5 h-5" />
+        )}
+      </button>
+
+      <button
+        onClick={() => setShowSettings(!showSettings)}
+        aria-label="Audio and video settings"
+        aria-expanded={showSettings}
+        className={cn(
+          "w-12 h-12 rounded-full flex items-center justify-center transition-colors",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-900",
+          showSettings
+            ? "bg-white text-zinc-900"
+            : "bg-white/10 text-white hover:bg-white/20",
+        )}
+      >
+        <Settings className="w-5 h-5" />
+      </button>
+    </div>
+  );
+
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-br from-zinc-900 via-zinc-800 to-zinc-900 p-4">
+    <div className="relative min-h-screen bg-gradient-to-br from-zinc-900 via-zinc-800 to-zinc-900 px-4 py-6 sm:px-6 lg:px-8">
       {/* Background pattern */}
       <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPjxnIGZpbGw9IiMyMjIiIGZpbGwtb3BhY2l0eT0iMC4wNSI+PGNpcmNsZSBjeD0iMzAiIGN5PSIzMCIgcj0iMiIvPjwvZz48L2c+PC9zdmc+')] opacity-50" />
 
-      <div className="relative z-10 w-full max-w-lg">
-        {/* Card */}
-        <div className="bg-card/95 backdrop-blur-xl rounded-2xl shadow-2xl border border-border/50 overflow-hidden">
-          {/* Header — the person first, the offering under it, and the type
-              as a quiet chip. It was an upper-cased enum in the largest type
-              on the screen, above the name of the person you are meeting. */}
-          <div className="px-6 pt-7 pb-5 sm:px-8">
+      <div className="relative z-10 mx-auto flex min-h-[calc(100vh-3rem)] w-full max-w-6xl items-center">
+        {/*
+          The preview used to sit in a narrow max-w-lg column, so it was small
+          and cropped. It is now the subject: a full-width 16:9 frame in the
+          wide column, with the session details and Join beside it on a desktop
+          and stacked beneath it on anything narrower.
+        */}
+        <div className="grid w-full gap-6 lg:grid-cols-[minmax(0,1fr)_22rem] lg:gap-8 lg:items-center">
+          {/* Preview + the controls that change it */}
+          <div className="space-y-4">
+            <div className="meeting-lobby-preview relative aspect-video w-full overflow-hidden rounded-2xl bg-zinc-950 shadow-2xl ring-1 ring-white/10">
+              <VideoPreview mirror={true} />
+              {!isCameraOn && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-950">
+                  <div className="mb-3 flex h-20 w-20 items-center justify-center rounded-full bg-zinc-800">
+                    <VideoOff className="h-8 w-8 text-zinc-500" />
+                  </div>
+                  <p className="text-sm font-medium text-zinc-400">
+                    Camera is off
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              {deviceToggles}
+
+              {/* The on/off chips that used to sit here are gone: the toggles
+                  are now beside the preview and go red when off, and the
+                  preview says so itself, so the chips only repeated them. */}
+              {isMicOn && (
+                <div className="min-w-0 flex-1 sm:max-w-xs">
+                  <div className="flex items-center gap-3">
+                    <Mic className="h-4 w-4 shrink-0 text-zinc-500" />
+                    <div className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-white/10">
+                      <div
+                        ref={micBarRef}
+                        className="h-full rounded-full bg-white"
+                        style={{ width: "0%" }}
+                      />
+                    </div>
+                  </div>
+                  <p className="mt-1.5 pl-7 text-xs text-zinc-400">
+                    {isSpeaking
+                      ? "We can hear you"
+                      : "Say something to check your microphone"}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {showSettings && (
+              <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                <p className="mb-3 text-sm font-medium text-zinc-400">
+                  Audio &amp; video settings
+                </p>
+                <DeviceSelector />
+              </div>
+            )}
+          </div>
+
+          {/* Session details + the primary action */}
+          <div className="rounded-2xl border border-border/50 bg-card/95 p-6 shadow-2xl backdrop-blur-xl">
+            {/* Header — the person first, the offering under it, and the type
+                as a quiet chip. It was an upper-cased enum in the largest type
+                on the screen, above the name of the person you are meeting. */}
             <div className="flex flex-wrap items-center gap-2">
               {info.typeLabel && (
-                <span className="px-2 py-0.5 rounded-full bg-muted text-muted-foreground text-xs font-medium">
+                <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
                   {info.typeLabel}
                 </span>
               )}
               {clock.status && (
                 <span
                   className={cn(
-                    "px-2 py-0.5 rounded-full text-xs font-medium",
+                    "rounded-full px-2 py-0.5 text-xs font-medium",
                     clock.phase === "in-progress" ||
                       clock.phase === "overrunning"
                       ? "bg-green-500/15 text-green-500"
@@ -358,188 +429,40 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
               )}
             </div>
 
-            <h1 className="mt-2 text-fluid-2xl font-semibold tracking-tight text-foreground truncate">
+            <h1 className="mt-2 truncate text-fluid-2xl font-semibold tracking-tight text-foreground">
               {heading}
             </h1>
             {subheading && (
-              <p className="text-muted-foreground text-sm truncate">
+              <p className="truncate text-sm text-muted-foreground">
                 {subheading}
               </p>
             )}
 
             {(scheduledAt || info.durationMinutes) && (
-              <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
+              <div className="mt-4 space-y-1.5 text-sm text-muted-foreground">
                 {scheduledAt && (
-                  <span className="inline-flex items-center gap-1.5">
-                    <CalendarClock className="w-4 h-4 shrink-0" />
+                  <span className="flex items-center gap-1.5">
+                    <CalendarClock className="h-4 w-4 shrink-0" />
                     {scheduledAt}
                   </span>
                 )}
                 {info.durationMinutes && (
-                  <span className="inline-flex items-center gap-1.5">
-                    <Timer className="w-4 h-4 shrink-0" />
+                  <span className="flex items-center gap-1.5">
+                    <Timer className="h-4 w-4 shrink-0" />
                     {info.durationMinutes} min
                   </span>
                 )}
               </div>
             )}
-          </div>
 
-          {/* Video Preview — nothing is overlaid on it now; the device state
-              reads underneath, where it does not sit on top of your face. */}
-          <div className="px-6 pb-3">
-            <div
-              className="relative rounded-xl overflow-hidden bg-zinc-900 shadow-inner"
-              style={{ aspectRatio: "16/9" }}
-            >
-              <VideoPreview
-                mirror={true}
-                className="w-full h-full object-cover"
-              />
-              {!isCameraOn && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-900">
-                  <div className="w-20 h-20 rounded-full bg-zinc-800 flex items-center justify-center mb-3">
-                    <VideoOff className="w-8 h-8 text-zinc-500" />
-                  </div>
-                  <p className="text-zinc-400 text-sm font-medium">
-                    Camera is off
-                  </p>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Device state + mic level */}
-          <div className="px-6 pb-4 space-y-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <span
-                className={cn(
-                  "px-2.5 py-1 rounded-full text-xs font-medium flex items-center gap-1.5 border",
-                  isMicOn
-                    ? "border-border text-foreground"
-                    : "border-red-500/40 text-red-500",
-                )}
-              >
-                {isMicOn ? (
-                  <Mic className="w-3 h-3" />
-                ) : (
-                  <MicOff className="w-3 h-3" />
-                )}
-                {isMicOn ? "Mic on" : "Mic off"}
-              </span>
-              <span
-                className={cn(
-                  "px-2.5 py-1 rounded-full text-xs font-medium flex items-center gap-1.5 border",
-                  isCameraOn
-                    ? "border-border text-foreground"
-                    : "border-red-500/40 text-red-500",
-                )}
-              >
-                {isCameraOn ? (
-                  <Video className="w-3 h-3" />
-                ) : (
-                  <VideoOff className="w-3 h-3" />
-                )}
-                {isCameraOn ? "Camera on" : "Camera off"}
-              </span>
-            </div>
-
-            {isMicOn && (
-              // The meter used to read "Waiting…" with nothing to say what it
-              // was waiting for. It is now labelled, and says what to do.
-              <div>
-                <div className="flex items-center gap-3">
-                  <Mic className="w-4 h-4 text-muted-foreground/70 shrink-0" />
-                  <div className="min-w-0 flex-1">
-                    <div className="h-1.5 bg-muted rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-foreground transition-all duration-75"
-                        style={{ width: `${Math.max(micLevel * 100, 2)}%` }}
-                      />
-                    </div>
-                  </div>
-                </div>
-                <p className="mt-1.5 pl-7 text-xs text-muted-foreground">
-                  {micLevel < 0.05
-                    ? "Say something to check your microphone"
-                    : "We can hear you"}
-                </p>
-              </div>
-            )}
-          </div>
-
-          {/* Controls */}
-          <div className="px-6 pb-6">
-            <div className="flex items-center justify-center gap-3">
-              {/* Mic Toggle */}
-              <button
-                onClick={toggleMic}
-                className={cn(
-                  "w-14 h-14 rounded-full flex items-center justify-center transition-all duration-200",
-                  isMicOn
-                    ? "bg-foreground text-background hover:bg-foreground/90"
-                    : "bg-red-500 text-white hover:bg-red-600",
-                )}
-              >
-                {isMicOn ? (
-                  <Mic className="w-5 h-5" />
-                ) : (
-                  <MicOff className="w-5 h-5" />
-                )}
-              </button>
-
-              {/* Camera Toggle */}
-              <button
-                onClick={toggleCamera}
-                className={cn(
-                  "w-14 h-14 rounded-full flex items-center justify-center transition-all duration-200",
-                  isCameraOn
-                    ? "bg-foreground text-background hover:bg-foreground/90"
-                    : "bg-red-500 text-white hover:bg-red-600",
-                )}
-              >
-                {isCameraOn ? (
-                  <Video className="w-5 h-5" />
-                ) : (
-                  <VideoOff className="w-5 h-5" />
-                )}
-              </button>
-
-              {/* Settings Toggle */}
-              <button
-                onClick={() => setShowSettings(!showSettings)}
-                className={cn(
-                  "w-14 h-14 rounded-full flex items-center justify-center transition-all duration-200",
-                  showSettings
-                    ? "bg-foreground text-background"
-                    : "bg-muted text-muted-foreground hover:bg-muted/80",
-                )}
-              >
-                <Settings className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Device Settings */}
-            {showSettings && (
-              <div className="mt-4 p-4 bg-muted rounded-xl border border-border">
-                <p className="text-sm font-medium text-muted-foreground mb-3">
-                  Audio & Video Settings
-                </p>
-                <DeviceSelector />
-              </div>
-            )}
-          </div>
-
-          {/* Join Button */}
-          <div className="px-6 pb-8">
             <Button
               onClick={handleJoinMeeting}
               disabled={isJoining}
-              className="w-full h-12 bg-primary hover:bg-primary/90 text-primary-foreground font-semibold rounded-xl shadow-lg transition-all duration-200 disabled:opacity-70"
+              className="mt-6 h-12 w-full rounded-xl bg-primary text-base font-semibold text-primary-foreground shadow-lg transition-colors hover:bg-primary/90 disabled:opacity-70"
             >
               {isJoining ? (
                 <>
-                  <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                  <Loader2 className="mr-2 h-5 w-5 animate-spin" />
                   Joining...
                 </>
               ) : clock.phase === "in-progress" ||
@@ -551,19 +474,19 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
                 "Join meeting"
               )}
             </Button>
+
+            {/* Replaces "Tip: test your mic and camera before joining", which
+                restated the screen. This only appears when there is something
+                the person would otherwise be surprised by. */}
+            {(!micState.hasBrowserPermission || !isCameraOn) && (
+              <p className="mt-3 text-center text-xs text-muted-foreground">
+                {!micState.hasBrowserPermission
+                  ? "Your browser is blocking the microphone. Allow access to be heard."
+                  : "Your camera is off — you will join with audio only."}
+              </p>
+            )}
           </div>
         </div>
-
-        {/* Replaces "Tip: test your mic and camera before joining", which
-            restated the screen. This only appears when there is something the
-            person would otherwise be surprised by. */}
-        {(!micState.hasBrowserPermission || !isCameraOn) && (
-          <p className="text-center text-muted-foreground text-xs mt-4">
-            {!micState.hasBrowserPermission
-              ? "Your browser is blocking the microphone. Allow access to be heard."
-              : "Your camera is off — you will join with audio only."}
-          </p>
-        )}
       </div>
     </div>
   );
