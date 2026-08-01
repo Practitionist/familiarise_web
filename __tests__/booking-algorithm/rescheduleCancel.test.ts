@@ -23,7 +23,16 @@ jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     $transaction: jest.fn(),
-    appointment: { findUnique: jest.fn() },
+    // #1006 — cancel resolves the refund facts across the WHOLE booking, so it
+    // reads every appointment of the parent request, not just the one it was
+    // handed. Default to none: the refund path is exercised in its own suites.
+    appointment: {
+      findUnique: jest.fn(),
+      findMany: jest.fn().mockResolvedValue([]),
+    },
+    // #1003 — group-event cancel reads the attendee roster off the payments so
+    // it can notify them. Default to an empty event.
+    payment: { findMany: jest.fn().mockResolvedValue([]) },
     slotOfAppointment: { findMany: jest.fn(), deleteMany: jest.fn() },
     // #1008 — the cancel/reschedule routes call hasActiveDisputeForAppointment,
     // which reads prisma.dispute.findFirst. Default to no live dispute.
@@ -1080,6 +1089,76 @@ describe("Cancel Route Handler - POST", () => {
         appointmentType: "CONSULTATION",
         reason: "OTHER",
       }),
+    );
+  });
+
+  // #1003 — a cancelled group event used to notify NOBODY: the recipient list
+  // was only assembled for the 1:1 types, so the organiser and every paying
+  // attendee learned about it by finding an empty calendar.
+  it("should notify the organiser and every paid attendee of a cancelled webinar", async () => {
+    (prisma.appointment.findUnique as jest.Mock).mockResolvedValue(
+      makeWebinarAppointment({
+        webinar: {
+          id: "web-1",
+          status: "SCHEDULED",
+          webinarPlan: {
+            title: "Intro to X",
+            consultantProfile: {
+              user: { id: "consultant-1", name: "Dr Who" },
+            },
+          },
+        },
+      }),
+    );
+    (prisma.payment.findMany as jest.Mock).mockResolvedValue([
+      { userId: "attendee-1" },
+      { userId: "attendee-2" },
+      // Duplicate seats must not produce duplicate notifications.
+      { userId: "attendee-1" },
+    ]);
+
+    const req = makeCancelRequest("apt-1", { reason: "OTHER" });
+    await cancelHandler(req, makeParams("apt-1"));
+
+    const [recipients, payload] = (notifyAppointmentCancelled as jest.Mock).mock
+      .calls[0];
+    expect(recipients).toEqual(
+      expect.arrayContaining(["consultant-1", "attendee-1", "attendee-2"]),
+    );
+    expect(recipients).toHaveLength(3);
+    expect(payload).toEqual(
+      expect.objectContaining({
+        appointmentType: "WEBINAR",
+        planTitle: "Intro to X",
+      }),
+    );
+  });
+
+  it("should notify the roster of a cancelled class too", async () => {
+    (prisma.appointment.findUnique as jest.Mock).mockResolvedValue(
+      makeClassAppointment({
+        class: {
+          id: "cls-1",
+          status: "SCHEDULED",
+          classPlan: {
+            title: "Weekly Cohort",
+            consultantProfile: {
+              user: { id: "consultant-1", name: "Dr Who" },
+            },
+          },
+        },
+      }),
+    );
+    (prisma.payment.findMany as jest.Mock).mockResolvedValue([
+      { userId: "attendee-9" },
+    ]);
+
+    const req = makeCancelRequest("apt-1");
+    await cancelHandler(req, makeParams("apt-1"));
+
+    expect(notifyAppointmentCancelled).toHaveBeenCalledWith(
+      expect.arrayContaining(["consultant-1", "attendee-9"]),
+      expect.objectContaining({ appointmentType: "CLASS" }),
     );
   });
 

@@ -17,6 +17,7 @@ import {
   unlockApproval,
 } from "@/utils/appointmentlock";
 import { transitionConsultationRequest } from "@/lib/booking/transitions";
+import { refundRejectedRequest } from "@/lib/booking/rejection-refund";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { MAX_TEXT_LENGTH } from "@/lib/validation/limits";
 import { sendPaymentLinkEmail } from "@/lib/email";
@@ -509,6 +510,21 @@ export async function PATCH(
       );
     }
 
+    // #1004 — declining is the CONSULTANT's act. The transition guard enforces
+    // only the from-state, and REJECTED is legal from PENDING and
+    // APPROVED_PENDING_PAYMENT, so without this the consultee could reject
+    // their own paid request and collect the consultant-initiated 100% refund
+    // — every notice tier bypassed, on demand.
+    if (
+      status === AppointmentStatus.REJECTED &&
+      !isConsultant &&
+      !isPrivileged(session.user.role)
+    ) {
+      return forbiddenResponse(
+        "Only the consultant can decline a request. Cancel it instead.",
+      );
+    }
+
     // LAYER 1: Distributed lock (only for APPROVED status changes)
     let lock;
     if (status === AppointmentStatus.APPROVED) {
@@ -731,6 +747,22 @@ export async function PATCH(
         });
       }
 
+      // #1004 — a rejected request that was already paid for has to give the
+      // money back. Direct checkout captures BEFORE the request exists, so the
+      // consultant is declining a booking the buyer has already paid; REJECTED
+      // is terminal and the cancel route refuses it, so this is the only exit.
+      // Runs after the transition commits — the allowed-from guard on that
+      // transition is what makes it at-most-once.
+      const rejectionRefund =
+        status === AppointmentStatus.REJECTED
+          ? await refundRejectedRequest({
+              kind: "consultation",
+              requestId: consultationId,
+              initiatedByUserId: session.user.id,
+              actor: isConsultant ? "CONSULTANT" : "PLATFORM",
+            })
+          : null;
+
       // Send email AFTER transaction commits - prevents holding locks during slow network calls
       // User can still find the payment link on their dashboard via pendingPaymentUrl if email fails
       if ("emailData" in result && result.emailData) {
@@ -781,7 +813,7 @@ export async function PATCH(
       // Return success response (exclude emailData from response)
       const { emailData: _emailData, ...responseData } =
         result as typeof result & { emailData?: unknown };
-      return NextResponse.json(responseData);
+      return NextResponse.json({ ...responseData, refund: rejectionRefund });
     } catch (error) {
       console.error(
         "Transaction error:",
