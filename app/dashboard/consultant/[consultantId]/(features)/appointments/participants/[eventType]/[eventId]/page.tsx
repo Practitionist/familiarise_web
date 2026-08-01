@@ -82,11 +82,11 @@ const removeParticipant = async ({
     { method: "DELETE" },
   );
   if (!response.ok) throw new Error("Failed to remove participant");
-  // Body shape varies by handler (#1003 gave class/webinar a refund summary;
-  // consultations/subscriptions still answer 204), and none of it is rendered.
-  // Parsing unconditionally threw on the SUCCESS path of the 204 handlers — the
-  // mutation rejected after the removal had already happened, the error toast
-  // fired, and the roster query was never invalidated.
+  // Only the class and webinar handlers are reachable (EVENT_KINDS admits no
+  // others) and both answer JSON — a refund summary since #1003. None of it is
+  // rendered, so it is deliberately not read. Both also answer 200 for an
+  // already-removed participant, so a repeat click still invalidates the
+  // roster rather than surfacing a failure.
 };
 
 export default function EventParticipantsPage() {

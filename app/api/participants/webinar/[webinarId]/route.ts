@@ -168,11 +168,14 @@ export async function DELETE(
     // which looks the payment up by user + event rather than by what was
     // actually released — so repeat clicks and stale tabs each raised an ops
     // page for a removal that never happened.
+    //
+    // 200, not 404: DELETE is idempotent and "this person is off the roster"
+    // is the requested end state either way. A 404 made the second click read
+    // as a failure to the roster client, which throws on any non-ok response —
+    // so it showed "Failed to remove participant" and never invalidated the
+    // query, leaving the removed row on screen.
     if (userSlots.length === 0) {
-      return NextResponse.json(
-        { removed: false, refund: null },
-        { status: 404 },
-      );
+      return NextResponse.json({ removed: false, refund: null });
     }
 
     // One atomic batch — sequential awaits paid a DB round trip per slot
