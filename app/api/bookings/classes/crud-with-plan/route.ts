@@ -19,6 +19,7 @@ import {
 } from "@/lib/events/capacity";
 
 import { getSession } from "@/lib/auth-server";
+import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
 // Schema for class content input (without Prisma-managed fields like createdAt, updatedAt, classPlanId)
 const ClassContentInputSchema = ClassContentSchema.omit({
   createdAt: true,
@@ -152,6 +153,8 @@ export async function POST(request: NextRequest) {
         id: consultantProfileId,
         userId: session.user.id,
       },
+      // #1076 — the host's zone is what the per-day/week caps bucket on.
+      include: { user: { select: { timezone: true } } },
     });
 
     if (!consultantProfile) {
@@ -238,6 +241,9 @@ export async function POST(request: NextRequest) {
             status,
             schedulingPeriodStartsAt: start, // Will be undefined if not provided
             schedulingPeriodEndsAt: end, // Will be undefined if start is not provided
+            schedulingTimezone: resolveSchedulingTimezone(
+              consultantProfile.user.timezone,
+            ),
             classPlan: { connect: { id: classPlan.id } },
             // Create appointments for the full duration
             appointments: {
