@@ -58,6 +58,32 @@ function rescheduleOutcomeToast(outcome: {
   };
 }
 
+/** What the cancel route reports about the money, in the buyer's words. */
+type CancelRefund = {
+  amountRefundedPaise: number;
+  refundPct: number;
+  requiresManualReview?: boolean;
+} | null;
+
+function describeRefund(refund: CancelRefund): string {
+  // A free booking has no money to speak about.
+  if (!refund) return "";
+  if (refund.requiresManualReview) {
+    return "Because sessions had already been delivered, our team is reviewing your refund and will be in touch.";
+  }
+  if (refund.amountRefundedPaise > 0) {
+    const rupees = (refund.amountRefundedPaise / 100).toLocaleString("en-IN", {
+      maximumFractionDigits: 2,
+    });
+    return `A refund of ₹${rupees} (${refund.refundPct}%) is on its way back to you.`;
+  }
+  // A tier of 0% is the policy working; a positive tier that refunded nothing
+  // is a failed refund, and saying "no refund applies" there would be a lie.
+  return refund.refundPct > 0
+    ? "We could not complete your refund automatically — our team has been alerted and will sort it out."
+    : "No refund applies under the cancellation policy for this booking.";
+}
+
 export function useEventActions({
   appointmentId,
   appointment,
@@ -223,9 +249,17 @@ export function useEventActions({
         }
         throw new Error(data.error || "Failed to cancel appointment");
       }
+      // The route reports what happened to the money on `refund`. Discarding
+      // it meant a cancellation that refunded nothing — or failed to refund —
+      // looked exactly like one that paid out in full.
       toast({
         title: "Appointment cancelled",
-        description: `Your ${type.toLowerCase()} "${title}" has been cancelled successfully.`,
+        description: [
+          `Your ${type.toLowerCase()} "${title}" has been cancelled.`,
+          describeRefund(data.refund),
+        ]
+          .filter(Boolean)
+          .join(" "),
       });
       setShowCancelDialog(false);
       invalidateBookingData();
