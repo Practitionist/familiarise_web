@@ -17,7 +17,15 @@ import {
 } from "@stream-io/video-react-sdk";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "@/lib/auth-client";
-import { Users, LayoutList, Grid3X3, Monitor, X, Phone } from "lucide-react";
+import {
+  Users,
+  LayoutList,
+  Grid3X3,
+  Monitor,
+  X,
+  Phone,
+  MoreVertical,
+} from "lucide-react";
 
 import {
   DropdownMenu,
@@ -30,6 +38,8 @@ import EndCallButton from "./EndCallButton";
 import CallEnded from "./CallEnded";
 import RecordingControls from "./RecordingControls";
 import { useMeetingRecording } from "../hooks/useMeetingRecording";
+import { sessionHeading, useSessionClock, useSessionInfo } from "../session-info";
+import { leaveCallAndReleaseMedia } from "@/lib/stream/media-teardown";
 import { cn } from "@/utils/tailwind";
 import { StreamVideoErrorBoundary } from "@/components/stream/StreamErrorBoundary";
 
@@ -85,6 +95,9 @@ const MeetingRoom = () => {
   const { useCallCustomData } = useCallStateHooks();
   const custom = useCallCustomData();
 
+  const info = useSessionInfo();
+  const clock = useSessionClock(info.startsAt, info.endsAt);
+
   // #org-appts — host/guest by WHICH SIDE of THIS appointment the viewer is on
   // (the ids stamped into the call's custom data), not the singular UserRole,
   // which is wrong for a dual-profile user booked as a learner into someone
@@ -132,32 +145,11 @@ const MeetingRoom = () => {
     return "/";
   };
 
-  // Cleanup media streams and navigate - ensures audio/video stops before navigation
+  // Release the hardware before navigating. The teardown is shared with the
+  // page unmount and the end-call path so every exit behaves the same way, and
+  // so no single failure can skip the rest of it.
   const cleanupAndNavigate = async (targetUrl: string) => {
-    try {
-      console.log("Starting media cleanup before navigation...");
-
-      // Disable media streams first to stop audio/video
-      await call?.camera.disable();
-      await call?.microphone.disable();
-
-      // Disable screen share if active
-      if (call?.screenShare?.state?.status === "enabled") {
-        await call?.screenShare.disable();
-      }
-
-      console.log("Media streams disabled");
-
-      // Leave the call if still connected
-      if (call?.state.callingState !== CallingState.LEFT) {
-        await call?.leave();
-        console.log("Left call successfully");
-      }
-    } catch (error) {
-      console.warn("Error during cleanup:", error);
-    }
-
-    // Navigate after cleanup
+    await leaveCallAndReleaseMedia(call);
     router.push(targetUrl);
   };
 
@@ -276,10 +268,10 @@ const MeetingRoom = () => {
                   <RecordCallButton />
                 ))}
 
-              {/* Leave Call Button */}
+              {/* Leave — the only red control in the bar, and the only exit
+                  reachable in one click. */}
               <button
                 onClick={async () => {
-                  console.log("Participant leaving call");
                   await cleanupAndNavigate(getDashboardUrl());
                 }}
                 className="p-3 rounded-full bg-red-500 hover:bg-red-600 transition-colors"
@@ -361,8 +353,39 @@ const MeetingRoom = () => {
                   />
                 )}
 
-              {/* End Call Button - Only for Consultant */}
-              {!isPersonalRoom && <EndCallButton />}
+              {/* Ending for EVERYONE lives behind this menu, and nowhere in
+                  the bar itself. It used to be the widest, highest-contrast
+                  element on the screen, sitting beside the ordinary hang-up —
+                  two destructive actions a thumb's width apart, one of which
+                  cannot be undone by the people it happens to. Reaching it now
+                  takes a deliberate second step, and it still needs the
+                  press-and-hold inside. */}
+              {!isPersonalRoom && isHost && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      className="p-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 transition-colors"
+                      title="Session options"
+                    >
+                      <MoreVertical className="w-5 h-5 text-white" />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent
+                    align="end"
+                    className="w-72 bg-zinc-900 border-zinc-800 p-3 rounded-xl"
+                    sideOffset={12}
+                  >
+                    <p className="text-sm font-medium text-white">
+                      End for everyone
+                    </p>
+                    <p className="mt-1 mb-3 text-xs text-zinc-400">
+                      Disconnects every participant and closes the room. Leaving
+                      instead only removes you.
+                    </p>
+                    <EndCallButton />
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
 
               {/* Recording Indicator for the guest - At the very end (only if recording enabled) */}
               {isGuest &&
@@ -378,18 +401,59 @@ const MeetingRoom = () => {
           </div>
         </div>
 
-        {/* Meeting Info Badge */}
-        <div className="fixed top-4 left-4 z-40 max-w-[calc(100vw-2rem)]">
-          <div className="flex items-center gap-2 px-3 py-2 bg-zinc-900/80 backdrop-blur-sm rounded-lg border border-zinc-800">
-            <div className="w-2 h-2 shrink-0 bg-white rounded-full animate-pulse" />
-            <span className="min-w-0 truncate text-sm font-medium text-white">
-              {call?.state.custom?.title || "Meeting"}
-            </span>
-            <span className="shrink-0 text-xs text-zinc-500">
-              • {participantCount} participant
-              {participantCount !== 1 ? "s" : ""}
-            </span>
+        {/* Header. The title was the appointment type in caps repeated from
+            the lobby; it now names the person, with the type demoted to the
+            supporting line. The session clock sits opposite it, because until
+            now nothing on this screen said how long was left. */}
+        <div className="pointer-events-none fixed inset-x-4 top-4 z-40 flex items-start justify-between gap-3">
+          <div className="pointer-events-auto flex min-w-0 items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-900/80 px-3 py-2 backdrop-blur-sm">
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium text-white">
+                {sessionHeading(info)}
+              </p>
+              <p className="truncate text-xs text-zinc-500">
+                {[
+                  info.typeLabel,
+                  `${participantCount} participant${participantCount !== 1 ? "s" : ""}`,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </p>
+            </div>
           </div>
+
+          {clock.elapsed && (
+            <div
+              className={cn(
+                "pointer-events-auto flex shrink-0 items-center gap-2 rounded-lg border px-3 py-2 backdrop-blur-sm",
+                clock.phase === "overrunning"
+                  ? "border-amber-500/40 bg-amber-500/10"
+                  : "border-zinc-800 bg-zinc-900/80",
+              )}
+            >
+              <div
+                className={cn(
+                  "h-2 w-2 shrink-0 rounded-full",
+                  clock.phase === "overrunning"
+                    ? "bg-amber-400"
+                    : "animate-pulse bg-white",
+                )}
+              />
+              <span className="text-sm font-medium tabular-nums text-white">
+                {clock.elapsed}
+              </span>
+              <span
+                className={cn(
+                  "hidden text-xs sm:inline",
+                  clock.phase === "overrunning"
+                    ? "text-amber-300"
+                    : "text-zinc-500",
+                )}
+              >
+                {clock.phase === "overrunning" ? clock.status : clock.remaining}
+              </span>
+            </div>
+          )}
         </div>
       </section>
     </StreamVideoErrorBoundary>

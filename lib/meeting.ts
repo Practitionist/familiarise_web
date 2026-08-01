@@ -194,6 +194,15 @@ export const getOrCreateAppointmentMeeting = async (
               ...(callProfile.offeringTitle
                 ? { offeringTitle: callProfile.offeringTitle }
                 : {}),
+              // Both sides by name, so each screen can lead with the OTHER
+              // one. `title` only ever held the requester, which showed the
+              // consultee their own name as their counterpart.
+              ...(callProfile.hostName
+                ? { hostName: callProfile.hostName }
+                : {}),
+              ...(callProfile.guestName
+                ? { guestName: callProfile.guestName }
+                : {}),
             }
           : {}),
       };

@@ -2,13 +2,13 @@
 
 import { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
-import {
-  StreamCall,
-  StreamTheme,
-  CallingState,
-} from "@stream-io/video-react-sdk";
+import { StreamCall, StreamTheme } from "@stream-io/video-react-sdk";
 import { Loader2, ShieldAlert } from "lucide-react";
 
+import {
+  leaveCallAndReleaseMedia,
+  stopLocalTracks,
+} from "@/lib/stream/media-teardown";
 import { useGetCallById } from "./hooks/useGetCallById";
 import Alert from "./components/Alert";
 import MeetingSetup from "./components/MeetingSetup";
@@ -61,35 +61,26 @@ const MeetingPage = () => {
     }
   }, [id, session?.user?.id, isSessionPending]);
 
-  // Cleanup on component unmount - disable media streams before leaving
+  // Release the camera and microphone on ANY exit from this page, not just the
+  // explicit Leave button: navigating away and the browser Back button both
+  // unmount the route, and until this ran on those paths too the capture light
+  // stayed on after the user had visibly left the meeting.
   useEffect(() => {
+    if (!call) return;
+
+    // React does not run effect cleanup when the document itself goes away
+    // (tab close, hard navigation), so the tracks are stopped from `pagehide`
+    // too. Synchronously: anything awaited here may never resume. Leaving the
+    // call properly is skipped — Stream times the participant out, and the
+    // camera going dark is the part that cannot wait.
+    const onPageHide = () => {
+      stopLocalTracks(call);
+    };
+    window.addEventListener("pagehide", onPageHide);
+
     return () => {
-      console.log("Meeting page unmounting, cleaning up call...");
-
-      const cleanup = async () => {
-        try {
-          // Disable media streams first to stop audio/video
-          await call?.camera.disable();
-          await call?.microphone.disable();
-
-          // Disable screen share if active
-          if (call?.screenShare?.state?.status === "enabled") {
-            await call?.screenShare.disable();
-          }
-
-          console.log("Media streams disabled");
-
-          // Leave the call if still connected
-          if (call?.state.callingState !== CallingState.LEFT) {
-            console.log("Leaving call on unmount");
-            await call?.leave();
-          }
-        } catch (error) {
-          console.warn("Error during cleanup on unmount:", error);
-        }
-      };
-
-      cleanup();
+      window.removeEventListener("pagehide", onPageHide);
+      void leaveCallAndReleaseMedia(call);
     };
   }, [call]);
 

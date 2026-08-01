@@ -8,7 +8,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { useRouter } from "next/navigation";
 import { useSession } from "@/lib/auth-client";
-import { Loader2 } from "lucide-react";
+import { Loader2, PhoneOff } from "lucide-react";
+import { leaveCallAndReleaseMedia } from "@/lib/stream/media-teardown";
 
 const EndCallButton = () => {
   const call = useCall();
@@ -40,56 +41,27 @@ const EndCallButton = () => {
     return "/"; // Fallback to home page
   }, [session]);
 
-  // Cleanup media streams and WebRTC connections
-  const cleanupMediaStreams = useCallback(async () => {
-    try {
-      // Stop camera and microphone
-      await call?.camera.disable();
-      await call?.microphone.disable();
-
-      // Stop screen sharing if active (check via call state)
-      if (call?.screenShare.state.status === "enabled") {
-        await call?.screenShare.disable();
-      }
-
-      console.log("Media streams disabled successfully");
-    } catch (error) {
-      console.warn("Error cleaning up media streams:", error);
-    }
-  }, [call]);
-
   const endCall = useCallback(async () => {
     if (isEnding) return; // Prevent multiple calls
 
     setIsEnding(true);
 
     try {
-      console.log("Starting call cleanup process...");
-
-      // 1. End the call for everyone
       await call?.endCall();
-      console.log("Call ended successfully");
-
-      // 2. Clean up media streams
-      await cleanupMediaStreams();
-      console.log("Media streams cleaned up");
-
-      // 3. Small delay to ensure cleanup completes
-      await new Promise((resolve) => setTimeout(resolve, 500));
-
-      // 4. Navigate to appropriate dashboard
-      const dashboardUrl = getDashboardUrl();
-      console.log("Redirecting to:", dashboardUrl);
-      router.push(dashboardUrl);
     } catch (error) {
+      // Navigating away regardless, so the failure is logged rather than
+      // blocking the exit.
       console.error("Error ending call:", error);
-      // Still try to navigate even if there was an error
-      const dashboardUrl = getDashboardUrl();
-      router.push(dashboardUrl);
     } finally {
+      // Unconditional, and in `finally`: releasing the hardware used to sit
+      // after `endCall()` in the same try, so an endCall that threw took the
+      // camera release down with it and the host left the page still
+      // broadcasting.
+      await leaveCallAndReleaseMedia(call);
       setIsEnding(false);
+      router.push(getDashboardUrl());
     }
-  }, [call, isEnding, cleanupMediaStreams, getDashboardUrl, router]);
+  }, [call, isEnding, getDashboardUrl, router]);
 
   useEffect(() => {
     let interval: number;
@@ -129,26 +101,37 @@ const EndCallButton = () => {
 
   if (!isHost) return null;
 
+  // Quiet by default and red only as the hold fills. It sits inside the
+  // session menu now, so it no longer has to shout to be findable — and it no
+  // longer competes with Leave for the eye.
   return (
     <Button
       onMouseDown={() => !isEnding && setIsPressed(true)}
       onMouseUp={() => setIsPressed(false)}
       onMouseLeave={() => setIsPressed(false)}
+      // Touch had no way to reach the hold at all, so the control was
+      // unusable on a phone.
+      onTouchStart={() => !isEnding && setIsPressed(true)}
+      onTouchEnd={() => setIsPressed(false)}
+      onTouchCancel={() => setIsPressed(false)}
       disabled={isEnding}
-      className="relative overflow-hidden bg-red-500 transition-colors disabled:opacity-70"
+      className="relative w-full overflow-hidden border border-red-500/50 bg-transparent text-red-400 transition-colors hover:bg-red-500/10 hover:text-red-300 disabled:opacity-70"
       style={{
         background: isEnding
           ? "rgba(185,28,28,1)"
-          : `linear-gradient(to right, rgba(239,68,68,1) ${progress}%, rgba(185,28,28,1) ${progress}%)`,
+          : `linear-gradient(to right, rgba(239,68,68,0.35) ${progress}%, transparent ${progress}%)`,
       }}
     >
       {isEnding ? (
-        <span className="relative z-10 flex items-center gap-2">
+        <span className="relative z-10 flex items-center gap-2 text-white">
           <Loader2 className="h-4 w-4 animate-spin" />
           Ending call...
         </span>
       ) : (
-        <span className="relative z-10">End call for everyone</span>
+        <span className="relative z-10 flex items-center gap-2">
+          <PhoneOff className="h-4 w-4" />
+          {progress > 0 ? "Keep holding…" : "Hold to end for everyone"}
+        </span>
       )}
     </Button>
   );

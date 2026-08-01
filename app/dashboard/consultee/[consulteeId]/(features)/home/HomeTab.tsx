@@ -728,8 +728,13 @@ export default function HomeTab({
           (sum, p) => sum + (p.amount ?? 0),
           0,
         ),
+        // startsAt/endsAt already describe the whole run here (#1061), so the
+        // end goes over too — it is what tells "in progress" from "over".
         upcomingSessions: upcomingEvents.map((e) => ({
+          id: e.id,
+          appointmentId: e.appointmentId ?? null,
           startsAt: e.startsAt,
+          endsAt: e.endsAt,
           title: e.title,
         })),
         basePath: `/dashboard/consultee/${consulteeId}`,

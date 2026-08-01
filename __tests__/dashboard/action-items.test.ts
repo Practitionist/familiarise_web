@@ -46,7 +46,7 @@ describe("imminentSessionItem", () => {
     // list, not the meeting, so "Join" promised a call it could not deliver.
     // Urgency is carried by `severity` and the title instead.
     expect(item?.ctaLabel).toBe("View");
-    expect(item?.title).toBe("A session is starting now");
+    expect(item?.title).toBe("Starting in 5 min");
   });
 
   it("uses the exact boundary, not rounded minutes, to decide the window", () => {
@@ -64,13 +64,84 @@ describe("imminentSessionItem", () => {
     expect(justInside?.severity).toBe("critical");
   });
 
-  it("keeps a session that has just started, and drops one long finished", () => {
+  it("keeps a session that is under way, and drops one that has ended", () => {
     expect(
-      imminentSessionItem([{ startsAt: inMinutes(-5), title: "Now" }], "/x"),
+      imminentSessionItem(
+        [{ startsAt: inMinutes(-5), endsAt: inMinutes(55), title: "Now" }],
+        "/x",
+      ),
     ).not.toBeNull();
     expect(
-      imminentSessionItem([{ startsAt: inMinutes(-45), title: "Over" }], "/x"),
+      imminentSessionItem(
+        [{ startsAt: inMinutes(-90), endsAt: inMinutes(-30), title: "Over" }],
+        "/x",
+      ),
     ).toBeNull();
+  });
+
+  // #1061 — the join window opens before the start and stays open for the
+  // duration, so the single `joinable` flag announced a session 25 minutes in
+  // as "starting now". These three are the states a reader has to tell apart.
+  describe("distinguishes starting from already running", () => {
+    const NOW = new Date("2026-08-01T12:00:00.000Z");
+    const at = (minutesFromNow: number) =>
+      new Date(NOW.getTime() + minutesFromNow * 60_000);
+
+    it("reads as in progress 25 minutes into an hour-long session", () => {
+      const item = imminentSessionItem(
+        [{ startsAt: at(-25), endsAt: at(35), title: "Career review" }],
+        "/x",
+        NOW,
+      );
+      expect(item?.title).toBe("Session in progress");
+      expect(item?.severity).toBe("critical");
+    });
+
+    it("reads as starting 5 minutes out", () => {
+      const item = imminentSessionItem(
+        [{ startsAt: at(5), endsAt: at(65), title: "Career review" }],
+        "/x",
+        NOW,
+      );
+      expect(item?.title).toBe("Starting in 5 min");
+      expect(item?.severity).toBe("critical");
+    });
+
+    it("reads as a countdown an hour out", () => {
+      const item = imminentSessionItem(
+        [{ startsAt: at(60), endsAt: at(120), title: "Career review" }],
+        "/x",
+        NOW,
+      );
+      expect(item?.title).toBe("Session in 60 min");
+      expect(item?.severity).toBe("warning");
+    });
+
+    it("treats the consecutive rows of one booking as a single session", () => {
+      // Two 30-minute rows of the same 12:00–13:00 booking. The second row
+      // must not announce itself as a separate session starting in 30 min.
+      const item = imminentSessionItem(
+        [
+          {
+            id: "s1",
+            appointmentId: "a1",
+            startsAt: at(0),
+            endsAt: at(30),
+            title: "Career review",
+          },
+          {
+            id: "s2",
+            appointmentId: "a1",
+            startsAt: at(30),
+            endsAt: at(60),
+            title: "Career review",
+          },
+        ],
+        "/x",
+        NOW,
+      );
+      expect(item?.title).toBe("Session in progress");
+    });
   });
 
   it("surfaces only the soonest — a list belongs on the Appointments tab", () => {

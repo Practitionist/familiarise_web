@@ -1,4 +1,10 @@
 import type { ActionItem } from "@/lib/enterprise/org-activation";
+import {
+  CONSULTEE_JOIN_WINDOW_MS,
+  getSessionJoinState,
+  groupSlotsIntoRuns,
+  type SessionSlotLike,
+} from "@/lib/appointments/slots";
 
 /**
  * Derives the "needs you now" queue for the personal dashboards.
@@ -18,64 +24,98 @@ import type { ActionItem } from "@/lib/enterprise/org-activation";
 /** A session is "imminent" inside this window — close enough to act on. */
 const IMMINENT_MS = 60 * 60 * 1000; // 1 hour
 
-/** The Join button opens this far ahead of the start time. */
-const JOIN_WINDOW_MS = 10 * 60 * 1000;
-
-function minutesUntil(when: Date | string): number {
-  return Math.round((new Date(when).getTime() - Date.now()) / 60000);
-}
-
 function pluralise(n: number, one: string, many: string): string {
   return n === 1 ? one : many;
 }
 
 export interface ImminentSession {
+  /**
+   * The slot row and the booking it belongs to. Both optional because not
+   * every surface has rows to give: the consultee home tab already hands us
+   * run-level times, while the consultant tab hands us the raw 30-minute
+   * rows. When they are present, consecutive rows of one booking collapse
+   * into a single session (#1061) instead of each half hour announcing
+   * itself as a separate thing starting 30 minutes from now.
+   */
+  id?: string;
+  appointmentId?: string | null;
   startsAt: Date | string;
+  endsAt?: Date | string | null;
   title: string;
 }
 
 /**
- * Shared by both roles: the next session starting within the hour. Only the
- * soonest is surfaced — a list of everything upcoming is the Appointments
- * tab's job, and repeating it here is exactly the duplication this panel
- * replaced.
+ * Shared by both roles: the session that is running now, or starting within
+ * the hour. Only the soonest is surfaced — a list of everything upcoming is
+ * the Appointments tab's job, and repeating it here is exactly the
+ * duplication this panel replaced.
  */
 export function imminentSessionItem(
   sessions: ImminentSession[],
   appointmentsHref: string,
+  now: Date = new Date(),
 ): ActionItem | null {
-  const now = Date.now();
-  const soonest = sessions
-    .filter((s) => {
-      const delta = new Date(s.startsAt).getTime() - now;
-      return delta > -JOIN_WINDOW_MS && delta <= IMMINENT_MS;
-    })
-    .sort(
-      (a, b) =>
-        new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
-    )[0];
+  // The title rides along on the row so the winning run can name itself.
+  const rows: Array<SessionSlotLike & { title: string }> = sessions.map(
+    (session, index) => ({
+      id: session.id ?? `imminent:${index}`,
+      appointmentId: session.appointmentId ?? null,
+      startsAt: session.startsAt,
+      endsAt: session.endsAt ?? null,
+      title: session.title,
+    }),
+  );
 
-  if (!soonest) return null;
+  // Already ordered earliest-first by the grouping helper.
+  const runs = groupSlotsIntoRuns(rows);
 
-  const mins = minutesUntil(soonest.startsAt);
-  // Compare against the raw delta, not the rounded minutes: a session 10m29s
-  // out rounds to 10 and was being called joinable, outside the documented
-  // window. `mins` stays for display only.
-  const joinable =
-    new Date(soonest.startsAt).getTime() - Date.now() <= JOIN_WINDOW_MS;
+  for (const run of runs) {
+    // The join window is the shared constant, and the window test is the
+    // shared helper. #1061 was two surfaces holding private copies of both
+    // and drifting apart; a third copy here would be the same mistake.
+    const state = getSessionJoinState(run, {
+      joinWindowMs: CONSULTEE_JOIN_WINDOW_MS,
+      now,
+    });
+    if (state === "ended" || state === "disabled") continue;
 
-  return {
-    key: "session-imminent",
-    severity: joinable ? "critical" : "warning",
-    title: joinable ? "A session is starting now" : `Session in ${mins} min`,
-    body: soonest.title,
-    // Both labels say "View": `ctaHref` is the appointments list, not the
-    // meeting, and ActionRequiredPanel renders it as an ordinary link. Saying
-    // "Join" promised a call and delivered a list. The urgency is already
-    // carried by `severity` and the title.
-    ctaLabel: "View",
-    ctaHref: appointmentsHref,
-  };
+    const msUntilStart = run.startsAt.getTime() - now.getTime();
+    if (msUntilStart > IMMINENT_MS) break;
+
+    // The same helper with no pre-start allowance: it can only answer
+    // "joinable" once `now` is past the start, which is exactly the "already
+    // running" question, and it still answers "ended" past the end. Deriving
+    // it this way rather than comparing times again keeps one definition of
+    // when a session is under way.
+    const inProgress =
+      getSessionJoinState(run, { joinWindowMs: 0, now }) === "joinable";
+
+    // Rounded for display only — the window itself is decided above, on the
+    // exact instant, because a session 10m29s out rounds to 10.
+    const mins = Math.max(1, Math.round(msUntilStart / 60_000));
+
+    return {
+      key: "session-imminent",
+      severity: state === "joinable" ? "critical" : "warning",
+      // A session 25 minutes in used to read "starting now" (#1061): the
+      // join window opens before the start and stays open throughout, so
+      // one flag could not tell "about to begin" from "under way".
+      title: inProgress
+        ? "Session in progress"
+        : state === "joinable"
+          ? `Starting in ${mins} min`
+          : `Session in ${mins} min`,
+      body: run.anchor.title,
+      // Both labels say "View": `ctaHref` is the appointments list, not the
+      // meeting, and ActionRequiredPanel renders it as an ordinary link. Saying
+      // "Join" promised a call and delivered a list. The urgency is already
+      // carried by `severity` and the title.
+      ctaLabel: "View",
+      ctaHref: appointmentsHref,
+    };
+  }
+
+  return null;
 }
 
 export interface ConsultantActionInput {

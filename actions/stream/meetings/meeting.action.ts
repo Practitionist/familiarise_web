@@ -131,10 +131,20 @@ export type SessionCallProfile = {
   members: SessionCallMember[];
   hostUserIds: string[];
   guestUserIds: string[];
+  /**
+   * Display names for the two sides. Carried so the meeting screens can name
+   * the person the viewer is actually sitting across from — the call's `title`
+   * only ever held the requester, which reads as the consultee's own name back
+   * at them.
+   */
+  hostName: string | null;
+  guestName: string | null;
 };
 
 /** Consultant identity, deep enough for `resolvePlanOwnerIds` to read it. */
-const ownerProfileSelect = { select: { id: true, userId: true } } as const;
+const ownerProfileSelect = {
+  select: { id: true, userId: true, user: { select: { name: true } } },
+} as const;
 const collaboratorsSelect = {
   where: { status: "ACCEPTED" as const },
   select: { consultantProfile: ownerProfileSelect },
@@ -226,7 +236,10 @@ export async function resolveSessionCallProfile(
     const siblings = await prisma.slotOfAppointment.findMany({
       where: { appointmentId: anchor.appointmentId, deletedAt: null },
       orderBy: { startsAt: "asc" },
-      select: { ...anchorSlotSelect, user: { select: { id: true } } },
+      select: {
+        ...anchorSlotSelect,
+        user: { select: { id: true, name: true } },
+      },
     });
     const run = findSessionRun(siblings, validatedSlotId);
     if (!run) return null;
@@ -235,8 +248,17 @@ export async function resolveSessionCallProfile(
     // reschedule and timings routes authorize with. It answers in consultant
     // PROFILE ids, so pair each profile with its user before filtering.
     const profileToUser = new Map<string, string>();
-    const remember = (profile?: { id: string; userId: string } | null) => {
-      if (profile) profileToUser.set(profile.id, profile.userId);
+    const userToName = new Map<string, string>();
+    const remember = (
+      profile?: {
+        id: string;
+        userId: string;
+        user?: { name?: string | null } | null;
+      } | null,
+    ) => {
+      if (!profile) return;
+      profileToUser.set(profile.id, profile.userId);
+      if (profile.user?.name) userToName.set(profile.userId, profile.user.name);
     };
     remember(appointment.consultation?.consultationPlan?.consultantProfile);
     remember(appointment.subscription?.subscriptionPlan?.consultantProfile);
@@ -266,6 +288,9 @@ export async function resolveSessionCallProfile(
       appointment.appointmentType === "WEBINAR" ||
       appointment.appointmentType === "CLASS";
     const hosts = new Set(hostUserIds);
+    for (const attendee of run.slots.flatMap((slot) => slot.user)) {
+      if (attendee.name) userToName.set(attendee.id, attendee.name);
+    }
     const guestUserIds = isGroupEvent
       ? []
       : [
@@ -293,6 +318,11 @@ export async function resolveSessionCallProfile(
       ],
       hostUserIds,
       guestUserIds,
+      // Only the first of each side is named. A 1:1 session has exactly one
+      // per side, and a group event names no guests at all, so a list would
+      // carry nothing the screens could use.
+      hostName: userToName.get(hostUserIds[0] ?? "") ?? null,
+      guestName: userToName.get(guestUserIds[0] ?? "") ?? null,
     };
   } catch (error) {
     Sentry.captureException(
@@ -344,6 +374,16 @@ export async function findDbMeetingSessionBySlot(
 }
 
 /**
+ * A refusal we meant to issue — maintenance, or input that is genuinely not a
+ * slot — as opposed to something breaking underneath us. Kept out of Sentry
+ * and passed through with its message intact.
+ *
+ * Not exported: a "use server" module may only export async functions, and
+ * nothing outside this file needs to narrow on it.
+ */
+class MeetingSessionRefusal extends Error {}
+
+/**
  * Creates a new meeting session in the database.
  * @param slot The appointment slot for which to create the session.
  * @param streamCallId The Stream Call ID to associate with the new session.
@@ -353,39 +393,60 @@ export async function createDbMeetingSession(
   slot: MeetingSlot,
   streamCallId: string,
 ): Promise<MeetingSession> {
-  // Block new call creation during maintenance
-  const maintenanceState = await getMaintenanceState();
-  if (maintenanceState.phase !== "OFF") {
-    throw new Error("New calls cannot be created during maintenance.");
-  }
-
-  // Validate inputs
-  slotSchema.parse({
-    id: slot.id,
-    startsAt: slot.startsAt,
-    endsAt: slot.endsAt,
-    isTentative: slot.isTentative,
-    appointmentId: slot.appointmentId,
-  });
-  const validatedStreamCallId = streamCallIdSchema.parse(streamCallId);
-
-  streamLogger.debug("Creating meeting session", {
-    slotId: slot.id,
-    streamCallId: validatedStreamCallId,
-  });
-
-  let organizationId: string | null = null;
-  if (slot.appointmentId) {
-    const appointment = await prisma.appointment.findUnique({
-      where: { id: slot.appointmentId },
-      select: {
-        organizationId: true,
-      },
-    });
-    organizationId = appointment?.organizationId ?? null;
-  }
-
+  // The maintenance read, the input validation and the organization lookup
+  // all used to sit OUTSIDE this guard. Anything they threw left the server
+  // action raw: Next replaces an uncaught server-action error with an opaque
+  // digest, so the join toast could only say "An error occurred in the Server
+  // Components render" — no Sentry event, no slot id, and no chance for the
+  // P2002 fallback below to recover a concurrent join. The failure was
+  // reported and then not reproducible, which is exactly what an unguarded
+  // transient DB call on the mint-only branch looks like.
   try {
+    const maintenanceState = await getMaintenanceState();
+    if (maintenanceState.phase !== "OFF") {
+      throw new MeetingSessionRefusal(
+        "New calls cannot be created during maintenance.",
+      );
+    }
+
+    // safeParse, so a rejection names the field instead of arriving as a bare
+    // ZodError the caller has to guess at.
+    const parsedSlot = slotSchema.safeParse({
+      id: slot.id,
+      startsAt: slot.startsAt,
+      endsAt: slot.endsAt,
+      isTentative: slot.isTentative,
+      appointmentId: slot.appointmentId,
+    });
+    if (!parsedSlot.success) {
+      throw new MeetingSessionRefusal(
+        `Invalid slot for meeting session: ${parsedSlot.error.issues
+          .map((issue) => `${issue.path.join(".") || "value"} ${issue.message}`)
+          .join("; ")}`,
+      );
+    }
+    const validatedStreamCallId = streamCallIdSchema.parse(streamCallId);
+
+    streamLogger.debug("Creating meeting session", {
+      slotId: slot.id,
+      streamCallId: validatedStreamCallId,
+    });
+
+    // Deliberately still fatal on failure rather than degrading to null: the
+    // column is written once and never updated, so a null recorded because a
+    // read blipped would hide this call from its own org's audit queries
+    // permanently. A failed join is retryable; that is not.
+    let organizationId: string | null = null;
+    if (slot.appointmentId) {
+      const appointment = await prisma.appointment.findUnique({
+        where: { id: slot.appointmentId },
+        select: {
+          organizationId: true,
+        },
+      });
+      organizationId = appointment?.organizationId ?? null;
+    }
+
     const meetingSession = await prisma.meetingSession.create({
       data: {
         streamCallId: validatedStreamCallId,
@@ -423,10 +484,19 @@ export async function createDbMeetingSession(
       if (existing) return existing;
     }
 
+    if (error instanceof MeetingSessionRefusal) {
+      streamLogger.warn("Refused to create meeting session", {
+        slotId: slot.id,
+        streamCallId,
+        reason: error.message,
+      });
+      throw new Error(error.message);
+    }
+
     Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
     streamLogger.error("Failed to create meeting session", error, {
       slotId: slot.id,
-      streamCallId: validatedStreamCallId,
+      streamCallId,
     });
 
     if (error instanceof Error) {
