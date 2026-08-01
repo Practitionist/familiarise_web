@@ -734,12 +734,18 @@ export function useEventSlotAllocation(
               options.schedulingTimezone,
             );
 
-            // Confirmed calls per week WITHOUT the new slot
+            // Confirmed calls per week WITHOUT the new slot.
+            // Seed from `weeklyConfirmedCallCounts` (server truth for sessions
+            // already allocated this week) — the earlier weekly-limit block
+            // already does; this sibling block used to count only `currentSlots`
+            // and under-reported progress toasts on partially confirmed weeks.
             const existingSlotsByDay = groupSlotsByDay(
               currentSlots,
               options.schedulingTimezone,
             );
-            const existingWeeklyConfirmedCallCounts = new Map<string, number>();
+            const existingWeeklyConfirmedCallCounts = new Map<string, number>(
+              Object.entries(options.weeklyConfirmedCallCounts ?? {}),
+            );
             existingSlotsByDay.forEach((daySlots) => {
               if (
                 daySlots.length === slotsPerCall &&

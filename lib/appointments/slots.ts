@@ -50,9 +50,19 @@ export interface SessionRun<T extends SessionSlotLike> {
 
 const DEAD_COMPLETION_STATUSES = new Set(["CANCELLED", "RESCHEDULED"]);
 
+/**
+ * Non-live for run math / planner rewrites.
+ *
+ * `completionStatus` alone used to be enough, but A10 also soft-deletes via
+ * `deletedAt`. A tombstoned row with a still-"SCHEDULED" status would otherwise
+ * count as live: its users got re-attached on rewrite, and a `notIn` delete
+ * could hard-delete the tombstone. Treat either signal as dead.
+ */
 export function isDeadSlot(slot: {
   completionStatus?: string | null;
+  deletedAt?: Date | string | null;
 }): boolean {
+  if (slot.deletedAt) return true;
   return (
     !!slot.completionStatus &&
     DEAD_COMPLETION_STATUSES.has(slot.completionStatus)

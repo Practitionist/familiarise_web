@@ -41,9 +41,50 @@ import { DocumentUpload } from "@/components/appointments/DocumentUpload";
 
 type DialogKind = "cancel" | "leave" | "report" | "documents";
 
+/**
+ * Event id for leave / cancel-trial API paths.
+ *
+ * ## Why two lookups?
+ *
+ * `map-consultee` sets `raw.source` to the webinar/class/trial row (has `.id`).
+ * `map-detail` sets `raw.source` to `{ appointment, siblings }` — no event id.
+ * The same adapter mounts on list AND detail, so gating on `source.id` alone
+ * hid Leave / Cancel trial on `/appointments/[appointmentId]` after #1005.
+ *
+ * Prefer `source.id` when present; otherwise read the appointment FKs the
+ * detail mapper already loaded. Longer-term a dedicated `eventId` on
+ * `AppointmentVM` would force both mappers to supply it — this fallback is
+ * the smaller surgical fix that unblocks the detail page.
+ */
 function sourceId(vm: AppointmentVM): string | null {
   const source = vm.raw.source as { id?: string } | undefined;
-  return source?.id ?? null;
+  if (source?.id) return source.id;
+
+  const appt = vm.raw.appointment as
+    | {
+        webinarId?: string | null;
+        classId?: string | null;
+        consultationId?: string | null;
+        subscriptionId?: string | null;
+        trialSession?: { id?: string } | null;
+      }
+    | undefined;
+  if (!appt) return null;
+
+  switch (vm.kind) {
+    case "WEBINAR":
+      return appt.webinarId ?? null;
+    case "CLASS":
+      return appt.classId ?? null;
+    case "TRIAL":
+      return appt.trialSession?.id ?? null;
+    case "CONSULTATION":
+      return appt.consultationId ?? null;
+    case "SUBSCRIPTION":
+      return appt.subscriptionId ?? null;
+    default:
+      return null;
+  }
 }
 
 const KIND_TO_TYPE: Record<
@@ -276,6 +317,49 @@ export function useConsulteeAppointmentsAdapter(): AppointmentActionAdapter {
     });
   };
 
+  // Extracted so Sonar cognitive-complexity on confirmDestructive stays under
+  // the gate; each helper owns its fetch + toast, the dispatcher owns loading.
+  const cancelTrial = async (id: string, title: string) => {
+    const response = await fetch(`/api/trials/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "CANCELLED" }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(
+        (data as { error?: string }).error || "Failed to cancel trial",
+      );
+    }
+    toast({
+      title: "Trial cancelled",
+      description: `Your trial "${title}" has been cancelled.`,
+    });
+  };
+
+  const leaveEvent = async (
+    kind: AppointmentVM["kind"],
+    id: string,
+    userId: string,
+    title: string,
+  ) => {
+    const path =
+      kind === "WEBINAR"
+        ? `/api/participants/webinar/${id}?userId=${encodeURIComponent(userId)}`
+        : `/api/participants/class/${id}?userId=${encodeURIComponent(userId)}`;
+    const response = await fetch(path, { method: "DELETE" });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(
+        (data as { error?: string }).error || "Failed to leave the event",
+      );
+    }
+    toast({
+      title: "Left event",
+      description: `You have left "${title}".`,
+    });
+  };
+
   const confirmDestructive = async () => {
     if (!activeVm) return;
     const id = sourceId(activeVm);
@@ -291,41 +375,12 @@ export function useConsulteeAppointmentsAdapter(): AppointmentActionAdapter {
     try {
       if (destructive === "cancel-trial") {
         if (!id) throw new Error("Trial id is missing");
-        const response = await fetch(`/api/trials/${id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status: "CANCELLED" }),
-        });
-        const data = await response.json().catch(() => ({}));
-        if (!response.ok) {
-          throw new Error(
-            (data as { error?: string }).error || "Failed to cancel trial",
-          );
-        }
-        toast({
-          title: "Trial cancelled",
-          description: `Your trial "${activeVm.title}" has been cancelled.`,
-        });
+        await cancelTrial(id, activeVm.title);
       } else if (destructive === "leave-event") {
         if (!id) throw new Error("Event id is missing");
         const userId = session?.user?.id;
         if (!userId) throw new Error("You must be signed in to leave");
-        const path =
-          activeVm.kind === "WEBINAR"
-            ? `/api/participants/webinar/${id}?userId=${encodeURIComponent(userId)}`
-            : `/api/participants/class/${id}?userId=${encodeURIComponent(userId)}`;
-        const response = await fetch(path, { method: "DELETE" });
-        const data = await response.json().catch(() => ({}));
-        if (!response.ok) {
-          throw new Error(
-            (data as { error?: string }).error ||
-              "Failed to leave the event",
-          );
-        }
-        toast({
-          title: "Left event",
-          description: `You have left "${activeVm.title}".`,
-        });
+        await leaveEvent(activeVm.kind, id, userId, activeVm.title);
       }
       closeDialog();
       invalidateBookings();

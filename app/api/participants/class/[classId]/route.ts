@@ -163,6 +163,29 @@ export async function DELETE(
       return new NextResponse("Class not found", { status: 404 });
     }
 
+    // #1005 — same gate as webinar DELETE: self-leave is pre-start only.
+    // Organiser removals keep working mid/post session for moderation.
+    if (isSelfLeave) {
+      const earliestLive = await prisma.slotOfAppointment.findFirst({
+        where: {
+          appointment: { classId },
+          deletedAt: null,
+          OR: [
+            { completionStatus: null },
+            { completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] } },
+          ],
+        },
+        orderBy: { startsAt: "asc" },
+        select: { startsAt: true },
+      });
+      if (earliestLive && earliestLive.startsAt.getTime() <= Date.now()) {
+        return NextResponse.json(
+          { error: "Cannot leave an event that has already started." },
+          { status: 400 },
+        );
+      }
+    }
+
     // Only the slots this user actually occupies.
     const userSlots = await prisma.slotOfAppointment.findMany({
       where: {
@@ -202,14 +225,14 @@ export async function DELETE(
       ),
     );
 
-    // #1003 — the seat was paid for. Removing the attendee without returning
-    // the fee let the organiser keep money for a session they just barred the
-    // buyer from. Post-commit and non-throwing: the removal stands either way.
+    // #1003 — seat was paid; refund after roster commit (non-throwing).
+    // #1005 — pass initiatedBy so self-leave does not get organiser-fault 100%.
     const refund = await refundRemovedAttendeeSeat({
       kind: "class",
       eventId: classId,
       attendeeUserId: userId,
       initiatedByUserId: session.user.id,
+      initiatedBy: isSelfLeave ? "attendee" : "organiser",
     });
 
     return NextResponse.json({ removed: true, refund });

@@ -158,6 +158,31 @@ export async function DELETE(
       return new NextResponse("Webinar not found", { status: 404 });
     }
 
+    // #1005 — belt-and-braces with the attendee refund tier. Even if
+    // computeRefundPct returned 0% after start, we still refuse the roster
+    // mutation so "Leave event" cannot be used as a post-session cleanup that
+    // looks like a successful leave. Organiser removals (moderation) skip this.
+    if (isSelfLeave) {
+      const earliestLive = await prisma.slotOfAppointment.findFirst({
+        where: {
+          appointment: { webinarId },
+          deletedAt: null,
+          OR: [
+            { completionStatus: null },
+            { completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] } },
+          ],
+        },
+        orderBy: { startsAt: "asc" },
+        select: { startsAt: true },
+      });
+      if (earliestLive && earliestLive.startsAt.getTime() <= Date.now()) {
+        return NextResponse.json(
+          { error: "Cannot leave an event that has already started." },
+          { status: 400 },
+        );
+      }
+    }
+
     // Only the slots this user actually occupies.
     const userSlots = await prisma.slotOfAppointment.findMany({
       where: {
@@ -197,14 +222,15 @@ export async function DELETE(
       ),
     );
 
-    // #1003 — the seat was paid for. Removing the attendee without returning
-    // the fee let the organiser keep money for a session they just barred the
-    // buyer from. Post-commit and non-throwing: the removal stands either way.
+    // #1003 — seat was paid; refund after roster commit (non-throwing).
+    // #1005 — must pass initiatedBy: self-leave used to inherit organiser-fault
+    // 100% because the helper defaulted isConsultantInitiated=true.
     const refund = await refundRemovedAttendeeSeat({
       kind: "webinar",
       eventId: webinarId,
       attendeeUserId: userId,
       initiatedByUserId: session.user.id,
+      initiatedBy: isSelfLeave ? "attendee" : "organiser",
     });
 
     return NextResponse.json({ removed: true, refund });

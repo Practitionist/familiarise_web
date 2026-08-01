@@ -280,19 +280,7 @@ export async function POST(request: NextRequest) {
                           durationInHours: sessionDurationInHours,
                           consultantProfileId,
                           isTentative: true,
-                        }).map(
-                          ({
-                            startsAt,
-                            endsAt,
-                            isTentative,
-                            consultantProfileId: ownerId,
-                          }) => ({
-                            startsAt,
-                            endsAt,
-                            isTentative,
-                            consultantProfileId: ownerId,
-                          }),
-                        ),
+                        }),
                       },
                     };
                   })

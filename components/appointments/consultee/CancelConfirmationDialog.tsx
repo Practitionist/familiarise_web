@@ -44,17 +44,23 @@ export function CancelConfirmationDialog({
   mode = "cancel",
 }: Readonly<CancelConfirmationDialogProps>) {
   const isLeave = mode === "leave";
+  // Flattened from a nested ternary — Sonar flags nested ternaries in JSX;
+  // the three outcomes are easier to skim as sequential assignments.
+  let dialogTitle: string;
+  if (isLeave) {
+    dialogTitle = `Leave ${appointmentType}?`;
+  } else if (isPendingPayment) {
+    dialogTitle = `Cancel ${appointmentType} request?`;
+  } else {
+    dialogTitle = `Cancel ${appointmentType}?`;
+  }
   return (
     <AlertDialog open={isOpen} onOpenChange={(open) => !open && onCancel()}>
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle className="flex items-center gap-2">
             <AlertTriangle className="h-5 w-5 text-red-500" />
-            {isLeave
-              ? `Leave ${appointmentType}?`
-              : isPendingPayment
-                ? `Cancel ${appointmentType} request?`
-                : `Cancel ${appointmentType}?`}
+            {dialogTitle}
           </AlertDialogTitle>
           <AlertDialogDescription asChild>
             <div className="space-y-2">

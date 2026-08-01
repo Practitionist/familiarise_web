@@ -80,6 +80,7 @@ export function assertSingleContiguousLiveRun(
     endsAt?: Date | string | null;
     isTentative?: boolean | null;
     completionStatus?: string | null;
+    deletedAt?: Date | string | null;
   }>,
 ): void {
   const live = slots.filter((s) => !isDeadSlot(s));
@@ -100,13 +101,32 @@ export function assertSingleContiguousLiveRun(
 }
 
 /**
- * Delete live (non-CANCELLED / non-RESCHEDULED) slots on the appointment and
- * recreate a contiguous N-atom run from `startsAt` + duration. Preserves
- * enrolled users from the previous live rows.
+ * Rewrite the appointment's live slot run to `startsAt` + duration.
+ *
+ * ## Why reconcile instead of deleteMany + recreate?
+ *
+ * The first #1071 cut hard-deleted live rows and inserted new ones. That fixed
+ * the stranded-atom bug, but `MeetingSession` / `Recording` cascade on
+ * `SlotOfAppointment` delete (`onDelete: Cascade`). A free webinar (or one
+ * whose payments are all FAILED/EXPIRED) still reaches this path, and a host
+ * who opened the room once already has a MeetingSession — so a duration-only
+ * edit could wipe recordings. The pre-#1071 code updated `[0]` in place and
+ * preserved ids; we keep that property for the overlapping prefix.
+ *
+ * Chosen shape (PR #1091 review):
+ * 1. UPDATE the first `min(existingLive, N)` rows' times (ids stay put).
+ * 2. CREATE only the delta when duration grows.
+ * 3. Soft-retire surplus live rows as `RESCHEDULED` (same stamp the consultee
+ *    reschedule route uses) so history + Stream children remain queryable.
+ *
+ * Dead rows (CANCELLED / RESCHEDULED / deletedAt) are left alone — they are
+ * not part of the live run and must not donate their `startsAt` to a
+ * duration-only rewrite (that snap-back was the other half of the bug).
  */
 export async function replaceContiguousSlotRun(
-  // PrismaLike (not Prisma.TransactionClient) — the app client is extended
-  // and interactive-tx clients fail assignability against the bare type.
+  // PrismaLike (not Prisma.TransactionClient): the app client is `$extends`,
+  // and interactive-tx clients fail assignability against the bare generated
+  // type (excessive stack depth / incompatible tx shape in CI).
   tx: PrismaLike,
   args: {
     appointmentId: string;
@@ -124,6 +144,8 @@ export async function replaceContiguousSlotRun(
     include: { user: { select: { id: true } } },
   });
 
+  // Only live rows participate in the run. Users on dead rows are intentionally
+  // not re-attached — those seats were already left / cancelled.
   const live = existing.filter((s) => !isDeadSlot(s));
   const preservedUserIds = new Set<string>(args.extraUserIds ?? []);
   for (const slot of live) {
@@ -131,25 +153,38 @@ export async function replaceContiguousSlotRun(
       preservedUserIds.add(u.id);
     }
   }
-
-  if (live.length > 0) {
-    await tx.slotOfAppointment.deleteMany({
-      where: {
-        appointmentId: args.appointmentId,
-        completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
-      },
-    });
-  }
+  const userIds = Array.from(preservedUserIds);
 
   const atoms = buildContiguousSlotAtoms({
     startsAt: args.startsAt,
     durationInHours: args.durationInHours,
     consultantProfileId: args.consultantProfileId,
     isTentative: args.isTentative ?? false,
-    userIds: Array.from(preservedUserIds),
+    userIds,
   });
 
-  for (const atom of atoms) {
+  const shared = Math.min(live.length, atoms.length);
+
+  // In-place updates: Stream room keys and recordings stay keyed to these ids.
+  for (let i = 0; i < shared; i++) {
+    const atom = atoms[i];
+    await tx.slotOfAppointment.update({
+      where: { id: live[i].id },
+      data: {
+        startsAt: atom.startsAt,
+        endsAt: atom.endsAt,
+        isTentative: atom.isTentative,
+        consultantProfileId: atom.consultantProfileId,
+        // `set` replaces the M2M so host + enrolled attendees survive the move.
+        ...(userIds.length > 0
+          ? { user: { set: userIds.map((id) => ({ id })) } }
+          : {}),
+      },
+    });
+  }
+
+  for (let i = shared; i < atoms.length; i++) {
+    const atom = atoms[i];
     await tx.slotOfAppointment.create({
       data: {
         appointmentId: args.appointmentId,
@@ -162,10 +197,27 @@ export async function replaceContiguousSlotRun(
     });
   }
 
+  // Duration shrunk: mark leftover live atoms RESCHEDULED rather than delete.
+  // Hard-delete would cascade MeetingSession → Recording for those rows.
+  for (let i = shared; i < live.length; i++) {
+    await tx.slotOfAppointment.update({
+      where: { id: live[i].id },
+      data: {
+        isTentative: true,
+        completionStatus: "RESCHEDULED",
+      },
+    });
+  }
+
+  // SQL `NOT IN (...)` excludes NULL completionStatus, so we OR-null explicitly.
   const createdLive = await tx.slotOfAppointment.findMany({
     where: {
       appointmentId: args.appointmentId,
-      completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
+      deletedAt: null,
+      OR: [
+        { completionStatus: null },
+        { completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] } },
+      ],
     },
     orderBy: { startsAt: "asc" },
   });
@@ -175,6 +227,6 @@ export async function replaceContiguousSlotRun(
 
   return {
     createdCount: createdLive.length,
-    preservedUserIds: Array.from(preservedUserIds),
+    preservedUserIds: userIds,
   };
 }

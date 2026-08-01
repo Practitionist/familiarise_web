@@ -108,9 +108,44 @@ export function NotificationInbox() {
           borderRadius: "0.5rem",
         },
         elements: {
+          // Novu's InboxContent is height:auto by default. When the Radix
+          // popover was `overflow-y-auto` + shrink-to-content, a short feed
+          // made the whole panel squat and tabs ("LearnPro Academy") overflowed
+          // sideways. Give Novu a filled column and scroll the *list* only.
+          inboxContent: {
+            height: "100%",
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+            minWidth: 0,
+          },
+          // Org tab labels can be long; horizontal scroll here is fine —
+          // vertical scroll must stay on the notification list below.
+          tabsList: {
+            flexShrink: 0,
+            overflowX: "auto",
+            overflowY: "hidden",
+            minWidth: 0,
+          },
+          notificationList: {
+            flex: 1,
+            minHeight: 0,
+            overflowY: "auto",
+            overflowX: "hidden",
+          },
           notification: {
             padding: "12px 16px",
             gap: "12px",
+            minWidth: 0,
+          },
+          // Long reminder copy was forcing horizontal overflow; wrap instead.
+          notificationSubject: {
+            overflowWrap: "anywhere",
+            wordBreak: "break-word",
+          },
+          notificationBody: {
+            overflowWrap: "anywhere",
+            wordBreak: "break-word",
           },
         },
       }}
@@ -144,14 +179,14 @@ export function NotificationInbox() {
             />
           </button>
         </PopoverTrigger>
-        {/* Narrower than the old 400px and collision-padded so the panel stays
-            inside the viewport instead of running to the window edge over the
-            page it is anchored above. */}
+        {/* Restore ~400px width (was narrowed to 22rem and felt cramped). Fixed
+            height + overflow-hidden so the panel does not shrink-wrap content
+            and invent a horizontal scrollbar; list scroll is configured above. */}
         <PopoverContent
           align="end"
           sideOffset={8}
           collisionPadding={12}
-          className="max-h-[min(32rem,calc(100vh-6rem))] w-[min(22rem,calc(100vw-2rem))] overflow-y-auto p-0"
+          className="flex h-[min(36rem,calc(100vh-5rem))] w-[min(400px,calc(100vw-2rem))] max-w-[calc(100vw-2rem)] flex-col overflow-hidden p-0"
         >
           <InboxContent
             onNotificationClick={(notification) => {

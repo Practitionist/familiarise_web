@@ -24,6 +24,29 @@ import {
   buildContiguousSlotAtoms,
   replaceContiguousSlotRun,
 } from "@/lib/appointments/contiguous-slot-run";
+import { isDeadSlot } from "@/lib/appointments/slots";
+
+/**
+ * Nested include for "what is the current live run?".
+ *
+ * Ordering by `startsAt` alone is not enough: the consultee reschedule route
+ * leaves replaced atoms in place as `RESCHEDULED`, so `[0]` becomes the *old*
+ * earlier dead row. Duration-only planner edits then rewrote the live run back
+ * onto the cancelled time. Filter at the query (and again with `isDeadSlot`
+ * when reading already-loaded arrays) so runStart/runEnd are always live.
+ *
+ * `OR: [null, notIn(...)]` is required because SQL `NOT IN` does not match NULL.
+ */
+const LIVE_SLOTS_INCLUDE = {
+  orderBy: { startsAt: "asc" as const },
+  where: {
+    deletedAt: null,
+    OR: [
+      { completionStatus: null },
+      { completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] } },
+    ],
+  },
+};
 
 import { getSession } from "@/lib/auth-server";
 // Schema for POST request body based on WebinarPlanSchema
@@ -283,19 +306,7 @@ export async function POST(request: NextRequest) {
                           durationInHours,
                           consultantProfileId,
                           isTentative: false,
-                        }).map(
-                          ({
-                            startsAt,
-                            endsAt,
-                            isTentative,
-                            consultantProfileId: ownerId,
-                          }) => ({
-                            startsAt,
-                            endsAt,
-                            isTentative,
-                            consultantProfileId: ownerId,
-                          }),
-                        ),
+                        }),
                       },
                     },
                   }
@@ -475,8 +486,8 @@ export async function PATCH(request: NextRequest) {
           include: {
             appointment: {
               include: {
-                // #1071 — [0] is only meaningful when ordered by start.
-                slotsOfAppointment: { orderBy: { startsAt: "asc" } },
+                // #1071 — live rows only; dead RESCHEDULED must not own [0].
+                slotsOfAppointment: LIVE_SLOTS_INCLUDE,
               },
             },
           },
@@ -509,7 +520,7 @@ export async function PATCH(request: NextRequest) {
           include: {
             appointment: {
               include: {
-                slotsOfAppointment: { orderBy: { startsAt: "asc" } },
+                slotsOfAppointment: LIVE_SLOTS_INCLUDE,
               },
             },
           },
@@ -567,18 +578,25 @@ export async function PATCH(request: NextRequest) {
       durationInHours !== undefined &&
       webinarToUpdate?.appointment?.slotsOfAppointment?.length
     ) {
-      // Duration-only change: keep the run's earliest start (slots are ordered).
-      const existingSlot = webinarToUpdate.appointment.slotsOfAppointment[0];
-      startTime = existingSlot.startsAt;
-      endTime = new Date(startTime.getTime() + durationInHours * 60 * 60 * 1000);
-      console.log(
-        "Recalculated slot end time due to duration change (PATCH):",
-        {
-          startTime: startTime.toISOString(),
-          endTime: endTime.toISOString(),
-          newDuration: durationInHours,
-        },
+      // Duration-only change: keep the live run's earliest start.
+      const liveSlots = webinarToUpdate.appointment.slotsOfAppointment.filter(
+        (s) => !isDeadSlot(s),
       );
+      const existingSlot = liveSlots[0];
+      if (existingSlot) {
+        startTime = existingSlot.startsAt;
+        endTime = new Date(
+          startTime.getTime() + durationInHours * 60 * 60 * 1000,
+        );
+        console.log(
+          "Recalculated slot end time due to duration change (PATCH):",
+          {
+            startTime: startTime.toISOString(),
+            endTime: endTime.toISOString(),
+            newDuration: durationInHours,
+          },
+        );
+      }
     }
 
     // FIX #626/#628: Guard against unsafe edits on webinars with confirmed bookings.
@@ -597,8 +615,9 @@ export async function PATCH(request: NextRequest) {
       // Only block when the time ACTUALLY differs from the current slot
       // (the planner client may always send scheduledAt even for non-time edits).
       if (activePayments > 0 && (startTime || endTime)) {
-        const existingSlots =
-          webinarToUpdate.appointment?.slotsOfAppointment ?? [];
+        const existingSlots = (
+          webinarToUpdate.appointment?.slotsOfAppointment ?? []
+        ).filter((s) => !isDeadSlot(s));
         const runStart = existingSlots[0]?.startsAt;
         const runEnd = existingSlots[existingSlots.length - 1]?.endsAt;
         const timeChanged =
@@ -787,8 +806,15 @@ export async function PATCH(request: NextRequest) {
               excludeAppointmentId: appointment?.id ?? null,
             });
 
-            if (typeof effectiveDurationForSlots !== "number") {
-              throw new Error(
+            // Validate here (→ 400 in catch) instead of letting
+            // buildContiguousSlotAtoms throw a generic Error (→ 500). TypeError
+            // also satisfies Sonar's "use TypeError for type checks" hint.
+            if (
+              typeof effectiveDurationForSlots !== "number" ||
+              !Number.isFinite(effectiveDurationForSlots) ||
+              effectiveDurationForSlots <= 0
+            ) {
+              throw new TypeError(
                 "Invalid duration for rewriting contiguous slot run.",
               );
             }
@@ -827,19 +853,7 @@ export async function PATCH(request: NextRequest) {
                       durationInHours: effectiveDurationForSlots,
                       consultantProfileId: ownerProfileId,
                       isTentative: false,
-                    }).map(
-                      ({
-                        startsAt,
-                        endsAt,
-                        isTentative,
-                        consultantProfileId: ownerId,
-                      }) => ({
-                        startsAt,
-                        endsAt,
-                        isTentative,
-                        consultantProfileId: ownerId,
-                      }),
-                    ),
+                    }),
                   },
                 },
               });
@@ -911,6 +925,12 @@ export async function PATCH(request: NextRequest) {
 
     // Shrinking below the current roster is a user error, not a 500.
     if (error instanceof CapacityBelowEnrollmentError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+    if (
+      error instanceof TypeError &&
+      error.message.includes("Invalid duration")
+    ) {
       return NextResponse.json({ error: error.message }, { status: 400 });
     }
     // AE-2 — co-host clash is a conflict, not a server error.
