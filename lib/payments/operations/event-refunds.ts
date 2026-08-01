@@ -17,6 +17,7 @@ import {
   computeRefundPct,
   parsePolicySnapshot,
 } from "./cancellation-policy";
+import { findLiveEventSlot } from "@/lib/appointments/live-event-slot";
 
 /**
  * Whole-event refund (#776 §C) — the production front door for the reversal
@@ -188,10 +189,20 @@ export async function refundWholeEventPayments(
  * moderation bulk-cancel has always refunded a removed attendee in full; the
  * interactive endpoints were the outlier.
  *
- * A removal is the organiser's act, so the frozen policy settles it at
- * `consultantInitiatedPct` (100% under the platform defaults) — the attendee
- * did nothing wrong. Routed through `refundBookingPayment` so an org-funded
- * seat reverses in-ledger instead of dying on UNKNOWN_GATEWAY.
+ * ## Who initiated the removal matters for the % (#1005)
+ *
+ * Historically only organisers hit this helper, so it always passed
+ * `isConsultantInitiated: true` into `computeRefundPct` (full
+ * `consultantInitiatedPct`, clock ignored). Self-leave reused that path and
+ * paid out organiser-fault money even after the session had started — the
+ * dialog copy promised "under the event's cancellation policy", which is the
+ * attendee notice tiers.
+ *
+ * Default remains `"organiser"` so existing roster/moderation callers keep the
+ * full-refund behaviour without an explicit flag. Self-leave must pass
+ * `"attendee"` and we resolve `hoursUntilStart` from the next future live slot
+ * (`startsAt >= now`) so a mid-program class leave uses the upcoming session,
+ * not a past COMPLETED/UNVERIFIED row that would force 0%.
  *
  * Never throws: the roster change has already committed.
  */
@@ -200,11 +211,18 @@ export async function refundRemovedAttendeeSeat(args: {
   eventId: string;
   attendeeUserId: string;
   initiatedByUserId: string | null;
+  /**
+   * Defaults to organiser (full tier). Pass `"attendee"` for consultee
+   * self-leave so notice-window tiers apply.
+   */
+  initiatedBy?: "organiser" | "attendee";
 }): Promise<{ amountRefundedPaise: number; refundPct: number } | null> {
   const eventFilter =
     args.kind === "webinar"
       ? { webinarId: args.eventId }
       : { classId: args.eventId };
+  // Missing flag = legacy organiser path; do not flip the money default.
+  const isOrganiserInitiated = (args.initiatedBy ?? "organiser") === "organiser";
 
   // Hoisted so the catch can scope its ops event to the funding organisation;
   // a failure reported against `null` never reaches the org that is owed it.
@@ -233,11 +251,30 @@ export async function refundRemovedAttendeeSeat(args: {
     if (!payment) return null;
     organizationId = payment.organizationId;
 
+    // Organiser branch ignores the clock inside computeRefundPct; skip the
+    // slot lookup. Attendee branch needs a real hoursUntilStart — negative
+    // means already started → 0% under the tiers (and the DELETE route should
+    // have 400'd before we got here for self-leave).
+    let hoursUntilStart = -1;
+    if (!isOrganiserInitiated) {
+      const now = new Date();
+      // Next upcoming session — not the earliest historical live row.
+      // Past class sessions stay SCHEDULED/COMPLETED/UNVERIFIED and would
+      // otherwise pin hoursUntilStart negative → permanent 0% refund.
+      const nextLive = await findLiveEventSlot(eventFilter, {
+        order: "asc",
+        startsAtGte: now,
+      });
+      if (nextLive) {
+        hoursUntilStart =
+          (nextLive.startsAt.getTime() - now.getTime()) / (1000 * 60 * 60);
+      }
+    }
+
     const refundPct = computeRefundPct(
       parsePolicySnapshot(payment.appointment?.cancellationPolicySnapshot),
-      // Ignored on the consultant-initiated branch.
-      -1,
-      true,
+      hoursUntilStart,
+      isOrganiserInitiated,
     );
     // Clamp to the remaining balance, exactly as the cancel route does. A seat
     // carrying an earlier partial refund would otherwise ask for more than is
@@ -249,10 +286,11 @@ export async function refundRemovedAttendeeSeat(args: {
     );
     if (amountPaise <= 0) return { amountRefundedPaise: 0, refundPct };
 
+    const actorLabel = isOrganiserInitiated ? "organiser" : "attendee";
     const result = await refundBookingPayment({
       paymentId: payment.id,
       amountPaise,
-      reason: `removed from ${args.kind} ${args.eventId} by the organiser (${refundPct}%)`,
+      reason: `removed from ${args.kind} ${args.eventId} by the ${actorLabel} (${refundPct}%)`,
       initiatedByUserId: args.initiatedByUserId,
     });
 
@@ -265,7 +303,9 @@ export async function refundRemovedAttendeeSeat(args: {
         ...notificationScope(payment.organizationId),
         amount: amountPaise,
         currency: payment.currency,
-        reason: `You were removed from this ${args.kind}.`,
+        reason: isOrganiserInitiated
+          ? `You were removed from this ${args.kind}.`
+          : `You left this ${args.kind}.`,
         dashboardUrl: `${getAppUrl()}/dashboard`,
       }).catch(() => {});
     }

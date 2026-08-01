@@ -116,6 +116,13 @@ export interface UseEventSlotAllocationOptions {
   /** Number of confirmed past event slots (for in-progress recurring events) */
   pastConfirmedSlotCount?: number;
 
+  /**
+   * #997 Phase 3 — server-bucketed confirmed calls per scheduling-timezone
+   * week key. Used so the interactive weekly-limit guard does not re-derive
+   * aggregates from a whole-window appointment fetch on every click.
+   */
+  weeklyConfirmedCallCounts?: Record<string, number>;
+
   /** Preferred time slots (if any) */
   preferredTimeSlots?: TimeSlot[];
 
@@ -142,6 +149,9 @@ export interface UseEventSlotAllocationOptions {
    * Set by the requests dialog (fresh PENDING allocations); reschedule
    * flows must NOT set it — they legitimately re-allocate. */
   initialAllocation?: boolean;
+
+  /** #1012 — reschedule stale-tab precondition (tentative count at dialog open). */
+  expectedTentativeSlotCount?: number;
 
   /** Enable caching of availability data */
   enableCaching?: boolean;
@@ -571,8 +581,10 @@ export function useEventSlotAllocation(
               options.schedulingTimezone,
             );
 
-            // Count complete calls already in this week (pre-add)
-            let completeCallsThisWeek = 0;
+            // Count complete calls already in this week (pre-add), plus
+            // server-confirmed calls for the same week key (#997 Phase 3).
+            let completeCallsThisWeek =
+              options.weeklyConfirmedCallCounts?.[targetWeekKey] || 0;
             preSlotsByDay.forEach((daySlots) => {
               if (isCompleteCall(daySlots, slotsPerCall))
                 completeCallsThisWeek++;
@@ -722,12 +734,18 @@ export function useEventSlotAllocation(
               options.schedulingTimezone,
             );
 
-            // Confirmed calls per week WITHOUT the new slot
+            // Confirmed calls per week WITHOUT the new slot.
+            // Seed from `weeklyConfirmedCallCounts` (server truth for sessions
+            // already allocated this week) — the earlier weekly-limit block
+            // already does; this sibling block used to count only `currentSlots`
+            // and under-reported progress toasts on partially confirmed weeks.
             const existingSlotsByDay = groupSlotsByDay(
               currentSlots,
               options.schedulingTimezone,
             );
-            const existingWeeklyConfirmedCallCounts = new Map<string, number>();
+            const existingWeeklyConfirmedCallCounts = new Map<string, number>(
+              Object.entries(options.weeklyConfirmedCallCounts ?? {}),
+            );
             existingSlotsByDay.forEach((daySlots) => {
               if (
                 daySlots.length === slotsPerCall &&
@@ -930,6 +948,7 @@ export function useEventSlotAllocation(
         schedulingTimezone: options.schedulingTimezone,
         idempotencyKey: attempt.key,
         initialAllocation: options.initialAllocation || undefined,
+        expectedTentativeSlotCount: options.expectedTentativeSlotCount,
       };
 
       const result = await AllocationAlgorithms.manualAllocate(
@@ -1003,6 +1022,7 @@ export function useEventSlotAllocation(
             isAuto: true,
             idempotencyKey: attempt.key,
             initialAllocation: options.initialAllocation || undefined,
+            expectedTentativeSlotCount: options.expectedTentativeSlotCount,
           },
         );
 
@@ -1098,6 +1118,7 @@ export function useEventSlotAllocation(
           schedulingTimezone: options.schedulingTimezone,
           idempotencyKey: attempt.key,
           initialAllocation: options.initialAllocation || undefined,
+          expectedTentativeSlotCount: options.expectedTentativeSlotCount,
         };
 
         const result =

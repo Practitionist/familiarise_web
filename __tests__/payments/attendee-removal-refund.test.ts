@@ -20,6 +20,7 @@
  */
 
 const mockPaymentFindFirst = jest.fn();
+const mockSlotFindFirst = jest.fn();
 const mockRefundBookingPayment = jest.fn();
 const mockNotifyRefundProcessed = jest.fn();
 const mockRecordSystemError = jest.fn();
@@ -31,6 +32,9 @@ jest.mock("../../lib/prisma", () => ({
     payment: {
       findFirst: (...a: unknown[]) => mockPaymentFindFirst(...a),
       findMany: jest.fn().mockResolvedValue([]),
+    },
+    slotOfAppointment: {
+      findFirst: (...a: unknown[]) => mockSlotFindFirst(...a),
     },
   },
 }));
@@ -97,6 +101,9 @@ function seat(
 beforeEach(() => {
   jest.clearAllMocks();
   mockPaymentFindFirst.mockResolvedValue(seat("pay_ABC"));
+  mockSlotFindFirst.mockResolvedValue({
+    startsAt: new Date(Date.now() + 48 * 60 * 60 * 1000),
+  });
   mockRefundBookingPayment.mockResolvedValue({
     refundId: "r1",
     amountRefundedPaise: 50_000,
@@ -293,5 +300,49 @@ describe("refundRemovedAttendeeSeat", () => {
     expect(result).toEqual({ amountRefundedPaise: 0, refundPct: 0 });
     expect(mockReportSentryError).toHaveBeenCalled();
     expect(mockRecordSystemError).toHaveBeenCalled();
+  });
+
+  it("self-leave after start refunds 0% under attendee notice tiers (#1005)", async () => {
+    // No upcoming live slot (startsAt >= now) → hoursUntilStart stays -1 → 0%.
+    mockSlotFindFirst.mockResolvedValue(null);
+
+    const result = await refundRemovedAttendeeSeat({
+      kind: "webinar",
+      eventId: "web-1",
+      attendeeUserId: ATTENDEE,
+      initiatedByUserId: ATTENDEE,
+      initiatedBy: "attendee",
+    });
+
+    expect(result).toEqual({ amountRefundedPaise: 0, refundPct: 0 });
+    expect(mockRefundBookingPayment).not.toHaveBeenCalled();
+    expect(mockSlotFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          startsAt: expect.objectContaining({ gte: expect.any(Date) }),
+        }),
+      }),
+    );
+  });
+
+  it("mid-program class self-leave uses the next future session for notice", async () => {
+    const nextStart = new Date(Date.now() + 72 * 60 * 60 * 1000);
+    mockSlotFindFirst.mockResolvedValue({ startsAt: nextStart });
+
+    const result = await refundRemovedAttendeeSeat({
+      kind: "class",
+      eventId: "class-1",
+      attendeeUserId: ATTENDEE,
+      initiatedByUserId: ATTENDEE,
+      initiatedBy: "attendee",
+    });
+
+    // Default policy: ≥48h notice → full attendee tier (100% under platform defaults).
+    expect(result).toEqual({ amountRefundedPaise: 50_000, refundPct: 100 });
+    expect(mockRefundBookingPayment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reason: expect.stringContaining("by the attendee"),
+      }),
+    );
   });
 });

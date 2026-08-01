@@ -37,13 +37,15 @@ A one-hour consultation is two rows, a four-hour consultation is eight, and in b
 3. Split the bucket wherever `prev.endsAt !== next.startsAt`, so a gap between two sittings ends the run.
 4. Split it again wherever `isTentative` changes, because an unallocated placeholder is not part of the confirmed session sitting next to it.
 
-Rows whose `completionStatus` is `CANCELLED` or `RESCHEDULED` are dropped before any of this happens. They can never be joined, and leaving them in would let a dead row bridge two runs that are not actually contiguous.
+Rows that `isDeadSlot` rejects — `completionStatus` in `{CANCELLED, RESCHEDULED}` **or** a non-null `deletedAt` tombstone — are dropped before any of this happens. They can never be joined, and leaving them in would let a dead row bridge two runs that are not actually contiguous. Callers that do not select `deletedAt` still degrade safely (`undefined` is treated as live for that signal alone).
 
 The run's first row is its **anchor**, and it is the only row anything may be keyed to.
 
 ### Why the Walk Exists Rather Than Keying on `appointmentId`
 
-One appointment per session is the designed model, and the allocator enforces it on every path that creates a booking. It is not, however, enforced by the schema, and it is already violated in two real places. `prisma/seedFiles/6a-create-appointments.ts:368` attaches weeks-apart sessions to a single appointment, and the webinar reschedule described in #1071 moves only `slotsOfAppointment[0]`, which strands the remaining rows on a different day.
+One appointment per session is the designed model, and the allocator enforces it on every path that creates a booking. It is not, however, enforced by the schema, and it was historically violated in two places. `prisma/seedFiles/6a-create-appointments.ts:368` attaches weeks-apart sessions to a single appointment (seed-only). The planner webinar/class path used to write one long slot or move only `slotsOfAppointment[0]` (#1071).
+
+**Planner create** for both webinars and classes now goes through `lib/appointments/contiguous-slot-run.ts` (`buildContiguousSlotAtoms`) and writes a contiguous N×30min run. **Planner PATCH** differs by type: webinar `crud-with-plan` rewrites the live run via `replaceContiguousSlotRun` (in-place reconcile — update overlapping ids, create the delta, soft-retire surplus as `RESCHEDULED` — so `MeetingSession` / `Recording` cascades are not tripped). Class `crud-with-plan` PATCH does **not** rewrite slot times when `sessionDurationInHours` changes; allocated class sessions keep their existing run length until a future allocator/reschedule path moves them.
 
 If sessions were keyed on `appointmentId` alone, both of those cases would collapse unrelated sessions into one shared video room. That is a cross-session privacy leak rather than a cosmetic defect, so the contiguity walk is load-bearing and must not be simplified away.
 

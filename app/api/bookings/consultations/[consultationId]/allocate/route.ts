@@ -92,6 +92,7 @@ export async function PATCH(
         // the first batch instead of allocating twice.
         idempotencyKey: request.headers.get("Idempotency-Key") ?? undefined,
         initialAllocation: body.initialAllocation,
+        expectedTentativeSlotCount: body.expectedTentativeSlotCount,
         // Honoured only for the consultant (or ADMIN/STAFF): accepting a
         // time outside the published availability is the consultant's call,
         // not something a consultee may assert about someone else's schedule.
