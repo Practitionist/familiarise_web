@@ -1,10 +1,15 @@
 "use client";
 
-import { useMemo } from "react";
-import { Inbox } from "@novu/nextjs";
-import { Bell } from "lucide-react";
+import { useMemo, useState } from "react";
+import { Bell, Inbox, InboxContent } from "@novu/nextjs";
+import { Bell as BellIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useSession } from "@/lib/auth-client";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 
 const NOVU_APP_ID = process.env.NEXT_PUBLIC_NOVU_APP_ID;
 
@@ -16,6 +21,7 @@ type OrgMembershipLite = {
 export function NotificationInbox() {
   const router = useRouter();
   const { data: session } = useSession();
+  const [open, setOpen] = useState(false);
 
   const memberships = useMemo(() => {
     const raw = (session?.user as Record<string, unknown> | undefined)
@@ -68,36 +74,24 @@ export function NotificationInbox() {
     return null;
   }
 
+  /**
+   * Novu's bundled popover is deliberately not used. Given children, `Inbox`
+   * drops to a provider and the panel becomes ours to place, which is what the
+   * calendar needed: its own popover took a fixed 400px at a bespoke z-index of
+   * 9999, could not be closed programmatically, and so stayed parked over the
+   * Friday and Saturday columns of the slot grid after a notification click
+   * navigated there.
+   *
+   * The repo's Radix popover fixes the placement (collision-aware, capped at
+   * the viewport, on the shared z-layer) and, because the open state is ours,
+   * the panel dismisses itself before routing rather than following the user
+   * onto the page they asked for.
+   */
   return (
     <Inbox
       applicationIdentifier={NOVU_APP_ID}
       subscriberId={session.user.id}
       tabs={tabs}
-      placement="bottom-end"
-      placementOffset={12}
-      renderBell={(unreadCount) => {
-        const count = unreadCount?.total ?? 0;
-        return (
-          <div
-            role="status"
-            className="relative inline-flex h-9 w-9 items-center justify-center"
-            aria-label={`Notifications${count > 0 ? ` (${count} unread)` : ""}`}
-          >
-            <Bell className="h-5 w-5" />
-            {count > 0 && (
-              <span className="absolute -top-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white">
-                {count > 99 ? "99+" : count}
-              </span>
-            )}
-          </div>
-        );
-      }}
-      onNotificationClick={(notification) => {
-        const url = notification?.redirect?.url;
-        if (url) {
-          router.push(url);
-        }
-      }}
       appearance={{
         variables: {
           colorBackground: "#ffffff",
@@ -114,28 +108,64 @@ export function NotificationInbox() {
           borderRadius: "0.5rem",
         },
         elements: {
-          popoverContent: {
-            zIndex: 9999,
-            width: "min(400px, calc(100vw - 2rem))",
-            maxHeight: "calc(100vh - 6rem)",
-            borderRadius: "0.75rem",
-            boxShadow:
-              "0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1)",
-            border: "1px solid #e4e4e7",
-            overflowY: "auto",
-          },
-          popoverTrigger: {
-            zIndex: 9998,
-          },
-          bellContainer: {
-            display: "contents",
-          },
           notification: {
             padding: "12px 16px",
             gap: "12px",
           },
         },
       }}
-    />
+    >
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            aria-label="Notifications"
+            aria-haspopup="dialog"
+            className="relative inline-flex h-9 w-9 items-center justify-center rounded-md text-zinc-600 transition-colors hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-zinc-50"
+          >
+            <Bell
+              renderBell={(unreadCount) => {
+                const count = unreadCount?.total ?? 0;
+                return (
+                  <span className="relative flex items-center justify-center">
+                    <BellIcon className="h-5 w-5" />
+                    {count > 0 && (
+                      <span
+                        role="status"
+                        aria-label={`${count} unread notifications`}
+                        className="absolute -top-2 -right-2 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white"
+                      >
+                        {count > 99 ? "99+" : count}
+                      </span>
+                    )}
+                  </span>
+                );
+              }}
+            />
+          </button>
+        </PopoverTrigger>
+        {/* Narrower than the old 400px and collision-padded so the panel stays
+            inside the viewport instead of running to the window edge over the
+            page it is anchored above. */}
+        <PopoverContent
+          align="end"
+          sideOffset={8}
+          collisionPadding={12}
+          className="max-h-[min(32rem,calc(100vh-6rem))] w-[min(22rem,calc(100vw-2rem))] overflow-y-auto p-0"
+        >
+          <InboxContent
+            onNotificationClick={(notification) => {
+              const url = notification?.redirect?.url;
+              // Closed first: the panel must not still be sitting over the
+              // grid it just sent the user to.
+              setOpen(false);
+              if (url) {
+                router.push(url);
+              }
+            }}
+          />
+        </PopoverContent>
+      </Popover>
+    </Inbox>
   );
 }

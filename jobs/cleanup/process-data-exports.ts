@@ -12,8 +12,8 @@ import {
   type DataExportResult,
 } from "../../scripts/cleanup/process-data-exports";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
-import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
 import * as Sentry from "@sentry/nextjs";
+import { runJob } from "../../lib/observability/job-sentry";
 
 function outputToGitHubActions(result: DataExportResult): void {
   if (!process.env.GITHUB_ACTIONS) return;
@@ -31,7 +31,7 @@ function outputToGitHubActions(result: DataExportResult): void {
 }
 
 if (require.main === module) {
-  (async () => {
+  runJob("process-data-exports", async () => {
     await abortIfMaintenance("process-data-exports");
     Sentry.logger.info("job:process-data-exports started");
     console.log("📦 Processing data export queue...");
@@ -42,19 +42,9 @@ if (require.main === module) {
       if (result.success) {
         Sentry.logger.info("job:process-data-exports finished", { picked: result.picked, succeeded: result.succeeded, failed: result.failed });
       }
-      if (!result.success) process.exit(1);
-    } catch (err) {
-      // #476 — lock held = another run is live; skip cleanly (exit 0).
-      if (err instanceof CronLockHeldError) {
-        Sentry.logger.info("job:process-data-exports lock held — skipping");
-        console.log(`⏭️  ${err.message}`);
-        return;
-      }
-      Sentry.captureException(err, { tags: { subsystem: "jobs", job: "process-data-exports" } });
-      console.error("Fatal error:", err);
-      process.exit(1);
+      if (!result.success) process.exitCode = 1;
     } finally {
       await disconnectDatabase();
     }
-  })();
+  });
 }

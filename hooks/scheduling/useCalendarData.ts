@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useEffect } from "react";
+import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { reportSentryError } from "@/lib/observability/report";
 import {
   startOfWeek,
@@ -38,6 +38,10 @@ export interface UseCalendarDataOptions {
   view: "week" | "month";
   currentDate: Date;
   mode: "view" | "select" | "allocate";
+  /** The scheduling period. It bounds what is SELECTABLE, enforced by the
+   * calendar's own range guard; the fetch window follows the visible
+   * week/month, so a cell outside the period still shows what is really
+   * there rather than reading as absent. */
   allowedStart?: Date;
   allowedEnd?: Date;
   /** #997 Phase 3 — subscription per-call slot count, sent to the event-slots
@@ -216,8 +220,6 @@ export function useCalendarData(
     autoLoad = true,
     view,
     currentDate,
-    mode,
-    allowedEnd,
     sessionDurationInHours,
     consulteeUserId,
     includeAppointmentDetails = false,
@@ -242,6 +244,11 @@ export function useCalendarData(
   >({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Flicker fix — a fetch for week N can resolve after the user has already
+  // navigated to week N+1 (no AbortController here). Only the response
+  // matching the MOST RECENTLY issued request may commit state; a stale one
+  // is silently dropped instead of repainting the wrong week.
+  const availabilityRequestIdRef = useRef(0);
 
   // PERFORMANCE: Computed available slots from raw data using useMemo
   const availableSlots = useMemo((): TimeSlot[] => {
@@ -290,19 +297,28 @@ export function useCalendarData(
   const fetchAvailabilitySlots = useCallback(async (): Promise<void> => {
     if (!consultantId) return;
 
+    const requestId = ++availabilityRequestIdRef.current;
+
     try {
-      // Always start from the view's natural start so pre-period weeks have
-      // availability data (allows "Outside Period" label on consultant's actual
-      // available slots rather than blank disabled cells — UX consistency fix).
+      // The window is the VISIBLE range, never the scheduling period — at
+      // either end. Starting at the view's own start is what lets a pre-period
+      // week show the consultant's real availability behind an "Outside Period"
+      // label instead of blank cells; the same argument governs the end, and
+      // used not to. Clamping to `allowedEnd` left every cell past it with no
+      // server row, and the route's slots-in-window filter drops the
+      // APPOINTMENTS in that range too, so booked cells disappeared exactly
+      // like available ones. One week further on the range inverted, the
+      // server returned nothing, and the whole grid blanked.
+      //
+      // `allowedStart`/`allowedEnd` govern SELECTABILITY — the range guard in
+      // `handleSlotClick` and the "Outside Period" label already enforce it —
+      // and must never govern visibility. Capping an allocate request at one
+      // week instead of the remainder of the period is also a direct win on
+      // the endpoint #997 measured in tens of seconds.
       const startDate =
         view === "week" ? startOfWeek(currentDate) : startOfMonth(currentDate);
-      // End at allowedEnd in allocate mode to avoid fetching past the period.
       const endDate =
-        mode === "allocate" && allowedEnd
-          ? allowedEnd
-          : view === "week"
-            ? endOfWeek(currentDate)
-            : endOfMonth(currentDate);
+        view === "week" ? endOfWeek(currentDate) : endOfMonth(currentDate);
 
       // #997 Phase 2 — the server-computed tooltip/orphan-slot detail. The
       // route re-verifies ownership regardless of this flag, and 403s rather
@@ -317,12 +333,16 @@ export function useCalendarData(
         consulteeUserId,
       );
 
-      // Defensive: Validate data structure before using
+      // A newer request was issued (user moved on) while this one was in
+      // flight — its result is stale, discard rather than repaint.
+      if (requestId !== availabilityRequestIdRef.current) return;
+
+      // A shape the route cannot legitimately return. Emptying the grid on it
+      // is the failure this change exists to remove: an empty grid is a valid
+      // answer for a quiet week, so the consultant cannot tell it apart from a
+      // broken response. Surface it instead.
       if (!data || typeof data !== "object") {
-        console.warn(
-          "⚠️ fetchAvailabilitySlots: Invalid data structure returned",
-        );
-        setRawAvailabilitySlots({ weekly: [], custom: [] });
+        setError("Could not read the availability response. Please try again.");
         return;
       }
 
@@ -354,6 +374,10 @@ export function useCalendarData(
 
       setRawAvailabilitySlots(validatedData);
     } catch (error) {
+      // A stale request's failure must not clobber the error state of
+      // whatever the user has since navigated to.
+      if (requestId !== availabilityRequestIdRef.current) return;
+
       console.error("Error fetching availability slots:", error);
       // Not captured here — AllocationService.fetchAvailabilitySlots already
       // reports this exact error (see fetchConsultantDetails above).
@@ -371,8 +395,6 @@ export function useCalendarData(
     toast,
     view,
     currentDate,
-    mode,
-    allowedEnd,
     consulteeUserId,
     includeAppointmentDetails,
   ]);
@@ -702,7 +724,14 @@ export function useCalendarData(
       }
       setError(null);
 
-      fetchAvailabilitySlots()
+      const pending = fetchAvailabilitySlots();
+      // Read AFTER the call: the id is bumped synchronously, before the first
+      // await, so this is that call's own id. Without it a stale reply's
+      // `finally` clears the spinner a newer request is still waiting on —
+      // the success and error paths are already guarded this way.
+      const requestId = availabilityRequestIdRef.current;
+
+      pending
         .catch((error) => {
           console.error("Error fetching date-dependent data:", error);
           // Believed unreachable — see fetchAllData's identical comment.
@@ -717,16 +746,16 @@ export function useCalendarData(
           );
         })
         .finally(() => {
+          if (requestId !== availabilityRequestIdRef.current) return;
           setLoading(false);
         });
     }
-  }, [
-    autoLoad,
-    consultantId,
-    consultantDetails,
-    weeklySlotCount,
-    fetchAvailabilitySlots,
-  ]);
+    // consultantDetails/weeklySlotCount deliberately excluded: both are SET
+    // BY this effect's own fetch, so listing them re-fires it every time the
+    // fetch it just ran completes — a self-triggering refetch loop on every
+    // week navigation (read via closure for isInitialLoad, not as triggers).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoLoad, consultantId, fetchAvailabilitySlots]);
 
   // ENHANCEMENT: Individual refetch functions for granular control
   const refetchConsultant = useCallback(async (): Promise<void> => {

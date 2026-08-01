@@ -33,6 +33,12 @@ import {
 } from "./types";
 import { SlotCalculationService } from "./SlotCalculationService";
 import {
+  matchesPreferredDays,
+  maxPreferenceScore,
+  scoreCandidateStart,
+  type AllocationPreference,
+} from "./preferenceScoring";
+import {
   SlotValidationService,
   isOccupiedByLiveAppointment,
 } from "./SlotValidationService";
@@ -52,7 +58,9 @@ import {
   ALLOCATION_APPROVABLE_FROM,
   EVENT_ALLOWED_FROM,
   CLASS_EVENT_ALLOWED_FROM,
+  RESCHEDULE_OPEN_STATUSES,
   transitionConsultationRequest,
+  transitionRescheduleRequest,
   transitionSubscriptionRequest,
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
@@ -122,6 +130,7 @@ export class SlotAllocationService {
             request.slots,
             request.idempotencyKey,
             request.initialAllocation,
+            request.wideLock,
           );
 
         case "requested":
@@ -454,6 +463,133 @@ export class SlotAllocationService {
     return { success: true, appointments };
   }
 
+  /**
+   * The slots this allocation is replacing — the ones a reschedule released.
+   *
+   * These are the identity of the reschedule, and the only safe key for finding
+   * what the initiator asked for. `RescheduleRequest.appointmentId` is NOT: the
+   * consultee's reschedule URL resolves to the booking's next actionable
+   * session (map-consultee's nextActionableChild) while the picker deliberately
+   * offers every session of the program, so on a multi-session booking the row
+   * is written against one appointment and the released slots land on another.
+   * Keying on the appointment made the preference apply only when the released
+   * session happened to be the next one — silent, and right often enough to
+   * look flaky rather than broken.
+   *
+   * RESCHEDULED rather than merely tentative: every pending request carries
+   * tentative slots (request-for-approval and unpaid checkout both create them
+   * that way), and those were never released by anybody.
+   */
+  private static releasedSlotIdsOf(
+    appointments: AppointmentWithSlots[],
+  ): string[] {
+    return appointments.flatMap((appointment) =>
+      appointment.slotsOfAppointment
+        .filter(
+          (slot) =>
+            slot.isTentative &&
+            slot.completionStatus === SlotCompletionStatus.RESCHEDULED,
+        )
+        .map((slot) => slot.id),
+    );
+  }
+
+  /** Open, preference-bearing reschedules that released any of these slots. */
+  private static openPreferenceRequestWhere(
+    releasedSlotIds: string[],
+  ): Prisma.RescheduleRequestWhereInput {
+    return {
+      releasedSlotIds: { hasSome: releasedSlotIds },
+      status: { in: RESCHEDULE_OPEN_STATUSES },
+      OR: [
+        { preferredTimeOfDay: { not: null } },
+        { preferredDays: { not: null } },
+      ],
+    };
+  }
+
+  /**
+   * The preference attached to the reschedule that released these slots, if the
+   * initiator stated one (#1065).
+   *
+   * Read here rather than passed in because the allocator is reached from the
+   * consultant's allocate surface, the auto-confirm path and the API route
+   * alike — none of which know what the consultee asked for. Empty for every
+   * non-reschedule allocation, which is exactly when it must not apply.
+   *
+   * Matching on the released slots also scopes it in TIME without needing a
+   * timestamp: a consumed reschedule's slot rows are deleted and replaced with
+   * fresh ids, so a stale row from an earlier reschedule of the same session
+   * cannot overlap this one and cannot leak its preference into it.
+   */
+  private static async findAllocationPreference(
+    releasedSlotIds: string[],
+  ): Promise<AllocationPreference | undefined> {
+    if (releasedSlotIds.length === 0) return undefined;
+
+    const stated = await prisma.rescheduleRequest.findFirst({
+      where: this.openPreferenceRequestWhere(releasedSlotIds),
+      // Newest wins; an older ask must not outrank the current one.
+      orderBy: { createdAt: "desc" },
+      select: { preferredTimeOfDay: true, preferredDays: true },
+    });
+
+    return stated ?? undefined;
+  }
+
+  /**
+   * Close the preference-only reschedule this allocation just answered.
+   *
+   * Placing replacement times IS the answer to "move these, ideally mornings",
+   * so leaving the row PENDING_REVIEW would both mislabel it in the audit trail
+   * — it was fulfilled, not lapsed unanswered — and keep its
+   * openForAppointmentId reservation held until the hourly expiry sweep, which
+   * would block the consultee from rescheduling the same booking again for up
+   * to 72 hours.
+   *
+   * Deliberately scoped to rows carrying NO proposed times. A request that
+   * named times and got different ones back has not been accepted, and how that
+   * case resolves is existing behaviour (it lapses to EXPIRED) that this change
+   * has no business rewriting.
+   *
+   * resolvedById is left null: the allocator is reached from routes, crons and
+   * the auto-confirm path, and inventing an actor here would be worse than
+   * recording none.
+   */
+  private static async resolveConsumedPreferenceRequests(
+    tx: Tx,
+    releasedSlotIds: string[],
+  ): Promise<void> {
+    if (releasedSlotIds.length === 0) return;
+
+    const consumed = await tx.rescheduleRequest.findMany({
+      where: {
+        ...this.openPreferenceRequestWhere(releasedSlotIds),
+        proposedSlots: { none: {} },
+      },
+      select: { id: true },
+    });
+
+    for (const request of consumed) {
+      try {
+        // The shared transition helper rather than a bare update: reaching a
+        // terminal state is what releases openForAppointmentId and stamps
+        // resolvedAt, and callers must not have to remember that.
+        await transitionRescheduleRequest(tx, {
+          where: { id: request.id },
+          to: "ACCEPTED",
+        });
+      } catch (err) {
+        // Losing the CAS means the initiator withdrew (or the sweep expired the
+        // row) between the read above and here. That is a perfectly good ending
+        // for the request and no reason to roll back an allocation that has
+        // already placed real times — closing the row is bookkeeping, the
+        // booking is the outcome.
+        if (!(err instanceof IllegalTransitionError)) throw err;
+      }
+    }
+  }
+
   private static async autoAllocate(
     eventType: EventType,
     eventId: string,
@@ -661,6 +797,12 @@ export class SlotAllocationService {
         );
       }
 
+      // #1065 — captured BEFORE the write txn deletes these rows. Empty for a
+      // fresh allocation, which is exactly when a preference must not apply.
+      const releasedSlotIds = this.releasedSlotIdsOf(existingAppointments);
+      const preference =
+        await this.findAllocationPreference(releasedSlotIds);
+
       // Find available slots (read-only; runs out-of-txn under the locks)
       // Pass appointmentIdsToExclude so their slots are excluded from bookedSlots
       // Pass existingAppointments so sessionsPerWeek is scoped to this event only
@@ -675,6 +817,7 @@ export class SlotAllocationService {
         existingAppointments,
         consulteeUserId, // #898 — pick slots free for the consultee too
         consultantProfileId,
+        preference,
       );
 
       // Validate (read-only; runs out-of-txn under the locks)
@@ -783,6 +926,10 @@ export class SlotAllocationService {
             config,
           );
 
+          // #1065 — these times ARE the answer to the preference, so close it
+          // here rather than leaving it open for the expiry sweep to mislabel.
+          await this.resolveConsumedPreferenceRequests(tx, releasedSlotIds);
+
           return {
             success: true,
             appointments,
@@ -829,6 +976,7 @@ export class SlotAllocationService {
     slotStrings: string[],
     idempotencyKey?: string,
     initialAllocation?: boolean,
+    wideLock?: boolean,
   ): Promise<AllocationResult> {
     // #837 — return the prior batch on a double-submit before doing any work.
     const replay = await this.findIdempotentAllocation(
@@ -858,12 +1006,19 @@ export class SlotAllocationService {
     // #860 — shard the lock by the earliest target day so allocations for
     // different days don't serialize; same-day (the actual duplicate risk)
     // still shares the key. #440's GiST constraint backstops cross-day overlap.
-    const lockScope = slotStrings
-      .map((s) => new Date(s))
-      .filter((d) => !Number.isNaN(d.getTime()))
-      .sort((a, b) => a.getTime() - b.getTime())[0]
-      ?.toISOString()
-      .slice(0, 10);
+    //
+    // wideLock opts out of the sharding: the caller is placing times nobody
+    // picked per-day, so parallel same-consultant allocations could each pass
+    // the per-week cap check on a stale count. GiST cannot see a cap, only an
+    // overlap.
+    const lockScope = wideLock
+      ? undefined
+      : slotStrings
+          .map((s) => new Date(s))
+          .filter((d) => !Number.isNaN(d.getTime()))
+          .sort((a, b) => a.getTime() - b.getTime())[0]
+          ?.toISOString()
+          .slice(0, 10);
     const lock = await lockAutoAllocate(consultantProfileId, lockScope);
     // #898 follow-up — serialize on the consultee too (consultant → consultee
     // lock order) so one person can't be booked with two consultants at once.
@@ -1012,6 +1167,12 @@ export class SlotAllocationService {
             .filter((a) => a.slotsOfAppointment.some((s) => s.isTentative))
             .map((a) => a.id)
         : existingAppointments.map((a) => a.id);
+
+      // #1065 — a hand-placed allocation answers a stated preference just as an
+      // auto one does (it does not READ the preference — the consultant chose
+      // the times — but it consumes the request all the same). Captured before
+      // the write txn deletes these rows.
+      const releasedSlotIds = this.releasedSlotIdsOf(existingAppointments);
 
       // Validate total slot count for recurring event types
       if (isRecurringEventType(eventType)) {
@@ -1163,6 +1324,9 @@ export class SlotAllocationService {
             slots[0],
             config,
           );
+
+          // #1065 — see autoAllocate: placing the replacement answers the ask.
+          await this.resolveConsumedPreferenceRequests(tx, releasedSlotIds);
 
           return {
             success: true,
@@ -1529,14 +1693,21 @@ export class SlotAllocationService {
   }
 
   /**
-   * First placeable call inside one row on a recurring event's day, or null.
+   * Best-scoring placeable call inside one row on a recurring event's day, or
+   * null when the row can host none.
    *
    * Candidates are held to the row's own scheduling-timezone day so that
    * walking an overnight row cannot spill a session into the next day and
    * breach the per-day cap the validator enforces (ADR B9 buckets by the
    * event's timezone, not the server's).
+   *
+   * #1065 — ordering by preference score, never filtering by it. Every
+   * candidate that was placeable before is still placeable; only which of them
+   * is returned can change. With no preference the maximum score is 0, the
+   * first placeable candidate hits it, and this returns exactly what the old
+   * first-fit walk returned.
    */
-  private static firstFittingBlockInRow(
+  private static bestFittingBlockInRow(
     rowStart: Date,
     slotsPerCall: number,
     consultant: ConsultantAllocationData,
@@ -1548,12 +1719,15 @@ export class SlotAllocationService {
       endDate: Date;
       schedulingTimezone?: string;
     },
-  ): Date[] | null {
+    preference?: AllocationPreference,
+  ): { block: Date[]; score: number } | null {
     const { now, startDate, endDate, schedulingTimezone } = bounds;
     const rowDayKey = SlotCalculationService.dayKey(
       rowStart,
       schedulingTimezone,
     );
+    const maxScore = maxPreferenceScore(preference);
+    let best: { block: Date[]; score: number } | null = null;
 
     for (const candidateStart of this.candidateStartsInRow(
       rowStart,
@@ -1583,15 +1757,115 @@ export class SlotAllocationService {
         bookedSlots,
         now,
       );
+      if (!block) continue;
 
-      if (block) return block;
+      const score = scoreCandidateStart(
+        candidateStart,
+        preference,
+        schedulingTimezone,
+      );
+      // Nothing later in the row can beat a perfect match, and an earlier one
+      // is the better session anyway — so stop. This is also the no-preference
+      // fast path: maxScore is 0, so the first placeable candidate ends the walk.
+      if (score >= maxScore) return { block, score };
+      if (!best || score > best.score) best = { block, score };
     }
 
-    return null;
+    return best;
   }
 
   /**
-   * Find available consecutive slots for auto-allocation
+   * The one block a consultation or webinar needs, or null if the search window
+   * holds none.
+   *
+   * The walk order is unchanged — chronologically sorted rows, week by week,
+   * every 30-minute start inside each row. What changed for #1065 is that a
+   * placeable block is SCORED and remembered rather than returned outright, and
+   * the walk stops early only once a candidate matches the preference in full.
+   * With no preference the ceiling is 0, so the very first placeable block ends
+   * the walk and this returns precisely what the old first-fit search did.
+   *
+   * The remembered best is the entire safety property: whatever the preference
+   * says, if any block was placeable at all this returns one, so a preference
+   * that cannot be met costs a less-liked time and never the allocation.
+   */
+  private static bestBlockForSingleSession(
+    eventType: EventType,
+    consultant: ConsultantAllocationData,
+    slotsPerCall: number,
+    bookedSlots: Set<string>,
+    now: Date,
+    sortedWeekly: ConsultantAllocationData["slotsOfAvailabilityWeekly"],
+    sortedCustom: ConsultantAllocationData["slotsOfAvailabilityCustom"],
+    schedulingTimezone?: string,
+    preference?: AllocationPreference,
+  ): Date[] | null {
+    const maxWeeksToSearch = eventType === "consultation" ? 8 : 4;
+    const maxScore = maxPreferenceScore(preference);
+
+    let bestBlock: Date[] | null = null;
+    let bestScore = -1;
+
+    /** Row starts to walk, in the order the search has always used them. */
+    const rowStarts: Date[] = [];
+    if (consultant.scheduleType === ScheduleType.WEEKLY) {
+      for (let week = 0; week < maxWeeksToSearch; week++) {
+        for (const slot of sortedWeekly) {
+          const rowStart = this.getNextOccurrenceWeekly(
+            slot.startDay,
+            slot.startTimeUtc,
+            slot.utcOffsetMinutes,
+          );
+          if (week > 0) rowStart.setUTCDate(rowStart.getUTCDate() + week * 7);
+          rowStarts.push(rowStart);
+        }
+      }
+    } else {
+      for (const slot of sortedCustom) rowStarts.push(new Date(slot.startsAt));
+    }
+
+    for (const rowStart of rowStarts) {
+      for (const candidateStart of this.candidateStartsInRow(
+        rowStart,
+        consultant,
+      )) {
+        if (candidateStart < now) continue;
+
+        const consecutiveBlock = this.buildConsecutiveBlock(
+          candidateStart,
+          slotsPerCall,
+          consultant,
+          bookedSlots,
+          now,
+        );
+        if (!consecutiveBlock) continue;
+
+        const score = scoreCandidateStart(
+          candidateStart,
+          preference,
+          schedulingTimezone,
+        );
+        // A full match cannot be beaten, and the earliest full match is the
+        // better session — so stop here rather than scanning the whole window.
+        if (score >= maxScore) return consecutiveBlock;
+        if (score > bestScore) {
+          bestScore = score;
+          bestBlock = consecutiveBlock;
+        }
+      }
+    }
+
+    return bestBlock;
+  }
+
+  /**
+   * Find available consecutive slots for auto-allocation.
+   *
+   * #1065 — `preference` orders the candidates that are already valid. Every
+   * hard constraint (availability, both parties' bookings, per-day and per-week
+   * caps, the scheduling period) is evaluated exactly as before and no
+   * preference can relax or tighten one. An unsatisfiable preference therefore
+   * changes nothing except which of the equally-legal placements is chosen.
    */
   private static async findAvailableSlots(
     // #908 — accepts the base client so slot discovery can run OUTSIDE the write
@@ -1612,6 +1886,9 @@ export class SlotAllocationService {
     // Lets the occupancy predicate include appointments delivered under this
     // consultant's own plans, matching what the availability grid counts.
     consultantProfileId?: string,
+    // #1065 — how the consultee would like the replacement placed. Scores
+    // candidates; absent (or all-null) leaves selection exactly as it was.
+    preference?: AllocationPreference,
   ): Promise<Date[]> {
     // Get all existing booked slots for this consultant
     // FIX Bug #15: Use centralized occupancy policy for consistent conflict detection
@@ -1741,67 +2018,25 @@ export class SlotAllocationService {
           )
         : [];
 
+    // #1065 — the preference's ceiling. Zero when nothing was asked for, which
+    // makes every "is this candidate perfect?" test below true on the first
+    // placeable candidate and preserves first-fit verbatim.
+    const maxScore = maxPreferenceScore(preference);
+
     // For consultations/webinars: find one consecutive block, searching multiple weeks
     if (eventType === "consultation" || eventType === "webinar") {
-      const maxWeeksToSearch = eventType === "consultation" ? 8 : 4;
-
-      if (consultant.scheduleType === ScheduleType.WEEKLY) {
-        for (let week = 0; week < maxWeeksToSearch; week++) {
-          for (const slot of sortedWeekly) {
-            const baseStart = this.getNextOccurrenceWeekly(
-              slot.startDay,
-              slot.startTimeUtc,
-              slot.utcOffsetMinutes,
-            );
-
-            const rowStart = new Date(baseStart);
-            if (week > 0) {
-              rowStart.setUTCDate(rowStart.getUTCDate() + week * 7);
-            }
-
-            for (const candidateStart of this.candidateStartsInRow(
-              rowStart,
-              consultant,
-            )) {
-              if (candidateStart < now) continue;
-
-              const consecutiveBlock = this.buildConsecutiveBlock(
-                candidateStart,
-                slotsPerCall,
-                consultant,
-                bookedSlots,
-                now,
-              );
-
-              if (consecutiveBlock) {
-                return consecutiveBlock;
-              }
-            }
-          }
-        }
-      } else {
-        // CUSTOM schedule: iterate pre-sorted slots
-        for (const slot of sortedCustom) {
-          for (const candidateStart of this.candidateStartsInRow(
-            new Date(slot.startsAt),
-            consultant,
-          )) {
-            if (candidateStart < now) continue;
-
-            const consecutiveBlock = this.buildConsecutiveBlock(
-              candidateStart,
-              slotsPerCall,
-              consultant,
-              bookedSlots,
-              now,
-            );
-
-            if (consecutiveBlock) {
-              return consecutiveBlock;
-            }
-          }
-        }
-      }
+      const singleSession = this.bestBlockForSingleSession(
+        eventType,
+        consultant,
+        slotsPerCall,
+        bookedSlots,
+        now,
+        sortedWeekly,
+        sortedCustom,
+        config.schedulingTimezone,
+        preference,
+      );
+      if (singleSession) return singleSession;
 
       throw new AllocationValidationError(
         `No ${slotsPerCall} consecutive slots available for ${eventType}`,
@@ -1862,24 +2097,39 @@ export class SlotAllocationService {
     const sessionsPlacedPerWeek = new Map(existingSessionsPerWeek);
     const usedDayKeys = new Set(seededDayKeys);
 
-    const cursor = new Date(
-      Date.UTC(
-        startDate.getUTCFullYear(),
-        startDate.getUTCMonth(),
-        startDate.getUTCDate(),
-      ),
-    );
+    /** Availability rows that touch this UTC day, in their sorted order. */
+    const rowStartsForDay = (currentDay: Date): Date[] =>
+      consultant.scheduleType === ScheduleType.WEEKLY
+        ? sortedWeekly
+            .map((slot) =>
+              this.matchWeeklySlotToDay(
+                slot.startDay,
+                slot.startTimeUtc,
+                currentDay,
+                slot.utcOffsetMinutes,
+              ),
+            )
+            .filter((rowStart): rowStart is Date => rowStart !== null)
+        : sortedCustom
+            .map((slot) => this.matchCustomSlotToDay(slot.startsAt, currentDay))
+            .filter((rowStart): rowStart is Date => rowStart !== null);
 
-    for (
-      ;
-      cursor <= endDate && selectedSlots.length < totalSlotsNeeded;
-      cursor.setUTCDate(cursor.getUTCDate() + 1)
-    ) {
-      const currentDay = new Date(cursor);
+    /**
+     * Place at most one call on this day, honouring the timezone-bucketed
+     * per-day and per-week caps the validator will re-check.
+     *
+     * `perfectOnly` is the day-preference half of #1065. A day of the week is a
+     * property of the whole day, so unlike the time band it cannot be chosen
+     * between candidates inside one row — the sweep has to be run twice
+     * instead. The first pass accepts only fully-preferred placements; the
+     * second accepts anything and is byte-for-byte the sweep that shipped
+     * before. Passing over a day in the first sweep never loses it, because the
+     * second sweep walks the same window with the same cap counters.
+     */
+    const tryPlaceOnDay = (currentDay: Date, perfectOnly: boolean): boolean => {
+      let best: { block: Date[]; score: number } | null = null;
 
-      // Place at most one call on this day, honouring the timezone-bucketed
-      // per-day and per-week caps the validator will re-check.
-      const tryPlace = (rowStart: Date): boolean => {
+      for (const rowStart of rowStartsForDay(currentDay)) {
         const rowDayKey = SlotCalculationService.dayKey(
           rowStart,
           config.schedulingTimezone,
@@ -1889,11 +2139,25 @@ export class SlotAllocationService {
           config.schedulingTimezone,
         );
 
-        if (usedDayKeys.has(rowDayKey)) return false;
+        if (usedDayKeys.has(rowDayKey)) continue;
         if ((sessionsPlacedPerWeek.get(rowWeekKey) ?? 0) >= sessionsPerWeek)
-          return false;
+          continue;
 
-        const sessionSlots = this.firstFittingBlockInRow(
+        // Day-of-week is a property of the whole row, so a preferred-only sweep
+        // can rule the row out here instead of walking its availability,
+        // building blocks and then discarding them below. On a year-long class
+        // with a weekend preference that is ~260 days of wasted block-building
+        // per sweep. Safe because bestFittingBlockInRow holds every candidate
+        // to the row's own timezone day, so they all share this weekday.
+        if (perfectOnly && !matchesPreferredDays(
+          rowStart,
+          preference,
+          config.schedulingTimezone,
+        )) {
+          continue;
+        }
+
+        const candidate = this.bestFittingBlockInRow(
           rowStart,
           slotsPerCall,
           consultant,
@@ -1904,49 +2168,76 @@ export class SlotAllocationService {
             endDate,
             schedulingTimezone: config.schedulingTimezone,
           },
+          preference,
         );
+        if (!candidate) continue;
+        // LOAD-BEARING: discarding a placeable block here is only safe because
+        // sweepPeriod(false) below is UNCONDITIONAL. Any early return inserted
+        // between the two sweeps turns this line into a filter and
+        // reintroduces #1065 — the preference would start costing allocations.
+        if (perfectOnly && candidate.score < maxScore) continue;
 
-        if (!sessionSlots) return false;
-
-        selectedSlots.push(...sessionSlots);
-        sessionSlots.forEach((s) => bookedSlots.add(s.toISOString()));
-
-        // Re-key on the slot actually placed rather than on the row it came
-        // from, so the counters record where the session really landed.
-        const placedDayKey = SlotCalculationService.dayKey(
-          sessionSlots[0],
-          config.schedulingTimezone,
-        );
-        const placedWeekKey = SlotCalculationService.weekKey(
-          sessionSlots[0],
-          config.schedulingTimezone,
-        );
-        usedDayKeys.add(placedDayKey);
-        sessionsPlacedPerWeek.set(
-          placedWeekKey,
-          (sessionsPlacedPerWeek.get(placedWeekKey) ?? 0) + 1,
-        );
-
-        return true;
-      };
-
-      if (consultant.scheduleType === ScheduleType.WEEKLY) {
-        for (const slot of sortedWeekly) {
-          const rowStart = this.matchWeeklySlotToDay(
-            slot.startDay,
-            slot.startTimeUtc,
-            currentDay,
-            slot.utcOffsetMinutes,
-          );
-          if (rowStart && tryPlace(rowStart)) break;
+        // A full match ends the row walk for the same reason it ends the
+        // candidate walk — and with no preference maxScore is 0, so the first
+        // row that yields anything wins, exactly as before.
+        if (candidate.score >= maxScore) {
+          best = candidate;
+          break;
         }
-      } else {
-        for (const slot of sortedCustom) {
-          const rowStart = this.matchCustomSlotToDay(slot.startsAt, currentDay);
-          if (rowStart && tryPlace(rowStart)) break;
-        }
+        if (!best || candidate.score > best.score) best = candidate;
       }
-    }
+
+      if (!best) return false;
+
+      const sessionSlots = best.block;
+      selectedSlots.push(...sessionSlots);
+      sessionSlots.forEach((s) => bookedSlots.add(s.toISOString()));
+
+      // Re-key on the slot actually placed rather than on the row it came
+      // from, so the counters record where the session really landed.
+      const placedDayKey = SlotCalculationService.dayKey(
+        sessionSlots[0],
+        config.schedulingTimezone,
+      );
+      const placedWeekKey = SlotCalculationService.weekKey(
+        sessionSlots[0],
+        config.schedulingTimezone,
+      );
+      usedDayKeys.add(placedDayKey);
+      sessionsPlacedPerWeek.set(
+        placedWeekKey,
+        (sessionsPlacedPerWeek.get(placedWeekKey) ?? 0) + 1,
+      );
+
+      return true;
+    };
+
+    /** One walk of the scheduling period, day by day, until the need is met. */
+    const sweepPeriod = (perfectOnly: boolean): void => {
+      const cursor = new Date(
+        Date.UTC(
+          startDate.getUTCFullYear(),
+          startDate.getUTCMonth(),
+          startDate.getUTCDate(),
+        ),
+      );
+
+      for (
+        ;
+        cursor <= endDate && selectedSlots.length < totalSlotsNeeded;
+        cursor.setUTCDate(cursor.getUTCDate() + 1)
+      ) {
+        tryPlaceOnDay(new Date(cursor), perfectOnly);
+      }
+    };
+
+    // Skipped entirely when nothing was asked for, so the single sweep below is
+    // the only one that runs and today's placements are reproduced exactly.
+    if (maxScore > 0) sweepPeriod(true);
+    // MUST stay unconditional and MUST stay over the whole window. This is the
+    // only thing making the preferred-only sweep above a preference rather than
+    // a filter: everything it declined is reconsidered here.
+    sweepPeriod(false);
 
     if (selectedSlots.length < totalSlotsNeeded) {
       throw new AllocationValidationError(

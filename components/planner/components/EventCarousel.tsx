@@ -316,6 +316,7 @@ export function EventCarousel({
               }
               onEdit={() => handleEdit(event)}
               onDelete={() => handleDeleteClick(event)}
+              canManage={Boolean(event.id)}
               onTrialsClick={
                 eventType === "subscription" &&
                 onTrialsClick &&

@@ -157,6 +157,14 @@ export function CollapsibleSidebar({
   const router = useRouter();
   const [collapsed, setCollapsed] = useState(false);
 
+  // An EMPTY array is truthy, so a consultant with no org memberships still got
+  // the switcher chrome — a chevron opening a menu containing nothing. Labels
+  // and separators alone are not something to switch TO either, so the chip
+  // only becomes a dropdown when there is at least one real destination in it.
+  const hasChipActions = !!bottomUserChipActions?.some(
+    (action) => action.type === "item",
+  );
+
   // Per-group collapsed map, keyed by the group's label. Defaults to
   // each group's `defaultCollapsed` on first render so callers can
   // hint "Operations" closed for OWNER while leaving People + Commerce
@@ -472,12 +480,12 @@ export function CollapsibleSidebar({
         </TooltipProvider>
       </nav>
 
-      {/* Footer */}
+{/* Footer */}
       <div className="border-t border-zinc-200 dark:border-zinc-800 p-2 space-y-1">
-        {/* Personal chip — clickable dropdown when `bottomUserChipActions`
-            is provided (org switcher lives here), otherwise a static strip.
-            Sign Out remains as a separate standalone red button below. */}
-        {bottomUserChip && bottomUserChipActions ? (
+        {/* Personal chip — a dropdown only when there is somewhere to go (the
+            org switcher lives here), otherwise a static strip. Sign Out remains
+            a separate standalone red button below. */}
+        {bottomUserChip && hasChipActions ? (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button
@@ -509,7 +517,7 @@ export function CollapsibleSidebar({
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent side="top" align="start" className="w-60">
-              {bottomUserChipActions.map((action, i) => {
+              {(bottomUserChipActions ?? []).map((action, i) => {
                 if (action.type === "separator") {
                   return <DropdownMenuSeparator key={i} />;
                 }

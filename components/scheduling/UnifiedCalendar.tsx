@@ -56,6 +56,18 @@ import {
   notEnoughConsecutive,
 } from "@/lib/scheduling/allocationMessages";
 import { useToast } from "@/hooks/use-toast";
+import {
+  SLOT_STATUS_TOKENS,
+  resolveSlotStatusKey,
+  slotCellClassName,
+} from "@/lib/scheduling/slot-status-tokens";
+import {
+  focusGridPosition,
+  focusScrollRow,
+  focusTargetRow,
+  gridTimeZone,
+  type SlotPickerFocus,
+} from "@/lib/scheduling/slot-picker-focus";
 
 /**
  * Small pure helpers for clarity and reuse. These do not cause side effects.
@@ -361,6 +373,12 @@ export interface UnifiedCalendarProps {
   /** Event's scheduling timezone — defines the limit day/week buckets
    * (ADR B9). Defaults to Asia/Kolkata in the shared helpers. */
   schedulingTimezone?: string;
+  /**
+   * Where to be looking on open (#1073). Applied ONCE, on first render of the
+   * week grid: it chooses the starting week and scroll position and then
+   * never touches either again.
+   */
+  focus?: SlotPickerFocus;
 }
 
 export function UnifiedCalendar({
@@ -386,10 +404,18 @@ export function UnifiedCalendar({
   allowedEnd,
   totalSessions,
   schedulingTimezone,
+  focus,
 }: UnifiedCalendarProps) {
   const { toast } = useToast();
   // State
-  const [currentDate, setCurrentDate] = useState(() => new Date());
+  const [currentDate, setCurrentDate] = useState(() => {
+    if (!focus) return new Date();
+    // Noon on the target's calendar date AS THE GRID READS IT: weekDates are
+    // derived from this with local date-fns, so a target near a midnight
+    // boundary lands a week out if the date is read in any other zone.
+    const { year, month, day } = focusGridPosition(focus.at, gridTimeZone());
+    return new Date(year, month - 1, day, 12);
+  });
   const [view, setView] = useState<"week" | "month">("week");
   const [browserTimezone, setBrowserTimezone] = useState("UTC");
   const [configWarning, setConfigWarning] = useState<string | null>(null);
@@ -440,7 +466,10 @@ export function UnifiedCalendar({
         // allocated slots appear correctly.
         await Promise.all([refetchEventSlots(), refetchAvailability()]);
       } catch (error) {
-        Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
+        Sentry.captureException(
+          error instanceof Error ? error : new Error(String(error)),
+          { tags: { subsystem: "client" } },
+        );
         console.error(
           "Error refetching calendar data after allocation:",
           error,
@@ -539,7 +568,7 @@ export function UnifiedCalendar({
   // re-renders.
   //
   // The callback is held in a ref and kept out of the dependency array on
-  // purpose. RescheduleSessionsModal passes an inline arrow, so depending on
+  // purpose. SlotPicker passes an inline arrow, so depending on
   // it meant a new identity every render: effect fires, parent setState,
   // re-render, new identity, fire again, forever — React error #185. Nothing
   // caught it because "select" is the consultee picker's mode and the picker
@@ -588,6 +617,43 @@ export function UnifiedCalendar({
     const startDate = startOfWeek(currentDate);
     return [...Array(7)].map((_, i) => addDays(startDate, i));
   }, [currentDate]);
+
+  // A callback ref in STATE, not a plain ref: the week grid does not exist
+  // until `consultantDetails` has arrived, and a ref mutating cannot wake an
+  // effect. Keyed off the element, the effect runs when the grid appears —
+  // whichever of the two independent fetches wins the race, and again if the
+  // user visits month view before the grid has ever been focused.
+  const [weekGridEl, setWeekGridEl] = useState<HTMLDivElement | null>(null);
+  // Once per open. A ref rather than effect deps: re-running this would drag
+  // the grid back while the consultant is reading somewhere else, and the
+  // callback-identity loop this component already hit (React #185, see
+  // onSlotsSelectedRef) is what a deps-driven "focus" would become.
+  const focusAppliedRef = useRef(false);
+
+  useEffect(() => {
+    if (!focus || focusAppliedRef.current || !weekGridEl) return;
+    // The element's mere existence is the real guard: it renders only past
+    // the `loading`/`error`/`consultantDetails` gates below, and `loading` is
+    // held true from mount until the availability fetch settles — so by the
+    // time there is a grid, `availableSlots` is final. (`loading` alone would
+    // NOT do: it starts false, before anything is fetched.)
+    if (weekGridEl.children.length === 0) return;
+    // The user got here first. Leave them where they are, permanently.
+    if (weekGridEl.scrollTop > 0) {
+      focusAppliedRef.current = true;
+      return;
+    }
+
+    const targetRow = focusTargetRow(focus, availableSlots, gridTimeZone());
+    const row = weekGridEl.children[focusScrollRow(targetRow)];
+    if (!(row instanceof HTMLElement)) return;
+
+    focusAppliedRef.current = true;
+    // Measured, not rowIndex × height: the row heights are a Tailwind detail
+    // this component should not be re-deriving.
+    weekGridEl.scrollTop +=
+      row.getBoundingClientRect().top - weekGridEl.getBoundingClientRect().top;
+  }, [focus, weekGridEl, availableSlots]);
 
   /**
    * Builds an auto-expanded group of consecutive slots starting from a clicked slot.
@@ -899,17 +965,33 @@ export function UnifiedCalendar({
         (allowedStart && intervalEnd <= allowedStart) ||
         (allowedEnd && intervalStart >= allowedEnd);
 
-      // Fast-exit: avoid rendering a clickable button for cells that have no
-      // availability **and** are disabled (e.g. past date).  Rendering a
-      // lightweight placeholder saves performance.
+      // Fast-exit: a cell with nothing published, nothing booked and already
+      // past is never interactive, so it renders as a plain block instead of a
+      // button. It paints from the same `unavailable` token as every other
+      // dead cell — it used to be its own gray-100/gray-200 pair, which is how
+      // past days and future days ended up disagreeing about what "nothing
+      // here" looks like (#1064).
       if (!status.isAvailable && !status.isBooked && status.isInPast) {
         return (
-          <div className="h-8 w-full bg-gray-100 border border-gray-200 rounded-sm" />
+          <div className={slotCellClassName("unavailable", { faded: true })} />
         );
       }
 
-      let cellClassName =
-        "h-8 w-full relative transition-colors duration-75 ease-in-out border border-transparent rounded-sm text-[10px] leading-tight px-1 py-0.5 disabled:pointer-events-none disabled:opacity-50";
+      const statusKey = resolveSlotStatusKey({
+        isSelected: isCurrentlySelected,
+        isThisEventSlot: isCurrentEventSlot,
+        isRescheduling: isCurrentEventTentative,
+        isBookedForDisplay: status.isBookedForDisplay,
+        isPartiallyBooked: status.isPartiallyBooked,
+        isAvailable: status.isAvailable,
+        isInPast: status.isInPast,
+      });
+      // ONE token, appended once, on top of a base string that carries no
+      // border-COLOUR. Every branch below adds cursor/opacity only — a second
+      // border-color utility on this element is structurally impossible now,
+      // which is what the reverted attempt got wrong (#1064).
+      let cellClassName = slotCellClassName(statusKey);
+
       let buttonText = "";
       const showTooltip =
         ((status.isBookedForDisplay || status.isPartiallyBooked) &&
@@ -917,62 +999,51 @@ export function UnifiedCalendar({
         isCurrentEventSlot;
 
       if (isCurrentlySelected) {
-        // Dark green for manually selected slots
-        cellClassName +=
-          " bg-green-700 text-white hover:bg-green-800 border-green-900";
-        buttonText = "Selected";
+        cellClassName += " cursor-pointer";
+        buttonText = SLOT_STATUS_TOKENS.selected.label;
       } else if (isCurrentEventSlot) {
-        // Black for this event's already booked slots
-        cellClassName +=
-          " bg-black text-white cursor-pointer hover:bg-gray-900 border-gray-800";
+        cellClassName += " cursor-pointer";
         cellClassName += status.isInPast ? " opacity-60" : "";
-        buttonText = status.isInPast ? "Past Session" : "This Event";
+        buttonText = status.isInPast
+          ? "Past session"
+          : SLOT_STATUS_TOKENS.thisEvent.label;
       } else if (isCurrentEventTentative) {
-        // Amber for THIS event's slot being rescheduled — distinct from the gray
-        // "Booked" used for foreign appointments. It's the consultant's own slot
-        // pending a new time, not someone else's booking.
-        cellClassName +=
-          " bg-amber-400 text-amber-900 cursor-pointer hover:bg-amber-500 border-amber-500";
+        // THIS event's slot being rescheduled — distinct from the "Booked"
+        // state used for foreign appointments below.
+        cellClassName += " cursor-pointer";
         cellClassName += status.isInPast ? " opacity-50" : "";
-        buttonText = "Rescheduling";
+        buttonText = SLOT_STATUS_TOKENS.rescheduling.label;
       } else if (status.isBookedForDisplay) {
-        // Grey for other appointments
-        cellClassName +=
-          " bg-slate-400 text-slate-800 cursor-pointer hover:bg-slate-500";
+        cellClassName += " cursor-pointer";
         cellClassName += status.isInPast ? " opacity-50" : "";
-        buttonText = "Booked";
+        buttonText = SLOT_STATUS_TOKENS.fullyBooked.label;
       } else if (status.isPartiallyBooked) {
-        cellClassName +=
-          " bg-yellow-400 text-yellow-900 cursor-pointer hover:bg-yellow-500";
+        cellClassName += " cursor-pointer";
         cellClassName += status.isInPast ? " opacity-50" : "";
-        buttonText = "Partially Booked";
+        buttonText = SLOT_STATUS_TOKENS.partiallyBooked.label;
       } else if (status.isAvailable) {
-        // Available slot - check if past for fading
         if (status.isInPast) {
           // A past slot is NOT available, whatever the consultant published.
           // It used to render green and say "Available", differing from a real
           // opening only by opacity — so a picker opened on the current week
           // offered times that had already happened. Still clickable, because
           // the toast explains why; it just no longer claims to be bookable.
-          cellClassName +=
-            " bg-slate-100 text-slate-400 border-slate-200 cursor-pointer hover:bg-slate-200";
+          cellClassName += " cursor-pointer";
           buttonText = isOutsideAllowedRange ? "Outside Period" : "Past";
         } else {
-          // Future available slot - unfaded, clickable
-          cellClassName +=
-            " bg-green-300 text-green-950 cursor-pointer hover:bg-green-400 border-green-400";
+          cellClassName += " cursor-pointer";
           if (eventType === "consultation") {
             cellClassName += " hover:shadow-md";
           }
-          buttonText = isOutsideAllowedRange ? "Outside Period" : "Available";
+          buttonText = isOutsideAllowedRange
+            ? "Outside Period"
+            : SLOT_STATUS_TOKENS.available.label;
         }
       } else {
-        if (status.isInPast) {
-          cellClassName +=
-            " bg-gray-300 text-gray-700 cursor-not-allowed opacity-70";
-        } else {
-          cellClassName += " bg-slate-200 cursor-not-allowed";
-        }
+        // Genuinely unpublished interval — never carried button text, before
+        // or after this change; only the colour source moved.
+        cellClassName += " cursor-not-allowed";
+        cellClassName += status.isInPast ? " opacity-70" : "";
       }
 
       // Only disable in view mode or if no availability at all (gray slots)
@@ -1083,7 +1154,7 @@ export function UnifiedCalendar({
     };
 
     return (
-      <div className="grid grid-cols-7 gap-1 flex-1 min-h-0 max-h-[min(600px,calc(90dvh_-_16rem))] overflow-y-auto">
+      <div className="grid grid-cols-7 gap-1 flex-1 min-h-0 overflow-y-auto">
         {DAYS.map((day) => (
           <div key={day} className="text-center font-bold p-2">
             {day.slice(0, 3)}
@@ -1276,7 +1347,7 @@ export function UnifiedCalendar({
 
       {/* Calendar View */}
       {view === "week" ? (
-        <div className="flex flex-col flex-1 min-h-0 max-h-[min(500px,calc(90dvh_-_16rem))]">
+        <div className="flex min-h-0 flex-1 flex-col">
           {/* Week header */}
           <div
             className={`shrink-0 ${GRID_COLS} gap-0.5 md:gap-1 bg-background z-20 pb-1`}
@@ -1312,7 +1383,10 @@ export function UnifiedCalendar({
           </div>
 
           {/* Week grid */}
-          <div className="flex-1 overflow-y-auto scrollbar-thin min-h-0">
+          <div
+            ref={setWeekGridEl}
+            className="flex-1 overflow-y-auto scrollbar-thin min-h-0"
+          >
             {INTERVALS.map((interval) => (
               <div
                 key={`interval-row-${interval.hour}-${interval.minute}`}
@@ -1414,7 +1488,10 @@ export function UnifiedCalendar({
                   return `${formatDurationLabel(totalMinutes)} selected`;
                 return `${formatDurationLabel(chosenMinutes)} of ${formatDurationLabel(totalMinutes)} selected`;
               } catch (error) {
-                Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
+                Sentry.captureException(
+                  error instanceof Error ? error : new Error(String(error)),
+                  { tags: { subsystem: "client" } },
+                );
                 console.error("Error calculating footer stats:", error);
                 if (error instanceof Error) {
                   return error.message;

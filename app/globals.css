@@ -363,6 +363,33 @@
   height: 40px;
 }
 
+/*
+ * The lobby's video preview.
+ *
+ * The SDK ships `.str-video__video-preview-container` with a 4px solid
+ * #005fff border on all four sides and a fixed 500x375 box. The border is
+ * decoration, not a focus ring — it reads as a debug outline and is the
+ * loudest thing on an otherwise calm screen. The fixed box is 4:3, so inside
+ * our 16:9 frame `object-fit: cover` cropped the sitter's face.
+ *
+ * Scoped under our own class so this outranks the SDK's single-class rules
+ * whatever order the two stylesheets land in, and so no other preview surface
+ * is affected. Keyboard focus is untouched: nothing here is a :focus style.
+ */
+.meeting-lobby-preview .str-video__video-preview-container {
+  width: 100%;
+  height: 100%;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+}
+
+.meeting-lobby-preview .str-video__video-preview-container video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 .glassmorphism {
   position: relative;
   background: linear-gradient(

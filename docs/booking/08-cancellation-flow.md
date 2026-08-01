@@ -29,9 +29,11 @@ This document is the definitive reference for how appointment cancellation works
 
 Cancellation is one of the most architecturally nuanced flows in the booking system. On the surface it seems simple -- "delete the appointment" -- but in practice it must coordinate across four concerns: database integrity, notification delivery, payment/refund tracking, and audit trail preservation. The cancellation endpoint is designed around three strict principles:
 
-1. **The cancellation itself must never fail because of a side effect.** If notifications fail, the user still gets a successful cancellation. This is the "fire-and-forget" philosophy.
-2. **Data needed after deletion must be extracted before deletion.** Since the appointment record is destroyed inside the transaction, any information needed for notifications or logging must be captured beforehand.
-3. **Refunds are never automatic.** The cancellation flow intentionally does not touch payment records. Refunds are a separate admin-initiated process with their own business rules.
+1. **The cancellation itself must never fail because of a side effect.** If a notification or a refund fails, the user still gets a successful cancellation. This is the "fire-and-forget" philosophy, and it is why the refund runs after the cancellation transaction has already committed.
+2. **Nothing is deleted.** The appointment, its slots and its payment records are all preserved; the cancellation is a status change plus audit fields. `Payment.appointment` cascades on delete, so destroying an appointment would destroy the money trail with it.
+3. **Refunds are automatic and policy-driven.** The cancellation flow computes a refund from the tiers frozen onto the booking at checkout and drives it through the payment operations, without an admin in the loop.
+
+> **A note on this chapter's age.** Sections below still describe an earlier design in which cancellation deleted the appointment, required no authentication and never touched money. All three of those statements are false against the current route, and the passages that repeat them are corrected in place where they are load-bearing. A full rewrite of the walkthrough — including its line-number references, which no longer match the route — is tracked in #1013.
 
 Here is the complete decision tree for the cancellation endpoint, from the moment a request arrives to the final response:
 
@@ -82,25 +84,25 @@ flowchart TD
 
 ## Who Can Cancel
 
-The current authorization model for cancellation is deliberately simple. Here is what is checked and what is not:
+Cancellation is authorized at the API layer, not merely hidden in the UI. Here is what the route checks:
 
-| Check                                      | Performed? | Details                                    |
-| ------------------------------------------ | ---------- | ------------------------------------------ |
-| Is the user authenticated?                 | Yes        | `getSession()` must return a valid session |
-| Is the user the consultant?                | No         | Not checked                                |
-| Is the user the consultee?                 | No         | Not checked                                |
-| Is the user an admin?                      | No         | Not checked                                |
-| Is the appointment in a cancellable state? | No         | Any status can be cancelled                |
-| Has the event already started?             | No         | Not checked                                |
+| Check                                      | Performed? | Details                                                                                  |
+| ------------------------------------------ | ---------- | ---------------------------------------------------------------------------------------- |
+| Is the user authenticated?                 | Yes        | `getSession()` must return a valid session, or the route answers 401                     |
+| Is the user a participant?                 | Yes        | The consultant on the plan or the consultee who requested it, or the route answers 403   |
+| Is the user privileged?                    | Yes        | `isPrivileged(session.user.role)` bypasses the participant check for admin and staff     |
+| Who may cancel a group event?              | Organiser  | Only the consultant who owns the webinar or class plan; attendees cannot cancel the event |
+| Is the booking in a cancellable state?     | Yes        | The allowed-from set rides the `UPDATE`'s `WHERE`, so a lost race answers 409             |
+| Is a payment dispute open?                 | Yes        | An open dispute answers 409, because a refund now could pay the customer twice            |
 
-**What this means in practice**: Any authenticated user who knows an appointment ID can cancel it. The system currently relies on the frontend to enforce role-based access (only showing cancel buttons to the relevant parties). The `cancelledBy` field in the audit trail records who performed the cancellation, which can be used for post-hoc accountability.
+**What this means in practice**: only the two parties to a booking, or an admin, can cancel it. A group event can only be cancelled by its organiser, since cancelling it ends the session for everyone enrolled.
 
-**Design rationale**: This permissive model was chosen for initial development velocity. The endpoint prioritizes always allowing a cancellation to go through rather than risking a user being locked out of cancelling a booking they need to cancel. Business rules about who _should_ be able to cancel are enforced at the UI layer and can be tightened at the API layer later.
+**Why the state check lives in the `WHERE` clause**: a cancellation racing the capture webhook, or a double-submitted cancel button, must resolve to exactly one winner. Re-reading the status in application code and then writing leaves a window between the two; putting the allowed-from set into the update's `WHERE` closes it, because the loser matches zero rows and is told the booking can no longer be cancelled. This is the same compare-and-set doctrine the rest of the booking lifecycle uses.
 
 **Implications for developers**:
 
-- Never assume the cancelling user is the consultee. Check `session.user.id` against the consultant and consultee IDs if you need to branch on role.
-- The `cancelledBy` field on the event record stores the raw user ID. The notification system compares this against the consultant's user ID to determine whether to label the canceller as `"consultant"` or `"consultee"`.
+- Never assume the cancelling user is the consultee. Compare `session.user.id` against the consultant's user ID if you need to branch on role; the refund tier does exactly this, because a consultant-initiated cancellation refunds in full.
+- The `cancelledBy` field on the event record stores the raw user ID, and the notification system compares it against the consultant's user ID to label the canceller.
 
 ---
 
@@ -553,16 +555,16 @@ erDiagram
     CONSULTATION_PLAN ||--|| CONSULTANT_PROFILE : "offered by"
 ```
 
-Notice what is gone:
+Notice what changes:
 
-- The `Appointment` record -- **deleted**
-- The `SlotOfAppointment` record -- **deleted**
+- The `Appointment` record -- **preserved**, so the payment and any refund keep a row to hang off
+- The `SlotOfAppointment` records -- **preserved** with `CANCELLED` completion status, which releases the time without erasing that it was held
 
 Notice what remains:
 
 - The `Consultation` record -- **preserved** with `CANCELLED` status and full audit trail
 - The `ConsultationPlan`, profiles, and users -- **untouched**
-- Any `Payment` records -- **completely untouched** (refund is a separate process)
+- Any `Payment` records -- preserved, with a `Refund` row and a balanced ledger reversal added when a refund was due
 
 ---
 
@@ -725,16 +727,16 @@ flowchart TD
     subgraph TRANSACTION["TRANSACTION"]
         direction TB
         T1["1. UPDATE Event Record\n   set status to CANCELLED\n   (+audit fields if applicable)"]
-        T2["2. DELETE all SlotOfAppointment\n   for this appointmentId"]
-        T3["3. DELETE Appointment record"]
+        T2["2. UPDATE all SlotOfAppointment\n   set completionStatus = CANCELLED"]
+        T3["3. CLOSE any open RescheduleRequest"]
         T1 --> T2 --> T3
     end
 
     subgraph AFTER["AFTER Cancellation"]
         direction TB
-        A2["Appointment\nDELETED"] --- B2["SlotOfAppointment\nDELETED"]
+        A2["Appointment\nPRESERVED"] --- B2["SlotOfAppointment\nstatus = CANCELLED"]
         C2["Event Record\nstatus = CANCELLED\n(preserved for audit)"]
-        D2["Payment Records\nUNTOUCHED\n(refund is separate)"]
+        D2["Payment Records\nPRESERVED\n(+ Refund row when due)"]
     end
 
     BEFORE --> TRANSACTION --> AFTER
@@ -757,8 +759,8 @@ flowchart TD
 | `Subscription` (if applicable) | `status = "APPROVED"`      | `status = "CANCELLED"` + audit fields | Same reasoning as consultation                                       |
 | `Webinar` (if applicable)      | `status = "PUBLISHED"`            | `status = "CANCELLED"`                       | Preserved but with minimal state change                              |
 | `Class` (if applicable)        | `status = "PUBLISHED"`            | `status = "CANCELLED"`                       | Same reasoning as webinar                                            |
-| `Payment` / `PaymentOrder`     | Various statuses                  | **Untouched**                                | Refund is a deliberate admin action, not automatic                   |
-| `Earning` / `PayoutItem`       | May exist if payment was captured | **Untouched**                                | Earnings reversal is handled by the refund flow                      |
+| `Payment` / `PaymentOrder`     | Various statuses                  | Preserved; a `Refund` row is added when due  | The policy frozen at checkout decides the amount, not an admin       |
+| `Earning` / `PayoutItem`       | May exist if payment was captured | Refunded share incremented by the cascade    | Earnings reversal rides the same transaction as the refund           |
 
 ### Why the Event Record is Preserved
 
@@ -869,7 +871,7 @@ const userIds = [
 ].filter((id): id is string => !!id);
 ```
 
-For webinars and classes where consultant/consultee relationships are not directly stored on the event model, the `userIds` array may be empty, in which case no notification is sent.
+For webinars and classes the organiser is read off the plan and every paid attendee is gathered after the refund fan-out, so the `userIds` array carries the organiser plus the attendees. It was empty for group events before #1003, which is why cancelling a class used to tell nobody at all.
 
 **Notification payload**:
 
@@ -888,22 +890,19 @@ For webinars and classes where consultant/consultee relationships are not direct
 
 ### Refund and Earnings
 
-**Refunds are NOT automatic.** This is a critical design decision that new developers must understand.
+**Refunds are automatic.** The judgement that used to be left to an admin is now encoded in the cancellation policy that was frozen onto the booking when the buyer paid, so an org or the platform editing its terms later never changes a buyer's deal retroactively.
 
-When an appointment is cancelled:
+When a paid consultation or subscription is cancelled, the route resolves three facts about the **whole booking** rather than the single appointment it was handed, because a subscription is one slot-less placeholder that carries the money plus one appointment per allocated session. It finds the payment funding the booking, the policy snapshot frozen on the row the buyer paid for, and the start time of the earliest session that has not yet been delivered. It then applies the tier for that many hours of notice, and refunds that percentage of the amount paid. A cancellation the consultant initiates always settles at the policy's consultant-initiated percentage — one hundred per cent under the platform defaults — because the buyer did nothing wrong.
 
-- Payment records (`Payment`, `PaymentOrder`) are **not modified**.
-- Earning records (`Earning`, `PayoutItem`) are **not modified**.
-- No refund is initiated.
-- No payout is reversed.
+Cancelling a whole class or webinar refunds every attendee in full instead, since the attendees did not choose to leave. Removing a single attendee from a live event refunds that attendee's seat on the same reasoning.
 
-**Why refunds are decoupled from cancellation**:
+The refund runs after the cancellation transaction commits, and a failure to refund never rolls the cancellation back. The outcome is returned on the `refund` field of the response and surfaced to the buyer in the cancellation toast, so a refund that did not happen reads differently from one that did; failures are additionally reported to Sentry for ops.
 
-1. **Business flexibility**: Different cancellation scenarios require different refund policies. A cancellation due to `CONSULTANT_EMERGENCY` might warrant a full refund. A last-minute `SCHEDULE_CONFLICT` might warrant a partial refund or no refund. These decisions require human judgment.
-2. **Payment gateway complexity**: Refunds through Razorpay/Stripe are asynchronous operations with their own failure modes. Coupling them to the cancellation transaction would make the entire flow fragile.
-3. **Accounting requirements**: Refunds must be tracked separately for tax compliance and financial reporting. They are not simply "undoing" a payment.
+One case deliberately does not refund automatically. A subscription that has already delivered sessions has no agreed proration rule, so rather than guess at one the route escalates: the response carries `requiresManualReview`, the buyer is told their refund is under review, and a durable `SystemEvent` is recorded in the `PAYMENT` category for an operator to settle by hand. This is tracked in #1006.
 
-The refund flow is documented separately. After a cancellation, an admin reviews the case and initiates a refund if warranted.
+A booking with no session scheduled at all is a different matter and does refund in full. There is no start time, so there are no hours of notice, and treating that as negative notice made cancelling before allocation score worse than cancelling after it — which no tier table can mean. The condition is keyed on the booking having no slot rows whatsoever, deliberately: a booking whose slots are merely all cancelled is not the same claim.
+
+**What the cascade reverses**: the refund is not just a gateway call. `applyRefundCascade` reverses the funding legs at their source, returns program engagements to the organisation's cap, increments the consultant's and the organisation's refunded share, claws back an already-completed payout, mints a GST credit note for any invoiced portion, reverses the withheld TDS, restores referral credits, and posts a balanced double-entry reversal. Org-funded bookings carry a synthetic payment intent that no gateway can resolve, so they reverse purely in-ledger through the reversal engine instead of calling out.
 
 **Cross-reference**: [Cancellation Payment Flow](../payments/cancellations-rescheduling/01-cancellation-payment-flow.md)
 
@@ -992,7 +991,7 @@ flowchart TD
 { "error": "Appointment not found" }
 ```
 
-**Developer notes**: This also catches the case where a user tries to cancel the same appointment twice. Since the first cancellation deletes the appointment record, the second attempt gets a 404.
+**Developer notes**: A second cancellation of the same appointment does not reach this branch. The appointment is preserved rather than deleted, so the row is still found and the compare-and-set guard on the status transition is what refuses the repeat, answering 409.
 
 #### 500 Failed to Cancel Appointment
 
@@ -1021,11 +1020,11 @@ Developers frequently ask: "What is the difference between cancelling and resche
 | Aspect                           | Cancellation                     | Reschedule                               |
 | -------------------------------- | -------------------------------- | ---------------------------------------- |
 | **Intent**                       | End the booking entirely         | Move the booking to a different time     |
-| **Appointment record**           | Deleted                          | Preserved (slots are swapped)            |
+| **Appointment record**           | Preserved (money rows hang off it) | Preserved (slots are swapped)          |
 | **Event record**                 | Status set to `CANCELLED`        | Status unchanged (remains `APPROVED`)    |
-| **Slot records**                 | Deleted                          | Old slots deleted, new slots created     |
-| **Payment**                      | Untouched (refund is separate)   | Untouched (no additional charge)         |
-| **Refund triggered**             | No (manual admin action)         | No                                       |
+| **Slot records**                 | Marked `CANCELLED`               | Old slots deleted, new slots created     |
+| **Payment**                      | Preserved; refunded per policy   | Untouched (no additional charge)         |
+| **Refund triggered**             | Yes, automatically per policy    | No                                       |
 | **Notifications**                | "Your appointment was cancelled" | "Your appointment was rescheduled"       |
 | **Audit fields written**         | Yes (consultation/subscription)  | Different fields (rescheduled timestamp) |
 | **Can happen after event start** | Not checked (no guard)           | Typically blocked by validation          |

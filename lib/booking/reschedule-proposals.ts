@@ -17,10 +17,8 @@
  * database; the route owns the writes.
  */
 
-import type {
-  AppointmentsType,
-  RescheduleInitiatorRole,
-} from "@prisma/client";
+import type { AppointmentsType, RescheduleInitiatorRole } from "@prisma/client";
+import type { RescheduleOutcomeFields } from "@/lib/novu/workflows";
 
 /** Ceiling on how long an unanswered proposal may sit. */
 export const PROPOSAL_MAX_LIFETIME_HOURS = 72;
@@ -61,7 +59,9 @@ export function computeProposalExpiry(
   const mustResolveBy = new Date(
     earliest.getTime() - PROPOSAL_RESOLVE_BEFORE_SESSION_HOURS * HOUR_MS,
   );
-  const lifetimeCap = new Date(now.getTime() + PROPOSAL_MAX_LIFETIME_HOURS * HOUR_MS);
+  const lifetimeCap = new Date(
+    now.getTime() + PROPOSAL_MAX_LIFETIME_HOURS * HOUR_MS,
+  );
 
   const expiry = mustResolveBy < lifetimeCap ? mustResolveBy : lifetimeCap;
   return expiry <= now ? null : expiry;
@@ -75,7 +75,9 @@ export function computeProposalExpiry(
  * Landing inside published availability and finding both calendars free is
  * necessary too, but that is the validator's job, not this predicate's.
  */
-export function mayAutoConfirm(initiatorRole: RescheduleInitiatorRole): boolean {
+export function mayAutoConfirm(
+  initiatorRole: RescheduleInitiatorRole,
+): boolean {
   return initiatorRole === "CONSULTEE";
 }
 
@@ -90,7 +92,9 @@ export function supportsProposals(
   // from the row and may not find one.
   appointmentType: AppointmentsType | null | undefined,
 ): boolean {
-  return appointmentType === "CONSULTATION" || appointmentType === "SUBSCRIPTION";
+  return (
+    appointmentType === "CONSULTATION" || appointmentType === "SUBSCRIPTION"
+  );
 }
 
 /**
@@ -104,9 +108,51 @@ export function proposalCountMatches(
   return releasedSlotCount === proposedSlotCount;
 }
 
-/** 1 = the opening proposal, 2 = the single permitted counter. */
-export const MAX_PROPOSAL_ROUNDS = 2;
+/**
+ * Which sentence the reschedule notification should render.
+ *
+ * The three outcomes the route already distinguishes in its response message
+ * are the same three a recipient needs told apart: you were moved, you were
+ * asked, or the time was given up and nobody has picked a new one. Collapsing
+ * them into one "moved from X to Y" template is what left the released case
+ * interpolating two empty strings.
+ *
+ * `releasedAt` is the earliest slot handed back, `proposedAt` the earliest time
+ * asked for — earliest rather than all of them because a multi-session
+ * reschedule still needs one sentence.
+ */
+export function rescheduleNotificationVariant(args: {
+  releasedAt: Date | null;
+  proposedAt: Date | null;
+  autoConfirmed: boolean;
+}): RescheduleOutcomeFields {
+  const { releasedAt, proposedAt, autoConfirmed } = args;
 
-export function mayCounter(currentRound: number): boolean {
-  return currentRound < MAX_PROPOSAL_ROUNDS;
+  // A destination needs both ends: the arms carrying `newDateTime` also carry
+  // `oldDateTime`, so a missing released time falls back to RELEASED rather
+  // than half-filling the sentence.
+  if (releasedAt && proposedAt) {
+    return {
+      outcome: autoConfirmed ? "MOVED" : "PROPOSED",
+      oldDateTime: releasedAt.toISOString(),
+      newDateTime: proposedAt.toISOString(),
+    };
+  }
+
+  return {
+    outcome: "RELEASED",
+    ...(releasedAt ? { oldDateTime: releasedAt.toISOString() } : {}),
+  };
 }
+
+/*
+ * There is deliberately no counter-round.
+ *
+ * MAX_PROPOSAL_ROUNDS and mayCounter lived here, and the COUNTERED status is
+ * still in the enum and the transition map — but nothing ever wrote it. The
+ * round-2 path was specified and never built, so removing it costs nothing and
+ * leaves one fewer half-implemented state to reason about.
+ *
+ * Propose -> accept or decline is the whole flow. A decline already falls back
+ * to the consultant allocating, so nothing dead-ends without it.
+ */

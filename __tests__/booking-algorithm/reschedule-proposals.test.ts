@@ -8,12 +8,11 @@
 
 import "./setup";
 import {
-  MAX_PROPOSAL_ROUNDS,
   PROPOSAL_MAX_LIFETIME_HOURS,
   computeProposalExpiry,
   mayAutoConfirm,
-  mayCounter,
   proposalCountMatches,
+  rescheduleNotificationVariant,
   supportsProposals,
 } from "../../lib/booking/reschedule-proposals";
 import {
@@ -90,11 +89,6 @@ describe("scope and shape guards", () => {
     expect(proposalCountMatches(2, 1)).toBe(false);
     expect(proposalCountMatches(2, 3)).toBe(false);
   });
-
-  it("permits exactly one counter-round", () => {
-    expect(mayCounter(1)).toBe(true);
-    expect(mayCounter(MAX_PROPOSAL_ROUNDS)).toBe(false);
-  });
 });
 
 describe("RESCHEDULE_ALLOWED_FROM state machine", () => {
@@ -134,9 +128,8 @@ describe("RESCHEDULE_ALLOWED_FROM state machine", () => {
 
 describe("allocationRequestSchema carries override", () => {
   it("no longer strips the field the Override button sends", async () => {
-    const { allocationRequestSchema } = await import(
-      "../../schemas/slotAllocation/validationSchemas"
-    );
+    const { allocationRequestSchema } =
+      await import("../../schemas/slotAllocation/validationSchemas");
 
     // Before this, `override` was absent from the schema and a plain (non-
     // passthrough) Zod object dropped it, so "Override and Allocate" sent a
@@ -161,5 +154,69 @@ describe("allocationRequestSchema carries override", () => {
         expect(result.success).toBe(false);
       },
     );
+  });
+});
+
+describe("rescheduleNotificationVariant", () => {
+  const released = new Date("2026-08-10T09:00:00Z");
+  const proposed = new Date("2026-08-12T14:00:00Z");
+
+  it("carries both times when the proposal auto-confirmed", () => {
+    expect(
+      rescheduleNotificationVariant({
+        releasedAt: released,
+        proposedAt: proposed,
+        autoConfirmed: true,
+      }),
+    ).toEqual({
+      outcome: "MOVED",
+      oldDateTime: released.toISOString(),
+      newDateTime: proposed.toISOString(),
+    });
+  });
+
+  it("distinguishes a proposal still awaiting an answer from a confirmed move", () => {
+    expect(
+      rescheduleNotificationVariant({
+        releasedAt: released,
+        proposedAt: proposed,
+        autoConfirmed: false,
+      }),
+    ).toEqual({
+      outcome: "PROPOSED",
+      oldDateTime: released.toISOString(),
+      newDateTime: proposed.toISOString(),
+    });
+  });
+
+  it("emits no destination for a plain release", () => {
+    // The bug this replaces: a template rendering "from {{oldDateTime}} to
+    // {{newDateTime}}" against a payload carrying neither, which reached the
+    // consultant's inbox as "rescheduled ... from  to".
+    const variant = rescheduleNotificationVariant({
+      releasedAt: released,
+      proposedAt: null,
+      autoConfirmed: false,
+    });
+
+    expect(variant).toEqual({
+      outcome: "RELEASED",
+      oldDateTime: released.toISOString(),
+    });
+    // Absent, not undefined — an explicit key would still serialize into the
+    // payload Novu interpolates.
+    expect("newDateTime" in variant).toBe(false);
+  });
+
+  it("omits the released time too when there is none to report", () => {
+    const variant = rescheduleNotificationVariant({
+      releasedAt: null,
+      proposedAt: proposed,
+      autoConfirmed: true,
+    });
+
+    // A destination alone cannot render "moved from X to Y", so it degrades to
+    // the released sentence rather than half-filling the other one.
+    expect(variant).toEqual({ outcome: "RELEASED" });
   });
 });

@@ -2990,9 +2990,10 @@ model Subscription {
   id                       String   @id @default(cuid())
   schedulingPeriodStartsAt DateTime @db.Timestamptz
   schedulingPeriodEndsAt   DateTime @db.Timestamptz
-  // #676 AE-3 / #872 — ornamental at launch: allocation reads the consultant's
-  // user.timezone, never this. Kept as frozen schema; made load-bearing in #872
-  // to pin a subscription's scheduling zone independent of the consultant's.
+  // #1076 — stamped from the owning consultant's user.timezone at creation, so
+  // the per-day/week caps bucket on the consultant's days. Pinned at creation
+  // rather than followed live: moving it would shift an existing booking's day
+  // boundaries. The default only applies where the consultant has no zone.
   schedulingTimezone       String   @default("Asia/Kolkata")
 
   status                 AppointmentStatus @default(PENDING) @map("requestStatus")
@@ -3350,8 +3351,8 @@ model Class {
   id                       String      @id @default(cuid())
   schedulingPeriodStartsAt DateTime?   @db.Timestamptz
   schedulingPeriodEndsAt   DateTime?   @db.Timestamptz
-  // #676 AE-3 / #872 — ornamental at launch (allocation reads the consultant's
-  // user.timezone). Kept as frozen schema; made load-bearing in #872.
+  // #1076 — stamped from the host consultant's user.timezone at creation. See
+  // Subscription.schedulingTimezone for why it is pinned, not followed.
   schedulingTimezone       String      @default("Asia/Kolkata")
   status                   ClassStatus @default(SCHEDULED)
 
@@ -3608,16 +3609,37 @@ model RescheduleRequest {
   /// The @unique is a DB-level guarantee of at most one live reschedule per
   /// appointment; NULLs don't collide, so resolved rows accumulate freely.
   /// Same nullable-unique trick as Appointment.allocationIdempotencyKey.
+  ///
+  /// EVERY open row must claim this, including a preference-only one that names
+  /// no times (#1065). It is the only guard there is — the route has no
+  /// pre-check and the 409 is a bare P2002 catch — and list-selects, the
+  /// withdraw route and slotsAllowReschedule all read "at most one" as given.
   openForAppointmentId String? @unique
 
   resolvedAt   DateTime? @db.Timestamptz
   resolvedBy   User?     @relation("RescheduleResolver", fields: [resolvedById], references: [id], onDelete: SetNull)
   resolvedById String?
+  /// The answering party's reply. `reason` runs consultee -> consultant; this
+  /// is the return leg, and it is the difference between "your sessions moved"
+  /// and "moved to Thursdays, I have blocked Tuesdays from September".
+  resolutionNote String?
 
   /// ADR 19/23 — inherits the appointment's org-ness so notifications route and
   /// org dashboards scope correctly.
   organization   Organization? @relation("RescheduleByOrg", fields: [organizationId], references: [id], onDelete: SetNull)
   organizationId String?
+
+  /// #1065 — how the initiator would like the replacement placed when they name
+  /// no time at all. Two orthogonal fields rather than one combined enum so
+  /// "weekday mornings" is expressible and each half scores on its own.
+  ///
+  /// These SCORE candidates in the allocator, they never filter them: preferring
+  /// mornings against a consultant with no morning availability must cost a
+  /// less-liked time, not the whole allocation. NULL means no preference and
+  /// scores neutrally. Evaluated in the event's schedulingTimezone (ADR B9) —
+  /// "morning" is the customer's morning, not the server's.
+  preferredTimeOfDay ReschedulePreferredTimeOfDay?
+  preferredDays      ReschedulePreferredDays?
 
   proposedSlots RescheduleProposedSlot[]
 
@@ -3655,6 +3677,27 @@ enum RescheduleInitiatorRole {
   CONSULTANT
 }
 
+/// #1065 — the half-day band a replacement session is preferred to land in,
+/// read in the event's scheduling timezone. The bands are deliberately wide and
+/// contiguous over waking hours so that every candidate falls in exactly one of
+/// them and no time is left unscoreable.
+enum ReschedulePreferredTimeOfDay {
+  /// 05:00–11:59.
+  MORNING
+  /// 12:00–16:59.
+  AFTERNOON
+  /// 17:00–04:59, i.e. everything the other two bands do not claim.
+  EVENING
+}
+
+/// #1065 — the part of the week a replacement session is preferred to land in.
+enum ReschedulePreferredDays {
+  /// Monday to Friday.
+  WEEKDAYS
+  /// Saturday and Sunday.
+  WEEKENDS
+}
+
 enum RescheduleRequestStatus {
   /// Landed in the consultant's published availability and was free for both
   /// parties, so it confirmed with no approval step.
@@ -3663,6 +3706,12 @@ enum RescheduleRequestStatus {
   COUNTERED
   ACCEPTED
   DECLINED
+  /// The INITIATOR took their own request back. Distinct from DECLINED, which
+  /// is the other party refusing: only a withdrawal restores the booking to its
+  /// original times, because nothing should have moved if the person who asked
+  /// no longer wants it. Collapsing the two would make the audit trail unable
+  /// to say who ended it.
+  WITHDRAWN
   /// Lapsed unanswered; the request falls back to consultant allocation.
   EXPIRED
 }

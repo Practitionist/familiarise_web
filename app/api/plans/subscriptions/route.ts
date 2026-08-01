@@ -4,6 +4,7 @@ import { SubscriptionPlanSchema } from "@/schemas/plans";
 import {
   curriculumCreateNested,
   faqCreateNested,
+  planContentInclude,
 } from "@/lib/api/plans/content";
 import { findOrCreateTopics, transformTopicsToStrings } from "@/lib/topics";
 import { SlotCalculationService } from "@/utils/slotAllocation/SlotCalculationService";
@@ -35,6 +36,9 @@ export async function GET(request: NextRequest) {
           subscriptionContents: {
             orderBy: { order: "asc" },
           },
+          // The offering editor hydrates from this list and PUTs the whole FAQ
+          // array back, so a list that omits them saves an empty set over them.
+          ...planContentInclude,
         },
         skip,
         take: limit,

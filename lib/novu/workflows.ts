@@ -184,10 +184,40 @@ export type AppointmentCancelledPayload = AppointmentPayload & {
   cancelledBy: "consultant" | "consultee" | "system";
 };
 
-export type AppointmentRescheduledPayload = AppointmentPayload & {
-  oldDateTime?: string;
-  newDateTime?: string;
-};
+/**
+ * Which of the three reschedule outcomes happened, and therefore which sentence
+ * the `appointment-rescheduled` template must render.
+ *
+ * A reschedule does not always have a destination. "Any time works" is the
+ * common case — the slots go back to the consultant's queue and no new time
+ * exists yet — so a template that always says "moved from X to Y" has nothing
+ * to put in either blank. The discriminator makes that a template branch rather
+ * than two empty interpolations, the same way `OrgInvoiceOverduePayload`
+ * (`reminderStage`) and `OrgPayoutFailedPayload` (`kind`) drive their copy.
+ *
+ * The arms are unions rather than optional fields on purpose: MOVED and
+ * PROPOSED cannot be constructed without both times, so the blank-blank payload
+ * that produced "from&nbsp;&nbsp;to" is now a compile error.
+ */
+export type RescheduleOutcomeFields =
+  | {
+      /** MOVED: auto-confirmed, the booking now holds `newDateTime`.
+       *  PROPOSED: `newDateTime` was asked for and awaits the other party. */
+      outcome: "MOVED" | "PROPOSED";
+      oldDateTime: string;
+      newDateTime: string;
+    }
+  | {
+      /** Slots released with no replacement time — awaiting a new one. */
+      outcome: "RELEASED";
+      oldDateTime?: string;
+      newDateTime?: never;
+    };
+
+// `dateTime` from AppointmentPayload is deliberately unused here: a reschedule
+// is about the pair of times, not a single one.
+export type AppointmentRescheduledPayload = AppointmentPayload &
+  RescheduleOutcomeFields;
 
 export type PaymentSuccessPayload = NotificationScope & {
   amount: number;

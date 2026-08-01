@@ -26,8 +26,9 @@ import { notifyMemberOverageTimedOut } from "@/lib/novu/org-workflows";
 import { restoreOverageBaseCarve } from "@/lib/payments/billing/overage-base-carve";
 import { recordSystemError } from "@/lib/enterprise/system-events";
 import { getAppUrl } from "@/lib/url";
-import { withCronLock, CronLockHeldError } from "@/lib/cron/with-cron-lock";
+import { withCronLock } from "@/lib/cron/with-cron-lock";
 import * as Sentry from "@sentry/nextjs";
+import { runJob } from "@/lib/observability/job-sentry";
 
 // #779 — 14-day window before a never-settled member overage times out.
 const TIMEOUT_DAYS = 14;
@@ -139,19 +140,5 @@ async function main() {
 }
 
 if (require.main === module) {
-  main()
-    .catch((err) => {
-      // #476 — lock held = another run is live; skip cleanly (exit 0).
-      if (err instanceof CronLockHeldError) {
-        Sentry.logger.info("job:timeout-member-overages lock already held, skipping");
-        console.log(`⏭️  ${err.message}`);
-        return;
-      }
-      Sentry.captureException(err, { tags: { subsystem: "jobs", job: "timeout-member-overages" } });
-      console.error("[timeout-member-overages] Failed:", err);
-      process.exitCode = 1;
-    })
-    .finally(async () => {
-      await prisma.$disconnect();
-    });
+  runJob("timeout-member-overages", () => main().finally(() => prisma.$disconnect()));
 }

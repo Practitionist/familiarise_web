@@ -4,7 +4,7 @@ import {
   getOperatorOrganizations,
   getWorkspaceBillingRollup,
 } from "@/lib/data/org-workspace";
-import { workspaceBillingQueryKey } from "../hooks/useWorkspaceBilling";
+import { workspaceBillingQueryKey } from "../workspace-billing-keys";
 import { HomePageClient } from "./HomePageClient";
 
 /**

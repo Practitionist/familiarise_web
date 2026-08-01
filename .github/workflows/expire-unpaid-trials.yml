@@ -18,6 +18,11 @@ jobs:
     timeout-minutes: 10
 
     env:
+      # #1066 — jobs run as bare Node processes, so Sentry.init only sees
+      # what the step env carries. Without the DSN the runner initialises
+      # a disabled client and every captureException is a no-op again.
+      NEXT_PUBLIC_SENTRY_DSN: ${{ secrets.NEXT_PUBLIC_SENTRY_DSN || secrets.SENTRY_DSN }}
+      NEXT_PUBLIC_SENTRY_ENVIRONMENT: production
       # Database connection (required for Prisma)
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       # #476 cron locks load lib/redis at import — every job entry needs these

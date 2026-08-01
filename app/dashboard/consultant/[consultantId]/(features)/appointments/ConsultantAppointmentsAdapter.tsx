@@ -2,15 +2,18 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { CalendarClock, Loader2 } from "lucide-react";
 import type {
   AppointmentActionAdapter,
   OverflowItem,
   PrimaryAction,
 } from "@/lib/appointments/adapter";
 import {
+  allowsManageTimings,
+  allowsUnschedule,
   CONSULTANT_JOIN_WINDOW_MS,
   getJoinableSlot,
+  slotsAllowReschedule,
+  upcomingSlots,
 } from "@/lib/appointments/slots";
 import {
   isApprovedStatus,
@@ -18,49 +21,18 @@ import {
   isInactiveStatus,
 } from "@/lib/appointments/status";
 import type { AppointmentVM } from "@/lib/appointments/view-model";
-import type {
-  ConsultantTrialLike,
-  UnscheduledClassLike,
-  UnscheduledWebinarLike,
-} from "@/lib/appointments/map-consultant";
-import type { TAppointment } from "@/types/appointment";
-import type { UnscheduledClass, UnscheduledWebinar } from "../../types";
+import type { ConsultantTrialLike } from "@/lib/appointments/map-consultant";
 import { useLazyJoinMeeting } from "@/hooks/scheduling/useLazyJoinMeeting";
-import {
-  buildUnscheduledClassAppointment,
-  buildUnscheduledWebinarAppointment,
-  type UnscheduledAppointment,
-} from "./utils/unscheduledAppointments";
 import {
   getParticipantManagementUrl,
   supportsParticipantManagement,
 } from "./utils/participantHelpers";
-import { EventTimingsCalendar } from "./components/EventTimingsCalendar";
 import { useConsultantEventActions } from "./components/useConsultantEventActions";
 import { CancelConfirmationDialog } from "@/components/appointments/consultee/CancelConfirmationDialog";
-import { RescheduleSessionsModal } from "@/components/appointments/consultee/RescheduleSessionsModal";
+import { UnscheduleConfirmationDialog } from "@/components/appointments/UnscheduleConfirmationDialog";
 import { ConsultantResponseUpload } from "../documents/ConsultantResponseUpload";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 
-interface TimingsTarget {
-  appointment: TAppointment | UnscheduledAppointment;
-  groupProgress: { completedSessions: number; totalSessions: number } | null;
-}
-
-type DialogKind =
-  | "cancel"
-  | "reschedule-single"
-  | "reschedule-multi"
-  | "documents";
+type DialogKind = "cancel" | "unschedule" | "documents";
 
 const TYPE_LABEL: Record<AppointmentVM["kind"], string> = {
   CONSULTATION: "Consultation",
@@ -70,7 +42,7 @@ const TYPE_LABEL: Record<AppointmentVM["kind"], string> = {
   TRIAL: "Trial",
 };
 
-/** Webinar/class cancel+reschedule is plan-owner only (API rejects collaborators). */
+/** Webinar/class lifecycle actions are plan-owner only (API rejects collaborators). */
 function canManageBookingLifecycle(vm: AppointmentVM): boolean {
   if (vm.kind === "WEBINAR" || vm.kind === "CLASS") {
     return !vm.collaboratorRole || vm.collaboratorRole === "HOST";
@@ -86,14 +58,9 @@ function actionableRawSlots(vm: AppointmentVM) {
       : vm.raw.appointment
         ? [vm.raw.appointment]
         : [];
-  const now = Date.now();
-  return sources
-    .flatMap((a) => a.slotsOfAppointment ?? [])
-    .filter((slot) => new Date(slot.endsAt).getTime() >= now)
-    .sort(
-      (a, b) =>
-        new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
-    );
+  // Shared with the timings page's own gate, so the menu cannot offer a route
+  // that then 404s on a different reading of the same slots (#1082).
+  return upcomingSlots(sources.flatMap((a) => a.slotsOfAppointment ?? []));
 }
 
 export function useConsultantAppointmentsAdapter(
@@ -101,9 +68,6 @@ export function useConsultantAppointmentsAdapter(
 ): AppointmentActionAdapter {
   const router = useRouter();
   const joinMeeting = useLazyJoinMeeting();
-  const [timingsTarget, setTimingsTarget] = useState<TimingsTarget | null>(
-    null,
-  );
   const [joiningId, setJoiningId] = useState<string | null>(null);
   const [activeVm, setActiveVm] = useState<AppointmentVM | null>(null);
   const [dialog, setDialog] = useState<DialogKind | null>(null);
@@ -175,35 +139,22 @@ export function useConsultantAppointmentsAdapter(
     if (!navigating) setJoiningId(null);
   };
 
+  /**
+   * `vm.id` already carries the `unscheduled-class-`/`unscheduled-webinar-`
+   * prefix for an offering with no `Appointment` row yet; a scheduled one
+   * routes on the real appointment id. The timings page resolves either
+   * shape itself (lib/data/manage-timings-target.ts).
+   */
   const openTimings = (vm: AppointmentVM) => {
-    if (vm.id.startsWith("unscheduled-class-")) {
-      setTimingsTarget({
-        appointment: buildUnscheduledClassAppointment(
-          vm.raw.source as UnscheduledClassLike as UnscheduledClass,
-        ),
-        groupProgress: null,
-      });
-      return;
-    }
-    if (vm.id.startsWith("unscheduled-webinar-")) {
-      setTimingsTarget({
-        appointment: buildUnscheduledWebinarAppointment(
-          vm.raw.source as UnscheduledWebinarLike as UnscheduledWebinar,
-        ),
-        groupProgress: null,
-      });
-      return;
-    }
-    if (!vm.raw.appointment) return;
-    setTimingsTarget({
-      appointment: vm.raw.appointment,
-      groupProgress: vm.group
-        ? {
-            completedSessions: vm.group.completed,
-            totalSessions: vm.group.total,
-          }
-        : null,
-    });
+    const targetId =
+      vm.id.startsWith("unscheduled-class-") ||
+      vm.id.startsWith("unscheduled-webinar-")
+        ? vm.id
+        : vm.appointmentId;
+    if (!targetId) return;
+    router.push(
+      `/dashboard/consultant/${consultantId}/appointments/${targetId}/timings`,
+    );
   };
 
   const trialJoinable = (vm: AppointmentVM) => {
@@ -253,12 +204,22 @@ export function useConsultantAppointmentsAdapter(
     const items: OverflowItem[] = [];
     const appointment = vm.raw.appointment;
     const inactive = isInactiveStatus(vm.status);
-    const firstRaw = actionableRawSlots(vm)[0];
-    const tentative = firstRaw?.isTentative ?? false;
+    const rawSlots = actionableRawSlots(vm);
     const lifecycleOk = canManageBookingLifecycle(vm);
     const isTrial = vm.kind === "TRIAL";
 
-    if (appointment && vm.bucket !== "cancelled" && vm.bucket !== "past") {
+    // Manage Timings moves sessions with no notice and no acceptance, so it is
+    // only offered where nobody else has committed to the time. A 1:1 whose
+    // consultee already holds a confirmed slot gets Reschedule below instead —
+    // the two are alternatives, never both (#1082).
+    const timingsOk = allowsManageTimings(vm.kind, rawSlots);
+
+    if (
+      appointment &&
+      vm.bucket !== "cancelled" &&
+      vm.bucket !== "past" &&
+      timingsOk
+    ) {
       items.push({
         key: "timings",
         label: "Timings",
@@ -279,14 +240,41 @@ export function useConsultantAppointmentsAdapter(
       !isTrial &&
       lifecycleOk &&
       !inactive &&
-      !tentative &&
-      isApprovedStatus(vm.status)
+      isApprovedStatus(vm.status) &&
+      // Reschedule is the negotiated path, so it belongs exactly where Manage
+      // Timings does not: a booking a counterparty holds a confirmed time on.
+      !timingsOk &&
+      slotsAllowReschedule(rawSlots)
     ) {
       items.push({
         key: "reschedule",
         label: "Reschedule",
+        // The consultant's OWN reschedule route. This surface used to mount
+        // the consultee's dialog, which has no equivalent page a consultant
+        // may open: that route's consultee ownership check would 403 them.
         onClick: () =>
-          openDialog(vm, vm.group ? "reschedule-multi" : "reschedule-single"),
+          router.push(
+            `/dashboard/consultant/${consultantId}/appointments/${vm.appointmentId}/reschedule`,
+          ),
+      });
+    }
+
+    // Unschedule is not a third branch of the pair above: a confirmed webinar
+    // offers Timings AND this. It withdraws the date only — the booking stays
+    // sold, attendees stay enrolled, no money moves — which is the whole of
+    // what separates it from Cancel below (#1082).
+    if (
+      vm.appointmentId &&
+      lifecycleOk &&
+      !inactive &&
+      // The route's own from-state for a group release is SCHEDULED/IN_PROGRESS.
+      isConfirmedStatus(vm.status) &&
+      allowsUnschedule(vm.kind, rawSlots)
+    ) {
+      items.push({
+        key: "unschedule",
+        label: "Unschedule",
+        onClick: () => openDialog(vm, "unschedule"),
       });
     }
 
@@ -331,16 +319,6 @@ export function useConsultantAppointmentsAdapter(
 
   const renderDialogs = () => (
     <>
-      {timingsTarget && (
-        <EventTimingsCalendar
-          isOpen
-          onClose={() => setTimingsTarget(null)}
-          appointment={timingsTarget.appointment}
-          completedSessions={timingsTarget.groupProgress?.completedSessions}
-          groupTotalSessions={timingsTarget.groupProgress?.totalSessions}
-        />
-      )}
-
       {activeVm && (
         <>
           <CancelConfirmationDialog
@@ -356,68 +334,17 @@ export function useConsultantAppointmentsAdapter(
             isLoading={actions.isLoading}
           />
 
-          <RescheduleSessionsModal
-            open={dialog === "reschedule-multi"}
-            onOpenChange={(open) => !open && closeDialog()}
-            typeLabel={typeLabel}
-            rawSlots={rawSlots}
-            isLoading={actions.isLoading}
-            // No proposal step here: a consultant-initiated proposal never
-            // auto-confirms, and this surface already carries the full
-            // allocation calendar for picking replacement times directly.
-            onConfirm={({ slotIds }) => {
+          <UnscheduleConfirmationDialog
+            isOpen={dialog === "unschedule"}
+            onConfirm={async () => {
+              await actions.handleUnschedule();
               closeDialog();
-              void actions.handleReschedule(slotIds);
             }}
+            onCancel={closeDialog}
+            title={activeVm.title}
+            appointmentType={typeLabel}
+            isLoading={actions.isLoading}
           />
-
-          <AlertDialog
-            open={dialog === "reschedule-single"}
-            onOpenChange={(open) => !open && closeDialog()}
-          >
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle className="flex items-center gap-2">
-                  <CalendarClock className="h-5 w-5 text-muted-foreground" />
-                  Reschedule {typeLabel}?
-                </AlertDialogTitle>
-                <AlertDialogDescription asChild>
-                  <div className="space-y-2">
-                    <p>
-                      Are you sure you want to reschedule{" "}
-                      <strong>&quot;{activeVm.title}&quot;</strong> with{" "}
-                      <strong>{activeVm.counterpart.name}</strong>?
-                    </p>
-                    <p className="text-muted-foreground">
-                      The current time slot will be released and the{" "}
-                      {typeLabel.toLowerCase()} status will revert to{" "}
-                      <strong>Pending</strong> until a new time is allocated.
-                    </p>
-                  </div>
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel disabled={actions.isLoading}>
-                  Keep Current Time
-                </AlertDialogCancel>
-                <AlertDialogAction
-                  onClick={() => {
-                    closeDialog();
-                    void actions.handleReschedule();
-                  }}
-                  disabled={actions.isLoading}
-                  className="bg-primary text-primary-foreground hover:bg-primary/90"
-                >
-                  {actions.isLoading ? (
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  ) : (
-                    <CalendarClock className="mr-2 h-4 w-4" />
-                  )}
-                  Reschedule
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
 
           {activeVm.appointmentId && dialog === "documents" && (
             <ConsultantResponseUpload

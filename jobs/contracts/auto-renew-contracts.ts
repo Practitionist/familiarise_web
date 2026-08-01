@@ -31,8 +31,9 @@ import "dotenv/config";
 import prisma from "@/lib/prisma";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { Prisma } from "@prisma/client";
-import { withCronLock, CronLockHeldError } from "@/lib/cron/with-cron-lock";
+import { withCronLock } from "@/lib/cron/with-cron-lock";
 import * as Sentry from "@sentry/nextjs";
+import { runJob } from "@/lib/observability/job-sentry";
 
 const BATCH_SIZE = 500;
 
@@ -180,19 +181,5 @@ async function main() {
 
 // Self-execute only when invoked directly (importable for unit tests).
 if (require.main === module) {
-  main()
-    .catch((err) => {
-      // #476 — lock held = another run is live; skip cleanly (exit 0).
-      if (err instanceof CronLockHeldError) {
-        Sentry.logger.info("job:auto-renew-contracts lock already held — skipping");
-        console.log(`⏭️  ${err.message}`);
-        return;
-      }
-      Sentry.captureException(err, { tags: { subsystem: "jobs", job: "auto-renew-contracts" } });
-      console.error("[auto-renew-contracts] Failed:", err);
-      process.exitCode = 1;
-    })
-    .finally(async () => {
-      await prisma.$disconnect();
-    });
+  runJob("auto-renew-contracts", () => main().finally(() => prisma.$disconnect()));
 }

@@ -14,8 +14,8 @@ import {
 } from "../../scripts/alerts/alert-orphaned-payments";
 import fs from "fs";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
-import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
 import * as Sentry from "@sentry/nextjs";
+import { runJob } from "../../lib/observability/job-sentry";
 
 /**
  * Output results to GitHub Actions
@@ -78,21 +78,11 @@ async function main(): Promise<void> {
     // Exit with error code if orphaned payments found (to trigger alerts)
     if (result.totalOrphaned > 0) {
       console.log("\n⚠️ Exiting with code 1 to trigger workflow failure alert");
-      process.exit(1);
+      process.exitCode = 1;
     }
-  } catch (error) {
-    // #476 — lock held = another run is live; skip cleanly (exit 0).
-    if (error instanceof CronLockHeldError) {
-      Sentry.logger.info("job:alert-orphaned-payments skipped — lock held");
-      console.log(`⏭️  ${error.message}`);
-      return;
-    }
-    Sentry.captureException(error, { tags: { subsystem: "jobs", job: "alert-orphaned-payments" } });
-    console.error("❌ Fatal error in orphaned payments alert:", error);
-    process.exit(1);
   } finally {
     await disconnectDatabase();
   }
 }
 
-main();
+runJob("alert-orphaned-payments", main);

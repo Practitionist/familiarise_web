@@ -26,6 +26,7 @@ import {
 import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
 import { freezeWalletSpend } from "../../lib/payments/wallet-freeze";
 import * as Sentry from "@sentry/nextjs";
+import { runJob } from "../../lib/observability/job-sentry";
 
 async function main(): Promise<void> {
   await abortIfMaintenance("reconcile-ledgers");
@@ -139,34 +140,30 @@ async function main(): Promise<void> {
           },
         );
       }
-      // #837 — captureException queues asynchronously; process.exit would drop
-      // the discrepancy alert + wallet-freeze P0 pages before the transport
-      // flushes. Drain first so the pages actually reach Sentry.
-      await Sentry.flush(2000);
-      process.exit(2);
-    }
-  } catch (error) {
-    // #476 — lock held = another run is live; skip cleanly (exit 0).
-    if (error instanceof CronLockHeldError) {
-      Sentry.logger.info("job:reconcile-ledgers skipped — lock held by another run");
-      console.log(`⏭️  ${error.message}`);
+      // #837/#1066 — the discrepancy alert + wallet-freeze P0 pages are queued,
+      // not sent. Setting the code instead of exiting lets runJob's flush drain
+      // them; process.exit() here would drop every one.
+      process.exitCode = 2;
       return;
     }
-    console.error("❌ Fatal error in ledger reconciliation:", error);
-    Sentry.captureException(error, {
-      tags: { subsystem: "jobs", job: "reconcile-ledgers" },
-    });
-    // #776 §K — a crashed auditor means we're flying blind on money integrity.
-    await recordSystemError({
-      category: "RECONCILE",
-      summary: "Ledger reconciliation crashed",
-      err: error,
-    });
-    await Sentry.flush(2000);
-    process.exit(1);
+  } catch (error) {
+    // #776 §K — a crashed auditor means we're flying blind on money integrity,
+    // so it goes to the telemetry sink as well. Everything generic (capture,
+    // job tag, step annotation, exit code, lock-held skip) is runJob's. (#1066)
+    if (!(error instanceof CronLockHeldError)) {
+      await recordSystemError({
+        category: "RECONCILE",
+        summary: "Ledger reconciliation crashed",
+        err: error,
+      });
+    }
+    throw error;
   } finally {
     await prisma.$disconnect();
   }
 }
 
-main();
+// A wide drift queues one fatal event PER drifted wallet (see the loop above),
+// so the default 5s drain can silently lose the P0 pages this job exists to
+// raise. The workflow allows 30 minutes; 30s of it can go to the flush. (#1066)
+runJob("reconcile-ledgers", main, { flushTimeoutMs: 30_000 });

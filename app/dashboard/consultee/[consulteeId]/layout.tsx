@@ -112,6 +112,9 @@ const PAGE_LABELS: Record<string, string> = {
   recordings: "Recordings",
   feedback: "Feedback",
   help: "Help",
+  // Task route hanging off a record id; without this the trail ends on the
+  // raw lowercase segment.
+  reschedule: "Reschedule",
 };
 
 // Opaque record ids (cuid / uuid) in nested routes carry no meaning as crumbs.
@@ -277,23 +280,21 @@ function ConsulteeLayoutInner({ children, params }: Readonly<PageProps>) {
 
     const crumbs: { label: string; href?: string }[] = [];
     let acc = basePath;
-    let lastSegWasRecordId = false;
 
     for (const seg of parts) {
       acc = `${acc}/${seg}`;
       if (looksLikeRecordId(seg)) {
-        lastSegWasRecordId = true;
+        // The label goes HERE, in the id's own position — that segment IS the
+        // record. Deferring it to after the loop only worked when the id was
+        // the LAST segment, so a task route (…/<id>/reschedule) reset the flag
+        // on its way past and the override never rendered.
+        if (overrideLabel) crumbs.push({ label: overrideLabel, href: acc });
         continue;
       }
-      lastSegWasRecordId = false;
       crumbs.push({
         label: PAGE_LABELS[seg] ?? seg,
         href: acc,
       });
-    }
-
-    if (lastSegWasRecordId && overrideLabel) {
-      crumbs.push({ label: overrideLabel });
     }
 
     return crumbs.map((crumb, index) => {

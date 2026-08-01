@@ -1,0 +1,273 @@
+/**
+ * @jest-environment node
+ */
+
+/**
+ * withdrawRescheduleRequest — behaviour, not just the enum shape.
+ *
+ * State-based prisma mock (same idiom as cancel-pending-checkout.test.ts): the
+ * tx stub mutates an in-memory store so the CAS guards run for real via the
+ * mocked updateMany counts.
+ *
+ * The asymmetry under test: a WITHDRAWAL restores the booking, a DECLINE does
+ * not. Both end the same request, and collapsing them would leave a consultee
+ * who was declined silently back where they started.
+ */
+
+interface SlotRow {
+  id: string;
+  isTentative: boolean;
+  completionStatus: string;
+}
+
+interface RequestRow {
+  id: string;
+  status: string;
+  initiatedById: string;
+  releasedSlotIds: string[];
+  appointmentId: string;
+  openForAppointmentId: string | null;
+  appointment: {
+    consultationId: string | null;
+    subscriptionId: string | null;
+  };
+}
+
+interface Store {
+  request: RequestRow | null;
+  slots: SlotRow[];
+  consultation: { id: string; status: string } | null;
+}
+
+let state: Store;
+
+type Data = Record<string, unknown>;
+/** The CAS shape both request tables are guarded by. */
+interface StatusCas {
+  where: { id: string; status?: { in: string[] } };
+  data: Data;
+}
+interface SlotCas {
+  where: { id: { in: string[] }; completionStatus: string };
+  data: Data;
+}
+
+function makeTx() {
+  return {
+    rescheduleRequest: {
+      updateMany: jest.fn(async ({ where, data }: StatusCas) => {
+        const row = state.request;
+        if (!row || row.id !== where.id) return { count: 0 };
+        // The CAS: the from-set is the state machine.
+        if (where.status?.in && !where.status.in.includes(row.status)) {
+          return { count: 0 };
+        }
+        Object.assign(row, data);
+        return { count: 1 };
+      }),
+    },
+    slotOfAppointment: {
+      updateMany: jest.fn(async ({ where, data }: SlotCas) => {
+        const targets = state.slots.filter(
+          (s) =>
+            where.id.in.includes(s.id) &&
+            s.completionStatus === where.completionStatus,
+        );
+        targets.forEach((s) => Object.assign(s, data));
+        return { count: targets.length };
+      }),
+    },
+    consultation: {
+      updateMany: jest.fn(async ({ where, data }: StatusCas) => {
+        const row = state.consultation;
+        if (!row || row.id !== where.id) return { count: 0 };
+        if (where.status?.in && !where.status.in.includes(row.status)) {
+          return { count: 0 };
+        }
+        Object.assign(row, data);
+        return { count: 1 };
+      }),
+    },
+  };
+}
+
+let tx: ReturnType<typeof makeTx>;
+
+jest.mock("../../lib/prisma", () => ({
+  __esModule: true,
+  default: {
+    rescheduleRequest: {
+      findUnique: jest.fn(async () => state.request),
+    },
+    $transaction: jest.fn(async (fn: (t: ReturnType<typeof makeTx>) => unknown) =>
+      fn(tx),
+    ),
+  },
+}));
+
+const reportSentryError = jest.fn();
+jest.mock("../../lib/observability/report", () => ({
+  __esModule: true,
+  reportSentryError: (...args: unknown[]) => reportSentryError(...args),
+}));
+
+import { withdrawRescheduleRequest } from "../../lib/booking/reschedule-withdraw";
+
+const INITIATOR = "user-consultee";
+const OTHER = "user-consultant";
+
+function seed(
+  overrides: Partial<{
+    status: string;
+    slots: SlotRow[];
+    consultationId: string | null;
+    subscriptionId: string | null;
+    consultationStatus: string;
+  }> = {},
+) {
+  const slots = overrides.slots ?? [
+    { id: "slot-1", isTentative: true, completionStatus: "RESCHEDULED" },
+    { id: "slot-2", isTentative: true, completionStatus: "RESCHEDULED" },
+  ];
+  const consultationId =
+    overrides.consultationId === undefined ? "cons-1" : overrides.consultationId;
+
+  state = {
+    request: {
+      id: "req-1",
+      status: overrides.status ?? "PENDING_REVIEW",
+      initiatedById: INITIATOR,
+      releasedSlotIds: slots.map((s) => s.id),
+      appointmentId: "appt-1",
+      openForAppointmentId: "appt-1",
+      appointment: {
+        consultationId,
+        subscriptionId: overrides.subscriptionId ?? null,
+      },
+    },
+    slots,
+    consultation: consultationId
+      ? { id: consultationId, status: overrides.consultationStatus ?? "PENDING" }
+      : null,
+  };
+  tx = makeTx();
+  reportSentryError.mockClear();
+}
+
+describe("withdrawRescheduleRequest", () => {
+  it("restores the released slots and reopens the appointment's lock", async () => {
+    seed();
+
+    const result = await withdrawRescheduleRequest({
+      rescheduleRequestId: "req-1",
+      withdrawnById: INITIATOR,
+    });
+
+    expect(result).toEqual({ withdrawn: true });
+    expect(state.slots).toEqual([
+      { id: "slot-1", isTentative: false, completionStatus: "SCHEDULED" },
+      { id: "slot-2", isTentative: false, completionStatus: "SCHEDULED" },
+    ]);
+    expect(state.request?.status).toBe("WITHDRAWN");
+    // Terminal, so the nullable-unique stops reserving the appointment. Miss
+    // this and every later reschedule of this booking is blocked forever.
+    expect(state.request?.openForAppointmentId).toBeNull();
+  });
+
+  it("refuses anyone who did not open it, and touches nothing", async () => {
+    seed();
+
+    const result = await withdrawRescheduleRequest({
+      rescheduleRequestId: "req-1",
+      withdrawnById: OTHER,
+    });
+
+    expect(result).toEqual({ withdrawn: false, reason: "NOT_INITIATOR" });
+    expect(state.request?.status).toBe("PENDING_REVIEW");
+    expect(state.slots.every((s) => s.completionStatus === "RESCHEDULED")).toBe(
+      true,
+    );
+  });
+
+  it("refuses a request that already resolved", async () => {
+    seed({ status: "ACCEPTED" });
+
+    const result = await withdrawRescheduleRequest({
+      rescheduleRequestId: "req-1",
+      withdrawnById: INITIATOR,
+    });
+
+    expect(result).toEqual({ withdrawn: false, reason: "PROPOSAL_NOT_OPEN" });
+    expect(state.slots.every((s) => s.completionStatus === "RESCHEDULED")).toBe(
+      true,
+    );
+  });
+
+  it("reports a lost CAS as PROPOSAL_NOT_OPEN, not as an error", async () => {
+    seed();
+    // The other party answers between the open-status read and the CAS. The
+    // transition then matches zero rows and throws IllegalTransitionError —
+    // a modelled outcome, so it must not reach Sentry or become a 500.
+    tx.rescheduleRequest.updateMany.mockResolvedValueOnce({ count: 0 });
+
+    const result = await withdrawRescheduleRequest({
+      rescheduleRequestId: "req-1",
+      withdrawnById: INITIATOR,
+    });
+
+    expect(result).toEqual({ withdrawn: false, reason: "PROPOSAL_NOT_OPEN" });
+    expect(reportSentryError).not.toHaveBeenCalled();
+  });
+
+  it("puts a consultation back to APPROVED so it leaves the allocate queue", async () => {
+    seed();
+
+    await withdrawRescheduleRequest({
+      rescheduleRequestId: "req-1",
+      withdrawnById: INITIATOR,
+    });
+
+    expect(state.consultation?.status).toBe("APPROVED");
+  });
+
+  it("leaves a subscription alone — it has no per-session status (#448)", async () => {
+    seed({ consultationId: null, subscriptionId: "sub-1" });
+
+    const result = await withdrawRescheduleRequest({
+      rescheduleRequestId: "req-1",
+      withdrawnById: INITIATOR,
+    });
+
+    expect(result).toEqual({ withdrawn: true });
+    expect(tx.consultation.updateMany).not.toHaveBeenCalled();
+    // The slots still restore; only the parent status is skipped.
+    expect(state.slots.every((s) => s.completionStatus === "SCHEDULED")).toBe(
+      true,
+    );
+  });
+
+  it("reports a partial restore instead of claiming success silently", async () => {
+    // One row's status drifted, so the RESCHEDULED-filtered updateMany skips
+    // it. The withdrawal is committed and correct, but the booking is
+    // half-restored and nothing else would ever say so.
+    seed({
+      slots: [
+        { id: "slot-1", isTentative: true, completionStatus: "RESCHEDULED" },
+        { id: "slot-2", isTentative: true, completionStatus: "CANCELLED" },
+      ],
+    });
+
+    const result = await withdrawRescheduleRequest({
+      rescheduleRequestId: "req-1",
+      withdrawnById: INITIATOR,
+    });
+
+    expect(result).toEqual({ withdrawn: true });
+    expect(reportSentryError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.stringContaining("restored 1 of 2"),
+      }),
+      expect.objectContaining({ op: "reschedule-withdraw-partial" }),
+    );
+  });
+});

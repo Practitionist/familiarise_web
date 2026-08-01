@@ -13,6 +13,7 @@ import {
   CONSULTEE_JOIN_WINDOW_MS,
   getJoinableSlot as getJoinableSlotShared,
 } from "@/lib/appointments/slots";
+import type { SlotPreference } from "@/components/scheduling/slot-picker-policy";
 
 interface UseEventActionsOptions {
   appointmentId?: string;
@@ -56,6 +57,49 @@ function rescheduleOutcomeToast(outcome: {
         ? "Your consultant will pick a new time for your session."
         : `Your consultant will pick new times for your ${outcome.sessionsAffected} sessions.`,
   };
+}
+
+/** What the cancel route reports about the money, in the buyer's words. */
+type CancelRefund = {
+  amountRefundedPaise: number;
+  refundPct: number;
+  status?:
+    | "REFUNDED"
+    | "FAILED"
+    | "NOTHING_REFUNDABLE"
+    | "POLICY_ZERO"
+    | "MANUAL_REVIEW";
+  requiresManualReview?: boolean;
+} | null;
+
+function describeRefund(refund: CancelRefund): string {
+  // A free booking has no money to speak about.
+  if (!refund) return "";
+
+  // Branch on what the route SAYS happened, never on the amount: zero is
+  // equally "the policy owes nothing", "the balance was already exhausted" and
+  // "the gateway refused", and only one of those deserves an apology.
+  switch (refund.status) {
+    case "MANUAL_REVIEW":
+      return "Because sessions had already been delivered, our team is reviewing your refund and will be in touch.";
+    case "FAILED":
+      return "We could not complete your refund automatically — our team has been alerted and will sort it out.";
+    case "NOTHING_REFUNDABLE":
+      // No alert was raised here, so do not claim one was.
+      return "This booking had already been refunded, so there is nothing further to return.";
+    case "POLICY_ZERO":
+      return "No refund applies under the cancellation policy for this booking.";
+    default:
+      break;
+  }
+
+  if (refund.amountRefundedPaise > 0) {
+    const rupees = (refund.amountRefundedPaise / 100).toLocaleString("en-IN", {
+      maximumFractionDigits: 2,
+    });
+    return `A refund of ₹${rupees} (${refund.refundPct}%) is on its way back to you.`;
+  }
+  return "";
 }
 
 export function useEventActions({
@@ -109,17 +153,23 @@ export function useEventActions({
     }
   };
 
+  /** Resolves true only when the release actually landed — the reschedule page
+   *  navigates away on that, and must stay put (with the selection) on a
+   *  failure the user can retry. */
   const handleReschedule = async (
     slotIds?: string[],
     proposedSlots?: { startsAt: string; endsAt: string }[],
-  ) => {
+    // #1065 — only meaningful alongside an absent proposedSlots: how to place
+    // the replacement when the consultee names no time.
+    preference?: SlotPreference,
+  ): Promise<boolean> => {
     if (!appointmentId) {
       toast({
         title: "Error",
         description: "Appointment ID is missing",
         variant: "destructive",
       });
-      return;
+      return false;
     }
 
     setIsLoading(true);
@@ -134,6 +184,10 @@ export function useEventActions({
       const payload: Record<string, unknown> = {};
       if (slotIds && slotIds.length > 0) payload.slotIds = slotIds;
       if (proposedSlots?.length) payload.proposedSlots = proposedSlots;
+      if (preference?.preferredTimeOfDay)
+        payload.preferredTimeOfDay = preference.preferredTimeOfDay;
+      if (preference?.preferredDays)
+        payload.preferredDays = preference.preferredDays;
 
       const response = await fetch(url, {
         method: "POST",
@@ -163,6 +217,7 @@ export function useEventActions({
       );
 
       invalidateBookingData();
+      return true;
     } catch (error) {
       Sentry.captureException(
         error instanceof Error ? error : new Error(String(error)),
@@ -177,6 +232,7 @@ export function useEventActions({
             : "Failed to request reschedule",
         variant: "destructive",
       });
+      return false;
     } finally {
       setIsLoading(false);
     }
@@ -218,9 +274,17 @@ export function useEventActions({
         }
         throw new Error(data.error || "Failed to cancel appointment");
       }
+      // The route reports what happened to the money on `refund`. Discarding
+      // it meant a cancellation that refunded nothing — or failed to refund —
+      // looked exactly like one that paid out in full.
       toast({
         title: "Appointment cancelled",
-        description: `Your ${type.toLowerCase()} "${title}" has been cancelled successfully.`,
+        description: [
+          `Your ${type.toLowerCase()} "${title}" has been cancelled.`,
+          describeRefund(data.refund),
+        ]
+          .filter(Boolean)
+          .join(" "),
       });
       setShowCancelDialog(false);
       invalidateBookingData();

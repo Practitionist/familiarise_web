@@ -6,9 +6,10 @@
  * we accept either that or plain JSON since the spec is in flux.
  *
  * The route does NOT require auth — anyone can post a CSP report (the
- * browser is the originator, not the user). We rate-limit via the
- * existing `spamLimiter` keyed on IP to keep a hostile receiver from
- * flooding our logs.
+ * browser is the originator, not the user). We rate-limit on IP to keep a
+ * hostile poster from flooding our logs, but with a ceiling sized for
+ * browser-generated traffic: see cspReportLimiter for why the old
+ * spamLimiter budget made this endpoint useless.
  *
  * The report is logged as a structured event (`event: "csp_violation"`)
  * so an operator scanning `console` output during the report-only
@@ -19,7 +20,7 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
-import { applyRateLimit, spamLimiter } from "@/lib/rate-limit";
+import { applyRateLimit, cspReportLimiter } from "@/lib/rate-limit";
 
 export async function POST(req: NextRequest) {
   const ip =
@@ -27,7 +28,7 @@ export async function POST(req: NextRequest) {
     req.headers.get("x-real-ip") ??
     "unknown";
 
-  const rl = await applyRateLimit(spamLimiter, `csp:${ip}`);
+  const rl = await applyRateLimit(cspReportLimiter, `csp:${ip}`);
   if (rl) return rl;
 
   const body = await req.json().catch(() => null);

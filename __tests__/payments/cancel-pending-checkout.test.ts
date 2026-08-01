@@ -167,6 +167,18 @@ jest.mock("../../scripts/payments/cleanup-abandoned-payments", () => ({
   cancelPaymentIntent: jest.fn(async () => undefined),
 }));
 
+const mockReverseBookingUtilization = jest.fn(async () => ({
+  reversed: false,
+  engagementsReversed: 0,
+  fullyReversed: false,
+}));
+
+jest.mock("../../lib/api/organizations/program-helpers", () => ({
+  __esModule: true,
+  reverseBookingUtilization: (...a: unknown[]) =>
+    mockReverseBookingUtilization(...(a as [])),
+}));
+
 import { cancelPendingCheckout } from "../../lib/payments/operations/cancel-pending";
 import { cancelPaymentIntent } from "../../scripts/payments/cleanup-abandoned-payments";
 import { IllegalTransitionError } from "../../lib/enterprise/transitions";
@@ -241,6 +253,28 @@ describe("cancelPendingCheckout — happy path (consultation)", () => {
 
     expect(result.ok).toBe(true);
     expect(cancelPaymentIntent).not.toHaveBeenCalled();
+  });
+
+  it("#1003 — returns the program engagement to the org's cap", async () => {
+    // Checkout debits BookingUtilization inside the booking transaction,
+    // BEFORE capture. Abandoning an org-funded checkout therefore burned a
+    // contracted seat permanently until this reversal was wired in.
+    seedConsultationPayment({});
+
+    await cancelPendingCheckout({ paymentId: "pay-1", userId: "user-1" });
+
+    expect(mockReverseBookingUtilization).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({ paymentId: "pay-1" }),
+    );
+  });
+
+  it("#1003 — does not reverse utilization when the cancel is refused", async () => {
+    seedConsultationPayment({ paymentStatus: "SUCCEEDED" });
+
+    await cancelPendingCheckout({ paymentId: "pay-1", userId: "user-1" });
+
+    expect(mockReverseBookingUtilization).not.toHaveBeenCalled();
   });
 });
 

@@ -37,10 +37,13 @@ export function SlotStatusLegend({
             className="flex items-center gap-1.5 text-xs text-muted-foreground"
             title={token.hint}
           >
+            {/* No border-COLOUR of its own: `swatchClassName` carries the
+                cell's, and a hardcoded one here would win or lose by
+                stylesheet order rather than by intent (#1064). */}
             <span
               aria-hidden
               className={cn(
-                "h-3 w-3 shrink-0 rounded-sm border border-black/10",
+                "h-3 w-3 shrink-0 rounded-sm border",
                 token.swatchClassName,
               )}
             />
