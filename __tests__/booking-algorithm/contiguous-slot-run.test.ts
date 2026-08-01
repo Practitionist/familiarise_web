@@ -268,7 +268,15 @@ describe("replaceContiguousSlotRun", () => {
     });
 
     // One live atom kept (updated), one surplus soft-retired, dead untouched.
-    expect(updates.some((u) => u.id === "s0")).toBe(true);
+    // Assert startsAt — updateMany's tentative pre-pass also touches s0.
+    expect(
+      updates.some(
+        (u) =>
+          u.id === "s0" &&
+          (u.data.startsAt as Date | undefined)?.toISOString() ===
+            "2026-08-14T12:00:00.000Z",
+      ),
+    ).toBe(true);
     expect(
       updates.some(
         (u) => u.id === "s1" && u.data.completionStatus === "RESCHEDULED",
@@ -300,7 +308,14 @@ describe("replaceContiguousSlotRun", () => {
       consultantProfileId: "cp_1",
     });
 
-    expect(updates.some((u) => u.id === "s0")).toBe(true);
+    expect(
+      updates.some(
+        (u) =>
+          u.id === "s0" &&
+          (u.data.startsAt as Date | undefined)?.toISOString() ===
+            "2026-08-10T10:00:00.000Z",
+      ),
+    ).toBe(true);
     expect(creates).toHaveLength(1);
     expect(result.preservedUserIds.sort()).toEqual(["buyer", "host"]);
     expect(result.createdCount).toBe(2);

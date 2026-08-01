@@ -372,6 +372,26 @@ export async function PATCH(request: NextRequest) {
       JSON.stringify(body, null, 2),
     );
 
+    // Grandfather legacy non-30-min session durations on unrelated PATCHes.
+    // ClassPlanSchema now rejects non-aligned values, but the planner often
+    // re-sends the full form — without this, editing title/price on a 0.75h
+    // plan would 400 even though duration is unchanged (#1071 / PR #1091).
+    if (
+      typeof body?.id === "string" &&
+      typeof body?.sessionDurationInHours === "number"
+    ) {
+      const existingDuration = await prisma.classPlan.findUnique({
+        where: { id: body.id },
+        select: { sessionDurationInHours: true },
+      });
+      if (
+        existingDuration &&
+        body.sessionDurationInHours === existingDuration.sessionDurationInHours
+      ) {
+        delete body.sessionDurationInHours;
+      }
+    }
+
     // --- Zod Validation ---
     const validationResult = PatchClassWithPlanBodySchema.safeParse(body);
 

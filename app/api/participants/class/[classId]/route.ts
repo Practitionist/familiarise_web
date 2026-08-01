@@ -7,6 +7,7 @@ import {
   forbiddenResponse,
 } from "@/lib/auth-helpers";
 import { refundRemovedAttendeeSeat } from "@/lib/payments/operations/event-refunds";
+import { findLiveEventSlot } from "@/lib/appointments/live-event-slot";
 import {
   applyRateLimit,
   eventMutationLimiter,
@@ -170,15 +171,7 @@ export async function DELETE(
     // gate permanently 400s after week 1 while the UI still offers Leave.
     // Organiser removals keep working mid/post session for moderation.
     if (isSelfLeave) {
-      const lastLive = await prisma.slotOfAppointment.findFirst({
-        where: {
-          appointment: { classId },
-          deletedAt: null,
-          completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
-        },
-        orderBy: { startsAt: "desc" },
-        select: { startsAt: true },
-      });
+      const lastLive = await findLiveEventSlot({ classId }, { order: "desc" });
       if (lastLive && lastLive.startsAt.getTime() <= Date.now()) {
         return NextResponse.json(
           { error: "Cannot leave a class after its last session has started." },

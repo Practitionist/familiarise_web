@@ -17,6 +17,7 @@ import {
   computeRefundPct,
   parsePolicySnapshot,
 } from "./cancellation-policy";
+import { findLiveEventSlot } from "@/lib/appointments/live-event-slot";
 
 /**
  * Whole-event refund (#776 §C) — the production front door for the reversal
@@ -257,18 +258,12 @@ export async function refundRemovedAttendeeSeat(args: {
     let hoursUntilStart = -1;
     if (!isOrganiserInitiated) {
       const now = new Date();
-      const nextLive = await prisma.slotOfAppointment.findFirst({
-        where: {
-          appointment: eventFilter,
-          deletedAt: null,
-          completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
-          // Next upcoming session — not the earliest historical live row.
-          // Past class sessions stay SCHEDULED/COMPLETED/UNVERIFIED and would
-          // otherwise pin hoursUntilStart negative → permanent 0% refund.
-          startsAt: { gte: now },
-        },
-        orderBy: { startsAt: "asc" },
-        select: { startsAt: true },
+      // Next upcoming session — not the earliest historical live row.
+      // Past class sessions stay SCHEDULED/COMPLETED/UNVERIFIED and would
+      // otherwise pin hoursUntilStart negative → permanent 0% refund.
+      const nextLive = await findLiveEventSlot(eventFilter, {
+        order: "asc",
+        startsAtGte: now,
       });
       if (nextLive) {
         hoursUntilStart =

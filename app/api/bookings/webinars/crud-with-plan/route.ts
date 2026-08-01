@@ -580,10 +580,9 @@ export async function PATCH(request: NextRequest) {
       webinarToUpdate?.appointment?.slotsOfAppointment?.length
     ) {
       // Duration-only change: keep the live run's earliest start.
-      const liveSlots = webinarToUpdate.appointment.slotsOfAppointment.filter(
+      const existingSlot = webinarToUpdate.appointment.slotsOfAppointment.find(
         (s) => !isDeadSlot(s),
       );
-      const existingSlot = liveSlots[0];
       if (existingSlot) {
         startTime = existingSlot.startsAt;
         endTime = new Date(
@@ -819,7 +818,11 @@ export async function PATCH(request: NextRequest) {
                 "Invalid duration for rewriting contiguous slot run.",
               );
             }
-            const ownerProfileId = existingPlan.consultantProfileId;
+            // Prefer the PATCH-requested owner when transferring the plan so
+            // rewritten atoms land on the new consultant's calendar (and
+            // slot_no_confirmed_overlap protects the right profile).
+            const ownerProfileId =
+              consultantProfileId ?? existingPlan.consultantProfileId;
             if (!ownerProfileId) {
               throw new Error(
                 "Webinar plan is missing consultantProfileId; cannot rewrite slots.",

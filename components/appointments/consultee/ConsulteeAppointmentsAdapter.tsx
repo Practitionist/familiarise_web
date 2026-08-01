@@ -338,15 +338,24 @@ export function useConsulteeAppointmentsAdapter(): AppointmentActionAdapter {
   };
 
   const leaveEvent = async (
-    kind: AppointmentVM["kind"],
+    kind: Extract<AppointmentVM["kind"], "WEBINAR" | "CLASS">,
     id: string,
     userId: string,
     title: string,
   ) => {
-    const path =
-      kind === "WEBINAR"
-        ? `/api/participants/webinar/${id}?userId=${encodeURIComponent(userId)}`
-        : `/api/participants/class/${id}?userId=${encodeURIComponent(userId)}`;
+    let path: string;
+    switch (kind) {
+      case "WEBINAR":
+        path = `/api/participants/webinar/${id}?userId=${encodeURIComponent(userId)}`;
+        break;
+      case "CLASS":
+        path = `/api/participants/class/${id}?userId=${encodeURIComponent(userId)}`;
+        break;
+      default: {
+        const _exhaustive: never = kind;
+        throw new Error(`Unsupported leave-event kind: ${_exhaustive}`);
+      }
+    }
     const response = await fetch(path, { method: "DELETE" });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
@@ -380,6 +389,9 @@ export function useConsulteeAppointmentsAdapter(): AppointmentActionAdapter {
         if (!id) throw new Error("Event id is missing");
         const userId = session?.user?.id;
         if (!userId) throw new Error("You must be signed in to leave");
+        if (activeVm.kind !== "WEBINAR" && activeVm.kind !== "CLASS") {
+          throw new Error("Only webinars and classes support leave-event");
+        }
         await leaveEvent(activeVm.kind, id, userId, activeVm.title);
       }
       closeDialog();

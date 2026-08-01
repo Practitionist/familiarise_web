@@ -7,6 +7,7 @@ import {
   forbiddenResponse,
 } from "@/lib/auth-helpers";
 import { refundRemovedAttendeeSeat } from "@/lib/payments/operations/event-refunds";
+import { findLiveEventSlot } from "@/lib/appointments/live-event-slot";
 import {
   applyRateLimit,
   eventMutationLimiter,
@@ -165,16 +166,11 @@ export async function DELETE(
     if (isSelfLeave) {
       // Single contiguous event: once the first live atom has started, leave
       // is closed (unlike class, which keys on the last session — see class
-      // DELETE). completionStatus is never NULL (@default SCHEDULED).
-      const earliestLive = await prisma.slotOfAppointment.findFirst({
-        where: {
-          appointment: { webinarId },
-          deletedAt: null,
-          completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
-        },
-        orderBy: { startsAt: "asc" },
-        select: { startsAt: true },
-      });
+      // DELETE).
+      const earliestLive = await findLiveEventSlot(
+        { webinarId },
+        { order: "asc" },
+      );
       if (earliestLive && earliestLive.startsAt.getTime() <= Date.now()) {
         return NextResponse.json(
           { error: "Cannot leave an event that has already started." },
