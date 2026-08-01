@@ -2990,9 +2990,10 @@ model Subscription {
   id                       String   @id @default(cuid())
   schedulingPeriodStartsAt DateTime @db.Timestamptz
   schedulingPeriodEndsAt   DateTime @db.Timestamptz
-  // #676 AE-3 / #872 — ornamental at launch: allocation reads the consultant's
-  // user.timezone, never this. Kept as frozen schema; made load-bearing in #872
-  // to pin a subscription's scheduling zone independent of the consultant's.
+  // #1076 — stamped from the owning consultant's user.timezone at creation, so
+  // the per-day/week caps bucket on the consultant's days. Pinned at creation
+  // rather than followed live: moving it would shift an existing booking's day
+  // boundaries. The default only applies where the consultant has no zone.
   schedulingTimezone       String   @default("Asia/Kolkata")
 
   status                 AppointmentStatus @default(PENDING) @map("requestStatus")
@@ -3350,8 +3351,8 @@ model Class {
   id                       String      @id @default(cuid())
   schedulingPeriodStartsAt DateTime?   @db.Timestamptz
   schedulingPeriodEndsAt   DateTime?   @db.Timestamptz
-  // #676 AE-3 / #872 — ornamental at launch (allocation reads the consultant's
-  // user.timezone). Kept as frozen schema; made load-bearing in #872.
+  // #1076 — stamped from the host consultant's user.timezone at creation. See
+  // Subscription.schedulingTimezone for why it is pinned, not followed.
   schedulingTimezone       String      @default("Asia/Kolkata")
   status                   ClassStatus @default(SCHEDULED)
 

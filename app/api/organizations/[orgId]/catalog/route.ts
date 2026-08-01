@@ -21,6 +21,7 @@ import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { planLevelSchema, planPositioningShape } from "@/schemas/plans";
+import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
 
 const PlanKindSchema = z.enum(["WEBINAR", "CLASS"]);
 
@@ -137,7 +138,11 @@ export async function POST(
       role: "EXPERT",
       consultantProfileId: body.consultantProfileId,
     },
-    select: { id: true },
+    // #1076 — the named deliverer's zone is what a class's caps bucket on.
+    select: {
+      id: true,
+      consultantProfile: { select: { user: { select: { timezone: true } } } },
+    },
   });
   if (!expert) {
     return NextResponse.json(
@@ -217,7 +222,13 @@ export async function POST(
         });
       } else {
         await tx.class.create({
-          data: { status: "DRAFT", classPlan: { connect: { id: plan.id } } },
+          data: {
+            status: "DRAFT",
+            classPlan: { connect: { id: plan.id } },
+            schedulingTimezone: resolveSchedulingTimezone(
+              expert.consultantProfile?.user.timezone,
+            ),
+          },
         });
       }
 
