@@ -27,8 +27,9 @@
 import "dotenv/config";
 import prisma from "@/lib/prisma";
 import { EarningStatus } from "@prisma/client";
-import { withCronLock, CronLockHeldError } from "@/lib/cron/with-cron-lock";
+import { withCronLock } from "@/lib/cron/with-cron-lock";
 import * as Sentry from "@sentry/nextjs";
+import { runJob } from "@/lib/observability/job-sentry";
 
 export interface ReleasePendingTrustResult {
   scanned: number;
@@ -143,21 +144,12 @@ async function runReleasePendingTrustEarningsUnlocked(): Promise<ReleasePendingT
 
 // CLI entry — `npx tsx jobs/cleanup/release-pending-trust-earnings.ts`
 if (require.main === module) {
-  runReleasePendingTrustEarnings()
-    .then((r) => {
-      if (r.errors.length > 0) process.exit(1);
-      process.exit(0);
-    })
-    .catch((err) => {
-      // #476 — lock held = another run is live; skip cleanly (exit 0).
-      if (err instanceof CronLockHeldError) {
-        Sentry.logger.info(`job:release-pending-trust-earnings lock held — ${err.message}`);
-        console.log(`⏭️  ${err.message}`);
-        process.exit(0);
-      }
-      Sentry.captureException(err, { tags: { subsystem: "jobs", job: "release-pending-trust-earnings" } });
-      console.error("Fatal:", err);
-      process.exit(1);
-    })
-    .finally(() => prisma.$disconnect());
+  runJob("release-pending-trust-earnings", async () => {
+    try {
+      const r = await runReleasePendingTrustEarnings();
+      if (r.errors.length > 0) process.exitCode = 1;
+    } finally {
+      await prisma.$disconnect();
+    }
+  });
 }

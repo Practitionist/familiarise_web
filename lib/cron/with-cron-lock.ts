@@ -1,4 +1,8 @@
 import { acquireLock, releaseLock, isMockRedis, checkRedisHealth } from "@/lib/redis";
+import {
+  CronLockHeldError,
+  CronLockUnavailableError,
+} from "@/lib/cron/cron-lock-errors";
 
 /**
  * #476 — distributed mutual exclusion for cron job entries. Schedule overlap,
@@ -11,25 +15,11 @@ import { acquireLock, releaseLock, isMockRedis, checkRedisHealth } from "@/lib/r
  * from the CAS transitions and unique constraints, never from this lock
  * (Redis is a different failure domain than Postgres; see ADR 13).
  */
-export class CronLockHeldError extends Error {
-  readonly httpStatus = 409 as const;
-  readonly code = "CRON_LOCK_HELD" as const;
-  constructor(readonly jobName: string) {
-    super(`${jobName} is already running — skipped (cron lock held)`);
-    this.name = "CronLockHeldError";
-  }
-}
 
-/** A fail-closed job refused to run because no real Redis lock is possible. */
-export class CronLockUnavailableError extends Error {
-  readonly code = "CRON_LOCK_UNAVAILABLE" as const;
-  constructor(readonly jobName: string) {
-    super(
-      `${jobName} is fail-closed and requires a real Redis lock, but Redis is not configured or unreachable`,
-    );
-    this.name = "CronLockUnavailableError";
-  }
-}
+// The error types live in a leaf module so an `instanceof` check does not drag
+// lib/redis (which throws at import without Upstash env) in with it. Re-exported
+// here because ~44 call sites already import them from this path. (#1066)
+export { CronLockHeldError, CronLockUnavailableError };
 
 const DEFAULT_TTL_MS = 15 * 60 * 1000; // workflows set timeout-minutes: 10
 /** Payout/reconcile family runs up to 30 min (ADR 05) — lock must outlive it. */

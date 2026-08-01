@@ -8,9 +8,9 @@
  */
 
 import * as Sentry from "@sentry/nextjs";
+import { runJob } from "../../lib/observability/job-sentry";
 import fs from "fs";
 
-import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
 import {
   disconnectDatabase,
@@ -75,23 +75,11 @@ async function main(): Promise<void> {
     });
 
     if (!result.success) {
-      process.exit(1);
+      process.exitCode = 1;
     }
-  } catch (error) {
-    // #476 — lock held = another run is live; skip cleanly (exit 0).
-    if (error instanceof CronLockHeldError) {
-      Sentry.logger.info("job:expire-unpaid-trials lock held, skipping");
-      console.log(`⏭️  ${error.message}`);
-      return;
-    }
-    Sentry.captureException(error, {
-      tags: { subsystem: "jobs", job: "expire-unpaid-trials" },
-    });
-    console.error("❌ Fatal error in unpaid trial expiry:", error);
-    process.exit(1);
   } finally {
     await disconnectDatabase();
   }
 }
 
-main();
+runJob("expire-unpaid-trials", main);

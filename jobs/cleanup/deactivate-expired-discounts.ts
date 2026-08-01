@@ -14,8 +14,8 @@ import {
 } from "../../scripts/cleanup/deactivate-expired-discounts";
 import fs from "fs";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
-import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
 import * as Sentry from "@sentry/nextjs";
+import { runJob } from "../../lib/observability/job-sentry";
 
 /**
  * Output results to GitHub Actions
@@ -85,21 +85,11 @@ async function main(): Promise<void> {
     });
 
     if (!result.success) {
-      process.exit(1);
+      process.exitCode = 1;
     }
-  } catch (error) {
-    // #476 — lock held = another run is live; skip cleanly (exit 0).
-    if (error instanceof CronLockHeldError) {
-      Sentry.logger.info("job:deactivate-expired-discounts lock already held, skipping");
-      console.log(`⏭️  ${error.message}`);
-      return;
-    }
-    Sentry.captureException(error, { tags: { subsystem: "jobs", job: "deactivate-expired-discounts" } });
-    console.error("❌ Fatal error in discount deactivation:", error);
-    process.exit(1);
   } finally {
     await disconnectDatabase();
   }
 }
 
-main();
+runJob("deactivate-expired-discounts", main);

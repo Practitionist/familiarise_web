@@ -37,8 +37,9 @@ import {
   resolveProgramCycle,
 } from "@/lib/enterprise/cycle-engine";
 import { Prisma } from "@prisma/client";
-import { withCronLock, CronLockHeldError, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
+import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 import * as Sentry from "@sentry/nextjs";
+import { runJob } from "@/lib/observability/job-sentry";
 
 // Bounded scan — one batch per run; the next tick drains the remainder.
 const BATCH_SIZE = 500;
@@ -236,18 +237,5 @@ async function main() {
 
 // Self-execute only when invoked directly (importable for unit tests).
 if (require.main === module) {
-  main()
-    .catch((err) => {
-      // #476 — lock held = another run is live; skip cleanly (exit 0).
-      if (err instanceof CronLockHeldError) {
-        Sentry.logger.info("job:advance-program-cycles skipped — lock held by another replica");
-        console.log(`⏭️  ${err.message}`);
-        return;
-      }
-      console.error("[advance-program-cycles] Failed:", err);
-      process.exitCode = 1;
-    })
-    .finally(async () => {
-      await prisma.$disconnect();
-    });
+  runJob("advance-program-cycles", () => main().finally(() => prisma.$disconnect()));
 }

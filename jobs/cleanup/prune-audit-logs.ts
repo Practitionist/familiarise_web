@@ -13,8 +13,8 @@ import {
   type AuditPruneResult,
 } from "../../scripts/cleanup/prune-audit-logs";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
-import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
 import * as Sentry from "@sentry/nextjs";
+import { runJob } from "../../lib/observability/job-sentry";
 
 function outputToGitHubActions(result: AuditPruneResult): void {
   if (!process.env.GITHUB_ACTIONS) return;
@@ -33,7 +33,7 @@ function outputToGitHubActions(result: AuditPruneResult): void {
 }
 
 if (require.main === module) {
-  (async () => {
+  runJob("prune-audit-logs", async () => {
     await abortIfMaintenance("prune-audit-logs");
     Sentry.logger.info("job:prune-audit-logs started");
     console.log("🧹 Pruning audit logs past retention...");
@@ -41,20 +41,13 @@ if (require.main === module) {
       const result = await pruneAuditLogs();
       console.log(JSON.stringify(result, null, 2));
       outputToGitHubActions(result);
-      if (!result.success) process.exit(1);
-      Sentry.logger.info("job:prune-audit-logs finished", { scanned: result.scanned, deleted7y: result.deleted7y, deleted2y: result.deleted2y });
-    } catch (err) {
-      // #476 — lock held = another run is live; skip cleanly (exit 0).
-      if (err instanceof CronLockHeldError) {
-        Sentry.logger.info("job:prune-audit-logs lock held, skipping");
-        console.log(`⏭️  ${err.message}`);
+      if (!result.success) {
+        process.exitCode = 1;
         return;
       }
-      Sentry.captureException(err, { tags: { subsystem: "jobs", job: "prune-audit-logs" } });
-      console.error("Fatal error:", err);
-      process.exit(1);
+      Sentry.logger.info("job:prune-audit-logs finished", { scanned: result.scanned, deleted7y: result.deleted7y, deleted2y: result.deleted2y });
     } finally {
       await disconnectDatabase();
     }
-  })();
+  });
 }

@@ -10,7 +10,15 @@ import {
   isProductionEnvironment,
 } from "@/utils/env";
 
-export function initSentry(): void {
+type SentryInitOptions = NonNullable<Parameters<typeof Sentry.init>[0]>;
+
+/**
+ * `overrides` is layered on last and exists for ONE caller: the cron-job runner
+ * in lib/observability/job-sentry.ts, which runs in a bare Node process where
+ * NODE_ENV is unset and so the gating below reads differently than it does for
+ * the app. No app entrypoint passes it, so their behaviour is unchanged. (#1066)
+ */
+export function initSentry(overrides?: Partial<SentryInitOptions>): void {
   const dsn = process.env.NEXT_PUBLIC_SENTRY_DSN;
 
   Sentry.init({
@@ -49,5 +57,9 @@ export function initSentry(): void {
       /^safari-extension:\/\//i,
       /^safari-web-extension:\/\//i,
     ],
+
+    // Last, so a caller can narrow a knob it has better information about.
+    // Undefined spreads to nothing, which is what every app entrypoint does.
+    ...overrides,
   });
 }
