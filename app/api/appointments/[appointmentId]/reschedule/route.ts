@@ -8,6 +8,7 @@ import { RescheduleProposalSchema } from "@/schemas/appointments";
 import {
   computeProposalExpiry,
   proposalCountMatches,
+  rescheduleNotificationVariant,
   supportsProposals,
 } from "@/lib/booking/reschedule-proposals";
 import {
@@ -537,10 +538,20 @@ export async function POST(
 
         const rescheduleType = getRescheduleType();
 
+        // Captured here because an auto-confirm deletes these rows and writes
+        // new ones — by the time the notification is built, the time being
+        // given up no longer exists anywhere.
+        const releasedAt = slotsToReschedule.reduce<Date | null>(
+          (earliest, slot) =>
+            !earliest || slot.startsAt < earliest ? slot.startsAt : earliest,
+          null,
+        );
+
         // Return detailed response
         return {
           success: true,
           rescheduleType,
+          releasedAt,
           // #448 — sessionsAffected is the user-facing count (distinct sessions);
           // slotsAffected stays for back-compat / debugging.
           sessionsAffected,
@@ -751,9 +762,26 @@ export async function POST(
               ? "webinar"
               : "class";
 
+        // Earliest of the times asked for, and only when a proposal actually
+        // opened: a group event never carries one, so it is always a release.
+        const proposedAt = result.rescheduleRequestId
+          ? (proposedSlots?.reduce<Date | null>(
+              (earliest, slot) =>
+                !earliest || slot.startsAt < earliest
+                  ? slot.startsAt
+                  : earliest,
+              null,
+            ) ?? null)
+          : null;
+
         if (uniqueUserIds.length > 0) {
           void notifyAppointmentRescheduled(uniqueUserIds, {
             ...notificationScope(appointment.organizationId),
+            ...rescheduleNotificationVariant({
+              releasedAt: result.releasedAt,
+              proposedAt,
+              autoConfirmed,
+            }),
             appointmentType,
             consultantName: plan?.consultantProfile?.user?.name ?? "Consultant",
             consulteeName: requestedBy?.user?.name ?? "Participant",
