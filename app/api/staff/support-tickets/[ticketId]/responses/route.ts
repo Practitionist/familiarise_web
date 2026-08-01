@@ -86,6 +86,10 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         ticketId: ticket.id,
         ticketTitle: ticket.title || "Support Ticket",
         message: validatedData.message,
+        // Declared on the payload and never passed, so a template naming the
+        // responder rendered an empty attribution — same shape as the blank
+        // reschedule times.
+        respondedBy: response.user?.name ?? "Support",
         dashboardUrl: "/dashboard",
       });
     }

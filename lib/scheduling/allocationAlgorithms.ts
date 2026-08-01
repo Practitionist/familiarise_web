@@ -16,21 +16,19 @@ import { AllocationService } from "./allocationService";
  *
  * MAJOR ENHANCEMENTS IMPLEMENTED:
  *
- * 1. PREFERENCE-BASED ALLOCATION:
- *    - Time preferences (morning 9-12, afternoon 1-5, evening 6-8)
- *    - Weekday vs weekend preferences
- *    - Configurable minimum time between sessions
- *
- * 2. MULTIPLE ALLOCATION STRATEGIES:
+ * 1. MULTIPLE ALLOCATION STRATEGIES:
  *    - Consultation: "earliest-available" strategy
  *    - Webinar: "consecutive-slots" strategy for multi-hour events
  *    - Subscription/Class: "optimal-distribution" strategy with weekly spreading
  *
- * 3. SMART SCORING ALGORITHM:
+ * 2. SMART SCORING ALGORITHM:
  *    - Time scoring: Prime business hours (10-4) score 10, extended hours lower
  *    - Day scoring: Tuesday/Wednesday/Thursday highest, weekends lowest
- *    - Preference-based filtering before allocation
  *    - Intelligent spacing to avoid conflicts
+ *
+ * Consultee-stated preferences are NOT handled here. They live on the server
+ * allocator (utils/slotAllocation/preferenceScoring.ts) and score candidates
+ * rather than filtering them — see #1065 and autoAllocate below.
  */
 
 export interface AllocationOptions {
@@ -70,22 +68,10 @@ export interface AllocationResult {
 }
 
 /**
- * AUTO ALLOCATION PREFERENCES - NEW FEATURE
- * ==========================================
- *
- * Allows users to configure their scheduling preferences:
- * - Time of day preferences (morning, afternoon, evening)
- * - Weekday vs weekend preferences
- * - Minimum spacing between sessions on same day
+ * Hours between two sessions placed on the same day by the recurring
+ * allocator. Was a caller-supplied preference; nothing ever supplied one.
  */
-export interface AutoAllocationPreferences {
-  preferWeekdays?: boolean;
-  preferMorning?: boolean; // 9 AM - 12 PM
-  preferAfternoon?: boolean; // 1 PM - 5 PM
-  preferEvening?: boolean; // 6 PM - 8 PM
-  excludeWeekends?: boolean;
-  minTimeBetweenSessions?: number; // Hours between sessions (for same day)
-}
+const MIN_HOURS_BETWEEN_SAME_DAY_SESSIONS = 2;
 
 /**
  * Enhanced allocation algorithms with smart preference-based selection
@@ -258,23 +244,24 @@ export class AllocationAlgorithms {
   }
 
   /**
-   * ENHANCED AUTO ALLOCATION - MAJOR FEATURE UPGRADE
-   * ================================================
+   * Client-side auto allocation: pick a schedule, then submit it as a manual
+   * batch.
    *
-   * NEW FEATURES:
-   * 1. Preference-based filtering before allocation
-   * 2. Multiple allocation strategies based on event type
-   * 3. Smart scoring system for optimal slot selection
-   * 4. Intelligent spacing for recurring events
+   * #997 Phase 1 — product code calls the SERVER's isAuto mode; this
+   * implementation is retained only as the test oracle that pins parity between
+   * auto-picked schedules and the manual validators (see mode-parity.test.ts)
+   * until phases 2-3 retire the client engine.
+   *
+   * #1065 — it used to take an `AutoAllocationPreferences` bag and FILTER the
+   * candidate slots by it, so prefer-mornings against a consultant with no
+   * morning availability returned "not enough slots available" with the whole
+   * afternoon free. Preferences now live on the server allocator and SCORE
+   * instead (utils/slotAllocation/preferenceScoring.ts); the filtering version
+   * is gone rather than left here looking usable.
    */
-  // #997 Phase 1 — product code now calls the SERVER's isAuto mode; this
-  // client implementation is retained as the test oracle that pins parity
-  // between auto-picked schedules and the manual validators (see
-  // mode-parity.test.ts) until phases 2-3 retire the client engine.
   static async autoAllocate(
     availableSlots: TimeSlot[],
     options: AllocationOptions,
-    preferences: AutoAllocationPreferences = {},
   ): Promise<AllocationResult> {
     try {
       // Calculate required slots based on event type
@@ -299,17 +286,20 @@ export class AllocationAlgorithms {
       let selectedSlots: TimeSlot[] = [];
       let strategy = "";
 
-      // STEP 1: Filter available slots based on user preferences
-      const filteredSlots = this.filterSlotsByPreferences(
-        availableSlots,
-        preferences,
+      // STEP 1: Drop the slots that are not placeable at all. These are hard
+      // constraints, not preferences — a booked or past slot is not a
+      // less-liked time, it is not a time.
+      const now = new Date();
+      const filteredSlots = availableSlots.filter(
+        (slot) =>
+          slot.startTime > now && slot.isAvailable && !slot.isBooked,
       );
 
       if (filteredSlots.length < requiredSlots) {
         return {
           success: false,
           selectedSlots: [],
-          error: `Not enough slots available after applying preferences. Need ${requiredSlots}, found ${filteredSlots.length}`,
+          error: `Not enough slots available. Need ${requiredSlots}, found ${filteredSlots.length}`,
         };
       }
 
@@ -340,7 +330,6 @@ export class AllocationAlgorithms {
             filteredSlots,
             requiredSlots,
             options.sessionsPerWeek || 1,
-            preferences,
             options,
           );
           strategy = "optimal-distribution";
@@ -358,7 +347,7 @@ export class AllocationAlgorithms {
         return {
           success: false,
           selectedSlots: [],
-          error: "Could not find suitable slots with current preferences",
+          error: "Could not find suitable slots in the available window",
         };
       }
 
@@ -505,44 +494,6 @@ export class AllocationAlgorithms {
   }
 
   /**
-   * Filter slots based on user preferences
-   */
-  private static filterSlotsByPreferences(
-    slots: TimeSlot[],
-    preferences: AutoAllocationPreferences,
-  ): TimeSlot[] {
-    const now = new Date();
-
-    return slots.filter((slot) => {
-      // Basic filters
-      if (slot.startTime <= now || !slot.isAvailable || slot.isBooked) {
-        return false;
-      }
-
-      const hour = slot.startTime.getHours();
-      const day = slot.startTime.getDay();
-
-      // Weekend filter
-      if (preferences.excludeWeekends && (day === 0 || day === 6)) {
-        return false;
-      }
-
-      // Time preference filters
-      if (preferences.preferMorning && (hour < 9 || hour >= 12)) {
-        return false;
-      }
-      if (preferences.preferAfternoon && (hour < 13 || hour >= 17)) {
-        return false;
-      }
-      if (preferences.preferEvening && (hour < 18 || hour >= 20)) {
-        return false;
-      }
-
-      return true;
-    });
-  }
-
-  /**
    * Allocate consecutive slots for consultations.
    * Returns an array of 30-minute TimeSlot objects or empty array if no valid block found.
    */
@@ -672,7 +623,6 @@ export class AllocationAlgorithms {
     availableSlots: TimeSlot[],
     totalSlots: number,
     sessionsPerWeek: number,
-    preferences: AutoAllocationPreferences,
     options: AllocationOptions,
   ): TimeSlot[] {
     if (!options.startDate || !options.endDate) {
@@ -747,7 +697,7 @@ export class AllocationAlgorithms {
         callsNeededThisWeek,
         hoursPerCall,
         slotsPerCall,
-        preferences.minTimeBetweenSessions || 2,
+        MIN_HOURS_BETWEEN_SAME_DAY_SESSIONS,
         maxCallsPerDay,
         options.schedulingTimezone,
       );

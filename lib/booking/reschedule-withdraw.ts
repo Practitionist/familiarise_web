@@ -121,6 +121,12 @@ export async function withdrawRescheduleRequest(args: {
   // released while the request is already WITHDRAWN — a half-restored booking
   // that otherwise reports success and shows nothing anywhere. The withdrawal
   // itself is committed and correct, so this reports rather than throws.
+  //
+  // Restoring NOTHING is a different animal and must not page: it means the
+  // released rows are simply gone, which is what an allocation replacing them
+  // does. Withdrawing after that is a no-op the user cannot have intended, not
+  // a fault in this code. A PARTIAL restore is the genuine anomaly the check
+  // was written for, because it leaves one booking in two states at once.
   if (restored !== request.releasedSlotIds.length) {
     reportSentryError(
       new Error(
@@ -129,6 +135,7 @@ export async function withdrawRescheduleRequest(args: {
       {
         subsystem: "bookings",
         op: "reschedule-withdraw-partial",
+        expected: restored === 0,
         extra: {
           rescheduleRequestId,
           releasedSlotIds: request.releasedSlotIds,

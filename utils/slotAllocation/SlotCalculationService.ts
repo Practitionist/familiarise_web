@@ -74,11 +74,17 @@ export class SlotCalculationService {
     return Math.round((wallAsUtc - at.getTime()) / 60_000);
   }
 
-  /** Calendar date {year, month(1-12), day, weekday(0=Sun)} of an instant in a timezone. */
+  /** Calendar date {year, month(1-12), day, weekday(0=Sun), hour(0-23)} of an instant in a timezone. */
   private static getCalendarParts(
     d: Date,
     timeZone: string,
-  ): { year: number; month: number; day: number; weekday: number } {
+  ): {
+    year: number;
+    month: number;
+    day: number;
+    weekday: number;
+    hour: number;
+  } {
     const parts = this.getDateFormatter(timeZone).formatToParts(d);
     const get = (type: string) =>
       parts.find((p) => p.type === type)?.value ?? "";
@@ -87,6 +93,11 @@ export class SlotCalculationService {
       month: Number(get("month")),
       day: Number(get("day")),
       weekday: WEEKDAY_INDEX[get("weekday")] ?? 0,
+      // 0-23 straight from the formatter, which is pinned to h23 above — so
+      // midnight is 00:00 on its own day, never 24:00 on the day before. The
+      // `% 24` this used to carry was a guard against h24 and is gone with it;
+      // leaving it would have kept a comment that contradicts the pinning.
+      hour: Number(get("hour")),
     };
   }
 
@@ -121,6 +132,42 @@ export class SlotCalculationService {
     };
   }
 
+  /**
+* Wall-clock hour and weekday of an instant, as read in `timeZone` (ADR B9).
+   *
+   * #1065 — the allocator scores "morning"/"weekend" with this rather than
+   * Date#getHours()/getDay(), which answer in whatever timezone the Node
+   * process happens to run in and would make the same booking a morning on one
+   * host and an afternoon on another.
+   *
+   * Both come back together because the scorer needs both for every candidate
+   * and `formatToParts` is the expensive part: asking twice doubled the Intl
+   * work inside the allocation search, which runs while the allocation lock is
+   * held.
+   */
+  static zonedClock(
+    d: Date,
+    timeZone: string = this.DEFAULT_SCHEDULING_TIMEZONE,
+  ): { hour: number; weekday: number } {
+    const { hour, weekday } = this.getCalendarParts(d, timeZone);
+    return { hour, weekday };
+  }
+
+  /** Wall-clock hour (0-23) of an instant in `timeZone`. */
+  static hourInTz(
+    d: Date,
+    timeZone: string = this.DEFAULT_SCHEDULING_TIMEZONE,
+  ): number {
+    return this.getCalendarParts(d, timeZone).hour;
+  }
+
+  /** Day of week (0 = Sunday) of an instant, as read in `timeZone` (ADR B9). */
+  static weekdayInTz(
+    d: Date,
+    timeZone: string = this.DEFAULT_SCHEDULING_TIMEZONE,
+  ): number {
+    return this.getCalendarParts(d, timeZone).weekday;
+  }
   /**
    * Count the number of distinct Sunday-start weeks overlapping [start, end].
    * This is the SINGLE implementation used across the entire app.

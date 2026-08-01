@@ -18,6 +18,7 @@
  */
 
 import type { AppointmentsType, RescheduleInitiatorRole } from "@prisma/client";
+import type { RescheduleOutcomeFields } from "@/lib/novu/workflows";
 
 /** Ceiling on how long an unanswered proposal may sit. */
 export const PROPOSAL_MAX_LIFETIME_HOURS = 72;
@@ -105,6 +106,43 @@ export function proposalCountMatches(
   proposedSlotCount: number,
 ): boolean {
   return releasedSlotCount === proposedSlotCount;
+}
+
+/**
+ * Which sentence the reschedule notification should render.
+ *
+ * The three outcomes the route already distinguishes in its response message
+ * are the same three a recipient needs told apart: you were moved, you were
+ * asked, or the time was given up and nobody has picked a new one. Collapsing
+ * them into one "moved from X to Y" template is what left the released case
+ * interpolating two empty strings.
+ *
+ * `releasedAt` is the earliest slot handed back, `proposedAt` the earliest time
+ * asked for — earliest rather than all of them because a multi-session
+ * reschedule still needs one sentence.
+ */
+export function rescheduleNotificationVariant(args: {
+  releasedAt: Date | null;
+  proposedAt: Date | null;
+  autoConfirmed: boolean;
+}): RescheduleOutcomeFields {
+  const { releasedAt, proposedAt, autoConfirmed } = args;
+
+  // A destination needs both ends: the arms carrying `newDateTime` also carry
+  // `oldDateTime`, so a missing released time falls back to RELEASED rather
+  // than half-filling the sentence.
+  if (releasedAt && proposedAt) {
+    return {
+      outcome: autoConfirmed ? "MOVED" : "PROPOSED",
+      oldDateTime: releasedAt.toISOString(),
+      newDateTime: proposedAt.toISOString(),
+    };
+  }
+
+  return {
+    outcome: "RELEASED",
+    ...(releasedAt ? { oldDateTime: releasedAt.toISOString() } : {}),
+  };
 }
 
 /*
