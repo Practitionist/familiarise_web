@@ -119,6 +119,7 @@ export default async function AllocateSlotsPage({
           allowedStart: request.allowedStart,
           allowedEnd: request.allowedEnd,
           hasReleasedSlots: request.hasReleasedSlots,
+          slots: request.slots,
         }}
       />
     </div>
