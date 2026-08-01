@@ -7,6 +7,7 @@ import {
   forbiddenResponse,
 } from "@/lib/auth-helpers";
 import { refundRemovedAttendeeSeat } from "@/lib/payments/operations/event-refunds";
+import { findLiveEventSlot } from "@/lib/appointments/live-event-slot";
 import {
   applyRateLimit,
   eventMutationLimiter,
@@ -115,10 +116,6 @@ export async function DELETE(
   if (authResult.error) return authResult.error;
   const { session } = authResult;
 
-  if (!isPrivileged(session.user.role) && !session.user.consultantProfileId) {
-    return forbiddenResponse("Only consultants can remove participants");
-  }
-
   const rl = await applyRateLimit(eventMutationLimiter, session.user.id);
   if (rl) return rl;
 
@@ -132,13 +129,21 @@ export async function DELETE(
       return new NextResponse("User ID is required", { status: 400 });
     }
 
-    // Ownership check only — the old shape loaded the entire roster
-    // (every slot × every full User row) just to find the one participant
-    // being removed.
+    // #1005 — consultees may remove themselves (self-leave). Organisers and
+    // privileged roles may remove anyone on their event.
+    const isSelfLeave = userId === session.user.id;
+    const isOrganiser =
+      isPrivileged(session.user.role) || !!session.user.consultantProfileId;
+    if (!isSelfLeave && !isOrganiser) {
+      return forbiddenResponse("Only consultants can remove other participants");
+    }
+
+    // Ownership check for organiser removals; self-leave only needs the event
+    // to exist and the caller to be on the roster (checked via userSlots).
     const webinarEvent = await prisma.webinar.findFirst({
       where: {
         id: webinarId,
-        ...(isPrivileged(session.user.role)
+        ...(isSelfLeave || isPrivileged(session.user.role)
           ? {}
           : {
               webinarPlan: {
@@ -152,6 +157,26 @@ export async function DELETE(
 
     if (!webinarEvent) {
       return new NextResponse("Webinar not found", { status: 404 });
+    }
+
+    // #1005 — belt-and-braces with the attendee refund tier. Even if
+    // computeRefundPct returned 0% after start, we still refuse the roster
+    // mutation so "Leave event" cannot be used as a post-session cleanup that
+    // looks like a successful leave. Organiser removals (moderation) skip this.
+    if (isSelfLeave) {
+      // Single contiguous event: once the first live atom has started, leave
+      // is closed (unlike class, which keys on the last session — see class
+      // DELETE).
+      const earliestLive = await findLiveEventSlot(
+        { webinarId },
+        { order: "asc" },
+      );
+      if (earliestLive && earliestLive.startsAt.getTime() <= Date.now()) {
+        return NextResponse.json(
+          { error: "Cannot leave an event that has already started." },
+          { status: 400 },
+        );
+      }
     }
 
     // Only the slots this user actually occupies.
@@ -193,14 +218,15 @@ export async function DELETE(
       ),
     );
 
-    // #1003 — the seat was paid for. Removing the attendee without returning
-    // the fee let the organiser keep money for a session they just barred the
-    // buyer from. Post-commit and non-throwing: the removal stands either way.
+    // #1003 — seat was paid; refund after roster commit (non-throwing).
+    // #1005 — must pass initiatedBy: self-leave used to inherit organiser-fault
+    // 100% because the helper defaulted isConsultantInitiated=true.
     const refund = await refundRemovedAttendeeSeat({
       kind: "webinar",
       eventId: webinarId,
       attendeeUserId: userId,
       initiatedByUserId: session.user.id,
+      initiatedBy: isSelfLeave ? "attendee" : "organiser",
     });
 
     return NextResponse.json({ removed: true, refund });

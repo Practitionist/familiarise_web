@@ -20,6 +20,7 @@ import {
 
 import { getSession } from "@/lib/auth-server";
 import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
+import { buildContiguousSlotAtoms } from "@/lib/appointments/contiguous-slot-run";
 // Schema for class content input (without Prisma-managed fields like createdAt, updatedAt, classPlanId)
 const ClassContentInputSchema = ClassContentSchema.omit({
   createdAt: true,
@@ -269,24 +270,17 @@ export async function POST(request: NextRequest) {
                       appointmentDate.getDate() + weekOffset + dayWithinWeek,
                     );
                     const slotStart = new Date(appointmentDate);
-                    const slotEnd = new Date(appointmentDate);
-                    slotEnd.setTime(
-                      slotEnd.getTime() +
-                        sessionDurationInHours * 60 * 60 * 1000,
-                    );
 
+                    // #1071 — N×30min atoms per session (allocator parity).
                     return {
                       appointmentType: "CLASS",
                       slotsOfAppointment: {
-                        create: {
+                        create: buildContiguousSlotAtoms({
                           startsAt: slotStart,
-                          endsAt: slotEnd,
-                          isTentative: true, // Mark as tentative until confirmed
-                          // #784 — owner denormalized so the overlap exclusion
-                          // guards the host once the session is confirmed
-                          // (constraint applies WHERE NOT isTentative).
+                          durationInHours: sessionDurationInHours,
                           consultantProfileId,
-                        },
+                          isTentative: true,
+                        }),
                       },
                     };
                   })
@@ -377,6 +371,26 @@ export async function PATCH(request: NextRequest) {
       "Received class update request body:",
       JSON.stringify(body, null, 2),
     );
+
+    // Grandfather legacy non-30-min session durations on unrelated PATCHes.
+    // ClassPlanSchema now rejects non-aligned values, but the planner often
+    // re-sends the full form — without this, editing title/price on a 0.75h
+    // plan would 400 even though duration is unchanged (#1071 / PR #1091).
+    if (
+      typeof body?.id === "string" &&
+      typeof body?.sessionDurationInHours === "number"
+    ) {
+      const existingDuration = await prisma.classPlan.findUnique({
+        where: { id: body.id },
+        select: { sessionDurationInHours: true },
+      });
+      if (
+        existingDuration &&
+        body.sessionDurationInHours === existingDuration.sessionDurationInHours
+      ) {
+        delete body.sessionDurationInHours;
+      }
+    }
 
     // --- Zod Validation ---
     const validationResult = PatchClassWithPlanBodySchema.safeParse(body);

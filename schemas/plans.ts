@@ -544,10 +544,19 @@ export const ClassPlanSchema = BaseEventPlanSchema.extend({
     .number()
     .min(1, "Duration must be at least 1 month")
     .max(24, "Duration cannot exceed 24 months"),
+  // #1071 — planner CRUD now expands each session into N×30min atoms via
+  // `getSlotsPerCall` (= ceil(hours/0.5)). WebinarPlan already refined to
+  // 30-minute steps; ClassPlan only had min/max, so a 0.75h class silently
+  // became 2×30 = 60min on the consultant's calendar. Reject at the schema
+  // rather than clamping the last atom (non-30 ends break allocator parity).
   sessionDurationInHours: z
     .number()
     .min(0.5, "Session duration must be at least 30 minutes")
     .max(4, "Session duration cannot exceed 4 hours")
+    .refine(
+      (val) => (val * 60) % 30 === 0,
+      "Session duration must be in 30-minute increments",
+    )
     .default(1),
   certificateProvided: z.boolean().default(false),
   recordingEnabled: z.boolean().default(false),

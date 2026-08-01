@@ -113,6 +113,7 @@ export class SlotAllocationService {
             request.eventId,
             request.idempotencyKey,
             request.initialAllocation,
+            request.expectedTentativeSlotCount,
           );
 
         case "manual":
@@ -131,6 +132,7 @@ export class SlotAllocationService {
             request.idempotencyKey,
             request.initialAllocation,
             request.wideLock,
+            request.expectedTentativeSlotCount,
           );
 
         case "requested":
@@ -140,6 +142,7 @@ export class SlotAllocationService {
             request.initialAllocation,
             request.idempotencyKey,
             request.override,
+            request.expectedTentativeSlotCount,
           );
 
         default:
@@ -408,6 +411,61 @@ export class SlotAllocationService {
   }
 
   /**
+   * #1012 — stale-tab reschedule precondition. The page that opened the
+   * allocate dialog captured the tentative count; if another tab already
+   * finished (or mutated) the reschedule, that count no longer matches and
+   * we 409 instead of delete+recreating confirmed slots.
+   */
+  private static assertExpectedTentativeSlotCount(
+    actual: number,
+    expected: number | undefined,
+  ): void {
+    if (expected === undefined) return;
+    if (actual !== expected) {
+      throw new AllocationConflictError(
+        `Reschedule state changed in another session ` +
+          `(expected ${expected} tentative slot(s), found ${actual}). ` +
+          `Reload and try again.`,
+      );
+    }
+  }
+
+  /**
+   * #1012 — in-txn re-assert of expectedTentativeSlotCount.
+   *
+   * The pre-txn read only catches sequential stale submissions. Under the
+   * Redis lock another writer can still commit between that read and our
+   * write txn (e.g. a second tab that raced the lock, or useRequestedSlots).
+   * `guardInitialAllocationInTx` only covers fresh allocations, not
+   * reschedules. Re-read with `tx` before delete/recreate, matching the
+   * requested-slots path.
+   */
+  private static async assertExpectedTentativeSlotCountInTx(
+    tx: Tx,
+    eventType: EventType,
+    eventId: string,
+    expected: number | undefined,
+  ): Promise<void> {
+    if (expected === undefined) return;
+    const relationField = this.getEventRelationField(eventType);
+    const existingAppointments: AppointmentWithSlots[] =
+      await tx.appointment.findMany({
+        where: {
+          [`${relationField}Id`]: eventId,
+        } as Prisma.AppointmentWhereInput,
+        include: { slotsOfAppointment: true },
+      });
+    const tentativeSlotCount = existingAppointments.reduce(
+      (count, appointment) =>
+        count +
+        appointment.slotsOfAppointment.filter((slot) => slot.isTentative)
+          .length,
+      0,
+    );
+    this.assertExpectedTentativeSlotCount(tentativeSlotCount, expected);
+  }
+
+  /**
    * AUTO ALLOCATION: Find and allocate first available consecutive slots
    *
    * FIX Issue #1 from Architecture Review (#446):
@@ -595,6 +653,7 @@ export class SlotAllocationService {
     eventId: string,
     idempotencyKey?: string,
     initialAllocation?: boolean,
+    expectedTentativeSlotCount?: number,
   ): Promise<AllocationResult> {
     // #837 — return the prior batch on a double-submit before doing any work.
     const replay = await this.findIdempotentAllocation(
@@ -688,6 +747,12 @@ export class SlotAllocationService {
           appointment.slotsOfAppointment.filter((slot) => slot.isTentative)
             .length,
         0,
+      );
+      // #1012 — before any delete+recreate, confirm the page's view of the
+      // tentative set still matches the database.
+      this.assertExpectedTentativeSlotCount(
+        tentativeSlotCount,
+        expectedTentativeSlotCount,
       );
       const isReschedule = tentativeSlotCount > 0;
 
@@ -877,6 +942,15 @@ export class SlotAllocationService {
             if (lockedReplay) return lockedReplay;
           }
 
+          // #1012 — reschedule path is outside guardInitialAllocationInTx;
+          // re-assert tentative count under the write txn before delete.
+          await SlotAllocationService.assertExpectedTentativeSlotCountInTx(
+            tx,
+            eventType,
+            eventId,
+            expectedTentativeSlotCount,
+          );
+
           // CRITICAL FIX: Delete existing appointments before creating new ones
           // For reschedules: only delete appointments with tentative slots (preserve confirmed ones)
           // For in-progress: only delete future slots (preserve past confirmed ones)
@@ -977,6 +1051,7 @@ export class SlotAllocationService {
     idempotencyKey?: string,
     initialAllocation?: boolean,
     wideLock?: boolean,
+    expectedTentativeSlotCount?: number,
   ): Promise<AllocationResult> {
     // #837 — return the prior batch on a double-submit before doing any work.
     const replay = await this.findIdempotentAllocation(
@@ -1120,6 +1195,12 @@ export class SlotAllocationService {
           appointment.slotsOfAppointment.filter((slot) => slot.isTentative)
             .length,
         0,
+      );
+      // #1012 — before any delete+recreate, confirm the page's view of the
+      // tentative set still matches the database.
+      this.assertExpectedTentativeSlotCount(
+        tentativeSlotCount,
+        expectedTentativeSlotCount,
       );
       const isReschedule = tentativeSlotCount > 0;
 
@@ -1276,6 +1357,15 @@ export class SlotAllocationService {
             if (lockedReplay) return lockedReplay;
           }
 
+          // #1012 — reschedule path is outside guardInitialAllocationInTx;
+          // re-assert tentative count under the write txn before delete.
+          await SlotAllocationService.assertExpectedTentativeSlotCountInTx(
+            tx,
+            eventType,
+            eventId,
+            expectedTentativeSlotCount,
+          );
+
           // Delete existing appointments
           // For reschedules: only delete tentative slots (preserve confirmed ones)
           // For in-progress: only delete future slots (preserve past confirmed ones)
@@ -1375,6 +1465,7 @@ export class SlotAllocationService {
     idempotencyKey?: string,
     /** Consultant accepting times outside their own published availability. */
     overrideAvailabilityWindow?: boolean,
+    expectedTentativeSlotCount?: number,
   ): Promise<AllocationResult> {
     // #837 — a retry whose first response was lost must replay the approved
     // batch, not trip the initial-allocation guard with a 409.
@@ -1463,6 +1554,19 @@ export class SlotAllocationService {
               } as Prisma.AppointmentWhereInput,
               include: { slotsOfAppointment: true },
             });
+
+          const tentativeSlotCount = existingAppointments.reduce(
+            (count, appointment) =>
+              count +
+              appointment.slotsOfAppointment.filter((slot) => slot.isTentative)
+                .length,
+            0,
+          );
+          // #1012 — stale-tab reschedule / approval precondition.
+          SlotAllocationService.assertExpectedTentativeSlotCount(
+            tentativeSlotCount,
+            expectedTentativeSlotCount,
+          );
 
           if (existingAppointments.length === 0) {
             throw new AllocationValidationError(

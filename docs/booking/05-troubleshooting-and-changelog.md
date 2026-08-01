@@ -101,6 +101,23 @@ Booking-calendar correctness sweep (branch `fix/booking-algorithm-calendar`, tra
 
 ---
 
+## Changelog: August 2026
+
+Booking algorithm Pre-MVP wave (`fix/booking-algorithm`, tracker #1072).
+
+| Fix | Severity | Description | Files / Issues |
+| --- | -------- | ----------- | -------------- |
+| Contiguous N×30min planner runs | Critical | Webinar/class **create** writes allocator-parity atoms via `buildContiguousSlotAtoms`. Webinar **PATCH** rewrites the live run via `replaceContiguousSlotRun` (reconcile in place — no `deleteMany`, so Stream `MeetingSession`/`Recording` survive). Class PATCH does not rewrite slot times on duration edits. | `lib/appointments/contiguous-slot-run.ts`, webinar/class `crud-with-plan` — #1071 |
+| Reconcile avoids exclusion self-collision | Critical | Before shifting confirmed atoms, `replaceContiguousSlotRun` `updateMany`s live rows to `isTentative: true` so `slot_no_confirmed_overlap` cannot 23P01 a run against itself mid-statement. | `contiguous-slot-run.ts` — PR #1091 |
+| Live-slot reads ignore dead/tombstoned rows | Critical | Planner webinar PATCH filters `CANCELLED`/`RESCHEDULED`/`deletedAt`; `isDeadSlot` also treats `deletedAt` as dead (affects run math / join / reschedule affordances). | `slots.ts`, webinar `crud-with-plan` — #1071 |
+| Reschedule stale-tab precondition | Critical | Allocate accepts `expectedTentativeSlotCount`; mismatch → 409. Auto/manual re-assert inside the write txn (not only the pre-txn read), matching requested-slots — covers races `guardInitialAllocationInTx` skips on reschedule. | `SlotAllocationService`, allocate routes, SlotPicker — #1012 |
+| Consultee kind-gates + self-leave | High | Hide impossible Reschedule/Cancel; trial cancel via trial API; group Leave Event via participant DELETE self. Webinar leave closes once the first live atom has started; class leave closes once the **last** live session has started. Self-leave refunds use attendee notice tiers (`initiatedBy: "attendee"`, next future slot for `hoursUntilStart`). | `consultee-affordances.ts`, adapter, participant routes, `event-refunds.ts` — #1005 |
+| #997 Phase 3 weekly-limit parity | Medium | `useSlotAllocation` weekly guard now includes server `weeklyConfirmedCallCounts` (Phase 2 grid already shipped). Residual: per-cell rule-flag payload still optional follow-up. | `useSlotAllocation.ts`, `UnifiedCalendar.tsx` — Part of #997 |
+| ClassPlan 30-min duration refine | Medium | `sessionDurationInHours` must be a multiple of 0.5 on create / when the field changes. Class PATCH grandfathers an unchanged legacy duration so unrelated edits (title/price) still succeed. | `schemas/plans.ts`, class `crud-with-plan` PATCH |
+| Novu inbox popover sizing | Low | Fixed notification popover height/scroll (unrelated to booking integrity; shipped on the same branch). | `NotificationInbox.tsx` |
+
+---
+
 ## Changelog: March 2026
 
 Security, auth, and booking fix sprint. 12 PRs merged.
