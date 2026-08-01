@@ -40,5 +40,10 @@ export const RescheduleProposalSchema = z
       .max(64)
       .optional(),
     reason: z.string().trim().max(500).optional(),
+    // #1065 — how to place the replacement when no concrete time is named.
+    // Mirrors the Prisma enums; the allocator SCORES on these and never filters,
+    // so an unmeetable preference costs a less-liked time and not the booking.
+    preferredTimeOfDay: z.enum(["MORNING", "AFTERNOON", "EVENING"]).optional(),
+    preferredDays: z.enum(["WEEKDAYS", "WEEKENDS"]).optional(),
   })
   .passthrough();

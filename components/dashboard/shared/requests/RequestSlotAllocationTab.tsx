@@ -270,18 +270,52 @@ function RequestNote({ notes }: Readonly<{ notes: string }>) {
  * on the row that has to be read before any button is pressed — everything
  * else is context for it.
  */
+/**
+ * "weekday mornings", "mornings", "weekends" — whichever halves were stated.
+ *
+ * Returns null when neither was, so the caller can treat "no preference" and
+ * "no proposal" the same way.
+ */
+function preferenceSummary(proposal: RescheduleProposalInfo): string | null {
+  const days =
+    proposal.preferredDays === "WEEKDAYS"
+      ? "weekday"
+      : proposal.preferredDays === "WEEKENDS"
+        ? "weekend"
+        : null;
+  const timeOfDay =
+    proposal.preferredTimeOfDay === "MORNING"
+      ? "mornings"
+      : proposal.preferredTimeOfDay === "AFTERNOON"
+        ? "afternoons"
+        : proposal.preferredTimeOfDay === "EVENING"
+          ? "evenings"
+          : null;
+
+  if (days && timeOfDay) return `${days} ${timeOfDay}`;
+  if (timeOfDay) return timeOfDay;
+  // No band to pluralise against, so the day half has to stand on its own.
+  if (days) return `${days}s`;
+  return null;
+}
+
 function ProposalBlock({ proposal }: { proposal: RescheduleProposalInfo }) {
   const slots = currentRoundSlots(proposal);
-  if (slots.length === 0) return null;
+  const preference = preferenceSummary(proposal);
+  // A preference-only request names no times but is still the whole reason this
+  // booking is back in the queue, so it has to render on its own (#1065).
+  if (slots.length === 0 && !preference) return null;
 
   return (
     <div className="rounded-md border border-l-2 border-border/70 border-l-primary bg-muted/40 px-2.5 py-2">
       <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
         <span className="flex items-center gap-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
           <CalendarClock className="h-3 w-3" />
-          {proposal.initiatorRole === "CONSULTEE"
-            ? "Consultee asked for"
-            : "You proposed"}
+          {slots.length === 0
+            ? "Any time works"
+            : proposal.initiatorRole === "CONSULTEE"
+              ? "Consultee asked for"
+              : "You proposed"}
         </span>
         {proposal.round > 1 && (
           <Badge
@@ -292,16 +326,23 @@ function ProposalBlock({ proposal }: { proposal: RescheduleProposalInfo }) {
           </Badge>
         )}
       </div>
-      <ul className="mt-1 space-y-0.5">
-        {slots.map((slot) => (
-          <li
-            key={slot.startsAt}
-            className="whitespace-nowrap text-sm font-medium tabular-nums text-foreground"
-          >
-            {formatDateTime(slot.startsAt)}
-          </li>
-        ))}
-      </ul>
+      {slots.length > 0 && (
+        <ul className="mt-1 space-y-0.5">
+          {slots.map((slot) => (
+            <li
+              key={slot.startsAt}
+              className="whitespace-nowrap text-sm font-medium tabular-nums text-foreground"
+            >
+              {formatDateTime(slot.startsAt)}
+            </li>
+          ))}
+        </ul>
+      )}
+      {preference && (
+        <p className="mt-1 text-sm font-medium text-foreground">
+          Ideally {preference}
+        </p>
+      )}
       {proposal.reason && (
         <p className="mt-1 line-clamp-2 text-xs italic text-muted-foreground">
           &ldquo;{proposal.reason}&rdquo;

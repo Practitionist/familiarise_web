@@ -3,9 +3,8 @@
  *
  * Covers:
  * - manualAllocate (validation, business rules, error handling)
- * - autoAllocate (all strategies, preference filtering, error handling)
+ * - autoAllocate (all strategies, error handling)
  * - allocateRequestedSlots (validation, delegation; formerly preAllocate)
- * - filterSlotsByPreferences (private, tested via autoAllocate)
  * - allocateConsultationSlots (session duration fix verification)
  * - allocateWebinarSlots (consecutive slot finding)
  * - allocateRecurringSlots (weekly distribution, session duration fix)
@@ -458,7 +457,13 @@ describe("AllocationAlgorithms.autoAllocate", () => {
     });
   });
 
-  describe("preference filtering", () => {
+  // #1065 — the preference-FILTER cases that lived here are gone with the code
+  // they covered. A preference that removes candidates can answer "no slots
+  // available" with the calendar wide open; scoring replaced it, and the
+  // replacement is pinned in preference-scored-allocation.test.ts. What remains
+  // here are the genuinely hard exclusions: a past or booked slot is not a
+  // less-liked time, it is not a time.
+  describe("unplaceable-slot exclusion", () => {
     it("should filter out past slots", async () => {
       const pastSlots = makeFutureConsecutiveSlots("2024-01-01T09:00:00Z", 4);
       const futureSlots = makeFutureConsecutiveSlots("2025-06-01T09:00:00Z", 4);
@@ -491,89 +496,6 @@ describe("AllocationAlgorithms.autoAllocate", () => {
       expect(result.error).toContain("Not enough slots");
     });
 
-    it("should exclude weekends when requested", async () => {
-      // Saturday slots
-      const satSlots = makeFutureConsecutiveSlots("2025-06-07T09:00:00Z", 4); // Saturday
-
-      const result = await AllocationAlgorithms.autoAllocate(
-        satSlots as any,
-        {
-          eventType: "consultation",
-          eventId: "event-1",
-          durationInHours: 0.5,
-        },
-        { excludeWeekends: true },
-      );
-      expect(result.success).toBe(false);
-    });
-
-    it("should apply morning preference filter", async () => {
-      // Afternoon slot (13:00)
-      const afternoonSlots = makeFutureConsecutiveSlots(
-        "2025-06-02T13:00:00Z",
-        4,
-      );
-      // Morning slot (09:00)
-      const morningSlots = makeFutureConsecutiveSlots(
-        "2025-06-02T09:00:00Z",
-        4,
-      );
-
-      const result = await AllocationAlgorithms.autoAllocate(
-        [...afternoonSlots, ...morningSlots] as any,
-        {
-          eventType: "consultation",
-          eventId: "event-1",
-          durationInHours: 1,
-        },
-        { preferMorning: true },
-      );
-
-      if (result.success) {
-        // Morning preference should only include 9-12 slots
-        result.selectedSlots.forEach((s) => {
-          const hour = s.startTime.getHours();
-          expect(hour).toBeGreaterThanOrEqual(9);
-          expect(hour).toBeLessThan(12);
-        });
-      }
-    });
-
-    it("should apply afternoon preference filter", async () => {
-      // Use 6:00 AM local time — guaranteed morning in any timezone
-      const baseDate = new Date(2025, 5, 2, 6, 0, 0, 0); // June 2, 6:00 AM local
-      const morningSlots = makeConsecutiveTimeSlots(baseDate.toISOString(), 4);
-
-      const result = await AllocationAlgorithms.autoAllocate(
-        morningSlots as any,
-        {
-          eventType: "consultation",
-          eventId: "event-1",
-          durationInHours: 0.5,
-        },
-        { preferAfternoon: true },
-      );
-      // Morning slots (6:00-8:00 AM local) should be filtered out by afternoon preference (13-17)
-      expect(result.success).toBe(false);
-    });
-
-    it("should apply evening preference filter", async () => {
-      const morningSlots = makeFutureConsecutiveSlots(
-        "2025-06-02T09:00:00Z",
-        4,
-      );
-
-      const result = await AllocationAlgorithms.autoAllocate(
-        morningSlots as any,
-        {
-          eventType: "consultation",
-          eventId: "event-1",
-          durationInHours: 0.5,
-        },
-        { preferEvening: true },
-      );
-      expect(result.success).toBe(false);
-    });
   });
 
   it("should handle AllocationService failure in autoAllocate", async () => {

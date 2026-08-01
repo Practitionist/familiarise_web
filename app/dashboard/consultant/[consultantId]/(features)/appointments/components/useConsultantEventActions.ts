@@ -5,6 +5,7 @@ import * as Sentry from "@sentry/nextjs";
 import { useToast } from "@/hooks/use-toast";
 import { useQueryClient } from "@tanstack/react-query";
 import type { SlotLike } from "@/lib/appointments/view-model";
+import type { SlotPreference } from "@/components/scheduling/slot-picker-policy";
 
 interface UseConsultantEventActionsOptions {
   consultantId: string;
@@ -59,6 +60,9 @@ export function useConsultantEventActions({
   const handleReschedule = async (
     slotIds?: string[],
     proposedSlots?: { startsAt: string; endsAt: string }[],
+    // #1065 — only meaningful alongside an absent proposedSlots: how to place
+    // the replacement when no time is named.
+    preference?: SlotPreference,
   ): Promise<boolean> => {
     if (!appointmentId) {
       toast({
@@ -79,6 +83,10 @@ export function useConsultantEventActions({
       const payload: Record<string, unknown> = {};
       if (slotIds && slotIds.length > 0) payload.slotIds = slotIds;
       if (proposedSlots?.length) payload.proposedSlots = proposedSlots;
+      if (preference?.preferredTimeOfDay)
+        payload.preferredTimeOfDay = preference.preferredTimeOfDay;
+      if (preference?.preferredDays)
+        payload.preferredDays = preference.preferredDays;
 
       const response = await fetch(url, {
         method: "POST",
