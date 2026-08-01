@@ -78,16 +78,3 @@ export function sessionsOfAppointment(
     ),
   );
 }
-
-/**
- * "Is this whole appointment behind us?" — the predicate the group-progress
- * counters use. Kept here so they ask about sessions rather than rows; a
- * four-hour booking is not three-quarters complete an hour in.
- */
-export function appointmentSessionsOver(
-  appointment: SessionSourceAppointment,
-  isOver: (session: SessionVM) => boolean,
-): boolean {
-  const sessions = sessionsOfAppointment(appointment);
-  return sessions.length > 0 && sessions.every(isOver);
-}

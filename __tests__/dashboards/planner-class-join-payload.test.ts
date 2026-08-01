@@ -150,6 +150,11 @@ function seedClass(appointments: StoredAppointment[]) {
 }
 
 beforeEach(() => {
+  // The route bounds its slot window with `classInclude(new Date())`, while
+  // these rows are anchored to NOW. Without pinning the clock the suite passes
+  // only on the day NOW happens to fall on.
+  jest.useFakeTimers({ doNotFake: ["performance"] });
+  jest.setSystemTime(NOW);
   mockedAuth.mockResolvedValue({
     session: {
       user: {
@@ -162,7 +167,9 @@ beforeEach(() => {
   db.webinar.findMany.mockResolvedValue([]);
   db.collaborator.findMany.mockResolvedValue([]);
   db.membership.findMany.mockResolvedValue([]);
-  db.consultantProfile.findUnique.mockResolvedValue({ userId: "user-consultant" });
+  db.consultantProfile.findUnique.mockResolvedValue({
+    userId: "user-consultant",
+  });
 
   db.class.findMany.mockImplementation(
     async (args: {
@@ -181,7 +188,9 @@ beforeEach(() => {
         }));
       }
       // Only the owned-plans query matches; the collaborated one returns none.
-      if (args.where?.classPlan?.consultantProfileId !== CONSULTANT_PROFILE_ID) {
+      if (
+        args.where?.classPlan?.consultantProfileId !== CONSULTANT_PROFILE_ID
+      ) {
         return [];
       }
       const spec = args.include.appointments;
@@ -333,4 +342,8 @@ describe("the planner payload carries what a class join reads", () => {
 
     expect(body.data.participantCounts["class-1"]).toBe(1);
   });
+});
+
+afterEach(() => {
+  jest.useRealTimers();
 });

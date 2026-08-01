@@ -23,7 +23,8 @@ import {
   reportClientFailure,
   userFacingError,
 } from "@/lib/errors/classification/client-failure";
-import { reportSentryError } from "@/lib/observability/report";
+// Same specifier as the jest.mock below, so the two cannot drift apart.
+import { reportSentryError } from "../../lib/observability/report";
 
 jest.mock("../../lib/observability/report", () => ({
   __esModule: true,

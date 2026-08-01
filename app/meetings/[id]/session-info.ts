@@ -61,7 +61,12 @@ export function useSessionInfo(): SessionInfo {
 
   const consultantUserId = str(custom?.consultantUserId);
   // #org-appts — which SIDE of this appointment the viewer is on, not the
-  // singular UserRole. Mirrors the derivation in MeetingRoom/EndCallButton.
+  // singular UserRole, which is wrong for a dual-profile user booked as a
+  // learner into someone else's session. Role fallback for legacy calls
+  // created before the stamp. THE definition: MeetingRoom and EndCallButton
+  // read `isHost` off this hook rather than repeating it, because it gates
+  // "End for everyone" — a destructive action the people it affects cannot
+  // undo, and three copies could disagree about who may take it.
   const isHost = consultantUserId
     ? session?.user?.id === consultantUserId
     : session?.user?.role === "CONSULTANT";

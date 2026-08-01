@@ -61,6 +61,9 @@ export function rmsFromTimeDomain(samples: Uint8Array): number {
  * range a person actually speaks in occupies most of the meter's travel.
  */
 export function micLevelFromRms(rms: number): number {
+  // Written this way on purpose: `rms <= 0` is false for NaN, which would put
+  // NaN through log10 and set the bar width to "NaN%". This form rejects NaN
+  // along with zero and negatives.
   if (!(rms > 0)) return 0;
   const db = 20 * Math.log10(rms);
   const level = (db - FLOOR_DB) / (CEILING_DB - FLOOR_DB);
@@ -102,18 +105,29 @@ export function createMicLevelMeter(
   const cancelFrame =
     options.cancelFrame ?? ((handle: number) => cancelAnimationFrame(handle));
 
+  // The WHOLE graph is guarded, not just the context: `createMediaStreamSource`
+  // throws when the stream carries no audio track, which is exactly what the
+  // SDK hands over mid device-switch. Escaping into the lobby's effect would
+  // take the join screen down — and leak the context, which browsers cap per
+  // tab.
   let audioContext: AudioContext;
+  let analyser: AnalyserNode;
   try {
     audioContext = audioContextFactory();
   } catch (error) {
     console.error("Error metering microphone:", error);
     return () => {};
   }
-
-  const analyser = audioContext.createAnalyser();
-  // Small enough to stay responsive, large enough for a stable RMS.
-  analyser.fftSize = 1024;
-  audioContext.createMediaStreamSource(stream).connect(analyser);
+  try {
+    analyser = audioContext.createAnalyser();
+    // Small enough to stay responsive, large enough for a stable RMS.
+    analyser.fftSize = 1024;
+    audioContext.createMediaStreamSource(stream).connect(analyser);
+  } catch (error) {
+    console.error("Error metering microphone:", error);
+    void audioContext.close().catch(() => {});
+    return () => {};
+  }
 
   const samples = new Uint8Array(analyser.fftSize) as Uint8Array<ArrayBuffer>;
   let level = 0;

@@ -58,6 +58,10 @@ export function useLazyJoinMeeting() {
         toast({
           title: "Connecting…",
           description: "Setting up your meeting client. Please try Join again.",
+          // The other two join surfaces show this state as a warning; without
+          // it the same condition looks different depending on where you
+          // clicked Join.
+          variant: "warning",
         });
         return false;
       }

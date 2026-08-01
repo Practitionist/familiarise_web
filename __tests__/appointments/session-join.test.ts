@@ -16,6 +16,7 @@
 
 import {
   CONSULTANT_JOIN_WINDOW_MS,
+  DEFAULT_MEETING_DURATION_MS,
   CONSULTEE_JOIN_WINDOW_MS,
   findSessionRun,
   getCurrentOrNextSession,
@@ -243,6 +244,19 @@ describe("the join window spans the whole session", () => {
 
     expect(at1029?.anchor.id).toBe("A");
     expect(at1031).toBeNull();
+  });
+
+  it("falls back to the default duration when a row has no endsAt", () => {
+    // `MeetingSlot` declares `endsAt` nullable and the join surfaces do hand
+    // that shape over, so the run bounds depend on this fallback.
+    const runs = groupSlotsIntoRuns([
+      row("A", "10:00", "10:30", { endsAt: null }),
+    ]);
+
+    expect(runs).toHaveLength(1);
+    expect(runs[0].endsAt.getTime() - runs[0].startsAt.getTime()).toBe(
+      DEFAULT_MEETING_DURATION_MS,
+    );
   });
 });
 

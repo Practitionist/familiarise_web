@@ -70,6 +70,64 @@ const layoutOptions = [
   { value: "speaker-right", label: "Speaker (Right)", icon: Monitor },
 ];
 
+/**
+ * The clock pill, isolated.
+ *
+ * `useSessionClock` ticks once a second for the whole session. Called from the
+ * top of MeetingRoom it re-rendered the entire video layout on every tick,
+ * including the many ticks whose output is identical. Only these twenty-odd
+ * nodes actually change, so only they subscribe.
+ */
+function SessionClockPill({
+  startsAt,
+  endsAt,
+}: {
+  startsAt: Date | null;
+  endsAt: Date | null;
+}) {
+  const clock = useSessionClock(startsAt, endsAt);
+  if (!clock.elapsed) return null;
+
+  return (
+    <div
+      className={cn(
+        "pointer-events-auto flex shrink-0 items-center gap-2 rounded-lg border px-3 py-2 backdrop-blur-sm",
+        clock.phase === "overrunning"
+          ? "border-amber-500/40 bg-amber-500/10"
+          : "border-zinc-800 bg-zinc-900/80",
+      )}
+    >
+      <div
+        className={cn(
+          "h-2 w-2 shrink-0 rounded-full",
+          clock.phase === "overrunning"
+            ? "bg-amber-400"
+            : "animate-pulse bg-white",
+        )}
+      />
+      {/* What remains leads; the clock since the start is context
+                beneath it and now says which one it is. Two unlabelled
+                durations side by side read as contradicting each other. */}
+      <span
+        className={cn(
+          "text-sm font-medium",
+          clock.phase === "overrunning" ? "text-amber-200" : "text-white",
+        )}
+      >
+        {clock.status}
+      </span>
+      <span
+        className={cn(
+          "hidden text-xs tabular-nums sm:inline",
+          clock.phase === "overrunning" ? "text-amber-300/80" : "text-zinc-500",
+        )}
+      >
+        {clock.elapsedLabel}
+      </span>
+    </div>
+  );
+}
+
 const MeetingRoom = () => {
   const searchParams = useSearchParams();
   const isPersonalRoom = !!searchParams.get("personal");
@@ -100,17 +158,11 @@ const MeetingRoom = () => {
   const custom = useCallCustomData();
 
   const info = useSessionInfo();
-  const clock = useSessionClock(info.startsAt, info.endsAt);
 
-  // #org-appts — host/guest by WHICH SIDE of THIS appointment the viewer is on
-  // (the ids stamped into the call's custom data), not the singular UserRole,
-  // which is wrong for a dual-profile user booked as a learner into someone
-  // else's session. Role fallback for legacy calls created before the stamp.
-  const consultantUserId = custom?.consultantUserId as string | undefined;
+  // #org-appts — host/guest by WHICH SIDE of THIS appointment the viewer is
+  // on. `isHost` comes from useSessionInfo, which owns the one definition.
   const consulteeUserId = custom?.consulteeUserId as string | undefined;
-  const isHost = consultantUserId
-    ? session?.user?.id === consultantUserId
-    : session?.user?.role === "CONSULTANT";
+  const isHost = info.isHost;
   const isGuest = consulteeUserId
     ? session?.user?.id === consulteeUserId
     : session?.user?.role === "CONSULTEE";
@@ -153,8 +205,15 @@ const MeetingRoom = () => {
   // page unmount and the end-call path so every exit behaves the same way, and
   // so no single failure can skip the rest of it.
   const cleanupAndNavigate = async (targetUrl: string) => {
-    await leaveCallAndReleaseMedia(call);
-    router.push(targetUrl);
+    try {
+      await leaveCallAndReleaseMedia(call);
+    } catch (error) {
+      console.error("Error releasing media while leaving call:", error);
+    } finally {
+      // In `finally`: a teardown that rejects must not be the reason the user
+      // is left sitting on the call screen.
+      router.push(targetUrl);
+    }
   };
 
   const handleRejoinCall = async () => {
@@ -405,7 +464,10 @@ const MeetingRoom = () => {
             the lobby; it now names the person, with the type demoted to the
             supporting line. The session clock sits opposite it, because until
             now nothing on this screen said how long was left. */}
-        <div className="pointer-events-none fixed inset-x-4 top-4 z-40 flex items-start justify-between gap-3">
+        {/* Below the participants sidebar (z-40) and its backdrop (z-30): the
+            header sits later in the DOM, so at equal stacking it painted over
+            the panel's own heading and close control. */}
+        <div className="pointer-events-none fixed inset-x-4 top-4 z-20 flex items-start justify-between gap-3">
           <div className="pointer-events-auto flex min-w-0 items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-900/80 px-3 py-2 backdrop-blur-sm">
             <div className="min-w-0">
               <p className="truncate text-sm font-medium text-white">
@@ -422,48 +484,7 @@ const MeetingRoom = () => {
             </div>
           </div>
 
-          {clock.elapsed && (
-            <div
-              className={cn(
-                "pointer-events-auto flex shrink-0 items-center gap-2 rounded-lg border px-3 py-2 backdrop-blur-sm",
-                clock.phase === "overrunning"
-                  ? "border-amber-500/40 bg-amber-500/10"
-                  : "border-zinc-800 bg-zinc-900/80",
-              )}
-            >
-              <div
-                className={cn(
-                  "h-2 w-2 shrink-0 rounded-full",
-                  clock.phase === "overrunning"
-                    ? "bg-amber-400"
-                    : "animate-pulse bg-white",
-                )}
-              />
-              {/* What remains leads; the clock since the start is context
-                  beneath it and now says which one it is. Two unlabelled
-                  durations side by side read as contradicting each other. */}
-              <span
-                className={cn(
-                  "text-sm font-medium",
-                  clock.phase === "overrunning"
-                    ? "text-amber-200"
-                    : "text-white",
-                )}
-              >
-                {clock.status}
-              </span>
-              <span
-                className={cn(
-                  "hidden text-xs tabular-nums sm:inline",
-                  clock.phase === "overrunning"
-                    ? "text-amber-300/80"
-                    : "text-zinc-500",
-                )}
-              >
-                {clock.elapsedLabel}
-              </span>
-            </div>
-          )}
+          <SessionClockPill startsAt={info.startsAt} endsAt={info.endsAt} />
         </div>
       </section>
     </StreamVideoErrorBoundary>

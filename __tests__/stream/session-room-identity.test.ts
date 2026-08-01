@@ -53,6 +53,7 @@ import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
 import { getMaintenanceState } from "@/lib/maintenance";
 import { getOrCreateAppointmentMeeting } from "@/lib/meeting";
+import { createDbMeetingSession } from "@/actions/stream/meetings/meeting.action";
 
 const db = prisma as unknown as {
   slotOfAppointment: { findUnique: jest.Mock; findMany: jest.Mock };
@@ -468,11 +469,18 @@ describe("the call describes the session it belongs to", () => {
     ];
     seed([a, b], null);
 
-    // No appointment means neither resolver can authorize the caller, so both
-    // degrade together — to the pre-#1061 room, but never to a refused join.
-    expect(await join(b)).toBe("slot-B");
+    // No appointment means entitlement cannot be established at all. The
+    // resolvers still degrade — the call is minted, unanchored and
+    // undescribed, exactly as before — but the WRITE fails closed rather than
+    // recording a session nobody could be shown to be part of. The column is
+    // required in the schema, so this is a guard against corrupt data, not a
+    // path any real booking takes.
+    await expect(join(b)).rejects.toThrow(
+      "You are not a participant in this session.",
+    );
     expect(callPayloads[0].data?.members).toBeUndefined();
     expect(custom().anchorSlotId).toBe("B");
+    expect(sessions).toEqual([]);
   });
 });
 
@@ -493,13 +501,19 @@ describe("only people involved in the booking may resolve it", () => {
 
     // The join is not refused — entry must never regress on an authorization
     // miss — but it degrades to the unanchored room and an undescribed call.
-    expect(await join(rows[1])).toBe("slot-B");
+    // The join is refused outright now that the WRITER is gated too. What is
+    // pinned here is that nothing leaked on the way to that refusal: the
+    // resolvers still degrade silently rather than describing the booking.
+    await expect(join(rows[1])).rejects.toThrow(
+      "You are not a participant in this session.",
+    );
     expect(callPayloads[0].data?.members).toBeUndefined();
     const custom = callPayloads[0].data?.custom ?? {};
     expect(custom.offeringTitle).toBeUndefined();
     expect(custom.consultantUserId).toBeUndefined();
     expect(custom.consulteeUserId).toBeUndefined();
     expect(custom.sessionEndsAt).toBeUndefined();
+    expect(sessions).toEqual([]);
   });
 
   it("gives a participating consultee the anchor and the profile", async () => {
@@ -536,8 +550,11 @@ describe("only people involved in the booking may resolve it", () => {
       consultantProfileId: "cp-999",
     });
 
-    expect(await join(rows[1])).toBe("slot-B");
+    await expect(join(rows[1])).rejects.toThrow(
+      "You are not a participant in this session.",
+    );
     expect(callPayloads[0].data?.members).toBeUndefined();
+    expect(sessions).toEqual([]);
   });
 
   it("admits an ACCEPTED collaborator on a webinar", async () => {
@@ -558,13 +575,17 @@ describe("only people involved in the booking may resolve it", () => {
 
   it("refuses a signed-out or banned caller", async () => {
     seed(twoRows(), consultationAppointment, null);
-    expect(await join(rows[1])).toBe("slot-B");
+    await expect(join(rows[1])).rejects.toThrow(
+      "You are not a participant in this session.",
+    );
 
     seed(twoRows(), consultationAppointment, {
       id: "user-consultee",
       banned: true,
     });
-    expect(await join(rows[1])).toBe("slot-B");
+    await expect(join(rows[1])).rejects.toThrow(
+      "You are not a participant in this session.",
+    );
   });
 });
 
@@ -669,5 +690,49 @@ describe("a refused join creates nothing on Stream", () => {
     ).rejects.toThrow("Invalid slot for meeting session");
 
     expect(streamCallsCreated).toEqual([]);
+  });
+});
+
+/**
+ * The writer, not just the readers.
+ *
+ * `readSlotForCaller` was added to gate the two RESOLVERS, and the exported
+ * writer in the same `"use server"` module was left open. Any client can call
+ * a server action with arguments of its choosing, so an unrelated caller could
+ * write the `MeetingSession` row for someone else's slot with a
+ * `streamCallId` of their choosing — and because that row is unique per slot,
+ * never updated, and reused by every later join, both legitimate parties would
+ * then be routed into a Stream call the attacker controls.
+ */
+describe("only a participant may create a session", () => {
+  const stranger: Caller = { id: "user-stranger" };
+
+  it("refuses to write a session for a booking the caller is not in", async () => {
+    seed([slotRow("A", "10:00", "10:30")], consultationAppointment, stranger);
+
+    await expect(
+      createDbMeetingSession(meetingSlot(rows[0]), "slot-attacker-controlled"),
+    ).rejects.toThrow("You are not a participant in this session.");
+
+    // The assertion that matters: no row exists to be reused by anyone.
+    expect(db.meetingSession.create).not.toHaveBeenCalled();
+    expect(sessions).toEqual([]);
+  });
+
+  it("refuses a signed-out caller too", async () => {
+    seed([slotRow("A", "10:00", "10:30")], consultationAppointment, null);
+
+    await expect(
+      createDbMeetingSession(meetingSlot(rows[0]), "slot-A"),
+    ).rejects.toThrow("You are not a participant in this session.");
+    expect(db.meetingSession.create).not.toHaveBeenCalled();
+  });
+
+  it("still lets a participant create their own session", async () => {
+    seed([slotRow("A", "10:00", "10:30")]);
+
+    await expect(
+      createDbMeetingSession(meetingSlot(rows[0]), "slot-A"),
+    ).resolves.toMatchObject({ streamCallId: "slot-A" });
   });
 });

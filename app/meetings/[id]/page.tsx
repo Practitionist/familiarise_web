@@ -73,7 +73,12 @@ const MeetingPage = () => {
     // too. Synchronously: anything awaited here may never resume. Leaving the
     // call properly is skipped — Stream times the participant out, and the
     // camera going dark is the part that cannot wait.
-    const onPageHide = () => {
+    const onPageHide = (event: PageTransitionEvent) => {
+      // `persisted` means the document is going into the back/forward cache,
+      // not away: it is frozen with its tree intact and Back restores it.
+      // Stopping tracks there leaves the SDK reporting the mic and camera as
+      // enabled while nothing is captured, so the meter sits at silence.
+      if (event.persisted) return;
       stopLocalTracks(call);
     };
     window.addEventListener("pagehide", onPageHide);
@@ -116,7 +121,9 @@ const MeetingPage = () => {
           <h2 className="text-xl font-bold text-foreground mb-2">
             Access Denied
           </h2>
-          <p className="text-muted-foreground mb-4">{accessValidation.message}</p>
+          <p className="text-muted-foreground mb-4">
+            {accessValidation.message}
+          </p>
           <p className="text-sm text-muted-foreground/70">
             If you believe this is an error, please contact support or the
             meeting host.

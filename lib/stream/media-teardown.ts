@@ -61,13 +61,22 @@ export async function releaseLocalMedia(
 ): Promise<void> {
   if (!call) return;
 
+  // The async arrow matters: `allSettled` isolates a rejected PROMISE, but a
+  // synchronous throw from `disable()` escapes the `.map` before there is a
+  // promise to settle, skipping `stopLocalTracks` and stranding the caller —
+  // with the camera still live, which is the one outcome this file exists to
+  // prevent.
   await Promise.allSettled(
-    localDevices(call).map((device) => device.disable({ forceStop: true })),
+    localDevices(call).map(async (device) =>
+      device.disable({ forceStop: true }),
+    ),
   );
 
   // Belt and braces. Whatever the managers did or failed to do, no track the
   // call still holds may be left live — this is the state the user actually
   // observes, and the only check that matches what the browser reports.
+  // `stopLocalTracks` swallows per-track failures itself, so this cannot be
+  // the thing that throws.
   stopLocalTracks(call);
 }
 
@@ -83,12 +92,21 @@ export async function leaveCallAndReleaseMedia(
 ): Promise<void> {
   if (!call) return;
 
-  await releaseLocalMedia(call);
+  // Never allowed to reject: both exit paths await this before navigating, and
+  // a rejection here would leave the user on the call screen.
+  try {
+    await releaseLocalMedia(call);
+  } catch (error) {
+    console.warn("Failed to release local media during teardown:", error);
+  }
 
   // IDLE is the lobby-exit path: nothing was ever joined, and `leave()`
   // rejects there rather than no-opping.
   const callingState = call.state.callingState;
-  if (callingState === CallingState.LEFT || callingState === CallingState.IDLE) {
+  if (
+    callingState === CallingState.LEFT ||
+    callingState === CallingState.IDLE
+  ) {
     return;
   }
 

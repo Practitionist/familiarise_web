@@ -285,10 +285,18 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
     }
   };
 
+  const joinLabel =
+    clock.phase === "in-progress" || clock.phase === "overrunning"
+      ? "Join now"
+      : clock.phase === "early"
+        ? "Join early"
+        : "Join meeting";
+
   /** Mic and camera toggles, kept beside the preview so a change is seen. */
   const deviceToggles = (
     <div className="flex items-center gap-3">
       <button
+        type="button"
         onClick={toggleMic}
         aria-label={isMicOn ? "Turn microphone off" : "Turn microphone on"}
         aria-pressed={isMicOn}
@@ -304,6 +312,7 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
       </button>
 
       <button
+        type="button"
         onClick={toggleCamera}
         aria-label={isCameraOn ? "Turn camera off" : "Turn camera on"}
         aria-pressed={isCameraOn}
@@ -323,6 +332,7 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
       </button>
 
       <button
+        type="button"
         onClick={() => setShowSettings(true)}
         aria-label="Audio and video settings"
         aria-haspopup="dialog"
@@ -439,7 +449,7 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
               </p>
             )}
 
-            {(scheduledAt || info.durationMinutes) && (
+            {(scheduledAt || (info.durationMinutes ?? 0) > 0) && (
               <div className="mt-4 space-y-1.5 text-sm text-muted-foreground">
                 {scheduledAt && (
                   <span className="flex items-center gap-1.5">
@@ -447,7 +457,7 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
                     {scheduledAt}
                   </span>
                 )}
-                {info.durationMinutes && (
+                {(info.durationMinutes ?? 0) > 0 && (
                   <span className="flex items-center gap-1.5">
                     <Timer className="h-4 w-4 shrink-0" />
                     {info.durationMinutes} min
@@ -466,13 +476,8 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
                   <Loader2 className="mr-2 h-5 w-5 animate-spin" />
                   Joining...
                 </>
-              ) : clock.phase === "in-progress" ||
-                clock.phase === "overrunning" ? (
-                "Join now"
-              ) : clock.phase === "early" ? (
-                "Join early"
               ) : (
-                "Join meeting"
+                joinLabel
               )}
             </Button>
 

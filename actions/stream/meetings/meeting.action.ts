@@ -172,6 +172,33 @@ async function readSlotForCaller(slotId: string) {
   return { slot, appointment };
 }
 
+/**
+ * A refusal we meant to issue — maintenance, an unentitled caller, or input
+ * that is genuinely not a slot — as opposed to something breaking underneath
+ * us. Kept out of Sentry and passed through with its message intact.
+ *
+ * Not exported: a "use server" module may only export async functions, and
+ * nothing outside this file needs to narrow on it.
+ */
+class MeetingSessionRefusal extends Error {}
+
+/**
+ * `readSlotForCaller` as a hard gate rather than a soft one.
+ *
+ * The resolvers degrade to null on refusal because a less informative join is
+ * better than none. Anything that WRITES, or that hands back a `streamCallId`,
+ * must refuse outright instead — returning null there would let the caller
+ * fall through to the mint branch and create a Stream call for a booking they
+ * have nothing to do with.
+ */
+async function requireEntitledCaller(slotId: string): Promise<void> {
+  if (!(await readSlotForCaller(slotId))) {
+    throw new MeetingSessionRefusal(
+      "You are not a participant in this session.",
+    );
+  }
+}
+
 const slotSchema = z.object({
   id: z.string().min(1),
   startsAt: z.coerce.date(),
@@ -299,12 +326,23 @@ export async function resolveSessionCallProfile(
     // `appointmentId IS NULL` and pull every appointment-less row in the table.
     if (!anchor.appointmentId) return null;
 
+    // A webinar or class discards its attendees a few lines below (they are
+    // never named as members), and can hold hundreds of them — so they are not
+    // fetched at all. `appointmentType` is already in hand from the gate.
+    const isGroupEvent =
+      appointment.appointmentType === "WEBINAR" ||
+      appointment.appointmentType === "CLASS";
     const siblings = await prisma.slotOfAppointment.findMany({
       where: { appointmentId: anchor.appointmentId, deletedAt: null },
       orderBy: { startsAt: "asc" },
       select: {
         ...anchorSlotSelect,
-        user: { select: { id: true, name: true } },
+        // `take: 0` rather than a narrower select, so the row type stays the
+        // same shape on both branches.
+        user: {
+          select: { id: true, name: true },
+          ...(isGroupEvent ? { take: 0 } : {}),
+        },
       },
     });
     const run = findSessionRun(siblings, validatedSlotId);
@@ -350,9 +388,6 @@ export async function resolveSessionCallProfile(
     // connected to the slot. A webinar or class can hold hundreds of them and
     // Stream would reject the oversized request, which would turn a working
     // join into a failure — so group events name their hosts and nobody else.
-    const isGroupEvent =
-      appointment.appointmentType === "WEBINAR" ||
-      appointment.appointmentType === "CLASS";
     const hosts = new Set(hostUserIds);
     for (const attendee of run.slots.flatMap((slot) => slot.user)) {
       if (attendee.name) userToName.set(attendee.id, attendee.name);
@@ -404,6 +439,18 @@ export async function resolveSessionCallProfile(
 
 /**
  * Finds an existing meeting session in the database by slot ID.
+ *
+ * Deliberately NOT entitlement-gated, unlike the writer below.
+ *
+ * The only thing it returns that an attacker would want is `streamCallId`, and
+ * that is `slot-<anchorSlotId>` — derivable from the slot id the caller had to
+ * supply to ask the question. A gate here would therefore buy no
+ * confidentiality, while putting a hard refusal on the read that EVERY join
+ * makes: `readSlotForCaller` returns null for a transient database failure as
+ * well as for a stranger, so a blip would refuse a legitimate participant
+ * instead of degrading. Entry to the meeting page is gated by
+ * /api/meetings/[id]/validate-access.
+ *
  * @param slotId The ID of the appointment slot.
  * @returns The MeetingSession object if found, otherwise null.
  */
@@ -441,16 +488,6 @@ export async function findDbMeetingSessionBySlot(
     return null;
   }
 }
-
-/**
- * A refusal we meant to issue — maintenance, or input that is genuinely not a
- * slot — as opposed to something breaking underneath us. Kept out of Sentry
- * and passed through with its message intact.
- *
- * Not exported: a "use server" module may only export async functions, and
- * nothing outside this file needs to narrow on it.
- */
-class MeetingSessionRefusal extends Error {}
 
 /**
  * Every precondition that can REFUSE a join, in one place so it can run
@@ -505,6 +542,11 @@ async function refuseMeetingCreation(
  * Fails OPEN. An unexpected throw here must not turn a working join into a
  * refusal: the authoritative gate is still `createDbMeetingSession`, which runs
  * a moment later on the same request.
+ *
+ * Deliberately NOT entitlement-gated, and the only export here that is not.
+ * It reads no row: it reports the global maintenance phase, which every user
+ * already sees, and whether an object the caller itself supplied is shaped
+ * like a slot. There is nothing here to disclose.
  */
 export async function getMeetingCreationRefusal(
   slot: MeetingSlot,
@@ -528,6 +570,28 @@ export async function getMeetingCreationRefusal(
     });
     return null;
   }
+}
+
+/**
+ * The org an appointment belongs to, for the audit column on MeetingSession.
+ *
+ * Deliberately still fatal on failure rather than degrading to null: the column
+ * is written once and never updated, so a null recorded because a read blipped
+ * would hide this call from its own org's audit queries permanently. A failed
+ * join is retryable; that is not.
+ *
+ * Extracted from `createDbMeetingSession` only to keep that function under the
+ * cognitive-complexity limit the pipeline enforces.
+ */
+async function readAppointmentOrganizationId(
+  appointmentId: string | null | undefined,
+): Promise<string | null> {
+  if (!appointmentId) return null;
+  const appointment = await prisma.appointment.findUnique({
+    where: { id: appointmentId },
+    select: { organizationId: true },
+  });
+  return appointment?.organizationId ?? null;
 }
 
 /**
@@ -555,6 +619,13 @@ export async function createDbMeetingSession(
     const refusal = await refuseMeetingCreation(slot);
     if (refusal) throw new MeetingSessionRefusal(refusal);
 
+    // The row written here decides which Stream call BOTH sides are sent to,
+    // it is unique per slot and never updated, and every later join reuses its
+    // `streamCallId`. Ungated, one call to this exported action would route a
+    // stranger's meeting into a room of the caller's choosing. The resolvers
+    // were gated two rounds ago and this writer was missed.
+    await requireEntitledCaller(slot.id);
+
     const validatedStreamCallId = streamCallIdSchema.parse(streamCallId);
 
     streamLogger.debug("Creating meeting session", {
@@ -562,20 +633,9 @@ export async function createDbMeetingSession(
       streamCallId: validatedStreamCallId,
     });
 
-    // Deliberately still fatal on failure rather than degrading to null: the
-    // column is written once and never updated, so a null recorded because a
-    // read blipped would hide this call from its own org's audit queries
-    // permanently. A failed join is retryable; that is not.
-    let organizationId: string | null = null;
-    if (slot.appointmentId) {
-      const appointment = await prisma.appointment.findUnique({
-        where: { id: slot.appointmentId },
-        select: {
-          organizationId: true,
-        },
-      });
-      organizationId = appointment?.organizationId ?? null;
-    }
+    const organizationId = await readAppointmentOrganizationId(
+      slot.appointmentId,
+    );
 
     const meetingSession = await prisma.meetingSession.create({
       data: {
@@ -641,61 +701,11 @@ export async function createDbMeetingSession(
   }
 }
 
-/**
- * Get or create a meeting session for a slot
- * This is an atomic operation that handles race conditions
- * @param slot The appointment slot
- * @param streamCallId The Stream call ID to use if creating new
- * @returns The existing or newly created meeting session
+/*
+ * `getOrCreateMeetingSession` and `updateMeetingSessionCallId` were removed
+ * here. Neither had a single caller, and both were exported from a
+ * `"use server"` module: the first wrapped the ungated find+create pair, and
+ * the second rewrote an existing session's `streamCallId` outright, which is a
+ * more direct hijack than the one that prompted this audit. Dead code that
+ * only exposes an attack surface is deleted rather than gated.
  */
-export async function getOrCreateMeetingSession(
-  slot: MeetingSlot,
-  streamCallId: string,
-): Promise<MeetingSession> {
-  // First try to find existing
-  const existing = await findDbMeetingSessionBySlot(slot.id);
-  if (existing) {
-    return existing;
-  }
-
-  // Create new session (handles race condition with unique constraint)
-  return createDbMeetingSession(slot, streamCallId);
-}
-
-/**
- * Update a meeting session's Stream call ID
- * Useful when reconnecting to a call
- * @param sessionId The meeting session ID
- * @param streamCallId The new Stream call ID
- * @returns The updated meeting session
- */
-export async function updateMeetingSessionCallId(
-  sessionId: string,
-  streamCallId: string,
-): Promise<MeetingSession> {
-  const validatedSessionId = z.string().min(1).parse(sessionId);
-  const validatedStreamCallId = streamCallIdSchema.parse(streamCallId);
-
-  try {
-    const updated = await prisma.meetingSession.update({
-      where: { id: validatedSessionId },
-      data: { streamCallId: validatedStreamCallId },
-    });
-
-    streamLogger.debug("Updated meeting session call ID", {
-      sessionId: validatedSessionId,
-      streamCallId: validatedStreamCallId,
-    });
-
-    return updated;
-  } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "stream" } },
-    );
-    streamLogger.error("Failed to update meeting session", error, {
-      sessionId: validatedSessionId,
-    });
-    throw error;
-  }
-}

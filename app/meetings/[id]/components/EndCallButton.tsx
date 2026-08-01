@@ -1,20 +1,16 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import {
-  useCall,
-  useCallStateHooks,
-} from "@stream-io/video-react-sdk";
+import { useCall } from "@stream-io/video-react-sdk";
 import { Button } from "@/components/ui/button";
 import { useRouter } from "next/navigation";
 import { useSession } from "@/lib/auth-client";
 import { Loader2, PhoneOff } from "lucide-react";
 import { leaveCallAndReleaseMedia } from "@/lib/stream/media-teardown";
+import { useSessionInfo } from "../session-info";
 
 const EndCallButton = () => {
   const call = useCall();
-  const { useCallCustomData } = useCallStateHooks();
-  const custom = useCallCustomData();
   const router = useRouter();
   const { data: session } = useSession();
   const [isPressed, setIsPressed] = useState(false);
@@ -57,7 +53,13 @@ const EndCallButton = () => {
       // after `endCall()` in the same try, so an endCall that threw took the
       // camera release down with it and the host left the page still
       // broadcasting.
-      await leaveCallAndReleaseMedia(call);
+      try {
+        await leaveCallAndReleaseMedia(call);
+      } catch (error) {
+        // Getting the host off this screen matters more than a clean teardown,
+        // and a rejection here would strand them on it.
+        console.error("Error releasing media while ending call:", error);
+      }
       setIsEnding(false);
       router.push(getDashboardUrl());
     }
@@ -88,16 +90,10 @@ const EndCallButton = () => {
       "useStreamCall must be used within a StreamCall component.",
     );
 
-  // Only the host (delivering side) may end the call for everyone.
-  // #org-appts — derive the host from WHICH SIDE of THIS appointment the viewer
-  // is on (the consultantUserId stamped into the call), not the singular
-  // UserRole: a dual-profile user booked as a learner into someone else's
-  // session has role CONSULTANT but is the guest here. Fall back to the role
-  // check for legacy calls created before the id was stamped.
-  const consultantUserId = custom?.consultantUserId as string | undefined;
-  const isHost = consultantUserId
-    ? session?.user?.id === consultantUserId
-    : session?.user?.role === "CONSULTANT";
+  // Only the host (delivering side) may end the call for everyone. The
+  // derivation lives in useSessionInfo — this gates a destructive action, so
+  // it must not be a second opinion about who the host is.
+  const isHost = useSessionInfo().isHost;
 
   if (!isHost) return null;
 
@@ -114,7 +110,33 @@ const EndCallButton = () => {
       onTouchStart={() => !isEnding && setIsPressed(true)}
       onTouchEnd={() => setIsPressed(false)}
       onTouchCancel={() => setIsPressed(false)}
+      // Keyboard had no way to reach the hold either: the control is a native
+      // <button>, so a keyboard user could focus it and press Enter or Space
+      // to no effect at all. `repeat` is ignored so key auto-repeat does not
+      // restart the hold, and blur cancels it like leaving with the pointer.
+      onKeyDown={(event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        if (!isEnding && !event.repeat) setIsPressed(true);
+      }}
+      onKeyUp={(event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        setIsPressed(false);
+      }}
+      onBlur={() => setIsPressed(false)}
       disabled={isEnding}
+      // The hold is the confirmation, so its progress has to be perceivable
+      // without seeing the fill.
+      role="progressbar"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={Math.round(progress)}
+      aria-label={
+        isEnding
+          ? "Ending the call for everyone"
+          : "Hold to end the call for everyone"
+      }
       className="relative w-full overflow-hidden border border-red-500/50 bg-transparent text-red-400 transition-colors hover:bg-red-500/10 hover:text-red-300 disabled:opacity-70"
       style={{
         background: isEnding

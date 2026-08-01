@@ -50,6 +50,22 @@ export interface ImminentSession {
  * the Appointments tab's job, and repeating it here is exactly the
  * duplication this panel replaced.
  */
+/**
+ * The three distinct things a session flag can mean. Kept as a function rather
+ * than a nested ternary inline: the join window opens BEFORE the start and
+ * stays open throughout, so "about to begin" and "under way" are different
+ * answers that one flag cannot carry (#1061).
+ */
+function sessionTitle(
+  inProgress: boolean,
+  isJoinable: boolean,
+  mins: number,
+): string {
+  if (inProgress) return "Session in progress";
+  if (isJoinable) return `Starting in ${mins} min`;
+  return `Session in ${mins} min`;
+}
+
 export function imminentSessionItem(
   sessions: ImminentSession[],
   appointmentsHref: string,
@@ -100,11 +116,7 @@ export function imminentSessionItem(
       // A session 25 minutes in used to read "starting now" (#1061): the
       // join window opens before the start and stays open throughout, so
       // one flag could not tell "about to begin" from "under way".
-      title: inProgress
-        ? "Session in progress"
-        : state === "joinable"
-          ? `Starting in ${mins} min`
-          : `Session in ${mins} min`,
+      title: sessionTitle(inProgress, state === "joinable", mins),
       body: run.anchor.title,
       // Both labels say "View": `ctaHref` is the appointments list, not the
       // meeting, and ActionRequiredPanel renders it as an ordinary link. Saying
