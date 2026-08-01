@@ -431,6 +431,41 @@ export class SlotAllocationService {
   }
 
   /**
+   * #1012 — in-txn re-assert of expectedTentativeSlotCount.
+   *
+   * The pre-txn read only catches sequential stale submissions. Under the
+   * Redis lock another writer can still commit between that read and our
+   * write txn (e.g. a second tab that raced the lock, or useRequestedSlots).
+   * `guardInitialAllocationInTx` only covers fresh allocations, not
+   * reschedules. Re-read with `tx` before delete/recreate, matching the
+   * requested-slots path.
+   */
+  private static async assertExpectedTentativeSlotCountInTx(
+    tx: Tx,
+    eventType: EventType,
+    eventId: string,
+    expected: number | undefined,
+  ): Promise<void> {
+    if (expected === undefined) return;
+    const relationField = this.getEventRelationField(eventType);
+    const existingAppointments: AppointmentWithSlots[] =
+      await tx.appointment.findMany({
+        where: {
+          [`${relationField}Id`]: eventId,
+        } as Prisma.AppointmentWhereInput,
+        include: { slotsOfAppointment: true },
+      });
+    const tentativeSlotCount = existingAppointments.reduce(
+      (count, appointment) =>
+        count +
+        appointment.slotsOfAppointment.filter((slot) => slot.isTentative)
+          .length,
+      0,
+    );
+    this.assertExpectedTentativeSlotCount(tentativeSlotCount, expected);
+  }
+
+  /**
    * AUTO ALLOCATION: Find and allocate first available consecutive slots
    *
    * FIX Issue #1 from Architecture Review (#446):
@@ -907,6 +942,15 @@ export class SlotAllocationService {
             if (lockedReplay) return lockedReplay;
           }
 
+          // #1012 — reschedule path is outside guardInitialAllocationInTx;
+          // re-assert tentative count under the write txn before delete.
+          await SlotAllocationService.assertExpectedTentativeSlotCountInTx(
+            tx,
+            eventType,
+            eventId,
+            expectedTentativeSlotCount,
+          );
+
           // CRITICAL FIX: Delete existing appointments before creating new ones
           // For reschedules: only delete appointments with tentative slots (preserve confirmed ones)
           // For in-progress: only delete future slots (preserve past confirmed ones)
@@ -1312,6 +1356,15 @@ export class SlotAllocationService {
               );
             if (lockedReplay) return lockedReplay;
           }
+
+          // #1012 — reschedule path is outside guardInitialAllocationInTx;
+          // re-assert tentative count under the write txn before delete.
+          await SlotAllocationService.assertExpectedTentativeSlotCountInTx(
+            tx,
+            eventType,
+            eventId,
+            expectedTentativeSlotCount,
+          );
 
           // Delete existing appointments
           // For reschedules: only delete tentative slots (preserve confirmed ones)

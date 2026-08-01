@@ -195,4 +195,85 @@ describe("#1012 expectedTentativeSlotCount", () => {
 
     expect(result.error ?? "").not.toMatch(/Reschedule state changed/);
   });
+
+  it("re-asserts the tentative count inside the write transaction", async () => {
+    // Pre-txn view still matches (2 tentative) so we enter the write txn;
+    // inside the txn another tab already confirmed — in-txn re-read 409s.
+    const matchingTentative = [
+      {
+        id: "appt-1",
+        slotsOfAppointment: [
+          {
+            id: "s1",
+            startsAt: new Date(FUTURE_SLOTS[0]),
+            endsAt: new Date("2026-08-03T09:30:00.000Z"),
+            isTentative: true,
+          },
+          {
+            id: "s2",
+            startsAt: new Date(FUTURE_SLOTS[1]),
+            endsAt: new Date("2026-08-03T10:00:00.000Z"),
+            isTentative: true,
+          },
+        ],
+      },
+    ];
+    const confirmedAfterRace = [
+      {
+        id: "appt-1",
+        slotsOfAppointment: [
+          {
+            id: "s1",
+            startsAt: new Date(FUTURE_SLOTS[0]),
+            endsAt: new Date("2026-08-03T09:30:00.000Z"),
+            isTentative: false,
+          },
+          {
+            id: "s2",
+            startsAt: new Date(FUTURE_SLOTS[1]),
+            endsAt: new Date("2026-08-03T10:00:00.000Z"),
+            isTentative: false,
+          },
+        ],
+      },
+    ];
+    mockPrisma.appointment.findMany.mockResolvedValue(matchingTentative);
+    mockValidateFn.mockResolvedValue({
+      isValid: true,
+      errors: [],
+      warnings: [],
+    });
+    mockRevalidateConflictsFn.mockResolvedValue({
+      isValid: true,
+      errors: [],
+      warnings: [],
+    });
+
+    mockPrisma.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => {
+      const tx = {
+        $queryRaw: jest.fn().mockResolvedValue(undefined),
+        appointment: {
+          findMany: jest.fn().mockResolvedValue(confirmedAfterRace),
+          findFirst: jest.fn().mockResolvedValue(null),
+        },
+        slotOfAppointment: {
+          count: jest.fn().mockResolvedValue(0),
+        },
+      };
+      return fn(tx);
+    });
+
+    const result = await SlotAllocationService.allocate({
+      eventType: "subscription",
+      eventId: "sub-1",
+      mode: "manual",
+      slots: FUTURE_SLOTS,
+      expectedTentativeSlotCount: 2,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.httpStatus).toBe(409);
+    expect(result.error).toMatch(/Reschedule state changed/);
+    expect(mockPrisma.$transaction).toHaveBeenCalled();
+  });
 });
