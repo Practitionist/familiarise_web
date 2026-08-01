@@ -32,14 +32,37 @@ const withBundleAnalyzer =
  *     added here AND in the matching client.
  *   - `frame-src` allows Razorpay's + Stripe's checkout iframes.
  *   - `media-src` is the load-bearing entry for Stream call audio /
- *     video / recording playback (`blob:` + getstream.io).
+ *     video / recording playback.
+ *
+ * Stream.io does NOT run on getstream.io at runtime
+ * -------------------------------------------------
+ * `getstream.io` is the marketing/docs domain. The SDKs actually talk to
+ * three separate domains, none of which `*.getstream.io` matches, so every
+ * dashboard load was filing violation reports:
+ *
+ *   - `*.stream-io-api.com`   REST + the chat/video websockets
+ *                             (`wss://video.stream-io-api.com`)
+ *   - `*.stream-io-video.com` the edge-latency hint (`hint.…`) the client
+ *                             fetches BEFORE a call to pick an SFU, then the
+ *                             SFU edge itself
+ *   - `*.stream-io-cdn.com`   recordings and chat attachments
+ *
+ * Confirmed against a real network log on a deploy preview, not inferred from
+ * docs. `*.getstream.io` stays because Stream still serves some static assets
+ * there and removing it is a separate, unobserved risk.
+ *
+ * Not added, deliberately: `worker-src`. Nothing in this app constructs a
+ * Worker and the Stream background-filter/noise-cancellation add-ons (the
+ * things that would need `blob:` workers and `wasm-unsafe-eval`) are not
+ * installed. If those are ever enabled, this is the directive that will break
+ * first, and `default-src 'self'` is what it will fall back to.
  */
 const CSP_DIRECTIVES = [
   "default-src 'self'",
   "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://checkout.razorpay.com https://js.stripe.com https://*.sentry.io https://*.getstream.io https://*.supabase.co",
-  "connect-src 'self' https://*.getstream.io wss://*.getstream.io https://*.supabase.co https://*.upstash.io https://api.razorpay.com https://api.stripe.com https://*.sentry.io https://api.resend.com https://*.novu.co wss://*.novu.co",
+  "connect-src 'self' https://*.getstream.io wss://*.getstream.io https://*.stream-io-api.com wss://*.stream-io-api.com https://*.stream-io-video.com wss://*.stream-io-video.com https://*.stream-io-cdn.com https://*.supabase.co https://*.upstash.io https://api.razorpay.com https://api.stripe.com https://*.sentry.io https://api.resend.com https://*.novu.co wss://*.novu.co",
   "img-src 'self' data: https: blob:",
-  "media-src 'self' blob: https://*.getstream.io",
+  "media-src 'self' blob: https://*.getstream.io https://*.stream-io-cdn.com https://*.stream-io-api.com",
   "style-src 'self' 'unsafe-inline'",
   "frame-src 'self' https://checkout.razorpay.com https://js.stripe.com https://hooks.stripe.com",
   "font-src 'self' data:",

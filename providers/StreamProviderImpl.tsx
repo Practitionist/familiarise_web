@@ -10,12 +10,7 @@
 // dynamic()-wrapping a component defined in the same file does not code-split,
 // since its static imports stay in the parent chunk. See StreamProvider.tsx.
 
-import {
-  useCallback,
-  useEffect,
-  useState,
-  useRef,
-} from "react";
+import { useCallback, useEffect, useState, useRef } from "react";
 import { StreamChat } from "stream-chat";
 import { Chat } from "stream-chat-react";
 import { StreamVideo, StreamVideoClient } from "@stream-io/video-react-sdk";
@@ -58,18 +53,30 @@ const clientSyncCompletedUsers = new Set<string>();
 
 const apiKey = process.env.NEXT_PUBLIC_STREAM_API_KEY;
 
+/**
+ * The two clients as ONE value, deliberately. Held separately they were set by
+ * two async connects that race, so the element in the wrapper slot below
+ * changed TYPE between renders — `children`, then `<StreamVideo>`, then
+ * `<Chat>`, in whichever order the sockets happened to settle. React cannot
+ * reconcile a type change in place: it unmounts and remounts the entire
+ * subtree, which here is the whole dashboard. That is the remount storm behind
+ * "I pressed Join ten times" — an in-flight join was torn down under the user.
+ *
+ * `null` means "not settled yet", which is distinct from a settled result whose
+ * `chat` or `video` is null because that connect failed.
+ */
+interface SettledStreamClients {
+  chat: StreamChat | null;
+  video: StreamVideoClient | null;
+}
+
 const StreamProviderImpl = ({
   children,
   userId,
   enableChat = true,
   enableVideo = true,
 }: StreamProviderProps) => {
-  // Connection states - always initialize to null/false
-  // Let the connection functions handle global client detection
-  const [chatClient, setChatClient] = useState<StreamChat | null>(null);
-  const [videoClient, setVideoClient] = useState<StreamVideoClient | null>(
-    null,
-  );
+  const [clients, setClients] = useState<SettledStreamClients | null>(null);
   const [chatConnected, setChatConnected] = useState(false);
   const [videoConnected, setVideoConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
@@ -144,17 +151,20 @@ const StreamProviderImpl = ({
     return Math.min(1000 * Math.pow(2, attempt), 30000); // Max 30 seconds
   }, []);
 
+  // connectChat/connectVideo RESOLVE to their client (or null) instead of each
+  // setting its own state, so the caller can commit both at once and the tree
+  // changes shape a single time. See SettledStreamClients.
   const connectChat = useCallback(async () => {
-    if (!enableChat || !userDetails || !apiKey) return;
+    if (!enableChat || !userDetails || !apiKey) return null;
 
     // Check if we already have a global client for this user - adopt it
-    if (getCurrentStreamUserId() === userDetails.id && getGlobalChatClient()) {
+    const adoptable = getGlobalChatClient();
+    if (getCurrentStreamUserId() === userDetails.id && adoptable) {
       streamLogger.debug("Adopting existing chat client", {
         userId: userDetails.id,
       });
-      setChatClient(getGlobalChatClient());
       setChatConnected(true);
-      return;
+      return adoptable;
     }
 
     // Prevent concurrent connectUser calls (e.g. connectVideo re-render race)
@@ -162,7 +172,7 @@ const StreamProviderImpl = ({
       streamLogger.debug("Chat connection already in progress, skipping", {
         userId: userDetails.id,
       });
-      return;
+      return getGlobalChatClient();
     }
 
     isChatConnectingRef.current = true;
@@ -182,9 +192,8 @@ const StreamProviderImpl = ({
         });
         setGlobalChatClient(client);
         setCurrentStreamUserId(userDetails.id);
-        setChatClient(client);
         setChatConnected(true);
-        return;
+        return client;
       }
 
       // Ensure user exists in Stream's database (only if not synced before)
@@ -218,7 +227,6 @@ const StreamProviderImpl = ({
       setGlobalChatClient(client);
       setCurrentStreamUserId(userDetails.id);
 
-      setChatClient(client);
       setChatConnected(true);
 
       // Initial channel sync — once per user per browser session.
@@ -261,6 +269,7 @@ const StreamProviderImpl = ({
       streamLogger.info("Chat connection established", {
         userId: userDetails.id,
       });
+      return client;
     } catch (error) {
       streamLogger.warn("Chat connection failed (will retry)", {
         userId: userDetails.id,
@@ -273,16 +282,16 @@ const StreamProviderImpl = ({
   }, [enableChat, userDetails, getCachedToken]);
 
   const connectVideo = useCallback(async () => {
-    if (!enableVideo || !userDetails || !apiKey) return;
+    if (!enableVideo || !userDetails || !apiKey) return null;
 
     // Check if we already have a global client for this user - adopt it
-    if (getCurrentStreamUserId() === userDetails.id && getGlobalVideoClient()) {
+    const adoptable = getGlobalVideoClient();
+    if (getCurrentStreamUserId() === userDetails.id && adoptable) {
       streamLogger.debug("Adopting existing video client", {
         userId: userDetails.id,
       });
-      setVideoClient(getGlobalVideoClient());
       setVideoConnected(true);
-      return;
+      return adoptable;
     }
 
     try {
@@ -304,11 +313,11 @@ const StreamProviderImpl = ({
       setGlobalVideoClient(client);
       setCurrentStreamUserId(userDetails.id);
 
-      setVideoClient(client);
       setVideoConnected(true);
       streamLogger.info("Video connection established", {
         userId: userDetails.id,
       });
+      return client;
     } catch (error) {
       streamLogger.error("Video connection failed", error, {
         userId: userDetails.id,
@@ -326,12 +335,25 @@ const StreamProviderImpl = ({
     setError(null);
 
     try {
-      const promises = [];
-      // Always try to connect - the functions will handle global client detection
-      if (enableChat) promises.push(connectChat());
-      if (enableVideo) promises.push(connectVideo());
+      // allSettled, not all: `all` rejects on the first failure and abandons the
+      // other client's result, so a chat failure discarded a perfectly good
+      // video client. Both outcomes are now committed together, which is also
+      // what keeps the tree from changing shape twice.
+      const [chatResult, videoResult] = await Promise.allSettled([
+        connectChat(),
+        connectVideo(),
+      ]);
 
-      await Promise.all(promises);
+      setClients({
+        chat: chatResult.status === "fulfilled" ? chatResult.value : null,
+        video: videoResult.status === "fulfilled" ? videoResult.value : null,
+      });
+
+      const failure = [chatResult, videoResult].find(
+        (result) => result.status === "rejected",
+      );
+      if (failure?.status === "rejected") throw failure.reason;
+
       connectionAttemptsRef.current = 0; // Reset on success
       setRetryCount(0);
     } catch (error) {
@@ -362,15 +384,10 @@ const StreamProviderImpl = ({
     } finally {
       setIsConnecting(false);
     }
-  }, [
-    isLoading,
-    userDetails,
-    enableChat,
-    enableVideo,
-    connectChat,
-    connectVideo,
-    getRetryDelay,
-  ]);
+    // enableChat/enableVideo are not read here any more: each connect returns
+    // null when its own flag is off, and both are already deps of those
+    // callbacks, so listing them again only invalidates this one needlessly.
+  }, [isLoading, userDetails, connectChat, connectVideo, getRetryDelay]);
 
   const retryConnection = useCallback(() => {
     connectionAttemptsRef.current = 0;
@@ -399,11 +416,11 @@ const StreamProviderImpl = ({
 
     const run = () => {
       // Check if user changed - if so, disconnect old user first.
-      // Use disconnectStreamClients (global refs) rather than the local
-      // disconnect() here: on a fresh remount for a different user, local
-      // chatClient/videoClient state is null while the GLOBAL clients still
-      // point at the PREVIOUS user. local disconnect() would no-op and leak
-      // the prior user's connection, which the new connect would then adopt.
+      // Use disconnectStreamClients (global refs) rather than any local
+      // teardown: on a fresh remount for a different user the local `clients`
+      // state is null while the GLOBAL clients still point at the PREVIOUS
+      // user, so a local teardown would no-op and leak the prior user's
+      // connection, which the new connect would then adopt.
       if (
         getCurrentStreamUserId() &&
         getCurrentStreamUserId() !== userDetails.id
@@ -420,9 +437,12 @@ const StreamProviderImpl = ({
           .catch((err) => {
             // Never block the new user's connect on a prior-user disconnect
             // failure; disconnectStreamClients already clears global refs.
-            streamLogger.warn("Prior-user disconnect failed, connecting anyway", {
-              error: err,
-            });
+            streamLogger.warn(
+              "Prior-user disconnect failed, connecting anyway",
+              {
+                error: err,
+              },
+            );
           })
           .finally(() => {
             connectServices();
@@ -488,17 +508,24 @@ const StreamProviderImpl = ({
   // render children immediately; the Stream context providers wrap them once the
   // clients are ready, and the video/chat consumers already guard a null client.
 
-  // Render providers
+  // The wrapper set is derived from ONE settled value and nested in a fixed
+  // order — Chat outside, StreamVideo inside — so the shape here is a pure
+  // function of `clients` rather than of which socket won the race. In the
+  // normal case that means exactly one shape change for the whole session:
+  // unwrapped while connecting, then wrapped once both connects settle.
+  //
+  // A connect that genuinely FAILS still costs a second change if a later retry
+  // succeeds. That is accepted: it is a degraded path, the retry loop is capped
+  // at 5 attempts, and withholding the client that did connect would break the
+  // sidebar's chat-unread badge on every route (#248).
   let content = children;
 
-  // Wrap with video provider if enabled and connected
-  if (enableVideo && videoClient) {
-    content = <StreamVideo client={videoClient}>{content}</StreamVideo>;
+  if (clients?.video) {
+    content = <StreamVideo client={clients.video}>{content}</StreamVideo>;
   }
 
-  // Wrap with chat provider if enabled and connected
-  if (enableChat && chatClient) {
-    content = <Chat client={chatClient}>{content}</Chat>;
+  if (clients?.chat) {
+    content = <Chat client={clients.chat}>{content}</Chat>;
   }
 
   // The connection-failed banner renders alongside children (not in place of
