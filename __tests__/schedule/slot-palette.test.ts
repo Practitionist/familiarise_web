@@ -77,6 +77,44 @@ describe("slot palette — the base cell string cannot fight the token", () => {
   it("carries no background of its own", () => {
     expect(colourUtilities(SLOT_CELL_BASE_CLASS, "bg-")).toEqual([]);
   });
+
+  /**
+   * The swatch-equality tests above compare token STRINGS, so they are green
+   * whether or not the browser paints the string at full strength. That is
+   * exactly how `disabled:opacity-50` survived the #1064 palette work: every
+   * unavailable cell is disabled, so `bg-slate-200` reached the screen at half
+   * over a white card — near enough to the reverted `slate-100` to make a
+   * sparse week read as an empty grid again — while the legend swatch, not
+   * being a disabled control, showed the true colour. No assertion about token
+   * equality can see a variant that fades one side and not the other, so it is
+   * pinned directly here.
+   */
+  it("does not fade every disabled cell", () => {
+    const faders = classesOf(SLOT_CELL_BASE_CLASS).filter((name) =>
+      name.startsWith("disabled:opacity-"),
+    );
+    expect(faders).toEqual([]);
+  });
+
+  it("still stops disabled cells being clicked", () => {
+    expect(classesOf(SLOT_CELL_BASE_CLASS)).toContain(
+      "disabled:pointer-events-none",
+    );
+  });
+
+  /**
+   * Fading a cell is legitimate where it is asked for explicitly — a past
+   * slot. That path goes through the `faded` option, not the disabled variant,
+   * and must keep working.
+   */
+  it("still fades a cell that asks to be faded", () => {
+    expect(classesOf(slotCellClassName("unavailable", { faded: true }))).toContain(
+      "opacity-60",
+    );
+    expect(classesOf(slotCellClassName("unavailable"))).not.toContain(
+      "opacity-60",
+    );
+  });
 });
 
 describe("slot palette — Tailwind can see where the tokens live", () => {

@@ -14,6 +14,7 @@ import type {
   SlotPickerPolicy,
   SlotPickerSubject,
 } from "@/components/scheduling/slot-picker-policy";
+import { resolveFocusTarget } from "@/lib/scheduling/slot-picker-focus";
 import { cn } from "@/utils/tailwind";
 
 /**
@@ -46,6 +47,15 @@ export function SlotPicker({
   const sessions = React.useMemo(
     () => groupReleasableSessions(subject.slots ?? []),
     [subject.slots],
+  );
+
+  // "First open" is this mount, and the target is pinned to it. Re-resolving
+  // against a moving `now` would let the grid drift under a consultant who
+  // left the tab open (#1073).
+  const [openedAt] = React.useState(() => new Date());
+  const focus = React.useMemo(
+    () => resolveFocusTarget(subject, openedAt),
+    [subject, openedAt],
   );
 
   const [releaseMode, setReleaseMode] = React.useState<ReleaseMode>("entire");
@@ -141,6 +151,10 @@ export function SlotPicker({
         schedulingTimezone={subject.schedulingTimezone}
         allowedStart={subject.allowedStart}
         allowedEnd={subject.allowedEnd}
+        // Deliberately NOT keyed to the release selection: focus is a
+        // starting position, and re-aiming the grid while someone is reading
+        // it is worse than the empty night rows it replaces (#1073).
+        focus={focus}
         // Fresh allocations only: a partial reschedule legitimately keeps
         // confirmed slots and must not trip the guard.
         initialAllocation={
