@@ -87,6 +87,37 @@ export class SlotCalculationService {
       weekday: WEEKDAY_INDEX[get("weekday")] ?? 0,
     };
   }
+
+  /**
+   * Wall-clock reading of an instant in a timezone: the calendar date AND the
+   * time of day.
+   *
+   * Shares the cached formatter with the limit-bucket keys below, so code that
+   * places something on a grid and code that buckets it cannot drift apart.
+   */
+  static wallClock(
+    d: Date,
+    timeZone: string = this.DEFAULT_SCHEDULING_TIMEZONE,
+  ): {
+    year: number;
+    month: number;
+    day: number;
+    hour: number;
+    minute: number;
+  } {
+    const parts = this.getDateFormatter(timeZone).formatToParts(d);
+    const get = (type: string) =>
+      Number(parts.find((p) => p.type === type)?.value ?? 0);
+    return {
+      year: get("year"),
+      month: get("month"),
+      day: get("day"),
+      // Intl reports 24 for midnight with hourCycle h24 quirks; normalize.
+      hour: get("hour") % 24,
+      minute: get("minute"),
+    };
+  }
+
   /**
    * Count the number of distinct Sunday-start weeks overlapping [start, end].
    * This is the SINGLE implementation used across the entire app.

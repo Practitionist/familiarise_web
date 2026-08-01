@@ -154,6 +154,13 @@ export async function readManageTimingsTarget(
         | "SUBSCRIPTION"
         | "WEBINAR"
         | "CLASS",
+      // Program-wide, past sessions included: the picker opens on the earliest
+      // session still awaiting a time, and falls back to the last one that
+      // ran when everything is over (#1073).
+      slots: [
+        ...appointment.slotsOfAppointment,
+        ...siblings.flatMap((sibling) => sibling.slotsOfAppointment),
+      ],
       consultation: appointment.consultation,
       subscription: appointment.subscription,
       webinar: appointment.webinar,

@@ -1,5 +1,6 @@
 import prisma from "@/lib/prisma";
 import { toPlain } from "@/lib/data/serialize";
+import type { SlotLike } from "@/lib/appointments/view-model";
 import type { AppointmentStatus } from "@prisma/client";
 
 /**
@@ -36,10 +37,29 @@ export interface AllocationRequest {
    * `initialAllocation` guard must NOT fire (#837).
    */
   hasReleasedSlots: boolean;
+  /**
+   * The times already asked for on the placeholder appointment — the buyer's
+   * requested times, or the ones left behind by a partial reschedule. Same
+   * rows `hasReleasedSlots` is derived from; the picker opens on the earliest
+   * of them (#1073).
+   */
+  slots: SlotLike[];
 }
 
 const requestedBySelect = {
   select: { userId: true, user: { select: { name: true } } },
+} as const;
+
+/** Enough of a slot to place it on the grid, and to say whether it is live. */
+const slotSelect = {
+  select: {
+    id: true,
+    appointmentId: true,
+    startsAt: true,
+    endsAt: true,
+    isTentative: true,
+    completionStatus: true,
+  },
 } as const;
 
 export async function readAllocationRequest(
@@ -67,7 +87,7 @@ export async function readAllocationRequest(
           },
         },
         appointments: {
-          select: { slotsOfAppointment: { select: { isTentative: true } } },
+          select: { slotsOfAppointment: slotSelect },
         },
       },
     });
@@ -92,6 +112,9 @@ export async function readAllocationRequest(
       hasReleasedSlots: subscription.appointments.some((appointment) =>
         appointment.slotsOfAppointment.some((slot) => slot.isTentative),
       ),
+      slots: subscription.appointments.flatMap(
+        (appointment) => appointment.slotsOfAppointment,
+      ),
     });
   }
 
@@ -108,9 +131,7 @@ export async function readAllocationRequest(
           durationInHours: true,
         },
       },
-      appointment: {
-        select: { slotsOfAppointment: { select: { isTentative: true } } },
-      },
+      appointment: { select: { slotsOfAppointment: slotSelect } },
     },
   });
   if (!consultation?.consultationPlan) return null;
@@ -128,5 +149,6 @@ export async function readAllocationRequest(
     hasReleasedSlots: (
       consultation.appointment?.slotsOfAppointment ?? []
     ).some((slot) => slot.isTentative),
+    slots: consultation.appointment?.slotsOfAppointment ?? [],
   });
 }
