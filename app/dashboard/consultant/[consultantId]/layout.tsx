@@ -1,6 +1,6 @@
 "use client";
 
-import { usePathname, useRouter } from "next/navigation";
+import { useParams, usePathname, useRouter } from "next/navigation";
 import { use, useEffect, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
@@ -135,9 +135,14 @@ const PAGE_LABELS: Record<string, string> = {
   appointments: "Appointments",
   participants: "Participants",
   classes: "Class",
+  class: "Class",
   consultations: "Consultation",
+  consultation: "Consultation",
   subscriptions: "Subscription",
+  subscription: "Subscription",
   webinars: "Webinar",
+  webinar: "Webinar",
+  offerings: "Offerings",
   planner: "Event Planner",
   requests: "Requests",
   // Task routes hanging off a record id. Without these the trail ends on the
@@ -154,7 +159,26 @@ const PAGE_LABELS: Record<string, string> = {
   support: "Support requests",
   feedback: "Feedback",
   help: "Help",
+  edit: "Edit",
+  new: "New",
 };
+
+// Segments that group routes without owning a page of their own — a crumb that
+// links the accumulated path makes Next prefetch a URL that 404s. Verified
+// against the route tree: `offerings` has only `[type]/…` children and
+// `participants` only `[eventType]/…`.
+//
+// Offerings is special-cased below: the crumb stays, but its href is rewritten
+// to the Event Planner, which is the actual listings surface for those rows.
+const PATHLESS_SEGMENTS = new Set(["offerings", "participants"]);
+
+/** Offering types that appear as `/offerings/[type]/…` URL segments. */
+const OFFERING_TYPE_SEGMENTS = new Set([
+  "consultation",
+  "subscription",
+  "webinar",
+  "class",
+]);
 
 // Opaque record ids (cuid / uuid) in nested routes carry no meaning as crumbs.
 const looksLikeRecordId = (segment: string) =>
@@ -169,11 +193,7 @@ interface PageProps {
 }
 
 // Error types and their configurations
-type ErrorType =
-  | "not-found"
-  | "session-expired"
-  | "network"
-  | "unknown";
+type ErrorType = "not-found" | "session-expired" | "network" | "unknown";
 
 function getErrorConfig(errorMessage: string): {
   type: ErrorType;
@@ -355,14 +375,12 @@ export default function ConsultantLayout(props: Readonly<PageProps>) {
   );
 }
 
-function ConsultantLayoutInner({
-  children,
-  params,
-}: Readonly<PageProps>) {
+function ConsultantLayoutInner({ children, params }: Readonly<PageProps>) {
   const resolvedParams = use(params);
   const consultantId = resolvedParams.consultantId;
   const basePath = `/dashboard/consultant/${consultantId}`;
   const pathname = usePathname();
+  const routeParams = useParams();
   const { data: session, isPending: isSessionLoading } = useSession();
   const router = useRouter();
 
@@ -502,15 +520,31 @@ function ConsultantLayoutInner({
 
   const { overrideLabel } = useBreadcrumbOverride();
 
+  // Every value the current route bound to a dynamic param. Such a segment is
+  // never a URL of its own, so its crumb must not be a link.
+  const paramValues = useMemo(() => {
+    const values = new Set<string>();
+    for (const value of Object.values(routeParams ?? {})) {
+      for (const part of Array.isArray(value) ? value : [value]) {
+        if (part) values.add(part);
+      }
+    }
+    return values;
+  }, [routeParams]);
+
   // Full breadcrumb trail — every URL segment after the consultant id
   // becomes a crumb; opaque record ids are dropped (or replaced with an
   // override label such as the appointment title). Parent crumbs keep an
-  // href so users can click back (e.g. Appointments from a detail page).
+  // href so users can click back (e.g. Appointments from a detail page),
+  // but only when the accumulated path is a route the app can actually serve.
   const breadcrumbs = useMemo(() => {
-    const parts = pathname
-      .replace(basePath, "")
-      .split("/")
-      .filter(Boolean);
+    const parts = pathname.replace(basePath, "").split("/").filter(Boolean);
+    const onOfferings = parts[0] === "offerings";
+    // Offerings have no list route of their own — the Event Planner is where
+    // those rows live. Point both the "Offerings" crumb and the type crumb
+    // (consultation / subscription / …) there so the trail is clickable
+    // without prefetching a 404.
+    const offeringsListingHref = `${basePath}/planner`;
 
     const crumbs: { label: string; href?: string }[] = [];
     let acc = basePath;
@@ -526,9 +560,22 @@ function ConsultantLayoutInner({
         if (overrideLabel) crumbs.push({ label: overrideLabel, href: acc });
         continue;
       }
+
+      if (
+        seg === "offerings" ||
+        (onOfferings && OFFERING_TYPE_SEGMENTS.has(seg))
+      ) {
+        crumbs.push({
+          label: PAGE_LABELS[seg] ?? seg,
+          href: offeringsListingHref,
+        });
+        continue;
+      }
+
+      const navigable = !PATHLESS_SEGMENTS.has(seg) && !paramValues.has(seg);
       crumbs.push({
         label: PAGE_LABELS[seg] ?? seg,
-        href: acc,
+        ...(navigable ? { href: acc } : {}),
       });
     }
 
@@ -541,7 +588,7 @@ function ConsultantLayoutInner({
       }
       return crumb;
     });
-  }, [pathname, basePath, overrideLabel]);
+  }, [pathname, basePath, overrideLabel, paramValues]);
 
   // Memoize StreamProvider children to prevent re-initialization on tab
   // switches. Must be called before any early returns (Rules of Hooks).

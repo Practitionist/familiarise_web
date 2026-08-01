@@ -2,6 +2,7 @@ import { cache } from "react";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
+import { DashboardViewportFill } from "@/components/dashboard/DashboardViewportFill";
 import { PanelHeader } from "@/components/dashboard/PageScaffold";
 import prisma from "@/lib/prisma";
 import { readAppointmentDetail } from "@/lib/data/appointment-detail";
@@ -110,18 +111,20 @@ export default async function RescheduleAppointmentPage({
   const backHref = `/dashboard/consultee/${consulteeId}/appointments`;
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-4">
+    <DashboardViewportFill className="gap-4">
       {/* The BOOKING now lives in the breadcrumb (RescheduleClient sets it via
           useSetBreadcrumbLabel); every reschedule page used to render an
           identical "Reschedule" heading, so the consultee could not tell
           which session they were moving (#1064). */}
-      <PanelHeader
-        description={
-          resolved.consultantName
-            ? `Choose a new time for your ${resolved.typeLabel.toLowerCase()} with ${resolved.consultantName}`
-            : `Choose a new time for your ${resolved.typeLabel.toLowerCase()}`
-        }
-      />
+      <div className="shrink-0">
+        <PanelHeader
+          description={
+            resolved.consultantName
+              ? `Choose a new time for your ${resolved.typeLabel.toLowerCase()} with ${resolved.consultantName}`
+              : `Choose a new time for your ${resolved.typeLabel.toLowerCase()}`
+          }
+        />
+      </div>
 
       <RescheduleClient
         appointmentId={appointmentId}
@@ -130,6 +133,6 @@ export default async function RescheduleAppointmentPage({
         subject={resolved.subject}
         backHref={backHref}
       />
-    </div>
+    </DashboardViewportFill>
   );
 }

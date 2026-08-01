@@ -89,6 +89,34 @@ export function OfferingEditor<T extends FieldValues = FieldValues>({
       ?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
+  // Keep the section tab in sync with whichever block is in view — otherwise
+  // a wheel-scroll leaves the highlight on the tab the user last clicked.
+  // Root is <main>: that is the dashboard scrollport (see PersonalDashboardShell).
+  React.useEffect(() => {
+    const nodes = manifest.sections
+      .map((section) =>
+        document.getElementById(`offering-section-${section.id}`),
+      )
+      .filter((node): node is HTMLElement => node !== null);
+    if (nodes.length === 0) return;
+
+    const root = document.querySelector("main");
+    const observer = new IntersectionObserver(
+      (entries) => {
+        // The topmost intersecting section wins; entries arrive unordered.
+        const visible = entries
+          .filter((entry) => entry.isIntersecting)
+          .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+        const id = visible[0]?.target.id.replace(/^offering-section-/, "");
+        if (id) setActiveSection(id);
+      },
+      // Bias toward the band just under the sticky section nav.
+      { root, rootMargin: "-20% 0px -55% 0px", threshold: 0 },
+    );
+    for (const node of nodes) observer.observe(node);
+    return () => observer.disconnect();
+  }, [manifest.sections]);
+
   // Publishing validates in full; a draft only has to clear the errors that are
   // not publish-only, so partial work can still be parked.
   const submitDraft = form.handleSubmit(
@@ -111,35 +139,48 @@ export function OfferingEditor<T extends FieldValues = FieldValues>({
           e.preventDefault();
         }}
       >
-        <div className="mb-6 flex flex-wrap items-center gap-3">
-          <h1 className="text-2xl font-semibold capitalize">
-            {planId ? "Edit" : "New"} {manifest.noun}
-          </h1>
-          {status === "DRAFT" && <Badge variant="outline">Draft</Badge>}
-          {status === "PUBLISHED" && <Badge>Published</Badge>}
-        </div>
+        {/*
+          Second navbar (Basics / Pricing / …): sticky to the top of <main>
+          under the dashboard context bar. Solid background — translucent
+          backdrop-blur let section content bleed through while scrolling.
+        */}
+        <div className="sticky top-0 z-20 mb-6 border-b bg-background pb-3 pt-1">
+          <div className="mb-3 flex flex-wrap items-center gap-3">
+            <h1 className="text-2xl font-semibold capitalize">
+              {planId ? "Edit" : "New"} {manifest.noun}
+            </h1>
+            {status === "DRAFT" && <Badge variant="outline">Draft</Badge>}
+            {status === "PUBLISHED" && <Badge>Published</Badge>}
+          </div>
 
-        <nav className="mb-6 flex flex-wrap gap-2 border-b pb-3">
-          {manifest.sections.map((section) => (
-            <button
-              key={section.id}
-              type="button"
-              onClick={() => scrollTo(section.id)}
-              className={cn(
-                "rounded-md px-3 py-1.5 text-sm transition-colors",
-                activeSection === section.id
-                  ? "bg-secondary font-medium text-secondary-foreground"
-                  : "text-muted-foreground hover:bg-secondary/50",
-              )}
-            >
-              {section.title}
-            </button>
-          ))}
-        </nav>
+          <nav aria-label="Offering sections" className="flex flex-wrap gap-2">
+            {manifest.sections.map((section) => (
+              <button
+                key={section.id}
+                type="button"
+                onClick={() => scrollTo(section.id)}
+                className={cn(
+                  "rounded-md px-3 py-1.5 text-sm transition-colors",
+                  activeSection === section.id
+                    ? "bg-secondary font-medium text-secondary-foreground"
+                    : "text-muted-foreground hover:bg-secondary/50",
+                )}
+              >
+                {section.title}
+              </button>
+            ))}
+          </nav>
+        </div>
 
         <div className="space-y-8">
           {manifest.sections.map((section) => (
-            <div key={section.id} id={`offering-section-${section.id}`}>
+            <div
+              key={section.id}
+              id={`offering-section-${section.id}`}
+              // Clear the sticky title+tabs band so scrollIntoView / deep links
+              // don't land the heading under the chrome.
+              className="scroll-mt-36"
+            >
               <FormSection
                 title={section.title}
                 description={section.description}
@@ -169,7 +210,12 @@ export function OfferingEditor<T extends FieldValues = FieldValues>({
           ))}
         </div>
 
-        <div className="fixed inset-x-0 bottom-0 z-10 border-t bg-background/95 backdrop-blur">
+        {/*
+          Pin to the content column, not the viewport: inset-x-0 drew the bar
+          under the sidebar and made the page look wider than the shell.
+          md:left-64 matches CollapsibleSidebar's expanded width.
+        */}
+        <div className="fixed inset-x-0 bottom-0 z-10 border-t bg-background/95 backdrop-blur md:left-64">
           <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-end gap-3 px-4 py-3">
             {publishBlockedReason && (
               <p className="mr-auto text-sm text-muted-foreground">

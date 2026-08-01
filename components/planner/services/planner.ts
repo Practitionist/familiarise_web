@@ -154,7 +154,7 @@ export class PlannerService {
   static async saveClass(
     classData: Partial<ClassEvent>,
     consultantId: string,
-    startDate?: string,
+    startDate?: string | null,
   ): Promise<ClassEvent> {
     return ClassService.saveClass(classData, consultantId, startDate);
   }

@@ -381,15 +381,31 @@ export function EventManagementDashboard({
 
   // Editing routes to the offering editor rather than reopening a dialog, so
   // an offering has one authoring surface and a URL you can return to.
-  const editHref = (type: string, id: string) =>
-    `/dashboard/consultant/${consultantId}/offerings/${type}/${id}/edit`;
+  //
+  // A row with no id has no editor to open, and both previous spellings built a
+  // URL that could only land on the error boundary: `id ?? ""` collapsed to a
+  // double slash, while a bare `id` stringified undefined into the path. The
+  // card's Edit control is disabled for such a row; this is the backstop.
+  const goToEdit = (type: string, id: string | undefined) => {
+    if (!id) {
+      reportSentryMessage("Edit requested for an offering with no id", {
+        subsystem: "offerings",
+        op: "edit-navigate",
+        extra: { type, consultantId },
+      });
+      return;
+    }
+    router.push(
+      `/dashboard/consultant/${consultantId}/offerings/${type}/${id}/edit`,
+    );
+  };
 
   const handleEditWebinar = (webinar: PlannerWebinarEvent) => {
-    router.push(editHref("webinar", webinar.id));
+    goToEdit("webinar", webinar.id);
   };
 
   const handleEditClass = (classEvent: PlannerClassEvent) => {
-    router.push(editHref("class", classEvent.id));
+    goToEdit("class", classEvent.id);
   };
 
   // Handle webinar delete event using React Query
@@ -411,13 +427,13 @@ export function EventManagementDashboard({
   const handleEditConsultationPlan = (
     consultationPlan: ConsultationPlanEvent,
   ) => {
-    router.push(editHref("consultation", consultationPlan.id ?? ""));
+    goToEdit("consultation", consultationPlan.id);
   };
 
   const handleEditSubscriptionPlan = (
     subscriptionPlan: SubscriptionPlanEvent,
   ) => {
-    router.push(editHref("subscription", subscriptionPlan.id ?? ""));
+    goToEdit("subscription", subscriptionPlan.id);
   };
 
   // Handle consultation plan delete event using React Query

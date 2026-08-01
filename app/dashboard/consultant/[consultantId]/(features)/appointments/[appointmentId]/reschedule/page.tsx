@@ -2,6 +2,7 @@ import { cache } from "react";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
+import { DashboardViewportFill } from "@/components/dashboard/DashboardViewportFill";
 import { PanelHeader } from "@/components/dashboard/PageScaffold";
 import { readAppointmentDetail } from "@/lib/data/appointment-detail";
 import { resolvePlanOwnerIds } from "@/lib/booking/plan-owners";
@@ -71,16 +72,18 @@ export default async function ConsultantReschedulePage({
   const backHref = `/dashboard/consultant/${consultantId}/appointments`;
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-4">
+    <DashboardViewportFill className="gap-4">
       {/* The BOOKING now lives in the breadcrumb (RescheduleClient sets it
           via useSetBreadcrumbLabel) — see the consultee's twin (#1064). */}
-      <PanelHeader
-        description={
-          resolved.consulteeName
-            ? `Propose a new time for ${resolved.consulteeName}`
-            : "Propose a new time"
-        }
-      />
+      <div className="shrink-0">
+        <PanelHeader
+          description={
+            resolved.consulteeName
+              ? `Propose a new time for ${resolved.consulteeName}`
+              : "Propose a new time"
+          }
+        />
+      </div>
 
       <RescheduleClient
         consultantId={consultantId}
@@ -90,6 +93,6 @@ export default async function ConsultantReschedulePage({
         subject={resolved.subject}
         backHref={backHref}
       />
-    </div>
+    </DashboardViewportFill>
   );
 }

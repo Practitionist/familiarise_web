@@ -50,7 +50,8 @@ export interface CreateClassPayload {
   topics?: string[];
   classContents?: ClassContentInput[];
   consultantProfileId: string;
-  startDate?: string;
+  /** ISO string to set; `null` clears; omit to leave unchanged on PATCH. */
+  startDate?: string | null;
 }
 
 export interface ClassContentInput {

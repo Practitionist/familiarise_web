@@ -2,6 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import type { FundingSource } from "@prisma/client";
+import { workspaceBillingQueryKey } from "../workspace-billing-keys";
 
 /**
  * Cross-org billing roll-up — the single source of truth shared by the
@@ -37,10 +38,6 @@ export interface WorkspaceBillingPerOrgRow {
 export interface WorkspaceBillingResponse {
   summary: WorkspaceBillingSummary;
   perOrg: WorkspaceBillingPerOrgRow[];
-}
-
-export function workspaceBillingQueryKey(orgWorkspaceId: string) {
-  return ["org-workspace-billing", orgWorkspaceId] as const;
 }
 
 async function fetchWorkspaceBilling(

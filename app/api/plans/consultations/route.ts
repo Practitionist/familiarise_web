@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { ConsultationPlanSchema } from "@/schemas/plans";
 import { findOrCreateTopics, transformTopicsToStrings } from "@/lib/topics";
 import { marketplaceVisibilityWhere } from "@/lib/api/plans/visibility";
-import { faqCreateNested } from "@/lib/api/plans/content";
+import { faqCreateNested, planContentInclude } from "@/lib/api/plans/content";
 import * as Sentry from "@sentry/nextjs";
 import { getSession } from "@/lib/auth-server";
 export async function GET(request: NextRequest) {
@@ -26,6 +26,9 @@ export async function GET(request: NextRequest) {
         include: {
           consultantProfile: true,
           topics: true,
+          // The offering editor hydrates from this list and PUTs the whole FAQ
+          // array back, so a list that omits them saves an empty set over them.
+          ...planContentInclude,
         },
         skip,
         take: limit,

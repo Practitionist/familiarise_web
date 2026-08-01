@@ -36,7 +36,7 @@ export function ManageTimingsClient({
 
   return (
     <SlotPicker
-      className="min-h-[70vh] flex-1"
+      className="min-h-0 flex-1"
       policy={policy}
       subject={subject}
       onCancel={goBack}

@@ -32,7 +32,9 @@ const ClassContentInputSchema = ClassContentSchema.omit({
 const PostClassWithPlanBodySchema = ClassPlanSchema.omit({
   planType: true,
   consultantProfile: true,
-  startDate: true,
+  // The form's Date-valued field; this endpoint takes an ISO `startDate`
+  // string, re-declared below.
+  schedulingStartDate: true,
   endDate: true,
   topics: true,
   classContents: true, // Omit to override with input schema
