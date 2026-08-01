@@ -3,6 +3,10 @@ import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { recordSystemError } from "@/lib/enterprise/system-events";
+import {
+  REFUNDABLE_BALANCE_SELECT,
+  refundableBalancePaise,
+} from "@/lib/payments/refundable-balance";
 import { getAppUrl } from "@/lib/url";
 import { notifyRefundProcessed } from "@/lib/novu";
 import { notificationScope } from "@/lib/novu/workflows";
@@ -202,6 +206,10 @@ export async function refundRemovedAttendeeSeat(args: {
       ? { webinarId: args.eventId }
       : { classId: args.eventId };
 
+  // Hoisted so the catch can scope its ops event to the funding organisation;
+  // a failure reported against `null` never reaches the org that is owed it.
+  let organizationId: string | null = null;
+
   try {
     const payment = await prisma.payment.findFirst({
       // Deterministic: the seat they bought first is the one being released.
@@ -218,10 +226,12 @@ export async function refundRemovedAttendeeSeat(args: {
         amount: true,
         currency: true,
         organizationId: true,
+        ...REFUNDABLE_BALANCE_SELECT,
         appointment: { select: { cancellationPolicySnapshot: true } },
       },
     });
     if (!payment) return null;
+    organizationId = payment.organizationId;
 
     const refundPct = computeRefundPct(
       parsePolicySnapshot(payment.appointment?.cancellationPolicySnapshot),
@@ -229,7 +239,14 @@ export async function refundRemovedAttendeeSeat(args: {
       -1,
       true,
     );
-    const amountPaise = Math.floor((Number(payment.amount) * refundPct) / 100);
+    // Clamp to the remaining balance, exactly as the cancel route does. A seat
+    // carrying an earlier partial refund would otherwise ask for more than is
+    // left, `refundPayment` would reject the whole request, and the attendee
+    // would receive nothing of the remainder they are owed.
+    const amountPaise = Math.min(
+      Math.floor((Number(payment.amount) * refundPct) / 100),
+      refundableBalancePaise(Number(payment.amount), payment),
+    );
     if (amountPaise <= 0) return { amountRefundedPaise: 0, refundPct };
 
     const result = await refundBookingPayment({
@@ -258,10 +275,14 @@ export async function refundRemovedAttendeeSeat(args: {
     // Benign idempotent re-drives — a seat already refunded, or a payment that
     // never captured. Paging ops for these turns every repeat click into an
     // incident. Mirrors the overage credit-back exemption above.
+    // AMOUNT_EXCEEDS_REFUNDABLE is unreachable through the clamp above, but a
+    // concurrent refund settling between the read and the write can still
+    // produce it, and that race is the benign case too.
     const benign =
       err instanceof RefundValidationError &&
       (err.code === "ALREADY_FULLY_REFUNDED" ||
-        err.code === "PAYMENT_NOT_SUCCEEDED");
+        err.code === "PAYMENT_NOT_SUCCEEDED" ||
+        err.code === "AMOUNT_EXCEEDS_REFUNDABLE");
     if (benign) return { amountRefundedPaise: 0, refundPct: 0 };
 
     reportSentryError(err, {
@@ -270,7 +291,7 @@ export async function refundRemovedAttendeeSeat(args: {
       extra: { ...args },
     });
     void recordSystemError({
-      organizationId: null,
+      organizationId,
       category: "PAYMENT",
       summary: `Seat refund failed for attendee removed from ${args.kind} ${args.eventId}`,
       err,

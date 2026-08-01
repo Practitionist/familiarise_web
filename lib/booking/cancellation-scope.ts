@@ -27,6 +27,11 @@
 import type { Prisma } from "@prisma/client";
 
 import prisma from "@/lib/prisma";
+import { recordSystemError } from "@/lib/enterprise/system-events";
+import {
+  REFUNDABLE_BALANCE_SELECT,
+  refundableBalancePaise,
+} from "@/lib/payments/refundable-balance";
 
 /** Slots that still represent an undelivered session. */
 const LIVE_SLOT_STATUSES = ["SCHEDULED", "RESCHEDULED"] as const;
@@ -116,38 +121,53 @@ export async function resolveBookingRefundContext(
         select: {
           id: true,
           amount: true,
-          refunds: { select: { amountPaise: true, status: true } },
-          disputes: { select: { amountPaise: true, status: true } },
+          ...REFUNDABLE_BALANCE_SELECT,
         },
         orderBy: { createdAt: "asc" },
       },
       slotsOfAppointment: {
-        where: { deletedAt: null },
+        // Scoped to the payer for the same reason the payment lookup is: on a
+        // class every attendee's seat hangs off the same appointment, so an
+        // unscoped count would tier ONE buyer's refund off OTHER attendees'
+        // sessions. A 1:1 booking has no `user` rows to filter on beyond its
+        // own, so the constraint is inert there.
+        where: {
+          deletedAt: null,
+          ...(payerUserId ? { user: { some: { id: payerUserId } } } : {}),
+        },
         select: { startsAt: true, completionStatus: true },
       },
     },
   });
 
-  const payer = rows.find((r) => r.payment.length > 0);
-  const payment = payer?.payment[0];
-  // Mirror the refund operation's own balance maths, or the caller computes an
-  // amount that operation will reject. A FAILED/CANCELLED refund moved no
-  // money; a lost chargeback did, via the bank rather than an app refund.
-  const alreadyReturned = payment
-    ? payment.refunds
-        .filter((r) => r.status === "SUCCEEDED" || r.status === "PENDING")
-        .reduce((a, r) => a + r.amountPaise, 0) +
-      payment.disputes
-        .filter((d) => d.status === "LOST" || d.status === "CHARGE_REFUNDED")
-        .reduce((a, d) => a + d.amountPaise, 0)
-    : 0;
+  const payments = rows.flatMap((r) => r.payment);
+  const payment = payments[0];
+  // More than one SUCCEEDED payment on a booking should be unreachable:
+  // `@@unique([userId, appointmentId])` means one row per payer per
+  // appointment, and the CHARGE_MEMBER overage side-charge is deliberately
+  // created with `appointmentId: null` to avoid exactly that clash
+  // (overage-settlement.ts). Which is precisely why this must not stay silent
+  // — if it ever fires, the model has changed under us and a buyer is being
+  // refunded less than they paid.
+  if (payments.length > 1) {
+    void recordSystemError({
+      organizationId: null,
+      category: "PAYMENT",
+      summary:
+        `Booking carries ${payments.length} refundable payments; only the ` +
+        `oldest is being refunded, so the buyer may be owed more`,
+      err: new Error("MULTIPLE_REFUNDABLE_PAYMENTS"),
+      context: { ref, payerUserId, paymentIds: payments.map((p) => p.id) },
+    }).catch(() => {});
+  }
   const paidPayment = payment
     ? {
         id: payment.id,
         amountPaise: Number(payment.amount),
-        refundablePaise: Math.max(0, Number(payment.amount) - alreadyReturned),
+        refundablePaise: refundableBalancePaise(Number(payment.amount), payment),
       }
     : null;
+  const payer = rows.find((r) => r.payment.length > 0);
 
   // The terms that bind are the ones frozen on the row the buyer actually paid
   // for. The subscription placeholder predates the snapshot write, so fall back

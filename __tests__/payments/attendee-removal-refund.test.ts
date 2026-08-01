@@ -73,14 +73,24 @@ import { refundRemovedAttendeeSeat } from "../../lib/payments/operations/event-r
 
 const ATTENDEE = "user-7";
 
-function seat(paymentIntent: string) {
+function seat(
+  paymentIntent: string,
+  extra: Partial<{
+    refunds: { amountPaise: number; status: string }[];
+    disputes: { amountPaise: number; status: string }[];
+    organizationId: string | null;
+  }> = {},
+) {
   return {
     id: "pay-seat",
     amount: 50_000,
     currency: "INR",
     organizationId: null,
     paymentIntent,
+    refunds: [],
+    disputes: [],
     appointment: { cancellationPolicySnapshot: null },
+    ...extra,
   };
 }
 
@@ -198,6 +208,54 @@ describe("refundRemovedAttendeeSeat", () => {
     });
 
     expect(mockNotifyRefundProcessed).not.toHaveBeenCalled();
+  });
+
+  it("clamps the seat refund to what is still refundable", async () => {
+    // Without the clamp the full 100% overshoots the remaining balance,
+    // refundPayment rejects the WHOLE request, and the attendee receives
+    // nothing of the remainder they are owed. Same bug the cancel route had.
+    mockPaymentFindFirst.mockResolvedValue(
+      seat("pay_ABC", {
+        refunds: [{ amountPaise: 20_000, status: "SUCCEEDED" }],
+        disputes: [{ amountPaise: 5_000, status: "CHARGE_REFUNDED" }],
+      }),
+    );
+    mockRefundBookingPayment.mockResolvedValue({
+      refundId: "r1",
+      amountRefundedPaise: 25_000,
+      rail: "GATEWAY",
+    });
+
+    await refundRemovedAttendeeSeat({
+      kind: "webinar",
+      eventId: "web-1",
+      attendeeUserId: ATTENDEE,
+      initiatedByUserId: "consultant-1",
+    });
+
+    expect(mockRefundBookingPayment).toHaveBeenCalledWith(
+      expect.objectContaining({ amountPaise: 25_000 }),
+    );
+  });
+
+  it("reports a seat failure to the funding organisation", async () => {
+    // Hard-coded null meant an org-funded seat's failure never reached the
+    // ops surface of the org that is actually owed the money.
+    mockPaymentFindFirst.mockResolvedValue(
+      seat("org_wallet_1_a", { organizationId: "org-9" }),
+    );
+    mockRefundBookingPayment.mockRejectedValue(new Error("ledger down"));
+
+    await refundRemovedAttendeeSeat({
+      kind: "class",
+      eventId: "class-1",
+      attendeeUserId: ATTENDEE,
+      initiatedByUserId: "consultant-1",
+    });
+
+    expect(mockRecordSystemError).toHaveBeenCalledWith(
+      expect.objectContaining({ organizationId: "org-9" }),
+    );
   });
 
   it("does not page ops for an idempotent re-drive", async () => {

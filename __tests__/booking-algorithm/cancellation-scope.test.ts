@@ -26,12 +26,17 @@
  */
 
 const mockAppointmentFindMany = jest.fn();
+const mockRecordSystemError = jest.fn();
 
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     appointment: { findMany: (...a: unknown[]) => mockAppointmentFindMany(...a) },
   },
+}));
+
+jest.mock("../../lib/enterprise/system-events", () => ({
+  recordSystemError: (...a: unknown[]) => mockRecordSystemError(...a),
 }));
 
 import {
@@ -82,6 +87,7 @@ function subscriptionRows() {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockRecordSystemError.mockResolvedValue(undefined);
 });
 
 describe("bookingAppointmentFilter", () => {
@@ -255,6 +261,83 @@ describe("resolveBookingRefundContext", () => {
     );
   });
 
+  it("scopes the SLOT counts to the same buyer", async () => {
+    mockAppointmentFindMany.mockResolvedValue([]);
+
+    await resolveBookingRefundContext({ classId: "class-1" }, "user-7");
+
+    // Scoping only the payment left sessionsCompleted, sessionsRemaining,
+    // slotsTotal and the tier itself derived from OTHER attendees' seats — so
+    // one buyer's refund was timed off a session another attendee had booked.
+    expect(mockAppointmentFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({
+          slotsOfAppointment: expect.objectContaining({
+            where: expect.objectContaining({
+              user: { some: { id: "user-7" } },
+            }),
+          }),
+        }),
+      }),
+    );
+  });
+
+  it("leaves the slot lookup unscoped for a 1:1 booking", async () => {
+    mockAppointmentFindMany.mockResolvedValue([]);
+
+    await resolveBookingRefundContext({ consultationId: "cons-1" });
+
+    const where =
+      mockAppointmentFindMany.mock.calls[0][0].select.slotsOfAppointment.where;
+    expect(where).toEqual({ deletedAt: null });
+  });
+
+  it("escalates rather than silently refunding one of several payments", async () => {
+    // Unreachable today — @@unique([userId, appointmentId]) allows one payment
+    // per payer per appointment, and the CHARGE_MEMBER overage side-charge is
+    // created with appointmentId: null precisely to avoid that clash. Which is
+    // why it must be loud if it ever happens: the buyer would be refunded less
+    // than they paid, and nothing else would say so.
+    mockAppointmentFindMany.mockResolvedValue([
+      {
+        id: PLACEHOLDER,
+        cancellationPolicySnapshot: null,
+        payment: [
+          { id: "pay-1", amount: 100_000, refunds: [], disputes: [] },
+          { id: "pay-2", amount: 40_000, refunds: [], disputes: [] },
+        ],
+        slotsOfAppointment: [],
+      },
+    ]);
+
+    const ctx = await resolveBookingRefundContext({ subscriptionId: "sub-1" });
+
+    expect(ctx.paidPayment?.id).toBe("pay-1");
+    expect(mockRecordSystemError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        category: "PAYMENT",
+        context: expect.objectContaining({
+          paymentIds: ["pay-1", "pay-2"],
+        }),
+      }),
+    );
+  });
+
+  it("stays quiet for the ordinary single-payment booking", async () => {
+    mockAppointmentFindMany.mockResolvedValue([
+      {
+        id: PLACEHOLDER,
+        cancellationPolicySnapshot: null,
+        payment: [{ id: "pay-1", amount: 100_000, refunds: [], disputes: [] }],
+        slotsOfAppointment: [],
+      },
+    ]);
+
+    await resolveBookingRefundContext({ subscriptionId: "sub-1" });
+
+    expect(mockRecordSystemError).not.toHaveBeenCalled();
+  });
+
   it("resolves a consultation exactly as before — one row, one payment", async () => {
     mockAppointmentFindMany.mockResolvedValue([
       {
@@ -298,6 +381,9 @@ describe("resolveBookingRefundContext", () => {
             ],
             disputes: [
               { amountPaise: 10_000, status: "LOST" },
+              // The bank already returned this one, so it reduces the balance
+              // exactly as a LOST verdict does.
+              { amountPaise: 5_000, status: "CHARGE_REFUNDED" },
               // Still contested — nothing has been pulled yet.
               { amountPaise: 30_000, status: "UNDER_REVIEW" },
             ],
@@ -312,7 +398,7 @@ describe("resolveBookingRefundContext", () => {
     // Callers tier the gross but must clamp to this, or the refund operation
     // rejects the whole request instead of paying the remainder.
     expect(ctx.paidPayment?.amountPaise).toBe(100_000);
-    expect(ctx.paidPayment?.refundablePaise).toBe(65_000);
+    expect(ctx.paidPayment?.refundablePaise).toBe(60_000);
   });
 
   it("never reports a negative refundable balance", async () => {
